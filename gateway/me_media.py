@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import base64
 import json
+import math
+import sqlite3
+import subprocess
 import time
-from collections import defaultdict
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
@@ -24,7 +27,7 @@ from gateway.user_runtime import UserPortalError
 
 SessionProvider = Callable[[Request], AdminSession | None]
 MutationValidator = Callable[[Request, AdminSession], JSONResponse | None]
-SignedUrlBuilder = Callable[[Request, str], str]
+SignedUrlBuilder = Callable[[Request, str, str], str]
 AssetPathResolver = Callable[[str], Path | None]
 AssetMediaTypeResolver = Callable[[str, Path | None], str]
 AssetDeleter = Callable[[str], bool]
@@ -35,7 +38,6 @@ PathProvider = Path | Callable[[], Path]
 MEDIA_DEFAULT_LIMIT = 24
 MEDIA_MAX_LIMIT = 100
 USAGE_RECEIPT_LIMIT = 50
-USAGE_AGGREGATE_LIMIT = 100000
 
 _KINDS_BY_PREFIX = {"img": "image", "vid": "video", "aud": "audio"}
 _CAPABILITY_BY_INTENT_PREFIX = {
@@ -96,7 +98,7 @@ def create_me_media_router(
     router = APIRouter(prefix="/me/api", tags=["me"])
 
     @router.get("/media", include_in_schema=False)
-    async def list_media(request: Request) -> JSONResponse:
+    def list_media(request: Request) -> JSONResponse:
         try:
             admin_path = _resolve_path(admin_db_path)
             jobs_path = _resolve_path(media_jobs_path)
@@ -122,13 +124,13 @@ def create_me_media_router(
             return _error_response(exc)
 
     @router.get("/media/{asset_id}", include_in_schema=False)
-    async def media_detail(asset_id: str, request: Request) -> JSONResponse:
+    def media_detail(asset_id: str, request: Request) -> JSONResponse:
         try:
             admin_path = _resolve_path(admin_db_path)
             jobs_path = _resolve_path(media_jobs_path)
             receipt_path = _resolve_path(receipts_path)
             actor = _actor_from_request(request, session_provider, admin_path)
-            scope = _MediaScope(app_ids=_owned_app_ids(actor.user_id, admin_path), user_ids=[actor.user_id])
+            scope = _media_scope(request, actor, admin_path)
             item = _find_asset(
                 asset_id,
                 scope=scope,
@@ -144,12 +146,14 @@ def create_me_media_router(
             )
             if item is None:
                 raise _ApiError("asset_not_found", "Asset not found for this account", 404)
+            if scope.audit_everyone:
+                _audit_everyone(actor, "media.detail.everyone", admin_path)
             return _json({"asset": item})
         except (_ApiError, UserPortalError) as exc:
             return _error_response(exc)
 
     @router.delete("/media/{asset_id}", include_in_schema=False)
-    async def delete_media(asset_id: str, request: Request) -> JSONResponse:
+    def delete_media(asset_id: str, request: Request) -> JSONResponse:
         try:
             session = session_provider(request)
             if session is not None and mutation_validator is not None:
@@ -196,13 +200,13 @@ def create_me_media_router(
             return _error_response(exc)
 
     @router.get("/media/{asset_id}/download", include_in_schema=False)
-    async def media_download(asset_id: str, request: Request) -> JSONResponse:
+    def media_download(asset_id: str, request: Request) -> JSONResponse:
         try:
             admin_path = _resolve_path(admin_db_path)
             jobs_path = _resolve_path(media_jobs_path)
             receipt_path = _resolve_path(receipts_path)
             actor = _actor_from_request(request, session_provider, admin_path)
-            scope = _MediaScope(app_ids=_owned_app_ids(actor.user_id, admin_path), user_ids=[actor.user_id])
+            scope = _media_scope(request, actor, admin_path)
             item = _find_asset(
                 asset_id,
                 scope=scope,
@@ -218,12 +222,17 @@ def create_me_media_router(
             )
             if item is None:
                 raise _ApiError("asset_not_found", "Asset not found for this account", 404)
-            return _json({"asset_id": asset_id, "download_url": item["download_url"]})
+            mode = request.query_params.get("metadata", "none")
+            if mode not in {"none", "full"}:
+                raise _ApiError("invalid_metadata", "Metadata must be full or none", 400)
+            if scope.audit_everyone:
+                _audit_everyone(actor, "media.download.everyone", admin_path)
+            return _json({"asset_id": asset_id, "download_url": signed_url_builder(request, asset_id, mode)})
         except (_ApiError, UserPortalError) as exc:
             return _error_response(exc)
 
     @router.get("/usage/summary", include_in_schema=False)
-    async def usage_summary(request: Request) -> JSONResponse:
+    def usage_summary(request: Request) -> JSONResponse:
         try:
             admin_path = _resolve_path(admin_db_path)
             jobs_path = _resolve_path(media_jobs_path)
@@ -235,6 +244,9 @@ def create_me_media_router(
                 admin_db_path=admin_path,
                 media_jobs_path=jobs_path,
                 receipts_path=receipt_path,
+                asset_catalog_provider=asset_catalog_provider,
+                asset_metadata_reader=asset_metadata_reader,
+                asset_path_resolver=asset_path_resolver,
             )
             return _json(summary)
         except (_ApiError, UserPortalError) as exc:
@@ -358,7 +370,7 @@ def _owned_app_ids(user_id: str, path: Path) -> list[str]:
     return [
         str(app["id"])
         for app in admin_store.list_apps_for_user(user_id, path=path)
-        if app.get("id") and not app.get("disabled_at")
+        if app.get("id")
     ]
 
 
@@ -424,6 +436,7 @@ def _list_media(
         "assets": page,
         "next_cursor": next_cursor,
         "has_more": next_cursor is not None,
+        "models": sorted({item["model"] for item in all_items if item.get("model")}),
     }
 
 
@@ -472,7 +485,7 @@ def _media_items(
     receipts_path: Path,
 ) -> list[dict[str, Any]]:
     jobs = media_jobs.recent(
-        limit=1000,
+        limit=media_jobs.count(path=media_jobs_path),
         audience="internal",
         status=media_jobs.STATUS_SUCCEEDED,
         path=media_jobs_path,
@@ -497,7 +510,7 @@ def _media_items(
             path = asset_path_resolver(asset_id)
             embedded = _embedded_provenance(path) if path is not None and path.exists() else {}
             media_type = str(asset.get("media_type") or asset_media_type_resolver(asset_id, path))
-            created_at = _asset_created_at(path, job, receipt)
+            created_at = _asset_created_at(path, job, receipt, embedded)
             prompt = _string_first(
                 _prompt_for_asset(asset, job, receipt),
                 _nested(embedded, "parameters", "prompt"),
@@ -532,7 +545,9 @@ def _media_items(
                 "height": _first_present(asset.get("height"), _nested(job, "metadata", "height"), _nested(embedded, "parameters", "height")),
                 "duration_s": _first_present(asset.get("duration_s"), asset.get("duration"), _nested(job, "metadata", "duration_s"), _nested(embedded, "parameters", "duration_s")),
                 "poster_asset_id": asset.get("poster_asset_id"),
-                "download_url": signed_url_builder(request, asset_id),
+                "download_url": signed_url_builder(request, asset_id, "none"),
+                "workflow_download_url": signed_url_builder(request, asset_id, "full") if embedded.get("workflow_available") else None,
+                "generation_ms": receipt.get("latency_ms") if receipt else None,
                 "provenance": _provenance(asset, job, receipt, embedded),
             })
     if asset_catalog_provider is not None and asset_metadata_reader is not None:
@@ -550,7 +565,7 @@ def _media_items(
                 continue
             embedded = _embedded_provenance(path)
             kind = _asset_kind(asset_id, metadata)
-            created_at = int(path.stat().st_ctime)
+            created_at = _asset_created_at(path, {}, None, embedded)
             seen.add(asset_id)
             out.append({
                 "asset_id": asset_id,
@@ -571,7 +586,9 @@ def _media_items(
                 "height": _nested(embedded, "parameters", "height"),
                 "duration_s": _nested(embedded, "parameters", "duration_s"),
                 "poster_asset_id": None,
-                "download_url": signed_url_builder(request, asset_id),
+                "download_url": signed_url_builder(request, asset_id, "none"),
+                "workflow_download_url": signed_url_builder(request, asset_id, "full") if embedded.get("workflow_available") else None,
+                "generation_ms": None,
                 "provenance": {
                     "prompt": _string_first(_nested(embedded, "parameters", "prompt"), embedded.get("prompt")),
                     "model": _string_first(embedded.get("resolved_model"), embedded.get("requested_model")),
@@ -617,36 +634,66 @@ def _credential_hashes_for_scope(scope: _MediaScope, path: Path) -> set[str] | N
 def _deleted_asset_ids(scope: _MediaScope, path: Path) -> set[str]:
     if scope.user_ids is None:
         return set()
-    user_ids = set(scope.user_ids)
     deleted: set[str] = set()
-    for event in admin_store.list_audit(
-        action_prefix="media.asset.delete",
-        limit=1000,
-        path=path,
-    ):
-        if str(event.get("actor_id") or "") in user_ids and event.get("target_id"):
-            deleted.add(str(event["target_id"]))
+    for user_id in scope.user_ids:
+        cursor: dict[str, Any] = {}
+        while True:
+            events = admin_store.list_audit(
+                actor_id=user_id, action_prefix="media.asset.delete",
+                limit=500, path=path, **cursor,
+            )
+            deleted.update(str(event["target_id"]) for event in events if event.get("target_id"))
+            if len(events) < 500:
+                break
+            last = events[-1]
+            cursor = {"before_created_at": last["created_at"], "before_id": last["id"]}
     return deleted
 
 
 def _embedded_provenance(path: Path) -> dict[str, Any]:
+    # Images use PNG text or EXIF. Audio/video use the existing container-tag
+    # contract. Limit byte reads; large files can still be downloaded normally.
     try:
-        content = path.read_bytes()
         if path.suffix.lower() == ".png":
-            chunks = media_metadata.png_text_chunks(content)
+            if path.stat().st_size > 32 * 1024 * 1024:
+                return {}
+            chunks = media_metadata.png_text_chunks(path.read_bytes())
             raw = chunks.get(provenance.PROVENANCE_KEY)
+            workflow = chunks.get("workflow")
+        elif path.suffix.lower() in {".jpg", ".jpeg", ".webp"}:
+            from PIL import Image
+            with Image.open(path) as image:
+                exif = image.getexif()
+                description = str(exif.get(0x010E, ""))
+                raw = next((line.split(":", 1)[1] for line in description.splitlines()
+                            if line.startswith(provenance.PROVENANCE_KEY + ":")), None)
+                workflow = str(exif.get(0x010F, ""))
         else:
-            tags = media_metadata.read_media_tags(content, path.suffix.lower())
+            probe = subprocess.run(
+                ["ffprobe", "-v", "error", "-print_format", "json", "-show_entries",
+                 "format_tags:stream_tags", str(path)],
+                capture_output=True, text=True, timeout=3, check=False,
+            )
+            if probe.returncode or len(probe.stdout) > 1024 * 1024:
+                return {}
+            facts = json.loads(probe.stdout)
+            tags = {}
+            for stream in facts.get("streams", []) + [facts.get("format", {})]:
+                tags.update({k.lower(): v for k, v in stream.get("tags", {}).items()})
             raw = tags.get(provenance.PROVENANCE_KEY)
-    except Exception:
-        raw = None
-    if not isinstance(raw, str) or not raw:
+            if raw is None:
+                for line in str(tags.get("comment", "")).splitlines():
+                    if line.startswith(provenance.PROVENANCE_KEY + "="):
+                        raw = line.split("=", 1)[1]
+            workflow = None
+        data = json.loads(raw) if isinstance(raw, str) else {}
+        if not isinstance(data, dict):
+            return {}
+        data = provenance.sanitize_provenance(data)
+        data["workflow_available"] = bool(workflow) and path.suffix.lower() == ".png"
+        return data
+    except (OSError, ValueError, subprocess.TimeoutExpired, media_metadata.MediaMetadataError):
         return {}
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        return {}
-    return data if isinstance(data, dict) else {}
 
 
 def _receipt_in_scope(receipt: Mapping[str, Any] | None, scope: _MediaScope) -> bool:
@@ -673,13 +720,22 @@ def _asset_kind(asset_id: str, asset: Mapping[str, Any]) -> str:
     return _KINDS_BY_PREFIX.get(prefix, "asset")
 
 
-def _asset_created_at(path: Path | None, job: Mapping[str, Any], receipt: Mapping[str, Any] | None) -> int:
-    if path is not None and path.exists():
-        return int(path.stat().st_ctime)
+def _asset_created_at(
+    path: Path | None, job: Mapping[str, Any], receipt: Mapping[str, Any] | None,
+    embedded: Mapping[str, Any] | None = None,
+) -> int:
+    recorded = (embedded or {}).get("created_at")
+    if isinstance(recorded, str):
+        try:
+            return int(datetime.fromisoformat(recorded.replace("Z", "+00:00")).timestamp())
+        except ValueError:
+            pass
+    if job.get("created_at"):
+        return int(job["created_at"])
     accepted_ms = receipt.get("accepted_at_ms") if receipt else None
     if isinstance(accepted_ms, int):
-        return int(accepted_ms / 1000)
-    return int(job.get("created_at") or time.time())
+        return accepted_ms // 1000
+    return int(path.stat().st_mtime) if path and path.exists() else 0
 
 
 def _prompt_for_asset(asset: Mapping[str, Any], job: Mapping[str, Any], receipt: Mapping[str, Any] | None) -> str | None:
@@ -766,92 +822,97 @@ def _matches_media_filters(item: Mapping[str, Any], request: Request) -> bool:
 
 
 def _usage_summary(
-    request: Request,
-    *,
-    actor: _Actor,
-    admin_db_path: Path,
-    media_jobs_path: Path,
-    receipts_path: Path,
+    request: Request, *, actor: _Actor, admin_db_path: Path,
+    media_jobs_path: Path, receipts_path: Path,
+    asset_catalog_provider: AssetCatalogProvider | None,
+    asset_metadata_reader: AssetMetadataReader | None,
+    asset_path_resolver: AssetPathResolver,
 ) -> dict[str, Any]:
-    period = str(request.query_params.get("period") or "month")
-    if period != "month":
+    if request.query_params.get("period", "month") != "month":
         raise _ApiError("unsupported_period", "Only period=month is supported", 400)
     app_ids, scope_label = _usage_app_scope(request, actor, admin_db_path)
-    since_s = _seconds_since_month_start()
-    receipts = receipt_store.recent(
-        limit=USAGE_AGGREGATE_LIMIT,
-        audience="internal",
-        app_ids=app_ids,
-        since_s=since_s,
-        outer_only=True,
-        path=receipts_path,
-    )
-    jobs = media_jobs.recent(
-        limit=USAGE_AGGREGATE_LIMIT,
-        audience="internal",
-        status=media_jobs.STATUS_SUCCEEDED,
-        since_s=since_s,
-        path=media_jobs_path,
-    )
-    receipt_app_ids = None if app_ids is None else set(app_ids)
-    media_count = 0
-    for job in jobs:
-        receipt = receipt_store.get(str(job.get("request_id") or ""), audience="internal", path=receipts_path)
-        if receipt_app_ids is None or (receipt and str(receipt.get("app_id") or "") in receipt_app_ids):
-            media_count += sum(1 for _ in _iter_job_assets(job))
-    by_day: dict[str, dict[str, Any]] = defaultdict(lambda: {"date": "", "capabilities": defaultdict(int)})
+    now = datetime.now(timezone.utc)
+    start = int(now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
+    clauses = ["created_at >= ?", "parent_request_id IS NULL"]
+    params: list[Any] = [start]
+    if app_ids is not None:
+        clauses.append("app_id IN (" + ",".join("?" for _ in app_ids) + ")" if app_ids else "0")
+        params.extend(app_ids)
+    # Aggregate every retained row in the period, rather than a recent-feed cap.
+    with sqlite3.connect(str(receipts_path)) as conn:
+        rows = conn.execute(
+            "SELECT receipt_json, created_at FROM receipts WHERE " + " AND ".join(clauses)
+            + " ORDER BY created_at DESC, request_id DESC", params,
+        ).fetchall()
+    receipts = []
+    for raw, stored_at in rows:
+        value = json.loads(raw)
+        if isinstance(value, dict):
+            value["_stored_at"] = stored_at
+            receipts.append(value)
+    by_day: dict[str, dict[str, Any]] = {}
     by_model: dict[str, dict[str, Any]] = {}
     spend = 0.0
-    spend_available = False
+    measured = 0
     for receipt in receipts:
-        day = _day_key(receipt)
+        day = datetime.fromtimestamp(receipt["_stored_at"], timezone.utc).strftime("%Y-%m-%d")
         capability = _capability(receipt)
-        by_day[day]["date"] = day
-        by_day[day]["capabilities"][capability] += 1
-        model = str(receipt.get("resolved_model") or receipt.get("requested_model") or "unknown")
-        row = by_model.setdefault(model, {"model": model, "requests": 0, "remote_spend": 0.0})
+        daily = by_day.setdefault(day, {"date": day})
+        daily[capability] = daily.get(capability, 0) + 1
+        model = str(receipt.get("resolved_model") or receipt.get("requested_model") or "Unknown model")
+        row = by_model.setdefault(model, {"model": model, "requests": 0, "remote_spend": None})
         row["requests"] += 1
         cost = _receipt_cost(receipt)
         if cost is not None:
-            spend_available = True
+            measured += 1
             spend += cost
-            row["remote_spend"] += cost
-    receipt_list = receipt_store.recent(
-        limit=USAGE_RECEIPT_LIMIT,
-        audience="client",
-        app_ids=app_ids,
-        since_s=since_s,
-        outer_only=True,
-        path=receipts_path,
-    )
-    if app_ids is None:
-        receipt_list = [
-            receipt_store.get(str(r.get("request_id")), audience="client", path=receipts_path) or r
-            for r in receipts[:USAGE_RECEIPT_LIMIT]
-        ]
+            row["remote_spend"] = (row["remote_spend"] or 0) + cost
+    scoped_users = None if app_ids is None else [request.query_params.get("person") or actor.user_id]
+    media_scope = _MediaScope(app_ids=app_ids, user_ids=scoped_users)
+    hashes = _credential_hashes_for_scope(media_scope, admin_db_path)
+    made: set[str] = set()
+    receipt_ids = {str(r["request_id"]) for r in receipts}
+    for job in media_jobs.recent(limit=media_jobs.count(path=media_jobs_path), audience="internal",
+                                 status=media_jobs.STATUS_SUCCEEDED, path=media_jobs_path):
+        if str(job.get("request_id")) in receipt_ids:
+            made.update(str(a.get("asset_id") or a.get("id")) for a in _iter_job_assets(job))
+    if asset_catalog_provider and asset_metadata_reader:
+        for asset_id in asset_catalog_provider():
+            metadata = asset_metadata_reader(asset_id)
+            owners = set(metadata.get("owner_key_hashes") or [])
+            if hashes is not None and not (owners & hashes):
+                continue
+            path = asset_path_resolver(asset_id)
+            if path is not None and path.exists():
+                embedded = _embedded_provenance(path)
+                if _asset_created_at(path, {}, None, embedded) >= start:
+                    made.add(asset_id)
+    receipt_list = []
+    for internal in receipts[:USAGE_RECEIPT_LIMIT]:
+        visible = receipt_store.get(internal["request_id"], audience="client", path=receipts_path)
+        if visible:
+            visible["remote_spend"] = _receipt_cost(internal)
+            visible["capability"] = _capability(internal)
+            receipt_list.append(visible)
     if scope_label == "everyone":
         _audit_everyone(actor, "usage.summary.everyone", admin_db_path)
+    coverage_start = max(start, int(time.time()) - receipt_store.RETAIN_S)
     return {
-        "schema_version": 1,
-        "period": "month",
-        "scope": scope_label,
-        "requests": len(receipts),
-        "media_count": media_count,
-        "remote_spend": round(spend, 6) if spend_available else 0.0,
-        "remote_spend_available": spend_available,
-        "remote_spend_source": "receipts.litellm.response_cost" if spend_available else "not_available",
-        "remote_spend_coverage": (
-            "receipt_litellm_cost_only"
-            if spend_available
-            else "provider_spend_ledger_not_present"
-        ),
-        "truncated": len(receipts) >= USAGE_AGGREGATE_LIMIT,
-        "by_day": [
-            {"date": day, **dict(data["capabilities"])}
-            for day, data in sorted(by_day.items())
-        ],
-        "by_model": sorted(by_model.values(), key=lambda row: (-int(row["requests"]), str(row["model"]))),
+        "schema_version": 1, "period": "month", "scope": scope_label,
+        "requests": len(receipts), "media_count": len(made),
+        "remote_spend": round(spend, 6), "remote_spend_available": measured > 0,
+        "remote_spend_source": "receipt costs" if measured else "not_available",
+        "remote_spend_coverage": "Recorded receipt costs only; provider spend ledger is not installed.",
+        "spend_measured_requests": measured, "spend_total_requests": len(receipts),
+        "retention_days": receipt_store.RETAIN_S // 86400,
+        "coverage_start": datetime.fromtimestamp(coverage_start, timezone.utc).isoformat(),
+        "coverage_note": "Requests cover retained receipts; media totals also include retained assets.",
+        "truncated": False, "receipts_limit": USAGE_RECEIPT_LIMIT,
+        "by_day": [by_day[day] for day in sorted(by_day)],
+        "by_model": sorted(by_model.values(), key=lambda row: (-row["requests"], row["model"])),
         "receipts": receipt_list,
+        "people": [{"id": u["id"], "name": u.get("name") or u.get("email") or "Person"}
+                   for u in admin_store.list_users(path=admin_db_path)] if actor.owner else [],
     }
 
 
@@ -871,7 +932,8 @@ def _receipt_cost(receipt: Mapping[str, Any]) -> float | None:
     if value is None:
         return None
     try:
-        return max(0.0, float(value))
+        parsed = float(value)
+        return parsed if math.isfinite(parsed) and parsed >= 0 else None
     except (TypeError, ValueError):
         return None
 
@@ -891,21 +953,6 @@ def _capability(receipt: Mapping[str, Any]) -> str:
     if "/embeddings" in path:
         return "embeddings"
     return prefix or "other"
-
-
-def _day_key(receipt: Mapping[str, Any]) -> str:
-    accepted_ms = receipt.get("accepted_at_ms")
-    if isinstance(accepted_ms, int):
-        ts = int(accepted_ms / 1000)
-    else:
-        ts = int(receipt.get("_stored_at") or time.time())
-    return time.strftime("%Y-%m-%d", time.localtime(ts))
-
-
-def _seconds_since_month_start() -> int:
-    now = time.localtime()
-    start = time.mktime((now.tm_year, now.tm_mon, 1, 0, 0, 0, now.tm_wday, now.tm_yday, now.tm_isdst))
-    return max(1, int(time.time() - start))
 
 
 def _audit_everyone(actor: _Actor, action: str, path: Path) -> None:

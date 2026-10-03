@@ -103,7 +103,9 @@ interface UsageSummary {
   byModel: UsageModel[];
   receipts: UsageReceipt[];
   people: UsagePerson[];
-  source: "summary" | "activity";
+  retentionDays: number;
+  coverageStart: string | null;
+  truncated: boolean;
 }
 
 const capabilities: UsageCapability[] = [
@@ -140,7 +142,7 @@ const chartColors: Record<UsageCapability, string> = {
   audio: "var(--vf-ok)",
   voice: "var(--vf-ok)",
   transcribe: "var(--vf-text-subtle)",
-  decide: "var(--vf-bad)",
+  decide: "var(--vf-accent)",
   embed: "color-mix(in srgb, var(--vf-accent) 55%, var(--vf-text-subtle))",
   embeddings: "color-mix(in srgb, var(--vf-accent) 55%, var(--vf-text-subtle))",
   rerank: "color-mix(in srgb, var(--vf-info) 55%, var(--vf-text-subtle))",
@@ -163,7 +165,7 @@ export default function UsagePage() {
         title="Usage"
         answer="How much am I using, and what does it cost?"
         actions={
-          viewer.admin ? (
+          ["owner", "superadmin"].includes(viewer.role) ? (
             <PersonFilter
               value={person}
               people={data?.people ?? []}
@@ -195,12 +197,11 @@ export default function UsagePage() {
       ) : (
         <>
           <SummaryRow summary={data} />
-          {data.source === "activity" && (
-            <p className="text-muted-foreground text-sm">
-              This gateway has receipts, but the monthly summary API is not
-              available yet. Spend and media totals show only measured values.
-            </p>
-          )}
+          <p className="text-muted-foreground text-sm">
+            Receipts are retained for {data.retentionDays} days
+            {data.coverageStart ? `, covering usage since ${data.coverageStart}` : ""}.
+            {data.truncated ? " This view is limited to the most recent stored receipts." : ""}
+          </p>
           <DailyChart days={data.byDay} />
           <ModelTable rows={data.byModel} />
           <ReceiptsList
@@ -357,13 +358,13 @@ function DailyChart({ days }: { days: UsageDay[] }) {
         <CardDescription>Stacked by capability</CardDescription>
       </CardHeader>
       <CardContent>
-        {rows.length < 2 ? (
+        {rows.length < 1 ? (
           <div className="text-muted-foreground flex min-h-40 items-center justify-center rounded-lg border text-sm">
-            Daily history appears after a few requests.
+            Daily history appears after requests are measured.
           </div>
         ) : (
           <>
-            <div className="h-72 w-full" aria-hidden>
+            <div className="h-72 w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
                   data={rows}
@@ -444,7 +445,7 @@ function ModelTable({ rows }: { rows: UsageModel[] }) {
         <CardTitle>Models</CardTitle>
         <CardDescription>Requests, duration and measured cost</CardDescription>
       </CardHeader>
-      <CardContent className="overflow-x-auto">
+      <CardContent className="overflow-x-auto" tabIndex={0}>
         {rows.length ? (
           <table className="w-full min-w-[560px] text-sm">
             <thead className="text-muted-foreground border-b text-left">
@@ -719,7 +720,12 @@ function MiniSparkline({
 
 function UsageSkeleton() {
   return (
-    <div aria-label="Loading usage" aria-busy="true" className="space-y-6">
+    <div
+      role="status"
+      aria-label="Loading usage"
+      aria-busy="true"
+      className="space-y-6"
+    >
       <div className="grid gap-4 md:grid-cols-3">
         {[0, 1, 2].map((item) => (
           <Skeleton key={item} className="h-36 w-full" />
@@ -739,13 +745,7 @@ async function fetchUsageSummary(person: string): Promise<UsageSummary> {
     cache: "no-store",
   });
   if (response.ok) return normalizeSummary(await response.json());
-  if (response.status !== 404) throw new Error("Usage summary could not be loaded.");
-  const activity = await fetch("/me/api/activity?limit=50", {
-    credentials: "same-origin",
-    cache: "no-store",
-  });
-  if (!activity.ok) throw new Error("Usage activity could not be loaded.");
-  return summaryFromActivity(await activity.json());
+  throw new Error("Usage summary could not be loaded.");
 }
 
 function normalizeSummary(raw: unknown): UsageSummary {
@@ -754,14 +754,14 @@ function normalizeSummary(raw: unknown): UsageSummary {
   const byDay = array(data.by_day ?? data.days ?? data.series).map(normalizeDay);
   const byModel = array(data.by_model ?? data.models).map(normalizeModel);
   const remoteSpendUsd = nullableNumber(
-    data.remote_spend_usd ?? data.remoteSpendUsd ?? data.remote_spend,
+    data.remote_spend ?? data.remote_spend_usd ?? data.remoteSpendUsd,
   );
   return {
     requests: number(data.requests ?? data.request_count, receipts.length),
     mediaCount: number(data.media_count ?? data.mediaCount, 0),
     remoteSpendUsd,
     spendMeasured: Boolean(
-      data.spend_measured ?? data.spendMeasured ?? remoteSpendUsd !== null,
+      data.remote_spend_available ?? data.spend_measured ?? data.spendMeasured ?? remoteSpendUsd !== null,
     ),
     byDay,
     byModel,
@@ -778,24 +778,9 @@ function normalizeSummary(raw: unknown): UsageSummary {
         };
       })
       .filter((item) => item.id),
-    source: "summary",
-  };
-}
-
-function summaryFromActivity(raw: unknown): UsageSummary {
-  const receipts = array(object(raw).receipts).map(normalizeReceipt);
-  return {
-    requests: receipts.length,
-    mediaCount: receipts.filter((receipt) =>
-      ["image", "video", "audio", "voice"].includes(receipt.capability),
-    ).length,
-    remoteSpendUsd: null,
-    spendMeasured: false,
-    byDay: daysFromReceipts(receipts),
-    byModel: modelsFromReceipts(receipts),
-    receipts,
-    people: [],
-    source: "activity",
+    retentionDays: number(data.retention_days, 14),
+    coverageStart: nullableString(data.coverage_note ?? data.coverage_start),
+    truncated: Boolean(data.truncated),
   };
 }
 
@@ -814,7 +799,7 @@ function normalizeReceipt(raw: unknown): UsageReceipt {
     data.duration_ms ?? data.latency_ms ?? data.latencyMs,
   );
   const costUsd = nullableNumber(
-    data.cost_usd ?? data.remote_cost_usd ?? metadata.cost_usd,
+    data.remote_spend ?? data.cost_usd ?? data.remote_cost_usd ?? metadata.cost_usd,
   );
   return {
     requestId,
@@ -834,7 +819,7 @@ function normalizeReceipt(raw: unknown): UsageReceipt {
 function normalizeDay(raw: unknown): UsageDay {
   const data = object(raw);
   const byCapability = normalizeCapabilityCounts(
-    data.by_capability ?? data.capabilities ?? data,
+    data.capabilities ?? data.by_capability ?? data,
   );
   return {
     date: string(data.date ?? data.day, ""),
@@ -852,7 +837,7 @@ function normalizeModel(raw: unknown): UsageModel {
     durationMs: nullableNumber(
       data.duration_ms ?? data.latency_ms ?? data.typical_ms,
     ),
-    costUsd: nullableNumber(data.cost_usd ?? data.remote_cost_usd),
+    costUsd: nullableNumber(data.remote_spend ?? data.cost_usd ?? data.remote_cost_usd),
   };
 }
 
@@ -864,54 +849,6 @@ function normalizeCapabilityCounts(
     (acc, capability) => ({ ...acc, [capability]: number(data[capability], 0) }),
     {} as Record<UsageCapability, number>,
   );
-}
-
-function daysFromReceipts(receipts: UsageReceipt[]): UsageDay[] {
-  const days = new Map<string, Record<UsageCapability, number>>();
-  for (const receipt of receipts) {
-    const date = dateKey(receipt.createdAt);
-    if (!date) continue;
-    const counts = days.get(date) ?? normalizeCapabilityCounts({});
-    counts[receipt.capability] += 1;
-    days.set(date, counts);
-  }
-  return Array.from(days, ([date, byCapability]) => ({
-    date,
-    byCapability,
-    total: sumCounts(byCapability),
-  })).sort((a, b) => a.date.localeCompare(b.date));
-}
-
-function modelsFromReceipts(receipts: UsageReceipt[]): UsageModel[] {
-  const rows = new Map<string, UsageModel & { samples: number }>();
-  for (const receipt of receipts) {
-    const model = receipt.model ?? "Unknown model";
-    const key = `${model}:${receipt.capability}`;
-    const row = rows.get(key) ?? {
-      model,
-      capability: receipt.capability,
-      requests: 0,
-      durationMs: null,
-      costUsd: null,
-      samples: 0,
-    };
-    row.requests += 1;
-    if (receipt.durationMs != null) {
-      row.durationMs =
-        ((row.durationMs ?? 0) * row.samples + receipt.durationMs) /
-        (row.samples + 1);
-      row.samples += 1;
-    }
-    if (receipt.costUsd != null) row.costUsd = (row.costUsd ?? 0) + receipt.costUsd;
-    rows.set(key, row);
-  }
-  return Array.from(rows.values()).map((row) => ({
-    model: row.model,
-    capability: row.capability,
-    requests: row.requests,
-    durationMs: row.durationMs,
-    costUsd: row.costUsd,
-  }));
 }
 
 function capabilitySpark(days: UsageDay[]) {
@@ -984,6 +921,7 @@ function number(value: unknown, fallback: number): number {
 }
 
 function nullableNumber(value: unknown): number | null {
+  if (value == null || value === "") return null;
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -1006,16 +944,6 @@ function formatDuration(value: number | null) {
   if (value == null) return "Not measured yet";
   if (value < 1000) return `${Math.round(value)} ms`;
   return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)} s`;
-}
-
-function dateKey(value: number | string | null) {
-  if (value == null) return null;
-  const date =
-    typeof value === "number" && value > 10_000_000_000
-      ? new Date(value)
-      : new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toISOString().slice(0, 10);
 }
 
 function shortDate(value: string) {

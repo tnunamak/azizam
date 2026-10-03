@@ -9,14 +9,15 @@ const mediaFixture = {
       prompt: "A clean product render of a teal fish gateway on a desk",
       model: "image",
       created_at: 1_760_000_000,
-      thumb_url:
+      download_url:
         "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 640 420'%3E%3Crect width='640' height='420' fill='%23e0f2fe'/%3E%3Ccircle cx='300' cy='210' r='110' fill='%230f766e'/%3E%3Cpath d='M365 210l120-80v160z' fill='%2314b8a6'/%3E%3Ccircle cx='265' cy='178' r='16' fill='white'/%3E%3C/svg%3E",
-      preview_url:
+      workflow_download_url:
         "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 640 420'%3E%3Crect width='640' height='420' fill='%23e0f2fe'/%3E%3Ccircle cx='300' cy='210' r='110' fill='%230f766e'/%3E%3Cpath d='M365 210l120-80v160z' fill='%2314b8a6'/%3E%3Ccircle cx='265' cy='178' r='16' fill='white'/%3E%3C/svg%3E",
-      download_url: "/me/api/media/asset_image_1/download",
       workflow: { sampler: "local-test" },
       seed: 42,
-      size: "1024 x 768 px",
+      width: 1024,
+      height: 768,
+      generation_ms: 2500,
     },
     {
       asset_id: "asset_video_1",
@@ -24,7 +25,7 @@ const mediaFixture = {
       prompt: "Gateway status lights moving across a quiet panel",
       model: "video",
       created_at: 1_760_010_000,
-      duration_seconds: 6,
+      duration_s: 6,
       download_url: "/me/api/media/asset_video_1/download",
     },
     {
@@ -33,7 +34,7 @@ const mediaFixture = {
       prompt: "A calm spoken introduction for the gateway",
       model: "voice",
       created_at: 1_760_020_000,
-      duration_seconds: 12,
+      duration_s: 12,
       download_url: "/me/api/media/asset_audio_1/download",
     },
   ],
@@ -88,7 +89,7 @@ for (const mode of ["light", "dark"] as const) {
       await expect(page.getByRole("dialog")).toContainText("Workflow");
       await expect(
         page.getByRole("link", { name: "Download" }),
-      ).toHaveAttribute("href", "/me/api/media/asset_image_1/download");
+      ).toHaveAttribute("href", mediaFixture.assets[0].download_url!);
       await auditPage(page);
       await page.screenshot({
         path: `test-results/screens/library-seeded-${mode}-${width}.png`,
@@ -128,6 +129,10 @@ for (const mode of ["light", "dark"] as const) {
         page.getByText("Your library could not be loaded. Try again."),
       ).toBeVisible();
       await auditPage(page);
+      await page.screenshot({
+        path: `test-results/screens/library-error-${mode}-${width}.png`,
+        fullPage: true,
+      });
       await page.getByRole("button", { name: "Try again" }).click();
       await expect(
         page.getByText("A clean product render", { exact: false }),
@@ -147,6 +152,9 @@ test("library delete confirms before mutation", async ({ page }) => {
     route.fulfill({ json: mediaFixture }),
   );
   await page.route("**/me/api/media/asset_image_1", (route) => {
+    if (route.request().method() !== "DELETE") return route.continue();
+    expect(route.request().headers()["x-ai-gateway-user-action"]).toBe("1");
+    expect(route.request().headers()["x-ai-gateway-csrf"]).toBeTruthy();
     deleted = true;
     return route.fulfill({ json: { ok: true } });
   });
@@ -162,4 +170,56 @@ test("library delete confirms before mutation", async ({ page }) => {
     .getByRole("button", { name: "Delete" })
     .click();
   await expect.poll(() => deleted).toBe(true);
+});
+
+test("library filters dates and everyone, pages forward and preserves prior items", async ({
+  page,
+}) => {
+  const requests: string[] = [];
+  await page.route("**/me/api/media?**", (route) => {
+    const url = route.request().url();
+    requests.push(url);
+    return route.fulfill({
+      json: url.includes("cursor=")
+        ? {
+            assets: [
+              {
+                ...mediaFixture.assets[0],
+                asset_id: "page_two",
+                prompt: "Second page image",
+              },
+            ],
+            models: ["image"],
+            next_cursor: null,
+          }
+        : mediaFixture,
+    });
+  });
+  await page.goto("/ui/library/");
+  await expect(
+    page.getByRole("button", { name: /Open A clean product render/ }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Load more" }).click();
+  await expect(
+    page.getByRole("button", { name: "Open Second page image" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /Open A clean product render/ }),
+  ).toBeVisible();
+  expect(requests.at(-1)).toContain("cursor=cursor_next");
+  await page.getByLabel("Date", { exact: true }).click();
+  await page.getByRole("option", { name: "Last 7 days" }).click();
+  await expect.poll(() => requests.at(-1) ?? "").toContain("start=");
+  await page.getByLabel("Owner", { exact: true }).click();
+  await page.getByRole("option", { name: "Everyone’s" }).click();
+  await expect.poll(() => requests.at(-1) ?? "").toContain("scope=everyone");
+  await page
+    .getByRole("button", { name: /Open A clean product render/ })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Delete", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("link", { name: "Open in ComfyUI" }),
+  ).toBeVisible();
 });

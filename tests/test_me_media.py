@@ -73,7 +73,7 @@ class MeMediaRouterTests(unittest.TestCase):
             me_media.create_me_media_router(
                 session_provider=self._session,
                 mutation_validator=self._mutation_validator,
-                signed_url_builder=lambda request, asset_id: f"http://testserver/v1/assets/{asset_id}/content?sig=test",
+                signed_url_builder=lambda request, asset_id, mode: f"http://testserver/v1/assets/{asset_id}/content?md={mode}&sig=test",
                 asset_path_resolver=self._asset_path,
                 asset_media_type_resolver=lambda asset_id, path: "image/png",
                 asset_deleter=self._delete_unshared,
@@ -155,6 +155,7 @@ class MeMediaRouterTests(unittest.TestCase):
             request_id="req_cache",
         )
         png = media_delivery.attach_provenance(PNG_1X1, ".png", record)
+        png = media_metadata.embed_png_text(png, {"workflow": json.dumps({"nodes": [], "links": []})})
         self._asset_path(asset_id).write_bytes(png)
         self._meta_path(asset_id).write_text(
             json.dumps({"asset_id": asset_id, "owner_key_hashes": owner_hashes, "updated_at": 1_700_000_000})
@@ -316,6 +317,7 @@ class MeMediaRouterTests(unittest.TestCase):
             proxy._image_url_signing_secret = None
             cfg = OIDCConfig(
                 enabled=True,
+                scopes=("openid", "email"), allowed_email_domains=(), admin_emails=(),
                 issuer="issuer",
                 client_id="client",
                 client_secret="secret",
@@ -350,6 +352,16 @@ class MeMediaRouterTests(unittest.TestCase):
             self.assertEqual(content.status_code, 200, content.text)
             self.assertEqual(content.headers["content-type"], "image/png")
             self.assertEqual(media_metadata.png_text_chunks(content.content), {})
+            full = client.get(f"/me/api/media/{asset_id}/download?metadata=full")
+            self.assertEqual(full.status_code, 200)
+            workflow_url = full.json()["download_url"]
+            workflow_png = client.get(workflow_url)
+            self.assertEqual(workflow_png.status_code, 200)
+            self.assertIn("workflow", media_metadata.png_text_chunks(workflow_png.content))
+            self.assertIn(provenance.PROVENANCE_KEY, media_metadata.png_text_chunks(workflow_png.content))
+            self.assertEqual(client.get(workflow_url.replace("md=full", "md=none")).status_code, 403)
+            client.cookies.clear()
+            self.assertEqual(client.get(f"/me/api/media/{asset_id}/download").status_code, 401)
         finally:
             proxy.ADMIN_STORE.path = old_admin_path
             media_jobs.DB_PATH = old_jobs_path
@@ -360,6 +372,108 @@ class MeMediaRouterTests(unittest.TestCase):
             proxy.ADMIN_OIDC_CONFIG = old_oidc
             proxy.ADMIN_AUTH.signing_key = old_signing_key
             proxy.ADMIN_AUTH.cookie = old_cookie
+
+    def test_paging_filters_and_embedded_generation_time(self) -> None:
+        for char, prompt in (("2", "orange boat"), ("3", "blue boat"), ("4", "red sky")):
+            asset_id = "img_" + char * 64
+            self._write_asset(asset_id, ["sha256:alice"], prompt)
+            self._receipt(self.app_a["id"], "req_" + char)
+            self._job("req_" + char, asset_id)
+        first = self.client.get("/me/api/media?limit=1&q=boat&model=local-image&kind=image").json()
+        self.assertEqual(len(first["assets"]), 1)
+        item = first["assets"][0]
+        self.assertEqual(item["seed"], 7)
+        self.assertEqual(item["width"], 512)
+        self.assertEqual(item["created_at"], 1_700_000_000)
+        self.assertTrue(item["workflow_download_url"])
+        second = self.client.get("/me/api/media?limit=1&q=boat&cursor=" + first["next_cursor"]).json()
+        self.assertEqual(len(second["assets"]), 1)
+        self.assertNotEqual(item["asset_id"], second["assets"][0]["asset_id"])
+        self.assertIsNone(second["next_cursor"])
+        self.assertEqual(self.client.get("/me/api/media?start=2026-01-01").json()["assets"], [])
+        self.assertEqual(self.client.get("/me/api/media?cursor=bad").status_code, 400)
+        self.assertEqual(self.client.get("/me/api/media?start=invalid").status_code, 400)
+
+    def test_cross_user_delete_and_download_do_not_reveal_foreign_assets(self) -> None:
+        asset_id = "img_" + "5" * 64
+        self._write_asset(asset_id, ["sha256:bob"])
+        headers = {"x-ai-gateway-user-action": "1", "x-ai-gateway-csrf": "valid-csrf"}
+        self.assertEqual(self.client.delete(f"/me/api/media/{asset_id}", headers=headers).status_code, 404)
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}/download?metadata=full").status_code, 404)
+        self.assertTrue(self._asset_path(asset_id).exists())
+
+    def test_owner_detail_is_explicit_and_audited_but_cannot_delete_foreign(self) -> None:
+        asset_id = "img_" + "6" * 64
+        self._write_asset(asset_id, ["sha256:alice"])
+        self.current_user = self.owner
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 404)
+        detail = self.client.get(f"/me/api/media/{asset_id}?scope=everyone")
+        self.assertEqual(detail.status_code, 200)
+        self.assertTrue(admin_store.list_audit(action_prefix="media.detail.everyone", path=self.admin_db))
+        headers = {"x-ai-gateway-user-action": "1", "x-ai-gateway-csrf": "valid-csrf"}
+        self.assertEqual(self.client.delete(f"/me/api/media/{asset_id}?scope=everyone", headers=headers).status_code, 404)
+        admin_store.assign_admin_role(role="admin", subject_kind="user", subject_id=self.bob["id"], path=self.admin_db)
+        self.current_user = self.bob
+        self.assertEqual(self.client.get("/me/api/media?scope=everyone").status_code, 403)
+        self.assertEqual(self.client.get("/me/api/usage/summary?person=all").status_code, 403)
+
+    def test_deleted_shared_asset_stays_deleted_after_audit_churn(self) -> None:
+        asset_id = "img_" + "7" * 64
+        self._write_asset(asset_id, ["sha256:alice", "sha256:bob"])
+        headers = {"x-ai-gateway-user-action": "1", "x-ai-gateway-csrf": "valid-csrf"}
+        self.assertEqual(self.client.delete(f"/me/api/media/{asset_id}", headers=headers).status_code, 200)
+        for index in range(1001):
+            admin_store.record_audit("media.asset.delete", actor_id=self.bob["id"], actor_kind="user",
+                                     target_id=f"other-{index}", path=self.admin_db)
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 404)
+        self.current_user = self.bob
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 200)
+
+    def test_disabled_apps_keep_owned_history(self) -> None:
+        asset_id = "img_" + "8" * 64
+        self._write_asset(asset_id, ["sha256:alice"])
+        self._receipt(self.app_a["id"], "req_disabled")
+        admin_store.disable_app(self.app_a["id"], path=self.admin_db)
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}").status_code, 200)
+        self.assertEqual(self.client.get("/me/api/usage/summary").json()["requests"], 1)
+
+    def test_jpeg_webp_embedded_provenance(self) -> None:
+        from PIL import Image
+        record = provenance.build_provenance_record(kind="image", created_at=1700000000,
+                                                    parameters={"prompt": "EXIF boat"}, seed=4)
+        exif = media_metadata.exif_bytes({provenance.PROVENANCE_KEY: json.dumps(record)})
+        for suffix, fmt in ((".jpg", "JPEG"), (".webp", "WEBP")):
+            path = self.cache / ("exif" + suffix)
+            Image.new("RGB", (2, 2)).save(path, format=fmt, exif=exif)
+            embedded = me_media._embedded_provenance(path)
+            self.assertEqual(embedded["seed"], 4)
+            self.assertEqual(embedded["parameters"]["prompt"], "EXIF boat")
+
+    def test_cache_only_media_counts_and_spend_absence_are_honest(self) -> None:
+        asset_id = "img_" + "9" * 64
+        self._write_asset(asset_id, ["sha256:alice"])
+        record = provenance.build_provenance_record(kind="image", created_at=time.time(),
+                                                    parameters={"prompt": "new image"})
+        self._asset_path(asset_id).write_bytes(media_delivery.attach_provenance(PNG_1X1, ".png", record))
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual(usage["media_count"], 1)
+        self.assertEqual(usage["requests"], 0)
+        self.assertFalse(usage["remote_spend_available"])
+        self.assertEqual(usage["remote_spend"], 0)
+        self.assertEqual(usage["retention_days"], 14)
+        self.assertIn("coverage_start", usage)
+        self.assertEqual(usage["people"], [])
+
+    def test_usage_excludes_children_and_preserves_unknown_costs(self) -> None:
+        self._receipt(self.app_a["id"], "req_outer")
+        receipt_store.record({"request_id": "req_child", "app_id": self.app_a["id"],
+                              "parent_request_id": "req_outer", "status": "succeeded"}, path=self.receipts_db)
+        usage = self.client.get("/me/api/usage/summary").json()
+        self.assertEqual(usage["requests"], 1)
+        self.assertIsNone(usage["by_model"][0]["remote_spend"])
+        self.assertIsNone(usage["receipts"][0]["remote_spend"])
+        for invalid in ("NaN", "Infinity", "-1", "bad"):
+            self.assertIsNone(me_media._receipt_cost({"metadata": {"litellm": {"response_cost": invalid}}}))
 
 
 if __name__ == "__main__":

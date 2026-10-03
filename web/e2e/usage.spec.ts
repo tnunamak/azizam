@@ -1,6 +1,36 @@
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
+const seededSummary = {
+  requests: 4,
+  media_count: 1,
+  remote_spend: 0.023,
+  remote_spend_available: true,
+  retention_days: 14,
+  coverage_note: "14-day receipt window",
+  by_day: [
+    { date: "2026-10-01", chat: 1, image: 1 },
+    { date: "2026-10-02", chat: 1, embeddings: 1 },
+  ],
+  by_model: [
+    { model: "demo-chat", requests: 2, remote_spend: 0.01 },
+    { model: "image", requests: 1, remote_spend: 0.013 },
+  ],
+  receipts: [
+    {
+      request_id: "req_demo_chat",
+      accepted_at_ms: 1790870400000,
+      requested_model: "demo-chat",
+      resolved_model: "demo-chat",
+      intent: "chat",
+      capability: "chat",
+      status: "success",
+      latency_ms: 42,
+      remote_spend: null,
+    },
+  ],
+};
+
 async function expectNoSeriousAxeViolations(page: import("@playwright/test").Page) {
   const a11y = await new AxeBuilder({ page }).analyze();
   const violations = a11y.violations
@@ -20,12 +50,17 @@ async function expectNoHorizontalOverflow(page: import("@playwright/test").Page)
   ).toBe(true);
 }
 
-test("usage lists the seeded real receipt and opens technical details", async ({
+test("usage lists a receipt and opens technical details", async ({
   page,
 }) => {
+  await page.route("**/me/api/usage/summary?**", (route) =>
+    route.fulfill({ json: seededSummary }),
+  );
   await page.goto("/ui/usage/");
   await expect(page.getByRole("heading", { name: "Usage" })).toBeVisible();
-  await expect(page.getByText("Receipts are retained for 14 days")).toBeVisible();
+  await expect(
+    page.getByText(/Receipts are retained for 14 days, covering usage/),
+  ).toBeVisible();
   await expect(page.getByText("demo-chat").first()).toBeVisible();
   await page
     .getByRole("button", { name: /Receipt details for demo-chat/ })
@@ -45,8 +80,9 @@ test("usage has designed empty and error states", async ({ page }) => {
       json: {
         requests: 0,
         media_count: 0,
-        remote_spend_usd: null,
-        spend_measured: false,
+        remote_spend: 0,
+        remote_spend_available: false,
+        retention_days: 14,
         by_day: [],
         by_model: [],
         receipts: [],
@@ -71,6 +107,9 @@ test("usage has designed empty and error states", async ({ page }) => {
     page.getByText("Usage could not be loaded. Try again."),
   ).toBeVisible();
   await page.unroute("**/me/api/usage/summary?**");
+  await page.route("**/me/api/usage/summary?**", (route) =>
+    route.fulfill({ json: seededSummary }),
+  );
   await page.getByRole("button", { name: /try again/i }).click();
   await expect(page.getByText("demo-chat").first()).toBeVisible();
 });
@@ -89,10 +128,16 @@ for (const theme of ["light", "dark"] as const) {
       await page.addInitScript((value) => {
         localStorage.setItem("theme", value);
       }, theme);
+      await page.route("**/me/api/usage/summary?**", (route) =>
+        route.fulfill({ json: seededSummary }),
+      );
       await page.goto("/ui/usage/");
       await expect(page.getByRole("heading", { name: "Usage" })).toBeVisible();
+      await expect(page.locator('[aria-label="Loading your account"]')).toHaveCount(0);
       await expect(page.getByText("Remote spend")).toBeVisible();
-      await expect(page.getByText("Receipts")).toBeVisible();
+      await expect(
+        page.getByText("Receipts", { exact: true }),
+      ).toBeVisible();
       await expectNoHorizontalOverflow(page);
       await expectNoSeriousAxeViolations(page);
       await page.screenshot({

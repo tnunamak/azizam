@@ -13432,7 +13432,7 @@ app.include_router(
     me_media.create_me_media_router(
         session_provider=lambda request: _oidc_session_from_request(request),
         mutation_validator=lambda request, session: _require_user_action_header(request, session),
-        signed_url_builder=lambda request, asset_id: build_signed_asset_url(request, asset_id),
+        signed_url_builder=lambda request, asset_id, mode: build_signed_asset_url(request, asset_id, mode),
         asset_path_resolver=lambda asset_id: asset_cache_path(asset_id),
         asset_media_type_resolver=lambda asset_id, path: asset_media_type(asset_id, path),
         asset_deleter=me_media.conservative_asset_deleter(

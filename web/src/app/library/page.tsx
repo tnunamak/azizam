@@ -1,7 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import NextImage from "next/image";
+import {
+  useMutation,
+  useInfiniteQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   AudioLines,
   CalendarDays,
@@ -50,14 +55,15 @@ interface MediaAsset {
   prompt: string;
   model: string;
   created_at: number | string | null;
-  thumb_url?: string | null;
-  preview_url?: string | null;
   download_url?: string | null;
-  comfyui_url?: string | null;
+  workflow_download_url?: string | null;
+  media_type?: string;
+  width?: number | null;
+  height?: number | null;
+  generation_ms?: number | null;
   workflow?: string | Record<string, unknown> | null;
   seed?: string | number | null;
-  size?: string | null;
-  duration_seconds?: number | null;
+  duration_s?: number | null;
   owner_name?: string | null;
 }
 
@@ -91,9 +97,15 @@ function buildMediaPath(filters: {
   const params = new URLSearchParams({ limit: "40" });
   if (isMediaKind(filters.kind)) params.set("kind", filters.kind);
   if (filters.model !== "all") params.set("model", filters.model);
-  if (filters.date !== "all") params.set("date", filters.date);
+  if (filters.date !== "all") {
+    const days = Number.parseInt(filters.date, 10);
+    params.set(
+      "start",
+      new Date(Date.now() - days * 86400000).toISOString().slice(0, 10),
+    );
+  }
   if (filters.search.trim()) params.set("q", filters.search.trim());
-  if (filters.owner === "everyone") params.set("owner", "all");
+  if (filters.owner === "everyone") params.set("scope", "everyone");
   return `/me/api/media?${params.toString()}`;
 }
 
@@ -134,27 +146,45 @@ function Preview({
   asset: MediaAsset;
   large?: boolean;
 }) {
-  const src =
-    asset.preview_url ?? asset.thumb_url ?? asset.download_url ?? null;
+  const src = asset.download_url ?? null;
   const Icon = kindIcon(asset.kind);
   if (asset.kind === "image" && src)
     return (
-      <img
+      <NextImage
+        unoptimized
+        width={asset.width ?? 1024}
+        height={asset.height ?? 768}
         src={src}
         alt={asset.prompt || "Generated image"}
-        className={cn("h-full w-full object-cover", large && "rounded-lg")}
+        className={cn(
+          "h-full w-full",
+          large ? "rounded-lg object-contain" : "object-cover",
+        )}
       />
     );
   if (asset.kind === "video" && src)
     return (
       <video
         src={src}
-        className={cn("h-full w-full object-cover", large && "rounded-lg")}
+        className={cn(
+          "h-full w-full",
+          large ? "rounded-lg object-contain" : "object-cover",
+        )}
         controls={large}
         muted={!large}
       />
     );
-  if (asset.kind === "audio") return <AudioWaveform />;
+  if (asset.kind === "audio")
+    return large && src ? (
+      <audio
+        controls
+        src={src}
+        aria-label="Generated audio"
+        className="w-full"
+      />
+    ) : (
+      <AudioWaveform />
+    );
   return (
     <div className="bg-muted/60 text-muted-foreground flex h-full min-h-40 items-center justify-center rounded-lg">
       <Icon className="size-8" aria-hidden />
@@ -174,7 +204,7 @@ function AssetCard({
     <button
       type="button"
       onClick={() => onOpen(asset)}
-      className="group bg-card hover:border-primary/50 focus-visible:ring-ring/50 break-inside-avoid overflow-hidden rounded-xl border text-left shadow-xs transition focus-visible:ring-[3px] focus-visible:outline-none"
+      className="group bg-card hover:border-primary/50 focus-visible:ring-ring/50 w-full break-inside-avoid overflow-hidden rounded-xl border text-left shadow-xs transition focus-visible:ring-[3px] focus-visible:outline-none"
       aria-label={`Open ${asset.prompt || kindLabel(asset.kind)}`}
     >
       <div
@@ -191,12 +221,12 @@ function AssetCard({
           <Icon className="size-3" />
           {kindLabel(asset.kind)}
         </Badge>
-        {asset.duration_seconds ? (
+        {asset.duration_s ? (
           <Badge
             variant="secondary"
             className="bg-background/90 absolute right-2 bottom-2"
           >
-            {Math.round(asset.duration_seconds)} s
+            {Math.round(asset.duration_s)} s
           </Badge>
         ) : null}
       </div>
@@ -227,31 +257,59 @@ export default function LibraryPage() {
   const [confirming, setConfirming] = useState<MediaAsset | null>(null);
   const filters = { kind, model, date, search, owner };
   const mediaPath = buildMediaPath(filters);
-  const { data, isLoading, isError, isFetching, refetch } = useQuery({
+  const {
+    data,
+    isLoading,
+    isError,
+    isFetching,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+    refetch,
+  } = useInfiniteQuery({
     queryKey: ["library", filters],
-    queryFn: () => mediaRequest<MediaResponse>(mediaPath),
+    initialPageParam: "",
+    queryFn: ({ pageParam }) =>
+      mediaRequest<MediaResponse>(
+        mediaPath +
+          (pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""),
+      ),
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
     retry: false,
   });
   const assets = useMemo(
-    () => (data?.assets ?? []).filter((item) => isMediaKind(item.kind)),
-    [data?.assets],
+    () =>
+      (data?.pages.flatMap((page) => page.assets) ?? []).filter((item) =>
+        isMediaKind(item.kind),
+      ),
+    [data?.pages],
   );
   const models = useMemo(
     () =>
       Array.from(
         new Set([
-          ...(data?.models ?? []),
+          ...(data?.pages[0]?.models ?? []),
           ...assets.map((asset) => asset.model).filter(Boolean),
         ]),
       ).sort(),
-    [assets, data?.models],
+    [assets, data?.pages],
   );
   const deleteMutation = useMutation({
-    mutationFn: (asset: MediaAsset) =>
-      mediaRequest(`/me/api/media/${encodeURIComponent(asset.asset_id)}`, {
-        method: "DELETE",
-        headers: { "x-ai-gateway-user-action": "1" },
-      }),
+    mutationFn: async (asset: MediaAsset) => {
+      const session = await mediaRequest<{ csrf_token: string }>(
+        "/me/api/session",
+      );
+      return mediaRequest(
+        `/me/api/media/${encodeURIComponent(asset.asset_id)}`,
+        {
+          method: "DELETE",
+          headers: {
+            "x-ai-gateway-user-action": "1",
+            "x-ai-gateway-csrf": session.csrf_token,
+          },
+        },
+      );
+    },
     onSuccess: () => {
       toast.success("Deleted from your library.");
       setSelected(null);
@@ -324,7 +382,7 @@ export default function LibraryPage() {
             <SelectItem value="90d">Last 90 days</SelectItem>
           </SelectContent>
         </Select>
-        {viewer.admin ? (
+        {["owner", "superadmin"].includes(viewer.role) ? (
           <Select value={owner} onValueChange={setOwner}>
             <SelectTrigger aria-label="Owner" className="w-full md:w-40">
               <SelectValue />
@@ -365,7 +423,16 @@ export default function LibraryPage() {
         <EmptyState
           icon={CalendarDays}
           title="No media yet"
-          description="Images, videos and audio you generate will appear here with the prompt, model, workflow and download links."
+          description={
+            kind !== "all" || model !== "all" || date !== "all" || search
+              ? "No media matches these filters. Try another kind, date or prompt."
+              : "Images, videos and audio you generate will appear here with the prompt, model, workflow and download links."
+          }
+          action={
+            <Button asChild variant="outline">
+              <a href="/ui/try/">Make something</a>
+            </Button>
+          }
         />
       ) : null}
       {!isLoading && !isError && assets.length > 0 ? (
@@ -375,6 +442,17 @@ export default function LibraryPage() {
               <AssetCard asset={asset} onOpen={setSelected} />
             </div>
           ))}
+        </div>
+      ) : null}
+      {hasNextPage && !isError ? (
+        <div className="mt-6 flex justify-center">
+          <Button
+            variant="outline"
+            disabled={isFetchingNextPage}
+            onClick={() => void fetchNextPage()}
+          >
+            {isFetchingNextPage ? "Loading more…" : "Load more"}
+          </Button>
         </div>
       ) : null}
       <Sheet
@@ -411,7 +489,19 @@ export default function LibraryPage() {
                   />
                   <Detail
                     label="Size"
-                    value={selected.size ?? "Not measured yet"}
+                    value={
+                      selected.width && selected.height
+                        ? `${selected.width} × ${selected.height} px`
+                        : "Not measured yet"
+                    }
+                  />
+                  <Detail
+                    label="Generation time"
+                    value={
+                      selected.generation_ms == null
+                        ? "Not measured yet"
+                        : `${(selected.generation_ms / 1000).toFixed(1)} s`
+                    }
                   />
                   {selected.owner_name ? (
                     <Detail label="Owner" value={selected.owner_name} />
@@ -448,34 +538,38 @@ export default function LibraryPage() {
                   </Button>
                   <Button
                     variant="outline"
+                    disabled={!selected.prompt}
                     onClick={() => {
-                      void navigator.clipboard.writeText(selected.prompt || "");
-                      toast.success("Prompt copied.");
+                      void navigator.clipboard
+                        .writeText(selected.prompt || "")
+                        .then(
+                          () => toast.success("Prompt copied."),
+                          () =>
+                            toast.error(
+                              "Prompt could not be copied. Select the text to copy it.",
+                            ),
+                        );
                     }}
                   >
                     <Copy />
                     Copy prompt
                   </Button>
-                  <Button asChild variant="outline">
-                    <a
-                      href={
-                        selected.comfyui_url ??
-                        selected.download_url ??
-                        `/me/api/media/${encodeURIComponent(selected.asset_id)}/download?workflow=1`
-                      }
-                      download
+                  {selected.workflow_download_url ? (
+                    <Button asChild variant="outline">
+                      <a href={selected.workflow_download_url} download>
+                        <ExternalLink /> Open in ComfyUI
+                      </a>
+                    </Button>
+                  ) : null}
+                  {owner === "mine" ? (
+                    <Button
+                      variant="outline"
+                      onClick={() => setConfirming(selected)}
                     >
-                      <ExternalLink />
-                      Open in ComfyUI
-                    </a>
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    onClick={() => setConfirming(selected)}
-                  >
-                    <Trash2 />
-                    Delete
-                  </Button>
+                      <Trash2 />
+                      Delete
+                    </Button>
+                  ) : null}
                 </div>
               </div>
             </>
