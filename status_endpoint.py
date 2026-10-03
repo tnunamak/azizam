@@ -29,6 +29,7 @@ import httpx
 import yaml
 
 from gateway import lifecycle_drivers
+from gateway.models_catalog import _availability_from_health_payload, _status_from_health_payload
 
 # Module-level cache (single in-process consumer is fine).
 _CACHE: dict[str, Any] = {"ts": 0.0, "data": None}
@@ -209,7 +210,31 @@ async def _probe(
         r = await client.get(url)
         dt = int((time.monotonic() - t0) * 1000)
         if 200 <= r.status_code < 300:
-            return {**base, "status": "up", "live_status": "up", "latency_ms": dt, "last_error": None}
+            payload = None
+            try:
+                payload = r.json()
+            except ValueError:
+                payload = None
+            if isinstance(payload, Mapping):
+                parsed_status = _status_from_health_payload(payload)
+                available = _availability_from_health_payload(payload)
+                if parsed_status == "ready" or available is True:
+                    return {**base, "status": "up", "live_status": "up", "latency_ms": dt, "last_error": None}
+                if parsed_status in {"starting", "busy"}:
+                    return {**base, "status": parsed_status, "live_status": parsed_status, "latency_ms": dt, "last_error": None}
+                if parsed_status == "unavailable" or available is False:
+                    return {**base, "status": "down", "live_status": "down", "latency_ms": dt, "last_error": "readiness false"}
+                return {**base, "status": "unknown", "live_status": "unknown", "latency_ms": dt, "last_error": None}
+            return {**base, "status": "unknown", "live_status": "unknown", "latency_ms": dt, "last_error": None}
+        if r.status_code in (404, 405):
+            return {
+                **base,
+                "status": "unknown",
+                "live_status": "unknown",
+                "latency_ms": dt,
+                "last_error": f"HTTP {r.status_code}",
+                "kind": "no_response",
+            }
         if r.status_code in (502, 503, 504):
             return {
                 **base,
@@ -226,11 +251,11 @@ async def _probe(
             "last_error": f"HTTP {r.status_code}",
         }
     except (httpx.ConnectError, httpx.ConnectTimeout):
-        return {**base, "status": "down", "live_status": "down", "latency_ms": None, "last_error": "connect refused"}
+        return {**base, "status": "down", "live_status": "down", "latency_ms": None, "last_error": "connect refused", "kind": "no_response"}
     except httpx.TimeoutException:
-        return {**base, "status": "degraded", "live_status": "degraded", "latency_ms": None, "last_error": "timeout"}
+        return {**base, "status": "degraded", "live_status": "degraded", "latency_ms": None, "last_error": "timeout", "kind": "no_response"}
     except Exception as e:  # noqa: BLE001
-        return {**base, "status": "down", "live_status": "down", "latency_ms": None, "last_error": _safe_err(e)}
+        return {**base, "status": "down", "live_status": "down", "latency_ms": None, "last_error": _safe_err(e), "kind": "no_response"}
 
 
 def _resolve_backend_targets(config: dict) -> list[dict[str, Any]]:

@@ -297,7 +297,7 @@ def test_alias_cannot_use_a_forbidden_resolved_backend():
     assert not fast.policy_available
 
 
-def test_declared_healthy_capability_without_measured_service_is_unavailable():
+def test_declared_healthy_capability_without_measured_service_is_unknown():
     from gateway.home_api import _availability
     cap = Capability(intent="image.generate", backend="not-running", health="healthy")
     state, reason = _availability(cap, {})

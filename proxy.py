@@ -13292,8 +13292,17 @@ def _gateway_capabilities_provider(request: Request) -> list[Capability]:
 
 
 def _cached_status_payload_for_availability() -> Mapping[str, Any]:
-    cached = getattr(status_endpoint, "_CACHE", {}).get("data")
-    return cached if isinstance(cached, Mapping) else {}
+    cache = getattr(status_endpoint, "_CACHE", {})
+    cached = cache.get("data") if isinstance(cache, Mapping) else None
+    ts = cache.get("ts") if isinstance(cache, Mapping) else None
+    ttl = float(getattr(status_endpoint, "_CACHE_TTL_S", 0.0) or 0.0)
+    if not isinstance(cached, Mapping):
+        return {}
+    if not isinstance(ts, (int, float)) or isinstance(ts, bool):
+        return {}
+    if ttl <= 0 or time.monotonic() - float(ts) > ttl:
+        return {}
+    return cached
 
 
 def _runtime_availability_evidence(

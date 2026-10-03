@@ -148,6 +148,19 @@ def assert_catalog_ready_after_chat(client):
     print(f"PASS member models catalog marks {MODEL} ready after chat via {source}", flush=True)
 
 
+def assert_shared_availability_after_chat(client, key, service_id):
+    home = expect(client.get("/me/api/home"), 200).json()
+    home_rows = [row for row in home["capabilities"] if row.get("model") == MODEL]
+    assert home_rows and all(row["status"] == "ready" for row in home_rows), "Home disagrees with successful chat evidence"
+    capabilities = expect(client.get("/gateway/v1/capabilities", headers={"Authorization": f"Bearer {key}"}), 200).json()
+    model_rows = [row for row in capabilities["capabilities"] if row.get("model") == MODEL]
+    assert model_rows and all(row["availability"]["status"] == "ready" for row in model_rows), "Capabilities disagree with successful chat evidence"
+    status = expect(client.get("/admin/api/status"), 200).json()["status"]["current_health"]
+    service = next(row for row in status["services"] if row["service_id"] == service_id)
+    assert service["observation"] == "up" and service["availability"]["status"] == "ready", "Status disagrees with successful chat evidence"
+    print("PASS Home, capabilities, and Status share successful chat evidence despite failed health", flush=True)
+
+
 def run(compose):
     # All scratch files remain in this worktree, on disk rather than /tmp.
     scratch = REPO / "venv"
@@ -252,7 +265,7 @@ def run(compose):
         headers["If-Match"] = registry.headers["etag"]
         created = expect(client.post("/admin/api/operator/services", headers=headers, json={
             "name": "First chat engine", "preset": "openai-compatible", "base_url": engine_url,
-            "health_endpoint": "/v1/models",
+            "health_endpoint": "/health-not-implemented",
             "capabilities": ["chat"], "models": [{"public": MODEL, "upstream": MODEL}]
         }), 201).json()["service_registry"]
         service = next(row for row in created["services"].values() if row["name"] == "First chat engine")
@@ -298,6 +311,7 @@ def run(compose):
             raise RuntimeError("Chat content did not match the deterministic engine answer")
         print(f"PASS authenticated chat: {ANSWER}", flush=True)
         assert_catalog_ready_after_chat(client)
+        assert_shared_availability_after_chat(client, key, service["id"])
     print("PASS teardown: processes, Compose resources, and temporary state removed", flush=True)
 
 

@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 
 from gateway import receipt_store
-from gateway.availability import evidence_from_receipt_store, evidence_from_receipts, merge_evidence, project_capabilities, project_service
+from gateway.availability import evidence_from_receipt_store, evidence_from_receipts, evidence_from_status_rows, merge_evidence, project_capabilities, project_service
 from gateway.capabilities import Capability
 from gateway.receipts import RouteReceipt
 
@@ -114,7 +114,7 @@ def test_client_failure_does_not_become_backend_down_evidence():
     assert evidence == {}
 
 
-def test_startable_down_probe_projects_idle():
+def test_startable_stopped_probe_projects_idle():
     projection = project_service(
         "svc",
         service_records={"services": {"svc": {"enabled": True, "config": {
@@ -435,3 +435,136 @@ def test_backend_grid_excludes_http_load_unload_from_process_lifecycle(monkeypat
     }}}))
 
     assert rows == []
+
+
+def test_status_rows_preserve_no_response_kind_so_request_can_win():
+    now = int(time.time())
+    status = evidence_from_status_rows([
+        {"service_id": "svc", "live_status": "down", "source": "status", "kind": "no_response"}
+    ], observed_at_s=now)
+    request = evidence_from_receipts([
+        {"request_id": "req_ok", "backend": "svc", "status": "succeeded", "updated_at_ms": now * 1000}
+    ], now_s=now)
+
+    merged = merge_evidence(status, request)
+
+    assert status["svc"]["kind"] == "no_response"
+    assert merged["svc"]["source"] == "request"
+
+
+def test_status_probe_connect_failure_marks_no_response_kind():
+    import asyncio
+    import httpx
+    import status_endpoint
+
+    class Client:
+        async def get(self, url):
+            raise httpx.ConnectError("refused")
+
+    row = asyncio.run(status_endpoint._probe(Client(), "svc", "Service", "http://127.0.0.1:9/health", "required", None))
+
+    assert row["live_status"] == "down"
+    assert row["kind"] == "no_response"
+
+
+def test_cached_status_payload_for_availability_expires(monkeypatch):
+    import proxy
+
+    now = proxy.time.monotonic()
+    monkeypatch.setattr(proxy.status_endpoint, "_CACHE_TTL_S", 10.0)
+    proxy.status_endpoint._CACHE = {"ts": now - 11.0, "data": {"backends": [{"key": "svc", "status": "up"}]}}
+    assert proxy._cached_status_payload_for_availability() == {}
+
+    proxy.status_endpoint._CACHE = {"ts": now, "data": {"backends": [{"key": "svc", "status": "up"}]}}
+    assert proxy._cached_status_payload_for_availability()["backends"][0]["key"] == "svc"
+
+
+def test_status_probe_200_ready_false_is_not_up():
+    import asyncio
+    import json
+    import status_endpoint
+
+    class Response:
+        status_code = 200
+        def json(self):
+            return {"ready": False}
+    class Client:
+        async def get(self, url):
+            return Response()
+
+    row = asyncio.run(status_endpoint._probe(Client(), "svc", "Service", "http://svc/health", "required", None))
+
+    assert row["live_status"] == "down"
+    assert row["last_error"] == "readiness false"
+
+
+def test_status_probe_200_starting_is_starting_not_up():
+    import asyncio
+    import status_endpoint
+
+    class Response:
+        status_code = 200
+        def json(self):
+            return {"status": "starting"}
+    class Client:
+        async def get(self, url):
+            return Response()
+
+    row = asyncio.run(status_endpoint._probe(Client(), "svc", "Service", "http://svc/health", "required", None))
+
+    assert row["live_status"] == "starting"
+
+
+def test_status_probe_200_unrecognized_json_is_unknown_not_up():
+    import asyncio
+    import status_endpoint
+
+    class Response:
+        status_code = 200
+        def json(self):
+            return {"object": "list", "data": []}
+    class Client:
+        async def get(self, url):
+            return Response()
+
+    row = asyncio.run(status_endpoint._probe(Client(), "svc", "Service", "http://svc/v1/models", "required", None))
+
+    assert row["live_status"] == "unknown"
+
+
+def test_status_probe_404_missing_health_route_is_weak_no_response():
+    import asyncio
+    import status_endpoint
+
+    class Response:
+        status_code = 404
+        def json(self):
+            return {"error": "not found"}
+    class Client:
+        async def get(self, url):
+            return Response()
+
+    row = asyncio.run(status_endpoint._probe(Client(), "svc", "Service", "http://svc/health-not-implemented", "required", None))
+
+    assert row["live_status"] == "unknown"
+    assert row["kind"] == "no_response"
+
+
+def test_status_404_missing_health_route_does_not_override_recent_success():
+    now = int(time.time())
+    status = evidence_from_status_rows([
+        {"service_id": "svc", "live_status": "unknown", "source": "status", "kind": "no_response"}
+    ], observed_at_s=now)
+    request = evidence_from_receipts([
+        {"request_id": "req_ok", "backend": "svc", "status": "succeeded", "updated_at_ms": now * 1000}
+    ], now_s=now)
+
+    merged = merge_evidence(status, request)
+
+    assert merged["svc"]["source"] == "request"
+    projection = project_service(
+        "svc",
+        service_records={"services": {"svc": {"enabled": True, "config": {"base_url": "http://svc/v1", "health_endpoint": "/health-not-implemented"}}}},
+        evidence=merged,
+    )
+    assert projection.status == "ready"

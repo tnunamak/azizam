@@ -233,12 +233,16 @@ def evidence_from_status_rows(
             available = None
         else:
             available = False
-        out[service_id] = {
-            "source": "status",
+        evidence = {
+            "source": str(row.get("source") or "status"),
             "status": raw,
             "available": available,
             "observed_at_s": observed_at_s,
         }
+        kind = row.get("kind")
+        if isinstance(kind, str) and kind.strip():
+            evidence["kind"] = kind.strip()
+        out[service_id] = evidence
     return out
 
 
