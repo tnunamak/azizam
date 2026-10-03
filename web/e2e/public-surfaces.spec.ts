@@ -205,6 +205,9 @@ for (const theme of ["light", "dark"] as const) {
     await expect(page).toHaveURL(/\/setup\/claim$/);
     await expect(page.getByRole("alert")).toBeVisible();
     await expect(page.locator("details.recovery")).toHaveAttribute("open", "");
+    await expect(page.locator("html")).toHaveClass(
+      theme === "dark" ? /setup-public.*dark/ : /^setup-public$/,
+    );
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= innerWidth,
@@ -214,6 +217,12 @@ for (const theme of ["light", "dark"] as const) {
       path: `test-results/screens/public-native-recovery-${theme}-390.png`,
       fullPage: true,
     });
+    const axe = await new AxeBuilder({ page }).analyze();
+    expect(
+      axe.violations.filter((v) =>
+        ["serious", "critical"].includes(v.impact ?? ""),
+      ),
+    ).toEqual([]);
   });
 }
 
