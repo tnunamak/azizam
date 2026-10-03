@@ -1,5 +1,86 @@
 import { expect, test } from "@playwright/test";
 import { workflowsPolishCatalog } from "./fixtures/workflows-polish";
+import AxeBuilder from "@axe-core/playwright";
+
+test("Providers presents the current API shape without inventing readiness or names", async ({
+  page,
+}) => {
+  await page.route("**/admin/api/providers", (route) =>
+    route.fulfill({
+      json: {
+        providers: [
+          {
+            id: "internal-provider-record",
+            name: "internal-provider-record",
+            enabled: true,
+            key_status: { state: "set" },
+            spend: { status: "known", daily_usd: 1, monthly_usd: 12.5 },
+            caps: { daily_usd: 2, monthly_usd: 50 },
+          },
+          {
+            id: "missing-key",
+            name: "Missing key provider",
+            enabled: true,
+            key_status: { state: "missing" },
+            spend: { status: "unknown", monthly_usd: 999 },
+          },
+        ],
+      },
+    }),
+  );
+  for (const theme of ["light", "dark"]) {
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+      await page.addInitScript(
+        (value) => localStorage.setItem("theme", value),
+        theme,
+      );
+      await page.goto("/ui/providers/");
+      const provider = page.locator("article").filter({
+        has: page.getByRole("heading", {
+          name: "Remote provider",
+          exact: true,
+        }),
+      });
+      await expect(provider.locator("code")).toHaveText(
+        "internal-provider-record",
+      );
+      await expect(provider.getByText("Set", { exact: true })).toBeVisible();
+      await expect(
+        provider.getByText("Availability not checked", { exact: true }),
+      ).toBeVisible();
+      await expect(provider).toContainText("$12.50 of $50.00 this month");
+      const missing = page.locator("article").filter({
+        has: page.getByRole("heading", {
+          name: "Missing key provider",
+          exact: true,
+        }),
+      });
+      await expect(
+        missing.getByText("Unavailable", { exact: true }),
+      ).toBeVisible();
+      await expect(missing.getByText("Missing", { exact: true })).toBeVisible();
+      await expect(
+        missing.getByText("Not measured yet", { exact: true }),
+      ).toBeVisible();
+      await expect(missing).not.toContainText("999");
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+      expect(
+        (await new AxeBuilder({ page }).analyze()).violations.filter((v) =>
+          ["serious", "critical"].includes(v.impact ?? ""),
+        ),
+      ).toEqual([]);
+      await page.screenshot({
+        path: `test-results/screens/providers-contract-${theme}-${width}.png`,
+        fullPage: true,
+      });
+    }
+  }
+});
 
 test("unknown provider readiness stays distinct from observed unavailability", async ({
   page,
@@ -34,37 +115,31 @@ test("unknown provider readiness stays distinct from observed unavailability", a
     }),
   );
   await page.goto("/ui/providers/");
-  const unknown = page
-    .locator("article")
-    .filter({
-      has: page.getByRole("heading", {
-        name: "Unchecked provider",
-        exact: true,
-      }),
-    });
+  const unknown = page.locator("article").filter({
+    has: page.getByRole("heading", {
+      name: "Unchecked provider",
+      exact: true,
+    }),
+  });
   await expect(
     unknown.getByText("Availability not checked", { exact: true }),
   ).toBeVisible();
   await expect(unknown.getByText("Unavailable", { exact: true })).toHaveCount(
     0,
   );
-  const down = page
-    .locator("article")
-    .filter({
-      has: page.getByRole("heading", {
-        name: "Unreachable provider",
-        exact: true,
-      }),
-    });
+  const down = page.locator("article").filter({
+    has: page.getByRole("heading", {
+      name: "Unreachable provider",
+      exact: true,
+    }),
+  });
   await expect(down.getByText("Unavailable", { exact: true })).toBeVisible();
-  const ready = page
-    .locator("article")
-    .filter({
-      has: page.getByRole("heading", {
-        name: "Reachable provider",
-        exact: true,
-      }),
-    });
+  const ready = page.locator("article").filter({
+    has: page.getByRole("heading", {
+      name: "Reachable provider",
+      exact: true,
+    }),
+  });
   await expect(ready.getByText("Ready", { exact: true })).toBeVisible();
 });
 
@@ -165,6 +240,15 @@ test("empty provider status offers connection review without promising provider 
 
   await page.goto("/ui/providers/");
   const configure = page.getByRole("link", { name: "Review connections" });
+  await expect(configure).toHaveAttribute("href", "/ui/engines/");
+  await page.unroute("**/admin/api/providers");
+  await page.route("**/admin/api/providers", (route) =>
+    route.fulfill({ status: 404, json: {} }),
+  );
+  await page.reload();
+  await expect(
+    page.getByText("Provider controls are not installed", { exact: true }),
+  ).toBeVisible();
   await expect(configure).toHaveAttribute("href", "/ui/engines/");
 });
 

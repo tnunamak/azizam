@@ -59,6 +59,50 @@ function money(value: unknown): string | null {
   return `$${value.toFixed(2)}`;
 }
 
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function normalizedSpend(obj: Record<string, unknown>): string {
+  const spend = objectValue(obj.spend);
+  if (spend) {
+    if (spend.status === "unknown") return "Not measured yet";
+
+    const caps = objectValue(obj.caps);
+    const monthly = money(spend.monthly_usd);
+    if (monthly !== null) {
+      const cap = money(caps?.monthly_usd);
+      return cap ? `${monthly} of ${cap} this month` : `${monthly} this month`;
+    }
+
+    const daily = money(spend.daily_usd);
+    if (daily !== null) {
+      const cap = money(caps?.daily_usd);
+      return cap ? `${daily} of ${cap} today` : `${daily} today`;
+    }
+    return "Not measured yet";
+  }
+
+  const amount = money(obj.spend_usd) ?? money(obj.current_spend_usd);
+  const cap = money(obj.cap_usd) ?? money(obj.spend_cap_usd);
+  return cap
+    ? `${amount ?? "Not measured yet"} of ${cap}`
+    : (amount ?? "Not measured yet");
+}
+
+function keyStateValue(obj: Record<string, unknown>): ProviderKeyState {
+  const keyStatus = objectValue(obj.key_status);
+  if (keyStatus) {
+    return keyStatus.state === "set" || keyStatus.state === "missing"
+      ? keyStatus.state
+      : "unknown";
+  }
+  const keySet = bool(obj.key_set);
+  return keySet === true ? "set" : keySet === false ? "missing" : "unknown";
+}
+
 function records(raw: unknown): unknown[] {
   if (raw == null) return [];
   if (Array.isArray(raw)) return raw;
@@ -90,17 +134,13 @@ export function providerViews(raw: unknown): ProviderStatusView[] {
       stringValue(obj.id) ??
       stringValue(obj.provider_id) ??
       `provider-${index}`;
-    const name = stringValue(obj.name) ?? stringValue(obj.label) ?? id;
+    const name =
+      [stringValue(obj.name), stringValue(obj.label)].find(
+        (candidate) => candidate !== null && candidate !== id,
+      ) ?? "Remote provider";
     const enabled = bool(obj.enabled);
     const reachable = bool(obj.reachable);
-    const keySet = bool(obj.key_set);
-    const keyState: ProviderKeyState =
-      keySet === true ? "set" : keySet === false ? "missing" : "unknown";
-    const spend =
-      money(obj.spend_usd) ??
-      money(obj.current_spend_usd) ??
-      "Not measured yet";
-    const cap = money(obj.cap_usd) ?? money(obj.spend_cap_usd);
+    const keyState = keyStateValue(obj);
     const tone: ProviderTone =
       enabled === true && (reachable === false || keyState === "missing")
         ? "bad"
@@ -113,7 +153,7 @@ export function providerViews(raw: unknown): ProviderStatusView[] {
       enabled,
       reachable,
       keyState,
-      spendText: cap ? `${spend} of ${cap}` : spend,
+      spendText: normalizedSpend(obj),
       tone,
     };
   });

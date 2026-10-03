@@ -86,6 +86,9 @@ export default function ProvidersPage() {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h2 className="text-base font-semibold">{provider.name}</h2>
+                  <code className="text-muted-foreground mt-1 block text-xs break-all">
+                    {provider.id}
+                  </code>
                   <p className="text-muted-foreground mt-1 text-sm">
                     {provider.enabled === true
                       ? "Enabled"
