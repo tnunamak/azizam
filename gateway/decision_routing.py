@@ -5,12 +5,22 @@ import time
 import asyncio
 from collections.abc import Callable, Mapping
 from typing import Any
+from dataclasses import dataclass, field
 
 import httpx
 
 from gateway.capabilities import Capability
 from gateway.decisions_api import DecisionDispatchResult, DecisionModel, DecisionsError
 from gateway.stable_aliases import AliasUnavailableError, resolve_alias
+
+
+ROUTING_TIMEOUT_SECONDS = 15.0
+
+
+@dataclass
+class _DecisionAttempts:
+    backend: str | None = None
+    fallbacks: list[str] = field(default_factory=list)
 
 
 class DecisionRuntime:
@@ -128,16 +138,30 @@ class DecisionRuntime:
         return rows
 
     async def dispatch(self, auth: Any, _profile: Any, body: Mapping[str, Any], _request_id: str) -> DecisionDispatchResult:
+        attempts = _DecisionAttempts()
+        deadline = time.monotonic() + ROUTING_TIMEOUT_SECONDS
+        try:
+            # httpx timeouts bound individual phases; this bounds the entire
+            # route, including authorization, activation, response and fallback.
+            async with asyncio.timeout_at(deadline):
+                return await self._dispatch_before_deadline(auth, _profile, body, deadline, attempts)
+        except TimeoutError:
+            if attempts.backend:
+                attempts.fallbacks.append(f"{attempts.backend}:deadline_exceeded")
+            return self._unavailable_result(attempts)
+
+    async def _dispatch_before_deadline(self, auth: Any, _profile: Any,
+                                        body: Mapping[str, Any], deadline: float,
+                                        attempts: _DecisionAttempts) -> DecisionDispatchResult:
         resolved = self.resolve(str(body["model"]))
         candidates = [(resolved.engine, resolved.service)] + list(resolved.fallbacks)
-        fallbacks = [f"{name}:not_deployed" for name in resolved.skipped_engines]
-        deadline = time.monotonic() + 15
-        last_service_id = None
+        fallbacks = attempts.fallbacks
+        fallbacks.extend(f"{name}:not_deployed" for name in resolved.skipped_engines)
         section = self.config().get("model_aliases", {}).get("decisions", {}).get("engines", {})
         for engine_id, service_id in candidates:
             if time.monotonic() >= deadline:
                 break
-            last_service_id = service_id
+            attempts.backend = service_id
             if not await asyncio.to_thread(self.authorize, auth, body["model"], service_id):
                 raise DecisionsError(403, "permission_denied", "Your access plan does not allow this decision model.")
             service = self.config().get("backends", {}).get(service_id, {})
@@ -159,7 +183,11 @@ class DecisionRuntime:
             forwarded = {**body, "model": spec.get("model") or resolved.upstream_model}
             try:
                 async with httpx.AsyncClient(timeout=max(0.001, min(float(service.get("timeout") or 15), deadline - time.monotonic())), trust_env=False) as client:
-                    response = await client.post(f"http://{service['host']}:{service['port']}/v1/systemone", json=forwarded)
+                    remaining_ms = max(0, (deadline - time.monotonic()) * 1000)
+                    response = await client.post(
+                        f"http://{service['host']}:{service['port']}/v1/systemone", json=forwarded,
+                        headers={"x-decision-deadline-ms": str(remaining_ms)},
+                    )
             except httpx.HTTPError:
                 fallbacks.append(f"{service_id}:unavailable")
                 continue
@@ -184,9 +212,13 @@ class DecisionRuntime:
                                           resolved_model=payload.get("model"), engine=engine,
                                           headers={"retry-after": response.headers["retry-after"]} if "retry-after" in response.headers else {},
                                           fallback_reasons=tuple(fallbacks))
+        return self._unavailable_result(attempts)
+
+    @staticmethod
+    def _unavailable_result(attempts: _DecisionAttempts) -> DecisionDispatchResult:
         return DecisionDispatchResult(
             {"error": {"message": "The local decision engines are starting or unavailable.",
                        "type": "server_error", "code": "overloaded"}},
             status_code=529, headers={"retry-after": "5"},
-            backend=last_service_id, fallback_reasons=tuple(fallbacks),
+            backend=attempts.backend, fallback_reasons=tuple(attempts.fallbacks),
         )
