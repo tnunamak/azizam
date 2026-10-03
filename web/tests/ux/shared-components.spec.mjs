@@ -1,11 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
 
 const root = new URL("../..", import.meta.url);
-const rootPath = fileURLToPath(root);
 const source = (path) => readFileSync(new URL(path, root), "utf8");
 
 const charts = source("src/components/ui/charts.tsx");
@@ -17,10 +14,7 @@ const browserFixture = source(
   "src/components/acceptance/shared-primitives-browser.tsx",
 );
 const browserTest = source("tests/playwright/shared-primitives.spec.ts");
-const brandCss = readFileSync(
-  resolve(rootPath, "../../../code/vivid-fish-brand/src/components.css"),
-  "utf8",
-);
+const legacyCss = source("src/styles/legacy-components.css");
 
 test("mobile navigation is route-agnostic and delegates current state to the shell", () => {
   const mobileTabBar = surface.slice(
@@ -76,7 +70,7 @@ test("mobile cards use a sibling primary control and empty advisories remain abs
   );
   assert.match(operational, /if \(props\.items\.length === 0\) return null/);
   assert.match(
-    brandCss,
+    legacyCss,
     /vf-mobile-data-card-actionable \.vf-mobile-data-card-head,[\s\S]*pointer-events: none/,
   );
 });

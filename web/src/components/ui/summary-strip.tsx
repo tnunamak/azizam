@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
 import { cn } from "@/lib/cn";
-import { Badge, type BadgeTone } from "./badge";
+import { Badge, type BadgeTone } from "./legacy/badge";
 
 export interface SummaryStripItem {
   label: ReactNode;

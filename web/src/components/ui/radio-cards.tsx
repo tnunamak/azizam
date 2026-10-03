@@ -20,11 +20,10 @@ export function RadioCards({ className, ...props }: RadioCardsProps) {
   );
 }
 
-export interface RadioCardProps
-  extends Omit<
-    ComponentPropsWithoutRef<typeof RadioGroupPrimitive.Item>,
-    "title"
-  > {
+export interface RadioCardProps extends Omit<
+  ComponentPropsWithoutRef<typeof RadioGroupPrimitive.Item>,
+  "title"
+> {
   title: ReactNode;
   description?: ReactNode;
 }

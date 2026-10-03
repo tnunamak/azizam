@@ -1,24 +1,23 @@
 import type { Metadata } from "next";
+import { AppShell } from "@/components/shell/app-shell";
+import { PRODUCT_NAME } from "@/lib/product";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AI Gateway",
-  description: "Admin and portal UI for the AI gateway",
+  title: { default: PRODUCT_NAME, template: `%s · ${PRODUCT_NAME}` },
+  description:
+    "Your own AI provider. Connect your apps and manage your gateway.",
 };
-
 export default function RootLayout({
   children,
-}: Readonly<{
+}: {
   children: React.ReactNode;
-}>) {
+}) {
   return (
-    <html lang="en">
-      {/* Brand fonts are self-hosted via fontsource + geist npm packages.
-          @font-face rules live in src/app/fonts.css (imported by globals.css),
-          registering exact brand family names: Geist, JetBrains Mono,
-          Newsreader. woff2 files are bundled same-origin by Next.js static
-          export — no external font CDN required. */}
-      <body>{children}</body>
+    <html lang="en" suppressHydrationWarning>
+      <body>
+        <AppShell>{children}</AppShell>
+      </body>
     </html>
   );
 }

@@ -5,7 +5,7 @@ import type { ComponentPropsWithoutRef, CSSProperties, ReactNode } from "react";
 import { forwardRef } from "react";
 
 import { cn } from "@/lib/cn";
-import { type BadgeTone } from "./badge";
+import { type BadgeTone } from "./legacy/badge";
 import { CopyButton } from "./copy-button";
 
 export interface BrandLockupProps {

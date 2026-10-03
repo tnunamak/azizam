@@ -148,3 +148,6 @@ data/voices/
 # Pending image-job spool (runtime state; private request bodies)
 data/image_media_jobs/
 data/showcase/
+
+# Private throwaway UI test state
+/.ui-e2e-state/

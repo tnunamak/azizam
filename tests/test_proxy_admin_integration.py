@@ -907,6 +907,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         session_resp = self.client.get("/me/api/session")
         self.assertEqual(session_resp.status_code, 200, session_resp.text)
         self.assertEqual(session_resp.json()["apps"][0]["id"], app_id)
+        self.assertEqual(session_resp.json()["csrf_token"], csrf)
         self.assertNotIn("hash", repr(session_resp.json()))
 
         missing_header = self.client.post(f"/me/api/apps/{app_id}/keys", json={})
@@ -917,7 +918,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             json={"label": "Brother laptop"},
             headers={
                 "x-ai-gateway-user-action": "1",
-                "x-ai-gateway-csrf": csrf,
+                "x-ai-gateway-csrf": session_resp.json()["csrf_token"],
             },
         )
         self.assertEqual(minted.status_code, 201, minted.text)

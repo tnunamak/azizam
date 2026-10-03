@@ -1,29 +1,42 @@
 import { defineConfig } from "@playwright/test";
+import { existsSync } from "node:fs";
+import path from "node:path";
 
-const channel = process.env.PLAYWRIGHT_BROWSER_CHANNEL;
-const port = Number(process.env.PLAYWRIGHT_PORT ?? "3417");
-
+const port = Number(process.env.UI_E2E_PORT ?? "18180");
+if (!Number.isInteger(port) || port < 18000 || port > 18998) {
+  throw new Error("UI_E2E_PORT must be an integer between 18000 and 18998");
+}
+const localPython = path.resolve(__dirname, "../venv/bin/python");
+const python =
+  process.env.UI_E2E_PYTHON ??
+  (existsSync(localPython) ? localPython : "python3");
+// Quote for the webServer shell, including Python paths with spaces.
+const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 export default defineConfig({
-  testDir: "./tests/playwright",
-  globalSetup: "./tests/playwright/global-setup.ts",
+  testDir: "./e2e",
+  globalSetup: "./e2e/global-setup.ts",
+  outputDir: "./test-results/artifacts",
+  workers: 1,
+  timeout: 60_000,
+  expect: { timeout: 10_000 },
+  reporter: [
+    ["list"],
+    ["html", { open: "never", outputFolder: "test-results/report" }],
+  ],
   use: {
     baseURL: `http://127.0.0.1:${port}`,
+    storageState: "./test-results/auth.json",
     headless: true,
+    trace: "retain-on-failure",
+    screenshot: "only-on-failure",
   },
   webServer: {
-    command: `npm run dev -- --port ${port}`,
-    url: `http://127.0.0.1:${port}/ui/admin/status/p1v-fixture/`,
+    command: `${quote(python)} ../scripts/ui/serve.py`,
+    env: { UI_E2E_PORT: String(port) },
+    url: `http://127.0.0.1:${port}/health`,
     reuseExistingServer: false,
     timeout: 120_000,
-    gracefulShutdown: { signal: "SIGTERM", timeout: 5_000 },
+    gracefulShutdown: { signal: "SIGTERM", timeout: 15_000 },
   },
-  projects: [
-    {
-      name: "chromium",
-      use: {
-        browserName: "chromium",
-        ...(channel ? { channel } : {}),
-      },
-    },
-  ],
+  projects: [{ name: "chromium", use: { browserName: "chromium" } }],
 });

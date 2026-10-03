@@ -6,7 +6,7 @@ import { formatCellValue, isEpochSeconds } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { EmptyState } from "./empty-state";
 import { RelativeTime } from "./relative-time";
-import { Skeleton } from "./skeleton";
+import { Skeleton } from "./legacy/skeleton";
 
 export interface DataTableColumn<T> {
   /** Stable id; doubles as the property accessor when `value`/`cell` are

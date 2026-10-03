@@ -12647,7 +12647,11 @@ async def lifespan(app: FastAPI):
     # No engine processes to stop — the gateway never owned tabby's existence.
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None)
+
+from gateway.api_reference import register_api_reference
+
+register_api_reference(app)
 
 # -----------------------------------------------------------------------------
 # Static React UI (web/out) — strangler surfaces under /ui
@@ -14187,15 +14191,22 @@ async def user_portal(request: Request):
 @app.get("/me/api/session", include_in_schema=False)
 async def user_portal_session(request: Request):
     session = _oidc_session_from_request(request)
+    snapshot = build_user_portal_snapshot(
+        session,
+        default_profile_id=(
+            _default_profile_id_for_session(session) if session else None
+        ),
+        path=ADMIN_STORE.path,
+    )
+    # Members cannot use the admin session endpoint. Supply their CSRF token
+    # with the same owner-scoped account snapshot used by the browser UI.
+    snapshot["csrf_token"] = (
+        _csrf_token_for_oidc_session(session)
+        if session and snapshot.get("authenticated") else ""
+    )
     return JSONResponse(
         status_code=200,
-        content=build_user_portal_snapshot(
-            session,
-            default_profile_id=(
-                _default_profile_id_for_session(session) if session else None
-            ),
-            path=ADMIN_STORE.path,
-        ),
+        content=snapshot,
         headers={"cache-control": "no-store"},
     )
 

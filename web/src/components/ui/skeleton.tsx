@@ -1,11 +1,13 @@
 import { cn } from "@/lib/cn";
 
-/** Loading placeholder bar. Size it with layout utilities (h-4 w-32 …). */
-export function Skeleton({ className }: { className?: string }) {
+function Skeleton({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
-      className={cn("rounded-vf-sm bg-vf-surface-2 animate-pulse", className)}
-      aria-hidden="true"
+      data-slot="skeleton"
+      className={cn("bg-muted animate-pulse rounded-md", className)}
+      {...props}
     />
   );
 }
+
+export { Skeleton };

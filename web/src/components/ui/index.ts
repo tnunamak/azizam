@@ -1,15 +1,16 @@
+// Legacy API retained until the remaining admin surfaces migrate.
 /** The gateway component library (docs/design/WEB_UI_STEERING.md).
  * Token-only styling; every interactive component ships hover /
  * focus-visible / disabled / loading states. App code imports from here;
  * nothing in this directory imports from app/. */
 
-export { Badge, type BadgeProps, type BadgeTone } from "./badge";
+export { Badge, type BadgeProps, type BadgeTone } from "./legacy/badge";
 export {
   Button,
   type ButtonProps,
   type ButtonSize,
   type ButtonVariant,
-} from "./button";
+} from "./legacy/button";
 export {
   MetricTrendCard,
   TrendBarChart,
@@ -27,7 +28,7 @@ export {
   type TrendBarChartProps,
   type TrendLineChartProps,
 } from "./charts";
-export { Checkbox, type CheckboxProps } from "./checkbox";
+export { Checkbox, type CheckboxProps } from "./legacy/checkbox";
 export { CompactTouchTargets } from "./compact-touch-targets";
 export { ConfirmDialog, type ConfirmDialogProps } from "./confirm-dialog";
 export {
@@ -53,7 +54,7 @@ export {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "./dialog";
+} from "./legacy/dialog";
 export { EmptyState, type EmptyStateProps } from "./empty-state";
 export { EntityRef, type EntityRefProps } from "./entity-ref";
 export { Field, type FieldProps, useFieldContext } from "./field";
@@ -81,7 +82,7 @@ export {
   UsersIcon,
   XIcon,
 } from "./icons";
-export { Input, type InputProps } from "./input";
+export { Input, type InputProps } from "./legacy/input";
 export {
   OverflowMenu,
   OverflowMenuItem,
@@ -140,11 +141,11 @@ export {
   SheetHeader,
   SheetTitle,
   SheetTrigger,
-} from "./sheet";
-export { Skeleton } from "./skeleton";
-export { Select, type SelectProps } from "./select";
+} from "./legacy/sheet";
+export { Skeleton } from "./legacy/skeleton";
+export { Select, type SelectProps } from "./legacy/select";
 export { Spinner } from "./spinner";
-export { Switch, type SwitchProps } from "./switch";
+export { Switch, type SwitchProps } from "./legacy/switch";
 export { Toaster, toast } from "./toast";
 export {
   ActivityFeedRow,

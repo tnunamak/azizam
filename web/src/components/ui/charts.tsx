@@ -14,7 +14,7 @@ import {
 } from "recharts";
 
 import { cn } from "@/lib/cn";
-import type { BadgeTone } from "./badge";
+import type { BadgeTone } from "./legacy/badge";
 import { StatusIcon, type StatusIconTone } from "./icons";
 
 export interface ChartPoint {

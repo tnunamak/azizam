@@ -1,53 +1,39 @@
-# web/ — gateway UI (Next.js static export)
+# Gateway UI
 
-The React rebuild of the gateway UI. Binding spec:
-[`docs/design/WEB_UI_STEERING.md`](../docs/design/WEB_UI_STEERING.md) — read it
-before touching anything here.
+Next.js 15, React 19 and Tailwind v4 export static files to `web/out`.
+The gateway serves them under `/ui/`; no Node server is needed in production.
 
-## Stack
+The foundation has a role-aware shell, light and dark themes, and Radix-based
+shadcn components. Apps & keys uses the signed-in person's `/me/api/*` endpoints.
+Activity uses the owner-only audit API. Other new routes intentionally show
+“Coming in this release” until their surface lanes arrive.
 
-- Next.js 15 App Router, React 19, TypeScript strict, Tailwind v4
-- `output: 'export'` — static files only; the FastAPI gateway serves
-  `web/out/` under `/ui`. No SSR/Node in production.
-- All visual tokens come from `@vivid-fish/brand`. This deployment uses a local
-  path dependency, but the package name and token contract are portable; token
-  gaps are fixed upstream in the brand package, never with local literals.
+Tokens live in `src/styles/tokens.css`. Geist Sans and Geist Mono are bundled
+from the `geist` npm package, with no font CDN or external checkout dependency.
+`src/styles/legacy-components.css` preserves the old operator layouts while their
+replacement pages are built. Its variables map to the new local tokens.
 
-## Commands
-
-```bash
-npm run dev      # dev server; proxies /admin/api/* and /me/api/* to the
-                 # gateway on 127.0.0.1:5000 via rewrites (dev only — the
-                 # static export ignores rewrites; production is same-origin)
-npm run check    # tsc --noEmit + next lint + react-doctor (errors fail) + next build
-npm run build    # static export to out/ with /ui basePath
-npm run format   # prettier (with Tailwind class sorting)
+```sh
+npm ci
+npm run lint
+npm run build
+npm run test:components
+npx playwright install chromium
+npm run test:e2e
 ```
 
-Note: `npm run dev` uses webpack, not Turbopack — Turbopack panics on the
-symlinked brand package outside the project root ("leaves the filesystem
-root"). Production builds are unaffected.
+`test:e2e` starts a temporary gateway and fake engine on ports 18180 and 18181,
+seeds them through real APIs, and stops both processes after the tests.
+It uses `../venv/bin/python` or `UI_E2E_PYTHON`. Install gateway dependencies
+with `uv venv venv` and `uv pip sync --python venv/bin/python
+ tests/requirements-hermetic.lock` from the repository root.
+Set `UI_E2E_PORT` to another unused port from 18000 through 18998 if needed.
+Test state and cookies stay in ignored directories. Screenshots are saved to
+`test-results/screens/`; the HTML report is in `test-results/report/`.
 
-## Fonts
+`npm run test:browser` retains the older browser fixture suite.
+`/ui/design/` is the component reference; `/ui/gallery/` links to it.
 
-Brand webfonts are **self-hosted** via npm packages — no Google Fonts CDN.
-
-| Family | Package | Brand token |
-|--------|---------|-------------|
-| Geist | `geist` | `--vf-font-sans` |
-| JetBrains Mono | `@fontsource-variable/jetbrains-mono` | `--vf-font-mono` |
-| Newsreader | `@fontsource-variable/newsreader` | `--vf-font-serif` |
-
-`@font-face` rules live in `src/app/fonts.css` (imported by `globals.css`).
-The family names are registered exactly as the brand tokens require (the
-fontsource packages register "…Variable" names so we write custom rules).
-`next build` copies the woff2 files into `out/_next/static/media/` — all
-same-origin; the gateway CSP (`default-src 'self'`) covers them.
-
-## Pre-commit hook (one-time setup)
-
-```bash
-ln -sf ../../scripts/pre-commit-web.sh .git/hooks/pre-commit
-```
-
-Runs `npm run check` whenever staged changes touch `web/**`.
+For local development, `npm run dev` starts Next. Its default development-only
+API rewrites target the gateway on port 5000. Implementation lanes should use
+the isolated browser harness instead of the running operator service.

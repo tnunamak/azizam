@@ -1,62 +1,15 @@
-/* Self-hosted brand webfonts — family names MUST match brand token stacks in
-   @vivid-fish/brand/tokens.css exactly:
-     --vf-font-sans:  'Geist'
-     --vf-font-mono:  'JetBrains Mono'
-     --vf-font-serif: 'Newsreader'
-
-   fontsource packages register different names ('Newsreader Variable',
-   'JetBrains Mono Variable') so we write our own @font-face rules pointing
-   at their woff2 files. Geist ships individual woff2s under geist/dist/.
-
-   font-display: swap — text stays visible during font load. */
-
-/* ── Geist (sans) ──────────────────────────────────────────────────────── */
-/* Variable roman (covers 400–600 range) */
+/* Bundled by Next from the pinned npm package; every request stays same-origin. */
 @font-face {
   font-family: 'Geist';
   font-style: normal;
   font-display: swap;
   font-weight: 100 900;
-  src: url('../../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2') format('woff2-variations');
+  src: url('../../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2') format('woff2');
 }
-
-/* Variable italic */
 @font-face {
-  font-family: 'Geist';
-  font-style: italic;
+  font-family: 'Geist Mono';
+  font-style: normal;
   font-display: swap;
   font-weight: 100 900;
-  src: url('../../node_modules/geist/dist/fonts/geist-sans/Geist-Italic[wght].woff2') format('woff2-variations');
-}
-
-/* ── JetBrains Mono ─────────────────────────────────────────────────────── */
-/* Variable roman — latin only, weight 100–800 */
-@font-face {
-  font-family: 'JetBrains Mono';
-  font-style: normal;
-  font-display: swap;
-  font-weight: 100 800;
-  src: url('../../node_modules/@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2') format('woff2-variations');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
-/* ── Newsreader (serif) ──────────────────────────────────────────────────── */
-/* Variable roman — latin */
-@font-face {
-  font-family: 'Newsreader';
-  font-style: normal;
-  font-display: swap;
-  font-weight: 200 800;
-  src: url('../../node_modules/@fontsource-variable/newsreader/files/newsreader-latin-wght-normal.woff2') format('woff2-variations');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
-/* Variable italic — needed for portal greeting and editorial text */
-@font-face {
-  font-family: 'Newsreader';
-  font-style: italic;
-  font-display: swap;
-  font-weight: 200 800;
-  src: url('../../node_modules/@fontsource-variable/newsreader/files/newsreader-latin-wght-italic.woff2') format('woff2-variations');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  src: url('../../node_modules/geist/dist/fonts/geist-mono/GeistMono-Variable.woff2') format('woff2');
 }

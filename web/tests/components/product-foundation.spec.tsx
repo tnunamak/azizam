@@ -1,0 +1,92 @@
+import {
+  cleanup,
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+} from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { CopyField } from "@/components/product/copy-field";
+import { SecretReveal } from "@/components/product/secret-reveal";
+import { Progress } from "@/components/ui/progress";
+import { Money } from "@/components/product/money";
+import { CommandDialog, CommandInput } from "@/components/ui/command";
+
+afterEach(cleanup);
+describe("foundation product contracts", () => {
+  it("reports measured progress to assistive technology", () => {
+    render(<Progress value={64} aria-label="Loading model" />);
+    expect(
+      screen.getByRole("progressbar", { name: "Loading model" }),
+    ).toHaveAttribute("aria-valuenow", "64");
+  });
+  it("copies the exact endpoint and exposes clipboard success", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    render(<CopyField value="https://gateway.example/v1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Copy base url" }));
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith("https://gateway.example/v1"),
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Copied to clipboard");
+  });
+  it("keeps a failed copy recoverable instead of claiming success", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+    });
+    render(<CopyField value="https://gateway.example/v1" />);
+    fireEvent.click(screen.getByRole("button", { name: "Copy base url" }));
+    expect(
+      await screen.findByText(
+        "Copy failed. Select the value and copy it manually.",
+      ),
+    ).toBeVisible();
+    expect(screen.getByLabelText("Base URL")).toHaveValue(
+      "https://gateway.example/v1",
+    );
+  });
+  it("permanently removes a newly issued secret on confirmation", () => {
+    const saved = vi.fn();
+    const view = render(<SecretReveal secret="example-only" onSaved={saved} />);
+    expect(screen.getByLabelText("Your key")).toHaveValue("example-only");
+    fireEvent.click(screen.getByRole("button", { name: "I’ve saved it" }));
+    expect(screen.queryByLabelText("Your key")).toBeNull();
+    expect(saved).toHaveBeenCalledOnce();
+    view.rerender(<SecretReveal secret="example-only" onSaved={saved} />);
+    expect(screen.queryByLabelText("Your key")).toBeNull();
+  });
+  it("distinguishes unknown cost, zero cost and local hardware", () => {
+    render(
+      <>
+        <Money amount={null} />
+        <Money amount={0} />
+        <Money amount={0.00004} />
+        <Money amount={null} local />
+      </>,
+    );
+    expect(screen.getByText("Not measured yet")).toBeVisible();
+    expect(screen.getByText("$0.00")).toBeVisible();
+    expect(screen.getByText("$0.00004")).toBeVisible();
+    expect(screen.getByText("Free (your hardware)")).toBeVisible();
+  });
+  it("owns command dialog title and description inside its accessible dialog", () => {
+    render(
+      <CommandDialog
+        open
+        title="Find a page"
+        description="Navigate your gateway"
+      >
+        <CommandInput placeholder="Search" />
+      </CommandDialog>,
+    );
+    const dialog = screen.getByRole("dialog", { name: "Find a page" });
+    expect(dialog).toHaveAccessibleDescription("Navigate your gateway");
+    expect(dialog).toContainElement(
+      screen.getByRole("heading", { name: "Find a page" }),
+    );
+  });
+});

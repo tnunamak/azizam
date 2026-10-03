@@ -1,11 +1,90 @@
 @import "./fonts.css";
 @import "tailwindcss";
-@import "@vivid-fish/brand";
+@import "tw-animate-css";
+@import "../styles/tokens.css";
+@import "../styles/legacy-components.css";
+@custom-variant dark (&:is(.dark *));
 
-/* Base page chrome from brand tokens only (no local literals — see
-   docs/design/WEB_UI_STEERING.md, presentation law #9). */
 @layer base {
+  * {
+    @apply border-border;
+  }
   body {
-    @apply bg-vf-bg text-vf-text font-sans antialiased;
+    @apply bg-background text-foreground font-sans antialiased;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  button,
+  a,
+  input,
+  textarea {
+    -webkit-tap-highlight-color: transparent;
+  }
+  button,
+  input,
+  textarea {
+    caret-color: var(--primary);
+  }
+  ::selection {
+    background: var(--accent);
+    color: var(--accent-foreground);
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 3px;
+  }
+  a {
+    text-underline-offset: 4px;
+  }
+  table {
+    font-variant-numeric: tabular-nums;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--input) transparent;
+  }
+}
+@layer components {
+  .shell-nav-link {
+    @apply text-sidebar-foreground hover:bg-muted hover:text-foreground flex min-h-11 items-center gap-3 rounded-md px-3 text-sm transition-colors;
+  }
+  .shell-nav-link[aria-current="page"] {
+    @apply bg-accent text-accent-foreground font-medium;
+  }
+  .shell-nav-link svg {
+    @apply size-5 shrink-0;
+  }
+  .shell-nav-label {
+    @apply hidden lg:inline;
+  }
+  .shell-group-label {
+    @apply text-muted-foreground mb-2 hidden px-3 text-xs font-medium lg:block;
+  }
+  .shell-nav-footer {
+    @apply text-muted-foreground hover:bg-muted flex items-center gap-2 rounded-md px-3 py-2 text-xs;
+  }
+  .shell-content {
+    @apply mx-auto w-full max-w-6xl px-5 py-8 sm:px-8 lg:px-12 lg:py-12;
+  }
+  .placeholder-content {
+    @apply border-border mt-12 flex min-h-80 items-center justify-center border-t;
+  }
+  .mobile-tab {
+    @apply text-muted-foreground flex min-h-14 flex-col items-center justify-center gap-1 text-xs;
+  }
+  .mobile-tab[aria-current="page"] {
+    @apply text-primary;
+  }
+  .mobile-tab svg {
+    @apply size-5;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

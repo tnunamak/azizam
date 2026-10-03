@@ -108,3 +108,40 @@ jobs:
 
       - name: Run check
         run: npm run check
+
+  web-e2e:
+    name: Production UI journey
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+      - name: Install gateway dependencies
+        run: |
+          uv venv venv
+          uv pip sync --python venv/bin/python --require-hashes tests/requirements-hermetic.lock
+      - name: Install and build the production UI
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+          npx playwright install --with-deps chromium
+      - name: Check routes, accessibility and real API journeys
+        working-directory: web
+        run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: foundation-browser-results
+          path: |
+            web/test-results/screens/
+            web/test-results/report/
+            web/test-results/artifacts/
+          retention-days: 7

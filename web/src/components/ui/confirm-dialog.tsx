@@ -3,7 +3,7 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 
-import { Button } from "./button";
+import { Button } from "./legacy/button";
 import {
   Dialog,
   DialogBody,
@@ -12,9 +12,9 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "./dialog";
+} from "./legacy/dialog";
 import { Field } from "./field";
-import { Input } from "./input";
+import { Input } from "./legacy/input";
 
 export interface ConfirmDialogProps {
   open: boolean;

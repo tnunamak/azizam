@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 
 import { cn } from "@/lib/cn";
-import { Button, type ButtonSize, type ButtonVariant } from "./button";
+import { Button, type ButtonSize, type ButtonVariant } from "./legacy/button";
 import { CheckIcon, CopyIcon } from "./icons";
 
 /** Copy text to the clipboard. Falls back to a hidden textarea when the

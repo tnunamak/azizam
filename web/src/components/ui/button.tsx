@@ -1,87 +1,62 @@
-"use client";
-
-import { Slot } from "@radix-ui/react-slot";
-import type { ComponentPropsWithoutRef } from "react";
-
+import * as React from "react";
+import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/cn";
-import { useCompactTouchTargetClass } from "./compact-touch-targets";
-import { Spinner } from "./spinner";
+import { Slot } from "radix-ui";
 
-export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
-export type ButtonSize = "sm" | "md" | "lg";
+const buttonVariants = cva(
+  "inline-flex shrink-0 items-center justify-center gap-2 rounded-md max-sm:min-h-11 max-sm:min-w-11 text-sm font-medium whitespace-nowrap transition-all outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20  [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  {
+    variants: {
+      variant: {
+        default: "bg-primary text-primary-foreground hover:bg-primary/90",
+        destructive:
+          "bg-destructive text-destructive-foreground hover:bg-destructive/90 focus-visible:ring-destructive/20  ",
+        outline:
+          "border bg-background shadow-xs hover:bg-accent hover:text-accent-foreground   ",
+        secondary:
+          "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+        ghost: "hover:bg-accent hover:text-accent-foreground ",
+        link: "text-primary underline-offset-4 hover:underline",
+      },
+      size: {
+        default: "h-11 px-4 py-2 has-[>svg]:px-3",
+        xs: "h-6 gap-1 rounded-md px-2 text-xs has-[>svg]:px-1.5 [&_svg:not([class*='size-'])]:size-3",
+        sm: "h-8 gap-1.5 rounded-md px-3 has-[>svg]:px-2.5",
+        lg: "h-11 rounded-md px-6 has-[>svg]:px-4",
+        icon: "size-11",
+        "icon-xs": "size-6 rounded-md [&_svg:not([class*='size-'])]:size-3",
+        "icon-sm": "size-8",
+        "icon-lg": "size-10",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+      size: "default",
+    },
+  },
+);
 
-const BASE =
-  "inline-flex select-none items-center justify-center gap-2 rounded-vf-md font-medium transition-colors " +
-  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-vf-bg " +
-  "disabled:pointer-events-none disabled:opacity-50";
-
-const VARIANT_CLASSES: Record<ButtonVariant, string> = {
-  primary:
-    "bg-vf-accent text-vf-accent-ink hover:bg-vf-accent/85 active:bg-vf-accent/75 focus-visible:ring-vf-accent/60",
-  secondary:
-    "border border-vf-border bg-vf-surface-2 text-vf-text hover:border-vf-border-strong hover:bg-vf-surface-3 focus-visible:ring-vf-accent/60",
-  ghost:
-    "text-vf-muted hover:bg-vf-surface-2 hover:text-vf-text focus-visible:ring-vf-accent/60",
-  danger:
-    "bg-vf-bad text-vf-accent-ink hover:bg-vf-bad/85 active:bg-vf-bad/75 focus-visible:ring-vf-bad/60",
-};
-
-const SIZE_CLASSES: Record<ButtonSize, string> = {
-  sm: "h-8 px-3 text-vf-small",
-  md: "h-9 px-4 text-vf-small",
-  lg: "h-11 px-5 text-vf-body",
-};
-
-export interface ButtonProps extends ComponentPropsWithoutRef<"button"> {
-  /** Default is secondary — `primary` is the one accent action per surface
-   * (steering doc: calm rows, one accent action). */
-  variant?: ButtonVariant;
-  size?: ButtonSize;
-  /** Disables the button and shows a spinner next to the label. */
-  loading?: boolean;
-  /** Style the child element (e.g. a link) as a button. `loading` is
-   * ignored with asChild — links don't have a pending state. */
-  asChild?: boolean;
-}
-
-export function Button({
-  variant = "secondary",
-  size = "md",
-  loading = false,
-  asChild = false,
+function Button({
   className,
-  children,
-  disabled,
-  type,
+  variant = "default",
+  size = "default",
+  asChild = false,
   ...props
-}: ButtonProps) {
-  const compactTouchTargetClass = useCompactTouchTargetClass();
-  const classes = cn(
-    BASE,
-    VARIANT_CLASSES[variant],
-    SIZE_CLASSES[size],
-    compactTouchTargetClass,
-    className,
-  );
-
-  if (asChild) {
-    return (
-      <Slot className={classes} {...props}>
-        {children}
-      </Slot>
-    );
-  }
+}: React.ComponentProps<"button"> &
+  VariantProps<typeof buttonVariants> & {
+    asChild?: boolean;
+  }) {
+  const Comp = asChild ? Slot.Root : "button";
 
   return (
-    <button
-      type={type ?? "button"}
-      className={classes}
-      disabled={disabled || loading}
-      aria-busy={loading || undefined}
+    <Comp
+      data-slot="button"
+      data-variant={variant}
+      data-size={size}
+      className={cn(buttonVariants({ variant, size, className }))}
       {...props}
-    >
-      {loading && <Spinner className="size-4" />}
-      {children}
-    </button>
+    />
   );
 }
+
+export { Button, buttonVariants };

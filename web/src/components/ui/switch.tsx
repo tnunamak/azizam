@@ -1,34 +1,34 @@
 "use client";
 
-import * as SwitchPrimitive from "@radix-ui/react-switch";
-import type { ComponentPropsWithoutRef } from "react";
-
+import * as React from "react";
 import { cn } from "@/lib/cn";
-import { useCompactTouchTargetClass } from "./compact-touch-targets";
-import { useFieldContext } from "./field";
+import { Switch as SwitchPrimitive } from "radix-ui";
 
-export type SwitchProps = ComponentPropsWithoutRef<typeof SwitchPrimitive.Root>;
-
-export function Switch({ className, ...props }: SwitchProps) {
-  const compactTouchTargetClass = useCompactTouchTargetClass();
-  const field = useFieldContext();
-
+function Switch({
+  className,
+  size = "default",
+  ...props
+}: React.ComponentProps<typeof SwitchPrimitive.Root> & {
+  size?: "sm" | "default";
+}) {
   return (
     <SwitchPrimitive.Root
-      id={props.id ?? field?.id}
-      aria-describedby={field?.describedBy}
+      data-slot="switch"
+      data-size={size}
       className={cn(
-        "rounded-vf-pill border-vf-border bg-vf-surface-3 inline-flex h-5 w-9 shrink-0 items-center border transition-colors",
-        compactTouchTargetClass,
-        "hover:border-vf-border-strong",
-        "focus-visible:ring-vf-accent/60 focus-visible:ring-offset-vf-bg focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none",
-        "data-[state=checked]:border-vf-accent data-[state=checked]:bg-vf-accent",
-        "disabled:cursor-not-allowed disabled:opacity-50",
+        "peer group/switch focus-visible:border-ring focus-visible:ring-ring/50 data-[state=checked]:bg-primary data-[state=unchecked]:bg-input inline-flex shrink-0 items-center rounded-full border border-transparent transition-all outline-none focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50 data-[size=default]:h-[1.15rem] data-[size=default]:w-8 data-[size=sm]:h-3.5 data-[size=sm]:w-6",
         className,
       )}
       {...props}
     >
-      <SwitchPrimitive.Thumb className="rounded-vf-pill bg-vf-text data-[state=checked]:bg-vf-accent-ink block size-4 translate-x-0.5 transition-transform data-[state=checked]:translate-x-4" />
+      <SwitchPrimitive.Thumb
+        data-slot="switch-thumb"
+        className={cn(
+          "bg-background pointer-events-none block rounded-full ring-0 transition-transform group-data-[size=default]/switch:size-4 group-data-[size=sm]/switch:size-3 data-[state=checked]:translate-x-[calc(100%-2px)] data-[state=unchecked]:translate-x-0",
+        )}
+      />
     </SwitchPrimitive.Root>
   );
 }
+
+export { Switch };
