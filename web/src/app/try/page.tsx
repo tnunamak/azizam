@@ -883,7 +883,7 @@ export default function TryPage() {
               <div className="grid gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
                 <form
                   onSubmit={(event) => void run(tab.value, event)}
-                  className="bg-card space-y-4 rounded-xl border p-5"
+                  className="bg-card min-w-0 space-y-4 rounded-xl border p-5"
                 >
                   <div>
                     <h2 className="flex items-center gap-2 font-semibold">
@@ -1243,7 +1243,10 @@ function ModelSelect({
         if (next) onChange(next);
       }}
     >
-      <SelectTrigger aria-label="Model" className="w-full">
+      <SelectTrigger
+        aria-label="Model"
+        className="w-full min-w-0 overflow-hidden [&_[data-slot=select-value]]:min-w-0"
+      >
         <SelectValue />
       </SelectTrigger>
       <SelectContent>

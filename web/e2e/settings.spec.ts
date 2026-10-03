@@ -185,6 +185,7 @@ for (const theme of ["light", "dark"] as const) {
             () => document.documentElement.scrollWidth <= innerWidth,
           ),
         ).toBe(true);
+        await page.evaluate(() => window.scrollTo(0, 0));
         await page.screenshot({
           path: `test-results/screens/settings-${state}-${theme}-${width}.png`,
           fullPage: true,

@@ -89,6 +89,22 @@ for (const theme of ["light", "dark"] as const) {
           );
         }
         if (state === "seeded") {
+          await page.route(mediaApi, (route) =>
+            route.fulfill({
+              json: {
+                assets: [
+                  {
+                    asset_id: "home-recorded-image",
+                    kind: "image",
+                    prompt: "A recorded image from your gateway",
+                    model: "image",
+                    created_at: Date.now() / 1000 - 60,
+                  },
+                ],
+                next_cursor: null,
+              },
+            }),
+          );
           await page.route(setupApi, (route) =>
             route.fulfill({ json: { complete: true, steps: [] } }),
           );
@@ -172,6 +188,13 @@ for (const theme of ["light", "dark"] as const) {
               exact: true,
             }),
           ).toBeVisible();
+          if (state === "seeded") {
+            await expect(
+              page.getByText("A recorded image from your gateway", {
+                exact: true,
+              }),
+            ).toBeVisible();
+          }
         }
         await inspectHome(page, `${state}-${theme}-${width}`);
 

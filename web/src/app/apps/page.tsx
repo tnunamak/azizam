@@ -238,7 +238,12 @@ function AppsContents() {
         }
       />
       {accountPending ? (
-        <div aria-label="Loading apps" aria-busy="true" className="space-y-4">
+        <div
+          role="status"
+          aria-label="Loading apps"
+          aria-busy="true"
+          className="space-y-4"
+        >
           {[0, 1, 2].map((i) => (
             <Skeleton key={i} className="h-24 w-full" />
           ))}
@@ -403,10 +408,7 @@ function AppsContents() {
               <label htmlFor="app-client" className="text-sm font-medium">
                 Client
               </label>
-              <Select
-                value={client}
-                onValueChange={setClient}
-              >
+              <Select value={client} onValueChange={setClient}>
                 <SelectTrigger id="app-client" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
