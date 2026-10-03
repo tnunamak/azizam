@@ -65,6 +65,29 @@ async function setTheme(page: Page, mode: "light" | "dark", width: 1440 | 390) {
   );
 }
 
+test("library loading stays accessible while media is pending", async ({
+  page,
+}) => {
+  await setTheme(page, "light", 390);
+  let release: () => void = () => {};
+  const ready = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/me/api/media?**", async (route) => {
+    await ready;
+    await route.fulfill({ json: mediaFixture });
+  });
+  await page.goto("/ui/library/", { waitUntil: "domcontentloaded" });
+  await expect(
+    page.getByRole("status", { name: "Loading library" }),
+  ).toBeVisible();
+  await auditPage(page);
+  release();
+  await expect(
+    page.getByRole("button", { name: /Open A clean product render/ }),
+  ).toBeVisible();
+});
+
 for (const mode of ["light", "dark"] as const) {
   for (const width of [1440, 390] as const) {
     test(`library seeded ${mode} ${width}`, async ({ page }) => {

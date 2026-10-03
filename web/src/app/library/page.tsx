@@ -402,7 +402,9 @@ export default function LibraryPage() {
       ) : null}
       {isLoading ? (
         <div
+          role="status"
           aria-label="Loading library"
+          aria-busy="true"
           className="columns-1 gap-4 sm:columns-2 xl:columns-3"
         >
           {Array.from({ length: 6 }).map((_, index) => (
