@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 
 const emptyModelsCatalog = {
   schema_version: 1,
@@ -14,6 +14,101 @@ const workflowsCatalog = {
   discovery_url: "/gateway/v1/workflows",
   workflows: [
     {
+      id: "image.generate.poster",
+      short_id: "poster",
+      title: "Poster image",
+      description: "Image workflow served through the OpenAI image route.",
+      engine_binding: "comfyui",
+      native_route: "/v1/images/generations",
+      inputs: [
+        { name: "prompt", type: "string", required: true, accepted: true },
+        {
+          name: "style",
+          type: "string",
+          enum: ["studio", "flatlay"],
+          default: "studio",
+          required: true,
+          accepted: true,
+        },
+        {
+          name: "steps",
+          type: "integer",
+          default: 8,
+          minimum: 1,
+          maximum: 12,
+          required: true,
+          accepted: true,
+        },
+        {
+          name: "strength",
+          type: "number",
+          default: 0.35,
+          minimum: 0,
+          maximum: 1,
+          required: false,
+          accepted: true,
+        },
+        {
+          name: "width",
+          type: "integer",
+          default: 1024,
+          minimum: 64,
+          maximum: 2048,
+          required: true,
+          accepted: true,
+        },
+        {
+          name: "height",
+          type: "integer",
+          default: 1024,
+          minimum: 64,
+          maximum: 2048,
+          required: true,
+          accepted: true,
+        },
+      ],
+      example_request: {
+        method: "POST",
+        path: "/v1/images/generations",
+        content_type: "application/json",
+        body: {
+          model: "poster",
+          prompt: "A teal poster.",
+          style: "studio",
+          strength: 0.35,
+          size: "1024x1024",
+          extensions: { "com.vividfish.workflow": { seed: 42, steps: 8 } },
+        },
+        form: {},
+        files: {},
+        curl: 'curl http://localhost:5000/v1/images/generations -H \'Authorization: Bearer $GATEWAY_API_KEY\' -H \'Content-Type: application/json\' -d \'{"model":"poster","prompt":"A teal poster."}\'',
+      },
+      openapi: {
+        execution: {
+          sync: {
+            path: "/v1/images/generations",
+            fields: {
+              prompt: { in: "body", field: "prompt" },
+              style: { in: "body", field: "style" },
+              width: {
+                in: "body",
+                field: "size",
+                combine: ["width", "height"],
+              },
+              height: {
+                in: "body",
+                field: "size",
+                combine: ["width", "height"],
+              },
+              seed: { in: "extension", field: "seed" },
+              steps: { in: "extension", field: "steps" },
+              strength: { in: "body", field: "strength" },
+            },
+          },
+        },
+      },
+    },
+    {
       id: "video.edit.remix",
       short_id: "remix",
       title: "Remix video",
@@ -22,7 +117,32 @@ const workflowsCatalog = {
       native_route: "/gateway/v1/workflows/remix/run",
       inputs: [
         { name: "prompt", type: "string", required: true, accepted: true },
-        { name: "strength", type: "number", default: 0.35, accepted: true },
+        {
+          name: "mode",
+          type: "string",
+          enum: ["cinematic", "product"],
+          default: "cinematic",
+          required: true,
+          accepted: true,
+        },
+        {
+          name: "frames",
+          type: "integer",
+          default: 12,
+          minimum: 1,
+          maximum: 24,
+          required: true,
+          accepted: true,
+        },
+        {
+          name: "strength",
+          type: "number",
+          default: 0.35,
+          minimum: 0,
+          maximum: 1,
+          required: true,
+          accepted: true,
+        },
         {
           name: "source_image",
           request_field: "source",
@@ -35,33 +155,128 @@ const workflowsCatalog = {
         method: "POST",
         path: "/gateway/v1/workflows/remix/run",
         content_type: "multipart/form-data",
-        form: { prompt: "Turn the clip into a teal product shot.", strength: 0.35 },
+        form: {
+          prompt: "Turn the clip into a teal product shot.",
+          mode: "cinematic",
+          frames: 12,
+          strength: 0.35,
+          preserve_detail: true,
+        },
         files: { source: "./source.mp4" },
-        curl:
-          "curl -X POST http://localhost:5000/gateway/v1/workflows/remix/run -H 'Authorization: Bearer $GATEWAY_API_KEY' -F prompt='Turn the clip into a teal product shot.' -F strength='0.35' -F source=@./source.mp4",
+        curl: "curl -X POST http://localhost:5000/gateway/v1/workflows/remix/run -H 'Authorization: Bearer $GATEWAY_API_KEY' -F prompt='Turn the clip into a teal product shot.' -F source=@./source.mp4",
         python:
-          "import requests\nfiles = {'source': open('./source.mp4', 'rb')}\ndata = {'prompt': 'Turn the clip into a teal product shot.', 'strength': '0.35'}\nprint(requests.post('http://localhost:5000/gateway/v1/workflows/remix/run', data=data, files=files).text)",
+          "import requests\nfiles = {'source': open('./source.mp4', 'rb')}\nprint(requests.post('http://localhost:5000/gateway/v1/workflows/remix/run', files=files).text)",
         javascript:
-          "const form = new FormData();\nform.set('prompt', 'Turn the clip into a teal product shot.');\nform.set('strength', '0.35');\nform.set('source', file);\nawait fetch('/gateway/v1/workflows/remix/run', { method: 'POST', body: form });",
+          "const form = new FormData();\nform.set('source', file);\nawait fetch('/gateway/v1/workflows/remix/run', { method: 'POST', body: form });",
+      },
+      openapi: {
+        execution: {
+          sync: {
+            path: "/gateway/v1/workflows/remix/run",
+            fields: {
+              prompt: { in: "form", field: "prompt" },
+              mode: { in: "form", field: "mode" },
+              frames: { in: "form", field: "frames" },
+              strength: { in: "form", field: "strength" },
+              source_image: { in: "file", field: "source" },
+            },
+          },
+        },
       },
     },
     {
-      id: "image.generate.poster",
-      short_id: "poster",
-      title: "Poster image",
-      description: "Image workflow served through the OpenAI image route.",
+      id: "audio.generate.voiceover",
+      short_id: "voiceover",
+      title: "Voiceover",
+      description: "Audio workflow that returns bytes.",
       engine_binding: "comfyui",
-      native_route: "/v1/images/generations",
-      inputs: [{ name: "prompt", type: "string", required: true, accepted: true }],
+      native_route: "/gateway/v1/workflows/voiceover/run",
+      inputs: [
+        { name: "prompt", type: "string", required: true, accepted: true },
+      ],
       example_request: {
         method: "POST",
-        path: "/v1/images/generations",
+        path: "/gateway/v1/workflows/voiceover/run",
         content_type: "application/json",
-        body: { model: "poster", prompt: "A teal poster." },
+        body: { model: "voiceover", prompt: "Say hello." },
         form: {},
         files: {},
-        curl:
-          "curl http://localhost:5000/v1/images/generations -H 'Authorization: Bearer $GATEWAY_API_KEY' -H 'Content-Type: application/json' -d '{\"model\":\"poster\",\"prompt\":\"A teal poster.\"}'",
+      },
+      outputs: [{ kind: "audio", media_type: "audio/mpeg" }],
+    },
+    {
+      id: "video.generate.preview",
+      short_id: "preview",
+      title: "Video preview",
+      description: "Video workflow that returns bytes.",
+      engine_binding: "comfyui",
+      native_route: "/gateway/v1/workflows/preview/run",
+      inputs: [
+        { name: "prompt", type: "string", required: true, accepted: true },
+      ],
+      example_request: {
+        method: "POST",
+        path: "/gateway/v1/workflows/preview/run",
+        content_type: "application/json",
+        body: { model: "preview", prompt: "A short teal animation." },
+        form: {},
+        files: {},
+      },
+      outputs: [{ kind: "video", media_type: "video/mp4" }],
+    },
+    {
+      id: "video.generate.async",
+      short_id: "async",
+      title: "Async video",
+      description: "Workflow returning a queued job.",
+      engine_binding: "comfyui",
+      native_route: "/gateway/v1/workflows/async/run",
+      inputs: [
+        { name: "prompt", type: "string", required: true, accepted: true },
+      ],
+      example_request: {
+        method: "POST",
+        path: "/v1/videos",
+        content_type: "application/json",
+        body: { model: "async", prompt: "A teal launch clip." },
+        form: {},
+        files: {},
+      },
+      openapi: {
+        execution: {
+          async: {
+            submit: { path: "/v1/videos" },
+            fields: {
+              prompt: { in: "body", field: "prompt" },
+            },
+            poll: { path: "/v1/videos/{video_id}" },
+            content: { path: "/v1/videos/{video_id}/content" },
+          },
+        },
+      },
+    },
+    {
+      id: "video.generate.media-job",
+      short_id: "media-job",
+      title: "Media job",
+      inputs: [{ name: "prompt", type: "string", required: true }],
+      example_request: {
+        path: "/gateway/v1/media/jobs",
+        content_type: "application/json",
+        body: {
+          intent: "video.generate",
+          request: { model: "media-job", prompt: "A teal fish." },
+        },
+      },
+      openapi: {
+        execution: {
+          async: {
+            submit: { path: "/gateway/v1/media/jobs" },
+            fields: { prompt: { in: "body", field: "prompt" } },
+            poll: { path: "/gateway/v1/media/jobs/{job_id}" },
+            content: { path: "/gateway/v1/media/jobs/{job_id}/content" },
+          },
+        },
       },
     },
     {
@@ -71,7 +286,9 @@ const workflowsCatalog = {
       description: "Workflow missing runnable example request.",
       engine_binding: "comfyui",
       native_route: null,
-      inputs: [{ name: "prompt", type: "string", required: true, accepted: true }],
+      inputs: [
+        { name: "prompt", type: "string", required: true, accepted: true },
+      ],
     },
   ],
 };
@@ -93,26 +310,183 @@ async function prepareTryKey(page: Page, workflowId: string) {
   await page.getByRole("button", { name: "I’ve saved it" }).click();
   await expect(page.getByText("Session key ready")).toBeVisible();
   await expect(page.getByText("Catalog loaded")).toBeVisible();
-}
-
-test("workflow deep link selects the workflow and submits multipart to its advertised run route", async ({
-  page,
-}) => {
-  await prepareTryKey(page, "video.edit.remix");
-
   await expect(page.getByRole("tab", { name: "Workflow" })).toHaveAttribute(
     "aria-selected",
     "true",
   );
+}
+
+function jsonBody(route: Route) {
+  return route.request().postDataJSON() as Record<string, unknown>;
+}
+
+async function openAdvancedJson(page: Page) {
+  await page.locator("summary").filter({ hasText: "Advanced JSON" }).click();
+  await expect(inputsJson(page)).toBeVisible();
+}
+
+function inputsJson(page: Page) {
+  return page.locator("textarea").last();
+}
+
+function fieldName(name: string, required = false) {
+  return new RegExp(`^${name}${required ? " Required" : ""}$`, "i");
+}
+
+function textbox(page: Page, name: string, required = false) {
+  return page.getByRole("textbox", { name: fieldName(name, required) });
+}
+
+function spinbutton(page: Page, name: string, required = false) {
+  return page.getByRole("spinbutton", { name: fieldName(name, required) });
+}
+
+function combobox(page: Page, name: string, required = false) {
+  return page.getByRole("combobox", { name: fieldName(name, required) });
+}
+
+async function updateAdvancedJson(
+  page: Page,
+  mutate: (body: Record<string, unknown>) => Record<string, unknown>,
+) {
+  await openAdvancedJson(page);
+  const current = JSON.parse(await inputsJson(page).inputValue()) as Record<
+    string,
+    unknown
+  >;
+  await inputsJson(page).fill(JSON.stringify(mutate(current), null, 2));
+}
+
+async function expectTechnicalCollapsed(page: Page) {
+  const details = page
+    .locator("details")
+    .filter({ hasText: "Technical details" });
+  await expect(details).toBeVisible();
+  await expect(details.locator("pre")).toBeHidden();
+}
+
+async function openTechnicalDetails(page: Page) {
+  await page
+    .locator("summary")
+    .filter({ hasText: "Technical details" })
+    .click();
+  await expect(page.getByText("Copy as", { exact: true })).toBeVisible();
+}
+
+async function fillGuidedImageInputs(page: Page) {
+  await textbox(page, "prompt", true).fill("A red poster.");
+  await combobox(page, "style", true).click();
+  await page.getByRole("option", { name: "flatlay" }).click();
+  await spinbutton(page, "steps", true).fill("11");
+  await spinbutton(page, "strength").fill("0.8");
+  await spinbutton(page, "width", true).fill("768");
+  await spinbutton(page, "height", true).fill("512");
+}
+
+async function selectWorkflowModel(page: Page, name: string) {
+  await page.getByLabel("Model", { exact: true }).click();
+  await page.getByRole("option", { name }).click();
+}
+
+test("workflow deep link edits guided JSON fields and preserves advanced extras", async ({
+  page,
+}) => {
+  await prepareTryKey(page, "image.generate.poster");
+
   await expect(page.getByLabel("Model", { exact: true })).toContainText(
-    "Remix video",
+    "Poster image",
   );
-  await expect(page.getByText("Typed inputs", { exact: true })).toBeVisible();
-  await expect(page.getByRole("cell", { name: "strength" })).toBeVisible();
-  await expect(page.getByLabel("Inputs JSON")).toHaveValue(
-    /Turn the clip into a teal product shot\./,
+  await expect(textbox(page, "prompt", true)).toHaveValue("A teal poster.");
+  await expect(combobox(page, "style", true)).toContainText("studio");
+  await expect(spinbutton(page, "steps", true)).toHaveValue("8");
+  await expect(spinbutton(page, "strength")).toHaveValue("0.35");
+  await expect(spinbutton(page, "width", true)).toHaveValue("1024");
+  await expect(spinbutton(page, "height", true)).toHaveValue("1024");
+  await expect(inputsJson(page)).toBeHidden();
+
+  await fillGuidedImageInputs(page);
+  await updateAdvancedJson(page, (body) => ({
+    ...body,
+    scheduler: "karras",
+    nested: { preserve: true },
+    extensions: {
+      ...((body.extensions as Record<string, unknown> | undefined) ?? {}),
+      "com.vividfish.workflow": {
+        ...(((body.extensions as Record<string, unknown> | undefined)?.[
+          "com.vividfish.workflow"
+        ] as Record<string, unknown> | undefined) ?? {}),
+        seed: 99,
+      },
+    },
+  }));
+  await page.locator("summary").filter({ hasText: "Advanced JSON" }).click();
+  await expect(inputsJson(page)).toBeHidden();
+
+  let postedBody: Record<string, unknown> | null = null;
+  await page.route("**/v1/images/generations", async (route) => {
+    expect(route.request().headers()["content-type"]).toContain(
+      "application/json",
+    );
+    postedBody = jsonBody(route);
+    await route.fulfill({
+      headers: {
+        "content-type": "application/json",
+        "x-ai-gateway-receipt-id": "receipt_json_workflow",
+      },
+      json: {
+        data: [
+          {
+            url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+            media_type: "image/png",
+          },
+        ],
+      },
+    });
+  });
+  await page.route("**/me/api/receipts/receipt_json_workflow", (route) =>
+    route.fulfill({ json: { request_id: "receipt_json_workflow" } }),
   );
-  await expect(page.getByText("./source.mp4", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(
+    page.getByText("Workflow result", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByAltText("Generated result")).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "receipt_json_workflow" }),
+  ).toHaveAttribute("href", "/r/receipt_json_workflow");
+  await expectTechnicalCollapsed(page);
+  await openTechnicalDetails(page);
+  expect(postedBody).toEqual({
+    model: "poster",
+    prompt: "A red poster.",
+    style: "flatlay",
+    size: "768x512",
+    strength: 0.8,
+    extensions: { "com.vividfish.workflow": { seed: 99, steps: 11 } },
+    scheduler: "karras",
+    nested: { preserve: true },
+  });
+});
+
+test("workflow multipart guided fields include file, numeric edits, and preserved extras", async ({
+  page,
+}) => {
+  await prepareTryKey(page, "video.edit.remix");
+
+  await page
+    .getByRole("textbox", { name: /^prompt Required$/i })
+    .fill("Turn this source into a crisp launch clip.");
+  await combobox(page, "mode", true).click();
+  await page.getByRole("option", { name: "product" }).click();
+  await spinbutton(page, "frames", true).fill("18");
+  await spinbutton(page, "strength", true).fill("0.65");
+  await updateAdvancedJson(page, (body) => ({
+    ...body,
+    preserve_detail: false,
+    colorGrade: "teal",
+  }));
+  await page.locator("summary").filter({ hasText: "Advanced JSON" }).click();
 
   let uploadedBody = "";
   await page.route("**/gateway/v1/workflows/remix/run", async (route) => {
@@ -120,12 +494,12 @@ test("workflow deep link selects the workflow and submits multipart to its adver
     expect(route.request().headers()["content-type"]).toContain(
       "multipart/form-data",
     );
-    const requestBody = await route.request().postDataBuffer();
-    uploadedBody = requestBody?.toString("utf8") ?? "";
+    uploadedBody =
+      (await route.request().postDataBuffer())?.toString("utf8") ?? "";
     await route.fulfill({
       headers: {
         "content-type": "image/png",
-        "x-ai-gateway-request-id": "req_workflow_try",
+        "x-ai-gateway-request-id": "req_workflow_multipart",
       },
       body: Buffer.from(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
@@ -145,51 +519,274 @@ test("workflow deep link selects the workflow and submits multipart to its adver
     buffer: Buffer.from("fake mp4"),
   });
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("Workflow result", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Workflow result", { exact: true }),
+  ).toBeVisible();
   await expect(page.getByAltText("Generated result")).toBeVisible();
-  await expect(page.getByText("Example request", { exact: true })).toBeVisible();
+  await expectTechnicalCollapsed(page);
+  await openTechnicalDetails(page);
+  await expect(page.getByText("Copy as", { exact: true })).toBeVisible();
   await expect(
     page.getByText("/gateway/v1/workflows/remix/run", { exact: false }),
   ).toBeVisible();
-  await expect(page.getByText("/openai/v1/gateway", { exact: false })).toHaveCount(
-    0,
-  );
+  await expect(
+    page.getByText("/openai/v1/gateway", { exact: false }),
+  ).toHaveCount(0);
+
   expect(uploadedBody).toContain('name="source"; filename="clip.mp4"');
   expect(uploadedBody).toContain('name="prompt"');
-  expect(uploadedBody).toContain("Turn the clip into a teal product shot.");
+  expect(uploadedBody).toContain("Turn this source into a crisp launch clip.");
+  expect(uploadedBody).toContain('name="mode"');
+  expect(uploadedBody).toContain("product");
+  expect(uploadedBody).toContain('name="frames"');
+  expect(uploadedBody).toContain("18");
   expect(uploadedBody).toContain('name="strength"');
-  expect(uploadedBody).toContain("0.35");
+  expect(uploadedBody).toContain("0.65");
+  expect(uploadedBody).toContain('name="preserve_detail"');
+  expect(uploadedBody).toContain("false");
+  expect(uploadedBody).toContain('name="colorGrade"');
+  expect(uploadedBody).toContain("teal");
+  await expect(page.locator("pre").filter({ hasText: "curl" })).toContainText(
+    "clip.mp4",
+  );
+  await expect(page.locator("pre").filter({ hasText: "curl" })).toContainText(
+    "Turn this source into a crisp launch clip.",
+  );
+  await expect(page.getByText("colorGrade", { exact: false })).toBeVisible();
 });
 
-test("workflow deep link uses the canonical image example request route", async ({
+test("workflow guided validation blocks missing, range, enum, and invalid JSON inputs", async ({
   page,
 }) => {
   await prepareTryKey(page, "image.generate.poster");
 
-  await expect(page.getByRole("tab", { name: "Workflow" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  await expect(page.getByLabel("Model", { exact: true })).toContainText(
-    "Poster image",
-  );
-  await expect(page.getByLabel("Inputs JSON")).toHaveValue(/A teal poster\./);
+  await textbox(page, "prompt", true).fill("");
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(page.getByText("prompt is required.")).toBeVisible();
 
-  let postedBody: Record<string, unknown> | null = null;
-  await page.route("**/v1/images/generations", async (route) => {
-    expect(route.request().headers()["content-type"]).toContain(
-      "application/json",
-    );
-    postedBody = route.request().postDataJSON() as Record<string, unknown>;
-    await route.fulfill({
-      status: 400,
-      json: { error: { message: "Image workflow unavailable." } },
-    });
+  await textbox(page, "prompt", true).fill("A valid poster.");
+  await spinbutton(page, "steps", true).fill("13");
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(page.getByText("steps must be <= 12.")).toBeVisible();
+
+  await spinbutton(page, "steps", true).fill("8");
+  await spinbutton(page, "width", true).fill("63");
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(page.getByText("width must be >= 64.")).toBeVisible();
+
+  await spinbutton(page, "width", true).fill("1024");
+  await openAdvancedJson(page);
+  await inputsJson(page).fill("[1,2,3]");
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(
+    page.getByText("Workflow inputs must be a JSON object.").last(),
+  ).toBeVisible();
+});
+
+test("workflow results preview JSON images, image bytes, audio bytes, and video bytes", async ({
+  page,
+}) => {
+  await prepareTryKey(page, "image.generate.poster");
+  await fillGuidedImageInputs(page);
+  await page.route("**/v1/images/generations", (route) =>
+    route.fulfill({
+      json: {
+        data: [
+          {
+            url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+            media_type: "image/png",
+          },
+        ],
+      },
+    }),
+  );
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(page.getByAltText("Generated result")).toBeVisible();
+  await page.unroute("**/v1/images/generations");
+
+  await selectWorkflowModel(page, "Remix video");
+  await page.setInputFiles('input[type="file"]', {
+    name: "clip.mp4",
+    mimeType: "video/mp4",
+    buffer: Buffer.from("fake mp4"),
   });
+  await page.route("**/gateway/v1/workflows/remix/run", (route) =>
+    route.fulfill({
+      headers: { "content-type": "image/png" },
+      body: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+        "base64",
+      ),
+    }),
+  );
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(page.getByAltText("Generated result")).toBeVisible();
+
+  await selectWorkflowModel(page, "Voiceover");
+  await page.route("**/gateway/v1/workflows/voiceover/run", (route) =>
+    route.fulfill({
+      headers: { "content-type": "audio/mpeg" },
+      body: Buffer.from("fake audio bytes"),
+    }),
+  );
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(page.locator("audio[controls]")).toBeVisible();
+
+  await selectWorkflowModel(page, "Video preview");
+  await page.route("**/gateway/v1/workflows/preview/run", (route) =>
+    route.fulfill({
+      headers: { "content-type": "video/mp4" },
+      body: Buffer.from("fake video bytes"),
+    }),
+  );
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(page.locator("video[controls]")).toBeVisible();
+});
+
+test("workflow async video jobs can complete with byte outputs or fail from Check job", async ({
+  page,
+}) => {
+  await prepareTryKey(page, "video.generate.async");
+
+  await page.route("**/v1/videos", (route) =>
+    route.fulfill({
+      json: {
+        id: "job_async_try",
+        object: "video",
+        status: "queued",
+        request_id: "receipt_async_try",
+      },
+    }),
+  );
+  await page.route("**/v1/videos/job_async_try", (route) =>
+    route.fulfill({
+      json: {
+        id: "job_async_try",
+        object: "video",
+        status: "completed",
+      },
+    }),
+  );
+  await page.route("**/v1/videos/job_async_try/content", (route) =>
+    route.fulfill({
+      headers: { "content-type": "video/mp4" },
+      body: Buffer.from("fake completed video bytes"),
+    }),
+  );
+  await page.route("**/me/api/receipts/receipt_async_try", (route) =>
+    route.fulfill({ json: { request_id: "receipt_async_try" } }),
+  );
 
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("Image workflow unavailable.")).toBeVisible();
-  expect(postedBody).toEqual({ model: "poster", prompt: "A teal poster." });
+  await expect(page.getByText("Job status: queued")).toBeVisible();
+  await expectTechnicalCollapsed(page);
+  await openTechnicalDetails(page);
+  await expect(page.getByText('"status": "queued"')).toBeVisible();
+  await page.getByRole("button", { name: "Check job" }).click();
+  await expect(page.locator("video[controls]")).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Download video" }),
+  ).toHaveAttribute("href", /^blob:/);
+
+  await page.route("**/v1/videos", (route) =>
+    route.fulfill({
+      json: {
+        id: "job_async_failed",
+        object: "video",
+        status: "queued",
+      },
+    }),
+  );
+  await page.route("**/v1/videos/job_async_failed", (route) =>
+    route.fulfill({
+      json: {
+        id: "job_async_failed",
+        object: "video",
+        status: "failed",
+        error: { message: "Renderer ran out of memory." },
+      },
+    }),
+  );
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(page.getByText("Job status: queued")).toBeVisible();
+  await page.route("**/v1/videos/job_async_try", (route) =>
+    route.fulfill({
+      json: {
+        id: "job_async_try",
+        object: "video",
+        status: "failed",
+        error: { message: "Renderer ran out of memory." },
+      },
+    }),
+  );
+  await page.getByRole("button", { name: "Check job" }).click();
+  await expect(
+    page.getByText("Renderer ran out of memory.", { exact: true }),
+  ).toBeVisible();
+});
+
+test("workflow denied receipt does not create a link, while verified receipt links /r/:id", async ({
+  page,
+}) => {
+  await prepareTryKey(page, "image.generate.poster");
+  await fillGuidedImageInputs(page);
+
+  await page.route("**/v1/images/generations", (route) =>
+    route.fulfill({
+      json: {
+        data: [
+          {
+            asset_id: "img_fixture",
+            url: "data:image/png;base64,iVBORw0KGgo=",
+            media_type: "image/png",
+          },
+        ],
+      },
+    }),
+  );
+  await page.route("**/me/api/media/img_fixture", (route) =>
+    route.fulfill({
+      json: { asset: { id: "img_fixture", request_id: "receipt_from_asset" } },
+    }),
+  );
+  await page.route("**/me/api/receipts/receipt_from_asset", (route) =>
+    route.fulfill({ json: { request_id: "receipt_from_asset" } }),
+  );
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(
+    page.getByRole("link", { name: "receipt_from_asset" }),
+  ).toHaveAttribute("href", "/r/receipt_from_asset");
+
+  await page.unroute("**/v1/images/generations");
+  await page.route("**/v1/images/generations", (route) =>
+    route.fulfill({
+      headers: { "x-ai-gateway-receipt-id": "receipt denied/value" },
+      json: { data: [{ url: "data:image/png;base64,iVBORw0KGgo=" }] },
+    }),
+  );
+  await page.route("**/me/api/receipts/receipt%20denied%2Fvalue", (route) =>
+    route.fulfill({ status: 404, json: { error: "not found" } }),
+  );
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(page.getByText("Not available for this session")).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "receipt denied/value" }),
+  ).toHaveCount(0);
+
+  await page.unroute("**/v1/images/generations");
+  await page.route("**/v1/images/generations", (route) =>
+    route.fulfill({
+      headers: { "x-ai-gateway-receipt-id": "receipt verified/value" },
+      json: { data: [{ url: "data:image/png;base64,iVBORw0KGgo=" }] },
+    }),
+  );
+  await page.route("**/me/api/receipts/receipt%20verified%2Fvalue", (route) =>
+    route.fulfill({ json: { request_id: "receipt verified/value" } }),
+  );
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(
+    page.getByRole("link", { name: "receipt verified/value" }),
+  ).toHaveAttribute("href", "/r/receipt%20verified%2Fvalue");
 });
 
 test("workflow deep link reports missing runnable examples without guessing", async ({
@@ -199,6 +796,101 @@ test("workflow deep link reports missing runnable examples without guessing", as
 
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(
-    page.getByText("This workflow does not include a runnable example request yet."),
+    page.getByText(
+      "This workflow does not include a runnable example request yet.",
+    ),
   ).toBeVisible();
+});
+
+test("workflow JSON media renders signed audio and video outputs", async ({
+  page,
+}) => {
+  await prepareTryKey(page, "audio.generate.voiceover");
+  await page.route("**/gateway/v1/workflows/voiceover/run", (route) =>
+    route.fulfill({
+      json: {
+        assets: [
+          {
+            kind: "audio",
+            signed_url: "https://media.example.test/audio?sig=fixture",
+            media_type: "audio/mpeg",
+          },
+          {
+            kind: "video",
+            signed_url: "https://media.example.test/video?sig=fixture",
+            media_type: "video/mp4",
+          },
+        ],
+      },
+    }),
+  );
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(page.locator("audio[controls]")).toHaveAttribute(
+    "src",
+    "https://media.example.test/audio?sig=fixture",
+  );
+  await expect(page.locator("video[controls]")).toHaveAttribute(
+    "src",
+    "https://media.example.test/video?sig=fixture",
+  );
+  await expect(
+    page.getByRole("link", { name: "Download audio 1" }),
+  ).toHaveAttribute("href", "https://media.example.test/audio?sig=fixture");
+  await expectTechnicalCollapsed(page);
+});
+
+test("workflow media jobs use declared routes and load signed output after retry", async ({
+  page,
+}) => {
+  await prepareTryKey(page, "video.generate.media-job");
+  let body: unknown;
+  await page.route("**/gateway/v1/media/jobs", (route) => {
+    body = route.request().postDataJSON();
+    return route.fulfill({
+      json: { object: "media.job", job_id: "signed_job", status: "queued" },
+    });
+  });
+  await page.route("**/gateway/v1/media/jobs/signed_job", (route) =>
+    route.fulfill({
+      status: 503,
+      json: { error: { message: "Job temporarily unavailable." } },
+    }),
+  );
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(page.getByText("Job status: queued")).toBeVisible();
+  expect(body).toEqual({
+    intent: "video.generate",
+    request: { model: "media-job", prompt: "A teal fish." },
+  });
+  await page.getByRole("button", { name: "Check job", exact: true }).click();
+  await expect(page.getByText("Job temporarily unavailable.")).toBeVisible();
+  await page.unroute("**/gateway/v1/media/jobs/signed_job");
+  await page.route("**/gateway/v1/media/jobs/signed_job", (route) =>
+    route.fulfill({
+      json: { object: "media.job", job_id: "signed_job", status: "succeeded" },
+    }),
+  );
+  await page.route("**/gateway/v1/media/jobs/signed_job/content", (route) =>
+    route.fulfill({
+      json: {
+        assets: [
+          {
+            kind: "video",
+            signed_url: "https://media.example.test/completed?sig=fixture",
+            media_type: "video/mp4",
+          },
+        ],
+      },
+    }),
+  );
+  await page.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect(page.locator("video[controls]")).toHaveAttribute(
+    "src",
+    "https://media.example.test/completed?sig=fixture",
+  );
+  await expect(page.getByText("Job status: succeeded")).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Download video", exact: true }),
+  ).toHaveAttribute("href", "https://media.example.test/completed?sig=fixture");
+  await expect(page.getByText("Not available for this session")).toBeVisible();
 });

@@ -22,6 +22,7 @@ const inputs: WorkflowInput[] = [
   {
     name: "steps",
     type: "integer",
+    description: "Sampling steps.",
     minimum: 1,
     maximum: 50,
     default: 8,
@@ -75,6 +76,26 @@ const mappedInputs: WorkflowInput[] = [
   },
 ];
 
+const assetBodyInputs: WorkflowInput[] = [
+  {
+    name: "reference_image",
+    type: "asset",
+    required: true,
+    applies: "Request body",
+  },
+];
+
+const rawSizeInputs: WorkflowInput[] = [
+  { name: "size", type: "string", request_field: "size", default: "1280x720" },
+  { name: "width", type: "integer", default: 1024, request_field: "size" },
+  { name: "height", type: "integer", default: 768, request_field: "size" },
+];
+
+const unsupportedCombineInputs: WorkflowInput[] = [
+  { name: "left", type: "integer", default: 1, request_field: "crop" },
+  { name: "top", type: "integer", default: 2, request_field: "crop" },
+];
+
 afterEach(cleanup);
 
 describe("workflow input helpers", () => {
@@ -93,6 +114,32 @@ describe("workflow input helpers", () => {
       size: "1024x1024",
       extra_passthrough: "kept",
     });
+  });
+
+  it("does not replace existing combined size defaults", () => {
+    expect(workflowDefaults(mappedInputs, { size: "640x480" })).toEqual({
+      size: "640x480",
+      extensions: { "com.vividfish.workflow": { steps: 8 } },
+    });
+  });
+
+  it("deep clones nested example data before adding defaults", () => {
+    const example = {
+      request: {
+        model: "slow",
+        extensions: { "com.vividfish.workflow": { steps: 4 } },
+      },
+    };
+
+    const defaults = workflowDefaults(mappedInputs, example, mapping);
+    setWorkflowInputValue(defaults, mappedInputs, mappedInputs[3], 10, mapping);
+
+    expect(defaults.request).toEqual({
+      model: "slow",
+      size: "1024x768",
+      extensions: { "com.vividfish.workflow": { steps: 10 } },
+    });
+    expect(example.request.extensions["com.vividfish.workflow"].steps).toBe(4);
   });
 
   it("parses and validates typed values", () => {
@@ -129,12 +176,19 @@ describe("workflow input helpers", () => {
       parseWorkflowInputs(JSON.stringify({ text: "x", guidance: 11 }), inputs),
     ).toThrow("guidance must be <= 10.");
     expect(() =>
-      parseWorkflowInputs(JSON.stringify({ text: "x", size: "128x128" }), inputs),
+      parseWorkflowInputs(
+        JSON.stringify({ text: "x", size: "128x128" }),
+        inputs,
+      ),
     ).toThrow("size must be one of: 512x512, 1024x1024.");
   });
 
   it("writes real route mappings including size and workflow extensions", () => {
-    const body = workflowDefaults(mappedInputs, { model: "extension" }, mapping);
+    const body = workflowDefaults(
+      mappedInputs,
+      { model: "extension" },
+      mapping,
+    );
     expect(body).toEqual({
       model: "extension",
       size: "1024x768",
@@ -148,7 +202,9 @@ describe("workflow input helpers", () => {
     expect(body.extensions).toEqual({
       "com.vividfish.workflow": { steps: 12 },
     });
-    expect(readWorkflowInputValue(body, mappedInputs, mappedInputs[1], mapping)).toBe(512);
+    expect(
+      readWorkflowInputValue(body, mappedInputs, mappedInputs[1], mapping),
+    ).toBe(512);
   });
 
   it("combines shared request_field size without explicit mapping", () => {
@@ -157,6 +213,19 @@ describe("workflow input helpers", () => {
 
     setWorkflowInputValue(body, mappedInputs, mappedInputs[1], 640);
     expect(body.size).toBe("640x768");
+  });
+
+  it("leaves unsupported shared request fields to Advanced JSON", () => {
+    const body = workflowDefaults(unsupportedCombineInputs);
+
+    expect(body).toEqual({});
+    setWorkflowInputValue(
+      body,
+      unsupportedCombineInputs,
+      unsupportedCombineInputs[0],
+      3,
+    );
+    expect(body).toEqual({});
   });
 
   it("keeps extension form fields as JSON strings for multipart requests", () => {
@@ -174,10 +243,56 @@ describe("workflow input helpers", () => {
     );
   });
 
+  it("rejects invalid extension JSON instead of overwriting it", () => {
+    expect(() =>
+      parseWorkflowInputs(
+        JSON.stringify({ extensions: '{"com.vividfish.workflow":' }),
+        mappedInputs,
+        mapping,
+      ),
+    ).toThrow("extensions must be valid JSON before using guided controls.");
+  });
+
   it("removes numeric fields when users clear them", () => {
     const body = { steps: 8 };
     setWorkflowInputValue(body, inputs, inputs[1], undefined);
     expect(body).toEqual({});
+  });
+
+  it("validates and edits required asset strings in JSON requests", () => {
+    expect(() => parseWorkflowInputs("{}", assetBodyInputs)).toThrow(
+      "reference_image is required.",
+    );
+
+    const body = {};
+    setWorkflowInputValue(
+      body,
+      assetBodyInputs,
+      assetBodyInputs[0],
+      "https://example.test/reference.png",
+    );
+
+    expect(body).toEqual({
+      reference_image: "https://example.test/reference.png",
+    });
+    expect(() =>
+      parseWorkflowInputs(JSON.stringify(body), assetBodyInputs),
+    ).not.toThrow();
+  });
+
+  it("lets literal size edit the raw size field beside width and height", () => {
+    const body = workflowDefaults(rawSizeInputs);
+
+    expect(body).toEqual({ size: "1280x720" });
+    expect(readWorkflowInputValue(body, rawSizeInputs, rawSizeInputs[0])).toBe(
+      "1280x720",
+    );
+
+    setWorkflowInputValue(body, rawSizeInputs, rawSizeInputs[0], "640x480");
+    expect(body.size).toBe("640x480");
+
+    setWorkflowInputValue(body, rawSizeInputs, rawSizeInputs[1], 320);
+    expect(body.size).toBe("320x480");
   });
 });
 
@@ -187,12 +302,16 @@ describe("WorkflowInputs", () => {
     render(
       <WorkflowInputs
         inputs={inputs}
-        json={JSON.stringify({ text: "old", extra_passthrough: "kept" }, null, 2)}
+        json={JSON.stringify(
+          { text: "old", extra_passthrough: "kept" },
+          null,
+          2,
+        )}
         onChange={onChange}
       />,
     );
 
-    const prompt = screen.getByRole("textbox", { name: "prompt" });
+    const prompt = screen.getByRole("textbox", { name: /prompt Required/ });
     fireEvent.change(prompt, { target: { value: "new" } });
 
     const last = JSON.parse(onChange.mock.calls.at(-1)?.[0] ?? "{}");
@@ -216,12 +335,12 @@ describe("WorkflowInputs", () => {
       "max",
       "50",
     );
-    expect(screen.getByRole("checkbox", { name: "transparent_background" }))
-      .toBeInTheDocument();
+    expect(screen.getByText("Sampling steps.")).toBeVisible();
     expect(
-      screen.getByText(
-        "File value is handled by the existing workflow file picker.",
-      ),
+      screen.getByRole("checkbox", { name: "transparent_background" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Choose this file in the upload control below."),
     ).toBeVisible();
     expect(
       screen.getByText(
@@ -230,11 +349,79 @@ describe("WorkflowInputs", () => {
     ).toBeVisible();
   });
 
-  it("disables guided controls while advanced JSON is malformed", () => {
-    render(<WorkflowInputs inputs={inputs} json="{" onChange={() => undefined} />);
+  it("renders mapped body asset inputs as text controls", () => {
+    const onChange = vi.fn();
+    render(
+      <WorkflowInputs
+        inputs={assetBodyInputs}
+        json={JSON.stringify({ reference_image: "" })}
+        onChange={onChange}
+      />,
+    );
 
-    expect(screen.getByText("Workflow inputs must be a JSON object.")).toBeVisible();
-    expect(screen.getByRole("textbox", { name: "prompt" })).toBeDisabled();
+    const asset = screen.getByRole("textbox", {
+      name: /reference_image Required/,
+    });
+    expect(asset).not.toBeDisabled();
+    fireEvent.change(asset, {
+      target: { value: "https://example.test/reference.png" },
+    });
+    expect(JSON.parse(onChange.mock.calls.at(-1)?.[0] ?? "{}")).toEqual({
+      reference_image: "https://example.test/reference.png",
+    });
+    expect(
+      screen.getByText(
+        "Use a data URI, http(s) URL, gateway asset id, or signed asset URL.",
+      ),
+    ).toBeVisible();
+  });
+
+  it("disables guided controls while advanced JSON is malformed", () => {
+    render(
+      <WorkflowInputs inputs={inputs} json="{" onChange={() => undefined} />,
+    );
+
+    expect(
+      screen.getByText("Workflow inputs must be a JSON object."),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("textbox", { name: /prompt Required/ }),
+    ).toBeDisabled();
+  });
+
+  it("disables guided controls while extension JSON is malformed", () => {
+    render(
+      <WorkflowInputs
+        inputs={mappedInputs}
+        mapping={mapping}
+        json={JSON.stringify({ extensions: '{"com.vividfish.workflow":' })}
+        onChange={() => undefined}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "extensions must be valid JSON before using guided controls.",
+      ),
+    ).toBeVisible();
+    expect(screen.getByRole("spinbutton", { name: "steps" })).toBeDisabled();
+  });
+
+  it("explains unsupported combined controls instead of editing them", () => {
+    render(
+      <WorkflowInputs
+        inputs={unsupportedCombineInputs}
+        json={JSON.stringify({ crop: "1,2" })}
+        onChange={() => undefined}
+      />,
+    );
+
+    expect(screen.getByRole("spinbutton", { name: "left" })).toBeDisabled();
+    expect(
+      screen.getAllByText(
+        "This combined field is not supported by guided controls yet. Edit Advanced JSON.",
+      ),
+    ).toHaveLength(2);
   });
 
   it("renders object values as advanced-only instead of stringifying them", () => {
@@ -250,5 +437,16 @@ describe("WorkflowInputs", () => {
       '{\n  "keep": true\n}',
     );
     expect(screen.getByRole("textbox", { name: "metadata" })).toBeDisabled();
+  });
+});
+
+it("allows required unsupported compound fields through Advanced JSON", () => {
+  const inputs: WorkflowInput[] = [
+    { name: "left", type: "integer", request_field: "crop", required: true },
+    { name: "top", type: "integer", request_field: "crop", required: true },
+  ];
+  expect(parseWorkflowInputs('{"crop":"1,2","extra":true}', inputs)).toEqual({
+    crop: "1,2",
+    extra: true,
   });
 });

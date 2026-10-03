@@ -15,6 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 export type WorkflowInput = {
   name: string;
   type: string;
+  description?: string;
   request_field?: string;
   applies?: string;
   required?: boolean;
@@ -44,7 +45,6 @@ export type WorkflowInputMapping = Record<
 >;
 
 const FILE_TYPES = new Set([
-  "asset",
   "file",
   "image",
   "audio",
@@ -68,8 +68,14 @@ export function parseWorkflowInputs(
     throw new Error("Workflow inputs must be a JSON object.");
   }
   const values = parsed as JsonObject;
+  validateExtensionEnvelope(requestRoot(values));
   for (const input of inputs) {
-    if (isFileInput(input) || input.ignored || input.accepted === false) {
+    if (
+      isFileInput(input, mapping) ||
+      input.ignored ||
+      input.accepted === false ||
+      isUnsupportedCombinedInput(input, inputs, mapping)
+    ) {
       continue;
     }
     const value = readWorkflowInputValue(values, inputs, input, mapping);
@@ -89,13 +95,10 @@ export function workflowDefaults(
   example: JsonObject = {},
   mapping: WorkflowInputMapping = {},
 ): JsonObject {
-  const values: JsonObject = { ...example };
+  const values = cloneJsonObject(example);
   for (const input of inputs) {
-    if (isFileInput(input) || input.default === undefined) continue;
-    const target = inputTarget(input, mapping);
+    if (isFileInput(input, mapping) || input.default === undefined) continue;
     if (readWorkflowInputValue(values, inputs, input, mapping) === undefined) {
-      setWorkflowInputValue(values, inputs, input, input.default, mapping);
-    } else if (target.combine?.length) {
       setWorkflowInputValue(values, inputs, input, input.default, mapping);
     }
   }
@@ -139,7 +142,16 @@ export function WorkflowInputs({
             key={input.name}
             input={input}
             value={readWorkflowInputValue(current, inputs, input, mapping)}
-            disabled={Boolean(parseError)}
+            disabled={
+              Boolean(parseError) ||
+              isUnsupportedCombinedInput(input, inputs, mapping)
+            }
+            fileInput={isFileInput(input, mapping)}
+            unsupportedCombined={isUnsupportedCombinedInput(
+              input,
+              inputs,
+              mapping,
+            )}
             onChange={(value) => update(input, value)}
           />
         ))}
@@ -152,36 +164,50 @@ function WorkflowInputControl({
   input,
   value,
   disabled: parentDisabled = false,
+  fileInput = false,
+  unsupportedCombined = false,
   onChange,
 }: {
   input: WorkflowInput;
   value: unknown;
   disabled?: boolean;
+  fileInput?: boolean;
+  unsupportedCombined?: boolean;
   onChange: (value: unknown) => void;
 }) {
   const id = `workflow-input-${input.name}`;
+  const label = input.required ? `${input.name} Required` : input.name;
   const disabled =
     parentDisabled ||
     input.ignored ||
     input.accepted === false ||
-    isFileInput(input) ||
+    fileInput ||
     isUnsupportedValue(value);
-  const explanation = inputExplanation(input);
+  const explanation = unsupportedCombined
+    ? "This combined field is not supported by guided controls yet. Edit Advanced JSON."
+    : inputExplanation(input, fileInput);
 
   return (
-    <label className="border-border/70 bg-card/30 flex min-w-0 flex-col gap-2 rounded-md border p-3 text-sm">
+    <label
+      className={`flex min-w-0 flex-col gap-2 text-sm ${input.type === "string" && !input.enum?.length ? "md:col-span-2" : ""}`}
+    >
       <span className="flex items-center justify-between gap-3">
         <span className="min-w-0">
           <span className="font-medium">{input.name}</span>
           {input.required && (
-            <span className="text-destructive ml-1">Required</span>
+            <span className="text-muted-foreground ml-1">Required</span>
           )}
         </span>
         <span className="text-muted-foreground shrink-0 text-xs">
           {input.type}
         </span>
       </span>
-      {controlFor(input, id, value, disabled, onChange)}
+      {(input.description || input.applies) && (
+        <span className="text-muted-foreground text-xs">
+          {[input.description, input.applies].filter(Boolean).join(" · ")}
+        </span>
+      )}
+      {controlFor(input, id, label, value, disabled, fileInput, onChange)}
       <span className="text-muted-foreground text-xs">{explanation}</span>
     </label>
   );
@@ -190,18 +216,21 @@ function WorkflowInputControl({
 function controlFor(
   input: WorkflowInput,
   id: string,
+  label: string,
   value: unknown,
   disabled: boolean,
+  fileInput: boolean,
   onChange: (value: unknown) => void,
 ) {
   const type = normalizedType(input);
-  if (isFileInput(input)) {
+  if (fileInput) {
     return (
       <Input
         id={id}
         disabled
         value="Managed by the workflow file picker"
-        aria-label={input.name}
+        aria-label={label}
+        aria-required={input.required || undefined}
         readOnly
       />
     );
@@ -210,7 +239,8 @@ function controlFor(
     return (
       <Textarea
         id={id}
-        aria-label={input.name}
+        aria-label={label}
+        aria-required={input.required || undefined}
         disabled
         value={JSON.stringify(value, null, 2)}
         readOnly
@@ -222,9 +252,17 @@ function controlFor(
       <Select
         value={selectValue(value)}
         disabled={disabled}
-        onValueChange={(next) => onChange(enumValue(input, next))}
+        onValueChange={(next) => {
+          // Radix can emit an empty value when its hidden form input resets.
+          if (next) onChange(enumValue(input, next));
+        }}
       >
-        <SelectTrigger id={id} className="w-full" aria-label={input.name}>
+        <SelectTrigger
+          id={id}
+          className="w-full"
+          aria-label={label}
+          aria-required={input.required || undefined}
+        >
           <SelectValue placeholder="Choose a value" />
         </SelectTrigger>
         <SelectContent>
@@ -242,7 +280,8 @@ function controlFor(
       <span className="flex min-h-11 items-center gap-3">
         <Checkbox
           id={id}
-          aria-label={input.name}
+          aria-label={label}
+          aria-required={input.required || undefined}
           checked={value === true}
           disabled={disabled}
           onCheckedChange={(checked) => onChange(checked === true)}
@@ -257,7 +296,8 @@ function controlFor(
     return (
       <Input
         id={id}
-        aria-label={input.name}
+        aria-label={label}
+        aria-required={input.required || undefined}
         type="number"
         inputMode={type === "integer" ? "numeric" : "decimal"}
         step={type === "integer" ? 1 : "any"}
@@ -276,7 +316,8 @@ function controlFor(
     return (
       <Textarea
         id={id}
-        aria-label={input.name}
+        aria-label={label}
+        aria-required={input.required || undefined}
         disabled={disabled}
         value={String(value ?? "")}
         onChange={(event) => onChange(event.currentTarget.value)}
@@ -286,7 +327,8 @@ function controlFor(
   return (
     <Input
       id={id}
-      aria-label={input.name}
+      aria-label={label}
+      aria-required={input.required || undefined}
       disabled={disabled}
       value={String(value ?? "")}
       onChange={(event) => onChange(event.currentTarget.value)}
@@ -332,9 +374,19 @@ export function setWorkflowInputValue(
   if (!target.field || target.in === "none" || target.in === "file") return;
   const root = requestRoot(object);
   if (target.in === "extension" || target.in === "file+extension") {
+    if (target.in === "file+extension" && isFileInput(input, mapping)) return;
     setExtensionValue(root, target.field, value);
     return;
   }
+  if (input.name === target.field && !target.combine?.length) {
+    if (value === undefined) {
+      delete root[target.field];
+    } else {
+      root[target.field] = value;
+    }
+    return;
+  }
+  if (isUnsupportedCombinedInput(input, inputs, mapping)) return;
   if (target.combine?.length || hasSharedRequestField(inputs, input, mapping)) {
     setCombinedValue(root, inputs, input, value, target, mapping);
     return;
@@ -356,17 +408,24 @@ export function readWorkflowInputValue(
   if (!target.field) return undefined;
   const root = requestRoot(object);
   if (target.in === "extension" || target.in === "file+extension") {
+    if (target.in === "file+extension" && isFileInput(input, mapping)) {
+      return undefined;
+    }
     return readExtension(root)[target.field];
   }
+  if (input.name === target.field && !target.combine?.length) {
+    return root[target.field];
+  }
+  if (isUnsupportedCombinedInput(input, inputs, mapping)) return undefined;
   if (target.combine?.length || hasSharedRequestField(inputs, input, mapping)) {
     return readCombinedPart(root[target.field], input.name);
   }
   return root[target.field];
 }
 
-function safeObject(json: string):
-  | { ok: true; value: JsonObject }
-  | { ok: false; error: string } {
+function safeObject(
+  json: string,
+): { ok: true; value: JsonObject } | { ok: false; error: string } {
   try {
     return { ok: true, value: parseWorkflowInputs(json) };
   } catch (error) {
@@ -386,7 +445,7 @@ function inputTarget(input: WorkflowInput, mapping: WorkflowInputMapping) {
       ? "none"
       : applies.includes("extension")
         ? "extension"
-        : isFileInput(input)
+        : isFileInput(input, mapping)
           ? "file"
           : "body");
   return {
@@ -400,13 +459,31 @@ function normalizedType(input: WorkflowInput) {
   return input.type.toLowerCase();
 }
 
-function isFileInput(input: WorkflowInput) {
-  return FILE_TYPES.has(normalizedType(input));
+function isFileInput(input: WorkflowInput, mapping: WorkflowInputMapping = {}) {
+  const type = normalizedType(input);
+  if (FILE_TYPES.has(type)) return true;
+  if (type !== "asset") return false;
+  const mapped = mapping[input.name];
+  const applies = String(input.applies ?? "").toLowerCase();
+  if (mapped?.in) return mapped.in === "file" || mapped.in === "file+extension";
+  if (
+    applies.includes("request body") ||
+    applies.includes("workflow extension")
+  ) {
+    return false;
+  }
+  return true;
 }
 
-function inputExplanation(input: WorkflowInput) {
-  if (isFileInput(input)) {
-    return "File value is handled by the existing workflow file picker.";
+function inputExplanation(
+  input: WorkflowInput,
+  fileInput = isFileInput(input),
+) {
+  if (fileInput) {
+    return "Choose this file in the upload control below.";
+  }
+  if (normalizedType(input) === "asset") {
+    return "Use a data URI, http(s) URL, gateway asset id, or signed asset URL.";
   }
   if (input.ignored) {
     return "Known input, but this route ignores it for the selected workflow.";
@@ -415,11 +492,10 @@ function inputExplanation(input: WorkflowInput) {
     return "Known input, but not available for this route.";
   }
   const parts = [`Writes ${input.request_field || input.name}`];
-  if (input.default !== undefined) parts.push(`default ${valueText(input.default)}`);
+  if (input.default !== undefined)
+    parts.push(`default ${valueText(input.default)}`);
   if (input.minimum !== undefined || input.maximum !== undefined) {
-    parts.push(
-      `range ${input.minimum ?? "-∞"} to ${input.maximum ?? "∞"}`,
-    );
+    parts.push(`range ${input.minimum ?? "-∞"} to ${input.maximum ?? "∞"}`);
   }
   return `${parts.join(" · ")}.`;
 }
@@ -452,12 +528,8 @@ function setExtensionValue(root: JsonObject, field: string, value: unknown) {
 function readExtension(root: JsonObject): JsonObject {
   const value = root.extensions;
   if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value);
-      return namespaceObject(parsed);
-    } catch {
-      return {};
-    }
+    const parsed = parseExtensionString(value);
+    return namespaceObject(parsed);
   }
   if (value && typeof value === "object" && !Array.isArray(value)) {
     return namespaceObject(value as JsonObject);
@@ -468,14 +540,7 @@ function readExtension(root: JsonObject): JsonObject {
 function extensionEnvelope(root: JsonObject): JsonObject {
   const value = root.extensions;
   if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value);
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? (parsed as JsonObject)
-        : {};
-    } catch {
-      return {};
-    }
+    return parseExtensionString(value);
   }
   if (value && typeof value === "object" && !Array.isArray(value)) {
     return value as JsonObject;
@@ -487,13 +552,52 @@ function extensionContainer(root: JsonObject) {
   return namespaceObject(extensionEnvelope(root));
 }
 
-function writeExtensionContainer(root: JsonObject, workflowExtension: JsonObject) {
+function writeExtensionContainer(
+  root: JsonObject,
+  workflowExtension: JsonObject,
+) {
   const envelope = {
     ...extensionEnvelope(root),
     "com.vividfish.workflow": workflowExtension,
   };
   root.extensions =
     typeof root.extensions === "string" ? JSON.stringify(envelope) : envelope;
+}
+
+function validateExtensionEnvelope(root: JsonObject) {
+  const value = root.extensions;
+  if (value === undefined || value === null) return;
+  const envelope =
+    typeof value === "string"
+      ? parseExtensionString(value)
+      : value && typeof value === "object" && !Array.isArray(value)
+        ? (value as JsonObject)
+        : null;
+  if (!envelope) {
+    throw new Error("extensions must be a JSON object.");
+  }
+  const namespace = envelope["com.vividfish.workflow"];
+  if (
+    namespace !== undefined &&
+    namespace !== null &&
+    (typeof namespace !== "object" || Array.isArray(namespace))
+  ) {
+    throw new Error("extensions.com.vividfish.workflow must be a JSON object.");
+  }
+}
+
+function parseExtensionString(value: string): JsonObject {
+  try {
+    const parsed = JSON.parse(value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("extensions must be a JSON object.");
+    }
+    return parsed as JsonObject;
+  } catch {
+    throw new Error(
+      "extensions must be valid JSON before using guided controls.",
+    );
+  }
 }
 
 function namespaceObject(value: JsonObject) {
@@ -520,11 +624,11 @@ function setCombinedValue(
     const width =
       input.name === widthName
         ? value
-        : current.width ?? defaultFor(inputs, widthName);
+        : (current.width ?? defaultFor(inputs, widthName));
     const height =
       input.name === heightName
         ? value
-        : current.height ?? defaultFor(inputs, heightName);
+        : (current.height ?? defaultFor(inputs, heightName));
     if (width === undefined || height === undefined) {
       delete root[target.field];
     } else {
@@ -541,6 +645,19 @@ function hasSharedRequestField(
   return sharedParts(inputs, input, mapping).length > 1;
 }
 
+function isUnsupportedCombinedInput(
+  input: WorkflowInput,
+  inputs: WorkflowInput[],
+  mapping: WorkflowInputMapping,
+) {
+  const target = inputTarget(input, mapping);
+  if (input.name === target.field && !target.combine?.length) return false;
+  const combined =
+    Boolean(target.combine?.length) ||
+    hasSharedRequestField(inputs, input, mapping);
+  return combined && target.field !== "size";
+}
+
 function sharedParts(
   inputs: WorkflowInput[],
   input: WorkflowInput,
@@ -549,6 +666,7 @@ function sharedParts(
   const target = inputTarget(input, mapping);
   return inputs
     .filter((item) => inputTarget(item, mapping).field === target.field)
+    .filter((item) => item.name !== target.field)
     .map((item) => item.name);
 }
 
@@ -583,7 +701,9 @@ function selectValue(value: unknown) {
 }
 
 function numberDisplay(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) ? String(value) : "";
+  return typeof value === "number" && Number.isFinite(value)
+    ? String(value)
+    : "";
 }
 
 function valueText(value: unknown) {
