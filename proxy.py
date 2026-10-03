@@ -2929,6 +2929,10 @@ def resolve_stable_alias(
     operation: str, requested_model: Any
 ) -> stable_aliases.AliasResolution | None:
     """Resolve through ``model_aliases``; raises AliasUnavailableError."""
+    if isinstance(requested_model, str):
+        provider_id, separator, _ = requested_model.partition("/")
+        if separator and provider_id in providers.provider_refs(ADMIN_STORE.get_service_registry()):
+            return None
     return stable_aliases.resolve_alias(
         config.get("model_aliases"),
         operation,

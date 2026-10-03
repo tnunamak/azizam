@@ -69,6 +69,14 @@ def _request(payload: dict) -> Request:
 
 
 class ProviderRoutingTests(unittest.TestCase):
+    def test_provider_qualified_model_bypasses_local_openai_globs(self) -> None:
+        aliases = {"model_aliases": {"chat": {
+            "stable": {"fast": "default-fast"},
+            "openai": [{"match": "o*-mini*", "to": "fast"}],
+        }}}
+        with patch.object(proxy, "config", aliases):
+            self.assertIsNone(proxy.resolve_stable_alias("chat", "openrouter/openai/gpt-4.1-mini"))
+
     def test_alias_paid_fallback_is_explicit_and_marked(self) -> None:
         body = {"model": "assistant", "messages": [{"role": "user", "content": "hi"}]}
         request = _request(body)
