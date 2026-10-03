@@ -5,7 +5,8 @@ export const workflowsPolishCatalog = {
       id: "image.product-render",
       capability: "image",
       title: "Product render",
-      description: "Create a clean product render with a local workflow.",
+      description:
+        "Create a clean product render with a local workflow. Long manifest guidance stays searchable and available inside Technical details without turning browse cards into documentation blocks. Use it when the operator needs exact route behavior, backend binding context, and alias provenance.",
       inputs: [
         {
           name: "prompt",
@@ -44,6 +45,13 @@ export const workflowsPolishCatalog = {
           accepted: false,
         },
       ],
+      outputs: [
+        {
+          name: "render",
+          media_type: "image/png",
+          description: "Final product render asset.",
+        },
+      ],
       engine_binding: "image-local",
       availability: {
         status: "ready",
@@ -69,6 +77,13 @@ export const workflowsPolishCatalog = {
       title: "Scene board",
       description: "Make a set of coordinated scene images.",
       inputs: [],
+      outputs: [
+        {
+          name: "board",
+          media_type: "image/webp",
+          description: "Generated scene board contact sheet.",
+        },
+      ],
       engine_binding: "image-local",
       availability: {
         status: "ready",
@@ -91,6 +106,7 @@ export const workflowsPolishCatalog = {
       title: "Product thumbnail",
       description: "Create a compact product thumbnail.",
       inputs: [],
+      outputs: [],
       engine_binding: "image-local",
       availability: {
         status: "ready",

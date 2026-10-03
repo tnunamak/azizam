@@ -145,7 +145,17 @@ function matches(row: WorkflowRow, query: string) {
     row.description,
     ...row.aliases,
     row.engine_binding ?? "",
-    ...row.inputs.map((input) => input.name),
+    row.native_route ?? "",
+    ...row.inputs.flatMap((input) => [
+      input.name,
+      input.description ?? "",
+      rangeLabel(input),
+    ]),
+    ...(row.outputs ?? []).flatMap((output) => [
+      output.name,
+      output.media_type ?? "",
+      output.description ?? "",
+    ]),
   ]
     .join(" ")
     .toLowerCase();
@@ -159,6 +169,52 @@ function statusClass(row: WorkflowRow) {
   return "bg-muted-foreground";
 }
 
+// Types describe the manifest; they do not imply an engine is ready to run.
+function inputKinds(workflow: WorkflowRow) {
+  const kinds = [
+    ...new Set(
+      workflow.inputs
+        .filter((input) => input.accepted)
+        .map(
+          (input) =>
+            ({
+              string: "Text",
+              integer: "Number",
+              number: "Number",
+              boolean: "Toggle",
+              object: "Object",
+              array: "List",
+            })[input.type] ?? input.type,
+        ),
+    ),
+  ];
+  return kinds.join(", ") || "Not specified";
+}
+
+function outputKinds(workflow: WorkflowRow) {
+  const kinds = [
+    ...new Set(
+      (workflow.outputs ?? []).map(
+        (output) => output.media_type || output.name,
+      ),
+    ),
+  ];
+  return (
+    kinds.join(", ") ||
+    (workflow.capability === "workflow"
+      ? "Not specified"
+      : capabilityLabel(workflow.capability))
+  );
+}
+
+function browseConstraint(workflow: WorkflowRow) {
+  const ranged = workflow.inputs.filter(
+    (input) => input.accepted && rangeLabel(input),
+  );
+  const input = ranged.find((input) => input.required) ?? ranged[0];
+  return input ? `${input.name}: ${rangeLabel(input)}` : null;
+}
+
 function WorkflowCard({
   workflow,
   onDetail,
@@ -166,6 +222,7 @@ function WorkflowCard({
   workflow: WorkflowRow;
   onDetail: (workflow: WorkflowRow) => void;
 }) {
+  const constraint = browseConstraint(workflow);
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
   async function copyId() {
@@ -179,53 +236,43 @@ function WorkflowCard({
     }
   }
   return (
-    <article className="bg-card text-card-foreground flex min-w-0 flex-col gap-5 rounded-xl border p-5">
+    <article
+      aria-label={workflow.title}
+      className="bg-card text-card-foreground flex min-w-0 flex-col gap-5 rounded-xl border p-5"
+    >
       <div className="flex min-w-0 items-start gap-3">
         <CapabilityIcon capability={iconCapability(workflow.capability)} />
         <div className="min-w-0 flex-1">
-          <h3 className="truncate font-semibold">{workflow.title}</h3>
-          <p className="text-muted-foreground mt-1 line-clamp-2 text-sm">
-            {workflow.description ||
-              "Workflow manifest visible to your access plan."}
-          </p>
+          <h3 className="font-semibold break-words">{workflow.title}</h3>
+          <dl className="text-muted-foreground mt-2 space-y-1 text-xs">
+            <div className="flex gap-2">
+              <dt>Input</dt>
+              <dd className="min-w-0 break-words">{inputKinds(workflow)}</dd>
+            </div>
+            <div className="flex gap-2">
+              <dt>Output</dt>
+              <dd className="min-w-0 break-words">{outputKinds(workflow)}</dd>
+            </div>
+          </dl>
         </div>
       </div>
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        aria-label={`Copy workflow id for ${workflow.title}`}
-        onClick={copyId}
-      >
-        {copied ? (
-          <>
-            <Check className="size-4 shrink-0" /> ID copied
-          </>
-        ) : (
-          <>
-            <Copy className="size-4 shrink-0" /> Copy ID
-          </>
-        )}
-      </Button>
-      {copyError && (
-        <p role="alert" className="text-destructive text-sm">
-          Copy failed. Try again or open workflow details to copy the ID.
-        </p>
-      )}
-      <span role="status" className="sr-only">
-        {copied ? "Workflow id copied" : ""}
-      </span>
       <div className="flex flex-wrap gap-2">
-        <Badge variant="secondary">
-          {capabilityLabel(workflow.capability)}
-        </Badge>
         <Badge variant="outline">{timeLabel(workflow.typical_seconds)}</Badge>
         {workflow.aliases.slice(0, 2).map((alias) => (
-          <Badge key={alias} variant="outline">
+          <Badge
+            key={alias}
+            variant="outline"
+            className="max-w-full break-all whitespace-normal"
+          >
             {alias}
           </Badge>
         ))}
       </div>
+      {constraint && (
+        <p className="text-muted-foreground text-xs break-words">
+          {constraint}
+        </p>
+      )}
       <div className="flex min-w-0 items-start gap-2 text-sm">
         <span
           aria-hidden="true"
@@ -253,6 +300,31 @@ function WorkflowCard({
         <Button variant="outline" size="sm" onClick={() => onDetail(workflow)}>
           Details
         </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          aria-label={`Copy workflow id for ${workflow.title}`}
+          onClick={copyId}
+        >
+          {copied ? (
+            <>
+              <Check className="size-4 shrink-0" /> ID copied
+            </>
+          ) : (
+            <>
+              <Copy className="size-4 shrink-0" /> Copy ID
+            </>
+          )}
+        </Button>
+        {copyError && (
+          <p role="alert" className="text-destructive text-sm">
+            Copy failed. Try again or open workflow details to copy the ID.
+          </p>
+        )}
+        <span role="status" className="sr-only">
+          {copied ? "Workflow id copied" : ""}
+        </span>
       </div>
     </article>
   );
@@ -289,72 +361,143 @@ function DetailSheet({
             <SheetHeader className="border-b pr-12">
               <SheetTitle>{workflow.title}</SheetTitle>
               <SheetDescription>
-                {workflow.description || "Workflow details and available routes."}
+                Typed inputs, example requests and your recent outputs.
               </SheetDescription>
             </SheetHeader>
             <div className="space-y-6 p-4">
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <Fact label="Workflow" value={workflow.id} />
-                <Fact
-                  label="Capability"
-                  value={capabilityLabel(workflow.capability)}
-                />
-                <Fact
-                  label="Engine binding"
-                  value={
-                    workflow.engine_binding ?? "No engine binding configured"
-                  }
-                />
-                <Fact
-                  label="Typical time"
-                  value={timeLabel(workflow.typical_seconds)}
-                />
-                <Fact
-                  label="Native route"
-                  value={
-                    workflow.native_route ??
-                    "No native passthrough route configured"
-                  }
-                />
-                <Fact
-                  label="Discovery"
-                  value={
-                    <a
-                      className="underline underline-offset-4"
-                      href={workflow.discovery_url}
-                    >
-                      Machine-readable workflow
-                    </a>
-                  }
-                />
-              </div>
-              <div>
-                <h3 className="font-medium">Stable aliases</h3>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {workflow.aliases.length ? (
-                    workflow.aliases.map((alias) => (
-                      <Badge key={alias} variant="secondary">
-                        {alias}
-                      </Badge>
-                    ))
-                  ) : (
-                    <p className="text-muted-foreground text-sm">
-                      No stable aliases point here.
-                    </p>
-                  )}
+              <details className="rounded-lg border p-4">
+                <summary className="focus-visible:outline-ring min-h-11 cursor-pointer py-3 font-medium focus-visible:outline-2">
+                  Technical details
+                </summary>
+                <div className="mt-3 space-y-4">
+                  <p className="text-muted-foreground text-sm break-words whitespace-pre-wrap">
+                    {workflow.description || "No manifest notes provided."}
+                  </p>
+                  <p className="text-muted-foreground text-sm break-words">
+                    {workflow.availability.reason}
+                  </p>
+                  <div className="grid gap-4 text-sm sm:grid-cols-2">
+                    <Fact label="Workflow" value={workflow.id} />
+                    <Fact
+                      label="Capability"
+                      value={capabilityLabel(workflow.capability)}
+                    />
+                    <Fact
+                      label="Engine binding"
+                      value={
+                        workflow.engine_binding ??
+                        "No engine binding configured"
+                      }
+                    />
+                    <Fact
+                      label="Typical time"
+                      value={timeLabel(workflow.typical_seconds)}
+                    />
+                    <Fact
+                      label="Native route"
+                      value={
+                        workflow.native_route ??
+                        "No native passthrough route configured"
+                      }
+                    />
+                    <Fact
+                      label="Discovery"
+                      value={
+                        <a
+                          className="underline underline-offset-4"
+                          href={workflow.discovery_url}
+                        >
+                          Machine-readable workflow
+                        </a>
+                      }
+                    />
+                  </div>
+                  <div>
+                    <h3 className="font-medium">Stable aliases</h3>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {workflow.aliases.length ? (
+                        workflow.aliases.map((alias) => (
+                          <Badge
+                            key={alias}
+                            variant="secondary"
+                            className="max-w-full break-all whitespace-normal"
+                          >
+                            {alias}
+                          </Badge>
+                        ))
+                      ) : (
+                        <p className="text-muted-foreground text-sm">
+                          No stable aliases point here.
+                        </p>
+                      )}
+                    </div>
+                  </div>
                 </div>
-              </div>
+              </details>
               <div>
                 <h3 className="font-medium">Typed inputs</h3>
                 <p className="text-muted-foreground mt-1 text-sm">
                   Applies inputs change the request. Ignored inputs have no
                   effect on this route.
                 </p>
-                <p className="text-muted-foreground mt-2 text-xs sm:hidden">
-                  Scroll sideways to see every column.
-                </p>
+                {workflow.inputs.length === 0 && (
+                  <p className="text-muted-foreground mt-3 text-sm">
+                    No typed inputs declared. See the example request for this
+                    route.
+                  </p>
+                )}
+                <ul
+                  aria-label="Typed input summaries"
+                  className="mt-3 divide-y rounded-lg border px-4 sm:hidden"
+                >
+                  {workflow.inputs.map((input) => (
+                    <li key={input.name} className="space-y-2 py-4">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <h4 className="font-mono text-sm break-all">
+                            {input.name}
+                          </h4>
+                          <p className="text-muted-foreground text-xs">
+                            {input.type}
+                            {input.required ? " · Required" : " · Optional"}
+                          </p>
+                        </div>
+                        <Badge
+                          variant={input.accepted ? "secondary" : "outline"}
+                        >
+                          {input.accepted ? "Applies" : "Ignored"}
+                        </Badge>
+                      </div>
+                      {input.description && (
+                        <p className="text-muted-foreground text-sm break-words">
+                          {input.description}
+                        </p>
+                      )}
+                      <dl className="space-y-2 text-sm">
+                        {input.default != null && (
+                          <div>
+                            <dt className="text-muted-foreground text-xs">
+                              Default
+                            </dt>
+                            <dd className="break-words">
+                              {valueLabel(input.default)}
+                            </dd>
+                          </div>
+                        )}
+                        {rangeLabel(input) && (
+                          <div>
+                            <dt className="text-muted-foreground text-xs">
+                              Range
+                            </dt>
+                            <dd className="break-words">{rangeLabel(input)}</dd>
+                          </div>
+                        )}
+                      </dl>
+                    </li>
+                  ))}
+                </ul>
                 <div
-                  className="mt-3 max-w-full overflow-x-auto rounded-lg border [&>div]:overflow-visible"
+                  className="mt-3 hidden max-w-full overflow-x-auto rounded-lg border sm:block [&>div]:overflow-visible"
                   tabIndex={0}
                   aria-label="Scrollable typed controls"
                 >
@@ -374,7 +517,12 @@ function DetailSheet({
                           <TableCell className="font-mono text-xs break-all !whitespace-normal">
                             {input.name}
                             {input.required && (
-                              <span className="text-destructive ml-1">*</span>
+                              <span className="ml-1 text-xs">(required)</span>
+                            )}
+                            {input.description && (
+                              <p className="text-muted-foreground mt-1 font-sans text-xs">
+                                {input.description}
+                              </p>
                             )}
                           </TableCell>
                           <TableCell>{input.type}</TableCell>
