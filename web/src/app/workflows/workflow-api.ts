@@ -16,6 +16,7 @@ export interface Workflow {
   title: string;
   description: string;
   inputs: WorkflowInput[];
+  outputs?: { name: string; media_type?: string; description?: string }[];
   engine_binding: string | null;
   availability: { status: string; reason: string; available?: boolean };
   typical_seconds: number | null;

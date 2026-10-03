@@ -10,7 +10,7 @@ const seededCatalog = {
       capability: "image",
       title: "Product render",
       description:
-        "Create a clean product render with the local image workflow.",
+        "Create a clean product render with the local image workflow. Long manifest guidance stays searchable and available inside Technical details without turning browse cards into documentation blocks.",
       inputs: [
         {
           name: "prompt",
@@ -33,6 +33,13 @@ const seededCatalog = {
           default: "studio",
           enum: ["studio", "flatlay"],
           accepted: false,
+        },
+      ],
+      outputs: [
+        {
+          name: "render",
+          media_type: "image/png",
+          description: "Final product render asset.",
         },
       ],
       engine_binding: "image-local",
@@ -69,6 +76,7 @@ const seededCatalog = {
           accepted: true,
         },
       ],
+      outputs: [],
       engine_binding: null,
       availability: {
         status: "not_configured",
@@ -247,7 +255,7 @@ test("workflow cards use the available width at phone, tablet and desktop sizes"
   }
 });
 
-test("typed input table fits desktop and exposes Range on a narrow sheet", async ({
+test("typed input table fits desktop and mobile summaries expose Range on a narrow sheet", async ({
   page,
 }) => {
   for (const width of [1440, 390] as const) {
@@ -259,10 +267,10 @@ test("typed input table fits desktop and exposes Range on a narrow sheet", async
 
     const sheet = page.getByRole("dialog", { name: "Product render" });
     await expect(sheet).toBeVisible();
-    const scrollport = sheet.getByLabel("Scrollable typed controls");
     const columnNames = ["Name", "Type", "Default", "Range", "Applies"];
 
     if (width === 1440) {
+      const scrollport = sheet.getByLabel("Scrollable typed controls");
       const bounds = await scrollport.evaluate((element) => {
         const viewport = element.getBoundingClientRect();
         const columns = Array.from(
@@ -287,43 +295,45 @@ test("typed input table fits desktop and exposes Range on a narrow sheet", async
             column.left >= bounds.left && column.right <= bounds.right,
         ),
       ).toBe(true);
+
+      for (const name of columnNames) {
+        await expect(
+          scrollport.getByRole("columnheader", { name, exact: true }),
+        ).toBeVisible();
+      }
+      await expect(
+        scrollport.getByRole("cell", { name: "0", exact: true }),
+      ).toHaveCount(2);
+      expect(
+        await scrollport
+          .getByRole("cell", { name: "guidance_scale", exact: true })
+          .evaluate((cell) => getComputedStyle(cell).whiteSpace),
+      ).toBe("normal");
+      await expect(
+        scrollport.getByRole("cell", { name: "false" }),
+      ).toBeVisible();
+      await expect(
+        scrollport.getByRole("cell", { name: "0 to 65535" }),
+      ).toBeVisible();
+      await expect(
+        scrollport.getByRole("cell", { name: "0 to 20" }),
+      ).toBeVisible();
+      await expect(scrollport.getByText("studio, flatlay")).toBeVisible();
+      await expect(scrollport.getByText("Not specified")).toHaveCount(0);
     } else {
-      const reachable = await scrollport.evaluate((element) => {
-        element.scrollLeft = element.scrollWidth;
-        const viewport = element.getBoundingClientRect();
-        const range = Array.from(
-          element.querySelectorAll('th[data-slot="table-head"]'),
-        ).find((column) => column.textContent?.trim() === "Range");
-        if (!range) return false;
-        const rect = range.getBoundingClientRect();
-        return rect.left >= viewport.left && rect.right <= viewport.right;
+      const summaries = sheet.getByRole("list", {
+        name: "Typed input summaries",
       });
-      expect(reachable).toBe(true);
+      await expect(summaries.getByText("seed")).toBeVisible();
+      await expect(summaries.getByText("integer · Optional")).toBeVisible();
+      await expect(summaries.getByText("0 to 65535")).toBeVisible();
+      await expect(summaries.getByText("guidance_scale")).toBeVisible();
+      await expect(summaries.getByText("0 to 20")).toBeVisible();
+      await expect(summaries.getByText("studio, flatlay")).toBeVisible();
+      await expect(summaries.getByText("Ignored")).toBeVisible();
+      await expect(summaries.getByText("Not specified")).toHaveCount(0);
       await assertNoOverflow(page);
     }
-
-    for (const name of columnNames) {
-      await expect(
-        scrollport.getByRole("columnheader", { name, exact: true }),
-      ).toBeVisible();
-    }
-    await expect(
-      scrollport.getByRole("cell", { name: "0", exact: true }),
-    ).toHaveCount(2);
-    expect(
-      await scrollport
-        .getByRole("cell", { name: "guidance_scale", exact: true })
-        .evaluate((cell) => getComputedStyle(cell).whiteSpace),
-    ).toBe("normal");
-    await expect(scrollport.getByRole("cell", { name: "false" })).toBeVisible();
-    await expect(
-      scrollport.getByRole("cell", { name: "0 to 65535" }),
-    ).toBeVisible();
-    await expect(
-      scrollport.getByRole("cell", { name: "0 to 20" }),
-    ).toBeVisible();
-    await expect(scrollport.getByText("studio, flatlay")).toBeVisible();
-    await expect(scrollport.getByText("Not specified")).toHaveCount(0);
   }
 });
 
@@ -336,6 +346,7 @@ test("missing input details stay quiet while unknown time remains explicit", asy
   await page.goto("/ui/workflows/");
   await page.getByRole("button", { name: "Details" }).nth(1).click();
   const sheet = page.getByRole("dialog", { name: "Voiceover" });
+  await sheet.getByText("Technical details", { exact: true }).click();
   await expect(sheet.getByText("Not measured yet")).toBeVisible();
   await expect(sheet.getByText("Not specified")).toHaveCount(0);
 });
@@ -381,6 +392,10 @@ for (const theme of ["light", "dark"] as const) {
       await expect(
         page.getByRole("heading", { name: "Product render", exact: true }),
       ).toBeVisible();
+      await expect(
+        page.getByText(/Long manifest guidance stays searchable/),
+      ).toHaveCount(0);
+      await expect(page.getByText("image/png")).toBeVisible();
       await expect(page.getByText("product-shot")).toBeVisible();
       await expect(
         page.getByText("No speech service is enabled."),
@@ -460,6 +475,30 @@ test("workflows search filters aliases and can be cleared", async ({
 
   await search.fill("does-not-exist");
   await expect(page.getByText("No matching workflows")).toBeVisible();
+  await search.fill("Long manifest guidance");
+  await expect(
+    page.getByRole("heading", { name: "Product render", exact: true }),
+  ).toBeVisible();
+  await search.fill("image-local");
+  await expect(
+    page.getByRole("heading", { name: "Product render", exact: true }),
+  ).toBeVisible();
+  await search.fill("What to render");
+  await expect(
+    page.getByRole("heading", { name: "Product render", exact: true }),
+  ).toBeVisible();
+  await search.fill("Final product render asset");
+  await expect(
+    page.getByRole("heading", { name: "Product render", exact: true }),
+  ).toBeVisible();
+  await search.fill("256 to 2048");
+  await expect(
+    page.getByRole("heading", { name: "Product render", exact: true }),
+  ).toBeVisible();
+  await search.fill("/v1/workflows/image.product-render/run");
+  await expect(
+    page.getByRole("heading", { name: "Product render", exact: true }),
+  ).toBeVisible();
   await search.clear();
   await expect(
     page.getByRole("heading", { name: "Product render", exact: true }),
@@ -492,6 +531,39 @@ test("workflow sheet shows controls, code, links and seeded recent jobs", async 
     sheet.getByRole("cell", { name: /256\s*(?:-|to)\s*2048/ }),
   ).toBeVisible();
   await expect(sheet.getByRole("cell", { name: "Ignored" })).toBeVisible();
+
+  const technicalDetails = sheet
+    .getByText("Technical details", { exact: true })
+    .locator("xpath=ancestor::details[1]");
+  await expect(technicalDetails).not.toHaveAttribute("open", "");
+  await expect(
+    sheet.getByText(/Long manifest guidance stays searchable/),
+  ).not.toBeVisible();
+  await sheet.getByText("Technical details", { exact: true }).click();
+  await expect(technicalDetails).toHaveAttribute("open", "");
+  await expect(
+    sheet.getByText(/Long manifest guidance stays searchable/),
+  ).toBeVisible();
+  const details = sheet.locator("details").filter({
+    hasText: "Technical details",
+  });
+  await expect(
+    details.getByText("image.product-render", { exact: true }),
+  ).toBeVisible();
+  await expect(details.getByText("image-local", { exact: true })).toBeVisible();
+  await expect(
+    details.getByText(
+      "Configured for this access plan; live availability is not measured yet.",
+    ),
+  ).toBeVisible();
+  await expect(
+    details.getByText("/v1/workflows/image.product-render/run", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    details.getByText("product-shot", { exact: true }),
+  ).toBeVisible();
 
   await expect(sheet.getByText(/curl \$AI_GATEWAY_BASE/)).toBeVisible();
   await sheet.getByRole("tab", { name: "Python" }).click();
