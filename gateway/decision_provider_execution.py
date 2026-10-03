@@ -371,14 +371,18 @@ async def openai(
             providers.attach_cost_to_receipt(receipt, cost, usage)
             if reservation is not None and cost.usd is not None:
                 providers.settle_provider_spend(reservation, cost, path=ledger_path)
+            elif reservation is not None and upstream_status in {401, 429}:
+                providers.release_provider_spend(reservation, path=ledger_path)
             receipt.set_policy_decision("allowed", source="gateway:remote-provider")
-            owner.report(status="succeeded", reason="completed")
+            owner.report(status="succeeded" if upstream_status < 400 else "failed", reason="completed" if upstream_status < 400 else "failed")
             headers = {
                 "x-gateway-request-id": receipt.request_id,
                 "x-gateway-remote": "1",
                 "x-gateway-provider": provider.id,
-                "x-gateway-cost-usd": str(receipt.cost["usd"] if receipt.cost else "unknown"),
+                "x-gateway-cost-usd": str(receipt.cost["usd"]) if receipt.cost and receipt.cost.get("usd") is not None else "unknown",
             }
+            if upstream_headers.get("retry-after"):
+                headers["retry-after"] = upstream_headers["retry-after"]
             return Response(upstream_content, status_code=upstream_status, media_type=upstream_headers.get("content-type", "application/json"), headers=headers)
         except TimeoutError:
             owner.report(status="failed", reason="deadline_exceeded")

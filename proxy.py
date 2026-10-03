@@ -13726,6 +13726,16 @@ def _record_decision_receipt(auth: AuthContext, result: decisions_api.DecisionRe
     receipt.metadata["status_code"] = result.status_code
     if result.error_code:
         receipt.reject_input(result.error_param or "request", result.error_code)
+    safe_usage = providers.extract_usage({"usage": result.usage or {}})
+    safe_usage_metadata = {
+        key: value
+        for key, value in {
+            "input_tokens": safe_usage.input_tokens,
+            "output_tokens": safe_usage.output_tokens,
+        }.items()
+        if value is not None
+    }
+    usage_for_receipt = safe_usage if safe_usage_metadata else None
     if result.remote:
         providers.attach_cost_to_receipt(
             receipt,
@@ -13733,14 +13743,11 @@ def _record_decision_receipt(auth: AuthContext, result: decisions_api.DecisionRe
                 Decimal(str(result.cost_usd)) if result.cost_usd is not None else None,
                 result.cost_source or "unknown", result.backend or "typesafe",
             ),
-            providers.Usage(
-                input_tokens=(result.usage or {}).get("input_tokens"),
-                output_tokens=(result.usage or {}).get("output_tokens"),
-            ),
+            usage_for_receipt,
         )
     receipt.metadata["decisions"] = {
         "question_count": result.question_count, "engine": result.engine,
-        "remote": result.remote, "cost_usd": result.cost_usd, "usage": dict(result.usage or {}),
+        "remote": result.remote, "cost_usd": result.cost_usd, "usage": safe_usage_metadata,
     }
     receipt_store.record(receipt)
 

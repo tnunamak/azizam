@@ -324,6 +324,106 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             rows = conn.execute("SELECT status, actual_usd FROM provider_spend").fetchall()
         self.assertEqual(rows, [("reserved", None)])
 
+
+    async def test_openai_success_with_unknown_actual_cost_emits_unknown_header_and_keeps_reservation(self) -> None:
+        async def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"id": "dec_unknown", "usage": {"input_tokens": 1, "output_tokens": 0}})
+
+        real_client = httpx.AsyncClient
+        transport = httpx.MockTransport(handler)
+        registry = _registry(provider_id="openai", protocols=("openai-compatible", "decisions"), models=[{"id": "gpt-5"}], api_key_env="OPENAI_TEST_KEY")
+        with patch.object(execution.providers.httpx, "AsyncClient", lambda *a, **kw: real_client(transport=transport, timeout=kw.get("timeout"))):
+            response = await execution.openai(
+                _request({"model": "gpt-5", "input": "hi"}),
+                _auth(), _profile(max_request=None, budget=None, monthly=None), registry, self.ledger,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["x-gateway-cost-usd"], "unknown")
+        with sqlite3.connect(self.ledger) as conn:
+            rows = conn.execute("SELECT status, actual_usd FROM provider_spend").fetchall()
+        self.assertEqual(rows, [("reserved", None)])
+
+
+    async def test_openai_opaque_hook_forwards_403_body_and_status_without_rewriting(self) -> None:
+        async def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(403, json={"error": {"code": "not_enabled", "message": "disabled"}})
+
+        real_client = httpx.AsyncClient
+        transport = httpx.MockTransport(handler)
+        registry = _registry(provider_id="openai", protocols=("openai-compatible", "decisions"), models=[{"id": "gpt-5"}], api_key_env="OPENAI_TEST_KEY")
+        with patch.object(execution.providers.httpx, "AsyncClient", lambda *a, **kw: real_client(transport=transport, timeout=kw.get("timeout"))):
+            response = await execution.openai(
+                _request({"model": "gpt-5", "input": "hi"}),
+                _auth(), _profile(max_request=None, budget=None, monthly=None), registry, self.ledger,
+            )
+
+        body = json.loads(await _response_body(response))
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(body, {"error": {"code": "not_enabled", "message": "disabled"}})
+        self.assertEqual(len(self.receipts), 1)
+        self.assertEqual(self.receipts[0].status, "failed")
+        with sqlite3.connect(self.ledger) as conn:
+            rows = conn.execute("SELECT status, actual_usd FROM provider_spend").fetchall()
+        self.assertEqual(rows, [("reserved", None)])
+
+    async def test_openai_opaque_hook_forwards_429_retry_after_and_releases_unknown_reservation(self) -> None:
+        async def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(429, headers={"retry-after": "7"}, json={"error": {"code": "rate_limit"}})
+
+        real_client = httpx.AsyncClient
+        transport = httpx.MockTransport(handler)
+        registry = _registry(provider_id="openai", protocols=("openai-compatible", "decisions"), models=[{"id": "gpt-5"}], api_key_env="OPENAI_TEST_KEY")
+        with patch.object(execution.providers.httpx, "AsyncClient", lambda *a, **kw: real_client(transport=transport, timeout=kw.get("timeout"))):
+            response = await execution.openai(
+                _request({"model": "gpt-5", "input": "hi"}),
+                _auth(), _profile(max_request=None, budget=None, monthly=None), registry, self.ledger,
+            )
+
+        body = json.loads(await _response_body(response))
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(body, {"error": {"code": "rate_limit"}})
+        self.assertEqual(response.headers["retry-after"], "7")
+        with sqlite3.connect(self.ledger) as conn:
+            rows = conn.execute("SELECT status, actual_usd FROM provider_spend").fetchall()
+        self.assertEqual(rows, [("released", None)])
+
+    async def test_openai_provider_hook_redacts_key_in_array_json_and_plain_text_but_preserves_safe_bytes(self) -> None:
+        bodies = [
+            (b'["oa-key"]', b'["<redacted>"]', {}),
+            (b'["oa-' + b'\\u006b' + b'ey"]', b'["<redacted>"]', {}),
+            (b'"oa-' + b'\\u006b' + b'ey"', b'"<redacted>"', {}),
+            (b'{"oa-' + b'\\u006b' + b'ey":"value"}', b'{"<redacted>":"value"}', {"<redacted>": "value"}),
+            (b'not json oa-key', b'not json <redacted>', {}),
+            (b'{  "safe" : "kept" }', b'{  "safe" : "kept" }', {"safe": "kept"}),
+            (b'plain safe bytes', b'plain safe bytes', {}),
+        ]
+
+        for raw_body, expected_content, expected_payload in bodies:
+            async def handler(_request: httpx.Request, raw_body=raw_body) -> httpx.Response:
+                return httpx.Response(200, content=raw_body, headers={"content-type": "application/json"})
+
+            real_client = httpx.AsyncClient
+            transport = httpx.MockTransport(handler)
+            provider = execution.providers.ProviderRef(
+                id="openai",
+                base_url="https://openai.test",
+                protocols=("openai-compatible",),
+                api_key_env="OPENAI_TEST_KEY",
+                cost_class="paid-remote",
+                price={},
+                config={},
+            )
+            async with real_client(transport=transport, timeout=1) as client:
+                payload, _cost, _usage, _headers, content, status = await execution.providers.call_openai_json(
+                    provider, "/v1/decisions", {}, client=client
+                )
+
+            self.assertEqual(status, 200)
+            self.assertEqual(payload, expected_payload)
+            self.assertEqual(content, expected_content)
+            self.assertNotIn(b"oa-key", content)
+
     async def test_openai_provider_hook_normalizes_v1_base_preserves_raw_body_and_redacts_echoed_key(self) -> None:
         seen = {}
 

@@ -228,12 +228,16 @@ not a decisions endpoint, so it does not change D7.
 
 - Reserve `POST /v1/decisions` in `registry/protocol_frontends.yml`.
 - **Until a schema exists:**
-  - If a Profile has `openai` in its remote providers and the owner configured
-    `OPENAI_API_KEY`, forward the body as-is to `api.openai.com/v1/decisions`.
+  - If an App access plan permits `openai`, and the configured OpenAI provider
+    explicitly declares `decisions`, forward the body as-is to its
+    `/v1/decisions` endpoint through paid admission. An ordinary chat provider
+    does not enable this route. Provider credentials remain environment references.
   - Return OpenAI's status and body, including its 403 "not enabled". The
-    receipt records the cost as `unknown` with `source: none`, and the response
-    gets `x-gateway-cost-usd: unknown`.
-  - Otherwise return OpenAI-shaped `404 model_not_found` with
+    receipt records reported actual cost when available; otherwise cost stays
+    unknown with `source: unknown` and `x-gateway-cost-usd: unknown`. Opaque
+    requests have no safe preflight cost estimate, so capped plans fail closed.
+    Unknown final charges retain the reservation for reconciliation.
+  - Without that configured capability, return an OpenAI-shaped 501 with
     `code: decisions_backend_unavailable`.
 - **Staying ready:** a weekly CI job diffs `openai/openai-openapi` and the
   openai-python changelog for `decisions`. When a schema lands:

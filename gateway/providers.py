@@ -1127,7 +1127,7 @@ def _redact_provider_payload(value: Any, secret: str) -> Any:
         return [_redact_provider_payload(item, secret) for item in value]
     if isinstance(value, dict):
         return {
-            key: _redact_provider_payload(item, secret)
+            _redact_provider_payload(key, secret): _redact_provider_payload(item, secret)
             for key, item in value.items()
         }
     return value
@@ -1162,18 +1162,20 @@ async def call_openai_json(
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
             content=content if content is not None else json.dumps(body, separators=(",", ":")).encode("utf-8"),
         )
-        _raise_mapped_response_error(response)
         original_content = response.content
+        parsed_json = True
         try:
             parsed = response.json()
         except ValueError:
-            parsed = {}
-        if not isinstance(parsed, dict):
-            parsed = {}
-        payload = _redact_provider_payload(parsed, api_key)
+            parsed_json = False
+            parsed = None
+        redacted = _redact_provider_payload(parsed, api_key) if parsed_json else None
+        payload = redacted if isinstance(redacted, dict) else {}
         returned_content = original_content
-        if payload != parsed:
-            returned_content = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        if parsed_json and redacted != parsed:
+            returned_content = json.dumps(redacted, separators=(",", ":")).encode("utf-8")
+        elif not parsed_json:
+            returned_content = original_content.replace(api_key.encode("utf-8"), b"<redacted>")
         cost = extract_provider_cost(provider, body=payload, headers=response.headers)
         return payload, cost, extract_usage(payload), response.headers, returned_content, response.status_code
     except httpx.TimeoutException as exc:

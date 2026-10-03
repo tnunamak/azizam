@@ -346,6 +346,45 @@ def test_typesafe_provider_unknown_actual_cost_is_projected_as_unknown_not_zero_
     assert "ts_secret_test_key" not in str(projected)
 
 
+def test_malformed_remote_usage_does_not_leak_into_failure_receipt_projection(tmp_path):
+    leaked_values = ("private echoed text", "-9")
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "model": "jev-latest",
+                "answers": {"is_urgent": {"type": "noul", "noul": 0.91}},
+                "usage": {
+                    "input_tokens": "private echoed text",
+                    "output_tokens": True,
+                    "completion_tokens": -9,
+                },
+            },
+        )
+
+    with _authenticated(_profile()) as (_identity, mp):
+        _install_registry(mp, tmp_path)
+        receipts = _capture_receipts(mp)
+        with _mock_typesafe_http(handler):
+            response = TestClient(proxy.app).post("/v1/systemone", json=BODY, headers=AUTH_HEADERS)
+
+    assert response.status_code == 502, response.text
+    assert response.json()["error"]["code"] == "decision_backend_error"
+    assert receipts
+    for audience in ("client", "admin"):
+        projected = receipts[-1].to_dict(audience=audience)
+        assert "usage" not in projected or projected["usage"] in ({}, None)
+        decisions = projected.get("decisions")
+        if decisions is not None:
+            assert decisions.get("usage") in ({}, None)
+        assert "input_tokens" not in str(projected.get("usage"))
+        assert "output_tokens" not in str(projected.get("usage"))
+        serialized = str(projected)
+        for value in leaked_values:
+            assert value not in serialized
+
+
 def test_typesafe_provider_concurrency_blocks_third_request_until_first_settles(tmp_path):
     entered = []
     release = Event()
