@@ -49,7 +49,7 @@ from fastapi import FastAPI, Request, Response, WebSocket
 from fastapi.responses import StreamingResponse, FileResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import FormData
-from starlette.requests import ClientDisconnect
+from starlette.requests import ClientDisconnect, HTTPConnection
 from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import WebSocketException
 
@@ -16948,9 +16948,10 @@ def _realtime_policy_denial(auth_context: AuthContext) -> Response | None:
 async def _handle_realtime(websocket: WebSocket) -> None:
     offered = [p.strip() for p in websocket.headers.get("sec-websocket-protocol", "").split(",") if p.strip()]
     subprotocol_key = realtime_proxy.key_from_subprotocols(offered)
+    caller: HTTPConnection = websocket
     if subprotocol_key and not get_client_api_key_from_headers(websocket.headers):
-        websocket.scope["headers"] = [*websocket.scope["headers"], (b"authorization", f"Bearer {subprotocol_key}".encode())]
-    auth_context = authenticate_request(websocket, "/v1/realtime")
+        caller = HTTPConnection({**websocket.scope, "headers": [*websocket.scope["headers"], (b"authorization", f"Bearer {subprotocol_key}".encode())]})
+    auth_context = authenticate_request(caller, "/v1/realtime")
     if isinstance(auth_context, Response):
         return await _deny_realtime(websocket, auth_context)
     denied = _realtime_policy_denial(auth_context)
