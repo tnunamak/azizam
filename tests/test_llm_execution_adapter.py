@@ -987,7 +987,7 @@ class LiteLlmRoutingOverrideTransportTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(sanitized["model"], "local-chat")
             self.assertEqual(sanitized["messages"], messages)
             self.assertEqual(sanitized["response_format"], response_format)
-            self.assertEqual(client.url, "http://litellm.test/v1/chat/completions?keep=hello+world")
+            self.assertEqual(client.url, "http://litellm.test/v1/chat/completions")
             for key in router_overrides:
                 with self.subTest(key=key):
                     self.assertNotIn(key, sanitized)

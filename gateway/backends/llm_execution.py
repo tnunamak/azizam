@@ -14,7 +14,7 @@ import json
 import os
 import re
 from typing import Any, Mapping
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -34,62 +34,56 @@ GATEWAY_REQUEST_ID_HEADER = "X-AI-Gateway-Request-Id"
 ASGIReceive = Callable[[], Awaitable[MappingABC[str, Any]]]
 
 _SSE_EVENT_END = re.compile(br"\r\n\r\n|\n\n|\r\r")
-_LITELLM_ROUTER_OVERRIDE_KEYS = frozenset({
-    "allowed_fails",
-    "allowed_fails_policy",
-    "api_base",
-    "api_key",
-    "api_type",
-    "api_version",
-    "base_url",
-    "content_policy_fallback",
-    "content_policy_fallbacks",
-    "context_window_fallback",
-    "context_window_fallback_dict",
-    "context_window_fallbacks",
-    "custom_llm_provider",
-    "default_fallback",
-    "default_fallbacks",
-    "default_litellm_params",
-    "default_priority",
-    "deployment",
-    "deployment_id",
-    "disable_cooldowns",
-    "disable_fallbacks",
-    "enable_pre_call_checks",
-    "enable_weighted_failover",
-    "extra_body",
-    "extra_headers",
-    "fallback",
-    "fallbacks",
-    "force_timeout",
-    "headers",
-    "healthy_deployments",
-    "litellm_params",
-    "max_fallbacks",
-    "max_retries",
-    "metadata",
-    "mock_response",
-    "mock_testing_rate_limit_error",
-    "mock_timeout",
-    "model_group",
-    "model_group_affinity_config",
-    "model_group_alias",
-    "model_group_retry_policy",
-    "model_id",
-    "model_list",
-    "num_retries",
-    "passthrough_on_no_deployment",
-    "previous_models",
-    "priority",
-    "retries",
-    "retry",
-    "retry_policy",
-    "router_settings",
-    "routing_groups",
-    "routing_strategy",
-    "routing_strategy_args",
-    "specific_deployment",
+_OPENAI_LITELLM_EXECUTION_BODY_KEYS = frozenset({
+    # OpenAI chat/completions/embeddings request body fields accepted at this
+    # gateway boundary. Top-level metadata is intentionally excluded even
+    # though OpenAI documents it for some APIs: LiteLLM consumes metadata as
+    # router context, so forwarding caller-controlled metadata can alter
+    # routing, retries, and fallback behavior. Nested metadata in user content,
+    # tool schemas, response schemas, and messages is preserved.
+    "audio",
+    "best_of",
+    "dimensions",
+    "encoding_format",
+    "echo",
+    "frequency_penalty",
+    "function_call",
+    "functions",
+    "input",
+    "logit_bias",
+    "logprobs",
+    "max_completion_tokens",
+    "max_tokens",
+    "messages",
+    "modalities",
+    "model",
+    "moderation",
+    "n",
+    "parallel_tool_calls",
+    "prediction",
+    "presence_penalty",
+    "prompt_cache_key",
+    "prompt_cache_options",
+    "prompt_cache_retention",
+    "prompt",
+    "reasoning_effort",
+    "response_format",
+    "safety_identifier",
+    "seed",
+    "service_tier",
+    "stop",
+    "store",
+    "stream",
+    "stream_options",
+    "suffix",
+    "temperature",
+    "tool_choice",
+    "tools",
+    "top_logprobs",
+    "top_p",
+    "user",
+    "verbosity",
+    "web_search_options",
 })
 
 
@@ -209,12 +203,7 @@ def _strip_litellm_router_query_overrides(url: str) -> str:
     parsed = urlsplit(url)
     if not parsed.query:
         return url
-    pairs = parse_qsl(parsed.query, keep_blank_values=True)
-    kept = [(key, value) for key, value in pairs if key not in _LITELLM_ROUTER_OVERRIDE_KEYS]
-    if len(kept) == len(pairs):
-        return url
-    query = urlencode(kept, doseq=True)
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, parsed.fragment))
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", parsed.fragment))
 
 
 def _strip_litellm_router_body_overrides(
@@ -232,7 +221,7 @@ def _strip_litellm_router_body_overrides(
     sanitized = {
         key: value
         for key, value in payload.items()
-        if key not in _LITELLM_ROUTER_OVERRIDE_KEYS
+        if key in _OPENAI_LITELLM_EXECUTION_BODY_KEYS
     }
     if trusted_num_retries is not None:
         sanitized["num_retries"] = trusted_num_retries

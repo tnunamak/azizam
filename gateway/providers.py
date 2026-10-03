@@ -816,11 +816,12 @@ def _estimate_tokens_from_json(value: object) -> int:
 
 
 def _output_token_limit(body: Mapping[str, Any]) -> int | None:
+    limits: list[int] = []
     for key in ("max_tokens", "max_completion_tokens", "max_output_tokens"):
         limit = _optional_int(body.get(key))
         if limit is not None and limit > 0:
-            return limit
-    return None
+            limits.append(limit)
+    return max(limits) if limits else None
 
 
 def _input_estimation_payload(body: Mapping[str, Any]) -> dict[str, Any]:

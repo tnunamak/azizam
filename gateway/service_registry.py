@@ -617,6 +617,7 @@ def service_from_backend_config(
 ) -> dict[str, Any]:
     safe_config, secret_refs = split_secret_refs(raw)
     validate_provider_secret_refs(service_id, safe_config, secret_refs)
+    validate_provider_native_passthrough_disabled(service_id, safe_config)
     if is_remote_provider_config(safe_config):
         safe_config["provider_id"] = canonical_provider_id(
             safe_config.get("provider_id") or service_id
@@ -707,6 +708,7 @@ def normalize_service_record(service_id: str, raw: Mapping[str, Any]) -> dict[st
     if not isinstance(secret_refs, Mapping):
         secret_refs = {}
     validate_provider_secret_refs(service_id, config, secret_refs)
+    validate_provider_native_passthrough_disabled(service_id, config)
     if is_remote_provider_config(config):
         config["provider_id"] = canonical_provider_id(
             config.get("provider_id") or service_id
@@ -789,6 +791,17 @@ def validate_provider_secret_refs(
     if not isinstance(api_key_env, str) or not ENV_VAR_NAME_RE.fullmatch(api_key_env):
         raise ValueError(
             f"remote provider {service_id!r} api_key_env must be an environment variable name"
+        )
+
+
+def validate_provider_native_passthrough_disabled(
+    service_id: str, config: Mapping[str, Any]
+) -> None:
+    if is_remote_provider_config(config) and bool_from_config(
+        config.get("native_passthrough"), False
+    ):
+        raise ValueError(
+            f"remote provider {service_id!r} cannot enable native_passthrough"
         )
 
 

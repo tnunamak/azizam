@@ -115,6 +115,81 @@ class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertFalse(client.opened)
 
+    async def test_provider_native_rejects_local_alias_to_paid_downstream_service(self) -> None:
+        class Client:
+            opened = False
+
+            def stream(self, *_args, **_kwargs):
+                self.opened = True
+                raise AssertionError("native guard must run before upstream dispatch")
+
+            async def aclose(self):
+                return None
+
+        native_profile = DEFAULT_PROFILE.with_overrides(
+            id="native-only",
+            native_passthrough=NativePassthroughPolicy(
+                enabled=True,
+                allowed_backends=frozenset({"local-alias"}),
+                allowed_operations=frozenset({"POST /v1/chat/completions"}),
+            ),
+            remote=RemoteProviderPolicy(
+                providers=frozenset(),
+                max_usd_per_request=Decimal("0"),
+            ),
+        )
+        auth_context = proxy.AuthContext(
+            identity=proxy.AuthIdentity(
+                name="native-paid-test",
+                key_hash="sha256:native-paid-test",
+                profile=native_profile,
+                app_id="app_native_paid_test",
+            )
+        )
+        local_alias_cfg = {
+            "native_passthrough": True,
+            "downstream_service": "openrouter",
+            "host": "127.0.0.1",
+            "port": 9999,
+        }
+        paid_downstream_cfg = {
+            "provider_type": "paid-remote",
+            "remote_provider": True,
+            "api_key_env": "OPENROUTER_API_KEY",
+            "auth_inject": [
+                {"header": "authorization", "secret_env": "OPENROUTER_API_KEY"}
+            ],
+        }
+        target = {
+            "backend": "local-alias",
+            "service": "openrouter",
+            "host": "http://local-alias.test",
+            "enabled": True,
+            "timeout": 1,
+        }
+        client = Client()
+
+        with patch.object(proxy, "_PROVIDER_NATIVE_TARGETS", {"local-alias": target}), patch.object(
+            proxy, "_auth_context_from_scope", return_value=auth_context
+        ), patch.dict(
+            proxy.config,
+            {"backends": {"local-alias": local_alias_cfg, "openrouter": paid_downstream_cfg}},
+            clear=False,
+        ), patch.dict(
+            os.environ, {"OPENROUTER_API_KEY": "test-provider-key"}, clear=False
+        ), patch.object(proxy.httpx, "AsyncClient", return_value=client):
+            response = await proxy.provider_native_request(
+                _request(
+                    "/gateway/v1/providers/local-alias/v1/chat/completions",
+                    {"model": "openrouter/paid-chat", "messages": []},
+                ),
+                "local-alias",
+                "v1/chat/completions",
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(client.opened)
+
     async def test_responses_post_begin_await_failures_are_owned(self) -> None:
         """Both outer Responses dispatch shapes finalize through the owner."""
         for stream in (False, True):

@@ -26854,6 +26854,42 @@ def _provider_native_downstream_auth_classes(
     return sorted(auth_classes)
 
 
+def _provider_native_backend_configs(
+    provider: str, target: Mapping[str, Any]
+) -> list[Mapping[str, Any]]:
+    backends = config.get("backends") if isinstance(config, Mapping) else {}
+    if not isinstance(backends, Mapping):
+        return []
+    keys = (provider, str(target.get("backend") or ""), str(target.get("service") or ""))
+    configs: list[Mapping[str, Any]] = []
+    seen: set[str] = set()
+    for key in keys:
+        key = key.strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        candidate = backends.get(key)
+        if isinstance(candidate, Mapping):
+            configs.append(candidate)
+    return configs
+
+
+def _provider_native_invalid_paid_remote_response(
+    provider: str, target: Mapping[str, Any]
+):
+    if not any(
+        service_registry.is_remote_provider_config(candidate)
+        for candidate in _provider_native_backend_configs(provider, target)
+    ):
+        return None
+    return openai_error_response(
+        f"Provider {provider!r} is a paid remote provider and cannot use native passthrough.",
+        status_code=400,
+        error_type="invalid_request_error",
+        code="provider_native_paid_remote_forbidden",
+    )
+
+
 def _provider_native_visible(
     provider: str,
     target: Mapping[str, Any],
@@ -26898,6 +26934,9 @@ async def provider_native_detail(request: Request, provider: str):
             status_code=404,
             code="provider_not_found",
         )
+    invalid_response = _provider_native_invalid_paid_remote_response(provider_key, target)
+    if invalid_response is not None:
+        return invalid_response
     if not _provider_native_visible(provider_key, target, _auth_context_from_scope(request)):
         return openai_error_response(
             f"Provider {provider!r} is not visible to this App profile.",
@@ -26929,6 +26968,9 @@ async def provider_native_request(
             status_code=404,
             code="provider_not_found",
         )
+    invalid_response = _provider_native_invalid_paid_remote_response(provider_key, target)
+    if invalid_response is not None:
+        return invalid_response
 
     receipt = _native_passthrough_receipt(
         auth_context=auth_context,

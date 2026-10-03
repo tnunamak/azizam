@@ -44,7 +44,10 @@ The important fields are:
   call.
 
 Inline provider keys are rejected by the service registry. Use `api_key_env`;
-do not put raw keys in YAML, `admin.db`, receipts, logs, or tests.
+do not put raw keys in YAML, `admin.db`, receipts, logs, or tests. Remote or paid
+providers cannot enable `native_passthrough`; their calls must use the paid
+admission and accounting path. The native handler also rejects remote records
+before injecting authentication or opening an upstream connection.
 
 ## Access Plans
 
@@ -65,8 +68,11 @@ Provider ids are canonical lowercase ids in configuration, profiles, admin
 policy, and the spend ledger. Model paths after the provider prefix retain
 their case.
 
-The shared execution transport strips caller-controlled LiteLLM routing and
-retry overrides from request bodies and query parameters. Gateway aliases
+The shared execution transport forwards only documented OpenAI chat,
+completion, and embedding body fields, plus gateway-controlled retry settings.
+It strips unknown top-level fields, all query parameters, and top-level
+`metadata`, which LiteLLM consumes as routing context. Nested message content
+and tool schemas are preserved. Gateway aliases
 choose fallback targets, and each paid attempt needs its own permission and
 reservation. Paid attempts use `num_retries: 0`; a single reservation cannot
 authorize multiple potentially billable retries.
@@ -102,7 +108,10 @@ If the ledger is absent or unreadable, the UI reports spend as unknown.  An
 empty readable ledger reports zero spend.
 
 Completion estimates include prompt batches and generated candidates
-(`n` and `best_of`). Estimation follows the actual request operation, so a
+(`n` and `best_of`). When output-limit fields conflict, reservation uses the
+maximum positive limit across `max_tokens`, `max_completion_tokens`, and
+`max_output_tokens`, because adapters can select different fields.
+Estimation follows the actual request operation, so a
 provider that supports both chat and decisions uses the appropriate price
 estimate for each call. Invalid streaming options fail before reserving spend;
 known failures before transport dispatch release their reservation.
