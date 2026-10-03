@@ -44,3 +44,8 @@
 
 - Useful: `ds tldr` and `ds recent` returned the workflow and recent repository boundaries.
 - Rough edge: `ds task "Prove first-run setup from a fresh instance" --slice "Implement isolated API journey and CI" --slice "Verify native and Compose first-run plus hermetic suite" ran for more than six minutes without a task ID or usable output. I terminated that task process and continued from the explicit brief and source files. A bounded timeout or progress signal would make this usable during implementation.
+
+## 2026-10-03 — Status and Engines UI lane
+
+- Useful: `ds tldr` and `ds recent` returned workflow guidance and the shell foundation boundary.
+- Rough edge: task creation waited on another index writer without returning a task ID. I canceled it. Retrying with `--no-refresh --index=false` also returned no task output after more than a minute; I terminated that process and continued from the complete lane brief. These flags did not provide a bounded path around the index wait.
