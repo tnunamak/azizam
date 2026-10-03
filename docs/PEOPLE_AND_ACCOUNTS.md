@@ -97,6 +97,8 @@ Account tables are created additively in the existing admin database during
 boot. New job/receipt attribution uses their existing JSON storage. Build
 and deploy the static export with the Python code; use the documented safe
 restart procedure at deployment. This lane does not restart any service.
+Sign-in and invitation responses use the saved instance name from Settings,
+with the same bootstrap defaults as discovery; name changes apply immediately.
 
 Monthly request usage is `null` until a complete monthly measurement source
 exists. The diagnostic receipt store retains 14 days, so the UI says

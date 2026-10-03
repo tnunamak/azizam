@@ -660,3 +660,25 @@ def test_account_connection_closes_and_rolls_back_failed_work(account_db):
     assert rows(path, "SELECT bucket FROM account_login_limits") == [{"bucket": "temporary"}]
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         failed.execute("SELECT 1")
+
+
+def test_public_signin_options_and_invite_inspection_use_saved_instance_name_live(account_db, account_client):
+    path, plan = account_db
+    client, _ = account_client
+    _, token = accounts.create_link("invite", "owner", profile_id=plan["id"], path=path)
+
+    def assert_public_name(name):
+        options = client.get("/auth/api/options")
+        invite = client.get("/auth/api/invite", params={"token": token})
+        assert options.status_code == invite.status_code == 200
+        assert options.json()["instance_name"] == name
+        assert invite.json()["instance_name"] == name
+        assert options.headers["cache-control"] == "no-store"
+        assert invite.headers["cache-control"] == "no-store"
+
+    assert_public_name("AI Gateway")
+    for name in ("Our team's gateway", "Renamed gateway"):
+        admin_store.put_operator_setting("instance_presentation", {
+            "name": name, "base_url": "https://gateway.example.test", "theme_default": "dark",
+        }, path=path)
+        assert_public_name(name)

@@ -308,11 +308,9 @@ from gateway.runtime_auth import (
 from gateway.protocols import anthropic as anthropic_protocol
 from gateway.protocols import ollama as ollama_protocol
 
-# ======================================================================
-
+# =============================================================================
 # Configuration
-# ======================================================================
-
+# =============================================================================
 
 _default_config = Path(__file__).parent / "proxy_config.yml"
 CONFIG_PATH = Path(os.environ["AI_GATEWAY_CONFIG_PATH"]) if os.environ.get("AI_GATEWAY_CONFIG_PATH") else _default_config
@@ -921,11 +919,9 @@ VISION_MODEL_PATTERNS = [
 ]
 
 
-# ======================================================================
-
+# =============================================================================
 # Live runtime registry — hot-reload without process restart
-# ======================================================================
-
+# =============================================================================
 # Module-level names (TABBY_HOST, KOBOLD_HOST, LLM_BACKEND_HOSTS, …) are
 # Python globals: every function that references them looks up the current
 # value at call time, not at import time.  reload_runtime_config() re-derives
@@ -1063,11 +1059,9 @@ TTS_PATHS = [
     "/v1/audio/speech",
 ]
 
-# ======================================================================
-
+# =============================================================================
 # Model routing - detect backend from filesystem
-# ======================================================================
-
+# =============================================================================
 
 async def get_active_backend() -> Optional[str]:
     """Check which LLM backend is currently running.
@@ -1423,11 +1417,9 @@ async def ensure_target(
         )
 
 
-# ======================================================================
-
+# =============================================================================
 # Load credentials
-# ======================================================================
-
+# =============================================================================
 
 TABBY_ADMIN_KEY_ENV = auth_cfg.get("admin_key_env", "TABBY_ADMIN_KEY")
 TABBY_API_KEY_ENV = auth_cfg.get("api_key_env", "TABBY_API_KEY")
@@ -1455,11 +1447,9 @@ if API_KEY:
     os.environ.setdefault(TABBY_API_KEY_ENV, API_KEY)
 
 
-# ======================================================================
-
+# =============================================================================
 # Proxy auth
-# ======================================================================
-
+# =============================================================================
 
 CLIENT_AUTH_HEADERS = [
     "authorization",
@@ -2665,11 +2655,9 @@ except Exception:
     pass
 
 
-# ======================================================================
-
+# =============================================================================
 # Model compatibility
-# ======================================================================
-
+# =============================================================================
 
 compat_cfg = config.get("model_compatibility", {})
 MODEL_COMPAT_ENABLED = bool_from_config(
@@ -3541,11 +3529,9 @@ async def refresh_openai_model_aliases() -> int:
     return 0
 
 
-# ======================================================================
-
+# =============================================================================
 # State management
-# ======================================================================
-
+# =============================================================================
 
 class ProxyState:
     def __init__(self):
@@ -3593,11 +3579,9 @@ class ProxyState:
 state = ProxyState()
 
 
-# ======================================================================
-
+# =============================================================================
 # TabbyAPI subprocess management
-# ======================================================================
-
+# =============================================================================
 
 # Tabby process spawn/stop/log/wait-for-ready removed. The gateway no longer
 # owns tabby's existence — an operator who wants the gateway to *start* tabby
@@ -3749,11 +3733,9 @@ async def check_embeddings_health() -> bool:
     return await check_service_health("embeddings")
 
 
-# ======================================================================
-
+# =============================================================================
 # TTS Backend
-# ======================================================================
-
+# =============================================================================
 
 async def check_tts_health() -> bool:
     """Check if TTS backend is healthy."""
@@ -4404,11 +4386,9 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
         return _tts_error(f"TTS proxy error: {str(e)}", 502)
 
 
-# ======================================================================
-
+# =============================================================================
 # STT Backend
-# ======================================================================
-
+# =============================================================================
 
 async def check_stt_health() -> bool:
     """Check if STT backend is healthy."""
@@ -5114,11 +5094,9 @@ async def proxy_stt_request(
         return response
 
 
-# ======================================================================
-
+# =============================================================================
 # ComfyUI Backend (Image Generation)
-# ======================================================================
-
+# =============================================================================
 
 _UI_WORKFLOW_CACHE: dict[str, Optional[dict]] = {}
 
@@ -5320,11 +5298,9 @@ def _record_image_size_adjustment(
     return {"X-Vivid-Size-Adjusted": adjustment}
 
 
-# ======================================================================
-
+# =============================================================================
 # Image cache, signed URLs, and adaptive batching (Fix 1 + Fix 2)
-# ======================================================================
-
+# =============================================================================
 # Single source of truth for everything in the image hot path that needs to
 # survive restarts: VRAM-per-(workflow,size) measurements and on-disk PNG bytes.
 # Implementation rules:
@@ -8810,11 +8786,9 @@ async def proxy_comfy_variations_request(
     return response
 
 
-# ======================================================================
-
+# =============================================================================
 # ComfyUI Backend (Video Generation — Sora-shaped async API)
-# ======================================================================
-
+# =============================================================================
 #
 # Endpoints (mirror Sora 2):
 #   POST /v1/videos                     -> {video_id, status: "queued", ...}
@@ -8829,11 +8803,9 @@ async def proxy_comfy_variations_request(
 VIDEO_ID_PREFIX = "video_"
 
 
-# ======================================================================
-
+# =============================================================================
 # ComfyUI websocket listener for real-time progress
-# ======================================================================
-
+# =============================================================================
 #
 # A single long-lived websocket subscription per proxy process. ComfyUI emits
 # events keyed by `prompt_id`; we cache the latest progress so /v1/videos/{id}
@@ -10961,11 +10933,9 @@ async def proxy_comfy_video_create(
 
 
 
-# ======================================================================
-
+# =============================================================================
 # Long video: extensions, storyboards, long `seconds`
-# ======================================================================
-
+# =============================================================================
 #
 # One request makes one ComfyUI prompt (gateway/video_extend.py builds it). The
 # video id is that prompt's id, so status, content, list, delete, ownership and
@@ -12136,11 +12106,9 @@ async def proxy_comfy_video_edit(request: Request, auth_context: AuthContext) ->
     )
 
 
-# ======================================================================
-
+# =============================================================================
 # Model management
-# ======================================================================
-
+# =============================================================================
 
 async def is_model_loaded() -> bool:
     """Check if a model is currently loaded."""
@@ -12282,11 +12250,9 @@ async def unload_model() -> bool:
     return success
 
 
-# ======================================================================
-
+# =============================================================================
 # Background tasks
-# ======================================================================
-
+# =============================================================================
 
 async def maintenance_loop():
     """Background task for idle checking and health monitoring.
@@ -12322,11 +12288,9 @@ async def maintenance_loop():
                 await unload_model()
 
 
-# ======================================================================
-
+# =============================================================================
 # FastAPI app
-# ======================================================================
-
+# =============================================================================
 
 _DRIFT_CACHE_PATH = Path(__file__).parent / "cache" / "drift_status.json"
 _DRIFT_SCRIPT_PATH = Path(__file__).parent / "scripts" / "check_workflow_drift.py"
@@ -14248,6 +14212,7 @@ app.include_router(create_account_router(
     cookie_provider=_browser_admin_cookie_config,
     signing_key_provider=_browser_admin_session_signing_key,
     oidc_provider=lambda: {"enabled": _resolved_admin_oidc_config()[0].enabled},
+    instance_provider=lambda: instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults()),
 ))
 
 
@@ -21442,11 +21407,9 @@ async def videos_extend(request: Request):
     return await proxy_comfy_video_extend(request, auth_context)
 
 
-# ======================================================================
-
+# =============================================================================
 # Audio Generation via ComfyUI (ACE-Step + TangoFlux)
-# ======================================================================
-
+# =============================================================================
 
 _audio_cfg = config.get("audio", {}) or {}
 AUDIO_DEFAULT_WORKFLOW = _audio_cfg.get("default_workflow", "ace-step-1.5-2b-base")
@@ -22890,16 +22853,14 @@ async def status_favicon():
     return Response(status_code=204)
 
 
-# ======================================================================
-
+# =============================================================================
 # /v1/responses — OpenAI Responses API (spring 2025 surface).
 # Implemented as a translation layer over /v1/chat/completions. Stateful
 # conversations (previous_response_id + store=true) are persisted in
 # data/responses.db. Hosted tools (web_search, file_search, code_interpreter,
 # computer_use) are rejected with 400 — the proxy backs onto a local llama
 # server with no first-party hosted-tool surface.
-# ======================================================================
-
+# =============================================================================
 
 async def _responses_prune_loop(stop_event: asyncio.Event) -> None:
     """Hourly prune of expired Responses rows. Bounded disk."""
@@ -27139,11 +27100,9 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
 app.add_middleware(InflightMiddleware, state=DRAIN_STATE)
 
 
-# ======================================================================
-
+# =============================================================================
 # Main
-# ======================================================================
-
+# =============================================================================
 
 def _gateway_openapi() -> dict[str, Any]:
     """FastAPI's schema plus the typed native workflow surface (cached)."""

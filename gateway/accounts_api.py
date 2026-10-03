@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt
 from starlette.responses import JSONResponse
 
 from gateway import accounts, admin_store
+from gateway.settings_api import instance_settings
 from gateway.admin_api import _require_admin
 from gateway.admin_oidc import encode_session_cookie, session_from_claims, csrf_token_for_session
 
@@ -83,7 +84,8 @@ def signin_options(path, oidc: dict) -> dict:
 
 
 def create_account_router(*, path_provider: Callable, auth, session_reader, cookie_provider,
-                          signing_key_provider, oidc_provider: Callable) -> APIRouter:
+                          signing_key_provider, oidc_provider: Callable,
+                          instance_provider: Callable | None = None) -> APIRouter:
     router = APIRouter(route_class=_AccountRoute, tags=["accounts"])
 
     def owner(request: Request):
@@ -95,7 +97,10 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         return ctx
 
     def options():
-        return signin_options(path_provider(), oidc_provider())
+        result = signin_options(path_provider(), oidc_provider())
+        instance = instance_provider() if instance_provider else instance_settings(path_provider())
+        result["instance_name"] = instance["name"]
+        return result
 
     def same_origin(request: Request):
         origin = request.headers.get("origin")
@@ -144,7 +149,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         invite = accounts.inspect_invite(token, path=path_provider())
         plan = admin_store.get_profile(invite["profile_id"], path=path_provider())
         return {"plan": plan, "email": invite["email"], "expires_at": invite["expires_at"],
-                "owner_name": "The gateway owner", "instance_name": "AI Gateway"}
+                "owner_name": "The gateway owner", "instance_name": options()["instance_name"]}
 
     @router.post("/auth/api/invite/accept")
     def accept(request: Request, body: Accept):
