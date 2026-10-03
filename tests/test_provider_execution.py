@@ -878,6 +878,233 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             ).fetchall()
         self.assertEqual(rows, [("settled", "0.060015000")])
 
+    async def test_stream_search_annotations_are_part_of_actual_cost_before_cap_reuse(self) -> None:
+        import litellm
+
+        self.provider = ProviderRef(
+            id="openrouter",
+            base_url="https://openrouter.ai/api/v1",
+            protocols=("openai",),
+            api_key_env="OPENROUTER_API_KEY",
+            cost_class="paid-remote",
+            price={
+                "input_usd_per_million_tokens": "2.50",
+                "output_usd_per_million_tokens": "10.00",
+                "cost_model": "openai/gpt-4o-search-preview",
+                "dimensions": {"search": {"enabled": True}},
+            },
+            config={
+                "models": [{"id": "openai/gpt-4o-search-preview"}],
+                "litellm_model": "openai/gpt-4o-search-preview",
+            },
+        )
+        self.profile = self.profile.with_overrides(
+            remote=RemoteProviderPolicy(
+                providers=frozenset({"openrouter"}),
+                max_usd_per_request=Decimal("1.00"),
+                budget_usd_per_day=Decimal("0.01"),
+                budget_usd_per_month=Decimal("20.00"),
+            )
+        )
+        self.body = {
+            "model": "openrouter/openai/gpt-4o-search-preview",
+            "messages": [{"role": "user", "content": "search"}],
+            "max_tokens": 1,
+            "stream": True,
+        }
+
+        def stream_response() -> tuple[_Client, _Response]:
+            return (
+                _Client(),
+                _Response(
+                    headers={"content-type": "text/event-stream"},
+                    chunks=[
+                        (
+                            b'data: {"id":"chatcmpl-search","object":"chat.completion.chunk",'
+                            b'"created":1,"model":"openai/gpt-4o-search-preview",'
+                            b'"choices":[{"index":0,"delta":{"role":"assistant","content":"answer"}}]}\n\n'
+                        ),
+                        (
+                            b'data: {"id":"chatcmpl-search","object":"chat.completion.chunk",'
+                            b'"created":1,"model":"openai/gpt-4o-search-preview",'
+                            b'"choices":[{"index":0,"delta":{"annotations":[{"type":"url_citation",'
+                            b'"url_citation":{"url":"https://example.test","title":"Example",'
+                            b'"start_index":0,"end_index":6}}]}}]}\n\n'
+                        ),
+                        (
+                            b'data: {"id":"chatcmpl-search","object":"chat.completion.chunk",'
+                            b'"created":1,"model":"openai/gpt-4o-search-preview",'
+                            b'"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":1,"total_tokens":11}}\n\n'
+                        ),
+                        b"data: [DONE]\n\n",
+                    ],
+                ),
+            )
+
+        model_rows = []
+        for model in ("gpt-4o-search-preview", "openai/gpt-4o-search-preview"):
+            row = litellm.model_cost.get(model)
+            if isinstance(row, dict):
+                model_rows.append(row)
+
+        with ExitStack() as prices:
+            for row in model_rows:
+                prices.enter_context(patch.dict(row, {
+                    "search_context_cost_per_query": {
+                        "search_context_size_high": 0.035,
+                        "search_context_size_low": 0.035,
+                        "search_context_size_medium": 0.035,
+                    }
+                }))
+            cache_clear = getattr(litellm.get_model_info, "cache_clear", None)
+            if callable(cache_clear):
+                cache_clear()
+            try:
+                sdk_response = litellm.ModelResponse(
+                    id="chatcmpl-search",
+                    object="chat.completion",
+                    created=1,
+                    model="openai/gpt-4o-search-preview",
+                    choices=[
+                        {
+                            "index": 0,
+                            "message": {
+                                "role": "assistant",
+                                "content": "answer",
+                                "annotations": [
+                                    {
+                                        "type": "url_citation",
+                                        "url_citation": {
+                                            "url": "https://example.test",
+                                            "title": "Example",
+                                            "start_index": 0,
+                                            "end_index": 6,
+                                        },
+                                    }
+                                ],
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    usage=litellm.Usage(prompt_tokens=10, completion_tokens=1, total_tokens=11),
+                )
+                self.assertEqual(
+                    f"{litellm.completion_cost(completion_response=sdk_response, model='openai/gpt-4o-search-preview'):.9f}",
+                    "0.035035000",
+                )
+                statuses = []
+                for _ in range(10):
+                    response, _ = await self._execute(send=AsyncMock(side_effect=lambda *_a, **_k: stream_response()))
+                    statuses.append(response.status_code)
+                    await _body(response)
+            finally:
+                if callable(cache_clear):
+                    cache_clear()
+
+        self.assertEqual(statuses, [200, *([403] * 9)])
+        with sqlite3.connect(self.ledger) as conn:
+            rows = conn.execute(
+                "SELECT status, actual_usd FROM provider_spend ORDER BY id"
+            ).fetchall()
+            total = conn.execute(
+                "SELECT COALESCE(SUM(CAST(actual_usd AS REAL)), 0) FROM provider_spend WHERE status = 'settled'"
+            ).fetchone()[0]
+        self.assertEqual(rows, [("settled", "0.035035000")])
+        self.assertEqual(f"{total:.9f}", "0.035035000")
+
+    async def test_paid_defaults_reject_implicit_search_online_realtime_billing(self) -> None:
+        cases = [
+            (
+                "search-model-name",
+                {
+                    "models": [{"id": "openai/gpt-4o-search-preview"}],
+                    "body_model": "openrouter/openai/gpt-4o-search-preview",
+                },
+            ),
+            (
+                "online-model-modifier",
+                {
+                    "models": [{"id": "openai/gpt-4.1-mini:online"}],
+                    "body_model": "openrouter/openai/gpt-4.1-mini:online",
+                },
+            ),
+            (
+                "realtime-model-name",
+                {
+                    "models": [{"id": "openai/gpt-4o-realtime-preview"}],
+                    "body_model": "openrouter/openai/gpt-4o-realtime-preview",
+                },
+            ),
+            (
+                "search-price-table",
+                {
+                    "models": [{"id": "openai/gpt-4.1-mini"}],
+                    "body_model": "openrouter/openai/gpt-4.1-mini",
+                    "price_extra": {"search_context_cost_per_query": {"search_context_size_medium": 0.035}},
+                },
+            ),
+        ]
+        for name, case in cases:
+            with self.subTest(name=name):
+                self.receipts.clear()
+                if self.ledger.exists():
+                    self.ledger.unlink()
+                price = {
+                    "input_usd_per_million_tokens": "2.50",
+                    "output_usd_per_million_tokens": "10.00",
+                    **case.get("price_extra", {}),
+                }
+                self.provider = ProviderRef(
+                    id="openrouter",
+                    base_url="https://openrouter.ai/api/v1",
+                    protocols=("openai",),
+                    api_key_env="OPENROUTER_API_KEY",
+                    cost_class="paid-remote",
+                    price=price,
+                    config={"models": case["models"]},
+                )
+                self.body = {
+                    "model": case["body_model"],
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "max_tokens": 1,
+                }
+                send = AsyncMock()
+
+                response, _ = await self._execute(send=send)
+
+                self.assertEqual(response.status_code, 400)
+                body = json.loads((await _body(response)).decode())
+                self.assertEqual(body["error"]["code"], "paid_option_unsupported")
+                send.assert_not_called()
+                self.assertFalse(self.ledger.exists())
+
+    def test_paid_declared_search_dimension_allows_implicit_search_indicator(self) -> None:
+        provider = ProviderRef(
+            id="openrouter",
+            base_url="https://openrouter.ai/api/v1",
+            protocols=("openai",),
+            api_key_env="OPENROUTER_API_KEY",
+            cost_class="paid-remote",
+            price={
+                "input_usd_per_million_tokens": "2.50",
+                "output_usd_per_million_tokens": "10.00",
+                "search_context_cost_per_query": {"search_context_size_medium": 0.035},
+                "dimensions": {"search": {"enabled": True}},
+            },
+            config={"models": [{"id": "openai/gpt-4o-search-preview"}]},
+        )
+
+        payload = provider_execution._paid_priced_outbound_payload(
+            {
+                "model": "openrouter/openai/gpt-4o-search-preview",
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 1,
+            },
+            provider=provider,
+        )
+
+        self.assertIsInstance(payload, dict)
+
     async def test_stream_success_without_actual_cost_keeps_reservation_open(self) -> None:
         self.body = {**self.body, "stream": True}
         send = AsyncMock(
