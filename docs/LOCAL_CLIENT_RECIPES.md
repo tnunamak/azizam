@@ -67,6 +67,9 @@ on 2026-10-02; those scripts are not part of the test suite.
 | | Results | `resource_link` blocks that point at signed asset URLs; no base64 | same |
 | | Resources, prompts, sampling, elicitation, tasks, `subscriptions/listen`, SSE streams, `GET /mcp`, session ids | Unsupported: `-32601` or 405 | same |
 | | External image URLs as tool inputs | Unsupported: tool error. Use a data URI or an asset id from an earlier result. | same |
+| **OpenAI Realtime** (`wss://.../v1/realtime`, `/openai/v1/realtime`) | WebSocket session: `session.update` (instructions, voice, tools, server VAD, PCM16 24 kHz), `input_audio_buffer.append`, `speech_started`/`speech_stopped`, input transcription, `response.create`/`cancel`, audio and transcript deltas, function calls, `response.done` | Works | `tests/test_realtime_proxy.py` (relay and auth); Live: `openai` Python 2.28.0 `realtime.connect` and `@openai/agents` 0.14.3 `RealtimeSession` (voice turns, barge-in, function call) |
+| | Turn handling, tools, barge-in | Done by the sibling Hugging Face `speech-to-speech` service, not the gateway. About 1.5 to 2 s from end of speech to first audio. | same |
+| | WebRTC (`/v1/realtime/calls`), `client_secrets`, SIP, `conversation.item.truncate` (accepted, no effect), server-side audio formats other than PCM16 24 kHz, `semantic_vad` | Not supported, or not tested | documented gap |
 | **A1111 / SD WebUI** (`/sdapi/v1`, host root) | `txt2img`, `options`, `sd-models`, `samplers`, `schedulers`, `upscalers`, `latent-upscale-modes`, `sd-vae`, `progress`, `interrupt` | Works | `tests/test_a1111_api.py`; Live: SillyTavern 1.18.0 server code against a temporary gateway |
 | | Hires fix, `restore_faces`, ADetailer and other scripts, LoRA tags, styles, variation seeds | Unsupported: 422 that names the field | same |
 | | Negative prompt, sampler, scheduler, `cfg_scale`, `clip_skip` on a model that does not use them | Dropped; the names are in the `x-gateway-ignored-params` header | same |
@@ -929,6 +932,58 @@ Notes:
 - Scores are model scores in 0..1. They compare documents within one request. Do not reuse a threshold from
   another reranker.
 - A key may rerank when its profile allows `text.embeddings`.
+
+## Recipe: OpenAI Realtime (voice agents)
+
+`/v1/realtime` is the OpenAI Realtime WebSocket. The gateway does not run the protocol. It checks the key and
+relays frames to a sibling service, Hugging Face `speech-to-speech` (voice activity detection, turn detection,
+barge-in, tools), which in turn calls this gateway's own routes:
+
+| Slot | Gateway call | Setting |
+|---|---|---|
+| Hear | `POST /v1/audio/transcriptions` | model `stt-fast` |
+| Think | `POST /v1/chat/completions` | model `current`, `reasoning_effort: none` (thinking off), streamed |
+| Speak | `POST /v1/audio/speech` | model `tts-fast` (Supertonic), `response_format=pcm`; `tts-1` (Chatterbox) is a drop-in option |
+
+Silero VAD and Smart Turn run on the CPU. The service uses no GPU and loads no model of its own.
+
+```python
+from openai import OpenAI
+client = OpenAI(api_key=KEY, base_url="http://127.0.0.1:5000/v1", websocket_base_url="ws://127.0.0.1:5000/v1")
+with client.realtime.connect(model="gpt-realtime") as conn:     # the model name is ignored
+    conn.session.update(session={"type": "realtime", "instructions": "Answer in one short sentence.",
+        "audio": {"input": {"format": {"type": "audio/pcm", "rate": 24000}, "turn_detection": {"type": "server_vad"}},
+                  "output": {"format": {"type": "audio/pcm", "rate": 24000}, "voice": "alloy"}}})
+    # send 24 kHz mono PCM16 with conn.input_audio_buffer.append(audio=<base64>) in 20 ms chunks;
+    # read response.output_audio.delta events. Send a little silence after speech so the VAD can end the turn.
+```
+
+`@openai/agents` works too: `new RealtimeSession(agent, {transport: new OpenAIRealtimeWebSocket(), model: "gpt-realtime"})`
+and `session.connect({apiKey: KEY, url: "ws://127.0.0.1:5000/v1/realtime?model=gpt-realtime"})`. Function tools
+run in the SDK as usual.
+
+Notes:
+
+- Auth is the one of the other routes: a trusted LAN client needs no key; otherwise send `Authorization: Bearer`,
+  `?api_key=`, or (browsers) the `openai-insecure-api-key.<key>` subprotocol. A refused upgrade is a plain HTTP 401
+  or 403. The key's profile must allow transcription, chat and speech, because a voice session uses all three.
+- Real numbers, 5 voice turns (2026-10-03): end of speech to first audio 1.5 to 2.0 s (median 1.6 s). That is
+  speech-to-text 0.2 to 0.8 s, then the model's first sentence 0.7 to 1.5 s (time to first token about 0.33 s), then
+  Supertonic's first audio 0.26 to 0.30 s.
+- The language model has one slot, shared with every other client. A voice session takes it for each turn.
+  Measured effect on a 95 000-token prefix held by another client: the next request from that client still reused
+  the whole prefix and paid about 0.8 s extra to swap it back in (no re-processing).
+- The service holds 2 sessions at once (`REALTIME_POOL_SIZE`). A third gets an `error` event.
+- The first connection after the service was down can take longer than 10 s (it warms its three slots, about 16 s),
+  and the Python SDK gives up at 10 s. Keep the unit enabled so it is already running.
+- Not provided: WebRTC (`/v1/realtime/calls`), `client_secrets`, SIP. `conversation.item.truncate` is accepted and has
+  no effect.
+
+Deployment: `docs/ops/speech-to-speech.service` (install in `~/.config/systemd/user/`, then
+`systemctl --user enable --now speech-to-speech`). The service lives in `~/applications/speech-to-speech`
+(`run.sh` holds all flags; the package is pinned to release tag `v1.0.0` in a uv venv with CPU torch). After the
+first deploy, add the backend to the DB-owned registry:
+`./venv/bin/python scripts/local/register_service_from_config.py realtime --apply`.
 
 ## Recipe: Open WebUI
 

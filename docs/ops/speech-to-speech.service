@@ -10,6 +10,8 @@ After=network.target
 Type=simple
 Environment=CUDA_VISIBLE_DEVICES=
 Environment=HF_HOME=%h/.cache/huggingface
+# Models are cached after the first start (Silero VAD, Smart Turn); never reach for the Hub at runtime.
+Environment=HF_HUB_OFFLINE=1
 # One pipeline per concurrent session. They share the gateway's single LLM slot, so more than 2 only queues.
 Environment=REALTIME_POOL_SIZE=2
 Environment=REALTIME_PORT=8021
