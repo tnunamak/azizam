@@ -271,11 +271,11 @@ def test_receipt_store_evidence_reads_internal_metadata_status_code(tmp_path: Pa
     receipt_store.init_db(db)
     now = int(time.time())
     old = RouteReceipt(protocol="openai", intent="chat.completions", backend="svc")
-    old.finish("ok")
+    old.finish("ok", now_ms=(now - 2) * 1000)
     receipt_store.record(old, created_at=now - 2, path=db)
     failed = RouteReceipt(protocol="openai", intent="chat.completions", backend="svc")
     failed.metadata["status_code"] = 503
-    failed.finish("error")
+    failed.finish("error", now_ms=(now - 1) * 1000)
     receipt_store.record(failed, created_at=now - 1, path=db)
 
     evidence = evidence_from_receipt_store(db, now_s=now, max_age_s=900)

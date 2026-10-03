@@ -789,6 +789,12 @@ def _services_mapping(service_records: Mapping[str, Any]) -> dict[str, Mapping[s
     return out
 
 
+class HealthProbeNoResponse(Exception):
+    def __init__(self, *, status_code: int | None = None) -> None:
+        super().__init__(f"health probe returned HTTP {status_code}" if status_code is not None else "health probe did not respond")
+        self.status_code = status_code
+
+
 async def probe_service_health(
     service_records: Mapping[str, Any],
     *,
@@ -823,11 +829,24 @@ async def probe_service_health(
                 "source": None,
                 "observed_at_s": int(time.time()),
             }
+        missing_route = False
         try:
             payload = await get_json(endpoint)
+        except HealthProbeNoResponse as exc:
+            missing_route = exc.status_code in {404, 405}
+            payload = None
         except Exception:  # noqa: BLE001
             payload = None
         if not isinstance(payload, Mapping):
+            if missing_route:
+                return service_id, {
+                    "available": None,
+                    "status": "unknown",
+                    "reason": "Health endpoint did not respond",
+                    "source": "health",
+                    "kind": "no_response",
+                    "observed_at_s": int(time.time()),
+                }
             return service_id, {
                 "available": False,
                 "status": "unavailable",

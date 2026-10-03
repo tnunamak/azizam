@@ -161,6 +161,7 @@ from gateway.models_catalog import (
     build_models_catalog,
     create_models_catalog_router,
     registered_model_capabilities,
+    HealthProbeNoResponse,
     probe_service_health,
 )
 from gateway.workflows_catalog import (
@@ -14658,7 +14659,7 @@ async def _models_catalog_health_evidence(
         async with httpx.AsyncClient(timeout=0.75) as client:
             response = await client.get(url)
         if response.status_code >= 400:
-            return None
+            raise HealthProbeNoResponse(status_code=response.status_code)
         payload = response.json()
         return payload if isinstance(payload, Mapping) else {}
 

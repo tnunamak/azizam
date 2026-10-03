@@ -265,7 +265,7 @@ def run(compose):
         headers["If-Match"] = registry.headers["etag"]
         created = expect(client.post("/admin/api/operator/services", headers=headers, json={
             "name": "First chat engine", "preset": "openai-compatible", "base_url": engine_url,
-            "health_endpoint": "/health-not-implemented",
+            "health_endpoint": "/v1/models",
             "capabilities": ["chat"], "models": [{"public": MODEL, "upstream": MODEL}]
         }), 201).json()["service_registry"]
         service = next(row for row in created["services"].values() if row["name"] == "First chat engine")
@@ -310,6 +310,10 @@ def run(compose):
         if content != ANSWER:
             raise RuntimeError("Chat content did not match the deterministic engine answer")
         print(f"PASS authenticated chat: {ANSWER}", flush=True)
+        registry = expect(client.get("/admin/api/operator/service-registry"), 200)
+        headers["If-Match"] = registry.headers["etag"]
+        expect(client.patch(f"/admin/api/operator/services/{service['id']}", headers=headers,
+            json={"health_endpoint": "/health-not-implemented"}), 200)
         assert_catalog_ready_after_chat(client)
         assert_shared_availability_after_chat(client, key, service["id"])
     print("PASS teardown: processes, Compose resources, and temporary state removed", flush=True)
