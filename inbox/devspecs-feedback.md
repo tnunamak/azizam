@@ -39,3 +39,8 @@
 
 - Useful: `ds tldr` made the intended bounded-hotfix workflow clear.
 - Rough edge: `ds task --quick` spent about 29 seconds indexing and created an untracked `devspecs/tasks/...` pack, but returned no task identifier or usable prompt. The implementation still needed manual source/test orientation, and the generated artifact required cleanup.
+
+## 2026-10-03 — first-run automation lane
+
+- Useful: `ds tldr` and `ds recent` returned the workflow and recent repository boundaries.
+- Rough edge: `ds task "Prove first-run setup from a fresh instance" --slice "Implement isolated API journey and CI" --slice "Verify native and Compose first-run plus hermetic suite" ran for more than six minutes without a task ID or usable output. I terminated that task process and continued from the explicit brief and source files. A bounded timeout or progress signal would make this usable during implementation.

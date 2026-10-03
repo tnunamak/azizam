@@ -1215,7 +1215,7 @@ class ServicePatchRoundTripTests(unittest.TestCase):
         )
         config = registry["services"]["first-chat"]["config"]
         self.assertEqual(config["model_policy_schema_version"], service_registry.MODEL_POLICY_SCHEMA_VERSION)
-        self.assertEqual(config["models"], [{"model_group": "chat", "upstream_model": "engine-model"}])
+        self.assertEqual(config["models"], [{"id": "chat", "model_group": "chat", "upstream_model": "engine-model"}])
 
     def test_add_preserves_explicit_model_policy_schema(self) -> None:
         registry = self.store.add_service(

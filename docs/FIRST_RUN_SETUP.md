@@ -82,6 +82,10 @@ volumes:
 The LiteLLM sidecar image is pinned to the same LiteLLM version used by the
 Python dependency lock: `ghcr.io/berriai/litellm:1.86.2` at digest
 `sha256:cae1ac3492d6d0bea69c26f4485381624e073eb753f3534ae7703a4204a4ce6b`.
+The gateway Docker image, native quickstart, and CI install Python packages
+from the existing `tests/requirements-hermetic.lock` with hash verification.
+That reviewed closure includes test tooling; no package versions are upgraded
+for first-run. The Docker installer is uv 0.12.21, pinned by image digest.
 
 ## Short Path
 
