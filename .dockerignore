@@ -3,7 +3,9 @@
 
 # Operator-local config and secrets -- never bake into the image
 proxy_config.yml
-.env.local
+proxy_api_keys.yml
+.env
+.env.*
 *.local
 
 # Claude Code / worktree tooling
@@ -28,7 +30,8 @@ tmp/
 logs/
 
 # Dev/test artifacts
-tests/
+tests/*
+!tests/requirements-hermetic.lock
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

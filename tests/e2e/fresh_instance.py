@@ -147,8 +147,9 @@ def run(compose):
                                 "LITELLM_LOCAL_MODEL_COST_MAP": "True",
                                 "DO_NOT_TRACK": "1",
                             }},
-                "fake-engine": {"image": f"{project}-gateway", "command": ["python3", "tests/e2e/fake_engine.py",
+                "fake-engine": {"image": f"{project}-gateway", "command": ["python3", "/fake_engine.py",
                     "--host", "0.0.0.0", "--port", "18001"],
+                    "volumes": [f"{source / 'tests/e2e/fake_engine.py'}:/fake_engine.py:ro"],
                     "restart": "no"}
             }}))
             env["OPENAI_PROXY_PORT"] = str(gateway_port)
