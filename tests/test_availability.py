@@ -2,11 +2,38 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+import pytest
 
 from gateway import receipt_store
 from gateway.availability import evidence_from_receipt_store, evidence_from_receipts, evidence_from_status_rows, merge_evidence, project_capabilities, project_service
 from gateway.capabilities import Capability
 from gateway.receipts import RouteReceipt
+
+
+@pytest.mark.parametrize("observed,expected", [
+    ("active", "running"),
+    ("activating", "starting"),
+    ("deactivating", "draining"),
+    ("failed", "failed"),
+    ("inactive", "stopped"),
+    ("unknown", "unmanaged"),
+    ("unexpected", "unmanaged"),
+])
+def test_systemd_status_observes_process_state_without_health_probe(monkeypatch, observed, expected):
+    import asyncio
+    from gateway import lifecycle_drivers
+
+    class Process:
+        async def communicate(self):
+            return observed.encode(), b""
+
+    async def create_process(*command, **kwargs):
+        assert command == ("systemctl", "--user", "is-active", "fake.service")
+        return Process()
+
+    monkeypatch.setattr(lifecycle_drivers.asyncio, "create_subprocess_exec", create_process)
+    service = {"lifecycle": {"driver": "systemd", "driver_config": {"unit": "fake.service", "scope": "user"}}}
+    assert asyncio.run(lifecycle_drivers.SystemdDriver().status(service)) == expected
 
 
 def test_no_health_endpoint_projects_unknown_not_unavailable():

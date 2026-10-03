@@ -60,7 +60,7 @@ class StatusServiceHistoryTests(unittest.TestCase):
     def test_probe_exposes_service_id_from_backend_key(self) -> None:
         class FakeClient:
             async def get(self, _url: str):
-                return SimpleNamespace(status_code=200)
+                return SimpleNamespace(status_code=200, json=lambda: {"ready": True})
 
         row = asyncio.run(
             status_endpoint._probe(
