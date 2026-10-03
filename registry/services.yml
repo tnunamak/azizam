@@ -25,3 +25,30 @@ records:
       type: external
       managed: false
       service_name: litellm
+  - id: openrouter
+    name: OpenRouter
+    kind: provider
+    source: builtin
+    enabled: false
+    priority: 100
+    role: optional
+    capabilities:
+      - openai-compatible
+    config:
+      provider_id: openrouter
+      provider_type: paid-remote
+      protocol: openai-compatible
+      protocols:
+        - openai-compatible
+      base_url: https://openrouter.ai/api/v1
+      api_key_env: OPENROUTER_API_KEY
+      generation_stats:
+        path: /generation
+        id_param: id
+        cost_path:
+          - data
+          - total_cost
+    lifecycle:
+      type: external
+      managed: false
+      service_name: ""

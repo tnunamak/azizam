@@ -84,6 +84,10 @@ class BudgetExceeded(ProviderError):
     code = "budget_exceeded"
 
 
+class ProviderNeedsReconciliation(BudgetExceeded):
+    code = "provider_needs_reconciliation"
+
+
 class ProviderAuthFailed(ProviderError):
     status_code = 502
     code = "provider_auth_failed"
@@ -259,6 +263,7 @@ def require_remote_allowed(
 def ensure_ledger(path: Path = DEFAULT_LEDGER_PATH) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS provider_spend (
@@ -270,10 +275,16 @@ def ensure_ledger(path: Path = DEFAULT_LEDGER_PATH) -> None:
                 actual_usd TEXT,
                 cost_source TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
-                settled_at INTEGER
+                settled_at INTEGER,
+                request_id TEXT,
+                generation_id TEXT
             )
             """
         )
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(provider_spend)")}
+        for name in ("request_id", "generation_id"):
+            if name not in columns:
+                conn.execute(f"ALTER TABLE provider_spend ADD COLUMN {name} TEXT")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_provider_spend_window "
             "ON provider_spend(provider, profile_id, created_at, status)"
@@ -314,6 +325,12 @@ def reserve_provider_spend(
     with sqlite3.connect(path, isolation_level=None) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
+            _enforce_reconciliation_clear(
+                conn,
+                profile=profile,
+                provider=provider,
+                provider_admin=provider_admin,
+            )
             _enforce_window_cap(
                 conn,
                 profile=profile,
@@ -427,20 +444,82 @@ def settle_provider_spend(
     now: int | None = None,
 ) -> None:
     actual = None if actual_cost is None else actual_cost.usd
-    if actual is None:
-        return
-    settled_amount = _quantize_usd(actual)
+    settled_amount = None if actual is None else _quantize_usd(actual)
     timestamp = int(now if now is not None else time.time())
     ensure_ledger(path)
     with sqlite3.connect(path) as conn:
         conn.execute(
             """
             UPDATE provider_spend
-            SET status = 'settled', actual_usd = ?, settled_at = ?
-            WHERE id = ? AND status = 'reserved'
+            SET status = ?, actual_usd = ?, settled_at = ?, cost_source = ?
+            WHERE id = ? AND status IN ('reserved', 'needs_reconciliation')
             """,
-            (str(settled_amount), timestamp, reservation.id),
+            ("needs_reconciliation" if settled_amount is None else "settled",
+             None if settled_amount is None else str(settled_amount), timestamp,
+             actual_cost.source if actual_cost is not None else "unknown", reservation.id),
         )
+
+
+def identify_provider_spend(
+    reservation: Reservation, *, request_id: str | None = None,
+    generation_id: str | None = None, path: Path = DEFAULT_LEDGER_PATH,
+) -> None:
+    ensure_ledger(path)
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE provider_spend SET request_id = COALESCE(?, request_id), "
+            "generation_id = COALESCE(?, generation_id) WHERE id = ?",
+            (request_id, generation_id, reservation.id),
+        )
+
+
+def list_provider_reconciliations(
+    *, path: Path = DEFAULT_LEDGER_PATH, provider_id: str | None = None,
+) -> list[dict[str, Any]]:
+    ensure_ledger(path)
+    with sqlite3.connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        where = "status = 'needs_reconciliation'"
+        params = []
+        if provider_id is not None:
+            where += " AND lower(provider) = ?"
+            params.append(canonical_provider_id(provider_id))
+        return [dict(row) for row in conn.execute(
+            f"SELECT * FROM provider_spend WHERE {where} ORDER BY id", params)]
+
+
+def reconcile_provider_spend(
+    reservation_id: int, actual_usd: object, *, provider_id: str,
+    path: Path = DEFAULT_LEDGER_PATH, source: str = "owner-reported",
+) -> dict[str, Any]:
+    try:
+        amount = _decimal_or_none(actual_usd)
+    except InvalidOperation as exc:
+        raise ValueError("actual_usd is too large") from exc
+    if amount is None:
+        raise ValueError("actual_usd must be a finite nonnegative USD amount")
+    try:
+        amount = _quantize_usd(amount)
+    except InvalidOperation as exc:
+        raise ValueError("actual_usd is too large") from exc
+    ensure_ledger(path)
+    with sqlite3.connect(path, isolation_level=None) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT * FROM provider_spend WHERE id = ? AND lower(provider) = ?",
+                           (reservation_id, canonical_provider_id(provider_id))).fetchone()
+        if row is None:
+            conn.execute("ROLLBACK")
+            raise LookupError("provider charge was not found")
+        if row["status"] != "needs_reconciliation":
+            conn.execute("ROLLBACK")
+            raise ValueError("provider charge does not need reconciliation")
+        conn.execute("UPDATE provider_spend SET status = 'settled', actual_usd = ?, "
+                     "cost_source = ?, settled_at = ? WHERE id = ?",
+                     (str(amount), source, int(time.time()), reservation_id))
+        result = dict(conn.execute("SELECT * FROM provider_spend WHERE id = ?", (reservation_id,)).fetchone())
+        conn.execute("COMMIT")
+        return result
 
 
 def release_provider_spend(
@@ -612,6 +691,12 @@ async def call_typesafe_systemone(
         release_provider_spend(reservation, path=ledger_path)
         raise
     finally:
+        # If a response was opaque or interrupted, its charge remains unknown.
+        # Known settlements and proven unbilled rejections remain terminal.
+        with sqlite3.connect(ledger_path) as conn:
+            conn.execute("UPDATE provider_spend SET status = 'needs_reconciliation', settled_at = ? "
+                         "WHERE id = ? AND status = 'reserved'",
+                         (int(time.time()), reservation.id))
         if close_client:
             await client.aclose()
 
@@ -689,6 +774,49 @@ def _has_any_cap(
     )
 
 
+def _enforce_reconciliation_clear(
+    conn: sqlite3.Connection,
+    *,
+    profile: AppProfile,
+    provider: ProviderRef,
+    provider_admin: Mapping[str, Any],
+) -> None:
+    if not _has_any_cap(profile, provider, provider_admin):
+        return
+    provider_id = canonical_provider_id(provider.id)
+    provider_pending = conn.execute(
+        "SELECT id FROM provider_spend WHERE lower(provider) = ? AND status = 'needs_reconciliation' LIMIT 1",
+        (provider_id,),
+    ).fetchone()
+    if provider_pending is not None:
+        raise BudgetExceeded(
+            f"provider {provider_id!r} needs reconciliation before more paid requests can be admitted"
+        )
+    if (
+        profile.remote.budget_usd_per_day is not None
+        or profile.remote.budget_usd_per_month is not None
+    ):
+        profile_pending = conn.execute(
+            "SELECT id FROM provider_spend WHERE profile_id = ? AND status = 'needs_reconciliation' LIMIT 1",
+            (profile.id,),
+        ).fetchone()
+        if profile_pending is not None:
+            raise BudgetExceeded(
+                f"access plan {profile.id!r} needs provider spend reconciliation before more paid requests can be admitted"
+            )
+    if (
+        _admin_global_cap(provider_admin, "daily") is not None
+        or _admin_global_cap(provider_admin, "monthly") is not None
+    ):
+        global_pending = conn.execute(
+            "SELECT id FROM provider_spend WHERE status = 'needs_reconciliation' LIMIT 1"
+        ).fetchone()
+        if global_pending is not None:
+            raise BudgetExceeded(
+                "provider spend needs reconciliation before more paid requests can be admitted"
+            )
+
+
 def _enforce_window_cap(
     conn: sqlite3.Connection,
     *,
@@ -702,6 +830,20 @@ def _enforce_window_cap(
 ) -> None:
     if cap is None:
         return
+    # Unknown completed charges must not age out of the admission barrier.
+    # Only an actual settlement can establish how much budget remains.
+    where = "status = 'needs_reconciliation'"
+    params: list[Any] = []
+    if profile is not None:
+        where += " AND profile_id = ?"
+        params.append(profile.id)
+    if provider is not None:
+        where += " AND lower(provider) = ?"
+        params.append(canonical_provider_id(provider))
+    if conn.execute(f"SELECT 1 FROM provider_spend WHERE {where} LIMIT 1", params).fetchone():
+        raise ProviderNeedsReconciliation(
+            f"{label} spend needs reconciliation; an owner must reconcile unknown charges before more paid requests"
+        )
     provider_total = _window_total(
         conn,
         provider=provider,
@@ -725,7 +867,7 @@ def _window_total(
     profile_id: str | None,
     since: int,
 ) -> Decimal:
-    where = "created_at >= ? AND status IN ('reserved', 'settled')"
+    where = "created_at >= ? AND status IN ('reserved', 'settled', 'needs_reconciliation')"
     params: list[Any] = [since]
     if profile_id is not None:
         where += " AND profile_id = ?"

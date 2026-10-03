@@ -637,7 +637,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsInstance(payload, dict)
 
-    async def test_paid_estimator_sees_exact_sanitized_outbound_payload(self) -> None:
+    async def test_paid_estimator_sees_sanitized_payload_with_resolved_model(self) -> None:
         self.body = {
             "model": "openrouter/openai/gpt-4.1-mini",
             "messages": [{"role": "user", "content": "hi"}],
@@ -692,7 +692,14 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             response, _ = await self._execute(send=AsyncMock(side_effect=send))
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(estimated_payloads, outbound_payloads)
+        self.assertEqual(len(estimated_payloads), 1)
+        self.assertEqual(len(outbound_payloads), 1)
+        self.assertEqual(estimated_payloads[0]["model"], "openai/gpt-4.1-mini")
+        self.assertEqual(outbound_payloads[0]["model"], "openrouter/openai/gpt-4.1-mini")
+        self.assertEqual(
+            {key: value for key, value in estimated_payloads[0].items() if key != "model"},
+            {key: value for key, value in outbound_payloads[0].items() if key != "model"},
+        )
         self.assertEqual(estimated_payloads[0]["max_tokens"], 8)
         self.assertNotIn("max_completion_tokens", estimated_payloads[0])
         self.assertEqual(
@@ -1083,7 +1090,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             rows = conn.execute(
                 "SELECT status, actual_usd FROM provider_spend ORDER BY id"
             ).fetchall()
-        self.assertEqual(rows, [("reserved", None)])
+        self.assertEqual(rows, [("needs_reconciliation", None)])
 
     async def test_paid_defaults_reject_implicit_search_online_realtime_billing(self) -> None:
         cases = [
@@ -1218,7 +1225,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             rows = conn.execute(
                 "SELECT status, actual_usd FROM provider_spend"
             ).fetchall()
-        self.assertEqual(rows, [("reserved", None)])
+        self.assertEqual(rows, [("needs_reconciliation", None)])
 
     async def test_stream_unknown_usage_extension_keeps_reservation_open(self) -> None:
         self.body = {**self.body, "stream": True}
@@ -1242,7 +1249,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             rows = conn.execute(
                 "SELECT status, actual_usd FROM provider_spend"
             ).fetchall()
-        self.assertEqual(rows, [("reserved", None)])
+        self.assertEqual(rows, [("needs_reconciliation", None)])
 
     async def test_paid_fallback_denied_without_profile_opt_in_before_provider_call(self) -> None:
         send = AsyncMock()

@@ -368,10 +368,12 @@ async def openai(
                     timeout=DEFAULT_DECISION_TIMEOUT_S,
                 )
             providers.attach_cost_to_receipt(receipt, cost, usage)
-            if reservation is not None and cost.usd is not None:
+            if reservation is not None and (cost.usd is not None or upstream_status not in {401, 429}):
                 providers.settle_provider_spend(reservation, cost, path=ledger_path)
             elif reservation is not None and upstream_status in {401, 429}:
                 providers.release_provider_spend(reservation, path=ledger_path)
+            if reservation is not None and upstream_status not in {401, 429}:
+                receipt.cost.update({"reservation_id": reservation.id, "reconciliation_status": "needs_reconciliation" if cost.usd is None else "settled"})
             receipt.set_policy_decision("allowed", source="gateway:remote-provider")
             owner.report(status="succeeded" if upstream_status < 400 else "failed", reason="completed" if upstream_status < 400 else "failed")
             headers = {

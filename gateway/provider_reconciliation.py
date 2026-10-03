@@ -1,0 +1,136 @@
+"""Provider-side reconciliation helpers.
+
+The gateway can recover some unknown paid-provider charges after dispatch by
+asking a provider-owned metadata endpoint for the final generation cost.  The
+endpoint shape is provider configuration, not production code: this module only
+knows how to issue one configured GET request and read one configured JSON path.
+"""
+
+from __future__ import annotations
+
+import os
+from collections.abc import Mapping, Sequence
+from decimal import Decimal, InvalidOperation
+from typing import Any
+
+import httpx
+
+from gateway.providers import Cost, ProviderRef
+
+DEFAULT_STATS_TIMEOUT = httpx.Timeout(10.0)
+
+
+async def lookup_generation_cost(
+    provider: ProviderRef,
+    generation_id: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+) -> Cost:
+    """Return provider-reported generation cost, or unknown on any failure."""
+
+    generation_id = str(generation_id or "").strip()
+    stats_config = (
+        provider.config.get("generation_stats")
+        if isinstance(provider.config, Mapping)
+        else None
+    )
+    if not generation_id or not isinstance(stats_config, Mapping):
+        return _unknown_cost(provider)
+
+    path = _stats_path(stats_config)
+    id_param = _stats_id_param(stats_config)
+    cost_path = _stats_cost_path(stats_config)
+    if path is None or id_param is None or cost_path is None:
+        return _unknown_cost(provider)
+
+    token = _provider_token(provider)
+    if token is None:
+        return _unknown_cost(provider)
+
+    close_client = client is None
+    active_client = client or httpx.AsyncClient(
+        timeout=DEFAULT_STATS_TIMEOUT,
+        follow_redirects=False,
+        trust_env=False,
+    )
+    try:
+        response = await active_client.get(
+            _join_url(provider.base_url, path),
+            params={id_param: generation_id},
+            headers={"Authorization": f"Bearer {token}"},
+            follow_redirects=False,
+        )
+        if response.status_code != 200:
+            return _unknown_cost(provider)
+        payload = response.json()
+        cost = _decimal_at_path(payload, cost_path)
+        if cost is None or cost < 0:
+            return _unknown_cost(provider)
+        return Cost(cost, "provider-generation-stats", provider.id)
+    except (httpx.HTTPError, ValueError, TypeError, InvalidOperation):
+        return _unknown_cost(provider)
+    finally:
+        if close_client:
+            await active_client.aclose()
+
+
+def _unknown_cost(provider: ProviderRef) -> Cost:
+    return Cost(None, "provider-generation-stats-unavailable", provider.id)
+
+
+def _stats_path(config: Mapping[str, Any]) -> str | None:
+    path = config.get("path")
+    if not isinstance(path, str):
+        return None
+    path = path.strip()
+    if not path or "://" in path:
+        return None
+    return "/" + path.lstrip("/")
+
+
+def _stats_id_param(config: Mapping[str, Any]) -> str | None:
+    param = config.get("id_param")
+    if not isinstance(param, str):
+        return None
+    param = param.strip()
+    return param or None
+
+
+def _stats_cost_path(config: Mapping[str, Any]) -> tuple[str, ...] | None:
+    path = config.get("cost_path")
+    if not isinstance(path, Sequence) or isinstance(path, (str, bytes)):
+        return None
+    out = tuple(str(part).strip() for part in path if str(part).strip())
+    return out or None
+
+
+def _provider_token(provider: ProviderRef) -> str | None:
+    if not provider.api_key_env:
+        return None
+    value = os.environ.get(provider.api_key_env)
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
+
+
+def _join_url(base_url: str, path: str) -> str:
+    return f"{str(base_url).rstrip('/')}{path}"
+
+
+def _decimal_at_path(payload: Any, path: tuple[str, ...]) -> Decimal | None:
+    value = payload
+    for part in path:
+        if not isinstance(value, Mapping) or part not in value:
+            return None
+        value = value[part]
+    return _decimal_or_none(value)
+
+
+def _decimal_or_none(value: Any) -> Decimal | None:
+    if isinstance(value, bool) or value in (None, ""):
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError):
+        return None
