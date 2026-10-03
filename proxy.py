@@ -12415,6 +12415,7 @@ async def _workflow_drift_loop(stop_event: asyncio.Event) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """App lifespan manager."""
+    providers.recover_provider_spend(path=ADMIN_DB_PATH.parent / "provider_spend.db")
     print(f"[proxy] Vivid Fish AI Gateway starting on port {PROXY_PORT}", flush=True)
     print(f"[proxy] TabbyAPI backend: {TABBY_HOST}", flush=True)
     print(f"[proxy] TTS backend: {TTS_HOST} (enabled: {TTS_ENABLED})", flush=True)
@@ -13762,6 +13763,10 @@ def _record_decision_receipt(auth: AuthContext, result: decisions_api.DecisionRe
             ),
             usage_for_receipt,
         )
+    if result.remote and result.reconciliation_status is not None:
+        receipt.cost["reconciliation_status"] = result.reconciliation_status
+        if result.reservation_id is not None:
+            receipt.cost["reservation_id"] = result.reservation_id
     receipt.metadata["decisions"] = {
         "question_count": result.question_count, "engine": result.engine,
         "remote": result.remote, "cost_usd": result.cost_usd, "usage": safe_usage_metadata,
@@ -14392,6 +14397,7 @@ _LITELLM_KEY_CLIENT = _LiveLiteLLMKeyClient()
 
 app.include_router(create_provider_admin_router(
     ADMIN_STORE, auth=ADMIN_AUTH,
+    ledger_path=ADMIN_DB_PATH.parent / "provider_spend.db",
     spending_provider=lambda: provider_ledger_spending_snapshot(path=ADMIN_DB_PATH.parent / "provider_spend.db"),
 ))
 

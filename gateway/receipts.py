@@ -367,7 +367,7 @@ def serialize_receipt_for_audience(data: Mapping[str, Any], audience: str = "int
         client_data["cost"] = {
             name: value
             for name, value in cost.items()
-            if name in {"usd", "source", "cost_class"}
+            if name in {"usd", "source", "cost_class", "reconciliation_status"}
         }
     metadata = data.get("metadata")
     decisions = _sanitize_decision_metadata(metadata.get("decisions")) if isinstance(metadata, Mapping) else {}

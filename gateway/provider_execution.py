@@ -10,6 +10,7 @@ import re
 import time
 from collections.abc import Mapping
 from pathlib import Path
+from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -130,8 +131,13 @@ def _prepare_paid_litellm_payload(
     *,
     stream: bool,
     provider: providers.ProviderRef,
+    resolved_upstream_model: str | None = None,
 ) -> tuple[dict[str, Any], bytes] | JSONResponse:
-    prepared = _paid_priced_outbound_payload(body, provider=provider)
+    prepared = _paid_priced_outbound_payload(
+        body,
+        provider=provider,
+        resolved_upstream_model=resolved_upstream_model,
+    )
     if isinstance(prepared, JSONResponse):
         return prepared
     payload = prepared
@@ -157,7 +163,10 @@ def _prepare_paid_litellm_payload(
 
 
 def _paid_priced_outbound_payload(
-    body: Mapping[str, Any], *, provider: providers.ProviderRef
+    body: Mapping[str, Any],
+    *,
+    provider: providers.ProviderRef,
+    resolved_upstream_model: str | None = None,
 ) -> dict[str, Any] | JSONResponse:
     payload: dict[str, Any] = {}
     output_limits: list[int] = []
@@ -189,15 +198,21 @@ def _paid_priced_outbound_payload(
     if unsupported_tool is not None:
         return paid_option_unsupported_response(unsupported_tool)
 
-    unsupported_modifier = _unsupported_model_modifier(payload.get("model"), provider)
+    pricing_model = resolved_upstream_model or providers.resolve_provider_model(provider, str(payload.get("model") or ""))
+
+    unsupported_modifier = _unsupported_model_modifier(pricing_model, provider)
     if unsupported_modifier is not None:
         return paid_option_unsupported_response(unsupported_modifier)
 
-    unsupported_billing_name = _unsupported_billing_name(payload.get("model"), provider)
+    unsupported_billing_name = _unsupported_billing_name(pricing_model, provider)
     if unsupported_billing_name is not None:
         return paid_option_unsupported_response(unsupported_billing_name)
 
-    unsupported_nested_dimension = _unsupported_nested_paid_dimension(payload, provider)
+    unsupported_nested_dimension = _unsupported_nested_paid_dimension(
+        payload,
+        provider,
+        model=pricing_model,
+    )
     if unsupported_nested_dimension is not None:
         return paid_option_unsupported_response(unsupported_nested_dimension)
 
@@ -323,8 +338,16 @@ def _unsupported_model_modifier(model: object, provider: providers.ProviderRef) 
     return None
 
 
-def _unsupported_nested_paid_dimension(value: object, provider: providers.ProviderRef) -> str | None:
-    dimensions = _provider_price_dimensions(provider, value.get("model") if isinstance(value, Mapping) else None)
+def _unsupported_nested_paid_dimension(
+    value: object,
+    provider: providers.ProviderRef,
+    *,
+    model: object = None,
+) -> str | None:
+    dimensions = _provider_price_dimensions(
+        provider,
+        model if model is not None else value.get("model") if isinstance(value, Mapping) else None,
+    )
     return _find_unsupported_nested_paid_dimension(value, dimensions, ())
 
 
@@ -447,14 +470,29 @@ def _assembled_stream_body(
 
 
 def _model_declared(provider: providers.ProviderRef, model: str) -> bool:
+    return _provider_model_facts(provider, model) is not None
+
+
+def _provider_model_facts(
+    provider: providers.ProviderRef,
+    model: str,
+) -> Mapping[str, Any] | None:
     if not set(provider.protocols) & {"openai", "openai-chat", "openai-compatible", "anthropic-messages"}:
-        return False
+        return None
     registry = {"services": {provider.id: {
         "id": provider.id, "kind": "provider", "capabilities": ["openai"],
         "config": {**provider.config, "provider_id": provider.id,
                    "provider_type": "paid-remote", "api_key_env": provider.api_key_env},
     }}}
-    return model in litellm_provider_model_lookup(registry)
+    return litellm_provider_model_lookup(registry).get(model)
+
+
+def _resolved_upstream_model(provider: providers.ProviderRef, model: str) -> str:
+    facts = _provider_model_facts(provider, model)
+    if not facts:
+        return model
+    upstream = str(facts.get("upstream_model") or "").strip()
+    return upstream or model
 
 
 async def execute_paid_litellm(
@@ -486,12 +524,22 @@ async def execute_paid_litellm(
                 raise providers.RemoteProviderNotAllowed("Paid providers require a gateway App key and access plan")
             if not _model_declared(provider, model):
                 raise providers.RemoteProviderNotAllowed("Remote model is not declared in the provider model allow-list")
+            resolved_upstream_model = _resolved_upstream_model(provider, model)
+            pricing_provider = replace(provider, price={
+                key: value for key, value in providers.price_for_provider_model(provider, model).items()
+                if key != "models"
+            })
             decision = evaluate(profile, PolicyRequest(protocol=protocol, intent=intent, model=model))
             if decision.denied:
                 raise providers.RemoteProviderNotAllowed("; ".join(decision.reasons))
             if not runtime.enabled:
                 raise providers.ProviderError("LiteLLM execution substrate is unavailable")
-            prepared = _prepare_paid_litellm_payload(body, stream=receipt.stream, provider=provider)
+            prepared = _prepare_paid_litellm_payload(
+                body,
+                stream=receipt.stream,
+                provider=pricing_provider,
+                resolved_upstream_model=resolved_upstream_model,
+            )
             if isinstance(prepared, JSONResponse):
                 receipt.set_policy_decision("denied", reason="invalid_request", source="gateway:remote-provider")
                 owner.report(status="failed", reason="failed")
@@ -518,52 +566,73 @@ async def execute_paid_litellm(
                 return invalid_request_response("request body is not JSON serializable")
             if not isinstance(estimate_payload, Mapping):
                 return invalid_request_response("request body must be a JSON object")
-            estimate = providers.estimate_request_cost(provider, estimate_payload, protocol=protocol, intent=intent)
+            estimate_pricing_payload = {
+                **estimate_payload,
+                "model": resolved_upstream_model,
+            }
+            estimate = providers.estimate_request_cost(pricing_provider, estimate_pricing_payload, protocol=protocol, intent=intent)
+            from gateway.provider_reconciliation import reconcile_pending_generations
+            await reconcile_pending_generations(provider, path=ledger_path)
             reservation = providers.reserve_provider_spend(
                 profile, provider, estimate, path=ledger_path,
                 admin_db_path=admin_db_path, paid_fallback=paid_fallback,
+                request_timeout_s=execution.read_timeout,
             )
         except providers.ProviderError as error:
             receipt.set_policy_decision("denied", reason=error.code, source="gateway:remote-provider")
             owner.report(status="failed", reason="failed")
             return error_response(error)
+        providers.identify_provider_spend(reservation, request_id=receipt.request_id, path=ledger_path)
         receipt.set_policy_decision("allowed", source="gateway:remote-provider")
-        # A missing final cost retains the reservation. Neither disconnect nor
-        # transport failure proves that the provider did not bill this request.
+        # Neither disconnect nor transport failure proves this request was unbilled.
         client = None
         response = None
         watcher = RequestDisconnectWatcher(request.receive)
         try:
             client, response = await send_llm_execution_request(execution, disconnect_watcher=watcher)
         except ClientDisconnectedBeforeHeaders:
+            providers.settle_provider_spend(reservation, None, path=ledger_path)
+            receipt.cost.update({"reservation_id": reservation.id, "reconciliation_status": "needs_reconciliation"})
             owner.report(status="cancelled", reason="cancelled")
             return Response(status_code=499)
         except httpx.TimeoutException:
+            providers.settle_provider_spend(reservation, None, path=ledger_path)
+            receipt.cost.update({"reservation_id": reservation.id, "reconciliation_status": "needs_reconciliation"})
             owner.report(status="failed", reason="idle_timeout")
             return error_response(providers.ProviderTimeout("Remote provider request timed out"))
         except LlmExecutionPredispatchError:
             providers.release_provider_spend(reservation, path=ledger_path)
+            receipt.cost.update({"reservation_id": reservation.id, "reconciliation_status": "released"})
             owner.report(status="failed", reason="connect_error")
             return JSONResponse({"error": {"code": "provider_unavailable", "message": "Remote execution is unavailable"}}, status_code=502)
         except httpx.HTTPError:
+            providers.settle_provider_spend(reservation, None, path=ledger_path)
+            receipt.cost.update({"reservation_id": reservation.id, "reconciliation_status": "needs_reconciliation"})
             owner.report(status="failed", reason="connect_error")
             return JSONResponse({"error": {"code": "provider_unavailable", "message": "Remote execution is unavailable"}}, status_code=502)
         finally:
             if response is None:
+                providers.settle_provider_spend(reservation, None, path=ledger_path)
+                if receipt.cost.get("reconciliation_status") != "released":
+                    receipt.cost.update({"reservation_id": reservation.id, "reconciliation_status": "needs_reconciliation"})
                 await watcher.aclose()
         cost = providers.extract_provider_cost(provider, headers=response.headers)
         headers = {"x-gateway-request-id": receipt.request_id, "x-gateway-remote": "1"}
         if response.headers.get("retry-after"):
             headers["retry-after"] = response.headers["retry-after"]
         if response.status_code >= 400:
+            # Do not reflect vendor exception text, URLs or auth headers.
+            unbilled_rejection = cost.usd is None and response.status_code in {401, 403, 429}
+            if unbilled_rejection:
+                providers.release_provider_spend(reservation, path=ledger_path)
+            else:
+                cost = providers.settle_provider_spend(reservation, cost, path=ledger_path)
+            providers.attach_cost_to_receipt(receipt, cost)
+            receipt.cost.update({"reservation_id": reservation.id, "reconciliation_status": "released" if unbilled_rejection else "needs_reconciliation" if cost.usd is None else "settled"})
+            owner.report(status="failed", reason="failed")
             await watcher.aclose()
             await response.aclose()
             await client.aclose()
-            # Do not reflect vendor exception text, URLs or auth headers.
-            if cost.usd is not None:
-                providers.settle_provider_spend(reservation, cost, path=ledger_path)
-            providers.attach_cost_to_receipt(receipt, cost)
-            owner.report(status="failed", reason="failed")
             if response.status_code in {401, 403}:
                 return error_response(providers.ProviderAuthFailed("Remote provider rejected the operator key"))
             if response.status_code == 429:
@@ -572,26 +641,47 @@ async def execute_paid_litellm(
                 return error_response(providers.ProviderTimeout("Remote provider request timed out"))
             return JSONResponse({"error": {"code": "provider_error", "message": "Remote provider request failed"}}, status_code=response.status_code, headers=headers)
 
-        def finish(body: Mapping[str, Any]) -> None:
+        async def finish(body: Mapping[str, Any], generation_id: str | None = None) -> None:
             final_cost = providers.extract_provider_cost(
-                provider,
-                body={**body, "model": model},
+                pricing_provider,
+                body={**body, "model": resolved_upstream_model},
                 headers=response.headers,
                 stream="text/event-stream" in response.headers.get("content-type", ""),
             )
+            generation_id = generation_id or (body.get("id") if isinstance(body.get("id"), str) else None)
+            providers.identify_provider_spend(reservation, generation_id=generation_id, path=ledger_path)
+            # Mark unknown charges before any lookup so concurrent admission fails closed.
+            final_cost = providers.settle_provider_spend(reservation, final_cost, path=ledger_path)
+            if final_cost.usd is None and generation_id:
+                from gateway.provider_reconciliation import lookup_generation_cost
+                reported_cost = await lookup_generation_cost(provider, generation_id)
+                if reported_cost.usd is not None:
+                    final_cost = reported_cost
+                    final_cost = providers.settle_provider_spend(reservation, final_cost, path=ledger_path)
             providers.attach_cost_to_receipt(receipt, final_cost, providers.extract_usage(body))
-            if final_cost.usd is not None:
-                providers.settle_provider_spend(reservation, final_cost, path=ledger_path)
+            receipt.cost.update({
+                "reservation_id": reservation.id,
+                "reconciliation_status": "needs_reconciliation" if final_cost.usd is None else "settled",
+            })
 
         if "text/event-stream" in response.headers.get("content-type", ""):
-            await watcher.aclose()
+            try:
+                await watcher.aclose()
+            except BaseException:
+                providers.settle_provider_spend(reservation, None, path=ledger_path)
+                receipt.cost.update({"reservation_id": reservation.id, "reconciliation_status": "needs_reconciliation"})
+                await response.aclose()
+                await client.aclose()
+                raise
             async def stream():
                 pending = b""
                 final_body: dict[str, Any] = {}
                 merged_usage: dict[str, Any] = {}
                 assembled_chunks: list[dict[str, Any]] = []
+                finished = False
                 assembly_failed = False
                 assembled_bytes = 0
+                generation_id = None
                 created = int(time.time())
                 try:
                     async for chunk in response.aiter_bytes():
@@ -610,6 +700,8 @@ async def execute_paid_litellm(
                                 if not isinstance(event, Mapping):
                                     assembly_failed = True
                                     continue
+                                if isinstance(event.get("id"), str):
+                                    generation_id = event["id"]
                                 assembled_bytes += len(data)
                                 if assembled_bytes > _STREAM_ASSEMBLY_MAX_BYTES:
                                     assembly_failed = True
@@ -638,30 +730,44 @@ async def execute_paid_litellm(
                         )
                         if assembled is not None:
                             final_body = assembled
-                    finish(final_body)
+                    await finish(final_body, generation_id)
+                    finished = True
                     owner.report(status="succeeded", reason="completed")
                 finally:
+                    if not finished:
+                        providers.settle_provider_spend(reservation, None, path=ledger_path)
+                        receipt.cost.update({"reservation_id": reservation.id, "reconciliation_status": "needs_reconciliation"})
                     await response.aclose()
                     await client.aclose()
             return StreamingResponse(owner.handoff_stream(stream()), media_type="text/event-stream", headers=headers)
         try:
             content = await read_llm_response_body(client, response, disconnect_watcher=watcher)
             if content is None:
+                providers.settle_provider_spend(reservation, None, path=ledger_path)
+                receipt.cost.update({"reservation_id": reservation.id, "reconciliation_status": "needs_reconciliation"})
                 owner.report(status="cancelled", reason="cancelled")
                 return Response(status_code=499)
             try:
                 result = json.loads(content)
             except (ValueError, UnicodeError):
                 result = {}
-            finish(result if isinstance(result, Mapping) else {})
+            await finish(result if isinstance(result, Mapping) else {})
             cost_usd = receipt.cost["usd"]
             headers["x-gateway-cost-usd"] = str(cost_usd) if cost_usd is not None else "unknown"
             owner.report(status="succeeded", reason="completed")
             return Response(content, status_code=response.status_code, media_type=response.headers.get("content-type", "application/json"), headers=headers)
         except httpx.TimeoutException:
+            providers.settle_provider_spend(reservation, None, path=ledger_path)
+            receipt.cost.update({"reservation_id": reservation.id, "reconciliation_status": "needs_reconciliation"})
             owner.report(status="failed", reason="idle_timeout")
             return error_response(providers.ProviderTimeout("Remote provider request timed out"))
+        except httpx.HTTPError:
+            owner.report(status="failed", reason="connect_error")
+            return error_response(providers.ProviderUpstreamError("Remote provider response was interrupted"))
         finally:
+            persisted_cost = providers.settle_provider_spend(reservation, None, path=ledger_path)
+            if persisted_cost.usd is None:
+                receipt.cost.update({"reservation_id": reservation.id, "reconciliation_status": "needs_reconciliation"})
             await watcher.aclose()
             await response.aclose()
             await client.aclose()

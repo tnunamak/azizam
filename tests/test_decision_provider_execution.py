@@ -241,7 +241,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.body["error"]["code"], "invalid_model")
         self.assertFalse(self.ledger.exists())
 
-    async def test_typesafe_success_without_actual_cost_keeps_reservation_open_and_cost_unknown(self) -> None:
+    async def test_typesafe_success_without_actual_cost_marks_reconciliation_and_cost_unknown(self) -> None:
         async def handler(_request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"model": "jev-remote", "answers": {}, "usage": {"input_tokens": 1, "output_tokens": 0}})
 
@@ -260,9 +260,9 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.resolved_model, "jev-remote")
         with sqlite3.connect(self.ledger) as conn:
             rows = conn.execute("SELECT status, actual_usd FROM provider_spend").fetchall()
-        self.assertEqual(rows, [("reserved", None)])
+        self.assertEqual(rows, [("needs_reconciliation", None)])
 
-    async def test_typesafe_cancellation_before_headers_cancels_vendor_and_keeps_reservation(self) -> None:
+    async def test_typesafe_cancellation_before_headers_cancels_vendor_and_marks_reconciliation(self) -> None:
         entered = asyncio.Event()
         cancelled = asyncio.Event()
 
@@ -290,9 +290,9 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(cancelled.is_set())
         with sqlite3.connect(self.ledger) as conn:
             rows = conn.execute("SELECT status, actual_usd FROM provider_spend").fetchall()
-        self.assertEqual(rows, [("reserved", None)])
+        self.assertEqual(rows, [("needs_reconciliation", None)])
 
-    async def test_openai_cancellation_before_headers_marks_receipt_cancelled_and_keeps_reservation(self) -> None:
+    async def test_openai_cancellation_before_headers_marks_receipt_cancelled_and_marks_reconciliation(self) -> None:
         entered = asyncio.Event()
         cancelled = asyncio.Event()
 
@@ -322,10 +322,10 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.receipts[0].status, "cancelled")
         with sqlite3.connect(self.ledger) as conn:
             rows = conn.execute("SELECT status, actual_usd FROM provider_spend").fetchall()
-        self.assertEqual(rows, [("reserved", None)])
+        self.assertEqual(rows, [("needs_reconciliation", None)])
 
 
-    async def test_openai_success_with_unknown_actual_cost_emits_unknown_header_and_keeps_reservation(self) -> None:
+    async def test_openai_success_with_unknown_actual_cost_emits_unknown_header_and_marks_reconciliation(self) -> None:
         async def handler(_request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"id": "dec_unknown", "usage": {"input_tokens": 1, "output_tokens": 0}})
 
@@ -342,7 +342,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.headers["x-gateway-cost-usd"], "unknown")
         with sqlite3.connect(self.ledger) as conn:
             rows = conn.execute("SELECT status, actual_usd FROM provider_spend").fetchall()
-        self.assertEqual(rows, [("reserved", None)])
+        self.assertEqual(rows, [("needs_reconciliation", None)])
 
 
     async def test_openai_opaque_hook_forwards_403_body_and_status_without_rewriting(self) -> None:
@@ -365,7 +365,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.receipts[0].status, "failed")
         with sqlite3.connect(self.ledger) as conn:
             rows = conn.execute("SELECT status, actual_usd FROM provider_spend").fetchall()
-        self.assertEqual(rows, [("reserved", None)])
+        self.assertEqual(rows, [("needs_reconciliation", None)])
 
     async def test_openai_opaque_hook_forwards_429_retry_after_and_releases_unknown_reservation(self) -> None:
         async def handler(_request: httpx.Request) -> httpx.Response:
@@ -410,7 +410,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.headers["x-gateway-cost-usd"], "unknown")
         with sqlite3.connect(self.ledger) as conn:
             rows = conn.execute("SELECT status, actual_usd FROM provider_spend").fetchall()
-        self.assertEqual(rows, [("reserved", None)])
+        self.assertEqual(rows, [("needs_reconciliation", None)])
 
     async def test_openai_opaque_trusted_cost_header_settles_without_usage_pricing(self) -> None:
         async def handler(_request: httpx.Request) -> httpx.Response:

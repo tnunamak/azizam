@@ -126,6 +126,7 @@ def create_provider_admin_router(
     *,
     auth: AdminAuth,
     spending_provider: MoneyUsageProvider | None = None,
+    ledger_path: Path = provider_core.DEFAULT_LEDGER_PATH,
     prefix: str = "/admin/api/providers",
 ) -> APIRouter:
     """Build the provider admin router.
@@ -141,7 +142,7 @@ def create_provider_admin_router(
     """
 
     router = APIRouter(prefix=prefix, tags=["admin-providers"])
-    effective_spending_provider = spending_provider or provider_ledger_spending_snapshot
+    effective_spending_provider = spending_provider or (lambda: provider_ledger_spending_snapshot(path=ledger_path))
 
     def _guard(request: Request) -> AdminContext | JSONResponse:
         return _require_admin(auth, request)
@@ -169,6 +170,74 @@ def create_provider_admin_router(
                 f"provider {provider_id!r} was not found",
             ).as_response()
         return JSONResponse(status_code=status.HTTP_200_OK, content={"provider": provider})
+
+    @router.get("/{provider_id}/reconciliation")
+    def list_provider_reconciliation(request: Request, provider_id: str) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            _require_provider(store, provider_id)
+            rows = provider_core.list_provider_reconciliations(
+                path=ledger_path,
+                provider_id=provider_id,
+            )
+        except _RouteError as exc:
+            return exc.as_response()
+        except sqlite3.Error:
+            return _RouteError(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "provider_ledger_unavailable",
+                "provider spend ledger is unavailable",
+            ).as_response()
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"reconciliations": rows},
+        )
+
+    @router.post("/{provider_id}/reconciliation/{reservation_id}")
+    async def reconcile_provider_reservation(
+        request: Request,
+        provider_id: str,
+        reservation_id: int,
+    ) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            _require_provider(store, provider_id)
+            body = await _read_json_body(request)
+            row = provider_core.reconcile_provider_spend(
+                reservation_id,
+                body.get("actual_usd"),
+                provider_id=provider_id,
+                path=ledger_path,
+            )
+            _audit_provider_reconciliation(store, ctx, provider_id, row)
+        except _RouteError as exc:
+            return exc.as_response()
+        except ValueError as exc:
+            return _RouteError(
+                status.HTTP_400_BAD_REQUEST,
+                "invalid_provider_reconciliation",
+                str(exc),
+            ).as_response()
+        except LookupError as exc:
+            return _RouteError(
+                status.HTTP_404_NOT_FOUND,
+                "provider_reconciliation_not_found",
+                str(exc),
+            ).as_response()
+        except sqlite3.Error:
+            return _RouteError(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "provider_ledger_unavailable",
+                "provider spend ledger is unavailable",
+            ).as_response()
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"reconciliation": row},
+        )
 
     @router.put("/{provider_id}/caps")
     async def set_provider_caps(request: Request, provider_id: str) -> JSONResponse:
@@ -282,7 +351,7 @@ def provider_ledger_spending_snapshot(
                 """
                 SELECT provider, created_at, estimated_usd, actual_usd, status
                 FROM provider_spend
-                WHERE status IN ('reserved', 'settled') AND created_at >= ?
+                WHERE (status IN ('reserved', 'settled') AND created_at >= ?) OR status = 'needs_reconciliation'
                 """,
                 (since,),
             ).fetchall()
@@ -291,8 +360,11 @@ def provider_ledger_spending_snapshot(
     providers: dict[str, dict[str, Decimal]] = {}
     global_daily = Decimal("0")
     global_monthly = Decimal("0")
+    pending: dict[str, int] = {}
     for provider, created_at, estimated, actual, _status in rows:
         provider_id = service_registry.canonical_provider_id(provider)
+        if _status == "needs_reconciliation":
+            pending[provider_id] = pending.get(provider_id, 0) + 1
         amount = _ledger_amount(actual, estimated)
         provider_totals = providers.setdefault(
             provider_id, {"daily_usd": Decimal("0"), "monthly_usd": Decimal("0")}
@@ -309,12 +381,14 @@ def provider_ledger_spending_snapshot(
             provider: {
                 "daily_usd": float(totals["daily_usd"]),
                 "monthly_usd": float(totals["monthly_usd"]),
+                "pending_reconciliation_count": pending.get(provider, 0),
             }
             for provider, totals in providers.items()
         },
         "global": {
             "daily_usd": float(global_daily),
             "monthly_usd": float(global_monthly),
+            "pending_reconciliation_count": sum(pending.values()),
         },
     }
 
@@ -607,7 +681,8 @@ def _normalize_spend(
     return {
         "daily_usd": _coerce_non_negative_float(value.get("daily_usd")),
         "monthly_usd": _coerce_non_negative_float(value.get("monthly_usd")),
-        "status": "known",
+        "status": "needs_reconciliation" if value.get("pending_reconciliation_count") else "known",
+        "pending_reconciliation_count": value.get("pending_reconciliation_count", 0),
     }
 
 
@@ -708,6 +783,33 @@ def _usage_snapshot(spending_provider: MoneyUsageProvider | None) -> Mapping[str
         return {}
     snapshot = spending_provider()
     return snapshot if isinstance(snapshot, Mapping) else {}
+
+
+def _audit_provider_reconciliation(
+    store: ProviderAdminStore,
+    ctx: AdminContext,
+    provider_id: str,
+    row: Mapping[str, Any],
+) -> None:
+    record_audit = getattr(store, "record_audit", None)
+    if not callable(record_audit):
+        store_path = getattr(store, "path", None)
+        if store_path is None:
+            return
+        record_audit = lambda action, **fields: admin_store.record_audit(action, path=store_path, **fields)
+    record_audit(
+        "operator.provider_reconciliation.update",
+        actor_kind=ctx.actor_kind,
+        actor_id=ctx.audit_actor_id,
+        actor_label=ctx.actor_label,
+        target_kind="provider_spend",
+        target_id=str(row.get("id") or ""),
+        metadata={
+            "provider_id": service_registry.canonical_provider_id(provider_id),
+            "actual_usd": row.get("actual_usd"),
+            "cost_source": row.get("cost_source"),
+        },
+    )
 
 
 def _require_admin(auth: AdminAuth, request: Request) -> AdminContext | JSONResponse:

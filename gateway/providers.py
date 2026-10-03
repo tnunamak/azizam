@@ -13,6 +13,7 @@ import os
 import sqlite3
 import time
 import calendar
+import uuid
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -26,9 +27,11 @@ from gateway.service_registry import canonical_provider_id, is_remote_provider_c
 
 USD_QUANTUM = Decimal("0.000000001")
 DEFAULT_PROVIDER_CONCURRENCY_LIMIT = 2
+DEFAULT_PROVIDER_REQUEST_TIMEOUT_S = 120.0
 DEFAULT_LEDGER_PATH = Path(
     os.environ.get("AI_GATEWAY_PROVIDER_LEDGER_DB", "data/provider_spend.db")
 )
+_PROCESS_UUID = uuid.uuid4().hex
 DEFAULT_USAGE_PRICE_REQUIREMENTS = (
     {
         "usage_path": ("prompt_tokens_details", "cache_creation_tokens"),
@@ -82,6 +85,10 @@ class ProviderKeyMissing(ProviderError):
 class BudgetExceeded(ProviderError):
     status_code = 402
     code = "budget_exceeded"
+
+
+class ProviderNeedsReconciliation(BudgetExceeded):
+    code = "provider_needs_reconciliation"
 
 
 class ProviderAuthFailed(ProviderError):
@@ -259,6 +266,7 @@ def require_remote_allowed(
 def ensure_ledger(path: Path = DEFAULT_LEDGER_PATH) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS provider_spend (
@@ -270,14 +278,65 @@ def ensure_ledger(path: Path = DEFAULT_LEDGER_PATH) -> None:
                 actual_usd TEXT,
                 cost_source TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
-                settled_at INTEGER
+                settled_at INTEGER,
+                request_id TEXT,
+                generation_id TEXT,
+                process_generation TEXT,
+                expires_at INTEGER
             )
             """
         )
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(provider_spend)")}
+        ownership_columns = {"request_id", "generation_id", "process_generation", "expires_at"}
+        if not ownership_columns.issubset(columns):
+            # Older ledgers cannot distinguish in-flight work from completed
+            # unknown bills. Across this schema upgrade, require owner settlement.
+            conn.execute("UPDATE provider_spend SET status = 'needs_reconciliation' "
+                         "WHERE status = 'reserved'")
+        column_types = {
+            "request_id": "TEXT",
+            "generation_id": "TEXT",
+            "process_generation": "TEXT",
+            "expires_at": "INTEGER",
+        }
+        for name, column_type in column_types.items():
+            if name not in columns:
+                conn.execute(f"ALTER TABLE provider_spend ADD COLUMN {name} {column_type}")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_provider_spend_window "
             "ON provider_spend(provider, profile_id, created_at, status)"
         )
+
+
+def current_process_generation() -> str:
+    return f"{os.getpid()}:{_PROCESS_UUID}"
+
+
+def recover_provider_spend(
+    *, path: Path = DEFAULT_LEDGER_PATH, now: int | None = None
+) -> int:
+    ensure_ledger(path)
+    timestamp = int(now if now is not None else time.time())
+    generation = current_process_generation()
+    with sqlite3.connect(path, isolation_level=None) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        cursor = conn.execute(
+            """
+            UPDATE provider_spend
+            SET status = 'needs_reconciliation', actual_usd = NULL,
+                settled_at = ?, cost_source = 'unknown'
+            WHERE status = 'reserved'
+              AND (
+                process_generation IS NULL
+                OR expires_at IS NULL
+                OR process_generation != ?
+                OR expires_at <= ?
+              )
+            """,
+            (timestamp, generation, timestamp),
+        )
+        conn.execute("COMMIT")
+        return int(cursor.rowcount or 0)
 
 
 def reserve_provider_spend(
@@ -289,6 +348,7 @@ def reserve_provider_spend(
     admin_db_path: Path | None = None,
     now: int | None = None,
     paid_fallback: bool = False,
+    request_timeout_s: float = DEFAULT_PROVIDER_REQUEST_TIMEOUT_S,
 ) -> Reservation:
     require_remote_allowed(profile, provider, paid_fallback=paid_fallback)
     provider_admin = _provider_admin_snapshot(
@@ -311,6 +371,9 @@ def reserve_provider_spend(
 
     ensure_ledger(path)
     timestamp = int(now if now is not None else time.time())
+    recover_provider_spend(path=path, now=timestamp)
+    expires_at = timestamp + max(0, int(request_timeout_s))
+    process_generation = current_process_generation()
     with sqlite3.connect(path, isolation_level=None) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -395,8 +458,9 @@ def reserve_provider_spend(
             cursor = conn.execute(
                 """
                 INSERT INTO provider_spend
-                (provider, profile_id, status, estimated_usd, cost_source, created_at)
-                VALUES (?, ?, 'reserved', ?, ?, ?)
+                (provider, profile_id, status, estimated_usd, cost_source, created_at,
+                 process_generation, expires_at)
+                VALUES (?, ?, 'reserved', ?, ?, ?, ?, ?)
                 """,
                 (
                     provider_id,
@@ -404,6 +468,8 @@ def reserve_provider_spend(
                     str(estimate),
                     estimated_cost.source,
                     timestamp,
+                    process_generation,
+                    expires_at,
                 ),
             )
             conn.execute("COMMIT")
@@ -425,22 +491,101 @@ def settle_provider_spend(
     *,
     path: Path = DEFAULT_LEDGER_PATH,
     now: int | None = None,
-) -> None:
+) -> Cost:
+    """Transition a charge atomically and return its persisted cost.
+
+    Unknown finalization cannot overwrite a reconciled charge. Competing owner
+    and automatic reconciliations keep the first settlement and report it honestly.
+    """
     actual = None if actual_cost is None else actual_cost.usd
-    if actual is None:
-        return
-    settled_amount = _quantize_usd(actual)
+    settled_amount = None if actual is None else _quantize_usd(actual)
     timestamp = int(now if now is not None else time.time())
     ensure_ledger(path)
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, isolation_level=None) as conn:
+        conn.execute("BEGIN IMMEDIATE")
         conn.execute(
             """
             UPDATE provider_spend
-            SET status = 'settled', actual_usd = ?, settled_at = ?
-            WHERE id = ? AND status = 'reserved'
+            SET status = ?, actual_usd = ?, settled_at = ?, cost_source = ?
+            WHERE id = ? AND (status = 'reserved' OR (status = 'needs_reconciliation' AND ? IS NOT NULL))
             """,
-            (str(settled_amount), timestamp, reservation.id),
+            ("needs_reconciliation" if settled_amount is None else "settled",
+             None if settled_amount is None else str(settled_amount), timestamp,
+             actual_cost.source if actual_cost is not None else "unknown", reservation.id,
+             None if settled_amount is None else str(settled_amount)),
         )
+        row = conn.execute("SELECT actual_usd, cost_source FROM provider_spend WHERE id = ?", (reservation.id,)).fetchone()
+        conn.execute("COMMIT")
+    return Cost(_decimal_or_none(row[0]) if row else None, row[1] if row else "unknown",
+                reservation.provider, actual_cost.cost_class if actual_cost else "paid-remote")
+
+
+def identify_provider_spend(
+    reservation: Reservation, *, request_id: str | None = None,
+    generation_id: str | None = None, path: Path = DEFAULT_LEDGER_PATH,
+) -> None:
+    ensure_ledger(path)
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "UPDATE provider_spend SET request_id = COALESCE(?, request_id), "
+            "generation_id = COALESCE(?, generation_id) WHERE id = ?",
+            (request_id, generation_id, reservation.id),
+        )
+
+
+def list_provider_reconciliations(
+    *, path: Path = DEFAULT_LEDGER_PATH, provider_id: str | None = None,
+) -> list[dict[str, Any]]:
+    ensure_ledger(path)
+    with sqlite3.connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        where = "status = 'needs_reconciliation'"
+        params = []
+        if provider_id is not None:
+            where += " AND lower(provider) = ?"
+            params.append(canonical_provider_id(provider_id))
+        return [dict(row) for row in conn.execute(
+            f"""
+            SELECT id, provider, profile_id, status, estimated_usd, actual_usd,
+                   cost_source, created_at, settled_at, request_id, generation_id
+            FROM provider_spend WHERE {where} ORDER BY id
+            """,
+            params,
+        )]
+
+
+def reconcile_provider_spend(
+    reservation_id: int, actual_usd: object, *, provider_id: str,
+    path: Path = DEFAULT_LEDGER_PATH, source: str = "owner-reported",
+) -> dict[str, Any]:
+    try:
+        amount = _decimal_or_none(actual_usd)
+    except InvalidOperation as exc:
+        raise ValueError("actual_usd is too large") from exc
+    if amount is None:
+        raise ValueError("actual_usd must be a finite nonnegative USD amount")
+    try:
+        amount = _quantize_usd(amount)
+    except InvalidOperation as exc:
+        raise ValueError("actual_usd is too large") from exc
+    ensure_ledger(path)
+    with sqlite3.connect(path, isolation_level=None) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT * FROM provider_spend WHERE id = ? AND lower(provider) = ?",
+                           (reservation_id, canonical_provider_id(provider_id))).fetchone()
+        if row is None:
+            conn.execute("ROLLBACK")
+            raise LookupError("provider charge was not found")
+        if row["status"] != "needs_reconciliation":
+            conn.execute("ROLLBACK")
+            raise ValueError("provider charge does not need reconciliation")
+        conn.execute("UPDATE provider_spend SET status = 'settled', actual_usd = ?, "
+                     "cost_source = ?, settled_at = ? WHERE id = ?",
+                     (str(amount), source, int(time.time()), reservation_id))
+        result = dict(conn.execute("SELECT * FROM provider_spend WHERE id = ?", (reservation_id,)).fetchone())
+        conn.execute("COMMIT")
+        return result
 
 
 def release_provider_spend(
@@ -504,6 +649,24 @@ def extract_provider_cost(
     if header_cost is not None and not stream:
         return Cost(header_cost, "litellm", provider.id, provider.cost_class)
     return Cost(None, "unknown", provider.id, provider.cost_class)
+
+
+def resolve_provider_model(provider: ProviderRef, model: str) -> str:
+    """Resolve registry model aliases using the same mapping as LiteLLM dispatch."""
+    from gateway.litellm_substrate import litellm_provider_model_lookup
+    registry = {"services": {provider.id: {
+        "id": provider.id, "kind": "provider", "capabilities": ["openai"],
+        "config": {**provider.config, "provider_id": provider.id,
+                   "provider_type": "paid-remote", "api_key_env": provider.api_key_env},
+    }}}
+    facts = litellm_provider_model_lookup(registry).get(model)
+    return str(facts.get("upstream_model") or model) if facts else model
+
+
+def price_for_provider_model(provider: ProviderRef, model: str) -> Mapping[str, Any]:
+    resolved = resolve_provider_model(provider, model)
+    upstream_price = _price_for_model(provider.price, resolved)
+    return _price_for_model(upstream_price, model)
 
 
 def estimate_typesafe_cost(provider: ProviderRef, body: Mapping[str, Any]) -> Cost:
@@ -575,6 +738,7 @@ async def call_typesafe_systemone(
     paid_fallback: bool = False,
     timeout: float = 15.0,
     client: httpx.AsyncClient | None = None,
+    request_id: str | None = None,
 ) -> tuple[dict[str, Any], Cost, Usage, Reservation]:
     require_remote_allowed(profile, provider, paid_fallback=paid_fallback)
     api_key = os.environ.get(provider.api_key_env or "")
@@ -587,7 +751,9 @@ async def call_typesafe_systemone(
         path=ledger_path,
         admin_db_path=admin_db_path,
         paid_fallback=paid_fallback,
+        request_timeout_s=timeout,
     )
+    identify_provider_spend(reservation, request_id=request_id, path=ledger_path)
     close_client = client is None
     client = client or httpx.AsyncClient(timeout=timeout)
     try:
@@ -602,16 +768,24 @@ async def call_typesafe_systemone(
             raise ProviderError("provider returned a non-object JSON body")
         payload = _redact_provider_payload(payload, api_key)
         actual_cost = extract_provider_cost(provider, body=payload, headers=response.headers)
-        settle_provider_spend(reservation, actual_cost, path=ledger_path)
+        actual_cost = settle_provider_spend(reservation, actual_cost, path=ledger_path)
         return payload, actual_cost, extract_usage(payload), reservation
     except httpx.TimeoutException as exc:
         raise ProviderTimeout("provider request timed out") from exc
     except httpx.HTTPError as exc:
         raise ProviderUpstreamError("remote provider request failed") from exc
+    except (ValueError, UnicodeError) as exc:
+        raise ProviderUpstreamError("remote provider returned invalid JSON") from exc
     except (ProviderAuthFailed, ProviderRateLimited):
         release_provider_spend(reservation, path=ledger_path)
         raise
     finally:
+        # If a response was opaque or interrupted, its charge remains unknown.
+        # Known settlements and proven unbilled rejections remain terminal.
+        with sqlite3.connect(ledger_path) as conn:
+            conn.execute("UPDATE provider_spend SET status = 'needs_reconciliation', settled_at = ? "
+                         "WHERE id = ? AND status = 'reserved'",
+                         (int(time.time()), reservation.id))
         if close_client:
             await client.aclose()
 
@@ -702,6 +876,20 @@ def _enforce_window_cap(
 ) -> None:
     if cap is None:
         return
+    # Unknown completed charges must not age out of the admission barrier.
+    # Only an actual settlement can establish how much budget remains.
+    where = "status = 'needs_reconciliation'"
+    params: list[Any] = []
+    if profile is not None:
+        where += " AND profile_id = ?"
+        params.append(profile.id)
+    if provider is not None:
+        where += " AND lower(provider) = ?"
+        params.append(canonical_provider_id(provider))
+    if conn.execute(f"SELECT 1 FROM provider_spend WHERE {where} LIMIT 1", params).fetchone():
+        raise ProviderNeedsReconciliation(
+            f"{label} spend needs reconciliation; an owner must reconcile unknown charges before more paid requests"
+        )
     provider_total = _window_total(
         conn,
         provider=provider,
@@ -725,7 +913,7 @@ def _window_total(
     profile_id: str | None,
     since: int,
 ) -> Decimal:
-    where = "created_at >= ? AND status IN ('reserved', 'settled')"
+    where = "created_at >= ? AND status IN ('reserved', 'settled', 'needs_reconciliation')"
     params: list[Any] = [since]
     if profile_id is not None:
         where += " AND profile_id = ?"
@@ -947,7 +1135,7 @@ def _cost_from_tokens(
     input_tokens: int | None,
     output_tokens: int | None,
 ) -> Decimal | None:
-    price = _price_for_model(provider.price, model)
+    price = price_for_provider_model(provider, model)
     input_price = _decimal_or_none(price.get("input_usd_per_million_tokens", price.get("input_per_million_usd")))
     output_price = _decimal_or_none(price.get("output_usd_per_million_tokens", price.get("output_per_million_usd")))
     total = Decimal("0")
@@ -1083,7 +1271,10 @@ def _decimal_or_none(value: object) -> Decimal | None:
         return None
     if not amount.is_finite() or amount < 0:
         return None
-    return _quantize_usd(amount)
+    try:
+        return _quantize_usd(amount)
+    except InvalidOperation:
+        return None
 
 
 def _cap_decimal_or_none(value: object, *, where: str) -> Decimal | None:
