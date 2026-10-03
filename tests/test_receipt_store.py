@@ -363,6 +363,44 @@ class TestReceiptStore(unittest.TestCase):
         self.assertNotIn("metadata", rows[0])
         self.assertNotIn("backend", rows[0])
 
+    def test_persistent_client_receipt_detail_omits_provider_cost_admin_keeps_it(self) -> None:
+        r = _make_receipt(remote=True)
+        r.cost = {
+            "usd": 0.0123,
+            "source": "provider-reported",
+            "cost_class": "paid-remote",
+            "provider": "openrouter",
+        }
+        receipt_store.record(r, path=self.db)
+
+        client = receipt_store.get(r.request_id, audience="client", path=self.db)
+        admin = receipt_store.get(r.request_id, audience="admin", path=self.db)
+
+        self.assertEqual(
+            client["cost"],
+            {"usd": 0.0123, "source": "provider-reported", "cost_class": "paid-remote"},
+        )
+        self.assertEqual(admin["cost"]["provider"], "openrouter")
+
+    def test_persistent_client_activity_omits_provider_cost_admin_keeps_it(self) -> None:
+        r = _make_receipt(remote=True)
+        r.cost = {
+            "usd": 0.0123,
+            "source": "provider-reported",
+            "cost_class": "paid-remote",
+            "provider": "openrouter",
+        }
+        receipt_store.record(r, path=self.db)
+
+        client_rows = receipt_store.recent(limit=10, audience="client", path=self.db)
+        admin_rows = receipt_store.recent(limit=10, audience="admin", path=self.db)
+
+        self.assertEqual(
+            client_rows[0]["cost"],
+            {"usd": 0.0123, "source": "provider-reported", "cost_class": "paid-remote"},
+        )
+        self.assertEqual(admin_rows[0]["cost"]["provider"], "openrouter")
+
     def test_recent_zero_limit_returns_empty(self) -> None:
         receipt_store.record(_make_receipt(), path=self.db)
         self.assertEqual(receipt_store.recent(limit=0, path=self.db), [])

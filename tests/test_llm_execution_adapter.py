@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import json
 import unittest
 from pathlib import Path
 
@@ -725,6 +726,66 @@ class RequestDisconnectWatcherTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(watcher.wait(), timeout=1)
         self.assertTrue(watcher.disconnected)
         await watcher.aclose()
+
+
+class LiteLlmRoutingOverrideTransportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_send_request_strips_caller_litellm_router_overrides(self) -> None:
+        import gateway.backends.llm_execution as llm_execution_module
+        from gateway.backends.llm_execution import LlmExecutionRequest
+
+        class _Response:
+            status_code = 200
+            headers = {"content-type": "application/json"}
+
+            async def aclose(self) -> None:
+                pass
+
+        class _CapturingClient:
+            def __init__(self) -> None:
+                self.content = b""
+                self.url = ""
+
+            def build_request(self, **kwargs):
+                self.content = kwargs["content"]
+                self.url = str(kwargs["url"])
+                return object()
+
+            async def send(self, req, stream=True):
+                return _Response()
+
+            async def aclose(self) -> None:
+                pass
+
+        client = _CapturingClient()
+        original_async_client = llm_execution_module.httpx.AsyncClient
+        llm_execution_module.httpx.AsyncClient = lambda **kwargs: client
+        try:
+            request = LlmExecutionRequest(
+                method="POST",
+                url="http://litellm.test/v1/chat/completions?num_retries=9",
+                headers={"content-type": "application/json"},
+                body=json.dumps({
+                    "model": "local-chat",
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "fallbacks": [{"local-chat": ["openrouter/paid-chat"]}],
+                    "num_retries": 9,
+                    "context_window_fallback_dict": {"local-chat": "openrouter/paid-chat"},
+                }).encode(),
+                read_timeout=5.0,
+            )
+
+            dispatch_client, response = await send_llm_execution_request(request)
+
+            self.assertIs(dispatch_client, client)
+            self.assertEqual(response.status_code, 200)
+            sanitized = json.loads(client.content.decode())
+            self.assertEqual(sanitized["model"], "local-chat")
+            self.assertNotIn("num_retries", client.url)
+            self.assertNotIn("fallbacks", sanitized)
+            self.assertNotIn("num_retries", sanitized)
+            self.assertNotIn("context_window_fallback_dict", sanitized)
+        finally:
+            llm_execution_module.httpx.AsyncClient = original_async_client
 
 
 class PreHeaderDisconnectRaceTests(unittest.IsolatedAsyncioTestCase):

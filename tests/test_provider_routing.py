@@ -42,6 +42,35 @@ def _registry() -> dict:
     }
 
 
+
+
+class _Client:
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class _Response:
+    def __init__(
+        self,
+        *,
+        status_code: int = 200,
+        headers: dict[str, str] | None = None,
+        body: bytes | None = None,
+    ) -> None:
+        self.status_code = status_code
+        self.headers = headers or {"content-type": "application/json"}
+        self._body = body if body is not None else b"{}"
+
+    async def aread(self) -> bytes:
+        return self._body
+
+    async def aclose(self) -> None:
+        pass
+
+
 def _request(payload: dict) -> Request:
     sent = False
 
@@ -291,6 +320,30 @@ class ProviderRoutingTests(unittest.TestCase):
 
         self.assertEqual(compiled["model_list"][0]["model_name"], "lan-chat")
         self.assertEqual(compiled["model_list"][0]["litellm_params"]["model"], "openai/qwen")
+
+    def test_litellm_forward_rejects_caller_paid_fallback_override(self) -> None:
+        body = {
+            "model": "local-chat",
+            "messages": [{"role": "user", "content": "hi"}],
+            "fallbacks": [{"local-chat": ["openrouter/openai/gpt-4.1-mini"]}],
+        }
+        request = _request(body)
+        send = AsyncMock(return_value=(_Client(), _Response(body=b'{"ok":true}')))
+
+        with patch.object(proxy, "send_llm_execution_request", send):
+            response = asyncio.run(
+                proxy._forward_litellm_proxy_request(
+                    request,
+                    request_path="/v1/chat/completions",
+                    auth_context=proxy.NO_AUTH_CONTEXT,
+                    body_json=body,
+                    runtime_config=self.runtime,
+                )
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("fallbacks", response.body.decode())
+        send.assert_not_called()
 
     def test_proxy_wrapper_passes_paid_fallback_flag_to_executor(self) -> None:
         execute = AsyncMock(

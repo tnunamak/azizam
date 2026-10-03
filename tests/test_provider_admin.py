@@ -5,6 +5,7 @@ import sys
 import sqlite3
 import tempfile
 import unittest
+from decimal import Decimal
 from contextlib import closing
 from pathlib import Path
 from typing import Any, Mapping
@@ -16,11 +17,18 @@ from fastapi.testclient import TestClient
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from gateway import admin_store  # noqa: E402
 from gateway.admin_api import AdminAuthError, AdminContext  # noqa: E402
 from gateway.provider_admin import (  # noqa: E402
+    PROVIDER_ADMIN_SETTING_KEY,
     create_provider_admin_router,
+    normalize_provider_admin_state,
+    provider_admin_setting_from_store,
+    provider_admin_setting_to_store,
     provider_ledger_spending_snapshot,
 )
+from gateway.policy import DEFAULT_PROFILE, RemoteProviderPolicy  # noqa: E402
+from gateway.providers import Cost, ProviderRef, reserve_provider_spend  # noqa: E402
 
 
 def _auth(request: Request) -> AdminContext:
@@ -32,6 +40,27 @@ def _auth(request: Request) -> AdminContext:
 
 def _member_auth(request: Request) -> AdminContext:
     return AdminContext(subject="usr_member", roles=frozenset({"viewer"}))
+
+
+class SqliteProviderAdminStore:
+    def __init__(self, *, path: Path, registry: dict[str, Any], profiles: list[dict[str, Any]]) -> None:
+        self.path = path
+        self.registry = registry
+        self.profiles = profiles
+
+    def get_service_registry(self) -> dict[str, Any]:
+        return self.registry
+
+    def list_profiles(self) -> list[dict[str, Any]]:
+        return list(self.profiles)
+
+    def get_provider_admin_state(self) -> dict[str, Any]:
+        return provider_admin_setting_from_store(path=self.path)
+
+    def update_provider_admin_state(
+        self, *, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]:
+        return provider_admin_setting_to_store(data, actor=actor, path=self.path)
 
 
 class FakeProviderAdminStore:
@@ -255,6 +284,67 @@ class ProviderAdminApiTests(unittest.TestCase):
                 "operator.provider_admin.update",
             ],
         )
+
+    def test_persisting_provider_caps_preserves_absent_allowed_plans_restriction(self) -> None:
+        persisted = normalize_provider_admin_state({
+            "schema_version": 1,
+            "providers": {"openrouter": {"caps": {"daily_usd": 2}}},
+            "global_caps": {},
+        })
+
+        provider_policy = persisted["providers"]["openrouter"]
+        self.assertEqual(provider_policy["caps"], {"daily_usd": 2.0})
+        self.assertNotIn("allowed_plans", provider_policy)
+
+    def test_cap_only_router_update_persists_no_plan_restriction_and_reservation_still_allowed(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        admin_db = Path(tmpdir.name) / "admin.db"
+        ledger_db = Path(tmpdir.name) / "provider_spend.db"
+        admin_store.init_db(admin_db)
+        fake = FakeProviderAdminStore()
+        store = SqliteProviderAdminStore(
+            path=admin_db,
+            registry=fake.registry,
+            profiles=fake.profiles,
+        )
+        client = _client(store, spending=lambda: {"providers": {}, "global": {}})
+
+        response = client.put(
+            "/admin/api/providers/typesafe/caps",
+            headers={"authorization": "Bearer admin"},
+            json={"daily_usd": 2},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        stored = admin_store.get_operator_setting(PROVIDER_ADMIN_SETTING_KEY, path=admin_db)
+        assert stored is not None
+        provider_policy = stored["value"]["providers"]["typesafe"]
+        self.assertEqual(provider_policy["caps"], {"daily_usd": 2.0})
+        self.assertNotIn("allowed_plans", provider_policy)
+
+        profile = DEFAULT_PROFILE.with_overrides(
+            id="builders",
+            remote=RemoteProviderPolicy(providers=frozenset({"typesafe"})),
+        )
+        provider = ProviderRef(
+            id="typesafe",
+            base_url="https://typesafe.test",
+            protocols=("openai-compatible",),
+            api_key_env="TYPESAFE_API_KEY",
+            cost_class="paid-remote",
+            price={},
+            config={},
+        )
+        with patch.dict(os.environ, {"TYPESAFE_API_KEY": "test-key"}, clear=False):
+            reserve_provider_spend(
+                profile,
+                provider,
+                Cost(Decimal("0.01"), "price-table", "typesafe"),
+                path=ledger_db,
+                admin_db_path=admin_db,
+                now=1_700_000_000,
+            )
 
     def test_provider_id_uses_execution_provider_id_and_plan_stores_policy_id(self) -> None:
         store = FakeProviderAdminStore()

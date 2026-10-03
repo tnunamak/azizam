@@ -274,6 +274,55 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.headers["retry-after"], "17")
         self.assertIn("provider_rate_limited", (await _body(response)).decode())
 
+    async def test_litellm_408_timeout_maps_to_504_provider_timeout(self) -> None:
+        send = AsyncMock(
+            return_value=(
+                _Client(),
+                _Response(
+                    status_code=408,
+                    headers={"content-type": "application/json"},
+                    body=b'{"error":{"message":"upstream timed out"}}',
+                ),
+            )
+        )
+
+        response, _ = await self._execute(send=send)
+
+        self.assertEqual(response.status_code, 504)
+        self.assertIn("provider_timeout", (await _body(response)).decode())
+
+    async def test_invalid_stream_options_do_not_reserve_budget_or_dispatch(self) -> None:
+        self.body = {**self.body, "stream": True, "stream_options": ["invalid"]}
+        send = AsyncMock()
+
+        response, _ = await self._execute(send=send)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("stream_options", (await _body(response)).decode())
+        send.assert_not_called()
+        self.assertFalse(self.ledger.exists())
+
+    async def test_paid_request_overrides_caller_num_retries_to_zero_outbound(self) -> None:
+        self.body = {**self.body, "num_retries": 20}
+        send = AsyncMock(
+            return_value=(
+                _Client(),
+                _Response(
+                    headers={
+                        "content-type": "application/json",
+                        "x-litellm-response-cost": "0.000123",
+                    },
+                    body=json.dumps({"model": "openrouter/openai/gpt-4.1-mini", "choices": []}).encode(),
+                ),
+            )
+        )
+
+        response, _ = await self._execute(send=send)
+
+        self.assertEqual(response.status_code, 200)
+        outbound = json.loads(send.await_args.args[0].body.decode())
+        self.assertEqual(outbound["num_retries"], 0)
+
     async def test_stream_cost_is_settled_from_usage_event(self) -> None:
         self.body = {**self.body, "stream": True}
         send = AsyncMock(

@@ -275,6 +275,28 @@ def test_remote_openrouter_models_are_provider_prefixed() -> None:
     }
 
 
+def test_paid_remote_models_disable_litellm_retries() -> None:
+    compiled = compile_litellm_substrate_config(
+        {
+            "openrouter": {
+                "id": "openrouter",
+                "kind": "provider",
+                "capabilities": ["openai"],
+                "config": {
+                    "provider_id": "openrouter",
+                    "provider_type": "paid-remote",
+                    "protocol": "openai-compatible",
+                    "base_url": "https://openrouter.ai/api/v1",
+                    "api_key_env": "OPENROUTER_API_KEY",
+                    "models": [{"id": "openai/gpt-4.1-mini"}],
+                },
+            }
+        }
+    )
+
+    assert compiled["model_list"][0]["litellm_params"]["num_retries"] == 0
+
+
 def test_remote_openai_and_anthropic_models_use_provider_adapters() -> None:
     compiled = compile_litellm_substrate_config(
         {

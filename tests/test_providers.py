@@ -31,6 +31,7 @@ from gateway.providers import (  # noqa: E402
     attach_cost_to_receipt,
     call_typesafe_systemone,
     estimate_chat_cost,
+    estimate_request_cost,
     estimate_typesafe_cost,
     extract_provider_cost,
     provider_lookup,
@@ -470,6 +471,125 @@ class TestSpendReservations(unittest.TestCase):
                 path=self.ledger,
             )
 
+    def test_completion_prompt_batch_output_cost_must_hit_per_request_cap(self) -> None:
+        ref = provider(
+            price={
+                "input_usd_per_million_tokens": "0",
+                "output_usd_per_million_tokens": "10",
+            }
+        )
+        estimate = estimate_chat_cost(ref, {"prompt": ["x"] * 20, "max_tokens": 100})
+
+        self.assertEqual(estimate.usd, Decimal("0.020000000"))
+        with self.assertRaises(BudgetExceeded):
+            reserve_provider_spend(
+                profile(max_usd_per_request=Decimal("0.002")),
+                ref,
+                estimate,
+                path=self.ledger,
+            )
+
+    def test_completion_best_of_output_cost_must_hit_per_request_cap(self) -> None:
+        ref = provider(
+            price={
+                "input_usd_per_million_tokens": "0",
+                "output_usd_per_million_tokens": "10",
+            }
+        )
+        estimate = estimate_chat_cost(
+            ref,
+            {"prompt": "x", "max_tokens": 100, "best_of": 20},
+        )
+
+        self.assertEqual(estimate.usd, Decimal("0.020000000"))
+        with self.assertRaises(BudgetExceeded):
+            reserve_provider_spend(
+                profile(max_usd_per_request=Decimal("0.002")),
+                ref,
+                estimate,
+                path=self.ledger,
+            )
+
+    def test_mixed_case_provider_id_uses_saved_admin_deny_all_plans(self) -> None:
+        admin_store.put_operator_setting(
+            "provider_admin",
+            {
+                "providers": {
+                    "openrouter": {
+                        "allowed_plans": [],
+                        "caps": {"daily_usd": 100},
+                    }
+                },
+                "global_caps": {},
+            },
+            path=self.admin_db,
+        )
+        mixed_case_provider = provider(
+            id="OpenRouter",
+            api_key_env="TYPESAFE_TEST_KEY",
+            protocols=("openai-compatible",),
+        )
+
+        with self.assertRaises(Exception) as cm:
+            reserve_provider_spend(
+                profile().with_overrides(
+                    remote=RemoteProviderPolicy(providers=frozenset({"OpenRouter"}))
+                ),
+                mixed_case_provider,
+                Cost(Decimal("0.01"), "price-table", "OpenRouter"),
+                path=self.ledger,
+                admin_db_path=self.admin_db,
+            )
+
+        self.assertIn("not allowed for access plan", str(cm.exception))
+
+    def test_mixed_case_provider_id_uses_saved_admin_zero_cap_when_plan_allowed(self) -> None:
+        admin_store.put_operator_setting(
+            "provider_admin",
+            {
+                "providers": {
+                    "openrouter": {
+                        "allowed_plans": ["paid-plan"],
+                        "caps": {"daily_usd": 0},
+                    }
+                },
+                "global_caps": {},
+            },
+            path=self.admin_db,
+        )
+        mixed_case_provider = provider(
+            id="OpenRouter",
+            api_key_env="TYPESAFE_TEST_KEY",
+            protocols=("openai-compatible",),
+        )
+
+        with self.assertRaises(BudgetExceeded):
+            reserve_provider_spend(
+                profile().with_overrides(
+                    remote=RemoteProviderPolicy(providers=frozenset({"OpenRouter"}))
+                ),
+                mixed_case_provider,
+                Cost(Decimal("0.01"), "price-table", "OpenRouter"),
+                path=self.ledger,
+                admin_db_path=self.admin_db,
+            )
+
+    def test_mixed_case_provider_id_matches_normalized_profile_provider(self) -> None:
+        mixed_case_provider = provider(
+            id="OpenRouter",
+            api_key_env="TYPESAFE_TEST_KEY",
+            protocols=("openai-compatible",),
+        )
+
+        reserve_provider_spend(
+            profile().with_overrides(
+                remote=RemoteProviderPolicy(providers=frozenset({"openrouter"}))
+            ),
+            mixed_case_provider,
+            Cost(Decimal("0.001"), "price-table", "OpenRouter"),
+            path=self.ledger,
+        )
+
     def test_admin_policy_read_error_fails_closed(self) -> None:
         bad_admin_path = Path(self.tmp.name)
 
@@ -589,6 +709,26 @@ class TestCosts(unittest.TestCase):
         )
 
         self.assertIsNone(cost.usd)
+
+    def test_mixed_protocol_provider_estimates_chat_with_chat_shape(self) -> None:
+        ref = provider(
+            id="openrouter",
+            protocols=("typesafe-systemone", "openai-compatible"),
+            price={
+                "input_usd_per_million_tokens": "8",
+                "output_usd_per_million_tokens": "8",
+            },
+        )
+        body = {
+            "model": "openrouter/test-chat",
+            "messages": [{"role": "user", "content": "x" * 10000}],
+            "max_tokens": 10000,
+        }
+
+        self.assertEqual(
+            estimate_request_cost(ref, body),
+            estimate_chat_cost(ref, body),
+        )
 
     def test_provider_reported_cost_wins_then_litellm_then_price_table(self) -> None:
         ref = provider(price={"input_usd_per_million_tokens": "1"})
