@@ -108,8 +108,7 @@ def run(compose):
         snapshot(source)
         env = {"PATH": os.defpath, "HOME": str(root), "LANG": "C.UTF-8",
                "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
-               "LITELLM_LOCAL_MODEL_COST_MAP": "True", "DO_NOT_TRACK": "1",
-               "AI_GATEWAY_FAKE_ENGINE_API_KEY": "sk-fake-engine"}
+               "LITELLM_LOCAL_MODEL_COST_MAP": "True", "DO_NOT_TRACK": "1"}
         env["AI_GATEWAY_CONFIG_PATH"] = str(source / "first-run.yml")
         env["AI_GATEWAY_LITELLM_API_KEY"] = "sk-fresh-instance-test"
         env["LITELLM_MASTER_KEY"] = env["AI_GATEWAY_LITELLM_API_KEY"]
@@ -118,9 +117,6 @@ def run(compose):
         substrate_socket, substrate_port = reserve_port(stack)
         if not compose:
             env["AI_GATEWAY_LITELLM_BASE_URL"] = f"http://127.0.0.1:{substrate_port}"
-            env["AI_GATEWAY_LITELLM_API_KEY"] = "sk-local-litellm"
-            env["LITELLM_MASTER_KEY"] = "sk-local-litellm"
-        env["AI_GATEWAY_CONFIG_PATH"] = "first-run.yml"
         log_path = root / "process.log"
         log = stack.enter_context(log_path.open("wb"))
 
@@ -150,11 +146,10 @@ def run(compose):
                             "environment": {
                                 "LITELLM_LOCAL_MODEL_COST_MAP": "True",
                                 "DO_NOT_TRACK": "1",
-                                "AI_GATEWAY_FAKE_ENGINE_API_KEY": "sk-fake-engine",
                             }},
                 "fake-engine": {"image": f"{project}-gateway", "command": ["python3", "tests/e2e/fake_engine.py",
                     "--host", "0.0.0.0", "--port", "18001"],
-                    "volumes": [f"{source}:/app"], "restart": "no"}
+                    "restart": "no"}
             }}))
             env["OPENAI_PROXY_PORT"] = str(gateway_port)
             command = ["docker", "compose", "--project-name", project, "--project-directory", str(source),
@@ -206,7 +201,7 @@ def run(compose):
         headers["If-Match"] = registry.headers["etag"]
         created = expect(client.post("/admin/api/operator/services", headers=headers, json={
             "name": "First chat engine", "preset": "openai-compatible", "base_url": engine_url,
-            "health_endpoint": "/v1/models", "api_key_env": "AI_GATEWAY_FAKE_ENGINE_API_KEY",
+            "health_endpoint": "/v1/models",
             "capabilities": ["chat"], "models": [{"public": MODEL, "upstream": MODEL}]
         }), 201).json()["service_registry"]
         service = next(row for row in created["services"].values() if row["name"] == "First chat engine")
