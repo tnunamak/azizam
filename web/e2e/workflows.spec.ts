@@ -372,7 +372,7 @@ test("workflow sheet shows controls, code, links and seeded recent jobs", async 
   await expect(sheet.getByText("A teal desk lamp on walnut")).toBeVisible();
   await expect(sheet.getByText("12.4 s")).toBeVisible();
   await expect(sheet.locator("time").first()).toBeVisible();
-  await expect(sheet.getByText("image", { exact: true })).toBeVisible();
+  await expect(sheet.getByRole("region", { name: "Recent jobs" }).getByText("image", { exact: true }).first()).toBeVisible();
   await expect(
     sheet.getByText("image.product-render", { exact: true }).first(),
   ).toBeVisible();

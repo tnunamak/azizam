@@ -378,7 +378,7 @@ def _example_file_for(name: str) -> str:
 def _route_model(route: Mapping[str, Any] | None) -> str | None:
     if not isinstance(route, Mapping):
         return None
-    value = route.get("model")
+    value = route.get("model") or _nested(route, "submit", "model")
     return str(value) if value else None
 
 
@@ -617,32 +617,63 @@ def _availability_reason(capabilities: list[Capability]) -> str:
 
 
 def _availability(capabilities: list[Capability]) -> dict[str, Any]:
-    measured = any(cap.health != "unknown" or cap.lifecycle != "unknown" for cap in capabilities)
-    if measured and any(cap.available for cap in capabilities):
+    measured_caps = [cap for cap in capabilities if cap.health != "unknown" or cap.lifecycle != "unknown"]
+    ready_caps = [
+        cap for cap in measured_caps
+        if cap.available and (
+            cap.health == "healthy"
+            or cap.lifecycle == "warm"
+        )
+    ]
+    if ready_caps:
         return {
             "status": "ready",
             "available": True,
             "measured": True,
             "reason": "Backend is measured available for this access plan.",
         }
+    starting_caps = [
+        cap for cap in measured_caps
+        if cap.available and cap.lifecycle == "warming"
+    ]
+    if starting_caps:
+        return {
+            "status": "starting",
+            "available": True,
+            "measured": True,
+            "reason": "Backend is starting for this access plan.",
+        }
     if capabilities:
-        if measured:
+        unknown_eligible = [
+            cap for cap in capabilities
+            if cap.available and cap.health == "unknown" and cap.lifecycle == "unknown"
+        ]
+        if unknown_eligible:
+            return {
+                "status": "configured",
+                "available": True,
+                "measured": False,
+                "reason": "Allowed by your access plan; live backend state is not measured yet.",
+            }
+        measured_available = [cap for cap in measured_caps if cap.available]
+        if measured_available:
+            return {
+                "status": "configured",
+                "available": True,
+                "measured": True,
+                "reason": "Backend is measured but not ready.",
+            }
+        if measured_caps:
             return {
                 "status": "unavailable",
                 "available": False,
                 "measured": True,
                 "reason": _availability_reason(capabilities),
             }
-        return {
-            "status": "configured",
-            "available": True,
-            "measured": False,
-            "reason": "Allowed by your access plan; live backend state is not measured yet.",
-        }
     return {
         "status": "not_available",
         "available": False,
-        "measured": measured,
+        "measured": False,
         "reason": _availability_reason(capabilities),
     }
 

@@ -396,6 +396,32 @@ class WorkflowsCatalogTests(unittest.TestCase):
         self.assertFalse(availability["available"])
         self.assertTrue(availability["measured"])
 
+    def test_mixed_unhealthy_and_unknown_backend_is_configured_not_ready(self) -> None:
+        payload = build_workflows_catalog(
+            records=_registry().records(),
+            capabilities=[
+                unavailable_capability(
+                    intent="image.generate",
+                    backend="comfyui-a",
+                    reason="backend unhealthy",
+                    workflow="image.generate.simple",
+                    lifecycle="stopped",
+                ),
+                Capability(
+                    intent="image.generate",
+                    backend="comfyui-b",
+                    workflow="image.generate.simple",
+                    health="unknown",
+                    lifecycle="unknown",
+                ),
+            ],
+        )
+
+        availability = payload["workflows"][0]["availability"]
+        self.assertEqual(availability["status"], "configured")
+        self.assertTrue(availability["available"])
+        self.assertFalse(availability["measured"])
+
     def test_member_catalog_omits_policy_denied_workflows(self) -> None:
         payload = build_workflows_catalog(
             records=_registry().records(),

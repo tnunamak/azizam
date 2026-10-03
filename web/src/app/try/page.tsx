@@ -59,10 +59,11 @@ type RequestInfo = {
   multipart?: boolean;
   form?: Record<string, unknown>;
   files?: WorkflowExampleFile[];
+  snippets?: Array<{ language: string; code: string }>;
 };
 type WorkflowExampleFile = {
   field: string;
-  name?: string;
+  placeholder: string;
   type?: string;
   required?: boolean;
 };
@@ -77,6 +78,7 @@ type CatalogOption = {
 type WorkflowInput = {
   name: string;
   type: string;
+  request_field?: string;
   required?: boolean;
   default?: unknown;
   enum?: unknown[];
@@ -91,8 +93,7 @@ type WorkflowOption = {
   description?: string;
   inputs: WorkflowInput[];
   engine_binding?: string;
-  native_route?: { method?: string; path?: string; content_type?: string } | null;
-  examples?: Array<{ body?: Record<string, unknown> }>;
+  native_route?: string | null;
   example_request?: {
     method?: string;
     path?: string;
@@ -100,6 +101,9 @@ type WorkflowOption = {
     body?: Record<string, unknown>;
     form?: Record<string, unknown>;
     files?: WorkflowExampleFile[];
+    curl?: string;
+    python?: string;
+    javascript?: string;
   };
 };
 type Result = {
@@ -111,6 +115,8 @@ type Result = {
   request: RequestInfo;
   imageUrl?: string;
   audioUrl?: string;
+  downloadUrl?: string;
+  downloadName?: string;
   vector?: { dimensions: number; min: number; max: number; mean: number };
   probabilities?: Array<{ option: string; probability: number | null }>;
 };
@@ -282,9 +288,12 @@ function costFrom(payload: unknown, response?: Response) {
 }
 
 function codeSnippets(request: RequestInfo) {
-  const url = request.path.startsWith("/v1/")
-    ? `${typeof window === "undefined" ? "" : window.location.origin}${request.path}`
-    : `${baseUrl()}${request.path}`;
+  if (request.snippets?.length) return request.snippets;
+  const origin = typeof window === "undefined" ? "" : window.location.origin;
+  const url =
+    request.path.startsWith("/v1/") || request.path.startsWith("/gateway/")
+      ? `${origin}${request.path}`
+      : `${baseUrl()}${request.path}`;
   const model = (request.body as { model?: string }).model ?? "";
   const jsonBody = JSON.stringify(request.body, null, 2);
   if (request.multipart) {
@@ -450,17 +459,10 @@ function groupWorkflows(payload: unknown): CatalogOption[] {
           : [],
         engine_binding: stringValue(record.engine_binding) ?? undefined,
         native_route:
-          typeof record.native_route === "object" && record.native_route !== null
-            ? (record.native_route as WorkflowOption["native_route"])
-            : null,
-        examples: Array.isArray(record.examples)
-          ? (record.examples as WorkflowOption["examples"])
-          : undefined,
-        example_request:
-          typeof record.example_request === "object" &&
-          record.example_request !== null
-            ? (record.example_request as WorkflowOption["example_request"])
-            : undefined,
+          record.native_route === null
+            ? null
+            : stringValue(record.native_route) ?? undefined,
+        example_request: workflowExampleRequest(record.example_request),
       };
       if (!workflow.id) continue;
       options.push({
@@ -473,6 +475,67 @@ function groupWorkflows(payload: unknown): CatalogOption[] {
       });
   }
   return options;
+}
+
+function workflowExampleRequest(value: unknown): WorkflowOption["example_request"] {
+  if (typeof value !== "object" || value === null) return undefined;
+  const record = value as Record<string, unknown>;
+  return {
+    method: stringValue(record.method) ?? undefined,
+    path: stringValue(record.path) ?? undefined,
+    content_type: stringValue(record.content_type) ?? undefined,
+    body:
+      typeof record.body === "object" && record.body !== null
+        ? (record.body as Record<string, unknown>)
+        : undefined,
+    form:
+      typeof record.form === "object" && record.form !== null
+        ? (record.form as Record<string, unknown>)
+        : undefined,
+    files: workflowExampleFiles(record.files),
+    curl: stringValue(record.curl) ?? undefined,
+    python: stringValue(record.python) ?? undefined,
+    javascript: stringValue(record.javascript) ?? undefined,
+  };
+}
+
+function workflowExampleFiles(value: unknown): WorkflowExampleFile[] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return [];
+  }
+  return Object.entries(value as Record<string, unknown>)
+    .map(([field, placeholder]) => ({
+      field,
+      placeholder: String(placeholder ?? ""),
+      required: true,
+    }))
+    .filter((file) => file.field);
+}
+
+function workflowFileSpecs(workflow: WorkflowOption) {
+  return (workflow.example_request?.files ?? []).map((file) => {
+    const input = workflow.inputs.find(
+      (item) =>
+        item.name === file.field ||
+        item.request_field === file.field,
+    );
+    return {
+      ...file,
+      required: input ? input.required !== false : true,
+    };
+  });
+}
+
+function workflowSnippets(workflow: WorkflowOption) {
+  const snippets = [
+    { language: "curl", code: workflow.example_request?.curl },
+    { language: "Python", code: workflow.example_request?.python },
+    { language: "JavaScript", code: workflow.example_request?.javascript },
+  ].filter(
+    (snippet): snippet is { language: string; code: string } =>
+      typeof snippet.code === "string" && snippet.code.trim().length > 0,
+  );
+  return snippets.length ? snippets : undefined;
 }
 
 function stringValue(value: unknown) {
@@ -528,12 +591,9 @@ function localityLabel(record: Record<string, unknown>) {
 }
 
 function workflowExampleBody(workflow: WorkflowOption) {
-  return (
-    workflow.example_request?.form ??
-    workflow.example_request?.body ??
-    workflow.examples?.find((example) => example.body)?.body ??
-    {}
-  );
+  return requestIsMultipart(workflow)
+    ? workflow.example_request?.form ?? {}
+    : workflow.example_request?.body ?? {};
 }
 
 function requestIsMultipart(workflow: WorkflowOption) {
@@ -841,8 +901,9 @@ export default function TryPage() {
         path: route,
         body,
         form: formBody,
-        files: selectedWorkflow.example_request?.files ?? [],
+        files: workflowFileSpecs(selectedWorkflow),
         multipart,
+        snippets: workflowSnippets(selectedWorkflow),
       };
     }
     return {
@@ -1001,14 +1062,30 @@ export default function TryPage() {
       };
     }
     if (tab === "workflow") {
-      const body =
-        payload instanceof Blob
-          ? "Workflow returned media bytes."
-          : JSON.stringify(payload, null, 2);
+      let imageUrl: string | undefined;
+      let audioUrl: string | undefined;
+      let downloadUrl: string | undefined;
+      if (payload instanceof Blob) {
+        const objectUrl = URL.createObjectURL(payload);
+        objectUrls.current.push(objectUrl);
+        if (payload.type.startsWith("image/")) {
+          imageUrl = objectUrl;
+        } else if (payload.type.startsWith("audio/")) {
+          audioUrl = objectUrl;
+        } else {
+          downloadUrl = objectUrl;
+        }
+      }
       return {
         title: "Workflow result",
-        body,
-        audioUrl: payload instanceof Blob ? URL.createObjectURL(payload) : undefined,
+        body:
+          payload instanceof Blob
+            ? "Workflow returned media bytes."
+            : JSON.stringify(payload, null, 2),
+        imageUrl,
+        audioUrl,
+        downloadUrl,
+        downloadName: "workflow-result",
         elapsedMs,
         cost,
         receiptId,
@@ -1332,6 +1409,15 @@ function ResultView({ result }: { result: Result }) {
             <a href={result.audioUrl}>Download audio</a>
           </audio>
         )}
+        {result.downloadUrl && (
+          <a
+            href={result.downloadUrl}
+            download={result.downloadName}
+            className="inline-flex min-h-11 items-center underline underline-offset-4"
+          >
+            Download result
+          </a>
+        )}
         {result.vector && (
           <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
             <Fact label="Dimensions" value={String(result.vector.dimensions)} />
@@ -1395,7 +1481,7 @@ function ResultView({ result }: { result: Result }) {
       <div className="space-y-2">
         <h3 className="flex items-center gap-2 text-sm font-medium">
           <Copy aria-hidden="true" className="size-4" />
-          Copy as
+          {result.request.snippets?.length ? "Example request" : "Copy as"}
         </h3>
         <SnippetBlock snippets={codeSnippets(result.request)} />
       </div>
@@ -1453,7 +1539,7 @@ function WorkflowFileInputs({
   files: Record<string, File | null>;
   onChange: (field: string, file: File | null) => void;
 }) {
-  const fileSpecs = workflow.example_request?.files ?? [];
+  const fileSpecs = workflowFileSpecs(workflow);
   if (!fileSpecs.length) return null;
   return (
     <div className="space-y-3">
@@ -1474,7 +1560,7 @@ function WorkflowFileInputs({
           />
           <span className="text-muted-foreground text-xs">
             {files[fileSpec.field]?.name ??
-              fileSpec.name ??
+              fileSpec.placeholder ??
               "Choose a file for this workflow input."}
           </span>
         </label>

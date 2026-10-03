@@ -19,28 +19,30 @@ const workflowsCatalog = {
       title: "Remix video",
       description: "Upload-driven video edit workflow.",
       engine_binding: "comfyui",
-      native_route: {
-        method: "POST",
-        path: "/gateway/v1/workflows/remix/run",
-        content_type: "multipart/form-data",
-      },
+      native_route: "/gateway/v1/workflows/remix/run",
       inputs: [
         { name: "prompt", type: "string", required: true, accepted: true },
         { name: "strength", type: "number", default: 0.35, accepted: true },
+        {
+          name: "source_image",
+          request_field: "source",
+          type: "asset",
+          required: true,
+          accepted: true,
+        },
       ],
       example_request: {
         method: "POST",
         path: "/gateway/v1/workflows/remix/run",
         content_type: "multipart/form-data",
         form: { prompt: "Turn the clip into a teal product shot.", strength: 0.35 },
-        files: [
-          {
-            field: "source",
-            name: "source.mp4",
-            type: "video/mp4",
-            required: true,
-          },
-        ],
+        files: { source: "./source.mp4" },
+        curl:
+          "curl -X POST http://localhost:5000/gateway/v1/workflows/remix/run -H 'Authorization: Bearer $GATEWAY_API_KEY' -F prompt='Turn the clip into a teal product shot.' -F strength='0.35' -F source=@./source.mp4",
+        python:
+          "import requests\nfiles = {'source': open('./source.mp4', 'rb')}\ndata = {'prompt': 'Turn the clip into a teal product shot.', 'strength': '0.35'}\nprint(requests.post('http://localhost:5000/gateway/v1/workflows/remix/run', data=data, files=files).text)",
+        javascript:
+          "const form = new FormData();\nform.set('prompt', 'Turn the clip into a teal product shot.');\nform.set('strength', '0.35');\nform.set('source', file);\nawait fetch('/gateway/v1/workflows/remix/run', { method: 'POST', body: form });",
       },
     },
     {
@@ -49,17 +51,17 @@ const workflowsCatalog = {
       title: "Poster image",
       description: "Image workflow served through the OpenAI image route.",
       engine_binding: "comfyui",
-      native_route: {
-        method: "POST",
-        path: "/v1/images/generations",
-        content_type: "application/json",
-      },
+      native_route: "/v1/images/generations",
       inputs: [{ name: "prompt", type: "string", required: true, accepted: true }],
       example_request: {
         method: "POST",
         path: "/v1/images/generations",
         content_type: "application/json",
         body: { model: "poster", prompt: "A teal poster." },
+        form: {},
+        files: {},
+        curl:
+          "curl http://localhost:5000/v1/images/generations -H 'Authorization: Bearer $GATEWAY_API_KEY' -H 'Content-Type: application/json' -d '{\"model\":\"poster\",\"prompt\":\"A teal poster.\"}'",
       },
     },
     {
@@ -110,7 +112,7 @@ test("workflow deep link selects the workflow and submits multipart to its adver
   await expect(page.getByLabel("Inputs JSON")).toHaveValue(
     /Turn the clip into a teal product shot\./,
   );
-  await expect(page.getByText("source.mp4", { exact: true })).toBeVisible();
+  await expect(page.getByText("./source.mp4", { exact: true })).toBeVisible();
 
   let uploadedBody = "";
   await page.route("**/gateway/v1/workflows/remix/run", async (route) => {
@@ -121,8 +123,14 @@ test("workflow deep link selects the workflow and submits multipart to its adver
     const requestBody = await route.request().postDataBuffer();
     uploadedBody = requestBody?.toString("utf8") ?? "";
     await route.fulfill({
-      headers: { "x-ai-gateway-request-id": "req_workflow_try" },
-      json: { ok: true, workflow: "video.edit.remix" },
+      headers: {
+        "content-type": "image/png",
+        "x-ai-gateway-request-id": "req_workflow_try",
+      },
+      body: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+        "base64",
+      ),
     });
   });
 
@@ -138,7 +146,14 @@ test("workflow deep link selects the workflow and submits multipart to its adver
   });
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Workflow result", { exact: true })).toBeVisible();
-  await expect(page.getByText('"workflow": "video.edit.remix"')).toBeVisible();
+  await expect(page.getByAltText("Generated result")).toBeVisible();
+  await expect(page.getByText("Example request", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("/gateway/v1/workflows/remix/run", { exact: false }),
+  ).toBeVisible();
+  await expect(page.getByText("/openai/v1/gateway", { exact: false })).toHaveCount(
+    0,
+  );
   expect(uploadedBody).toContain('name="source"; filename="clip.mp4"');
   expect(uploadedBody).toContain('name="prompt"');
   expect(uploadedBody).toContain("Turn the clip into a teal product shot.");
@@ -158,6 +173,7 @@ test("workflow deep link uses the canonical image example request route", async 
   await expect(page.getByLabel("Model", { exact: true })).toContainText(
     "Poster image",
   );
+  await expect(page.getByLabel("Inputs JSON")).toHaveValue(/A teal poster\./);
 
   let postedBody: Record<string, unknown> | null = null;
   await page.route("**/v1/images/generations", async (route) => {
