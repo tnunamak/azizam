@@ -12,7 +12,7 @@ All examples assume:
 
 ```text
 Local base host:   http://127.0.0.1:5000
-Public base host:  https://ai.vivid.fish         # optional, when exposed
+Public base host:  https://ai.example.com        # optional, when exposed
 Client API key:    opk_...                       # never commit, never log
 ```
 
@@ -1371,14 +1371,14 @@ revisions 2025-03-26 to 2025-11-25. The server never issues `Mcp-Session-Id`;
 **Claude Code:**
 
 ```bash
-claude mcp add vivid https://ai.vivid.fish/mcp --transport http \
+claude mcp add gateway https://ai.example.com/mcp --transport http \
   -H 'Authorization: Bearer ${AI_GATEWAY_API_KEY}'
 ```
 
 **Pi (`pi-mcp-adapter`)**, in `.mcp.json` or `~/.config/mcp/mcp.json`:
 
 ```json
-{ "mcpServers": { "vivid": { "url": "https://ai.vivid.fish/mcp",
+{ "mcpServers": { "gateway": { "url": "https://ai.example.com/mcp",
     "headers": { "Authorization": "Bearer ${AI_GATEWAY_API_KEY}" },
     "protocolVersion": "auto" } } }
 ```
@@ -1388,7 +1388,7 @@ claude mcp add vivid https://ai.vivid.fish/mcp --transport http \
 **Smoke test without a client:**
 
 ```bash
-curl -s https://ai.vivid.fish/mcp -H "Authorization: Bearer $AI_GATEWAY_API_KEY" \
+curl -s https://ai.example.com/mcp -H "Authorization: Bearer $AI_GATEWAY_API_KEY" \
   -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"run","arguments":{"target":"tts-fast","inputs":{"input":"Hello."}}}}'
 ```

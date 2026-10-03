@@ -99,13 +99,12 @@ API key:  opk_...
 External apps can use the public canonical host:
 
 ```text
-Base URL: https://ai.vivid.fish/v1
+Base URL: https://ai.example.com/v1
 API key:  opk_...
 ```
 
-The previous host `https://openai.vivid.fish/v1` remains a compatibility alias
-— every route resolves identically — so apps that are already configured
-against it do not need to change.
+If you change public hostnames, keep old hostnames as compatibility aliases
+until every configured app has moved.
 
 ## What Key Creation Does
 
@@ -145,7 +144,7 @@ The command initializes the durable admin store if needed and prints one
 it directly for admin-plane requests:
 
 ```bash
-curl -s https://ai.vivid.fish/admin/api/overview \
+curl -s https://ai.example.com/admin/api/overview \
   -H "Authorization: Bearer oak_..."
 ```
 
@@ -176,16 +175,16 @@ admin:
       none: prof_family_default
       admin: prof_operator_default
     domain_profile_ids:
-      vivid.fish: prof_operator_default
+      example.com: prof_operator_default
   oidc:
     enabled: true
     issuer: https://idp.example.com
-    client_id: vivid-fish-ai-gateway
+    client_id: ai-gateway
     client_secret_env: AI_GATEWAY_OIDC_CLIENT_SECRET
-    redirect_uri: https://ai.vivid.fish/admin/oidc/callback
+    redirect_uri: https://ai.example.com/admin/oidc/callback
     signing_key_env: AI_GATEWAY_ADMIN_SESSION_KEY
-    allowed_email_domains: ["vivid.fish"]
-    admin_emails: ["owner@vivid.fish"]
+    allowed_email_domains: ["example.com"]
+    admin_emails: ["owner@example.com"]
 ```
 
 The first allowed OIDC login becomes `owner` if no owner exists yet. Later
@@ -225,12 +224,12 @@ flow:
        level: basic
    ```
 4. **App API key.** They mint their own bearer token from the account portal.
-   They can visit `https://ai.vivid.fish/`, sign in with OIDC, create their
+   They can visit `https://ai.example.com/`, sign in with OIDC, create their
    Personal App if one does not already exist, mint an `opk_...` key, and verify
    the base URL, SDK snippets, and effective capabilities visible to that key.
    Then they paste the same key into their chat app of choice
    (LibreChat, Open WebUI, an iOS shortcut, etc.) with base URL
-   `https://ai.vivid.fish/v1`.
+   `https://ai.example.com/v1`.
 
 Rotation stays per-App: delete the old Credential and create a new key for the
 same App while leaving the User, the Profile, and the audit history intact.

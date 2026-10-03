@@ -721,8 +721,8 @@ return `400 invalid_request`.
   "issuer": "https://accounts.google.com",
   "subject": "oidc-sub-string",
   "email": "tim@example.com",
-  "display_name": "Tim" | null,
-  "name": "Tim" | null,
+  "display_name": "Owner" | null,
+  "name": "Owner" | null,
   "created_at": 1765…,
   "last_login_at": 1765… | null,
   "roles": ["owner"]

@@ -6,9 +6,9 @@ This document scopes **Vivid Fish AI Gateway** (the product formerly known as
 `openai-proxy`) around the top target users without turning one operator's
 current machine into the product spec.
 
-Canonical public host: `https://ai.vivid.fish`.
-Compatibility alias: `https://openai.vivid.fish` (kept indefinitely so apps
-already configured against the legacy host keep working).
+Example public host: `https://ai.example.com`.
+Keep old public hostnames as compatibility aliases until apps already
+configured against them have moved.
 
 ## Implementation Status
 

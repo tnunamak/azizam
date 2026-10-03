@@ -257,7 +257,7 @@ Matches the existing `/admin` left-rail shell (one section at a time; see memory
 ```
 Admin → Services → [+ Add backend]
   Step 1  Engine:  ( ) llama.cpp  (•) vLLM  ( ) Ollama  ( ) TabbyAPI  ( ) ComfyUI …
-  Step 2  Connection:  base_url [http://192.168.1.50:8000]   [Test ✓ 200, 1 model]
+  Step 2  Connection:  base_url [http://10.0.0.50:8000]      [Test ✓ 200, 1 model]
   Step 3  Models:  detected → qwen3-30b-a3b   [map to gateway id: qwen3 ▸]
           ┌─────────────────────────────────────────────────────────────┐
           │ ⚡ Suggested transforms for vLLM + Qwen3:                     │

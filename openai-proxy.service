@@ -4,8 +4,8 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/tnunamak/applications/openai-proxy
-ExecStart=/home/tnunamak/applications/openai-proxy/start.sh
+WorkingDirectory=%h/applications/openai-proxy
+ExecStart=%h/applications/openai-proxy/start.sh
 Restart=on-failure
 RestartSec=10
 

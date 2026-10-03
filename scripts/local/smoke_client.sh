@@ -3,7 +3,7 @@
 #
 # Usage:
 #   OPENAI_PROXY_API_KEY=opk_... ./scripts/local/smoke_client.sh
-#   OPENAI_PROXY_API_KEY=opk_... OPENAI_PROXY_BASE=https://openai.vivid.fish ./scripts/local/smoke_client.sh
+#   OPENAI_PROXY_API_KEY=opk_... OPENAI_PROXY_BASE=https://ai.example.com ./scripts/local/smoke_client.sh
 #
 # Never paste a real opk_... value as a literal argument; export it from your
 # secret store. This script prints only response prefixes, never the key.

@@ -3,8 +3,7 @@
 Date: 2026-05-15
 Status: live gateway integration in progress
 Product: **Vivid Fish AI Gateway** (project directory still named
-`openai-proxy`; canonical host `https://ai.vivid.fish`; alias
-`https://openai.vivid.fish` preserved for compatibility).
+`openai-proxy`; public examples use `https://ai.example.com`).
 
 This document defines the smallest set of stable contracts the gateway needs
 before it grows more endpoints, adapters, or scheduler behavior.

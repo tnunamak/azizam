@@ -1,24 +1,21 @@
 # LiteLLM Substrate Decision
 
-Status: adopted boundary; target rearchitecture is directional, not yet adopted.
+Status: adopted boundary; revised target control-plane decision.
 
 This document has two deliberate layers:
 
 - **Current state** records the boundary the running gateway implements today.
-- **Target state** records the durable rearchitecture direction harvested from
-  the LiteLLM memo. It is not evidence that the migration is complete.
+- **Target state** records the durable ownership split for future work. It is
+  not evidence that implementation is complete.
 
-The boundary is adopted. The exact target deployment, database topology, and
-identity migration remain open until they are proven against the product's
-self-hosted and multi-user requirements.
+The boundary is adopted. The gateway remains the one product control plane for
+identity, App keys, access plans, budget decisions, provider-key custody, spend
+caps, receipts, and local orchestration. LiteLLM is a pinned, replaceable
+execution substrate for chat-shaped local and remote models.
 
-The target direction is supported by LiteLLM's documented proxy, routing,
-virtual-key, database, user/team, access-group, pass-through, custom-provider,
-and authentication capabilities. These external capabilities are inputs to the
-direction, not promises about every installed LiteLLM version; verify them
-again before implementation. The local implementation evidence is the gateway
-substrate compiler, delegated-key path, virtual-key admin transport, service
-registry, and sidecar launcher referenced below.
+The local implementation evidence is the gateway substrate compiler,
+delegated-key path, virtual-key admin transport, service registry, and sidecar
+launcher referenced below.
 
 ## Current state: adopted execution boundary
 
@@ -91,12 +88,16 @@ There are two distinct kinds of key, owned by two distinct planes:
   spend). The gateway does not store them; it forwards a virtual key to the
   substrate as the `X-Litellm-Key` delegated header on execution.
 
-A virtual key authorizes eligible LLM-shaped protocol frontends: the three
-OpenAI execution routes above, the gateway's Anthropic Messages frontend, and
-the LiteLLM-filtered Ollama catalog. It bypasses gateway Profile policy for
-those calls. It does not authorize gateway-owned media, jobs, admin, or native
-passthrough routes; those remain behind gateway App-key auth and their own
-gateway policy.
+A virtual key currently authorizes eligible LLM-shaped protocol frontends: the
+three OpenAI execution routes above, the gateway's Anthropic Messages frontend,
+and the LiteLLM-filtered Ollama catalog. That path bypasses gateway Profile
+policy for those calls. It does not authorize gateway-owned media, jobs, admin,
+or native passthrough routes; those remain behind gateway App-key auth and their
+own gateway policy.
+
+This bypass is a migration bridge. It must be retired for paid models. Paid
+execution must pass through gateway App-key auth, access-plan checks, spend
+caps, and receipts before LiteLLM executes the request.
 
 ### Operating LiteLLM virtual keys
 
@@ -120,32 +121,33 @@ Code: thin transport in `gateway/backends/litellm_admin.py`
 (`LiteLLMKeyAdminClient`), endpoints in `gateway/admin_api.py`, panel in
 `gateway/admin_render.py`, live client wiring in `proxy.py`.
 
-## Target state: LiteLLM owns LLM runtime access
+## Target state: gateway control plane, LiteLLM execution substrate
 
-The durable direction is to make LiteLLM the source of truth for **LLM-shaped
-runtime access**, while keeping this gateway as the local-AI product and
-orchestration layer. This is a target architecture, not a completed migration.
+The durable direction is to keep the gateway as the one control plane and use
+LiteLLM as a commodity execution substrate. LiteLLM runs chat-shaped local and
+remote model calls. The gateway decides whether a person, app, access plan,
+alias, provider, and budget allow the call before execution starts.
 
 In the target state, LiteLLM owns:
 
-- supported OpenAI- and Anthropic-shaped LLM execution and provider adapters;
+- provider adapters and execution for supported OpenAI- and Anthropic-shaped
+  LLM calls;
 - routing, fallback, and load balancing where deployments are genuinely
   interchangeable;
-- virtual keys, users, teams, access groups, model access, budgets, rate limits,
-  spend accounting, and the LLM request log where its product supports them;
-- the durable LLM model/access catalog rather than a parallel gateway policy
-  system.
+- raw LiteLLM request execution, provider error normalization, and cost data that
+  the gateway can record in receipts.
 
-The gateway continues to own:
+The gateway owns:
 
-- setup and self-hosted product UX, including OIDC login when LiteLLM's SSO
-  path is not the right product fit;
+- setup and self-hosted product UX;
+- built-in accounts, OIDC, people, Apps, App keys, access plans, and invites;
+- provider-key custody through environment-variable references;
+- spend caps, budget decisions, policy gates, and paid-call admission;
 - the local service registry, resource admission, readiness, and lifecycle or
   model swapping for mutable singleton engines;
 - ComfyUI and other media workflows, durable jobs, assets, and provider-native
   passthrough;
-- gateway receipts that explain local orchestration, enriched with LiteLLM
-  cost and usage data;
+- receipts, activity, admin UX, discovery metadata, and support matrices;
 - thin protocol-shape shims such as Ollama-compatible routes when LiteLLM does
   not expose the exact client contract.
 
@@ -155,70 +157,45 @@ gateway-owned local target that makes the requested state real, then forwards
 to the engine. `current` and `current-fast` remain gateway semantics until an
 equivalent contract is proven elsewhere.
 
-### Target state: durable ownership split
+### Why LiteLLM is not the product control plane
 
-The intended split is two durable sources of truth, not three:
+LiteLLM is a strong execution substrate, but its documented product shape does
+not match the gateway's self-hosted control-plane needs:
 
-- LiteLLM's durable database holds LLM users, teams, virtual keys, access
-  groups, model access, budgets, rate limits, and spend data.
-- The gateway database holds local services, lifecycle declarations, resource
-  state, workflows, media jobs/assets, OIDC-to-LiteLLM provisioning rules, and
-  product settings that LiteLLM does not model.
+- Enterprise licensing gates several controls the gateway needs as ordinary
+  owner features. LiteLLM documents SSO as free only up to five users, with
+  SSO beyond that, OIDC/JWT auth, audit logs with retention, secret-manager
+  read/write, public/private route controls, RBAC, project management, and
+  tag-based budgets in its Enterprise surface.
+- Durable key, user, spend, config, virtual-key, and budget features depend on
+  Postgres. LiteLLM's production guide lists PostgreSQL as required for proxy
+  auth and tracking features. Its virtual-key guide requires a Postgres
+  database. Its budget guide says budgets read spend from the database and do
+  not cap a database-free deployment.
+- Moving identity, keys, model access, and budgets into LiteLLM would create two
+  policy engines: LiteLLM for chat-shaped LLM calls and the gateway for media,
+  local resources, provider-native routes, jobs, assets, and receipts. That
+  split would make paid-call admission harder to explain and test.
+- LiteLLM is a supply-chain dependency. On 2026-03-24, LiteLLM reported that
+  PyPI packages `litellm==1.82.7` and `litellm==1.82.8` were compromised and
+  contained malicious payloads. The gateway should pin and hash-lock LiteLLM,
+  keep it replaceable, and avoid making it the owner of product identity.
 
 Generated `data/litellm.config.yaml` may remain as a bootstrap, migration, or
-export artifact while this is being implemented. It must not become a third
-hand-edited runtime source of truth.
+export artifact. It must not become a hand-edited product source of truth.
 
-### Target state: migration constraints and open questions
+Do not build another generic provider adapter system in the gateway. LiteLLM is
+the preferred substrate where its adapters fit. Do not delete local lifecycle,
+resource state, media/workflow, receipts, access plans, paid-call admission, or
+exact protocol shims merely because LiteLLM is the chosen substrate.
 
-The rearchitecture is conditional rather than a license to delete working
-gateway behavior:
+Reference material:
 
-- A multi-user product likely requires LiteLLM's durable database for virtual
-  keys, budgets, and model access. A genuinely database-free product mode would
-  change that conclusion and has not been ruled out by an adopted product
-  decision.
-- Existing gateway App keys, Profiles, OIDC mappings, and policy cannot be
-  removed until their replacement has equivalent coverage for media, local
-  resources, and household/friend/agent UX. A Profile may eventually become a
-  product-friendly view over a LiteLLM access group or key template, but it must
-  not remain a second LLM authorization engine.
-- The sidecar versus in-process library choice remains open. The sidecar is
-  current and stays in place until recurring config-sync or operational pain
-  justifies a measured change; library mode is not a target-state requirement.
-- External LiteLLM capabilities and licensing boundaries can change. Recheck
-  provider, SSO/RBAC, database, and API behavior before implementing a migration.
-
-### Target state: migration order
-
-Migration should reduce duplicate policy incrementally:
-
-1. Define the supported single-user and multi-user deployment modes, including
-   database requirements and honest feature limits.
-2. Make LiteLLM virtual keys the primary LLM execution credentials, with a
-   bounded bridge for existing gateway keys during migration.
-3. Map gateway identity and Profiles to LiteLLM users, teams, access groups, or
-   key templates; retain gateway-only permissions for media and local resources.
-4. Move supported OpenAI/Anthropic LLM semantics behind LiteLLM while keeping
-   gateway lifecycle preparation and receipts.
-5. Replace generated YAML as runtime truth with supported provisioning paths;
-   keep compatibility exports only as migration artifacts.
-6. Delete duplicated gateway LLM policy and compatibility code only after
-   integration tests prove the replacement boundary.
-
-Do not build a second runtime key, budget, model-access, or generic provider
-adapter system in the gateway. Do not delete local lifecycle, resource state,
-media/workflow, receipts, or exact protocol shims merely because LiteLLM is the
-chosen substrate.
-
-Reference material for a future migration review:
-
-- [LiteLLM proxy](https://docs.litellm.ai/) and [routing](https://docs.litellm.ai/docs/routing)
-- [virtual keys](https://docs.litellm.ai/docs/proxy/virtual_keys) and
-  [database ownership](https://docs.litellm.ai/docs/proxy/db_info)
-- [users and teams](https://docs.litellm.ai/docs/proxy/user_management_heirarchy),
-  [access groups](https://docs.litellm.ai/docs/proxy/access_groups), and
-  [custom providers](https://docs.litellm.ai/docs/providers/custom_llm_server)
+- [LiteLLM Enterprise](https://docs.litellm.ai/docs/enterprise)
+- [LiteLLM production deployment](https://docs.litellm.ai/docs/proxy/deploy)
+- [LiteLLM virtual keys](https://docs.litellm.ai/docs/proxy/virtual_keys)
+- [LiteLLM budgets and rate limits](https://docs.litellm.ai/docs/proxy/users)
+- [LiteLLM security update for the 2026-03-24 PyPI incident](https://docs.litellm.ai/blog/security-update-march-2026)
 
 ## Deployment shape: sidecar (current); library mode is an open question
 
@@ -234,9 +211,8 @@ Context for whoever revisits it:
   the choice is about process topology, not dependency footprint.
 - The gateway owns its product control plane (App keys, Profiles, policy, admin
   UI, receipts) **in the current state** and uses LiteLLM for raw execution,
-  virtual-key administration, and `v1/models`; the target state moves eligible
-  LLM runtime access to LiteLLM without moving local orchestration or product
-  UX wholesale.
+  virtual-key administration, and `v1/models`; the target state keeps product
+  access policy in the gateway while LiteLLM executes eligible LLM calls.
 - A 2026-06-03 incident exposed config-sync staleness. That reconciliation is
   now completed: registry writes regenerate the YAML artifact, and the managed
   launcher hash-watches it and restarts LiteLLM when it changes. The sidecar
