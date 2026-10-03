@@ -57,10 +57,14 @@ class AccountError(ValueError):
 
 @contextmanager
 def connection(path: Path):
-    with sqlite3.connect(str(path), timeout=10) as conn:
+    conn = sqlite3.connect(str(path), timeout=10)
+    try:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys=ON")
-        yield conn
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 def initialize(path: Path) -> None:

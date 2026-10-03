@@ -645,3 +645,18 @@ def test_oidc_returns_to_the_product_account_page(target):
     import proxy
     assert proxy._safe_admin_return_to(target) == target
     assert proxy._safe_admin_return_to("//evil.example" + target) == "/admin"
+
+
+def test_account_connection_closes_and_rolls_back_failed_work(account_db):
+    path, _ = account_db
+    with accounts.connection(path) as conn:
+        conn.execute("INSERT INTO account_login_limits VALUES('temporary',1,1)")
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        conn.execute("SELECT 1")
+    with pytest.raises(RuntimeError):
+        with accounts.connection(path) as failed:
+            failed.execute("INSERT INTO account_login_limits VALUES('rolled-back',1,1)")
+            raise RuntimeError("transaction failed")
+    assert rows(path, "SELECT bucket FROM account_login_limits") == [{"bucket": "temporary"}]
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        failed.execute("SELECT 1")

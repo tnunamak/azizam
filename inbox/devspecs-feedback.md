@@ -1,5 +1,10 @@
 # devspecs feedback
 
+## 2026-10-03 — People and built-in accounts lane
+
+- Useful: `ds tldr` explained the slice workflow, and `ds recent` returned recent repository topics.
+- Rough edge: creating the three-slice account task printed `Task index preflight: waiting for another index update` without an observed task ID or usable task pack. `ds task status` required an ID; `ds task list` returned no output. I continued from the explicit brief and recorded verification manually. A bounded wait and a recoverable task ID would help when another index update is active.
+
 ## 2026-06-24 — LiteLLM rearchitecture memo
 
 - Task: `ds task quick "produce LiteLLM rearchitecture decision memo"`.

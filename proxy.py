@@ -135,7 +135,6 @@ from gateway.admin_render import render_admin_dashboard
 from gateway.local_owner import (
     hash_password as local_hash_password,
     load_or_create_signing_key as local_load_signing_key,
-    verify_password as local_verify_password,
 )
 from gateway.setup_render import render_setup_page
 from gateway.admin_runtime import (
