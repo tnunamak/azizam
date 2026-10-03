@@ -12,12 +12,7 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet";
-import {
-  CodeBlock,
-  EmptyState,
-  ErrorState,
-  RelativeTime,
-} from "@/components/product";
+import { EmptyState, ErrorState, RelativeTime } from "@/components/product";
 
 type Receipt = {
   request_id: string;
@@ -317,10 +312,13 @@ export function Requests() {
                     Technical details
                   </summary>
                   <div className="mt-4">
-                    <CodeBlock
-                      language="json"
-                      code={JSON.stringify(record.receipt, null, 2)}
-                    />
+                    <pre
+                      tabIndex={0}
+                      aria-label="Technical request details"
+                      className="bg-muted focus-visible:outline-ring overflow-x-auto rounded-lg p-4 font-mono text-xs leading-relaxed focus-visible:outline-2"
+                    >
+                      <code>{JSON.stringify(record.receipt, null, 2)}</code>
+                    </pre>
                   </div>
                 </details>
               </div>

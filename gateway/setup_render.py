@@ -27,6 +27,8 @@ response. Chrome (header, fonts, layout tokens) is shared with ``/`` and
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any, Mapping
 
 from gateway.gateway_shell import (
@@ -36,6 +38,8 @@ from gateway.gateway_shell import (
 )
 
 __all__ = ["render_setup_page"]
+
+_PRODUCT_NAME = json.loads(Path(__file__).with_name("product_identity.json").read_text())["name"]
 
 
 _PAGE_CSS = """
@@ -920,9 +924,13 @@ def render_setup_page(
         body = body.replace("<h2 ", "<h1 ", 1).replace("</h2>", "</h1>", 1)
         header_html = (
             '<header class="shell-header"><div class="shell-header-inner">'
-            f'<a class="shell-brand" href="/" aria-label="{esc(brand)} home">'
-            '<span class="shell-brand-dot" aria-hidden="true"></span>'
-            f'{esc(brand)}</a>'
+            f'<a class="shell-brand" href="/" aria-label="{esc(_PRODUCT_NAME)} home">'
+            '<svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" '
+            'fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+            '<path d="M6.5 12c.94-3.46 4.94-6 8.5-6 3.56 0 6.06 2.54 7 6-.94 3.47-3.44 6-7 6s-7.56-2.53-8.5-6Z"/>'
+            '<path d="M18 12v.5M16 17.93a9.77 9.77 0 0 1 0-11.86M7 10.67C7 8 5.58 5.97 2.73 5.5c-1 1.5-1 5 .23 6.5-1.24 1.5-1.24 5-.23 6.5C5.58 18.03 7 16 7 13.33"/>'
+            '<path d="M10.46 7.26C10.2 5.88 9.17 4.24 8 3h5.8a2 2 0 0 1 1.98 1.67l.23 1.4M10.46 16.74C10.2 18.12 9.17 19.76 8 21h5.8a2 2 0 0 0 1.98-1.67l.23-1.4"/></svg>'
+            f'{esc(_PRODUCT_NAME)}</a>'
             '<button class="setup-theme-toggle" type="button" '
             'data-setup-theme aria-label="Toggle theme">'
             '<svg class="sun" aria-hidden="true" viewBox="0 0 24 24" '

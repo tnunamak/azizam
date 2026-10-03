@@ -1,4 +1,6 @@
-export const PRODUCT_NAME = "Vivid Fish";
+import identity from "../../../gateway/product_identity.json";
+
+export const PRODUCT_NAME = identity.name;
 
 // Next adds /ui automatically to Link hrefs. These are application paths.
 export const destinations = [
