@@ -378,9 +378,15 @@ def test_capability_union_includes_available_new_app_default(home_case):
     assert data["new_app_aliases"] == [] and data["aliases"] == []
 
 
-def test_public_chat_header_returns_own_durable_receipt_not_upstream_id(monkeypatch):
+def test_public_chat_header_returns_own_durable_receipt_not_upstream_id(monkeypatch, tmp_path):
     import proxy
     from gateway.policy import DEFAULT_PROFILE
+
+    receipt_db = tmp_path / "public-header-receipts.db"
+    receipt_store.init_db(receipt_db)
+    original_begin, original_finalize = receipt_store.begin, receipt_store.finalize
+    monkeypatch.setattr(receipt_store, "begin", lambda item, **kwargs: original_begin(item, path=receipt_db, **kwargs))
+    monkeypatch.setattr(receipt_store, "finalize", lambda item, **kwargs: original_finalize(item, path=receipt_db, **kwargs))
 
     class Client:
         async def aclose(self):
@@ -422,6 +428,41 @@ def test_public_chat_header_returns_own_durable_receipt_not_upstream_id(monkeypa
     request_id = response.headers["x-ai-gateway-request-id"]
     assert request_id not in {"spoofed-upstream", "provider-opaque"} and "," not in request_id
     assert response.headers["request-id"] == "provider-opaque"
-    receipt = receipt_store.get(request_id)
+    receipt = receipt_store.get(request_id, path=receipt_db)
     assert receipt["status"] == "succeeded" and receipt["app_id"] == "header-app"
     assert len(captured) == 1
+
+
+def test_chat_only_model_plan_cannot_advertise_ready_generic_image_targets(home_case):
+    c = home_case
+    profile = admin_store.create_profile("Chat targets", {"id": "chat-targets", "protocols": ["openai"], "models": ["demo-chat"]}, path=c.db)
+    c.inherited_profile = c.prospective_profile = profile["id"]
+    views = {"chat": {"stable": [{"alias": "fast", "resolves_to": "demo-chat"}]},
+             "images": {"stable": [{"alias": "image", "resolves_to": "draw"}]}}
+    c.aliases_override = views
+    c.registry = {"services": {
+        "service": {"enabled": True, "config": {"models": [{"id": "demo-chat", "local_lifecycle": True}]}},
+        "art-service": {"enabled": True, "config": {}}
+    }}
+    c.health = {"backends": [{"key": service, "live_status": "up"} for service in ("service", "art-service")]}
+    def provider(identity):
+        raw = [Capability(intent="chat.completions", backend="service"),
+               Capability(intent="image.generate", backend="art-service"),
+               Capability(intent="image.generate", backend="art-service", workflow="draw"),
+               *build_alias_capabilities(views)]
+        return [capability_with_policy_view(cap, identity.profile, request=make_policy_request(
+            protocol="openai.chat" if cap.intent.startswith("chat") else "openai.images",
+            intent=cap.intent, model=cap.model, workflow=cap.workflow, backend=cap.backend)) for cap in raw]
+    c.capabilities_override = provider
+    data = c.http.get("/me/api/home").json()
+    assert [row["id"] for row in data["aliases"]] == ["fast"]
+    assert not any(row["capability"] == "image" for row in data["capabilities"])
+    assert any(row["capability"] == "chat" and row["available"] for row in data["capabilities"])
+
+
+def test_disabled_service_is_unavailable_even_when_probe_endpoint_answers(home_case):
+    c = home_case
+    c.registry["services"]["service"]["enabled"] = False
+    data = c.http.get("/me/api/home").json()
+    assert not any(row["available"] for row in data["capabilities"])
+    assert data["status"]["state"] == "unavailable"
