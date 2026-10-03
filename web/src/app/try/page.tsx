@@ -28,6 +28,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -1229,18 +1236,21 @@ function ModelSelect({
     ...options,
   ];
   return (
-    <select
-      aria-label="Model"
-      className="border-input bg-background h-11 w-full rounded-md border px-3 text-sm"
+    <Select
       value={value}
-      onChange={(event) => onChange(event.target.value)}
+      onValueChange={onChange}
     >
-      {values.map((option) => (
-        <option key={option.id} value={option.id}>
-          {option.label} · {option.locality} · {option.price}
-        </option>
-      ))}
-    </select>
+      <SelectTrigger aria-label="Model" className="w-full">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {values.map((option) => (
+          <SelectItem key={option.id} value={option.id}>
+            {option.label} · {option.locality} · {option.price}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }
 

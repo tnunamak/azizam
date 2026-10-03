@@ -25526,7 +25526,7 @@ async def _forward_current_loaded_openai_request(
                 receipt.metadata, "backend_egress", body,
                 extra={"status_code": resp.status_code},
             )
-            excluded = ("content-length", "transfer-encoding", "content-type", "x-ai-gateway-request-id")
+            excluded = ("content-length", "transfer-encoding", "content-type", "x-ai-gateway-request-id", "x-ai-gateway-receipt-id")
             response_headers = {
                 k: v for k, v in resp.headers.items() if k.lower() not in excluded
             }
@@ -25833,7 +25833,7 @@ async def _forward_litellm_proxy_request(
                 headers={"Retry-After": "10"},
             )
         content_type = resp.headers.get("content-type", "") or "application/json"
-        excluded = ("content-length", "transfer-encoding", "content-type", "x-ai-gateway-request-id")
+        excluded = ("content-length", "transfer-encoding", "content-type", "x-ai-gateway-request-id", "x-ai-gateway-receipt-id")
         response_headers = {
             k: v for k, v in resp.headers.items() if k.lower() not in excluded
         }

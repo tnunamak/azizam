@@ -24,6 +24,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   PageHeader,
   EmptyState,
   ErrorState,
@@ -396,16 +403,21 @@ function AppsContents() {
               <label htmlFor="app-client" className="text-sm font-medium">
                 Client
               </label>
-              <select
-                id="app-client"
-                className="border-input bg-background h-10 w-full rounded-lg border px-3 text-sm"
+              <Select
                 value={client}
-                onChange={(e) => setClient(e.target.value)}
+                onValueChange={setClient}
               >
-                {CLIENTS.map((value) => (
-                  <option key={value}>{value}</option>
-                ))}
-              </select>
+                <SelectTrigger id="app-client" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {CLIENTS.map((value) => (
+                    <SelectItem key={value} value={value}>
+                      {value}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             {error && (
               <p role="alert" className="text-destructive text-sm">

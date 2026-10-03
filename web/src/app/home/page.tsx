@@ -16,6 +16,13 @@ import { accountApi, type AccountApp } from "@/lib/account-api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   CapabilityIcon,
@@ -289,30 +296,33 @@ function Connect({ home }: { home: HomeSnapshot }) {
           <label htmlFor="recipe-key" className="text-sm font-medium">
             Key for these settings
           </label>
-          <select
-            id="recipe-key"
+          <Select
             value={selectedCredentialId}
             disabled={creating || !!reveal || testing}
-            onChange={(event) => {
-              setSelectedCredentialId(event.target.value);
+            onValueChange={(value) => {
+              setSelectedCredentialId(value);
               setTestResult(null);
               setTestKey("");
             }}
-            className="border-input bg-background h-11 w-full rounded-lg border px-3 text-sm"
           >
-            <option value="new">New app · your default access</option>
-            {selectedCredentialId !== "new" &&
-              !keys.some((key) => key.id === selectedCredentialId) && (
-                <option value={selectedCredentialId}>
-                  New key · loading access
-                </option>
-              )}
-            {keys.map((key) => (
-              <option key={key.id} value={key.id}>
-                {key.appName} · {key.display_name || "Key"}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger id="recipe-key" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="new">New app · your default access</SelectItem>
+              {selectedCredentialId !== "new" &&
+                !keys.some((key) => key.id === selectedCredentialId) && (
+                  <SelectItem value={selectedCredentialId}>
+                    New key · loading access
+                  </SelectItem>
+                )}
+              {keys.map((key) => (
+                <SelectItem key={key.id} value={key.id}>
+                  {key.appName} · {key.display_name || "Key"}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <p className="text-muted-foreground text-xs">
             Recipes use this key’s access plan. A new app uses your default
             access, which can differ from your other apps.

@@ -29,6 +29,18 @@ export interface HomeReceipt {
   _stored_at?: number | null;
   accepted_at_ms?: number | null;
 }
+export interface HomeCreation {
+  asset_id: string;
+  kind: "image" | "video" | "audio";
+  prompt?: string | null;
+  model?: string | null;
+  created_at?: number | string | null;
+  download_url?: string | null;
+  media_type?: string | null;
+}
+export interface HomeCreationsResponse {
+  assets: HomeCreation[];
+}
 export interface HomeSnapshot {
   authenticated: boolean;
   user: { id: string; name: string; email: string | null; role: string };
@@ -103,6 +115,8 @@ async function homeRequest<T>(
 
 export const homeApi = {
   home: () => homeRequest<HomeSnapshot>("/me/api/home"),
+  creations: () =>
+    homeRequest<HomeCreationsResponse>("/me/api/media?limit=5"),
   setup: () => adminFetch<SetupProgress>("/admin/api/setup-progress"),
   test: (apiKey: string, credentialId?: string) =>
     homeRequest<ConnectionResult>("/me/api/connection-test", {

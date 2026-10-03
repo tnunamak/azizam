@@ -158,7 +158,9 @@ export default function GalleryPage() {
       />
       {isPending ? (
         <div
+          role="status"
           aria-label="Loading recorded examples"
+          aria-busy="true"
           className="grid gap-6 sm:grid-cols-2"
         >
           <Skeleton className="h-64 w-full" />

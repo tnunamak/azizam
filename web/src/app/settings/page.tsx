@@ -67,9 +67,17 @@ interface DefaultsResponse {
   defaults: { profile_id: string | null };
   aliases: Record<string, unknown>;
 }
+type SignInMode = "built-in" | "oidc" | "both";
+interface SignInOptions {
+  mode: SignInMode;
+  built_in: boolean;
+  oidc: boolean;
+  oidc_label: string;
+}
 const keys = {
   instance: ["settings", "instance"],
   oidc: ["settings", "oidc"],
+  signIn: ["settings", "sign-in"],
   defaults: ["settings", "defaults"],
   media: ["settings", "media"],
   extensions: ["settings", "extensions"],
@@ -107,7 +115,12 @@ function Section({
 }
 function Loading() {
   return (
-    <div aria-label="Loading settings" className="space-y-4">
+    <div
+      role="status"
+      aria-label="Loading settings"
+      aria-busy="true"
+      className="space-y-4"
+    >
       <Skeleton className="h-11 w-full" />
       <Skeleton className="h-11 w-3/4" />
     </div>
@@ -285,36 +298,64 @@ function InstanceForm({ initial }: { initial: Instance }) {
   );
 }
 function SignInSection() {
-  const { data, isPending, isError, refetch } = useQuery({
+  const {
+    data: oidcData,
+    isPending: oidcIsPending,
+    isError: oidcIsError,
+    refetch: refetchOidc,
+  } = useQuery({
     queryKey: keys.oidc,
     queryFn: () =>
       adminFetch<{ oidc_config: EffectiveOidcConfig | null }>(
         "/admin/api/oidc-config",
       ),
   });
+  const {
+    data: signInData,
+    isPending: signInIsPending,
+    isError: signInIsError,
+    refetch: refetchSignIn,
+  } = useQuery({
+    queryKey: keys.signIn,
+    queryFn: () => adminFetch<SignInOptions>("/admin/api/operator/sign-in"),
+  });
   return (
     <Section
       title="Sign-in"
-      description="Connect an identity provider so people can sign in."
+      description="Choose whether people sign in with built-in accounts, an identity provider or both."
     >
-      {isPending ? (
+      {oidcIsPending || signInIsPending ? (
         <Loading />
-      ) : isError ? (
+      ) : oidcIsError || signInIsError ? (
         <ErrorState
           message="Sign-in settings could not be loaded."
-          onRetry={() => void refetch()}
+          onRetry={() => {
+            void refetchOidc();
+            void refetchSignIn();
+          }}
         />
       ) : (
         <OidcForm
-          key={JSON.stringify(data.oidc_config)}
-          config={data.oidc_config}
+          key={JSON.stringify({
+            oidc: oidcData.oidc_config,
+            signIn: signInData,
+          })}
+          config={oidcData.oidc_config}
+          signIn={signInData}
         />
       )}
     </Section>
   );
 }
-function OidcForm({ config }: { config: EffectiveOidcConfig | null }) {
+function OidcForm({
+  config,
+  signIn,
+}: {
+  config: EffectiveOidcConfig | null;
+  signIn: SignInOptions;
+}) {
   const client = useQueryClient();
+  const [mode, setMode] = useState<SignInMode>(signIn.mode);
   const [enabled, setEnabled] = useState(config?.enabled ?? false);
   const [fields, setFields] = useState({
     issuer: config?.issuer ?? "",
@@ -361,131 +402,176 @@ function OidcForm({ config }: { config: EffectiveOidcConfig | null }) {
     },
     onSuccess: (data) => {
       client.setQueryData(keys.oidc, data);
+      void client.invalidateQueries({ queryKey: keys.signIn });
       void client.invalidateQueries({ queryKey: keys.effective });
-      toast.success("Sign-in settings saved");
+      toast.success("Identity provider saved");
+    },
+  });
+  const modeMutation = useMutation({
+    mutationFn: () =>
+      adminFetch<SignInOptions>("/admin/api/operator/sign-in", {
+        method: "PUT",
+        body: { mode },
+      }),
+    onSuccess: (data) => {
+      client.setQueryData(keys.signIn, data);
+      toast.success("Sign-in choice saved");
     },
   });
   return (
-    <form
-      className="space-y-5"
-      onSubmit={(e) => {
-        e.preventDefault();
-        mutation.mutate();
-      }}
-    >
-      <div className="flex flex-wrap items-center gap-3">
-        <Badge variant="secondary">OIDC only</Badge>
-        <p className="text-muted-foreground text-xs">
-          Built-in member accounts are not configurable in this version.
-        </p>
-      </div>
-      {!config && (
-        <p className="text-muted-foreground text-sm">
-          No identity provider is connected yet. Add its details below to enable
-          sign-in.
-        </p>
-      )}
-      <Toggle
-        id="oidc-enabled"
-        label="Allow OIDC sign-in"
-        checked={enabled}
-        onChange={setEnabled}
-      />
-      <Field id="oidc-issuer" label="Issuer URL">
-        <Input
-          id="oidc-issuer"
-          type="url"
-          required={enabled}
-          value={fields.issuer}
-          onChange={(e) => update("issuer", e.target.value)}
-        />
-      </Field>
-      <Field id="oidc-client" label="Client ID">
-        <Input
-          id="oidc-client"
-          required={enabled}
-          value={fields.client_id}
-          onChange={(e) => update("client_id", e.target.value)}
-        />
-      </Field>
-      <Field
-        id="oidc-secret"
-        label="Client secret"
-        help={
-          config?.client_secret_set
-            ? "A secret is saved. Leave this blank to keep it."
-            : "Write-only. The saved value is never shown."
-        }
+    <div className="space-y-7">
+      <form
+        className="space-y-5"
+        onSubmit={(e) => {
+          e.preventDefault();
+          modeMutation.mutate();
+        }}
       >
-        <Input
+        <div className="flex flex-wrap items-center gap-3">
+          <Badge variant={signIn.built_in ? "default" : "secondary"}>
+            Built-in accounts {signIn.built_in ? "on" : "off"}
+          </Badge>
+          <Badge variant={signIn.oidc ? "default" : "secondary"}>
+            OIDC {signIn.oidc ? "on" : "off"}
+          </Badge>
+        </div>
+        <Field
+          id="sign-in-mode"
+          label="Available sign-in methods"
+          help="This setting controls the methods shown on the sign-in page. The provider switch below only configures OIDC."
+        >
+          <Select
+            value={mode}
+            onValueChange={(value) => setMode(value as SignInMode)}
+          >
+            <SelectTrigger id="sign-in-mode" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="built-in">Built-in accounts only</SelectItem>
+              <SelectItem value="oidc">OIDC only</SelectItem>
+              <SelectItem value="both">Built-in accounts and OIDC</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+        <MutationError error={modeMutation.error} />
+        <Save pending={modeMutation.isPending} label="Save sign-in choice" />
+      </form>
+      <form
+        className="space-y-5 border-t pt-7"
+        onSubmit={(e) => {
+          e.preventDefault();
+          mutation.mutate();
+        }}
+      >
+        {!config && (
+          <p className="text-muted-foreground text-sm">
+            No identity provider is connected yet. Add its details below to
+            enable sign-in.
+          </p>
+        )}
+        <Toggle
+          id="oidc-enabled"
+          label="Enable identity provider"
+          checked={enabled}
+          onChange={setEnabled}
+        />
+        <Field id="oidc-issuer" label="Issuer URL">
+          <Input
+            id="oidc-issuer"
+            type="url"
+            required={enabled}
+            value={fields.issuer}
+            onChange={(e) => update("issuer", e.target.value)}
+          />
+        </Field>
+        <Field id="oidc-client" label="Client ID">
+          <Input
+            id="oidc-client"
+            required={enabled}
+            value={fields.client_id}
+            onChange={(e) => update("client_id", e.target.value)}
+          />
+        </Field>
+        <Field
           id="oidc-secret"
-          type="password"
-          autoComplete="new-password"
-          value={fields.client_secret}
-          onChange={(e) => update("client_secret", e.target.value)}
-        />
-      </Field>
-      <Field id="oidc-redirect" label="Redirect URL">
-        <Input
-          id="oidc-redirect"
-          type="url"
-          required={enabled}
-          value={fields.redirect_uri}
-          onChange={(e) => update("redirect_uri", e.target.value)}
-        />
-      </Field>
-      <details>
-        <summary className="min-h-11 cursor-pointer py-3 text-sm font-medium">
-          Provider details and access rules
-        </summary>
-        <div className="space-y-5 pb-2">
-          {(
-            [
-              ["scopes", "Scopes"],
-              ["groups_claim", "Groups claim"],
-              ["allowed_email_domains", "Allowed email domains"],
-              ["admin_emails", "Admin emails"],
-              ["admin_groups", "Admin groups"],
-              ["admin_roles", "Admin roles"],
-              ["authorization_endpoint", "Authorization endpoint"],
-              ["token_endpoint", "Token endpoint"],
-              ["jwks_uri", "Signing keys URL"],
-            ] as const
-          ).map(([key, label]) => (
-            <Field key={key} id={`oidc-${key}`} label={label}>
+          label="Client secret"
+          help={
+            config?.client_secret_set
+              ? "A secret is saved. Leave this blank to keep it."
+              : "Write-only. The saved value is never shown."
+          }
+        >
+          <Input
+            id="oidc-secret"
+            type="password"
+            autoComplete="new-password"
+            value={fields.client_secret}
+            onChange={(e) => update("client_secret", e.target.value)}
+          />
+        </Field>
+        <Field id="oidc-redirect" label="Redirect URL">
+          <Input
+            id="oidc-redirect"
+            type="url"
+            required={enabled}
+            value={fields.redirect_uri}
+            onChange={(e) => update("redirect_uri", e.target.value)}
+          />
+        </Field>
+        <details>
+          <summary className="min-h-11 cursor-pointer py-3 text-sm font-medium">
+            Provider details and access rules
+          </summary>
+          <div className="space-y-5 pb-2">
+            {(
+              [
+                ["scopes", "Scopes"],
+                ["groups_claim", "Groups claim"],
+                ["allowed_email_domains", "Allowed email domains"],
+                ["admin_emails", "Admin emails"],
+                ["admin_groups", "Admin groups"],
+                ["admin_roles", "Admin roles"],
+                ["authorization_endpoint", "Authorization endpoint"],
+                ["token_endpoint", "Token endpoint"],
+                ["jwks_uri", "Signing keys URL"],
+              ] as const
+            ).map(([key, label]) => (
+              <Field key={key} id={`oidc-${key}`} label={label}>
+                <Input
+                  id={`oidc-${key}`}
+                  value={fields[key]}
+                  onChange={(e) => update(key, e.target.value)}
+                />
+              </Field>
+            ))}
+            <p className="text-muted-foreground text-xs">
+              Separate list values with commas. Leave endpoint overrides blank
+              to use provider discovery.
+            </p>
+            <Field id="oidc-clock" label="Clock tolerance (seconds)">
               <Input
-                id={`oidc-${key}`}
-                value={fields[key]}
-                onChange={(e) => update(key, e.target.value)}
+                id="oidc-clock"
+                type="number"
+                min={0}
+                step={1}
+                value={fields.clock_skew_seconds}
+                onChange={(e) => update("clock_skew_seconds", e.target.value)}
               />
             </Field>
-          ))}
-          <p className="text-muted-foreground text-xs">
-            Separate list values with commas. Leave endpoint overrides blank to
-            use provider discovery.
-          </p>
-          <Field id="oidc-clock" label="Clock tolerance (seconds)">
-            <Input
-              id="oidc-clock"
-              type="number"
-              min={0}
-              step={1}
-              value={fields.clock_skew_seconds}
-              onChange={(e) => update("clock_skew_seconds", e.target.value)}
-            />
-          </Field>
-        </div>
-      </details>
-      <MutationError error={mutation.error} />
-      <Save pending={mutation.isPending} label="Save sign-in" />
-      <p className="text-muted-foreground text-xs">
-        Changes apply to future sign-ins. Keep this session open until you test
-        the provider.{" "}
-        <a className="text-primary underline" href="/setup">
-          Owner recovery
-        </a>
-      </p>
-    </form>
+          </div>
+        </details>
+        <MutationError error={mutation.error} />
+        <Save pending={mutation.isPending} label="Save sign-in" />
+        <p className="text-muted-foreground text-xs">
+          Changes apply to future sign-ins. Keep this session open until you
+          test the provider.{" "}
+          <a className="text-primary underline" href="/setup">
+            Owner recovery
+          </a>
+        </p>
+      </form>
+    </div>
   );
 }
 function DefaultsSection() {

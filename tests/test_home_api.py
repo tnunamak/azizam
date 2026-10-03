@@ -394,7 +394,7 @@ def test_public_chat_header_returns_own_durable_receipt_not_upstream_id(monkeypa
 
     class Upstream:
         status_code = 200
-        headers = {"content-type": "application/json", "x-ai-gateway-request-id": "spoofed-upstream", "request-id": "provider-opaque"}
+        headers = {"content-type": "application/json", "x-ai-gateway-request-id": "spoofed-upstream", "x-ai-gateway-receipt-id": "spoofed-receipt", "request-id": "provider-opaque"}
         async def aread(self):
             return b'{"choices":[{"message":{"role":"assistant","content":"Hi"},"finish_reason":"stop"}]}'
         async def aclose(self):
@@ -426,6 +426,7 @@ def test_public_chat_header_returns_own_durable_receipt_not_upstream_id(monkeypa
         client.close()
     assert response.status_code == 200, response.text
     request_id = response.headers["x-ai-gateway-request-id"]
+    assert response.headers["x-ai-gateway-receipt-id"] == request_id
     assert request_id not in {"spoofed-upstream", "provider-opaque"} and "," not in request_id
     assert response.headers["request-id"] == "provider-opaque"
     receipt = receipt_store.get(request_id, path=receipt_db)

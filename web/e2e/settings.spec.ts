@@ -35,7 +35,7 @@ async function seed(page: Page, state: "seeded" | "empty" | "error") {
           state === "empty"
             ? null
             : {
-                enabled: false,
+                enabled: true,
                 issuer: "https://login.example.test",
                 client_id: "gateway",
                 client_secret_set: true,
@@ -51,6 +51,17 @@ async function seed(page: Page, state: "seeded" | "empty" | "error") {
                 jwks_uri: "",
                 clock_skew_seconds: 60,
               },
+      },
+    }),
+  );
+  await page.route("**/admin/api/operator/sign-in", (route) =>
+    route.fulfill({
+      status: state === "error" ? 503 : 200,
+      json: {
+        mode: state === "empty" ? "built-in" : "both",
+        built_in: true,
+        oidc: state !== "empty",
+        oidc_label: "Example identity",
       },
     }),
   );
@@ -143,7 +154,19 @@ for (const theme of ["light", "dark"] as const) {
             "Our gateway",
           );
           await expect(
-            page.getByText("OIDC only", { exact: true }),
+            page.getByText("Built-in accounts on", { exact: true }),
+          ).toBeVisible();
+          await expect(
+            page.getByLabel("Available sign-in methods"),
+          ).toContainText(
+            state === "empty"
+              ? "Built-in accounts only"
+              : "Built-in accounts and OIDC",
+          );
+          await expect(
+            page.getByText(state === "empty" ? "OIDC off" : "OIDC on", {
+              exact: true,
+            }),
           ).toBeVisible();
           await expect(
             page.getByRole("link", { name: "Export redacted snapshot" }),
@@ -227,6 +250,56 @@ test("settings saves each section through its own API and keeps OIDC secret writ
   await expect(page.getByLabel("Default access plan")).toContainText(
     "Local chat",
   );
+  await page.getByLabel("Available sign-in methods").click();
+  await page
+    .getByRole("option", { name: "Built-in accounts only", exact: true })
+    .click();
+  const signInChoiceSaved = page.waitForResponse(
+    (r) =>
+      r.url().endsWith("/admin/api/operator/sign-in") &&
+      r.request().method() === "PUT",
+  );
+  await page
+    .getByRole("button", { name: "Save sign-in choice", exact: true })
+    .click();
+  expect((await signInChoiceSaved).status()).toBe(200);
+  await expect(
+    page.getByText("Sign-in choice saved", { exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(page.getByLabel("Available sign-in methods")).toContainText(
+    "Built-in accounts only",
+  );
+  await page.getByLabel("Available sign-in methods").click();
+  await page.getByRole("option", { name: "OIDC only", exact: true }).click();
+  const signInChoiceRejected = page.waitForResponse(
+    (r) =>
+      r.url().endsWith("/admin/api/operator/sign-in") &&
+      r.request().method() === "PUT",
+  );
+  await page
+    .getByRole("button", { name: "Save sign-in choice", exact: true })
+    .click();
+  expect((await signInChoiceRejected).status()).toBe(409);
+  await expect(
+    page.getByRole("alert").filter({
+      hasText:
+        "Configure an identity provider before enabling this sign-in option.",
+    }),
+  ).toBeVisible();
+  await page.getByLabel("Available sign-in methods").click();
+  await page
+    .getByRole("option", { name: "Built-in accounts only", exact: true })
+    .click();
+  const signInChoiceRestored = page.waitForResponse(
+    (r) =>
+      r.url().endsWith("/admin/api/operator/sign-in") &&
+      r.request().method() === "PUT",
+  );
+  await page
+    .getByRole("button", { name: "Save sign-in choice", exact: true })
+    .click();
+  expect((await signInChoiceRestored).status()).toBe(200);
   await page.getByLabel("Issuer URL").fill("https://login.example.test");
   await page.getByLabel("Client ID", { exact: true }).fill("browser-test");
   await page
@@ -268,6 +341,33 @@ test("settings saves each section through its own API and keeps OIDC secret writ
   expect((await download).suggestedFilename()).toBe(
     "gateway-effective-config.json",
   );
+});
+
+test("settings announces delayed loading states for assistive technology", async ({
+  page,
+}) => {
+  await seed(page, "seeded");
+  let releaseSignIn: () => void = () => {};
+  const signInResponse = new Promise<void>((resolve) => {
+    releaseSignIn = resolve;
+  });
+  await page.route("**/admin/api/operator/sign-in", async (route) => {
+    await signInResponse;
+    return route.fulfill({
+      json: {
+        mode: "both",
+        built_in: true,
+        oidc: true,
+        oidc_label: "Example identity",
+      },
+    });
+  });
+  await page.goto("/ui/settings/");
+  const signIn = page.getByRole("region", { name: "Sign-in", exact: true });
+  const status = signIn.getByRole("status", { name: "Loading settings" });
+  await expect(status).toHaveAttribute("aria-busy", "true");
+  releaseSignIn();
+  await expect(status).toHaveCount(0);
 });
 
 test("settings reports save failure and retries a failed load", async ({
