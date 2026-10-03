@@ -296,6 +296,32 @@ class ProviderAdminApiTests(unittest.TestCase):
         self.assertEqual(provider_policy["caps"], {"daily_usd": 2.0})
         self.assertNotIn("allowed_plans", provider_policy)
 
+    def test_provider_api_distinguishes_unrestricted_from_explicit_empty_allowed_plans(self) -> None:
+        store = FakeProviderAdminStore()
+        store.provider_admin_state = normalize_provider_admin_state({
+            "schema_version": 1,
+            "providers": {
+                "openrouter": {"caps": {"daily_usd": 2}},
+                "typesafe": {"allowed_plans": []},
+            },
+            "global_caps": {},
+        })
+        client = _client(store, spending=lambda: {"providers": {}, "global": {}})
+
+        openrouter = client.get(
+            "/admin/api/providers/openrouter",
+            headers={"authorization": "Bearer admin"},
+        )
+        typesafe = client.get(
+            "/admin/api/providers/typesafe",
+            headers={"authorization": "Bearer admin"},
+        )
+
+        self.assertEqual(openrouter.status_code, 200)
+        self.assertEqual(typesafe.status_code, 200)
+        self.assertIsNone(openrouter.json()["provider"]["allowed_plans"])
+        self.assertEqual(typesafe.json()["provider"]["allowed_plans"], [])
+
     def test_cap_only_router_update_persists_no_plan_restriction_and_reservation_still_allowed(self) -> None:
         tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(tmpdir.cleanup)

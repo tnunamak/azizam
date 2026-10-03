@@ -83,7 +83,7 @@ def _request(payload: dict) -> Request:
                 "body": json.dumps(payload).encode(),
                 "more_body": False,
             }
-        return {"type": "http.disconnect"}
+        await asyncio.Future()
 
     return Request(
         {
@@ -321,16 +321,34 @@ class ProviderRoutingTests(unittest.TestCase):
         self.assertEqual(compiled["model_list"][0]["model_name"], "lan-chat")
         self.assertEqual(compiled["model_list"][0]["litellm_params"]["model"], "openai/qwen")
 
-    def test_litellm_forward_rejects_caller_paid_fallback_override(self) -> None:
+    def test_litellm_forward_strips_caller_paid_fallback_override(self) -> None:
+        import gateway.backends.llm_execution as llm_execution_module
+
         body = {
             "model": "local-chat",
             "messages": [{"role": "user", "content": "hi"}],
             "fallbacks": [{"local-chat": ["openrouter/openai/gpt-4.1-mini"]}],
         }
         request = _request(body)
-        send = AsyncMock(return_value=(_Client(), _Response(body=b'{"ok":true}')))
 
-        with patch.object(proxy, "send_llm_execution_request", send):
+        class _CapturingClient:
+            def __init__(self) -> None:
+                self.content = b""
+
+            def build_request(self, **kwargs):
+                self.content = kwargs["content"]
+                return object()
+
+            async def send(self, req, stream=True):
+                return _Response(body=b'{"ok":true}')
+
+            async def aclose(self) -> None:
+                pass
+
+        client = _CapturingClient()
+        original_async_client = llm_execution_module.httpx.AsyncClient
+        llm_execution_module.httpx.AsyncClient = lambda **kwargs: client
+        try:
             response = asyncio.run(
                 proxy._forward_litellm_proxy_request(
                     request,
@@ -340,10 +358,13 @@ class ProviderRoutingTests(unittest.TestCase):
                     runtime_config=self.runtime,
                 )
             )
+        finally:
+            llm_execution_module.httpx.AsyncClient = original_async_client
 
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("fallbacks", response.body.decode())
-        send.assert_not_called()
+        self.assertEqual(response.status_code, 200)
+        outbound = json.loads(client.content.decode())
+        self.assertEqual(outbound["model"], "local-chat")
+        self.assertNotIn("fallbacks", outbound)
 
     def test_proxy_wrapper_passes_paid_fallback_flag_to_executor(self) -> None:
         execute = AsyncMock(

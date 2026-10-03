@@ -756,20 +756,61 @@ class LiteLlmRoutingOverrideTransportTests(unittest.IsolatedAsyncioTestCase):
             async def aclose(self) -> None:
                 pass
 
+        router_overrides = {
+            "allowed_fails": 1,
+            "api_base": "https://attacker.invalid",
+            "api_key": "sk-attacker",
+            "context_window_fallback_dict": {"local-chat": "openrouter/paid-chat"},
+            "custom_llm_provider": "openrouter",
+            "default_fallbacks": ["openrouter/paid-chat"],
+            "deployment_id": "attacker-deployment",
+            "extra_body": {"router": "override"},
+            "fallbacks": [{"local-chat": ["openrouter/paid-chat"]}],
+            "litellm_params": {"api_base": "https://attacker.invalid"},
+            "max_retries": 9,
+            "metadata": {"model_group": "openrouter/paid-chat"},
+            "model_list": [{"model_name": "local-chat", "litellm_params": {}}],
+            "num_retries": 9,
+            "retry_policy": {"TimeoutErrorRetries": 9},
+            "routing_strategy": "usage-based-routing",
+            "specific_deployment": "attacker-deployment",
+        }
+        messages = [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "nested fallback text is user content"},
+            ],
+        }]
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "preserve_nested_schema",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "api_key": {"type": "string"},
+                        "fallbacks": {"type": "array"},
+                    },
+                },
+            },
+        }
+
         client = _CapturingClient()
         original_async_client = llm_execution_module.httpx.AsyncClient
         llm_execution_module.httpx.AsyncClient = lambda **kwargs: client
         try:
             request = LlmExecutionRequest(
                 method="POST",
-                url="http://litellm.test/v1/chat/completions?num_retries=9",
+                url=(
+                    "http://litellm.test/v1/chat/completions?"
+                    "keep=hello+world&num_retries=9&specific_deployment=bad&api_key=bad"
+                ),
                 headers={"content-type": "application/json"},
                 body=json.dumps({
                     "model": "local-chat",
-                    "messages": [{"role": "user", "content": "hi"}],
-                    "fallbacks": [{"local-chat": ["openrouter/paid-chat"]}],
-                    "num_retries": 9,
-                    "context_window_fallback_dict": {"local-chat": "openrouter/paid-chat"},
+                    "messages": messages,
+                    "response_format": response_format,
+                    **router_overrides,
                 }).encode(),
                 read_timeout=5.0,
             )
@@ -780,13 +821,71 @@ class LiteLlmRoutingOverrideTransportTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.status_code, 200)
             sanitized = json.loads(client.content.decode())
             self.assertEqual(sanitized["model"], "local-chat")
-            self.assertNotIn("num_retries", client.url)
-            self.assertNotIn("fallbacks", sanitized)
-            self.assertNotIn("num_retries", sanitized)
-            self.assertNotIn("context_window_fallback_dict", sanitized)
+            self.assertEqual(sanitized["messages"], messages)
+            self.assertEqual(sanitized["response_format"], response_format)
+            self.assertEqual(client.url, "http://litellm.test/v1/chat/completions?keep=hello+world")
+            for key in router_overrides:
+                with self.subTest(key=key):
+                    self.assertNotIn(key, sanitized)
+                    self.assertNotIn(f"{key}=", client.url)
         finally:
             llm_execution_module.httpx.AsyncClient = original_async_client
 
+    def test_sanitizer_preserves_url_when_query_has_no_router_override(self) -> None:
+        from gateway.backends.llm_execution import LlmExecutionRequest, sanitize_litellm_execution_request
+
+        request = LlmExecutionRequest(
+            method="POST",
+            url="http://litellm.test/v1/chat/completions?keep=hello%20world&blank=",
+            headers={},
+            body=b"{}",
+            read_timeout=5.0,
+        )
+
+        self.assertIs(sanitize_litellm_execution_request(request), request)
+
+    async def test_build_request_failure_closes_client_and_raises_predispatch_error(self) -> None:
+        import httpx
+        import gateway.backends.llm_execution as llm_execution_module
+        from gateway.backends.llm_execution import (
+            LlmExecutionPredispatchError,
+            LlmExecutionRequest,
+        )
+
+        class _BuildFailingClient:
+            def __init__(self) -> None:
+                self.closed = False
+                self.send_called = False
+
+            def build_request(self, **kwargs):
+                raise httpx.InvalidURL("bad url")
+
+            async def send(self, req, stream=True):
+                self.send_called = True
+                raise AssertionError("send must not run after build_request fails")
+
+            async def aclose(self) -> None:
+                self.closed = True
+
+        client = _BuildFailingClient()
+        original_async_client = llm_execution_module.httpx.AsyncClient
+        llm_execution_module.httpx.AsyncClient = lambda **kwargs: client
+        try:
+            request = LlmExecutionRequest(
+                method="POST",
+                url="http://litellm.test/v1/chat/completions",
+                headers={},
+                body=b"{}",
+                read_timeout=5.0,
+            )
+
+            with self.assertRaises(LlmExecutionPredispatchError):
+                await send_llm_execution_request(request)
+
+            self.assertTrue(client.closed)
+            self.assertFalse(client.send_called)
+        finally:
+            llm_execution_module.httpx.AsyncClient = original_async_client
 
 class PreHeaderDisconnectRaceTests(unittest.IsolatedAsyncioTestCase):
     async def test_client_disconnect_before_headers_cancels_dispatch_and_closes_client(self) -> None:

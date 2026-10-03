@@ -23,6 +23,7 @@ from typing import Any
 import yaml
 
 from gateway.service_registry import (
+    canonical_provider_id,
     is_litellm_service_record,
     is_remote_provider_config,
     normalize_service_record,
@@ -396,6 +397,8 @@ def _model_list_entries(
                 # Container DNS and LAN addresses are as valid as loopback here.
                 litellm_params["api_key"] = "sk-local"
             if is_remote_provider_config(config):
+                litellm_params["num_retries"] = 0
+                litellm_params["max_retries"] = 0
                 model_info.update(
                     {
                         "gateway_remote_provider": True,
@@ -478,7 +481,7 @@ def _contains_fallback_config(value: Any) -> bool:
 
 
 def _provider_id(service: Mapping[str, Any], config: Mapping[str, Any]) -> str:
-    return str(config.get("provider_id") or service.get("id") or "").strip()
+    return canonical_provider_id(config.get("provider_id") or service.get("id") or "")
 
 
 def _litellm_provider(config: Mapping[str, Any]) -> str:
@@ -490,12 +493,15 @@ def _litellm_provider(config: Mapping[str, Any]) -> str:
     ).strip()
     if provider == "openai-compatible":
         return "openai"
-    return provider
+    return canonical_provider_id(provider)
 
 
 def _provider_prefixed_model_name(provider_id: str, model_name: str) -> str:
-    if not provider_id or model_name.startswith(f"{provider_id}/"):
+    if not provider_id:
         return model_name
+    prefix, separator, rest = model_name.partition("/")
+    if separator and canonical_provider_id(prefix) == provider_id:
+        return f"{provider_id}/{rest}"
     return f"{provider_id}/{model_name}"
 
 

@@ -10,9 +10,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping as MappingABC
+import json
 import os
 import re
 from typing import Any, Mapping
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 
@@ -32,6 +34,63 @@ GATEWAY_REQUEST_ID_HEADER = "X-AI-Gateway-Request-Id"
 ASGIReceive = Callable[[], Awaitable[MappingABC[str, Any]]]
 
 _SSE_EVENT_END = re.compile(br"\r\n\r\n|\n\n|\r\r")
+_LITELLM_ROUTER_OVERRIDE_KEYS = frozenset({
+    "allowed_fails",
+    "allowed_fails_policy",
+    "api_base",
+    "api_key",
+    "api_type",
+    "api_version",
+    "base_url",
+    "content_policy_fallback",
+    "content_policy_fallbacks",
+    "context_window_fallback",
+    "context_window_fallback_dict",
+    "context_window_fallbacks",
+    "custom_llm_provider",
+    "default_fallback",
+    "default_fallbacks",
+    "default_litellm_params",
+    "default_priority",
+    "deployment",
+    "deployment_id",
+    "disable_cooldowns",
+    "disable_fallbacks",
+    "enable_pre_call_checks",
+    "enable_weighted_failover",
+    "extra_body",
+    "extra_headers",
+    "fallback",
+    "fallbacks",
+    "force_timeout",
+    "headers",
+    "healthy_deployments",
+    "litellm_params",
+    "max_fallbacks",
+    "max_retries",
+    "metadata",
+    "mock_response",
+    "mock_testing_rate_limit_error",
+    "mock_timeout",
+    "model_group",
+    "model_group_affinity_config",
+    "model_group_alias",
+    "model_group_retry_policy",
+    "model_id",
+    "model_list",
+    "num_retries",
+    "passthrough_on_no_deployment",
+    "previous_models",
+    "priority",
+    "retries",
+    "retry",
+    "retry_policy",
+    "router_settings",
+    "routing_groups",
+    "routing_strategy",
+    "routing_strategy_args",
+    "specific_deployment",
+})
 
 
 @dataclass(frozen=True)
@@ -41,6 +100,12 @@ class LlmExecutionRequest:
     headers: Mapping[str, str]
     body: bytes
     read_timeout: float
+    trusted_num_retries: int | None = None
+    trusted_max_retries: int | None = None
+
+
+class LlmExecutionPredispatchError(httpx.HTTPError):
+    """The upstream request failed before any bytes were dispatched."""
 
 
 @dataclass(frozen=True)
@@ -118,6 +183,64 @@ def litellm_url(*, base_url: str, path: str, query: str = "") -> str:
     if query:
         url = f"{url}?{query}"
     return url
+
+
+def sanitize_litellm_execution_request(request: LlmExecutionRequest) -> LlmExecutionRequest:
+    url = _strip_litellm_router_query_overrides(request.url)
+    body = _strip_litellm_router_body_overrides(
+        request.body,
+        trusted_num_retries=request.trusted_num_retries,
+        trusted_max_retries=request.trusted_max_retries,
+    )
+    if url == request.url and body == request.body:
+        return request
+    return LlmExecutionRequest(
+        method=request.method,
+        url=url,
+        headers=request.headers,
+        body=body,
+        read_timeout=request.read_timeout,
+        trusted_num_retries=request.trusted_num_retries,
+        trusted_max_retries=request.trusted_max_retries,
+    )
+
+
+def _strip_litellm_router_query_overrides(url: str) -> str:
+    parsed = urlsplit(url)
+    if not parsed.query:
+        return url
+    pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    kept = [(key, value) for key, value in pairs if key not in _LITELLM_ROUTER_OVERRIDE_KEYS]
+    if len(kept) == len(pairs):
+        return url
+    query = urlencode(kept, doseq=True)
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, parsed.fragment))
+
+
+def _strip_litellm_router_body_overrides(
+    body: bytes,
+    *,
+    trusted_num_retries: int | None,
+    trusted_max_retries: int | None,
+) -> bytes:
+    try:
+        payload = json.loads(body.decode("utf-8") or "{}")
+    except (UnicodeDecodeError, ValueError):
+        return body
+    if not isinstance(payload, dict):
+        return body
+    sanitized = {
+        key: value
+        for key, value in payload.items()
+        if key not in _LITELLM_ROUTER_OVERRIDE_KEYS
+    }
+    if trusted_num_retries is not None:
+        sanitized["num_retries"] = trusted_num_retries
+    if trusted_max_retries is not None:
+        sanitized["max_retries"] = trusted_max_retries
+    if sanitized == payload:
+        return body
+    return json.dumps(sanitized, separators=(",", ":")).encode("utf-8")
 
 
 def litellm_headers(
@@ -237,6 +360,7 @@ async def send_llm_execution_request(
     also must not prevent local cleanup — see the ``finally`` below, which
     always runs regardless of how the signalled branch exits).
     """
+    request = sanitize_litellm_execution_request(request)
     client = httpx.AsyncClient(
         timeout=httpx.Timeout(
             connect=10.0,
@@ -245,12 +369,16 @@ async def send_llm_execution_request(
             pool=None,
         )
     )
-    req = client.build_request(
-        method=request.method,
-        url=request.url,
-        headers=dict(request.headers),
-        content=request.body,
-    )
+    try:
+        req = client.build_request(
+            method=request.method,
+            url=request.url,
+            headers=dict(request.headers),
+            content=request.body,
+        )
+    except Exception as exc:
+        await client.aclose()
+        raise LlmExecutionPredispatchError("LLM execution request could not be prepared") from exc
 
     if disconnect_watcher is None and cancellation_token is None:
         try:

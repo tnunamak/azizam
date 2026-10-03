@@ -16,9 +16,10 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from gateway import providers
 from gateway.backends.llm_execution import (
-    LiteLlmRuntimeConfig, LlmExecutionRequest, litellm_headers, litellm_url,
-    send_llm_execution_request, RequestDisconnectWatcher,
-    ClientDisconnectedBeforeHeaders, read_llm_response_body,
+    ClientDisconnectedBeforeHeaders, LlmExecutionPredispatchError,
+    LiteLlmRuntimeConfig, LlmExecutionRequest, RequestDisconnectWatcher,
+    litellm_headers, litellm_url, read_llm_response_body,
+    send_llm_execution_request,
 )
 from gateway.policy import AppProfile, PolicyRequest, evaluate
 from gateway.receipts import ReceiptLifecycleOwner, RouteReceipt
@@ -34,12 +35,45 @@ def provider_for_model(registry: Mapping[str, Any], model: Any) -> providers.Pro
     provider_id, separator, _ = model.partition("/")
     if not separator:
         return None
-    return providers.provider_refs(registry).get(provider_id)
+    return providers.provider_refs(registry).get(providers.canonical_provider_id(provider_id))
 
 
 def error_response(error: providers.ProviderError) -> JSONResponse:
     headers = {"retry-after": error.retry_after} if error.retry_after else {}
     return JSONResponse(error.error_body(), status_code=error.status_code, headers=headers)
+
+
+def invalid_request_response(message: str, *, param: str | None = None) -> JSONResponse:
+    error: dict[str, Any] = {
+        "code": "invalid_request",
+        "message": message,
+    }
+    if param:
+        error["param"] = param
+    return JSONResponse({"error": error}, status_code=400)
+
+
+def _prepare_paid_litellm_payload(body: Mapping[str, Any], *, stream: bool) -> tuple[dict[str, Any], bytes] | JSONResponse:
+    payload = dict(body)
+    payload["num_retries"] = 0
+    payload["max_retries"] = 0
+    if stream:
+        raw_stream_options = payload.get("stream_options")
+        if raw_stream_options is None:
+            stream_options: dict[str, Any] = {}
+        elif isinstance(raw_stream_options, Mapping):
+            stream_options = dict(raw_stream_options)
+        else:
+            return invalid_request_response(
+                "stream_options must be an object when provided.",
+                param="stream_options",
+            )
+        payload["stream_options"] = {**stream_options, "include_usage": True}
+    try:
+        payload_bytes = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    except (TypeError, ValueError):
+        return invalid_request_response("request body is not JSON serializable")
+    return payload, payload_bytes
 
 
 def _model_declared(provider: providers.ProviderRef, model: str) -> bool:
@@ -87,7 +121,13 @@ async def execute_paid_litellm(
                 raise providers.RemoteProviderNotAllowed("; ".join(decision.reasons))
             if not runtime.enabled:
                 raise providers.ProviderError("LiteLLM execution substrate is unavailable")
-            estimate = providers.estimate_request_cost(provider, body)
+            prepared = _prepare_paid_litellm_payload(body, stream=receipt.stream)
+            if isinstance(prepared, JSONResponse):
+                receipt.set_policy_decision("denied", reason="invalid_request", source="gateway:remote-provider")
+                owner.report(status="failed", reason="failed")
+                return prepared
+            payload, payload_bytes = prepared
+            estimate = providers.estimate_request_cost(provider, payload, protocol=protocol, intent=intent)
             reservation = providers.reserve_provider_spend(
                 profile, provider, estimate, path=ledger_path,
                 admin_db_path=admin_db_path, paid_fallback=paid_fallback,
@@ -102,13 +142,10 @@ async def execute_paid_litellm(
         client = None
         response = None
         watcher = RequestDisconnectWatcher(request.receive)
-        payload = dict(body)
-        if receipt.stream:
-            payload["stream_options"] = {**dict(payload.get("stream_options") or {}), "include_usage": True}
         execution = LlmExecutionRequest(
             method=request.method, url=litellm_url(base_url=runtime.base_url, path=request_path),
             headers=litellm_headers({}, api_key=runtime.api_key, gateway_metadata={"request-id": receipt.request_id}),
-            body=json.dumps(payload).encode(), read_timeout=120.0,
+            body=payload_bytes, read_timeout=120.0, trusted_num_retries=0, trusted_max_retries=0,
         )
         try:
             client, response = await send_llm_execution_request(execution, disconnect_watcher=watcher)
@@ -118,6 +155,10 @@ async def execute_paid_litellm(
         except httpx.TimeoutException:
             owner.report(status="failed", reason="idle_timeout")
             return error_response(providers.ProviderTimeout("Remote provider request timed out"))
+        except LlmExecutionPredispatchError:
+            providers.release_provider_spend(reservation, path=ledger_path)
+            owner.report(status="failed", reason="connect_error")
+            return JSONResponse({"error": {"code": "provider_unavailable", "message": "Remote execution is unavailable"}}, status_code=502)
         except httpx.HTTPError:
             owner.report(status="failed", reason="connect_error")
             return JSONResponse({"error": {"code": "provider_unavailable", "message": "Remote execution is unavailable"}}, status_code=502)
@@ -141,6 +182,8 @@ async def execute_paid_litellm(
                 return error_response(providers.ProviderAuthFailed("Remote provider rejected the operator key"))
             if response.status_code == 429:
                 return error_response(providers.ProviderRateLimited("Remote provider rate limited the request", retry_after=headers.get("retry-after")))
+            if response.status_code == 408:
+                return error_response(providers.ProviderTimeout("Remote provider request timed out"))
             return JSONResponse({"error": {"code": "provider_error", "message": "Remote provider request failed"}}, status_code=response.status_code, headers=headers)
 
         def finish(body: Mapping[str, Any]) -> None:

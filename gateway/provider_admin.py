@@ -80,7 +80,7 @@ def normalize_provider_admin_state(value: Mapping[str, Any] | None) -> dict[str,
     raw_providers = raw.get("providers")
     if isinstance(raw_providers, Mapping):
         for raw_id, raw_provider in raw_providers.items():
-            provider_id = service_registry.normalize_id(str(raw_id))
+            provider_id = service_registry.canonical_provider_id(str(raw_id))
             if not provider_id or not isinstance(raw_provider, Mapping):
                 continue
             providers[provider_id] = _normalize_provider_policy(raw_provider)
@@ -353,7 +353,7 @@ def _one_provider_payload(
     provider_id: str,
 ) -> dict[str, Any] | None:
     providers = _remote_providers(store)
-    normalized_id = service_registry.normalize_id(provider_id)
+    normalized_id = service_registry.canonical_provider_id(provider_id)
     service = providers.get(normalized_id)
     if service is None:
         return None
@@ -384,7 +384,7 @@ def _remote_providers(store: ProviderAdminStore) -> dict[str, Mapping[str, Any]]
                 {"services": {raw_id: raw_service}},
                 str(raw_service.get("id") or raw_id),
             )
-            provider_id = service_registry.normalize_id(
+            provider_id = service_registry.canonical_provider_id(
                 provider_ref.id if provider_ref is not None else str(config.get("provider_id") or raw_service.get("id") or raw_id)
             )
             if provider_id:
@@ -423,7 +423,11 @@ def _project_provider(
             error=usage.get("error"),
         ),
         "caps": _normalize_caps(provider_state.get("caps")),
-        "allowed_plans": _normalize_string_list(provider_state.get("allowed_plans")),
+        "allowed_plans": (
+            _normalize_string_list(provider_state.get("allowed_plans"))
+            if "allowed_plans" in provider_state
+            else None
+        ),
     }
 
 
@@ -436,7 +440,7 @@ def _provider_model_summaries(registry: Mapping[str, Any]) -> dict[str, list[dic
     for public_name, facts in sorted(lookup.items()):
         if not facts.get("remote"):
             continue
-        provider_id = service_registry.normalize_id(str(facts.get("provider_id") or ""))
+        provider_id = service_registry.canonical_provider_id(str(facts.get("provider_id") or ""))
         if not provider_id:
             continue
         row = {"model": str(public_name)}
@@ -460,15 +464,15 @@ def _provider_state_for_update(state: dict[str, Any], provider_id: str) -> dict[
     state.clear()
     state.update(normalized)
     providers = state.setdefault("providers", {})
-    provider_state = providers.setdefault(service_registry.normalize_id(provider_id), {})
+    provider_state = providers.setdefault(service_registry.canonical_provider_id(provider_id), {})
     if not isinstance(provider_state, dict):
         provider_state = {}
-        providers[service_registry.normalize_id(provider_id)] = provider_state
+        providers[service_registry.canonical_provider_id(provider_id)] = provider_state
     return provider_state
 
 
 def _require_provider(store: ProviderAdminStore, provider_id: str) -> None:
-    if service_registry.normalize_id(provider_id) not in _remote_providers(store):
+    if service_registry.canonical_provider_id(provider_id) not in _remote_providers(store):
         raise _RouteError(
             status.HTTP_404_NOT_FOUND,
             "provider_not_found",
@@ -477,10 +481,10 @@ def _require_provider(store: ProviderAdminStore, provider_id: str) -> None:
 
 
 def _normalize_provider_policy(value: Mapping[str, Any]) -> dict[str, Any]:
-    return {
-        "caps": _normalize_caps(value.get("caps")),
-        "allowed_plans": _normalize_string_list(value.get("allowed_plans")),
-    }
+    policy = {"caps": _normalize_caps(value.get("caps"))}
+    if "allowed_plans" in value:
+        policy["allowed_plans"] = _normalize_string_list(value.get("allowed_plans"))
+    return policy
 
 
 def _normalize_caps(value: Any) -> dict[str, float]:

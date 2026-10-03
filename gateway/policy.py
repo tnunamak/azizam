@@ -16,6 +16,7 @@ from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from typing import Iterable
 
+
 ALLOWED = "allowed"
 DENIED = "denied"
 NOT_EVALUATED = "not_evaluated"
@@ -27,6 +28,12 @@ MODEL_ACCESS_MODES = ("catalog", "current_loaded")
 MEDIA_METADATA_MODES = ("full", "none")
 
 DEFAULT_PROFILE_ID = "default-local"
+
+
+def _canonical_provider_id(value: object) -> str:
+    from gateway.service_registry import canonical_provider_id
+
+    return canonical_provider_id(value)
 
 
 def default_profile_id() -> str:
@@ -66,6 +73,19 @@ class RemoteProviderPolicy:
     budget_usd_per_day: Decimal | None = None
     budget_usd_per_month: Decimal | None = None
     allow_paid_fallback: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "providers",
+            frozenset(
+                provider
+                for provider in (
+                    _canonical_provider_id(item) for item in self.providers
+                )
+                if provider
+            ),
+        )
 
 
 @dataclass(frozen=True)
@@ -493,6 +513,7 @@ def _evaluate_remote(profile: AppProfile, request: PolicyRequest) -> PolicyDecis
     provider = request.remote_provider
     if provider is None:
         return _allowed(profile, ())
+    provider = _canonical_provider_id(provider)
     if provider not in remote.providers:
         return _denied(
             profile,

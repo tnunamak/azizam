@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -19,6 +20,7 @@ sys.path.insert(0, str(ROOT))
 
 from gateway import admin_store  # noqa: E402
 from gateway.policy import DEFAULT_PROFILE, RemoteProviderPolicy  # noqa: E402
+from gateway.policy import PolicyRequest, evaluate  # noqa: E402
 from gateway.providers import (  # noqa: E402
     BudgetExceeded,
     Cost,
@@ -30,6 +32,7 @@ from gateway.providers import (  # noqa: E402
     Usage,
     attach_cost_to_receipt,
     call_typesafe_systemone,
+    ensure_ledger,
     estimate_chat_cost,
     estimate_request_cost,
     estimate_typesafe_cost,
@@ -489,6 +492,31 @@ class TestSpendReservations(unittest.TestCase):
                 path=self.ledger,
             )
 
+    def test_completion_token_id_prompt_list_counts_as_one_prompt(self) -> None:
+        ref = provider(
+            price={
+                "input_usd_per_million_tokens": "0",
+                "output_usd_per_million_tokens": "10",
+            }
+        )
+        estimate = estimate_chat_cost(ref, {"prompt": [1, 2, 3], "max_tokens": 100})
+
+        self.assertEqual(estimate.usd, Decimal("0.001000000"))
+
+    def test_completion_token_batch_prompt_list_counts_each_prompt(self) -> None:
+        ref = provider(
+            price={
+                "input_usd_per_million_tokens": "0",
+                "output_usd_per_million_tokens": "10",
+            }
+        )
+        estimate = estimate_chat_cost(
+            ref,
+            {"prompt": [[1, 2, 3], [4, 5, 6]], "max_tokens": 100},
+        )
+
+        self.assertEqual(estimate.usd, Decimal("0.002000000"))
+
     def test_completion_best_of_output_cost_must_hit_per_request_cap(self) -> None:
         ref = provider(
             price={
@@ -589,6 +617,72 @@ class TestSpendReservations(unittest.TestCase):
             Cost(Decimal("0.001"), "price-table", "OpenRouter"),
             path=self.ledger,
         )
+
+    def test_policy_request_remote_provider_is_canonicalized(self) -> None:
+        decision = evaluate(
+            profile().with_overrides(
+                remote=RemoteProviderPolicy(providers=frozenset({"openrouter"}))
+            ),
+            PolicyRequest(remote_provider="OpenRouter"),
+        )
+
+        self.assertTrue(decision.allowed)
+
+    def test_historical_mixed_case_ledger_rows_count_toward_provider_caps(self) -> None:
+        ensure_ledger(self.ledger)
+        with sqlite3.connect(self.ledger) as conn:
+            conn.execute(
+                """
+                INSERT INTO provider_spend
+                (provider, profile_id, status, estimated_usd, cost_source, created_at)
+                VALUES (?, ?, 'reserved', ?, ?, ?)
+                """,
+                ("OpenRouter", "paid-plan", "0.006", "price-table", 1000),
+            )
+
+        with self.assertRaises(BudgetExceeded):
+            reserve_provider_spend(
+                profile(),
+                provider(
+                    id="openrouter",
+                    config={"spend_caps_usd": {"daily": "0.01"}},
+                ),
+                Cost(Decimal("0.006"), "price-table", "openrouter"),
+                path=self.ledger,
+                now=1001,
+            )
+
+    def test_historical_mixed_case_ledger_rows_count_toward_admin_caps(self) -> None:
+        admin_store.put_operator_setting(
+            "provider_admin",
+            {
+                "providers": {"openrouter": {"caps": {"daily_usd": 0.01}}},
+                "global_caps": {},
+            },
+            path=self.admin_db,
+        )
+        ensure_ledger(self.ledger)
+        with sqlite3.connect(self.ledger) as conn:
+            conn.execute(
+                """
+                INSERT INTO provider_spend
+                (provider, profile_id, status, estimated_usd, cost_source, created_at)
+                VALUES (?, ?, 'reserved', ?, ?, ?)
+                """,
+                ("OpenRouter", "paid-plan", "0.006", "price-table", 1000),
+            )
+
+        with self.assertRaises(BudgetExceeded):
+            reserve_provider_spend(
+                profile(),
+                provider(
+                    id="openrouter",
+                ),
+                Cost(Decimal("0.006"), "price-table", "openrouter"),
+                path=self.ledger,
+                admin_db_path=self.admin_db,
+                now=1001,
+            )
 
     def test_admin_policy_read_error_fails_closed(self) -> None:
         bad_admin_path = Path(self.tmp.name)

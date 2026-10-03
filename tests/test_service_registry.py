@@ -41,6 +41,38 @@ def test_remote_metadata_case_cannot_bypass_policy(config) -> None:
     assert service_registry.is_remote_provider_config(config)
 
 
+def test_remote_provider_id_is_canonicalized_in_service_records() -> None:
+    service = service_registry.normalize_service_record(
+        "openrouter",
+        {
+            "kind": "provider",
+            "config": {
+                "provider_type": "paid-remote",
+                "provider_id": "OpenRouter",
+                "api_key_env": "OPENROUTER_API_KEY",
+            },
+        },
+    )
+
+    assert service["config"]["provider_id"] == "openrouter"
+
+
+def test_remote_provider_empty_provider_id_falls_back_to_service_id() -> None:
+    service = service_registry.normalize_service_record(
+        "Open Router",
+        {
+            "kind": "provider",
+            "config": {
+                "provider_type": "paid-remote",
+                "provider_id": "",
+                "api_key_env": "OPENROUTER_API_KEY",
+            },
+        },
+    )
+
+    assert service["config"]["provider_id"] == "open-router"
+
+
 def _run_concurrent_ensure(
     *, proxy_config: dict, path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> list[dict]:

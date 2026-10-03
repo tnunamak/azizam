@@ -61,6 +61,15 @@ remote:
 
 The default profile has no remote providers.  A paid fallback also needs
 `allow_paid_fallback: true`; naming a fallback in an alias is not enough.
+Provider ids are canonical lowercase ids in configuration, profiles, admin
+policy, and the spend ledger. Model paths after the provider prefix retain
+their case.
+
+The shared execution transport strips caller-controlled LiteLLM routing and
+retry overrides from request bodies and query parameters. Gateway aliases
+choose fallback targets, and each paid attempt needs its own permission and
+reservation. Paid attempts use `num_retries: 0`; a single reservation cannot
+authorize multiple potentially billable retries.
 
 ## Admin API
 
@@ -92,11 +101,24 @@ The Providers UI spend totals are a read-only projection over `provider_spend`.
 If the ledger is absent or unreadable, the UI reports spend as unknown.  An
 empty readable ledger reports zero spend.
 
+Completion estimates include prompt batches and generated candidates
+(`n` and `best_of`). Estimation follows the actual request operation, so a
+provider that supports both chat and decisions uses the appropriate price
+estimate for each call. Invalid streaming options fail before reserving spend;
+known failures before transport dispatch release their reservation.
+
+An absent provider `allowed_plans` restriction preserves the profile's provider
+permission and appears as `null` in admin JSON. An explicit empty list denies
+every plan. Updating only caps keeps
+that distinction. Client receipt serialization omits `cost.provider` for both
+newly created and persisted receipts; admin receipts retain it.
+
 ## Error Semantics
 
 - Missing provider key or denied access plan: fail before the provider call.
 - Provider 401 or 403: return gateway `502 provider_auth_failed`.
 - Provider timeout: return `504 provider_timeout`.
+- LiteLLM upstream timeout responses (HTTP 408): return `504 provider_timeout`.
 - Provider rate limit: return `429 provider_rate_limited` with `Retry-After`
   when supplied.
 - Unknown cost with an active cap: fail closed before the provider call.

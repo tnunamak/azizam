@@ -22,7 +22,7 @@ import httpx
 
 from gateway import admin_store
 from gateway.policy import AppProfile, PolicyRequest, evaluate
-from gateway.service_registry import is_remote_provider_config
+from gateway.service_registry import canonical_provider_id, is_remote_provider_config
 
 USD_QUANTUM = Decimal("0.000000001")
 DEFAULT_LEDGER_PATH = Path(
@@ -91,6 +91,9 @@ class ProviderRef:
     config: Mapping[str, Any]
     enabled: bool = True
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "id", canonical_provider_id(self.id))
+
     @property
     def configured(self) -> bool:
         return bool(self.api_key_env and os.environ.get(self.api_key_env))
@@ -102,6 +105,9 @@ class Cost:
     source: str
     provider: str
     cost_class: str = "paid-remote"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "provider", canonical_provider_id(self.provider))
 
 
 @dataclass(frozen=True)
@@ -125,13 +131,14 @@ def provider_lookup(
     services = registry.get("services") if isinstance(registry, Mapping) else None
     if not isinstance(services, Mapping):
         return None
-    raw = services.get(provider_id)
+    requested_provider_id = canonical_provider_id(provider_id)
+    raw = services.get(requested_provider_id) or services.get(provider_id)
     if raw is None:
         for candidate in services.values():
             if not isinstance(candidate, Mapping):
                 continue
             config = candidate.get("config") if isinstance(candidate.get("config"), Mapping) else {}
-            if str(config.get("provider_id") or "") == provider_id:
+            if canonical_provider_id(config.get("provider_id") or candidate.get("id")) == requested_provider_id:
                 raw = candidate
                 break
     if not isinstance(raw, Mapping):
@@ -153,7 +160,7 @@ def provider_lookup(
         or ""
     ).rstrip("/")
     return ProviderRef(
-        id=str(config.get("provider_id") or raw.get("id") or provider_id),
+        id=canonical_provider_id(config.get("provider_id") or raw.get("id") or provider_id),
         base_url=base_url,
         protocols=protocols,
         api_key_env=(
@@ -196,7 +203,7 @@ def require_remote_allowed(
     decision = evaluate(
         profile,
         PolicyRequest(
-            remote_provider=provider.id,
+            remote_provider=canonical_provider_id(provider.id),
             remote_paid_fallback=paid_fallback,
         ),
     )
@@ -246,6 +253,7 @@ def reserve_provider_spend(
     provider_admin = _provider_admin_snapshot(
         _effective_admin_db_path(admin_db_path, path)
     )
+    provider_id = canonical_provider_id(provider.id)
     _enforce_allowed_plan(profile, provider, provider_admin)
     estimate = estimated_cost.usd
     if estimate is None:
@@ -277,7 +285,7 @@ def reserve_provider_spend(
             _enforce_window_cap(
                 conn,
                 profile=None,
-                provider=provider.id,
+                provider=provider_id,
                 cap=_provider_cap(provider, "daily"),
                 since=timestamp - 24 * 60 * 60,
                 estimate=estimate,
@@ -287,8 +295,8 @@ def reserve_provider_spend(
             _enforce_window_cap(
                 conn,
                 profile=None,
-                provider=provider.id,
-                cap=_admin_provider_cap(provider_admin, provider.id, "daily"),
+                provider=provider_id,
+                cap=_admin_provider_cap(provider_admin, provider_id, "daily"),
                 since=timestamp - 24 * 60 * 60,
                 estimate=estimate,
                 label="daily provider admin",
@@ -316,7 +324,7 @@ def reserve_provider_spend(
             _enforce_window_cap(
                 conn,
                 profile=None,
-                provider=provider.id,
+                provider=provider_id,
                 cap=_provider_cap(provider, "monthly"),
                 since=month_start,
                 estimate=estimate,
@@ -326,8 +334,8 @@ def reserve_provider_spend(
             _enforce_window_cap(
                 conn,
                 profile=None,
-                provider=provider.id,
-                cap=_admin_provider_cap(provider_admin, provider.id, "monthly"),
+                provider=provider_id,
+                cap=_admin_provider_cap(provider_admin, provider_id, "monthly"),
                 since=month_start,
                 estimate=estimate,
                 label="monthly provider admin",
@@ -349,7 +357,7 @@ def reserve_provider_spend(
                 VALUES (?, ?, 'reserved', ?, ?, ?)
                 """,
                 (
-                    provider.id,
+                    provider_id,
                     profile.id,
                     str(estimate),
                     estimated_cost.source,
@@ -362,7 +370,7 @@ def reserve_provider_spend(
             raise
     return Reservation(
         id=int(cursor.lastrowid),
-        provider=provider.id,
+        provider=provider_id,
         profile_id=profile.id,
         estimated_usd=estimate,
         cost_source=estimated_cost.source,
@@ -487,22 +495,29 @@ def estimate_chat_cost(provider: ProviderRef, body: Mapping[str, Any]) -> Cost:
         output_limit = 0
     if output_limit is None:
         return Cost(None, "unknown", provider.id, provider.cost_class)
-    count = body.get("n", 1)
-    if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+    candidates = _completion_candidate_count(body)
+    if candidates is None:
         return Cost(None, "unknown", provider.id, provider.cost_class)
     estimated = _cost_from_tokens(
         provider,
         model=str(body.get("model") or ""),
         input_tokens=input_tokens,
-        output_tokens=output_limit * count,
+        output_tokens=output_limit * candidates,
     )
     if estimated is None:
         return Cost(None, "unknown", provider.id, provider.cost_class)
     return Cost(estimated, "price-table", provider.id, provider.cost_class)
 
 
-def estimate_request_cost(provider: ProviderRef, body: Mapping[str, Any]) -> Cost:
-    if "typesafe-systemone" in provider.protocols or str(provider.config.get("protocol")) == "typesafe-systemone":
+def estimate_request_cost(
+    provider: ProviderRef,
+    body: Mapping[str, Any],
+    *,
+    protocol: str | None = None,
+    intent: str | None = None,
+) -> Cost:
+    operation = str(protocol or intent or "").strip()
+    if operation in {"typesafe-systemone", "decision.systemone", "systemone"}:
         return estimate_typesafe_cost(provider, body)
     return estimate_chat_cost(provider, body)
 
@@ -587,9 +602,10 @@ def _vendor_typesafe_body(
 ) -> dict[str, Any]:
     out = dict(body)
     model = out.get("model")
-    prefix = f"{provider.id}/"
-    if isinstance(model, str) and model.startswith(prefix):
-        out["model"] = model[len(prefix):]
+    if isinstance(model, str):
+        prefix, separator, rest = model.partition("/")
+        if separator and canonical_provider_id(prefix) == provider.id:
+            out["model"] = rest
     return out
 
 
@@ -680,8 +696,8 @@ def _window_total(
         where += " AND profile_id = ?"
         params.append(profile_id)
     if provider is not None:
-        where += " AND provider = ?"
-        params.append(provider)
+        where += " AND lower(provider) = ?"
+        params.append(canonical_provider_id(provider))
     rows = conn.execute(
         f"SELECT estimated_usd, actual_usd FROM provider_spend WHERE {where}",
         params,
@@ -735,7 +751,13 @@ def _provider_admin_policy(
     providers = provider_admin.get("providers")
     if not isinstance(providers, Mapping):
         return {}
-    policy = providers.get(provider_id)
+    canonical_id = canonical_provider_id(provider_id)
+    policy = providers.get(canonical_id)
+    if policy is None:
+        for raw_id, raw_policy in providers.items():
+            if canonical_provider_id(raw_id) == canonical_id:
+                policy = raw_policy
+                break
     return policy if isinstance(policy, Mapping) else {}
 
 
@@ -744,7 +766,8 @@ def _enforce_allowed_plan(
     provider: ProviderRef,
     provider_admin: Mapping[str, Any],
 ) -> None:
-    policy = _provider_admin_policy(provider_admin, provider.id)
+    provider_id = canonical_provider_id(provider.id)
+    policy = _provider_admin_policy(provider_admin, provider_id)
     if "allowed_plans" not in policy:
         return
     raw = policy.get("allowed_plans")
@@ -758,7 +781,7 @@ def _enforce_allowed_plan(
         allowed = set()
     if profile.id not in allowed:
         raise RemoteProviderNotAllowed(
-            f"remote provider {provider.id!r} is not allowed for access plan {profile.id!r}"
+            f"remote provider {provider_id!r} is not allowed for access plan {profile.id!r}"
         )
 
 
@@ -807,6 +830,35 @@ def _input_estimation_payload(body: Mapping[str, Any]) -> dict[str, Any]:
 
 def _looks_like_embeddings_request(body: Mapping[str, Any]) -> bool:
     return "input" in body and "messages" not in body and "prompt" not in body
+
+
+def _completion_candidate_count(body: Mapping[str, Any]) -> int | None:
+    n = _positive_int_or_none(body.get("n"), default=1)
+    best_of = _positive_int_or_none(body.get("best_of"), default=1)
+    if n is None or best_of is None:
+        return None
+    batch_count = max(
+        _prompt_batch_size(body.get("prompt")),
+        _prompt_batch_size(body.get("input")),
+        1,
+    )
+    return batch_count * max(n, best_of)
+
+
+def _prompt_batch_size(value: object) -> int:
+    if isinstance(value, list):
+        if all(isinstance(item, int) and not isinstance(item, bool) for item in value):
+            return 1
+        return max(1, len(value))
+    return 1
+
+
+def _positive_int_or_none(value: object, *, default: int) -> int | None:
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        return None
+    return value
 
 
 def _has_unbounded_media_payload(body: Mapping[str, Any]) -> bool:

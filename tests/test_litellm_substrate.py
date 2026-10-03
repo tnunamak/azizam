@@ -275,6 +275,37 @@ def test_remote_openrouter_models_are_provider_prefixed() -> None:
     }
 
 
+def test_remote_mixed_case_provider_id_uses_canonical_public_prefix_once() -> None:
+    compiled = compile_litellm_substrate_config(
+        {
+            "openrouter": {
+                "id": "openrouter",
+                "name": "OpenRouter",
+                "kind": "provider",
+                "capabilities": ["openai"],
+                "config": {
+                    "provider_id": "OpenRouter",
+                    "provider_type": "paid-remote",
+                    "protocol": "openai-compatible",
+                    "base_url": "https://openrouter.ai/api/v1",
+                    "api_key_env": "OPENROUTER_API_KEY",
+                    "models": [
+                        {
+                            "id": "OpenRouter/Anthropic/Claude-Sonnet-4.5",
+                            "upstream_model": "Anthropic/Claude-Sonnet-4.5",
+                        }
+                    ],
+                },
+            }
+        }
+    )
+
+    entry = compiled["model_list"][0]
+    assert entry["model_name"] == "openrouter/Anthropic/Claude-Sonnet-4.5"
+    assert entry["litellm_params"]["model"] == "openrouter/Anthropic/Claude-Sonnet-4.5"
+    assert not entry["litellm_params"]["model"].startswith("OpenRouter/")
+
+
 def test_paid_remote_models_disable_litellm_retries() -> None:
     compiled = compile_litellm_substrate_config(
         {

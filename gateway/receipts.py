@@ -263,9 +263,6 @@ class RouteReceipt:
         self.updated_at_ms = int(now_ms if now_ms is not None else time() * 1000)
 
     def to_dict(self, audience: str = "internal") -> dict[str, Any]:
-        if audience not in {"internal", "admin", "client"}:
-            raise ValueError("audience must be internal, admin, or client")
-
         data = {
             "request_id": self.request_id,
             "protocol": self.protocol,
@@ -305,23 +302,29 @@ class RouteReceipt:
             "updated_at_ms": self.updated_at_ms,
             "metadata": dict(self.metadata),
         }
-        if audience == "internal":
-            return data
-        if audience == "admin":
-            data = dict(data)
-            data.pop("owner_key_hash", None)
-            metadata = data.pop("metadata", None)
-            data.update(sanitize_admin_metadata(metadata))
-            return data
-        client_data = {name: data[name] for name in CLIENT_VISIBLE_FIELDS if name in data}
-        cost = client_data.get("cost")
-        if isinstance(cost, Mapping):
-            client_data["cost"] = {
-                name: value
-                for name, value in cost.items()
-                if name in {"usd", "source", "cost_class"}
-            }
-        return client_data
+        return serialize_receipt_for_audience(data, audience)
+
+
+def serialize_receipt_for_audience(data: Mapping[str, Any], audience: str = "internal") -> dict[str, Any]:
+    if audience not in {"internal", "admin", "client"}:
+        raise ValueError("audience must be internal, admin, or client")
+    if audience == "internal":
+        return dict(data)
+    if audience == "admin":
+        out = dict(data)
+        out.pop("owner_key_hash", None)
+        metadata = out.pop("metadata", None)
+        out.update(sanitize_admin_metadata(metadata))
+        return out
+    client_data = {name: data[name] for name in CLIENT_VISIBLE_FIELDS if name in data}
+    cost = client_data.get("cost")
+    if isinstance(cost, Mapping):
+        client_data["cost"] = {
+            name: value
+            for name, value in cost.items()
+            if name in {"usd", "source", "cost_class"}
+        }
+    return client_data
 
 
 class ReceiptLifecycleOwner:

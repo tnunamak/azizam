@@ -617,6 +617,10 @@ def service_from_backend_config(
 ) -> dict[str, Any]:
     safe_config, secret_refs = split_secret_refs(raw)
     validate_provider_secret_refs(service_id, safe_config, secret_refs)
+    if is_remote_provider_config(safe_config):
+        safe_config["provider_id"] = canonical_provider_id(
+            safe_config.get("provider_id") or service_id
+        )
     source = source if source in SERVICE_SOURCES else "ui"
     name = str(raw.get("name") or service_id)
     capabilities = normalize_string_list(raw.get("capabilities"))
@@ -703,6 +707,10 @@ def normalize_service_record(service_id: str, raw: Mapping[str, Any]) -> dict[st
     if not isinstance(secret_refs, Mapping):
         secret_refs = {}
     validate_provider_secret_refs(service_id, config, secret_refs)
+    if is_remote_provider_config(config):
+        config["provider_id"] = canonical_provider_id(
+            config.get("provider_id") or service_id
+        )
     provenance = raw.get("provenance")
     if not isinstance(provenance, Mapping):
         provenance = {}
@@ -1507,6 +1515,11 @@ def is_secret_reference_key(key: str) -> bool:
 
 def normalize_id(value: Any) -> str:
     return str(value or "").strip().lower().replace(" ", "-")
+
+
+def canonical_provider_id(value: Any) -> str:
+    """Return the canonical key for provider policy, registry and ledger rows."""
+    return normalize_id(value)
 
 
 def normalize_string_list(value: Any) -> list[str]:

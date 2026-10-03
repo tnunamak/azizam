@@ -322,6 +322,42 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         outbound = json.loads(send.await_args.args[0].body.decode())
         self.assertEqual(outbound["num_retries"], 0)
+        self.assertEqual(outbound["max_retries"], 0)
+
+    async def test_predispatch_transport_failure_releases_reserved_budget(self) -> None:
+        from gateway.backends.llm_execution import LlmExecutionPredispatchError
+
+        send = AsyncMock(side_effect=LlmExecutionPredispatchError("bad request"))
+
+        response, _ = await self._execute(send=send)
+
+        self.assertEqual(response.status_code, 502)
+        self.assertIn("provider_unavailable", (await _body(response)).decode())
+        with sqlite3.connect(self.ledger) as conn:
+            rows = conn.execute("SELECT status, actual_usd FROM provider_spend").fetchall()
+        self.assertEqual(rows, [("released", None)])
+
+    async def test_mixed_case_provider_prefix_uses_paid_provider_gate(self) -> None:
+        registry = {
+            "services": {
+                "openrouter": {
+                    "id": "openrouter",
+                    "kind": "provider",
+                    "enabled": True,
+                    "config": {
+                        "provider_id": "OpenRouter",
+                        "provider_type": "paid-remote",
+                        "api_key_env": "OPENROUTER_API_KEY",
+                        "models": [{"id": "openai/gpt-4.1-mini"}],
+                    },
+                },
+            },
+        }
+
+        provider = provider_execution.provider_for_model(registry, "OpenRouter/openai/gpt-4.1-mini")
+
+        self.assertIsNotNone(provider)
+        self.assertEqual(provider.id, "openrouter")
 
     async def test_stream_cost_is_settled_from_usage_event(self) -> None:
         self.body = {**self.body, "stream": True}
