@@ -11,6 +11,7 @@ import { SecretReveal } from "@/components/product/secret-reveal";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Progress } from "@/components/ui/progress";
 import { Money } from "@/components/product/money";
+import { StatusPill } from "@/components/product/status-pill";
 import { CommandDialog, CommandInput } from "@/components/ui/command";
 
 afterEach(cleanup);
@@ -83,6 +84,25 @@ describe("foundation product contracts", () => {
     expect(screen.getByText("$0.00")).toBeVisible();
     expect(screen.getByText("$0.00004")).toBeVisible();
     expect(screen.getByText("Local · no provider charge")).toBeVisible();
+  });
+  it("renders truthful availability labels for unknown and startable idle states", () => {
+    render(
+      <>
+        <StatusPill
+          status="unknown"
+          reason="No health endpoint is configured."
+        />
+        <StatusPill
+          status="standby_stopped"
+          reason="Starts when you send a request."
+        />
+      </>,
+    );
+    expect(screen.getByText("Unknown")).toBeVisible();
+    expect(screen.getByText("No health endpoint is configured.")).toBeVisible();
+    expect(screen.getByText("Ready to start")).toBeVisible();
+    expect(screen.getByText("Starts when you send a request.")).toBeVisible();
+    expect(screen.queryByText("Unavailable")).toBeNull();
   });
   it("owns command dialog title and description inside its accessible dialog", () => {
     render(

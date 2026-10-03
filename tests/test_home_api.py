@@ -301,7 +301,7 @@ def test_declared_healthy_capability_without_measured_service_is_unavailable():
     from gateway.home_api import _availability
     cap = Capability(intent="image.generate", backend="not-running", health="healthy")
     state, reason = _availability(cap, {})
-    assert state == "unavailable" and "Not measured yet" in reason
+    assert state == "unknown" and "Not measured yet" in reason
 
 
 def test_alias_resolves_registry_models_when_catalog_only_has_generic_endpoint():

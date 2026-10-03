@@ -94,7 +94,7 @@ class ModelsCatalogBuildTests(unittest.TestCase):
         self.assertEqual(fast["timing"]["source"], "receipts")
         self.assertEqual(fast["recent_receipts"][0]["href"], "/r/req_1")
         self.assertFalse(fast["availability"]["available"])
-        self.assertEqual(fast["availability"]["status"], "unavailable")
+        self.assertEqual(fast["availability"]["status"], "unknown")
         self.assertFalse(fast["availability"]["measured"])
         self.assertIn("/v1/chat/completions", fast["use"]["curl"])
 
@@ -363,7 +363,7 @@ class ModelsCatalogBuildTests(unittest.TestCase):
         embed = next(row for row in catalog["models"] if row["id"] == "embed")
         self.assertEqual(embed["timing"], {"typical_seconds": None, "source": None})
         self.assertEqual(embed["availability"]["reason"], "Not measured yet")
-        self.assertEqual(embed["availability"]["status"], "unavailable")
+        self.assertEqual(embed["availability"]["status"], "unknown")
 
     def test_manifest_metadata_supplies_name_description_and_timing(self) -> None:
         catalog = build_models_catalog(
@@ -513,6 +513,22 @@ class ModelsCatalogBuildTests(unittest.TestCase):
         self.assertFalse(evidence["svc"]["available"])
         self.assertEqual(evidence["svc"]["status"], "unavailable")
         self.assertEqual(evidence["svc"]["reason"], "Health endpoint reported unavailable")
+
+    def test_service_health_probe_opaque_success_is_unknown(self) -> None:
+        async def run():
+            async def get_json(_url: str):
+                return {"data": [{"id": "model"}]}
+
+            return await probe_service_health(
+                {"services": {"svc": {"config": {"health_endpoint": "http://svc/v1/models"}}}},
+                get_json=get_json,
+            )
+
+        import asyncio
+
+        evidence = asyncio.run(run())
+        self.assertIsNone(evidence["svc"]["available"])
+        self.assertEqual(evidence["svc"]["status"], "unknown")
 
     def test_public_workflow_model_keeps_manifest_metadata_and_own_receipts(self) -> None:
         catalog = build_models_catalog(

@@ -100,6 +100,78 @@ const seededCatalog = {
         javascript: { path: "/v1/images/generations", model: "image" },
       },
     },
+    {
+      id: "decide",
+      object: "model_catalog.alias",
+      display_name: "decide",
+      alias: true,
+      operations: ["decide"],
+      resolves_to: { decide: "local/decider" },
+      description: "On-demand decision model for routing choices.",
+      capabilities: [
+        {
+          intent: "decision.systemone",
+          label: "Decide",
+          input_modalities: ["text"],
+          output_modalities: ["json"],
+          available: true,
+        },
+      ],
+      provider: "Local test engine",
+      locality: "local",
+      cost: { kind: "free", price: null },
+      timing: { typical_seconds: null, source: null },
+      availability: {
+        available: true,
+        reason: "Starts when you send a request.",
+        measured: false,
+        status: "idle_startable",
+      },
+      io: { input: ["text"], output: ["json"] },
+      examples: [],
+      recent_receipts: [],
+      use: {
+        model: "decide",
+        python: { path: "/v1/systemone", model: "decide" },
+        javascript: { path: "/v1/systemone", model: "decide" },
+      },
+    },
+    {
+      id: "tts",
+      object: "model_catalog.alias",
+      display_name: "tts",
+      alias: true,
+      operations: ["speech"],
+      resolves_to: { speech: "local/speech" },
+      description: "Speech synthesis when a backend is configured.",
+      capabilities: [
+        {
+          intent: "speech.synthesis",
+          label: "Speech",
+          input_modalities: ["text"],
+          output_modalities: ["audio"],
+          available: true,
+        },
+      ],
+      provider: "Local test engine",
+      locality: "local",
+      cost: { kind: "free", price: null },
+      timing: { typical_seconds: null, source: null },
+      availability: {
+        available: true,
+        reason: "No health endpoint is configured.",
+        measured: true,
+        status: "unknown",
+      },
+      io: { input: ["text"], output: ["audio"] },
+      examples: [],
+      recent_receipts: [],
+      use: {
+        model: "tts",
+        python: { path: "/v1/audio/speech", model: "tts" },
+        javascript: { path: "/v1/audio/speech", model: "tts" },
+      },
+    },
   ],
   models: [
     {
@@ -184,7 +256,7 @@ const seededCatalog = {
       },
     },
   ],
-  counts: { aliases: 2, models: 2, capabilities: 2 },
+  counts: { aliases: 4, models: 2, capabilities: 4 },
 };
 
 const emptyCatalog = {
@@ -250,12 +322,22 @@ for (const theme of ["light", "dark"] as const) {
       ).toBeVisible();
       await expect(page.getByText("Image generation through")).toBeVisible();
       await expect(
-        page.getByText("Local · no provider charge", { exact: true }),
+        page.getByText("Local · no provider charge", { exact: true }).first(),
       ).toBeVisible();
       await expect(
         page.getByRole("button", { name: "No provider charge", exact: true }),
       ).toHaveAttribute("aria-pressed", "true");
       await expect(page.getByText("Ready", { exact: true })).toHaveCount(0);
+      await expect(
+        page.getByText("Ready to start", { exact: true }),
+      ).toBeVisible();
+      await expect(page.getByText("Unknown", { exact: true })).toHaveCount(1);
+      await expect(
+        page.getByText("Starts when you send a request."),
+      ).toBeVisible();
+      await expect(
+        page.getByText("No health endpoint is configured."),
+      ).toBeVisible();
       await expect(
         page.getByText("Paid · $0.04 per image", { exact: true }),
       ).toBeVisible();

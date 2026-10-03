@@ -101,6 +101,9 @@ function observationLabel(service?: CurrentHealthService): string {
   if (service.observation === "up") return "Ready";
   if (service.observation === "down") return "Unavailable";
   if (service.observation === "degraded") return "Degraded";
+  if (service.observation === "idle") return "Ready to start";
+  if (service.observation === "busy") return "Busy";
+  if (service.observation === "starting") return "Starting";
   if (service.observation === "standby_stopped") return "Standby, stopped";
   if (service.observation === "unavailable") return "Not measured yet";
   return service.observation.replace(/_/g, " ");

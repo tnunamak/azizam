@@ -274,6 +274,21 @@ class DeriveAdminAttentionTests(unittest.TestCase):
                 "observation": "standby_stopped",
             },
             {
+                "name": "lifecycle-backed stopped service is idle",
+                "registry": {
+                    "services": {
+                        "ondemand": {
+                            "config": {"lifecycle": {"driver": "systemd"}},
+                        },
+                    },
+                },
+                "payload": {"backends": [{"key": "ondemand", "status": "stopped"}]},
+                "available": True,
+                "state": "inactive",
+                "tone": "neutral",
+                "observation": "idle",
+            },
+            {
                 "name": "status source unavailable",
                 "registry": {"services": {"required": {}}},
                 "payload": {},

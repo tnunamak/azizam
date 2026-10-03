@@ -185,6 +185,49 @@ describe("Home and Library polish", () => {
       screen.getByRole("link", { name: /Image request.*Succeeded/ }),
     ).toHaveAttribute("href", "/r/real-request");
   });
+  it("shows unknown and ready-to-start capability states without calling them unavailable", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        switch (String(input)) {
+          case "/.well-known/ai-gateway":
+            return Response.json({ service: { name: "Family gateway" } });
+          case "/me/api/home":
+            return Response.json({
+              ...home,
+              capabilities: [
+                {
+                  capability: "image",
+                  intent: "image.generate",
+                  model: "image",
+                  available: true,
+                  status: "unknown",
+                  reason: "No health endpoint is configured.",
+                },
+                {
+                  capability: "decide",
+                  intent: "decision.systemone",
+                  model: "decide",
+                  available: true,
+                  status: "standby_stopped",
+                  reason: "Starts when you send a request.",
+                },
+              ],
+            });
+          case "/me/api/media?limit=5":
+            return Response.json({ assets: [] });
+          default:
+            throw new Error(`Unexpected request: ${input}`);
+        }
+      }),
+    );
+    renderPage(<HomePage />);
+    expect(await screen.findByText("Unknown")).toBeVisible();
+    expect(screen.getByText("No health endpoint is configured.")).toBeVisible();
+    expect(screen.getByText("Ready to start")).toBeVisible();
+    expect(screen.getByText("Starts when you send a request.")).toBeVisible();
+    expect(screen.queryByText("Unavailable right now")).toBeNull();
+  });
   it("keeps audio controls outside the open action and uses a duration fallback for video", async () => {
     vi.stubGlobal(
       "fetch",
