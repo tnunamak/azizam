@@ -151,3 +151,7 @@ data/showcase/
 
 # Private throwaway UI test state
 /.ui-e2e-state/
+
+# Paid-provider spend ledger (runtime state, beside the admin DB)
+data/provider_spend.db
+data/provider_spend.db-*
