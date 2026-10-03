@@ -746,11 +746,27 @@ def validate_provider_secret_refs(
 
     if not is_remote_provider_config(config):
         return
-    inline_keys = [
-        key
-        for key in (*secret_refs, *config)
-        if is_secret_key(str(key)) and not is_secret_reference_key(str(key))
-    ]
+    inline_keys: list[str] = []
+
+    def inspect_secrets(value: Any, prefix: str = "") -> None:
+        if isinstance(value, Mapping):
+            for raw_key, item in value.items():
+                key = str(raw_key)
+                normalized = key.lower().replace("-", "_")
+                path = f"{prefix}.{key}" if prefix else key
+                secret_field = normalized in {"api_key", "authorization", "x_api_key", "client_secret", "password", "secret", "token", "access_token", "bearer_token", "credential"}
+                if secret_field:
+                    inline_keys.append(path)
+                elif is_secret_key(key) and is_secret_reference_key(key):
+                    if not key.lower().endswith("_env") or not isinstance(item, str) or not ENV_VAR_NAME_RE.fullmatch(item):
+                        inline_keys.append(path)
+                inspect_secrets(item, path)
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                inspect_secrets(item, f"{prefix}[{index}]")
+
+    inspect_secrets(config)
+    inspect_secrets(secret_refs)
     if inline_keys:
         names = ", ".join(sorted(str(key) for key in inline_keys))
         raise ValueError(

@@ -122,6 +122,15 @@ def _client(
 
 
 class ProviderAdminApiTests(unittest.TestCase):
+    def test_caps_reject_non_finite_and_boolean_money(self) -> None:
+        store = FakeProviderAdminStore()
+        client = _client(store)
+        for amount in ("NaN", "Infinity", True):
+            with self.subTest(amount=amount):
+                response = client.put("/admin/api/providers/-/global-caps",
+                    headers={"authorization": "Bearer admin"}, json={"daily_usd": amount})
+                self.assertEqual(response.status_code, 400)
+
     def test_list_projects_remote_providers_and_key_status_without_secret_value(self) -> None:
         store = FakeProviderAdminStore()
         with patch.dict(os.environ, {"OPENROUTER_API_KEY": "sk-live-secret"}, clear=False):

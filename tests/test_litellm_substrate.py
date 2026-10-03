@@ -2,6 +2,16 @@ from __future__ import annotations
 
 import pytest
 
+
+def test_duplicate_paid_deployments_cannot_disagree_with_gateway_lookup() -> None:
+    service = {"kind": "provider", "capabilities": ["openai"], "config": {
+        "provider_type": "paid-remote", "provider_id": "openrouter",
+        "api_key_env": "TEST_PROVIDER_KEY", "protocol": "openai-compatible",
+        "base_url": "https://provider.test/v1", "models": ["test-model"],
+    }}
+    with pytest.raises(ValueError, match="ambiguous"):
+        compile_litellm_substrate_config({"first": service, "second": service})
+
 from gateway.litellm_substrate import (
     compile_litellm_config_from_registry,
     compile_litellm_substrate_config,

@@ -454,7 +454,7 @@ def _validate_no_local_remote_model_name_collisions(entries: list[Mapping[str, A
             or ""
         )
         existing = owners.get(model_name)
-        if existing is not None and existing[1] != remote:
+        if existing is not None and (existing[1] or remote):
             raise ValueError(
                 f"public model name {model_name!r} is ambiguous across services "
                 f"{existing[0] or 'local'} and {owner or 'local'}"

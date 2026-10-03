@@ -8,6 +8,7 @@ Profiles may use them.  It never reads or returns a provider key value.
 from __future__ import annotations
 
 import hmac
+import math
 import json
 import os
 import sqlite3
@@ -489,7 +490,7 @@ def _normalize_caps(value: Any) -> dict[str, float]:
                 "invalid_spend_cap",
                 f"{key} must be a non-negative number",
             ) from exc
-        if amount < 0:
+        if isinstance(value[key], bool) or not math.isfinite(amount) or amount < 0:
             raise _RouteError(
                 status.HTTP_400_BAD_REQUEST,
                 "invalid_spend_cap",

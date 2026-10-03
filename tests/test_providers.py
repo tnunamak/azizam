@@ -8,6 +8,7 @@ import os
 import sys
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from pathlib import Path
 
@@ -121,6 +122,18 @@ class TestProviderLookup(unittest.TestCase):
 
 
 class TestSpendReservations(unittest.TestCase):
+    def test_concurrent_requests_cannot_reserve_the_same_remaining_budget(self) -> None:
+        def reserve():
+            try:
+                reserve_provider_spend(profile(budget_usd_per_day=Decimal("0.01")), provider(),
+                    Cost(Decimal("0.006"), "price-table", "typesafe"), path=self.ledger)
+                return "allowed"
+            except BudgetExceeded:
+                return "denied"
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: reserve(), range(2)))
+        self.assertEqual(sorted(results), ["allowed", "denied"])
+
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.ledger = Path(self.tmp.name) / "ledger.db"
@@ -491,6 +504,20 @@ class TestSpendReservations(unittest.TestCase):
 
 
 class TestCosts(unittest.TestCase):
+    def test_missing_output_price_is_unknown_instead_of_input_price(self) -> None:
+        ref = provider(price={"input_usd_per_million_tokens": "1"})
+        self.assertIsNone(estimate_chat_cost(ref, {"messages": [], "max_tokens": 100}).usd)
+
+    def test_multiple_completions_reserve_each_output(self) -> None:
+        ref = provider(price={"input_usd_per_million_tokens": "0", "output_usd_per_million_tokens": "1"})
+        cost = estimate_chat_cost(ref, {"messages": [], "max_tokens": 1000, "n": 3})
+        self.assertEqual(cost.usd, Decimal("0.003"))
+
+    def test_nested_image_has_unknown_cost_before_paid_dispatch(self) -> None:
+        ref = provider(price={"input_usd_per_million_tokens": "1", "output_usd_per_million_tokens": "1"})
+        cost = estimate_chat_cost(ref, {"messages": [{"content": [{"type": "image_url", "image_url": {"url": "https://example.test/image"}}]}], "max_tokens": 10})
+        self.assertIsNone(cost.usd)
+
     def test_typesafe_estimate_uses_provider_price_data_only(self) -> None:
         ref = provider(price={})
         cost = estimate_typesafe_cost(

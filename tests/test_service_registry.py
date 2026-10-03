@@ -19,6 +19,20 @@ def test_shaped_remote_service_rejects_inline_config_key() -> None:
         })
 
 
+@pytest.mark.parametrize("extra", [
+    {"headers": {"Authorization": "test-inline-secret"}},
+    {"auth": {"api_key": "test-inline-secret"}},
+    {"api_key_ref": "test-inline-secret"},
+])
+def test_remote_service_rejects_nested_and_non_env_secret_values(extra) -> None:
+    with pytest.raises(ValueError, match="inline secret fields"):
+        service_registry.normalize_service_record("openrouter", {
+            "kind": "provider", "config": {
+                "provider_type": "paid-remote", "api_key_env": "TEST_PROVIDER_KEY", **extra,
+            },
+        })
+
+
 @pytest.mark.parametrize("config", [
     {"provider_type": "Paid-Remote"},
     {"provider_type": "local", "cost_class": "PAID-REMOTE"},
