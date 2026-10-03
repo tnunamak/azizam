@@ -93,3 +93,11 @@ The blocking integrity check prevented creating a bounded task even though the
 implementation target and oracle were already known. A progress indicator,
 bounded timeout, or quick-mode path that reuses recent context would make this
 failure easier to diagnose. No DevSpecs-owned files were deleted or reset.
+
+## 2026-10-03 — README and guides lane
+
+`ds tldr` and `ds recent` completed. Recent identified browser-front-door,
+UI-polish and provider-reconciliation changes with useful source pointers.
+Direct source review was still needed to confirm that Home uses Gateway check
+and that Providers displays status without editing records. No failure or
+material friction occurred during this orientation pass.
