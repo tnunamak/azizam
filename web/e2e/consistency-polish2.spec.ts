@@ -171,6 +171,10 @@ test("workflow cards keep internal IDs behind an explicit copy or details action
   const sheet = page.getByRole("dialog");
   await expect(
     sheet.getByText("image.product-render", { exact: true }),
+  ).not.toBeVisible();
+  await sheet.getByText("Technical details", { exact: true }).click();
+  await expect(
+    sheet.getByText("image.product-render", { exact: true }),
   ).toBeVisible();
 });
 
