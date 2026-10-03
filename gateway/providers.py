@@ -464,12 +464,13 @@ def extract_provider_cost(
             reported = _decimal_or_none(usage.get("cost"))
             if reported is not None:
                 return Cost(reported, "provider-reported", provider.id, provider.cost_class)
-            sdk_cost = _litellm_full_usage_cost(_litellm_cost_model(provider, body), body)
-            if sdk_cost is not None:
-                return Cost(sdk_cost, "litellm", provider.id, provider.cost_class)
     header_cost = _decimal_or_none(headers.get("x-litellm-response-cost"))
     if header_cost is not None and not stream:
         return Cost(header_cost, "litellm", provider.id, provider.cost_class)
+    if body is not None and isinstance(body.get("usage"), Mapping):
+        sdk_cost = _litellm_full_usage_cost(_litellm_cost_model(provider, body), body)
+        if sdk_cost is not None:
+            return Cost(sdk_cost, "litellm", provider.id, provider.cost_class)
     return Cost(None, "unknown", provider.id, provider.cost_class)
 
 
@@ -935,9 +936,14 @@ def _litellm_full_usage_cost(model: str, body: Mapping[str, Any]) -> Decimal | N
     except Exception:
         return None
     try:
-        response = ModelResponse(**dict(body))
+        response = ModelResponse(**{**dict(body), "model": model})
         usage = body.get("usage")
         if isinstance(usage, Mapping):
+            # Unknown usage extensions cannot establish a complete bill. The
+            # SDK schema is the source of supported fields, not a vendor list.
+            supported = set(Usage.model_fields) | {"input_tokens", "output_tokens"}
+            if set(usage) - supported:
+                return None
             full_usage = dict(usage)
             full_usage.setdefault("prompt_tokens", usage.get("input_tokens", 0))
             full_usage.setdefault("completion_tokens", usage.get("output_tokens", 0))

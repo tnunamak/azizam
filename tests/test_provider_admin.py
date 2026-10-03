@@ -283,22 +283,23 @@ class ProviderAdminApiTests(unittest.TestCase):
             price={},
             config={"concurrency_limit": 3},
         )
-        for _ in range(3):
-            reserve_provider_spend(
-                profile,
-                provider,
-                Cost(Decimal("0.01"), "price-table", "openrouter"),
-                path=ledger_db,
-                now=1_700_000_000,
-            )
-        with self.assertRaises(ProviderError):
-            reserve_provider_spend(
-                profile,
-                provider,
-                Cost(Decimal("0.01"), "price-table", "openrouter"),
-                path=ledger_db,
-                now=1_700_000_000,
-            )
+        with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-provider-key"}):
+            for _ in range(3):
+                reserve_provider_spend(
+                    profile,
+                    provider,
+                    Cost(Decimal("0.01"), "price-table", "openrouter"),
+                    path=ledger_db,
+                    now=1_700_000_000,
+                )
+            with self.assertRaises(ProviderError):
+                reserve_provider_spend(
+                    profile,
+                    provider,
+                    Cost(Decimal("0.01"), "price-table", "openrouter"),
+                    path=ledger_db,
+                    now=1_700_000_000,
+                )
 
         store.registry["services"]["openrouter"]["config"]["recommendations"] = [
             {"id": "custom", "message": "Use a team-owned provider key."}
