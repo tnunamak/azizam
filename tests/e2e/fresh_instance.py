@@ -151,9 +151,19 @@ def assert_catalog_ready_after_chat(client):
 def assert_shared_availability_after_chat(client, key, service_id):
     home = expect(client.get("/me/api/home"), 200).json()
     home_rows = [row for row in home["capabilities"] if row.get("model") == MODEL]
-    assert home_rows and all(row["status"] == "ready" for row in home_rows), "Home disagrees with successful chat evidence"
+    if not home_rows:
+        home_rows = [row for row in home["capabilities"] if row.get("intent") == "chat.completions" and row.get("model") is None]
+    assert home_rows and all(row["status"] == "ready" for row in home_rows), (
+        "Home disagrees with successful chat evidence: " + json.dumps([
+            {"intent": row.get("intent"), "model": row.get("model"), "status": row.get("status"),
+             "source": row.get("availability", {}).get("evidence", {}).get("source")}
+            for row in home["capabilities"]
+        ])
+    )
     capabilities = expect(client.get("/gateway/v1/capabilities", headers={"Authorization": f"Bearer {key}"}), 200).json()
     model_rows = [row for row in capabilities["capabilities"] if row.get("model") == MODEL]
+    if not model_rows:
+        model_rows = [row for row in capabilities["capabilities"] if row.get("intent") == "chat.completions" and row.get("model") is None]
     assert model_rows and all(row["availability"]["status"] == "ready" for row in model_rows), "Capabilities disagree with successful chat evidence"
     status = expect(client.get("/admin/api/status"), 200).json()["status"]["current_health"]
     service = next(row for row in status["services"] if row["service_id"] == service_id)

@@ -466,11 +466,11 @@ def _admin_observation_from_projection(
     if status_value == "busy":
         return "degraded" if raw_status == "degraded" else "busy"
     if status_value == "starting":
-        return "degraded"
+        return "starting"
     if status_value == "idle":
         return "standby_stopped" if role == "standby" else "idle"
     if status_value == "unavailable":
-        return "standby_stopped" if role == "standby" and raw_status in {"down", "stopped"} else "down"
+        return "down"
     return "unavailable"
 
 
@@ -479,9 +479,9 @@ def _admin_tone_from_observation(observation: str, *, role: str) -> str:
         return "ok"
     if observation in {"standby_stopped", "idle", "disabled", "unavailable"}:
         return "neutral"
-    if observation in {"degraded", "busy"}:
+    if observation in {"degraded", "busy", "starting"}:
         return "warn"
-    return "warn" if role == "optional" else "bad"
+    return "warn" if role in {"optional", "standby"} else "bad"
 
 
 def derive_admin_health_projection(

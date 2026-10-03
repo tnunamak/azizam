@@ -262,16 +262,16 @@ class DeriveAdminAttentionTests(unittest.TestCase):
                 "observation": "degraded",
             },
             {
-                "name": "standby stopped",
+                "name": "standby failure is observed down",
                 "registry": {"services": {"standby": {"role": "standby"}}},
                 "payload": {
                     "system_health": "bad",
                     "backends": [{"key": "standby", "status": "down"}],
                 },
                 "available": True,
-                "state": "inactive",
-                "tone": "neutral",
-                "observation": "standby_stopped",
+                "state": "warn",
+                "tone": "warn",
+                "observation": "down",
             },
             {
                 "name": "lifecycle-backed stopped service is idle",
@@ -287,6 +287,15 @@ class DeriveAdminAttentionTests(unittest.TestCase):
                 "state": "inactive",
                 "tone": "neutral",
                 "observation": "idle",
+            },
+            {
+                "name": "starting stays starting",
+                "registry": {"services": {"starting": {}}},
+                "payload": {"backends": [{"key": "starting", "status": "starting"}]},
+                "available": True,
+                "state": "warn",
+                "tone": "warn",
+                "observation": "starting",
             },
             {
                 "name": "status source unavailable",

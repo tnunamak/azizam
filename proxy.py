@@ -13216,10 +13216,12 @@ def _capability_for_profile(
 
 def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Capability]:
     try:
+        live_registry = ADMIN_STORE.get_service_registry()
         _live_backends: Mapping[str, Any] | None = service_registry.runtime_backends(
-            ADMIN_STORE.get_service_registry()
+            live_registry
         )
     except Exception:  # noqa: BLE001
+        live_registry = {}
         _live_backends = None
     capabilities = list(build_local_capabilities(
         config,
@@ -13234,6 +13236,7 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
         },
         backends=_live_backends,
     ))
+    capabilities.extend(registered_model_capabilities(live_registry))
 
     capabilities.extend(build_alias_capabilities(_gateway_aliases_provider()))
     decision_capabilities = DECISION_RUNTIME.capabilities()
@@ -14696,6 +14699,8 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
         profile_loader=lambda profile_id: DEFAULT_PROFILE if profile_id == "default-local" else ADMIN_STORE.profile_for_id(profile_id),
         context_for_profile=_catalog_auth_context_for_profile,
     )
+    if not auth_contexts:
+        return build_models_catalog(alias_views={}, capabilities=[])
     activity = build_user_activity_snapshot(
         session,
         limit=50,
@@ -14706,10 +14711,8 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
         service_records: Mapping[str, Any] = ADMIN_STORE.get_service_registry()
     except Exception:  # noqa: BLE001
         service_records = {}
-    registered_capabilities = registered_model_capabilities(service_records)
     capability_sets = [
-        [*_gateway_capabilities_for_auth_context(auth_context),
-         *(_capability_for_profile(capability, auth_context) for capability in registered_capabilities)]
+        _gateway_capabilities_for_auth_context(auth_context)
         for auth_context in auth_contexts
     ]
     visible_service_ids = {
