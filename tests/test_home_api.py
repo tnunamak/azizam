@@ -466,3 +466,19 @@ def test_disabled_service_is_unavailable_even_when_probe_endpoint_answers(home_c
     data = c.http.get("/me/api/home").json()
     assert not any(row["available"] for row in data["capabilities"])
     assert data["status"]["state"] == "unavailable"
+
+
+def test_generic_endpoint_requires_unshadowed_permitted_registry_model():
+    identity = RuntimeIdentity(name="Scoped", key_hash="", profile=load_profile({"id": "fast-only", "models": ["fast"]}))
+    views = {"chat": {"stable": [{"alias": "fast", "resolves_to": "paid-model"}]}}
+    raw = [Capability(intent="chat.completions", backend="local"),
+           Capability(intent="chat.completions", backend="remote", model="paid-model"),
+           *build_alias_capabilities(views)]
+    registry = {"services": {"local": {"config": {"models": [{"id": "fast"}]}},
+                             "remote": {"config": {"models": [{"id": "paid-model"}]}}}}
+    caps = _resolved_capabilities(identity, lambda _identity: raw, registry)
+    assert not next(cap for cap in caps if cap.backend == "local").policy_available
+    allowed = RuntimeIdentity(name="Scoped", key_hash="", profile=load_profile({"id": "plain-only", "models": ["plain"]}))
+    registry["services"]["local"]["config"]["models"] = [{"id": "plain"}]
+    caps = _resolved_capabilities(allowed, lambda _identity: raw[:1], registry)
+    assert caps[0].policy_available  # A real permitted registry target is sufficient.

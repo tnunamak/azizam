@@ -73,6 +73,8 @@ def _product_capability(intent: str) -> str:
 
 def _availability(capability: Capability, health: Mapping[str, str]) -> tuple[str, str]:
     live = health.get(capability.backend)
+    if live == "disabled":
+        return "unavailable", "The service is disabled."
     if capability.lifecycle == "stopped" or capability.health == "unhealthy" or live == "down":
         return "unavailable", "The service is unavailable."
     if capability.lifecycle == "warming":
@@ -110,10 +112,25 @@ def _resolved_capabilities(identity: RuntimeIdentity, provider,
     A missing or ambiguous target remains unavailable to this surface.
     """
     raw = list(provider(identity))
+    alias_names = {(cap.intent, cap.model) for cap in raw if "alias" in cap.tags}
+    def target_policy(cap, model, concrete=None):
+        concrete = concrete or cap
+        resolved = replace(cap, backend=concrete.backend, health=concrete.health,
+                           lifecycle=concrete.lifecycle)
+        return capability_with_policy_view(resolved, identity.profile, request=make_policy_request(
+            protocol=_PROTOCOLS.get(_product_capability(cap.intent), "openai.chat"),
+            intent=cap.intent, model=model, backend=concrete.backend,
+            workflow=concrete.workflow, capability_exposure=concrete.exposure,
+            capability_trust_tier=concrete.trust_tier,
+            capability_resource_tier=concrete.resource_tier, capability_tags=concrete.tags))
     out = []
     for cap in raw:
         targets = [tag.removeprefix("resolves_to:") for tag in cap.tags if tag.startswith("resolves_to:")]
         if "alias" not in cap.tags or not targets:
+            if (cap.intent, cap.model) in alias_names:
+                continue  # Public aliases take precedence over same-named models.
+            if cap.workflow and cap.model is None and identity.profile.models is not None:
+                cap = target_policy(cap, cap.workflow)
             out.append(cap)
             continue
         # Service-selected aliases already carry the selected service ID from
@@ -147,15 +164,23 @@ def _resolved_capabilities(identity: RuntimeIdentity, provider,
             out.append(replace(cap, policy_available=False))
             continue
         concrete = matches[0]
-        resolved = replace(cap, backend=concrete.backend, health=concrete.health,
-                           lifecycle=concrete.lifecycle)
-        protocol = _PROTOCOLS.get(_product_capability(cap.intent), "openai.chat")
-        resolved = capability_with_policy_view(resolved, identity.profile, request=make_policy_request(
-            protocol=protocol, intent=cap.intent, model=target, backend=concrete.backend,
-            workflow=concrete.workflow, capability_exposure=concrete.exposure,
-            capability_trust_tier=concrete.trust_tier,
-            capability_resource_tier=concrete.resource_tier, capability_tags=concrete.tags))
-        out.append(resolved)
+        out.append(target_policy(cap, target, concrete))
+    if identity.profile.models is not None:
+        # A model-less endpoint alone cannot prove that a constrained key has
+        # any usable target. Require a permitted named capability or a logical
+        # model declared by the service's routing data.
+        named = {(cap.intent, cap.backend) for cap in out if cap.policy_available and cap.model is not None}
+        services = (registry or {}).get("services") or {}
+        for index, cap in enumerate(out):
+            if cap.model is not None or cap.workflow is not None or not cap.policy_available:
+                continue
+            service = services.get(cap.backend) or {}
+            model_rows = service_model_records(service.get("config") or {})
+            declared = any(target_policy(cap, row.get("model_group") or row.get("id")).policy_available
+                           for row in model_rows if (row.get("model_group") or row.get("id"))
+                           and (cap.intent, row.get("model_group") or row.get("id")) not in alias_names)
+            if (cap.intent, cap.backend) not in named and not declared:
+                out[index] = replace(cap, policy_available=False)
     return out
 
 
@@ -213,8 +238,13 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
 
     async def live_health() -> dict[str, str]:
         status = await status_provider()
-        return {str(row.get("key") or row.get("name")): str(row.get("live_status") or "unknown")
-                for row in status.get("backends", []) if isinstance(row, Mapping)}
+        measured = {str(row.get("key") or row.get("name")): str(row.get("live_status") or "unknown")
+                    for row in status.get("backends", []) if isinstance(row, Mapping)}
+        # Probe responses can exist for disabled services. Their enablement
+        # remains authoritative in the registry, even when an endpoint answers.
+        services = store.get_service_registry().get("services") or {}
+        return {service_id: measured.get(service_id, "unknown") if service.get("enabled", True) else "disabled"
+                for service_id, service in services.items() if isinstance(service, Mapping)}
 
     @router.get("/me/api/home", include_in_schema=False)
     async def home(request: Request):

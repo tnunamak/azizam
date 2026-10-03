@@ -105,6 +105,18 @@ for (const theme of ["light", "dark"] as const) {
         ).toBeVisible();
         if (state === "seeded") {
           const snapshot = await (await request.get("/me/api/home")).json();
+          const media = snapshot.capabilities.filter(
+            (cap: { capability: string }) =>
+              ["image", "video", "audio"].includes(cap.capability),
+          );
+          expect(
+            media.length,
+            "The default plan can discover configured media targets",
+          ).toBeGreaterThan(0);
+          expect(
+            media.every((cap: { available: boolean }) => !cap.available),
+            "Disabled media services cannot become Ready when the shared probe endpoint answers",
+          ).toBe(true);
           const seededApp = snapshot.apps.find(
             (app: { name: string }) => app.name === "Browser test app",
           );
