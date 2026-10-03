@@ -569,6 +569,21 @@ function DefaultsForm({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="none">No default plan</SelectItem>
+              {!data.profiles.some((p) => p.id === "default-local") && (
+                <SelectItem value="default-local">
+                  Default local (built-in)
+                </SelectItem>
+              )}
+              {!data.profiles.some((p) => p.id === "default") && (
+                <SelectItem value="default">Default (built-in)</SelectItem>
+              )}
+              {plan !== "none" &&
+                !["default", "default-local"].includes(plan) &&
+                !data.profiles.some((p) => p.id === plan) && (
+                  <SelectItem value={plan}>
+                    Current plan (unavailable)
+                  </SelectItem>
+                )}
               {data.profiles.map((p) => (
                 <SelectItem key={p.id} value={p.id}>
                   {p.name}

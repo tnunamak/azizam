@@ -27,6 +27,7 @@ type Receipt = {
   status?: string;
   latency_ms?: number | null;
   path?: string;
+  parent_request_id?: string;
   warnings?: string[];
   [key: string]: unknown;
 };
@@ -197,6 +198,11 @@ export function Requests() {
                 <div className="min-w-0 flex-1 space-y-1">
                   <p className="text-sm font-medium break-words">
                     {requestSummary(row.receipt)}
+                    {row.receipt.parent_request_id && (
+                      <span className="text-muted-foreground ml-2 text-xs font-normal">
+                        Internal execution
+                      </span>
+                    )}
                   </p>
                   <p className="text-muted-foreground text-xs break-words">
                     {row.person_label} · {row.app_label}

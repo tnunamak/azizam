@@ -312,6 +312,114 @@ _PAGE_CSS = """
   }
 """
 
+# Retained native POST responses share the public React presentation. These
+# same-origin font assets are emitted from the pinned Geist dependency.
+_PUBLIC_SETUP_CSS = """
+  @font-face {
+    font-family: Geist; font-style: normal; font-display: swap;
+    font-weight: 100 900;
+    src: url('/ui/_next/static/media/Geist-Variable.0b78ff37.woff2') format('woff2');
+  }
+  @font-face {
+    font-family: 'Geist Mono'; font-style: normal; font-display: swap;
+    font-weight: 100 900;
+    src: url('/ui/_next/static/media/GeistMono-Variable.723e11e5.woff2') format('woff2');
+  }
+  html.setup-public {
+    color-scheme: light;
+    --bg: #ffffff; --panel: #ffffff; --panel-2: #f4f4f5;
+    --line: #e4e4e7; --line-strong: #d4d4d8;
+    --text: #18181b; --muted: #65656e; --soft: #65656e;
+    --accent: #087f75; --accent-ink: #ffffff; --link: #087f75;
+    --bad: #b42335; --bad-bg: #fcecef;
+    --font-sans: 'Geist', sans-serif;
+    --font-serif: var(--font-sans);
+    --font-mono: 'Geist Mono', monospace;
+    --radius: 0.75rem; --radius-sm: 0.5rem;
+  }
+  html.setup-public.dark {
+    color-scheme: dark;
+    --bg: #18181b; --panel: #202023; --panel-2: #27272a;
+    --line: #343438; --line-strong: #52525b;
+    --text: #fafafa; --muted: #a1a1aa; --soft: #a1a1aa;
+    --accent: #69d8c7; --accent-ink: #103b35; --link: #69d8c7;
+    --bad: #ff91a1; --bad-bg: #40272e;
+  }
+  .setup-public body {
+    background: var(--bg); font: 14px/1.5 var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  .setup-public .shell-header {
+    position: static; background: var(--bg); border: 0; backdrop-filter: none;
+  }
+  .setup-public .shell-header-inner {
+    max-width: none; padding: 16px 20px; justify-content: space-between;
+  }
+  .setup-public .shell-brand { gap: 8px; font-size: 14px; min-height: 44px; }
+  .setup-public .shell-brand-dot { box-shadow: none; }
+  .setup-public .shell-main {
+    width: 100%; max-width: 552px; padding: 48px 20px; margin: 0 auto;
+  }
+  .setup-public .setup-card, .setup-public .setup-card.hero {
+    background: var(--panel); border-color: var(--line); padding: 24px;
+    gap: 24px; box-shadow: 0 1px 3px rgb(0 0 0 / 5%);
+  }
+  .setup-public .setup-card h1, .setup-public .setup-card h2 {
+    margin: 0; font: 600 20px/1.3 var(--font-sans); color: var(--text);
+  }
+  .setup-public .setup-card p { line-height: 1.5; }
+  .setup-public .setup-card .eyebrow {
+    font: 500 12px/1.4 var(--font-sans); letter-spacing: 0;
+    text-transform: none;
+  }
+  .setup-public .setup-form { gap: 16px; }
+  .setup-public .setup-form label {
+    color: var(--text); font-size: 14px; font-weight: 500; gap: 8px;
+  }
+  .setup-public .setup-form input {
+    background: transparent; border-color: var(--line-strong); height: 44px;
+    font-weight: 400; padding: 8px 12px;
+  }
+  .setup-public .setup-form button {
+    width: 100%; padding: 8px 16px; border-radius: 0.5rem;
+    font-size: 14px; font-weight: 500;
+  }
+  .setup-public .pill {
+    min-height: 44px; border-radius: 0.5rem; font-size: 14px; font-weight: 500;
+  }
+  .setup-public .recovery { background: transparent; padding: 16px 0 0; border: 0; border-top: 1px solid var(--line); }
+  .setup-public .recovery summary { min-height: 44px; padding: 12px 0; font-size: 14px; font-weight: 500; }
+  .setup-public .recovery pre { background: var(--panel-2); font-size: 12px; padding: 12px; }
+  .setup-public .recovery code { background: var(--panel-2); font-size: 12px; overflow-wrap: anywhere; }
+  .setup-public .setup-error { background: var(--bad-bg); color: var(--bad); font-size: 14px; }
+  .setup-public :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .setup-theme-toggle { width: 44px; height: 44px; background: transparent; border: 0; border-radius: 0.5rem; cursor: pointer; }
+  .setup-theme-toggle:hover { background: var(--panel-2); }
+  .setup-theme-toggle svg { width: 20px; height: 20px; vertical-align: middle; }
+  .setup-theme-toggle .moon { display: none; }
+  .dark .setup-theme-toggle .sun { display: none; }
+  .dark .setup-theme-toggle .moon { display: inline; }
+  @media (max-width: 540px) {
+    .setup-public .shell-main { padding-top: 32px; }
+  }
+"""
+
+_PUBLIC_THEME_SCRIPT = """
+<script>
+(function () {
+  function prefersDark() { return window.matchMedia('(prefers-color-scheme: dark)').matches; }
+  var theme;
+  try { theme = localStorage.getItem('theme'); } catch (e) {}
+  document.documentElement.classList.toggle('dark', theme === 'dark' || (theme !== 'light' && prefersDark()));
+  document.addEventListener('click', function (event) {
+    if (!event.target.closest('[data-setup-theme]')) return;
+    var dark = document.documentElement.classList.toggle('dark');
+    try { localStorage.setItem('theme', dark ? 'dark' : 'light'); } catch (e) {}
+  });
+}());
+</script>
+"""
+
 
 # ---------------------------------------------------------------------------
 # Local owner forms: create (first-run) and sign-in (returning operator)
@@ -805,14 +913,40 @@ def render_setup_page(
         logout_url=logout_url if is_admin_signed_in else None,
     )
 
+    public_presentation = not is_admin_signed_in
+    if public_presentation:
+        # The native forms retain their routes, values and validation messages;
+        # only their surrounding public chrome changes.
+        body = body.replace("<h2 ", "<h1 ", 1).replace("</h2>", "</h1>", 1)
+        header_html = (
+            '<header class="shell-header"><div class="shell-header-inner">'
+            f'<a class="shell-brand" href="/" aria-label="{esc(brand)} home">'
+            '<span class="shell-brand-dot" aria-hidden="true"></span>'
+            f'{esc(brand)}</a>'
+            '<button class="setup-theme-toggle" type="button" '
+            'data-setup-theme aria-label="Toggle theme">'
+            '<svg class="sun" aria-hidden="true" viewBox="0 0 24 24" '
+            'fill="none" stroke="currentColor" stroke-width="2">'
+            '<circle cx="12" cy="12" r="4"/>'
+            '<path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg>'
+            '<svg class="moon" aria-hidden="true" viewBox="0 0 24 24" '
+            'fill="none" stroke="currentColor" stroke-width="2">'
+            '<path d="M20.5 13A9 9 0 0 1 11 3.5 9 9 0 1 0 20.5 13Z"/></svg>'
+            '</button></div></header>'
+        )
+    presentation_css = _PUBLIC_SETUP_CSS if public_presentation else ""
+    theme_script = _PUBLIC_THEME_SCRIPT if public_presentation else ""
+    html_class = ' class="setup-public"' if public_presentation else ""
+
     return (
         "<!doctype html>"
-        '<html lang="en"><head>'
+        f'<html lang="en"{html_class}><head>'
         '<meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         f"<title>{esc(title)}</title>"
-        f"<style>{SHELL_CSS}{_PAGE_CSS}</style>"
-        "</head><body>"
+        f"<style>{SHELL_CSS}{_PAGE_CSS}{presentation_css}</style>"
+        + theme_script
+        + "</head><body>"
         + header_html
         + '<main class="shell-main">'
         + body

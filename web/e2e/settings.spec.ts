@@ -301,3 +301,87 @@ test("settings reports save failure and retries a failed load", async ({
     "Instance could not be saved",
   );
 });
+
+test("new visitors use the saved default theme and personal choices persist", async ({
+  browser,
+  baseURL,
+}) => {
+  const context = await browser.newContext({ colorScheme: "light" });
+  const page = await context.newPage();
+  await page.route("**/.well-known/ai-gateway", (route) =>
+    route.fulfill({
+      json: {
+        service: { name: "Our gateway" },
+        presentation: { theme_default: "dark" },
+      },
+    }),
+  );
+  await page.goto(`${baseURL}/ui/showcase/`);
+  await expect(page.locator("html")).toHaveClass(/dark/);
+  await page.getByRole("button", { name: "Toggle theme" }).click();
+  await expect(page.locator("html")).not.toHaveClass(/dark/);
+  await page.reload();
+  await expect(page.locator("html")).not.toHaveClass(/dark/);
+  await context.close();
+});
+
+test("built-in default plans remain visible without a database profile row", async ({
+  page,
+}) => {
+  await seed(page, "seeded");
+  await page.route("**/admin/api/settings/defaults", (route) =>
+    route.fulfill({
+      json: { defaults: { profile_id: "default-local" }, aliases: {} },
+    }),
+  );
+  await page.goto("/ui/settings/");
+  await expect(page.getByLabel("Default access plan")).toContainText(
+    "Default local (built-in)",
+  );
+});
+
+test("extension enable uses the validated source and waits for explicit code trust", async ({
+  page,
+}) => {
+  await seed(page, "empty");
+  await page.route("**/admin/api/extensions/validate", (route) =>
+    route.fulfill({
+      json: {
+        review: {
+          ok: true,
+          package: { id: "trusted-fixture", version: "1" },
+          errors: [],
+          warnings: [],
+          requires_code_trust: true,
+          resolved_source: { resolved_ref: "fixture-commit" },
+          object_counts: { services: 1 },
+        },
+      },
+    }),
+  );
+  await page.route("**/admin/api/extensions/enable", (route) =>
+    route.fulfill({ json: {} }),
+  );
+  await page.goto("/ui/settings/");
+  await page.getByRole("button", { name: "Add extension" }).click();
+  await page.getByLabel("Directory on the gateway").fill("/extensions/fixture");
+  await page.getByRole("button", { name: "Validate package" }).click();
+  await expect(
+    page.getByRole("button", { name: "Enable extension" }),
+  ).toBeDisabled();
+  await page
+    .getByLabel("I trust this package to run code on the gateway")
+    .click();
+  const enabled = page.waitForRequest(
+    (r) =>
+      r.url().endsWith("/admin/api/extensions/enable") && r.method() === "POST",
+  );
+  await page.getByRole("button", { name: "Enable extension" }).click();
+  expect((await enabled).postDataJSON()).toEqual({
+    source: { type: "local_directory", path: "/extensions/fixture" },
+    review: { resolved_source: { resolved_ref: "fixture-commit" } },
+  });
+  await expect(
+    page.getByText("Extension enabled", { exact: true }),
+  ).toBeVisible();
+});

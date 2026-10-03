@@ -115,7 +115,7 @@ function RecordedOutput({
     );
   if (typeof output.text === "string")
     return (
-      <pre className="bg-muted max-h-96 overflow-y-auto rounded-md p-4 text-sm [overflow-wrap:anywhere] whitespace-pre-wrap">
+      <pre className="bg-muted max-h-96 overflow-y-auto rounded-md p-4 font-sans text-sm [overflow-wrap:anywhere] whitespace-pre-wrap">
         {output.text}
       </pre>
     );

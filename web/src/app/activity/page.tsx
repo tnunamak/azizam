@@ -33,6 +33,28 @@ const categories = [
   { value: "operator.", label: "Gateway settings" },
   { value: "runtime_profile_mapping.", label: "Access mappings" },
 ];
+
+function auditSummary(entry: AuditEntry) {
+  if (entry.action === "operator.instance.update")
+    return "Updated instance settings";
+  if (entry.action === "operator.default_access_plan.update")
+    return "Updated the default access plan";
+  return auditDescription(entry);
+}
+function changedName(entry: AuditEntry) {
+  if (typeof entry.metadata?.name === "string") return entry.metadata.name;
+  const labels: Record<string, string> = {
+    credential: "Key",
+    profile: "Access plan",
+    user: "Person",
+    operator_setting: "Gateway settings",
+    service: "Engine",
+    runtime_profile_mapping: "Access mapping",
+    app: "App",
+  };
+  return labels[entry.target_kind ?? ""] ?? auditTargetName(entry);
+}
+
 export default function ActivityPage() {
   const [category, setCategory] = useState("");
   const [actor, setActor] = useState("");
@@ -228,7 +250,7 @@ export default function ActivityPage() {
                   <button
                     type="button"
                     key={row.id}
-                    aria-label={`Details: ${auditDescription(row)} by ${row.actor_label}`}
+                    aria-label={`Details: ${auditSummary(row)} by ${row.actor_label}`}
                     onClick={() => setEntry(row)}
                     className="group hover:bg-muted/40 focus-visible:outline-ring flex w-full items-center gap-4 py-4 text-left transition-colors focus-visible:outline-2"
                   >
@@ -239,14 +261,10 @@ export default function ActivityPage() {
                       />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium">
-                        {auditDescription(row)}
-                      </p>
+                      <p className="text-sm font-medium">{auditSummary(row)}</p>
                       <p className="text-muted-foreground mt-1 text-xs break-words">
                         {row.actor_label}
-                        {auditTargetName(row)
-                          ? ` · ${auditTargetName(row)}`
-                          : ""}
+                        {changedName(row) ? ` · ${changedName(row)}` : ""}
                       </p>
                       <p className="text-muted-foreground mt-1 text-xs break-words">
                         {row.action}
@@ -302,7 +320,7 @@ export default function ActivityPage() {
           {entry && (
             <>
               <SheetHeader className="pr-14">
-                <SheetTitle>{auditDescription(entry)}</SheetTitle>
+                <SheetTitle>{auditSummary(entry)}</SheetTitle>
                 <SheetDescription>
                   {entry.actor_label} · <RelativeTime ts={entry.created_at} />
                 </SheetDescription>
@@ -313,12 +331,10 @@ export default function ActivityPage() {
                     <dt className="text-muted-foreground">Person</dt>
                     <dd className="mt-1">{entry.actor_label}</dd>
                   </div>
-                  {auditTargetName(entry) && (
+                  {changedName(entry) && (
                     <div>
                       <dt className="text-muted-foreground">Changed</dt>
-                      <dd className="mt-1 break-words">
-                        {auditTargetName(entry)}
-                      </dd>
+                      <dd className="mt-1 break-words">{changedName(entry)}</dd>
                     </div>
                   )}
                   <div>

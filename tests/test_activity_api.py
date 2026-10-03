@@ -58,6 +58,16 @@ def test_person_filter_is_server_scoped_and_unknown_is_empty(activity):
     assert client.get('/admin/api/activity/requests?person_id=missing').json()['records'] == []
 
 
+def test_all_receipts_includes_nested_execution_receipts(activity):
+    client, path, _, apps = activity
+    seed(path, apps[0], 'outer')
+    receipt_store.record({'request_id': 'inner', 'parent_request_id': 'outer',
+                         'intent': 'chat', 'status': 'succeeded', 'app_id': apps[0]['id']},
+                         created_at=1700000001, path=path)
+    records = client.get('/admin/api/activity/requests').json()['records']
+    assert {row['receipt']['request_id'] for row in records} == {'inner', 'outer'}
+
+
 @pytest.mark.parametrize(('role', 'status'), [('member', 403), ('admin', 403), ('anonymous', 401)])
 def test_non_owners_cannot_read_any_receipts(activity, role, status):
     client, path, _, apps = activity
@@ -72,4 +82,6 @@ def test_empty_and_invalid_cursor(activity):
     assert client.get('/admin/api/activity/requests').json()['records'] == []
     assert client.get('/admin/api/activity/requests?before=broken').status_code == 400
     assert client.get('/admin/api/activity/requests?before=%5B1%5D').status_code == 400
+    for cursor in ('[true, "id"]', '[NaN, "id"]', '[Infinity, "id"]'):
+        assert client.get('/admin/api/activity/requests', params={'before': cursor}).status_code == 400
     assert client.get('/admin/api/activity/requests?limit=101').status_code == 422

@@ -30,7 +30,8 @@ def create_activity_router(
 
     @router.get("/requests")
     def requests(request: Request, limit: int = Query(50, ge=1, le=100),
-                 person_id: str | None = None, before: str | None = None):
+                 person_id: str | None = Query(None, max_length=256),
+                 before: str | None = Query(None, max_length=512)):
         denied = authorize(request)
         if denied is not None:
             return denied
@@ -39,7 +40,7 @@ def create_activity_router(
                   for row in users]
         labels = {person["id"]: person["label"] for person in people}
         apps = {row["id"]: row for row in admin_store.list_apps(path=admin_path)}
-        clauses = ["parent_request_id IS NULL"]
+        clauses = ["1 = 1"]
         params: list = []
         if person_id is not None:
             owned = [id for id, app in apps.items() if app.get("owner_user_id") == person_id]
@@ -52,7 +53,7 @@ def create_activity_router(
                 timestamp, id = json.loads(before)
                 if type(timestamp) not in (int, float) or not math.isfinite(timestamp) or not isinstance(id, str):
                     raise ValueError
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, OverflowError):
                 return JSONResponse(status_code=400, content={"error": {
                     "code": "invalid_cursor", "message": "Request cursor is invalid."}})
             clauses.append("(created_at < ? OR (created_at = ? AND request_id < ?))")
@@ -73,7 +74,10 @@ def create_activity_router(
             records.append({"receipt": row, "created_at": timestamp,
                             "person_label": labels.get(owner, "Unattributed request"),
                             "app_label": app.get("name") or "Unknown app"})
-        cursor = json.dumps(rows[limit - 1]) if len(rows) > limit else None
+        cursor = None
+        if len(rows) > limit:
+            last_request_id, last_created_at = rows[limit - 1]
+            cursor = json.dumps([last_created_at, last_request_id])
         return {"records": records, "next_cursor": cursor, "people": people}
 
     return router
