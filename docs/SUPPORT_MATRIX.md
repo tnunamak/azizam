@@ -209,7 +209,7 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | `POST` | `/v1/batches{rest:path}` | unsupported | 400 unsupported_operation (not 501) | [proxy.py](../proxy.py) `openai_batches_unsupported` |
 | `POST` | `/v1/chat/completions` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `chat_completions` |
 | `POST` | `/v1/completions` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `completions` |
-| `POST` | `/v1/decisions` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/decisions_api.py](../gateway/decisions_api.py) `reserved_openai_decisions` |
+| `POST` | `/v1/decisions` | partial | 501 without configured provider passthrough; no local schema | [gateway/decisions_api.py](../gateway/decisions_api.py) `reserved_openai_decisions` |
 | `POST` | `/v1/embeddings` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `embeddings` |
 | `DELETE` | `/v1/files{rest:path}` | unsupported | 400 unsupported_operation (not 501) | [proxy.py](../proxy.py) `openai_files_unsupported` |
 | `GET` | `/v1/files{rest:path}` | unsupported | 400 unsupported_operation (not 501) | [proxy.py](../proxy.py) `openai_files_unsupported` |
