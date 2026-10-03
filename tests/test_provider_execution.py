@@ -521,6 +521,117 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 send.assert_not_called()
                 self.assertFalse(self.ledger.exists())
 
+    async def test_paid_guard_ignores_function_parameter_schema_keywords(self) -> None:
+        provider = ProviderRef(
+            id="openrouter",
+            base_url="https://openrouter.ai/api/v1",
+            protocols=("openai",),
+            api_key_env="OPENROUTER_API_KEY",
+            cost_class="paid-remote",
+            price={
+                "input_usd_per_million_tokens": "0",
+                "output_usd_per_million_tokens": "0",
+            },
+            config={"models": [{"id": "openai/gpt-4.1-mini"}]},
+        )
+        payload = provider_execution._paid_priced_outbound_payload(
+            {
+                "model": "openrouter/openai/gpt-4.1-mini",
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 1,
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "save",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "cache_control": {"type": "string"},
+                                    "file": {"type": "string"},
+                                },
+                            },
+                        },
+                    }
+                ],
+            },
+            provider=provider,
+        )
+
+        self.assertIsInstance(payload, dict)
+
+    async def test_paid_guard_rejects_operational_payload_that_looks_like_schema(self) -> None:
+        self.body = {
+            "model": "openrouter/openai/gpt-4.1-mini",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "object",
+                            "properties": {},
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
+                }
+            ],
+            "max_tokens": 1,
+        }
+        send = AsyncMock()
+
+        response, _ = await self._execute(send=send)
+
+        self.assertEqual(response.status_code, 400)
+        body = json.loads((await _body(response)).decode())
+        self.assertEqual(body["error"]["code"], "paid_option_unsupported")
+        self.assertEqual(body["error"]["param"], "cache_control")
+        send.assert_not_called()
+
+    async def test_paid_declared_price_dimensions_allow_known_paid_features(self) -> None:
+        provider = ProviderRef(
+            id="openrouter",
+            base_url="https://openrouter.ai/api/v1",
+            protocols=("openai",),
+            api_key_env="OPENROUTER_API_KEY",
+            cost_class="paid-remote",
+            price={
+                "input_usd_per_million_tokens": "0",
+                "output_usd_per_million_tokens": "0",
+                "dimensions": {
+                    "document": {"enabled": True},
+                    "cache_control": {"enabled": True},
+                    "model_modifier:online": {"enabled": True},
+                },
+            },
+            config={"models": [{"id": "openai/gpt-4.1-mini:online"}]},
+        )
+
+        payload = provider_execution._paid_priced_outbound_payload(
+            {
+                "model": "openrouter/openai/gpt-4.1-mini:online",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "document",
+                                "source": {"type": "url", "url": "https://example.test/a.pdf"},
+                            },
+                            {
+                                "type": "text",
+                                "text": "cache this",
+                                "cache_control": {"type": "ephemeral"},
+                            },
+                        ],
+                    }
+                ],
+                "max_tokens": 1,
+            },
+            provider=provider,
+        )
+
+        self.assertIsInstance(payload, dict)
+
     async def test_paid_estimator_sees_exact_sanitized_outbound_payload(self) -> None:
         self.body = {
             "model": "openrouter/openai/gpt-4.1-mini",
@@ -694,7 +805,8 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 "output_usd_per_million_tokens": "15",
             },
             config={
-                "models": [{"id": "anthropic/claude-sonnet-4.5"}],
+                "models": [{"id": "anthropic/claude-sonnet-4-5-20250929"}],
+                "litellm_model": "anthropic/claude-sonnet-4-5-20250929",
                 "price": {
                     "input_usd_per_million_tokens": "3",
                     "output_usd_per_million_tokens": "15",
@@ -702,7 +814,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.body = {
-            "model": "openrouter/anthropic/claude-sonnet-4.5",
+            "model": "openrouter/anthropic/claude-sonnet-4-5-20250929",
             "messages": [{"role": "user", "content": "hi"}],
             "max_tokens": 1,
             "stream": True,
@@ -715,9 +827,13 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                     chunks=[
                         b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
                         (
-                            b'data: {"usage":{"input_tokens":10000,'
-                            b'"cache_creation_input_tokens":10000,'
-                            b'"output_tokens":1}}\n\n'
+                            b'data: {"usage":{"prompt_tokens":10000,'
+                            b'"prompt_tokens_details":{"cache_creation_tokens":10000,'
+                            b'"cache_creation_token_details":{"ephemeral_1h_input_tokens":10000}}}}\n\n'
+                        ),
+                        (
+                            b'data: {"usage":{"prompt_tokens":10000,'
+                            b'"completion_tokens":1}}\n\n'
                         ),
                         b"data: [DONE]\n\n",
                     ],
@@ -742,9 +858,36 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             return_value=(
                 _Client(),
                 _Response(
-                    headers={"content-type": "text/event-stream"},
+                    headers={
+                        "content-type": "text/event-stream",
+                        "x-litellm-response-cost": "0",
+                    },
                     chunks=[
                         b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
+                        b"data: [DONE]\n\n",
+                    ],
+                ),
+            )
+        )
+
+        response, _ = await self._execute(send=send)
+        await _body(response)
+
+        with sqlite3.connect(self.ledger) as conn:
+            rows = conn.execute(
+                "SELECT status, actual_usd FROM provider_spend"
+            ).fetchall()
+        self.assertEqual(rows, [("reserved", None)])
+
+    async def test_stream_unknown_usage_extension_keeps_reservation_open(self) -> None:
+        self.body = {**self.body, "stream": True}
+        send = AsyncMock(
+            return_value=(
+                _Client(),
+                _Response(
+                    headers={"content-type": "text/event-stream"},
+                    chunks=[
+                        b'data: {"usage":{"input_tokens":10,"output_tokens":1,"future_billable_units":3}}\n\n',
                         b"data: [DONE]\n\n",
                     ],
                 ),

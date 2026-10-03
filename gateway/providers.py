@@ -25,6 +25,7 @@ from gateway.policy import AppProfile, PolicyRequest, evaluate
 from gateway.service_registry import canonical_provider_id, is_remote_provider_config
 
 USD_QUANTUM = Decimal("0.000000001")
+DEFAULT_PROVIDER_CONCURRENCY_LIMIT = 2
 DEFAULT_LEDGER_PATH = Path(
     os.environ.get("AI_GATEWAY_PROVIDER_LEDGER_DB", "data/provider_spend.db")
 )
@@ -70,6 +71,11 @@ class ProviderTimeout(ProviderError):
 class ProviderRateLimited(ProviderError):
     status_code = 429
     code = "provider_rate_limited"
+
+
+class ProviderConcurrencyLimited(ProviderError):
+    status_code = 429
+    code = "provider_concurrency_limited"
 
 
 class ProviderUpstreamError(ProviderError):
@@ -192,6 +198,15 @@ def provider_refs(registry: Mapping[str, Any]) -> dict[str, ProviderRef]:
         if ref is not None:
             out[ref.id] = ref
     return out
+
+
+def provider_concurrency_limit(config: Mapping[str, Any]) -> int:
+    """Return the paid-provider concurrency limit; default 2, minimum 1."""
+
+    limit = _optional_int(config.get("concurrency_limit"))
+    if limit is None or limit < 1:
+        return DEFAULT_PROVIDER_CONCURRENCY_LIMIT
+    return limit
 
 
 def require_remote_allowed(
@@ -350,6 +365,7 @@ def reserve_provider_spend(
                 estimate=estimate,
                 label="monthly global admin",
             )
+            _enforce_provider_concurrency(conn, provider_id, provider)
             cursor = conn.execute(
                 """
                 INSERT INTO provider_spend
@@ -384,8 +400,10 @@ def settle_provider_spend(
     path: Path = DEFAULT_LEDGER_PATH,
     now: int | None = None,
 ) -> None:
-    actual = reservation.estimated_usd if actual_cost is None else actual_cost.usd
-    settled_amount = reservation.estimated_usd if actual is None else _quantize_usd(actual)
+    actual = None if actual_cost is None else actual_cost.usd
+    if actual is None:
+        return
+    settled_amount = _quantize_usd(actual)
     timestamp = int(now if now is not None else time.time())
     ensure_ledger(path)
     with sqlite3.connect(path) as conn:
@@ -437,37 +455,21 @@ def extract_provider_cost(
     *,
     body: Mapping[str, Any] | None = None,
     headers: Mapping[str, str] | None = None,
+    stream: bool = False,
 ) -> Cost:
     headers = headers or {}
-    header_cost = _decimal_or_none(headers.get("x-litellm-response-cost"))
-    if header_cost is not None:
-        return Cost(header_cost, "litellm", provider.id, provider.cost_class)
     if body is not None:
         usage = body.get("usage")
         if isinstance(usage, Mapping):
             reported = _decimal_or_none(usage.get("cost"))
             if reported is not None:
                 return Cost(reported, "provider-reported", provider.id, provider.cost_class)
-            input_tokens = _optional_int(
-                usage.get("input_tokens", usage.get("prompt_tokens"))
-            )
-            output_tokens = _optional_int(
-                usage.get("output_tokens", usage.get("completion_tokens"))
-            )
-            if input_tokens is not None or output_tokens is not None:
-                estimated = _cost_from_tokens(
-                    provider,
-                    model=str(body.get("model") or ""),
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                )
-                if estimated is not None:
-                    return Cost(
-                        estimated,
-                        "price-table",
-                        provider.id,
-                        provider.cost_class,
-                    )
+            sdk_cost = _litellm_full_usage_cost(_litellm_cost_model(provider, body), body)
+            if sdk_cost is not None:
+                return Cost(sdk_cost, "litellm", provider.id, provider.cost_class)
+    header_cost = _decimal_or_none(headers.get("x-litellm-response-cost"))
+    if header_cost is not None and not stream:
+        return Cost(header_cost, "litellm", provider.id, provider.cost_class)
     return Cost(None, "unknown", provider.id, provider.cost_class)
 
 
@@ -674,12 +676,12 @@ def _enforce_window_cap(
         since=since,
     )
     if provider_only:
-        if provider_total + estimate > cap:
+        if provider_total >= cap or provider_total + estimate > cap:
             raise BudgetExceeded(
                 f"{label} provider cap for {provider!r} would exceed ${cap}"
             )
         return
-    if provider_total + estimate > cap:
+    if provider_total >= cap or provider_total + estimate > cap:
         raise BudgetExceeded(f"{label} global cap would exceed ${cap}")
 
 
@@ -715,6 +717,26 @@ def _window_total(
 def _month_start_epoch(timestamp: int) -> int:
     parts = time.gmtime(timestamp)
     return calendar.timegm((parts.tm_year, parts.tm_mon, 1, 0, 0, 0))
+
+
+def _enforce_provider_concurrency(
+    conn: sqlite3.Connection,
+    provider_id: str,
+    provider: ProviderRef,
+) -> None:
+    limit = provider_concurrency_limit(provider.config)
+    current = conn.execute(
+        "SELECT COUNT(*) FROM provider_spend WHERE lower(provider) = ? AND status = 'reserved'",
+        (canonical_provider_id(provider_id),),
+    ).fetchone()[0]
+    if int(current or 0) >= limit:
+        raise ProviderConcurrencyLimited(
+            f"remote provider {provider_id!r} has reached its concurrency limit"
+        )
+
+
+def _provider_concurrency_limit(provider: ProviderRef) -> int:
+    return provider_concurrency_limit(provider.config)
 
 
 def _provider_cap(provider: ProviderRef, window: str) -> Decimal | None:
@@ -905,6 +927,40 @@ def _cost_from_tokens(
             return None
         total += Decimal(output_tokens) * output_price / Decimal(1_000_000)
     return _quantize_usd(total)
+
+
+def _litellm_full_usage_cost(model: str, body: Mapping[str, Any]) -> Decimal | None:
+    try:
+        from litellm import ModelResponse, Usage, completion_cost  # type: ignore[import-not-found]
+    except Exception:
+        return None
+    try:
+        response = ModelResponse(**dict(body))
+        usage = body.get("usage")
+        if isinstance(usage, Mapping):
+            full_usage = dict(usage)
+            full_usage.setdefault("prompt_tokens", usage.get("input_tokens", 0))
+            full_usage.setdefault("completion_tokens", usage.get("output_tokens", 0))
+            response.usage = Usage(**full_usage)
+        value = completion_cost(completion_response=response, model=model)
+    except Exception:
+        return None
+    return _decimal_or_none(value)
+
+
+def _litellm_cost_model(provider: ProviderRef, body: Mapping[str, Any]) -> str:
+    body_model = str(body.get("model") or "")
+    model_price = _price_for_model(provider.price, body_model)
+    model_cost_model = model_price.get("cost_model")
+    if isinstance(model_cost_model, str) and model_cost_model.strip():
+        return model_cost_model.strip()
+    price_model = provider.price.get("cost_model")
+    if isinstance(price_model, str) and price_model.strip():
+        return price_model.strip()
+    config_model = provider.config.get("cost_model", provider.config.get("litellm_model"))
+    if isinstance(config_model, str) and config_model.strip():
+        return config_model.strip()
+    return body_model
 
 
 def _price_for_model(price: Mapping[str, Any], model: str) -> Mapping[str, Any]:

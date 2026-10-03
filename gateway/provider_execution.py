@@ -121,8 +121,13 @@ _PAID_CALLER_ROUTING_FIELDS = frozenset(
 )
 
 
-def _prepare_paid_litellm_payload(body: Mapping[str, Any], *, stream: bool) -> tuple[dict[str, Any], bytes] | JSONResponse:
-    prepared = _paid_priced_outbound_payload(body)
+def _prepare_paid_litellm_payload(
+    body: Mapping[str, Any],
+    *,
+    stream: bool,
+    provider: providers.ProviderRef,
+) -> tuple[dict[str, Any], bytes] | JSONResponse:
+    prepared = _paid_priced_outbound_payload(body, provider=provider)
     if isinstance(prepared, JSONResponse):
         return prepared
     payload = prepared
@@ -147,7 +152,9 @@ def _prepare_paid_litellm_payload(body: Mapping[str, Any], *, stream: bool) -> t
     return payload, payload_bytes
 
 
-def _paid_priced_outbound_payload(body: Mapping[str, Any]) -> dict[str, Any] | JSONResponse:
+def _paid_priced_outbound_payload(
+    body: Mapping[str, Any], *, provider: providers.ProviderRef
+) -> dict[str, Any] | JSONResponse:
     payload: dict[str, Any] = {}
     output_limits: list[int] = []
     for key, value in body.items():
@@ -178,10 +185,113 @@ def _paid_priced_outbound_payload(body: Mapping[str, Any]) -> dict[str, Any] | J
     if unsupported_tool is not None:
         return paid_option_unsupported_response(unsupported_tool)
 
-    # Adding a provider-executed billing dimension here is not enough. The
-    # estimator must first model a safe upper bound for that dimension; until
-    # then paid execution fails closed even if a provider price table names it.
+    unsupported_modifier = _unsupported_model_modifier(payload.get("model"), provider)
+    if unsupported_modifier is not None:
+        return paid_option_unsupported_response(unsupported_modifier)
+
+    unsupported_nested_dimension = _unsupported_nested_paid_dimension(payload, provider)
+    if unsupported_nested_dimension is not None:
+        return paid_option_unsupported_response(unsupported_nested_dimension)
+
     return payload
+
+
+
+def _provider_price_dimensions(provider: providers.ProviderRef, model: object = None) -> set[str]:
+    """Return operator-declared priced dimensions for paid request guards."""
+
+    dimensions: set[str] = set()
+    _collect_price_dimensions(provider.price.get("dimensions"), dimensions)
+    if isinstance(model, str):
+        models = provider.price.get("models")
+        if isinstance(models, Mapping):
+            override = models.get(model)
+            if isinstance(override, Mapping):
+                _collect_price_dimensions(override.get("dimensions"), dimensions)
+    return dimensions
+
+
+def _collect_price_dimensions(value: object, out: set[str]) -> None:
+    if not isinstance(value, Mapping):
+        return
+    for key, declaration in value.items():
+        if declaration is True:
+            out.add(_normalize_dimension_name(str(key)))
+            continue
+        if isinstance(declaration, Mapping) and declaration.get("enabled") is True:
+            out.add(_normalize_dimension_name(str(key)))
+
+
+def _normalize_dimension_name(value: str) -> str:
+    return value.strip().lower().replace("-", "_")
+
+
+def _dimension_declared(dimensions: set[str], *names: str) -> bool:
+    normalized = {_normalize_dimension_name(name) for name in names}
+    return bool(dimensions & normalized)
+
+
+def _unsupported_model_modifier(model: object, provider: providers.ProviderRef) -> str | None:
+    if not isinstance(model, str) or ":" not in model:
+        return None
+    leaf = model.rsplit("/", 1)[-1]
+    parts = [part for part in leaf.split(":")[1:] if part]
+    if not parts:
+        return None
+    dimensions = _provider_price_dimensions(provider, model)
+    for modifier in parts:
+        modifier_name = _normalize_dimension_name(modifier)
+        if not _dimension_declared(
+            dimensions,
+            f"model_modifier:{modifier_name}",
+            f"model_modifier_{modifier_name}",
+            f"model_suffix:{modifier_name}",
+            f"model_suffix_{modifier_name}",
+        ):
+            return f"model_modifier:{modifier_name}"
+    return None
+
+
+def _unsupported_nested_paid_dimension(value: object, provider: providers.ProviderRef) -> str | None:
+    dimensions = _provider_price_dimensions(provider, value.get("model") if isinstance(value, Mapping) else None)
+    return _find_unsupported_nested_paid_dimension(value, dimensions, ())
+
+
+def _is_declared_schema_path(path: tuple[object, ...]) -> bool:
+    if len(path) >= 4 and path[-4] == "tools" and path[-2:] == ("function", "parameters"):
+        return True
+    if len(path) >= 3 and path[-3] == "functions" and path[-1] == "parameters":
+        return True
+    return path[-3:] == ("response_format", "json_schema", "schema")
+
+
+def _find_unsupported_nested_paid_dimension(
+    value: object, dimensions: set[str], path: tuple[object, ...]
+) -> str | None:
+    if isinstance(value, Mapping):
+        if _is_declared_schema_path(path):
+            return None
+        if "cache_control" in value and not _dimension_declared(dimensions, "cache_control"):
+            return "cache_control"
+        value_type = _normalize_dimension_name(str(value.get("type") or ""))
+        if value_type == "document" and not _dimension_declared(dimensions, "document"):
+            return "document"
+        if value_type == "file" and not _dimension_declared(dimensions, "file"):
+            return "file"
+        for key, child in value.items():
+            key_name = _normalize_dimension_name(str(key))
+            if key_name in {"file", "files"} and not _dimension_declared(dimensions, "file"):
+                return "file"
+            found = _find_unsupported_nested_paid_dimension(child, dimensions, (*path, key))
+            if found is not None:
+                return found
+        return None
+    if isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            found = _find_unsupported_nested_paid_dimension(item, dimensions, (*path, index))
+            if found is not None:
+                return found
+    return None
 
 
 def _positive_int(value: object) -> int | None:
@@ -202,6 +312,16 @@ def _unsupported_paid_tool(value: object) -> str | None:
         if tool_type != "function":
             return "tools"
     return None
+
+
+def _merge_usage(left: Mapping[str, Any], right: Mapping[str, Any]) -> dict[str, Any]:
+    merged = dict(left)
+    for key, value in right.items():
+        if isinstance(value, Mapping) and isinstance(merged.get(key), Mapping):
+            merged[key] = _merge_usage(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def _model_declared(provider: providers.ProviderRef, model: str) -> bool:
@@ -249,7 +369,7 @@ async def execute_paid_litellm(
                 raise providers.RemoteProviderNotAllowed("; ".join(decision.reasons))
             if not runtime.enabled:
                 raise providers.ProviderError("LiteLLM execution substrate is unavailable")
-            prepared = _prepare_paid_litellm_payload(body, stream=receipt.stream)
+            prepared = _prepare_paid_litellm_payload(body, stream=receipt.stream, provider=provider)
             if isinstance(prepared, JSONResponse):
                 receipt.set_policy_decision("denied", reason="invalid_request", source="gateway:remote-provider")
                 owner.report(status="failed", reason="failed")
@@ -331,15 +451,22 @@ async def execute_paid_litellm(
             return JSONResponse({"error": {"code": "provider_error", "message": "Remote provider request failed"}}, status_code=response.status_code, headers=headers)
 
         def finish(body: Mapping[str, Any]) -> None:
-            final_cost = providers.extract_provider_cost(provider, body={**body, "model": model}, headers=response.headers)
+            final_cost = providers.extract_provider_cost(
+                provider,
+                body={**body, "model": model},
+                headers=response.headers,
+                stream="text/event-stream" in response.headers.get("content-type", ""),
+            )
             providers.attach_cost_to_receipt(receipt, final_cost, providers.extract_usage(body))
-            providers.settle_provider_spend(reservation, final_cost, path=ledger_path)
+            if final_cost.usd is not None:
+                providers.settle_provider_spend(reservation, final_cost, path=ledger_path)
 
         if "text/event-stream" in response.headers.get("content-type", ""):
             await watcher.aclose()
             async def stream():
                 pending = b""
-                final_body: Mapping[str, Any] = {}
+                final_body: dict[str, Any] = {}
+                merged_usage: dict[str, Any] = {}
                 try:
                     async for chunk in response.aiter_bytes():
                         pending += chunk
@@ -351,10 +478,13 @@ async def execute_paid_litellm(
                                 except (ValueError, UnicodeError):
                                     continue
                                 if isinstance(event, Mapping) and isinstance(event.get("usage"), Mapping):
-                                    final_body = event
+                                    final_body = dict(event)
+                                    merged_usage = _merge_usage(merged_usage, event["usage"])
                         if len(pending) > 2 * 1024 * 1024:
                             pending = b""
                         yield chunk
+                    if merged_usage:
+                        final_body["usage"] = merged_usage
                     finish(final_body)
                     owner.report(status="succeeded", reason="completed")
                 finally:

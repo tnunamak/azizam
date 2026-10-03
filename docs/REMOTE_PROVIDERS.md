@@ -89,10 +89,16 @@ Unmodeled billing options also return `paid_option_unsupported`, including
 search, service tiers, audio/modalities, prediction, storage/background work,
 and unknown fields. This applies even without configured caps. Tools must be
 client-executed function tools; provider-executed tools are unsupported.
-Nested function schemas remain intact. Adding a price-table key alone does
-not enable an option: the estimator must model a conservative bound for that
-dimension before the paid allowlist can admit it. The explicit field-list
-regression requires a pricing decision when supported fields change.
+Nested function schemas remain intact. The explicit field-list regression
+requires a pricing decision when supported fields change.
+
+Document/file blocks, nested `cache_control`, and model modifiers such as
+`:online` and `:nitro` are rejected by default. An operator can explicitly
+declare these dimensions in the provider price table, including per-model
+overrides. For example, `price.dimensions.cache_control: true` or
+`price.dimensions["model_modifier:online"]: true` opts into that feature.
+Unbounded input estimates still fail closed when a cap requires a bound.
+These declarations do not turn reservations into final bills.
 
 ## Admin API
 
@@ -113,7 +119,34 @@ contains the key value.
 
 Provider calls reserve spend in `provider_spend` before dispatch.  The ledger
 counts both `reserved` and `settled` rows so concurrent requests cannot exceed
-caps by racing each other.
+the available reservation budget by racing each other. Settlement prefers
+provider-reported `usage.cost`; otherwise LiteLLM calculates cost from the
+full typed response and usage, including cache, reasoning, and other billing
+details. Streaming usage fields are merged across events before calculation.
+Streaming headers cannot establish final cost before generation completes.
+
+A cap can be exceeded by at most the actual cost of requests already in flight when it was reached.
+
+The Providers admin API includes this guarantee. Once settled spend reaches
+a window cap, new paid requests are denied even when their estimate is zero.
+Paid concurrency is limited per provider across all access plans and gateway
+processes sharing the ledger. The default is two open reservations; set a
+positive integer `config.concurrency_limit` on the provider record to change
+it. The admin API projects the same effective value.
+
+Unknown actual cost retains the reservation and its concurrency slot until
+reconciliation. Disconnects and transport failures do not establish a zero
+bill. A successful settlement or a known pre-dispatch release frees the slot;
+an unresolved reservation cannot be replaced with another paid request.
+
+Set the OpenRouter key's own credit limit equal to the gateway cap as a
+provider-side backstop. The admin API recommends key-level credit limits for
+providers that support them; operator-authored `recommendations` can replace
+the default. Match the key's reset period to the intended budget window.
+OpenRouter's `provider.max_price` constrains unit rates, not total request
+cost, so the gateway does not populate it with the remaining dollar budget.
+See [OpenRouter spend controls](https://openrouter.ai/docs/guides/best-practices/spend-controls)
+and [provider price limits](https://openrouter.ai/docs/guides/routing/provider-selection).
 
 The admin API stores operator cap policy in
 `operator_settings.provider_admin`.  Execution passes `admin_db_path` to

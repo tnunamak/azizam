@@ -25,6 +25,7 @@ from gateway.providers import (  # noqa: E402
     BudgetExceeded,
     Cost,
     ProviderAuthFailed,
+    ProviderConcurrencyLimited,
     ProviderError,
     ProviderKeyMissing,
     ProviderRateLimited,
@@ -37,6 +38,7 @@ from gateway.providers import (  # noqa: E402
     estimate_request_cost,
     estimate_typesafe_cost,
     extract_provider_cost,
+    provider_concurrency_limit,
     provider_lookup,
     release_provider_spend,
     reserve_provider_spend,
@@ -126,6 +128,14 @@ class TestProviderLookup(unittest.TestCase):
 
 
 class TestSpendReservations(unittest.TestCase):
+    def test_provider_concurrency_limit_defaults_and_clamps_to_minimum_one(self) -> None:
+        self.assertEqual(provider_concurrency_limit({}), 2)
+        self.assertEqual(provider_concurrency_limit({"concurrency_limit": None}), 2)
+        self.assertEqual(provider_concurrency_limit({"concurrency_limit": 0}), 2)
+        self.assertEqual(provider_concurrency_limit({"concurrency_limit": "bad"}), 2)
+        self.assertEqual(provider_concurrency_limit({"concurrency_limit": 1}), 1)
+        self.assertEqual(provider_concurrency_limit({"concurrency_limit": 5}), 5)
+
     def test_concurrent_requests_cannot_reserve_the_same_remaining_budget(self) -> None:
         def reserve():
             try:
@@ -163,13 +173,15 @@ class TestSpendReservations(unittest.TestCase):
             path=self.ledger,
         )
 
-        with self.assertRaises(ProviderError):
+        with self.assertRaises(ProviderConcurrencyLimited) as cm:
             reserve_provider_spend(
                 third_profile,
                 ref,
                 Cost(Decimal("0.001"), "price-table", "openrouter"),
                 path=self.ledger,
             )
+        self.assertEqual(cm.exception.status_code, 429)
+        self.assertEqual(cm.exception.code, "provider_concurrency_limited")
 
         release_provider_spend(first, path=self.ledger)
         third = reserve_provider_spend(
@@ -186,6 +198,39 @@ class TestSpendReservations(unittest.TestCase):
             path=self.ledger,
         )
         release_provider_spend(third, path=self.ledger)
+
+    def test_four_actual_cost_requests_can_overshoot_once_then_fifth_is_denied(self) -> None:
+        p = DEFAULT_PROFILE.with_overrides(
+            id="paid-plan",
+            remote=RemoteProviderPolicy(
+                providers=frozenset({"openrouter"}),
+                budget_usd_per_day=Decimal("0.20"),
+            ),
+        )
+        ref = provider(id="openrouter", config={"concurrency_limit": 4})
+        actual = Cost(Decimal("0.060015"), "litellm", "openrouter")
+        for _ in range(4):
+            reservation = reserve_provider_spend(
+                p,
+                ref,
+                Cost(Decimal("0.001"), "price-table", "openrouter"),
+                path=self.ledger,
+            )
+            settle_provider_spend(reservation, actual, path=self.ledger)
+
+        with self.assertRaises(BudgetExceeded):
+            reserve_provider_spend(
+                p,
+                ref,
+                Cost(Decimal("0.001"), "price-table", "openrouter"),
+                path=self.ledger,
+            )
+        with sqlite3.connect(self.ledger) as conn:
+            rows = conn.execute(
+                "SELECT actual_usd FROM provider_spend WHERE status = 'settled'"
+            ).fetchall()
+        total = sum((Decimal(row[0]) for row in rows), Decimal("0"))
+        self.assertEqual(total, Decimal("0.240060000"))
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -264,6 +309,32 @@ class TestSpendReservations(unittest.TestCase):
                 p,
                 ref,
                 Cost(Decimal("0.005"), "price-table", "typesafe"),
+                path=self.ledger,
+                now=1002,
+            )
+
+    def test_reached_cap_rejects_zero_estimate_request(self) -> None:
+        p = profile(budget_usd_per_day=Decimal("0.02"))
+        ref = provider()
+        reservation = reserve_provider_spend(
+            p,
+            ref,
+            Cost(Decimal("0.01"), "price-table", "typesafe"),
+            path=self.ledger,
+            now=1000,
+        )
+        settle_provider_spend(
+            reservation,
+            Cost(Decimal("0.02"), "provider-reported", "typesafe"),
+            path=self.ledger,
+            now=1001,
+        )
+
+        with self.assertRaises(BudgetExceeded):
+            reserve_provider_spend(
+                p,
+                ref,
+                Cost(Decimal("0"), "price-table", "typesafe"),
                 path=self.ledger,
                 now=1002,
             )
@@ -903,7 +974,7 @@ class TestCosts(unittest.TestCase):
             estimate_chat_cost(ref, body),
         )
 
-    def test_provider_reported_cost_wins_then_litellm_then_price_table(self) -> None:
+    def test_provider_reported_cost_wins_then_litellm_unknown_is_not_estimate(self) -> None:
         ref = provider(price={"input_usd_per_million_tokens": "1"})
 
         reported = extract_provider_cost(ref, body={"usage": {"cost": "0.25"}})
@@ -923,7 +994,35 @@ class TestCosts(unittest.TestCase):
         self.assertEqual(litellm.source, "litellm")
         self.assertEqual(reported_with_header.usd, Decimal("0.250000000"))
         self.assertEqual(reported_with_header.source, "provider-reported")
-        self.assertEqual(priced.source, "price-table")
+        self.assertIsNone(priced.usd)
+        self.assertEqual(priced.source, "unknown")
+
+    def test_sdk_cost_handles_input_output_token_aliases_like_prompt_completion(self) -> None:
+        ref = provider(
+            id="openrouter",
+            price={
+                "input_usd_per_million_tokens": "3",
+                "output_usd_per_million_tokens": "15",
+                "models": {
+                    "openrouter/anthropic/claude-sonnet-4-5-20250929": {
+                        "cost_model": "anthropic/claude-sonnet-4-5-20250929",
+                    }
+                },
+            },
+        )
+        prompt_completion = {
+            "model": "openrouter/anthropic/claude-sonnet-4-5-20250929",
+            "usage": {"prompt_tokens": 10000, "completion_tokens": 1},
+        }
+        input_output = {
+            "model": "openrouter/anthropic/claude-sonnet-4-5-20250929",
+            "usage": {"input_tokens": 10000, "output_tokens": 1},
+        }
+
+        self.assertEqual(
+            extract_provider_cost(ref, body=input_output).usd,
+            extract_provider_cost(ref, body=prompt_completion).usd,
+        )
 
 
 class TestTypeSafeHttpHook(unittest.TestCase):

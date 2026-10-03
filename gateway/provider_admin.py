@@ -428,6 +428,9 @@ def _project_provider(
             if "allowed_plans" in provider_state
             else None
         ),
+        "cap_guarantee": _cap_guarantee(),
+        "concurrency": _project_concurrency(config),
+        "recommendations": _project_recommendations(provider_state, config),
     }
 
 
@@ -484,7 +487,78 @@ def _normalize_provider_policy(value: Mapping[str, Any]) -> dict[str, Any]:
     policy = {"caps": _normalize_caps(value.get("caps"))}
     if "allowed_plans" in value:
         policy["allowed_plans"] = _normalize_string_list(value.get("allowed_plans"))
+    if "recommendations" in value:
+        policy["recommendations"] = _normalize_recommendations(value.get("recommendations"))
     return policy
+
+
+DEFAULT_PROVIDER_RECOMMENDATIONS = [
+    {
+        "id": "provider_key_credit_limit",
+        "message": "Set the provider key credit limit equal to gateway cap when supported",
+    }
+]
+
+
+def _cap_guarantee() -> dict[str, str]:
+    return {
+        "scope": "gateway_reservation",
+        "guarantee": "A cap can be exceeded by at most the actual cost of requests already in flight when it was reached.",
+        "note": "Gateway provider and global caps are enforced at reservation time.",
+    }
+
+
+def _project_concurrency(config: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "max_in_flight": provider_core.provider_concurrency_limit(config),
+        "source": "config" if "concurrency_limit" in config else "default",
+    }
+
+
+def _project_recommendations(
+    provider_state: Mapping[str, Any], config: Mapping[str, Any]
+) -> list[dict[str, str]]:
+    for source in (provider_state, config):
+        if "recommendations" in source:
+            return _normalize_recommendations(source.get("recommendations"))
+        recommendation = source.get("provider_credit_limit_recommendation")
+        if isinstance(recommendation, str) and recommendation.strip():
+            return [{"id": "provider_credit_limit", "message": recommendation.strip()}]
+        if isinstance(recommendation, Mapping):
+            normalized = _normalize_recommendations([recommendation])
+            if normalized:
+                return normalized
+    return [dict(row) for row in DEFAULT_PROVIDER_RECOMMENDATIONS]
+
+
+def _normalize_recommendations(value: Any) -> list[dict[str, str]]:
+    if value is None:
+        return []
+    if isinstance(value, Mapping):
+        value = [value]
+    if not isinstance(value, (list, tuple)):
+        return []
+    out: list[dict[str, str]] = []
+    for index, item in enumerate(value):
+        if isinstance(item, str):
+            message = item.strip()
+            if message:
+                out.append({"id": f"recommendation_{index + 1}", "message": message})
+            continue
+        if not isinstance(item, Mapping):
+            continue
+        message = str(item.get("message") or item.get("recommendation") or "").strip()
+        if not message:
+            continue
+        row = {
+            "id": str(item.get("id") or f"recommendation_{index + 1}").strip(),
+            "message": message,
+        }
+        url = str(item.get("url") or "").strip()
+        if url:
+            row["url"] = url
+        out.append(row)
+    return out
 
 
 def _normalize_caps(value: Any) -> dict[str, float]:

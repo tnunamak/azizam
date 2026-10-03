@@ -28,7 +28,7 @@ from gateway.provider_admin import (  # noqa: E402
     provider_ledger_spending_snapshot,
 )
 from gateway.policy import DEFAULT_PROFILE, RemoteProviderPolicy  # noqa: E402
-from gateway.providers import Cost, ProviderRef, reserve_provider_spend  # noqa: E402
+from gateway.providers import Cost, ProviderError, ProviderRef, reserve_provider_spend  # noqa: E402
 
 
 def _auth(request: Request) -> AdminContext:
@@ -231,6 +231,90 @@ class ProviderAdminApiTests(unittest.TestCase):
             providers["typesafe"]["models"],
             [{"model": "typesafe/system-one", "upstream_model": "system-one"}],
         )
+
+    def test_provider_admin_projects_runtime_concurrency_guarantee_and_data_recommendations(self) -> None:
+        store = FakeProviderAdminStore()
+        store.registry["services"]["openrouter"]["config"]["concurrency_limit"] = 3
+        store.provider_admin_state = normalize_provider_admin_state({
+            "schema_version": 1,
+            "providers": {"openrouter": {"concurrency": {"max_in_flight": 4}}},
+            "global_caps": {},
+        })
+        client = _client(store, spending=lambda: {"providers": {}, "global": {}})
+
+        openrouter = client.get(
+            "/admin/api/providers/openrouter",
+            headers={"authorization": "Bearer admin"},
+        ).json()["provider"]
+        typesafe = client.get(
+            "/admin/api/providers/typesafe",
+            headers={"authorization": "Bearer admin"},
+        ).json()["provider"]
+
+        self.assertEqual(openrouter["concurrency"], {"max_in_flight": 3, "source": "config"})
+        self.assertEqual(typesafe["concurrency"], {"max_in_flight": 2, "source": "default"})
+        self.assertEqual(
+            openrouter["cap_guarantee"]["guarantee"],
+            "A cap can be exceeded by at most the actual cost of requests already in flight when it was reached.",
+        )
+        self.assertEqual(
+            openrouter["recommendations"],
+            [
+                {
+                    "id": "provider_key_credit_limit",
+                    "message": "Set the provider key credit limit equal to gateway cap when supported",
+                }
+            ],
+        )
+
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        ledger_db = Path(tmpdir.name) / "provider_spend.db"
+        profile = DEFAULT_PROFILE.with_overrides(
+            id="builders",
+            remote=RemoteProviderPolicy(providers=frozenset({"openrouter"})),
+        )
+        provider = ProviderRef(
+            id="openrouter",
+            base_url="https://openrouter.test",
+            protocols=("openai-compatible",),
+            api_key_env="OPENROUTER_API_KEY",
+            cost_class="paid-remote",
+            price={},
+            config={"concurrency_limit": 3},
+        )
+        for _ in range(3):
+            reserve_provider_spend(
+                profile,
+                provider,
+                Cost(Decimal("0.01"), "price-table", "openrouter"),
+                path=ledger_db,
+                now=1_700_000_000,
+            )
+        with self.assertRaises(ProviderError):
+            reserve_provider_spend(
+                profile,
+                provider,
+                Cost(Decimal("0.01"), "price-table", "openrouter"),
+                path=ledger_db,
+                now=1_700_000_000,
+            )
+
+        store.registry["services"]["openrouter"]["config"]["recommendations"] = [
+            {"id": "custom", "message": "Use a team-owned provider key."}
+        ]
+        custom = client.get(
+            "/admin/api/providers/openrouter",
+            headers={"authorization": "Bearer admin"},
+        ).json()["provider"]
+        self.assertEqual(custom["recommendations"], [{"id": "custom", "message": "Use a team-owned provider key."}])
+
+        store.registry["services"]["openrouter"]["config"]["recommendations"] = []
+        disabled = client.get(
+            "/admin/api/providers/openrouter",
+            headers={"authorization": "Bearer admin"},
+        ).json()["provider"]
+        self.assertEqual(disabled["recommendations"], [])
 
     def test_missing_env_reports_missing_key_state(self) -> None:
         store = FakeProviderAdminStore()
