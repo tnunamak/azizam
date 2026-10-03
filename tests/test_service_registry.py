@@ -1107,6 +1107,43 @@ def test_remove_config_sourced_service_not_resurrected_on_reboot(tmp_path: Path)
     )
 
 
+def test_removed_seed_catalog_service_not_resurrected_on_reboot(tmp_path: Path) -> None:
+    catalog_dir = tmp_path / "catalog"
+    catalog_dir.mkdir()
+    (catalog_dir / "services.yml").write_text(
+        """
+records:
+  - id: openrouter
+    name: OpenRouter
+    source: builtin
+    kind: provider
+    enabled: true
+    capabilities: [openai]
+    config:
+      base_url: https://openrouter.test/api/v1
+""",
+        encoding="utf-8",
+    )
+    proxy_config = {"registry": {"catalog_dir": str(catalog_dir)}, "backends": {}}
+    db = tmp_path / "admin.db"
+    admin_store.init_db(db)
+
+    registry = service_registry.ensure_service_registry(proxy_config, path=db)
+    assert "openrouter" in registry["services"]
+
+    updated = service_registry.remove_service_from_registry(registry, "openrouter")
+    write_service_registry_for_test(updated, updated_by="test", path=db)
+
+    reloaded = service_registry.ensure_service_registry(proxy_config, path=db)
+
+    assert "openrouter" not in reloaded["services"]
+    stored = admin_store.get_operator_setting(
+        service_registry.SERVICE_REGISTRY_SETTING_KEY,
+        path=db,
+    )["value"]
+    assert "openrouter" not in stored["services"]
+
+
 def test_existing_registry_model_rows_are_not_silently_upgraded_from_yaml(tmp_path: Path) -> None:
     """Old DB shapes stay DB-owned and must fail closed until migrated."""
     old_config = {

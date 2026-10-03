@@ -392,7 +392,14 @@ def _backfill_missing_records(
     seeds: Mapping[str, Any],
 ) -> None:
     for record_id, seed in seeds.items():
-        if record_id not in records and isinstance(seed, Mapping):
+        if record_id in records or not isinstance(seed, Mapping):
+            continue
+        # The DB registry is the source of truth after first seed. Do not
+        # resurrect ordinary bundled/catalog services an operator removed.
+        # The managed LiteLLM substrate is the sole exception because the
+        # gateway owns that process and remove_service_from_registry blocks its
+        # deletion in current registries; old registries may predate the row.
+        if is_litellm_service_record(record_id, seed):
             records[record_id] = copy.deepcopy(dict(seed))
 
 
