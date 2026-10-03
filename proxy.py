@@ -13619,16 +13619,14 @@ mcp_server.register_mcp_routes(
 
 # System One facades use the existing registry lifecycle and profile evaluator.
 def _decision_authorized(auth: AuthContext, model: str, service: str | None) -> bool:
-    decision = evaluate_and_apply(auth.identity, make_policy_request(
-        protocol="typesafe.systemone", intent="decision.systemone", model=model,
-        backend=service, capability_exposure="default", capability_trust_tier="stable",
-        capability_resource_tier="interactive",
-    ))
-    if decision.denied:
-        return False
     if _profile_target_activation(auth) == "existing_only":
-        return bool(service and DECISION_RUNTIME.observed_engine(service, fresh=True) is not None)
-    return True
+        if not service or DECISION_RUNTIME.observed_engine(service, fresh=True) is None:
+            return False
+    try:
+        capability = DECISION_RUNTIME.capability_for(model, service)
+    except decisions_api.DecisionsError:
+        return False
+    return _capability_for_profile(capability, auth).policy_available is not False
 
 
 async def _decision_ensure_ready(service: str) -> Response | None:

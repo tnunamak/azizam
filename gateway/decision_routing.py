@@ -10,7 +10,7 @@ import httpx
 
 from gateway.capabilities import Capability
 from gateway.decisions_api import DecisionDispatchResult, DecisionModel, DecisionsError
-from gateway.stable_aliases import AliasUnavailableError, describe_aliases, resolve_alias
+from gateway.stable_aliases import AliasUnavailableError, resolve_alias
 
 
 class DecisionRuntime:
@@ -59,58 +59,72 @@ class DecisionRuntime:
         self.observed[service_id] = (time.monotonic(), engine)
         return engine
 
+    def model_names(self) -> list[str]:
+        section = self.config().get("model_aliases", {}).get("decisions", {})
+        names = list(dict.fromkeys(
+            list(section.get("stable", {})) + list(section.get("engines", {}))
+            + [spec["model"] for spec in section.get("engines", {}).values() if spec.get("model")]
+        ))
+        if any(pattern.get("match") == "jev-*" for pattern in section.get("openai", [])):
+            names += ["jev-latest", "jev-preview"]
+        return names
+
+    def capability_for(self, model: str, service_id: str | None = None) -> Capability:
+        """One metadata contract for discovery and each authorized routing target."""
+        resolved = self.resolve(model)
+        service = service_id or resolved.service
+        candidates = {resolved.service, *(candidate for _, candidate in resolved.fallbacks)}
+        if service not in candidates:
+            raise DecisionsError(403, "permission_denied", "This backend is not a configured decision target.")
+        section = self.config().get("model_aliases", {}).get("decisions", {})
+        spec = next((row for row in section.get("engines", {}).values()
+                     if row.get("service") == service), {})
+        engine = self.observed_engine(str(service))
+        is_alias = model in section.get("stable", {}) or model.startswith("jev-")
+        return Capability(
+            intent="decision.systemone", backend=service, model=model,
+            input_modalities=("text", "json"), output_modalities=("decision",),
+            tags=("alias" if is_alias else "model", "free-local", "local", f"engine:{engine or 'unknown'}"),
+            limits=tuple((key, spec[key]) for key in ("max_options", "max_levels", "max_state_tokens", "context_tokens", "calibrated") if key in spec),
+            backend_kind="local", cost_class="free-local", engine=engine,
+            calibrated=bool(spec.get("calibrated", False)),
+            latency_class="gpu-sub-second" if engine == "gpu" else "cpu-seconds" if engine == "cpu" else "unknown",
+            reason="engine_not_running_or_unprobed" if engine is None else None,
+            caveats=("Placement is unknown until the decision service reports its running engine.",) if engine is None else (),
+        )
+
     def models_for(self, auth: Any, _profile: Any = None) -> list[DecisionModel]:
-        cfg = self.config().get("model_aliases", {})
-        section = cfg.get("decisions", {})
-        names = list(dict.fromkeys(list(section.get("stable", {})) + list(section.get("engines", {})) + [spec["model"] for spec in section.get("engines", {}).values() if spec.get("model")]))
-        names += ["jev-latest", "jev-preview"] if any(
-            p.get("match") == "jev-*" for p in section.get("openai", [])
-        ) else []
         rows = []
-        for name in names:
+        for name in self.model_names():
             try:
                 resolved = self.resolve(name)
+                if not self.authorize(auth, name, resolved.service):
+                    continue
+                capability = self.capability_for(name)
             except DecisionsError:
                 continue
-            if not self.authorize(auth, name, resolved.service):
-                continue
             spec = resolved.engine_spec or {}
-            engine = self.observed_engine(str(resolved.service))
+            engine = capability.engine
             target_policy = getattr(_profile, "target_policy", None)
             if getattr(target_policy, "visibility", "catalog") == "available" and engine is None:
                 continue
             rows.append(DecisionModel(
                 id=name, root=resolved.upstream_model, backend=resolved.service, engine=engine,
-                limits={key: spec[key] for key in ("max_options", "max_levels", "max_state_tokens", "context_tokens") if key in spec},
-                capabilities={"calibrated": bool(spec.get("calibrated", False)),
-                              "latency_class": "gpu-sub-second" if engine == "gpu" else "cpu-seconds" if engine == "cpu" else "unknown",
+                limits=dict(capability.limits),
+                capabilities={"calibrated": capability.calibrated,
+                              "latency_class": capability.latency_class,
                               "placement": spec.get("placement", "unknown"),
                               "residency": spec.get("residency", "unknown")},
             ))
         return rows
 
     def capabilities(self) -> list[Capability]:
-        views = describe_aliases(self.config().get("model_aliases"), operation="decisions",
-                                 engine_available=self.available).get("decisions", {})
         rows = []
-        for row in views.get("stable", []):
-            if not row.get("resolves_to"):
+        for name in self.model_names():
+            try:
+                rows.append(self.capability_for(name))
+            except DecisionsError:
                 continue
-            service = str(row.get("service"))
-            engine = self.observed_engine(service)
-            resolved = self.resolve(row["alias"])
-            limits = resolved.engine_spec or {}
-            rows.append(Capability(
-                intent="decision.systemone", backend=service, model=row["alias"],
-                input_modalities=("text", "json"), output_modalities=("decision",),
-                tags=("alias", "free-local", "local", f"engine:{engine or 'unknown'}"),
-                limits=tuple((key, limits[key]) for key in ("max_options", "max_levels", "max_state_tokens", "context_tokens", "calibrated") if key in limits),
-                backend_kind="local", cost_class="free-local", engine=engine,
-                calibrated=bool(limits.get("calibrated", False)),
-                latency_class="gpu-sub-second" if engine == "gpu" else "cpu-seconds" if engine == "cpu" else "unknown",
-                reason="engine_not_running_or_unprobed" if engine is None else None,
-                caveats=("Placement is unknown until the decision service reports its running engine.",) if engine is None else (),
-            ))
         return rows
 
     async def dispatch(self, auth: Any, _profile: Any, body: Mapping[str, Any], _request_id: str) -> DecisionDispatchResult:
