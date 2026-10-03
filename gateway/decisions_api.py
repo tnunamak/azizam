@@ -112,6 +112,7 @@ class DecisionDispatchResult:
     cost_usd: float | str | None = 0.0
     engine: str | None = None
     fallback_reasons: Sequence[str] = field(default_factory=tuple)
+    cost_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -133,6 +134,7 @@ class DecisionReceipt:
     error_code: str | None = None
     error_param: str | None = None
     usage: Mapping[str, Any] | None = None
+    cost_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -246,6 +248,7 @@ def _receipt(
     error_code: str | None = None,
     error_param: str | None = None,
     usage: Mapping[str, Any] | None = None,
+    cost_source: str | None = None,
 ) -> DecisionReceipt:
     return DecisionReceipt(
         protocol="typesafe.systemone",
@@ -265,6 +268,7 @@ def _receipt(
         error_code=error_code,
         error_param=error_param,
         usage=usage,
+        cost_source=cost_source,
     )
 
 
@@ -442,15 +446,12 @@ async def _call_maybe_async(func: Callable[..., Any], *args: Any) -> Any:
 
 
 
-async def _call_dispatch_with_disconnect(
+async def _call_with_disconnect(
     request: Request,
-    deps: DecisionsApiDeps,
-    auth: Any,
-    profile: Any,
-    body: Mapping[str, Any],
-    request_id: str,
-) -> DecisionDispatchResult | None:
-    dispatch_task = asyncio.create_task(_call_maybe_async(deps.dispatch, auth, profile, body, request_id))
+    callback: Callable[..., Any],
+    *args: Any,
+) -> Any:
+    dispatch_task = asyncio.create_task(_call_maybe_async(callback, *args))
     disconnect_task = asyncio.create_task(_wait_for_disconnect(request))
     try:
         done, _pending = await asyncio.wait({dispatch_task, disconnect_task}, return_when=asyncio.FIRST_COMPLETED)
@@ -625,7 +626,7 @@ def _is_validation_detail(value: Any) -> bool:
 def _response_headers(request_id: str, result: DecisionDispatchResult) -> dict[str, str]:
     headers = {
         "x-gateway-remote": "1" if result.remote else "0",
-        "x-gateway-cost-usd": str(result.cost_usd if result.cost_usd is not None else 0),
+        "x-gateway-cost-usd": str(result.cost_usd) if result.cost_usd is not None else "unknown",
     }
     headers.update({str(k): str(v) for k, v in result.headers.items()})
     headers["x-gateway-request-id"] = request_id
@@ -716,8 +717,9 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
                 headers=_request_headers(request_id),
             )
 
+        paid_context = {"remote": True, "backend": "typesafe", "cost_usd": None, "cost_source": "unknown"} if body["model"].startswith("typesafe/") else {}
         try:
-            result = await _call_dispatch_with_disconnect(request, deps, auth, profile, body, request_id)
+            result = await _call_with_disconnect(request, deps.dispatch, auth, profile, body, request_id)
             if result is None:
                 await _record_receipt(
                     deps,
@@ -730,6 +732,7 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
                         question_count=len(body["questions"]),
                         status_code=499,
                         error_code="client_disconnected",
+                        **paid_context,
                     ),
                 )
                 return NoResponse()
@@ -746,6 +749,7 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
                     status_code=exc.status,
                     error_code=exc.code,
                     error_param=exc.param,
+                    **paid_context,
                 ),
             )
             if exc.status == 422:
@@ -776,6 +780,7 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
                     question_count=len(body["questions"]),
                     status_code=502,
                     error_code="decision_backend_error",
+                    **paid_context,
                 ),
             )
             return error_response(
@@ -799,6 +804,12 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
                         question_count=len(body["questions"]),
                         status_code=502,
                         error_code="decision_backend_error",
+                        backend=result.backend,
+                        resolved_model=result.resolved_model,
+                        remote=result.remote,
+                        cost_usd=result.cost_usd,
+                        cost_source=result.cost_source,
+                        usage=result.body.get("usage") if isinstance(result.body.get("usage"), Mapping) else None,
                         started=started,
                     ),
                 )
@@ -822,6 +833,7 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
                 status_code=result.status_code,
                 remote=result.remote,
                 cost_usd=result.cost_usd,
+                cost_source=result.cost_source,
                 engine=result.engine,
                 fallback_reasons=tuple(result.fallback_reasons),
                 usage=result.body.get("usage") if isinstance(result.body.get("usage"), Mapping) else None,
@@ -841,7 +853,9 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
             return error_response(401, "unauthorized", "Missing or invalid API key.")
         auth, profile = gate
         if deps.openai_decisions is not None:
-            return await _call_maybe_async(deps.openai_decisions, request, auth, profile)
+            await request.body()
+            response = await _call_with_disconnect(request, deps.openai_decisions, request, auth, profile)
+            return NoResponse() if response is None else response
         return error_response(
             501,
             "decisions_backend_unavailable",

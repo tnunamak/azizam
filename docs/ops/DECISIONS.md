@@ -8,8 +8,9 @@ Noul returns P(yes). Questions are evaluated independently against shared state.
 
 Use `decide` for the default local model, `decide-quality` for the larger local
 model with a free fallback to `decide`, or `jev-*` for the default local alias.
-A provider-qualified name is never sent to a paid provider by this local path.
-The separate providers implementation can supply remote routing later.
+A provider-qualified `typesafe/*` name selects the configured paid TypeSafe
+provider. Unprefixed `jev-*` names stay local; an unavailable local engine does
+not trigger a paid fallback.
 
 The official TypeSafe SDK uses `TYPESAFE_BASE_URL=http://HOST/typesafe` and the
 gateway App key as `TYPESAFE_API_KEY`. `GET /typesafe/v1/models` returns TypeSafe's
@@ -19,9 +20,9 @@ protocol, intent, model, backend and capability-tag rules. Restricted existing p
 explicit `typesafe` protocol and `decision.systemone` intent grant.
 
 `POST /v1/decisions` returns an OpenAI-shaped 501 with code
-`decisions_backend_unavailable`. Its public schema is not available in the
-binding design. A dependency hook can supply the remote OpenAI passthrough;
-this implementation does not guess a local translator.
+`decisions_backend_unavailable`. The route forwards the original JSON request bytes when an enabled OpenAI
+provider declares the `decisions` capability. It uses paid admission and
+receipts, without a local translator.
 
 ## Engine deployment
 
@@ -85,3 +86,56 @@ Startup rejects occupied child ports and verifies the listener's owned PID and
 model identity. Health becomes unhealthy when the owned llama-server child exits,
 and the wrapper exits with failure so the configured service restart policy can
 recover it. Operator-requested graceful shutdown exits successfully.
+
+## Paid provider deployment
+
+Set `TYPESAFE_API_KEY` in the gateway process environment or deployment secret
+store. Registry records contain the variable name, never its value. Add the
+TypeSafe service through the admin service API/UI; the registry is authoritative:
+
+```yaml
+id: typesafe
+kind: provider
+enabled: true
+capabilities: [typesafe-systemone]
+config:
+  provider_id: typesafe
+  provider_type: paid-remote
+  base_url: https://api.typesafe.ai
+  api_key_env: TYPESAFE_API_KEY
+  concurrency_limit: 2
+  models:
+    - model_group: typesafe/jev-latest
+      upstream_model: jev-latest
+```
+
+Add the operator's current contracted token rates to the record's `price`
+configuration before granting a capped plan. The provider module rejects unknown
+estimates when any App, provider or global cap requires a bound. Grant the App
+access plan the TypeSafe protocol, `decision.systemone` intent, applicable model,
+backend and capability tags, plus `remote.providers: [typesafe]`. Set its
+per-request, daily and monthly caps through the access plan and Providers admin
+controls. Paid calls require an App credential; delegated or legacy credentials
+cannot authorize them.
+
+`GET /typesafe/v1/models` includes permitted configured TypeSafe model records.
+Discovery reads registry metadata and key availability without calling vendors.
+Actual settlement uses the provider hook's reported or computed final cost;
+missing final cost stays unknown. Unknown paid cost appears as `unknown` in the
+response header and `null` in the receipt, and its reservation remains held.
+Ambiguous failures and cancellation also retain reservations because they do
+not establish that billing stopped. These unresolved reservations consume the
+provider's concurrency limit until reconciled under the provider ledger rules.
+
+For OpenAI forwarding, add an enabled `openai` provider record with an
+OpenAI-compatible protocol and the explicit `decisions` capability, and set its
+configured key environment variable. The Decisions schema has no local cost
+bound: opaque requests with any spend cap fail closed before dispatch. Explicitly
+permitted uncapped requests can forward and settle a reported final cost. Do
+not infer Decisions support from a chat provider alone. Without the configured
+capability, `/v1/decisions` remains 501.
+
+No schema migration is required. The paid provider module creates its spend
+ledger beside the admin database. After configuring records and environment,
+restart the gateway only with `scripts/safe-restart`; this lane does not deploy
+or restart live services.

@@ -1131,3 +1131,63 @@ def _redact_provider_payload(value: Any, secret: str) -> Any:
             for key, item in value.items()
         }
     return value
+
+
+async def call_openai_json(
+    provider: ProviderRef,
+    path: str,
+    body: Mapping[str, Any],
+    *,
+    content: bytes | None = None,
+    timeout: float = 15.0,
+    client: httpx.AsyncClient | None = None,
+) -> tuple[dict[str, Any], Cost, Usage, Mapping[str, str], bytes, int]:
+    """Call an OpenAI-compatible provider JSON endpoint without LiteLLM.
+
+    Admission, reservation and receipts stay with the caller because different
+    OpenAI-shaped routes have different bounded-cost preconditions. ``content``
+    lets opaque routes preserve the caller's original JSON bytes; when a
+    response body contains the provider key, the returned bytes are replaced by
+    redacted JSON.
+    """
+
+    api_key = os.environ.get(provider.api_key_env or "")
+    if not api_key:
+        raise ProviderKeyMissing(f"provider {provider.id!r} key is missing")
+    close_client = client is None
+    client = client or httpx.AsyncClient(timeout=timeout)
+    try:
+        response = await client.post(
+            _provider_url(provider, path),
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            content=content if content is not None else json.dumps(body, separators=(",", ":")).encode("utf-8"),
+        )
+        _raise_mapped_response_error(response)
+        original_content = response.content
+        try:
+            parsed = response.json()
+        except ValueError:
+            parsed = {}
+        if not isinstance(parsed, dict):
+            parsed = {}
+        payload = _redact_provider_payload(parsed, api_key)
+        returned_content = original_content
+        if payload != parsed:
+            returned_content = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        cost = extract_provider_cost(provider, body=payload, headers=response.headers)
+        return payload, cost, extract_usage(payload), response.headers, returned_content, response.status_code
+    except httpx.TimeoutException as exc:
+        raise ProviderTimeout("provider request timed out") from exc
+    except httpx.HTTPError as exc:
+        raise ProviderUpstreamError("remote provider request failed") from exc
+    finally:
+        if close_client:
+            await client.aclose()
+
+
+def _provider_url(provider: ProviderRef, path: str) -> str:
+    base = provider.base_url.rstrip("/")
+    suffix = "/" + path.lstrip("/")
+    if base.endswith("/v1") and suffix.startswith("/v1/"):
+        suffix = suffix[3:]
+    return base + suffix

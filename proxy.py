@@ -36,6 +36,7 @@ import hmac
 import ipaddress
 import secrets
 import uuid
+from decimal import Decimal
 from dataclasses import dataclass, replace
 from pathlib import Path
 import contextlib
@@ -80,7 +81,7 @@ from gateway import video_subject
 from gateway import video_job_records
 from gateway.showcase import build_showcase_router, is_public_showcase_path
 from gateway import realtime_proxy
-from gateway import decisions_api
+from gateway import decisions_api, decision_provider_execution
 from gateway.decision_routing import DecisionRuntime
 from gateway import rerank as rerank_api
 from gateway import stable_aliases
@@ -13220,6 +13221,11 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
         decision_capabilities = [cap for cap in decision_capabilities if cap.engine is not None]
     capabilities.extend(decision_capabilities)
 
+    for model in _remote_decision_models(auth_context, _profile_for_auth_context(auth_context)):
+        provider = providers.provider_refs(ADMIN_STORE.get_service_registry()).get("typesafe")
+        if provider:
+            capabilities.append(decision_provider_execution.capability_for(provider, model.id))
+
     for record in GATEWAY_WORKFLOW_REGISTRY.records():
         for backend in record.supported_backends:
             try:
@@ -13654,6 +13660,55 @@ DECISION_RUNTIME = DecisionRuntime(
 )
 
 
+def _decision_provider_context() -> dict[str, Any]:
+    return {
+        "registry": ADMIN_STORE.get_service_registry(),
+        "ledger_path": ADMIN_DB_PATH.parent / "provider_spend.db",
+        "admin_db_path": ADMIN_DB_PATH,
+    }
+
+
+async def _dispatch_decision(auth: AuthContext, profile: Any, body: Mapping[str, Any], request_id: str) -> decisions_api.DecisionDispatchResult:
+    if str(body.get("model") or "").startswith("typesafe/"):
+        return await decision_provider_execution.systemone(auth, profile, body, request_id, **_decision_provider_context())
+    return await DECISION_RUNTIME.dispatch(auth, profile, body, request_id)
+
+
+async def _openai_decisions(request: Request, auth: AuthContext, profile: Any) -> Response:
+    return await decision_provider_execution.openai(request, auth, profile, **_decision_provider_context())
+
+
+def _remote_decision_models(auth: AuthContext, profile: Any) -> list[decisions_api.DecisionModel]:
+    if not auth.identity or not auth.identity.app_id:
+        return []
+    registry = ADMIN_STORE.get_service_registry()
+    provider = providers.provider_refs(registry).get("typesafe")
+    if not provider or not provider.enabled or "typesafe-systemone" not in provider.protocols:
+        return []
+    try:
+        providers.require_remote_allowed(profile, provider)
+    except providers.ProviderError:
+        return []
+    rows = []
+    for model in decision_provider_execution.catalog_models(provider):
+        cap = decision_provider_execution.capability_for(provider, model)
+        if _capability_for_profile(cap, auth).policy_available is False:
+            continue
+        if _profile_target_visibility(auth) == "available" and not provider.configured:
+            continue
+        rows.append(decisions_api.DecisionModel(
+            id=model, root=model.partition("/")[2], backend=provider.id,
+            backend_kind="provider", cost_class=provider.cost_class, remote=True,
+            available=provider.configured, reason=None if provider.configured else "provider_key_missing",
+            capabilities={"calibrated": True},
+        ))
+    return rows
+
+
+def _decision_models_for(auth: AuthContext, profile: Any) -> list[decisions_api.DecisionModel]:
+    return DECISION_RUNTIME.models_for(auth, profile) + _remote_decision_models(auth, profile)
+
+
 def _record_decision_receipt(auth: AuthContext, result: decisions_api.DecisionReceipt) -> None:
     identity = auth.identity
     receipt = RouteReceipt(
@@ -13671,6 +13726,18 @@ def _record_decision_receipt(auth: AuthContext, result: decisions_api.DecisionRe
     receipt.metadata["status_code"] = result.status_code
     if result.error_code:
         receipt.reject_input(result.error_param or "request", result.error_code)
+    if result.remote:
+        providers.attach_cost_to_receipt(
+            receipt,
+            providers.Cost(
+                Decimal(str(result.cost_usd)) if result.cost_usd is not None else None,
+                result.cost_source or "unknown", result.backend or "typesafe",
+            ),
+            providers.Usage(
+                input_tokens=(result.usage or {}).get("input_tokens"),
+                output_tokens=(result.usage or {}).get("output_tokens"),
+            ),
+        )
     receipt.metadata["decisions"] = {
         "question_count": result.question_count, "engine": result.engine,
         "remote": result.remote, "cost_usd": result.cost_usd, "usage": dict(result.usage or {}),
@@ -13682,9 +13749,10 @@ decisions_api.register_decision_routes(
     app, decisions_api.DecisionsApiDeps(
         authenticate=lambda request, path: authenticate_request(request, path),
         profile_for=_profile_for_auth_context,
-        models_for=DECISION_RUNTIME.models_for,
-        dispatch=DECISION_RUNTIME.dispatch,
+        models_for=_decision_models_for,
+        dispatch=_dispatch_decision,
         record_receipt=_record_decision_receipt,
+        openai_decisions=_openai_decisions,
     ),
 )
 
@@ -22982,7 +23050,7 @@ async def list_models(request: Request):
         if desc:
             item["description"] = desc
 
-    for decision_model in await asyncio.to_thread(DECISION_RUNTIME.models_for, auth_context, _profile_for_auth_context(auth_context)):
+    for decision_model in await asyncio.to_thread(_decision_models_for, auth_context, _profile_for_auth_context(auth_context)):
         entry = {"id": decision_model.id, "object": "model", "owned_by": "vivid-fish",
                  "created": 0, "capabilities": decision_model.view()["capabilities"]}
         if entry["id"] not in {item.get("id") for item in data if isinstance(item, dict)}:

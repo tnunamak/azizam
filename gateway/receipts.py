@@ -7,6 +7,7 @@ raw request bodies or secrets.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from time import perf_counter, time
 import asyncio
 from collections.abc import AsyncIterator
@@ -100,13 +101,31 @@ def _sanitize_decision_metadata(value: Any) -> dict[str, Any] | None:
     count = value.get("question_count")
     if type(count) is not int or count < 0:
         return None
-    # Local decisions have no provider secrets and cost exactly zero.
-    if value.get("remote") is not False or value.get("cost_usd") != 0:
+    remote = value.get("remote")
+    if type(remote) is not bool:
         return None
+    raw_cost = value.get("cost_usd")
+    if remote:
+        if raw_cost is None:
+            cost = None
+        elif isinstance(raw_cost, (str, int, float)) and not isinstance(raw_cost, bool):
+            try:
+                amount = Decimal(str(raw_cost))
+            except InvalidOperation:
+                return None
+            if not amount.is_finite() or amount < 0:
+                return None
+            cost = str(amount)
+        else:
+            return None
+    else:
+        if raw_cost != 0:
+            return None
+        cost = 0.0
     engine = value.get("engine")
-    if engine not in (None, "cpu", "gpu"):
+    if engine not in (None, "cpu", "gpu") or (remote and engine is not None):
         return None
-    out = {"question_count": count, "engine": engine, "remote": False, "cost_usd": 0.0}
+    out = {"question_count": count, "engine": engine, "remote": remote, "cost_usd": cost}
     usage = value.get("usage")
     if isinstance(usage, Mapping):
         safe_usage = {key: usage[key] for key in ("input_tokens", "output_tokens")

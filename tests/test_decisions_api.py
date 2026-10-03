@@ -505,7 +505,8 @@ def test_decisions_error_headers_are_forwarded(env):
     assert env.fakes.receipts[0][1].error_code == "overloaded"
 
 
-def test_systemone_dispatch_is_cancelled_when_client_disconnects_after_body():
+@pytest.mark.parametrize("path", ["/v1/systemone", "/v1/decisions"])
+def test_decision_dispatch_is_cancelled_when_client_disconnects_after_body(path):
     started = asyncio.Event()
     cancelled = asyncio.Event()
     continued_after_disconnect = asyncio.Event()
@@ -527,6 +528,9 @@ def test_systemone_dispatch_is_cancelled_when_client_disconnects_after_body():
             cancelled.set()
             raise
 
+    async def openai_passthrough(request, auth, profile):
+        return await dispatch(auth, profile, {}, "openai")
+
     fakes = FakeDeps()
     app = FastAPI()
     register_decision_routes(
@@ -537,6 +541,7 @@ def test_systemone_dispatch_is_cancelled_when_client_disconnects_after_body():
             models_for=fakes.models_for,
             dispatch=dispatch,
             record_receipt=fakes.record_receipt,
+            openai_decisions=openai_passthrough,
         ),
     )
     body = json.dumps(_fixture("typesafe_systemone_noul.json")["request"]).encode("utf-8")
@@ -562,8 +567,8 @@ def test_systemone_dispatch_is_cancelled_when_client_disconnects_after_body():
             "http_version": "1.1",
             "method": "POST",
             "scheme": "http",
-            "path": "/v1/systemone",
-            "raw_path": b"/v1/systemone",
+            "path": path,
+            "raw_path": path.encode(),
             "query_string": b"",
             "headers": [(b"authorization", b"Bearer good"), (b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
             "client": ("127.0.0.1", 12345),
@@ -576,8 +581,11 @@ def test_systemone_dispatch_is_cancelled_when_client_disconnects_after_body():
 
     assert cancelled.is_set()
     assert not continued_after_disconnect.is_set()
-    assert fakes.receipts[0][1].status_code == 499
-    assert fakes.receipts[0][1].error_code == "client_disconnected"
+    if path == "/v1/systemone":
+        assert fakes.receipts[0][1].status_code == 499
+        assert fakes.receipts[0][1].error_code == "client_disconnected"
+    else:
+        assert fakes.receipts == []  # The opaque hook owns its receipt lifecycle.
     assert sent == []
 
 
