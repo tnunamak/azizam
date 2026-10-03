@@ -628,7 +628,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
 
         response = self.client.get("/status", follow_redirects=False)
         self.assertEqual(response.status_code, 302, response.text)
-        self.assertEqual(response.headers["location"], "/login?return_to=%2Fstatus")
+        self.assertEqual(response.headers["location"], "/login?return_to=%2Fui%2Fstatus%2F")
 
     def test_v1_status_accepts_admin_key(self) -> None:
         async def fake_status(_config):

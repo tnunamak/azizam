@@ -101,6 +101,9 @@ If you just want a working gateway, in order:
    dependency file:
 
    ```bash
+   npm --prefix web ci
+   npm --prefix web run build
+
    AI_GATEWAY_CONFIG_PATH=first-run.yml \
    AI_GATEWAY_REQUIREMENTS_FILE=tests/requirements-hermetic.lock \
    AI_GATEWAY_REQUIREMENTS_HASHES=true \
@@ -111,7 +114,7 @@ If you just want a working gateway, in order:
 3. Claim or create the first owner (see [Setup States](#setup-states)).
 4. Mint the first `opk_...` runtime key from the same page and configure your
    client against `/openai/v1`.
-5. Add a chat engine from `/admin` -> Services. Use the engine's
+5. Add a chat engine from Gateway → Engines (`/ui/engines/`). Use the engine's
    OpenAI-compatible base URL as seen by the gateway and add at least one model
    mapping. For generic OpenAI-compatible engines, set health endpoint
    `/v1/models`. Example: public model `my-llama` -> upstream model

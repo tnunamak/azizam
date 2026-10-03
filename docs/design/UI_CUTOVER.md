@@ -92,3 +92,20 @@ The route cutover itself needs no database migration. At deployment, follow
 `scripts/safe-restart` and `docs/ops/SAFE_RESTART.md`; implementation lanes
 must not restart the running gateway. If navigation or sign-in regresses,
 restore the prior committed Python handlers and matching `/ui` export.
+
+## Audience amendment dependencies
+
+The UI spec's audience amendment keeps Home focused on connecting an app.
+Home labels route verification “Gateway check”; a client recipe without an
+observed client version is labelled “Untested recipe.” Local execution means
+“Local · no provider charge.” Owner claim and the first App key form the
+initial setup milestone; connecting an engine, making a request, copying
+client settings and seeing its receipt form the Home milestone.
+
+The member-scoped Status API and page, Workflows surface, amended navigation
+order and visual identity belong to their product surface lanes. This cutover
+adds no placeholder destinations. The current Status page still reads owner
+APIs, so its server authorization remains owner/admin-only until a member
+surface can display scoped observations. `/status/raw` stays owner/admin-only
+when member Status ships. Ship those surface changes with this cutover to meet
+the amended release bar.
