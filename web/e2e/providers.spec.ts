@@ -400,7 +400,9 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
   };
   const unique = Date.now().toString(36);
   let profile: { id: string } | undefined;
+  let observerProfile: { id: string } | undefined;
   let app: { id: string } | undefined;
+  let observerApp: { id: string } | undefined;
   try {
     const profileResponse = await request.post("/admin/api/profiles", {
       headers,
@@ -409,7 +411,7 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
         profile: {
           id: `provider-denied-${unique}`,
           protocols: ["openai"],
-          remote: { providers: ["openrouter"], budget_usd_per_day: "2.00" },
+          remote: { providers: [], budget_usd_per_day: "2.00" },
           status_visibility: { level: "full" },
         },
       },
@@ -417,6 +419,31 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
     expect(profileResponse.status()).toBe(201);
     ({ profile } = await profileResponse.json());
     const users = await (await request.get("/admin/api/users")).json();
+    const observerProfileResponse = await request.post("/admin/api/profiles", {
+      headers,
+      data: {
+        name: `Provider observer plan ${unique}`,
+        profile: {
+          id: `provider-observer-${unique}`,
+          protocols: ["openai"],
+          remote: { providers: ["openrouter"], budget_usd_per_day: "2.00" },
+          status_visibility: { level: "full" },
+        },
+      },
+    });
+    expect(observerProfileResponse.status()).toBe(201);
+    ({ profile: observerProfile } = await observerProfileResponse.json());
+    const observerAppResponse = await request.post("/admin/api/apps", {
+      headers,
+      data: {
+        name: `Provider observer app ${unique}`,
+        kind: "personal",
+        owner_user_id: users.users[0].id,
+        profile_id: observerProfile!.id,
+      },
+    });
+    expect(observerAppResponse.status()).toBe(201);
+    ({ app: observerApp } = await observerAppResponse.json());
     const appResponse = await request.post("/admin/api/apps", {
       headers,
       data: {
@@ -475,6 +502,27 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
     await expect(
       page.getByRole("cell", { name: /^3(?:\.000000)?$/ }),
     ).toBeVisible();
+    await expect(
+      page.getByRole("cell", { name: /^15(?:\.000000)?$/ }),
+    ).toBeVisible();
+    const providerList = await request.get("/admin/api/providers");
+    expect(providerList.status()).toBe(200);
+    expect(await providerList.json()).toMatchObject({
+      providers: [
+        {
+          id: "openrouter",
+          models: [
+            {
+              name: "Claude Sonnet 4.5",
+              price: {
+                input_usd_per_million_tokens: 3,
+                output_usd_per_million_tokens: 15,
+              },
+            },
+          ],
+        },
+      ],
+    });
 
     const denied = await request.post("/openai/v1/chat/completions", {
       headers: { authorization: `Bearer ${credential.api_key}` },
@@ -494,22 +542,27 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
     })();
     expect(denied.status(), JSON.stringify(deniedBody)).toBe(403);
     expect(deniedBody).toMatchObject({
-      error: { code: "paid_provider_not_allowed" },
+      error: { code: "remote_provider_not_allowed" },
     });
 
     const allowResponse = await request.put(
       "/admin/api/providers/openrouter/allowed-plans",
       {
         headers,
-        data: { allowed_plans: [profile!.id] },
+        data: { allowed_plans: [observerProfile!.id, profile!.id] },
       },
     );
     expect(allowResponse.status()).toBe(200);
 
     await page.goto("/ui/models/");
     await expect(page.getByRole("heading", { name: "Models" })).toBeVisible();
+    await page.getByRole("button", { name: /All models/ }).click();
     await expect(page.getByText("Claude Sonnet 4.5")).toBeVisible();
-    await expect(page.getByText(/Paid/)).toBeVisible();
+    await expect(
+      page.getByRole("cell", {
+        name: /Paid · \$3 input \/ \$15 output per 1M tokens/,
+      }),
+    ).toBeVisible();
 
     const allowed = await request.post("/openai/v1/chat/completions", {
       headers: { authorization: `Bearer ${credential.api_key}` },
@@ -538,9 +591,19 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
         .delete(`/admin/api/apps/${app.id}`, { headers })
         .catch(() => undefined);
     }
+    if (observerApp?.id) {
+      await request
+        .delete(`/admin/api/apps/${observerApp.id}`, { headers })
+        .catch(() => undefined);
+    }
     if (profile?.id) {
       await request
         .delete(`/admin/api/profiles/${profile.id}`, { headers })
+        .catch(() => undefined);
+    }
+    if (observerProfile?.id) {
+      await request
+        .delete(`/admin/api/profiles/${observerProfile.id}`, { headers })
         .catch(() => undefined);
     }
   }

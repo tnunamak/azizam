@@ -108,7 +108,7 @@ class DecisionDispatchResult:
     headers: Mapping[str, str] = field(default_factory=dict)
     backend: str | None = None
     resolved_model: str | None = None
-    remote: bool = False
+    remote: bool | None = False
     cost_usd: float | str | None = 0.0
     engine: str | None = None
     fallback_reasons: Sequence[str] = field(default_factory=tuple)
@@ -129,7 +129,7 @@ class DecisionReceipt:
     question_count: int
     latency_ms: float
     status_code: int
-    remote: bool
+    remote: bool | None
     cost_usd: float | str | None
     engine: str | None
     fallback_reasons: Sequence[str] = field(default_factory=tuple)
@@ -245,7 +245,7 @@ def _receipt(
     backend: str | None = None,
     question_count: int = 0,
     status_code: int,
-    remote: bool = False,
+    remote: bool | None = False,
     cost_usd: float | str | None = 0.0,
     engine: str | None = None,
     fallback_reasons: Sequence[str] = (),
@@ -461,12 +461,12 @@ async def _selected_model_paid_context(
     try:
         models = await _call_maybe_async(deps.models_for, auth, profile)
     except Exception:
-        return {}
+        return {"remote": None, "cost_usd": None, "cost_source": "unknown"}
     for model in models:
         candidate = model.id if isinstance(model, DecisionModel) else model.get("id") if isinstance(model, Mapping) else None
         if candidate == model_id:
             return _model_paid_context(model)
-    return {}
+    return {"remote": None, "cost_usd": None, "cost_source": "unknown"}
 
 
 def _model_view(model: DecisionModel | Mapping[str, Any]) -> JSON:

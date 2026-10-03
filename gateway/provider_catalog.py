@@ -18,6 +18,11 @@ import yaml
 
 CATALOG_DIR = Path(__file__).resolve().parent.parent / "providers" / "catalog"
 PROTOCOLS = frozenset({"openai-chat", "anthropic-messages", "typesafe-systemone"})
+PROTOCOL_AUTH = {
+    "openai-chat": ("authorization", "Bearer"),
+    "anthropic-messages": ("x-api-key", ""),
+    "typesafe-systemone": ("authorization", "Bearer"),
+}
 
 
 @dataclass(frozen=True)
@@ -91,6 +96,9 @@ def normalize_provider_preset(raw: Mapping[str, Any], *, source: Path | str = "<
                 raise ValueError(f"{source}: invalid {key}")
     if not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", str(auth["header"])) or any(ch in str(auth.get("prefix", "")) for ch in "\r\n"):
         raise ValueError(f"{source}: invalid authentication header")
+    declared_auth = (str(auth["header"]).strip().lower(), str(auth.get("prefix") or "").strip())
+    if declared_auth != PROTOCOL_AUTH[protocol]:
+        raise ValueError(f"{source}: authentication scheme does not match the execution protocol")
     dimensions = raw.get("billing_dimensions")
     if not isinstance(dimensions, list) or not dimensions or not all(isinstance(item, str) and item.strip() for item in dimensions):
         raise ValueError(f"{source}: billing_dimensions must be a non-empty list")

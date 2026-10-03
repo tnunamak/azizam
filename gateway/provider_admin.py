@@ -203,7 +203,7 @@ def create_provider_admin_router(
                 service = provider_configuration.provider_service_from_body(body)
                 expected_generation = _expected_registry_generation(store, body)
                 provider_id = service_registry.canonical_provider_id(service["id"])
-                if provider_id in (store.get_service_registry().get("services") or {}):
+                if provider_id in (store.get_service_registry().get("services") or {}) or provider_id in _remote_providers(store):
                     raise _RouteError(status.HTTP_409_CONFLICT, "provider_exists", f"provider {provider_id!r} already exists")
                 create_caps = _normalize_caps(body.get("caps") if isinstance(body.get("caps"), Mapping) else body)
                 create_allowed = (

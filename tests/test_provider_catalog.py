@@ -37,6 +37,8 @@ def test_builtin_provider_catalog_is_data_and_has_required_presets() -> None:
     ("protocol", "vendor-specific-code"), ("display_name", ""),
     ("logo_key", None), ("base_url", "https://key:secret@example.test"),
     ("billing_dimensions", "tokens"), ("auth", {"header": "invalid\r\nheader"}),
+    ("auth", {"header": "X-Custom-Key", "prefix": ""}),
+    ("auth", {"header": "Authorization", "prefix": "Custom"}),
     ("model_listing", {"path": "//other.test/models"}),
     ("model_listing", {"path": "/models", "method": "POST"}),
     ("model_listing", {"path": "/models", "prices": {"input": {"path": "price", "scale": "NaN"}}}),

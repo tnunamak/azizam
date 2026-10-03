@@ -15,7 +15,7 @@ from unittest.mock import patch
 import httpx
 from starlette.requests import Request
 
-from gateway import decision_provider_execution as execution
+from gateway import admin_store, decision_provider_execution as execution
 from gateway import receipt_store
 from gateway.policy import DEFAULT_PROFILE, RemoteProviderPolicy
 
@@ -181,7 +181,8 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 provider_id="acme-decisions",
                 models=[
                     {"id": "decider"},
-                    {"id": "hidden", "enabled": False},
+                    {"id": "acme-decisions/hidden", "enabled": False},
+                    {"id": "org/model"},
                     {"model_group": "acme-decisions/explicit"},
                 ],
             ),
@@ -189,7 +190,29 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         )
         assert provider is not None
 
-        self.assertEqual(execution.catalog_models(provider), ["acme-decisions/decider", "acme-decisions/explicit"])
+        self.assertEqual(
+            execution.catalog_models(provider),
+            ["acme-decisions/decider", "acme-decisions/org/model", "acme-decisions/explicit"],
+        )
+        self.assertFalse(execution._model_declared(provider, "acme-decisions/hidden"))
+        self.assertTrue(execution._model_declared(provider, "acme-decisions/org/model"))
+
+    def test_model_declaration_does_not_allow_disabled_suffix_collision(self) -> None:
+        provider = execution.providers.provider_lookup(
+            _registry(
+                provider_id="acme",
+                models=[
+                    {"id": "acme/foo", "enabled": False},
+                    {"id": "other/foo"},
+                ],
+            ),
+            "acme",
+        )
+        assert provider is not None
+
+        self.assertEqual(execution.catalog_models(provider), ["acme/other/foo"])
+        self.assertFalse(execution._model_declared(provider, "acme/foo"))
+        self.assertTrue(execution._model_declared(provider, "acme/other/foo"))
 
     async def test_unprefixed_jev_model_stays_local_by_returning_not_configured_without_provider_call(self) -> None:
         called = False
@@ -561,7 +584,8 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             return httpx.Response(200, json={"id": "dec_1", "usage": {"input_tokens": 1, "output_tokens": 0, "cost": "0.000001"}})
 
         admin_db = Path(self.tmp.name) / "admin.db"
-        execution.providers.secret_store.put_provider_secret("provider:openai:api_key", "oa-stored-key", db_path=admin_db)
+        with patch.object(admin_store, "DB_PATH", admin_db):
+            execution.providers.secret_store.put_provider_secret("provider:openai:api_key", "oa-stored-key", db_path=admin_db)
         registry = _registry(
             provider_id="openai",
             protocols=("openai-compatible", "decisions"),
@@ -573,7 +597,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         service["config"]["api_key_secret_id"] = "provider:openai:api_key"
         real_client = httpx.AsyncClient
         transport = httpx.MockTransport(handler)
-        with patch.object(execution.providers.httpx, "AsyncClient", lambda *a, **kw: real_client(transport=transport, timeout=kw.get("timeout"))):
+        with patch.object(admin_store, "DB_PATH", admin_db), patch.object(execution.providers.httpx, "AsyncClient", lambda *a, **kw: real_client(transport=transport, timeout=kw.get("timeout"))):
             response = await execution.openai(
                 _request({"model": "gpt-5", "input": "hi"}),
                 _auth(), _profile(max_request=None, budget=None, monthly=None), registry, self.ledger, admin_db_path=admin_db,

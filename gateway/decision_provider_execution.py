@@ -116,7 +116,7 @@ def catalog_models(provider: providers.ProviderRef) -> list[str]:
         if not value:
             return
         item = str(value)
-        if "/" not in item:
+        if not item.startswith(f"{provider.id}/"):
             item = f"{provider.id}/{item}"
         if item not in out:
             out.append(item)
@@ -145,10 +145,8 @@ def _model_declared(provider: providers.ProviderRef, model: str) -> bool:
         raw = provider.config.get("default_models")
     if raw is None:
         return False
-    candidates = {model, model.split("/", 1)[-1]}
-    declared = set(catalog_models(provider))
-    declared |= {item.split("/", 1)[-1] for item in declared}
-    return bool(candidates & declared)
+    qualified = model if model.startswith(f"{provider.id}/") else f"{provider.id}/{model}"
+    return qualified in set(catalog_models(provider))
 
 
 def systemone_provider_for_model(registry: Mapping[str, Any], model: Any) -> providers.ProviderRef | None:

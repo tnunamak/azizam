@@ -165,6 +165,32 @@ def test_concurrent_provider_creates_cannot_delete_the_winning_key(tmp_path: Pat
     assert get_provider_secret(config["api_key_secret_id"], db_path=db) == f"synthetic-concurrent-key-{winner}"
 
 
+def test_existing_canonical_provider_under_legacy_row_cannot_be_replaced(tmp_path: Path) -> None:
+    db = tmp_path / "admin.db"
+    store = AdminSQLiteStore(db)
+    store.init_db()
+    app = FastAPI()
+    app.include_router(create_provider_admin_router(store, auth=_owner))
+    with TestClient(app) as client:
+        body = {"preset_id": "openai", "provider_id": "acme", "models": [],
+                "api_key": "synthetic-original-key", "allowed_plans": []}
+        original = client.post("/admin/api/providers", json=body)
+        assert original.status_code == 201, original.json()
+        record = admin_store.get_service_registry_with_generation(path=db)
+        registry = record["value"]
+        service = registry["services"].pop("acme")
+        service["id"] = "legacy-row"
+        registry["services"]["legacy-row"] = service
+        admin_store.write_service_registry(registry, path=db,
+                                          expected_generation=record["operator_settings_generation"])
+        conflicting = client.post("/admin/api/providers", json={
+            **body, "api_key": "synthetic-replacement-key",
+        })
+        assert conflicting.status_code == 409, conflicting.json()
+        assert get_provider_secret("provider:acme:api_key", db_path=db) == "synthetic-original-key"
+        assert set(store.get_service_registry()["services"]) == {"legacy-row"}
+
+
 @pytest.mark.parametrize("path", [
     "/admin/api/providers", "/admin/api/providers/-/catalog",
     "/admin/api/providers/cloud-test",

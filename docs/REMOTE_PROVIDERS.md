@@ -31,6 +31,10 @@ Add a catalog file to extend setup choices. Generic presets let an operator
 connect another compatible service without a vendor-specific code change.
 Catalog files are provisioning data; saved service records remain the runtime
 source of truth. Missing model-list prices mean unknown, not free.
+Authentication must match the selected execution protocol: Bearer authorization
+for OpenAI-compatible and SystemOne endpoints, or `x-api-key` for Anthropic
+messages. The catalog rejects other schemes because the execution adapters do
+not support arbitrary authentication headers.
 
 Decision providers follow the same rule. A provider with the
 `typesafe-systemone` protocol uses its configured provider prefix and enabled
