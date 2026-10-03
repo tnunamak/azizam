@@ -43,6 +43,11 @@ export default function ProvidersPage() {
           title="Provider controls are not installed"
           description="This gateway does not expose the provider admin API yet. Local engines and explicit model aliases keep working."
           icon={ServerOff}
+          action={
+            <Button asChild variant="outline">
+              <a href="/ui/engines/">Review connections</a>
+            </Button>
+          }
         />
       ) : providers.state === "error" ? (
         <div
@@ -89,14 +94,20 @@ export default function ProvidersPage() {
                         : "Enablement is not reported"}
                   </p>
                 </div>
-                <StatusPill
-                  status={provider.tone === "ok" ? "ready" : "unavailable"}
-                  reason={
-                    provider.tone === "ok"
-                      ? "Provider is reachable."
-                      : providerUnavailableReason(provider)
-                  }
-                />
+                {provider.tone === "ok" ? (
+                  <StatusPill status="ready" reason="Provider is reachable." />
+                ) : provider.enabled === false ||
+                  provider.reachable === false ||
+                  provider.keyState === "missing" ? (
+                  <StatusPill
+                    status="unavailable"
+                    reason={providerUnavailableReason(provider)}
+                  />
+                ) : (
+                  <p className="text-muted-foreground text-xs">
+                    Availability not checked
+                  </p>
+                )}
               </div>
               <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
                 <div>

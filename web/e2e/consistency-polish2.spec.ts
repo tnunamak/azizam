@@ -1,6 +1,73 @@
 import { expect, test } from "@playwright/test";
 import { workflowsPolishCatalog } from "./fixtures/workflows-polish";
 
+test("unknown provider readiness stays distinct from observed unavailability", async ({
+  page,
+}) => {
+  await page.route("**/admin/api/providers", (route) =>
+    route.fulfill({
+      json: {
+        providers: [
+          {
+            id: "unknown",
+            name: "Unchecked provider",
+            enabled: true,
+            reachable: null,
+            key_set: true,
+          },
+          {
+            id: "down",
+            name: "Unreachable provider",
+            enabled: true,
+            reachable: false,
+            key_set: true,
+          },
+          {
+            id: "ready",
+            name: "Reachable provider",
+            enabled: true,
+            reachable: true,
+            key_set: true,
+          },
+        ],
+      },
+    }),
+  );
+  await page.goto("/ui/providers/");
+  const unknown = page
+    .locator("article")
+    .filter({
+      has: page.getByRole("heading", {
+        name: "Unchecked provider",
+        exact: true,
+      }),
+    });
+  await expect(
+    unknown.getByText("Availability not checked", { exact: true }),
+  ).toBeVisible();
+  await expect(unknown.getByText("Unavailable", { exact: true })).toHaveCount(
+    0,
+  );
+  const down = page
+    .locator("article")
+    .filter({
+      has: page.getByRole("heading", {
+        name: "Unreachable provider",
+        exact: true,
+      }),
+    });
+  await expect(down.getByText("Unavailable", { exact: true })).toBeVisible();
+  const ready = page
+    .locator("article")
+    .filter({
+      has: page.getByRole("heading", {
+        name: "Reachable provider",
+        exact: true,
+      }),
+    });
+  await expect(ready.getByText("Ready", { exact: true })).toBeVisible();
+});
+
 test("workflow cards keep internal IDs behind an explicit copy or details action", async ({
   page,
 }) => {
