@@ -62,6 +62,7 @@ def test_instance_save_reload_and_audit(settings):
     {"base_url": "https://host .test"}, {"base_url": "https://host.test\n"},
     {"base_url": "https://ho\tst.test"}, {"base_url": "https://host.test\x00"},
     {"base_url": "https://host.test\x7f"}, {"base_url": " https://host.test"},
+    {"base_url": "https://host.test\x80"},
     {"name": 42}, {"bootstrap": True},
 ])
 def test_instance_invalid_input_leaves_no_setting(settings, change):

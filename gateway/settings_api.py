@@ -89,7 +89,7 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
                 raise ValueError("Supply name, base_url and theme_default")
             if not all(isinstance(v, str) for v in body.values()):
                 raise ValueError("Instance fields must be text")
-            if any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in body["base_url"]):
+            if any(char.isspace() or ord(char) < 32 or 127 <= ord(char) <= 159 for char in body["base_url"]):
                 raise ValueError("Base URL must not contain whitespace or control characters")
             body = {k: v.strip() for k, v in body.items()}
             if not body["name"] or len(body["name"]) > 100:

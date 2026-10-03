@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 from pathlib import Path
 
@@ -49,7 +50,7 @@ def create_activity_router(
         if before:
             try:
                 timestamp, id = json.loads(before)
-                if type(timestamp) is not int or not isinstance(id, str):
+                if type(timestamp) not in (int, float) or not math.isfinite(timestamp) or not isinstance(id, str):
                     raise ValueError
             except (ValueError, TypeError):
                 return JSONResponse(status_code=400, content={"error": {

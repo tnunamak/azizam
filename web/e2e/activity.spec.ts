@@ -44,8 +44,8 @@ for (const theme of ["light", "dark"] as const) {
             .click();
           await expect(page.getByRole("dialog")).toBeVisible();
           await expect(
-            page.getByRole("dialog").getByText("Completed", { exact: false }),
-          ).toBeVisible();
+            page.getByRole("dialog").locator('[data-slot="sheet-description"]'),
+          ).toContainText("Completed");
           await page
             .getByRole("dialog")
             .getByText("Technical details", { exact: true })
