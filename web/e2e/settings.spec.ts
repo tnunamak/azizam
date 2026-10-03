@@ -18,7 +18,11 @@ async function seed(page: Page, state: "seeded" | "empty" | "error") {
             aliases: state === "empty" ? {} : { chat: "local-chat" },
           }
         : {
-            config: { proxy: { port: 18000 }, secret: "<redacted>" },
+            config: {
+              proxy: { port: 18000 },
+              secret: "<redacted>",
+              example_endpoint: `https://gateway.example.test/${"recorded-path/".repeat(25)}`,
+            },
             export_url: "/admin/api/settings/effective/export",
           };
     return route.fulfill({ status: state === "error" ? 503 : 200, json: body });

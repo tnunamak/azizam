@@ -17,7 +17,6 @@ import { PageHeader } from "@/components/product/page-header";
 import { ErrorState } from "@/components/product/error-state";
 import { EmptyState } from "@/components/product/empty-state";
 import { RelativeTime } from "@/components/product/relative-time";
-import { CodeBlock } from "@/components/product/code-block";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -633,10 +632,13 @@ function DefaultsForm({
           restart to change them.
         </p>
         {Object.keys(data.aliases).length ? (
-          <CodeBlock
-            language="JSON"
-            code={JSON.stringify(data.aliases, null, 2)}
-          />
+          <pre
+            tabIndex={0}
+            aria-label="Default model aliases JSON"
+            className="bg-muted focus-visible:outline-ring overflow-x-auto rounded-lg p-4 font-mono text-xs leading-relaxed focus-visible:outline-2"
+          >
+            <code>{JSON.stringify(data.aliases, null, 2)}</code>
+          </pre>
         ) : (
           <p className="text-muted-foreground text-sm">
             No default aliases configured. Add model aliases in the gateway
@@ -1054,10 +1056,13 @@ function AdvancedSection() {
                     Export redacted snapshot
                   </a>
                 </Button>
-                <CodeBlock
-                  code={JSON.stringify(data.config, null, 2)}
-                  language="JSON"
-                />
+                <pre
+                  tabIndex={0}
+                  aria-label="Effective configuration JSON"
+                  className="bg-muted focus-visible:outline-ring overflow-x-auto rounded-lg p-4 font-mono text-xs leading-relaxed focus-visible:outline-2"
+                >
+                  <code>{JSON.stringify(data.config, null, 2)}</code>
+                </pre>
               </>
             ))}
         </div>
