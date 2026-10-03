@@ -147,3 +147,12 @@ def test_provider_secret_origin_column_is_authenticated(tmp_path: Path) -> None:
             db_path=db,
             expected_origin="https://evil.test/api/v1",
         )
+
+
+def test_ipv6_credential_origin_normalization_is_idempotent() -> None:
+    from gateway.secret_store import credential_origin_from_url
+
+    origin = credential_origin_from_url("https://[::1]:8443/v1")
+
+    assert origin == "https://[::1]:8443"
+    assert credential_origin_from_url(origin) == origin

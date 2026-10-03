@@ -63,10 +63,10 @@ decrypts UI-entered keys into the sidecar's environment immediately before
 starting it. No plaintext provider key is written into YAML or command
 arguments. Environment-variable references remain an alternative and do not
 copy the environment value into the secret store.
-UI-created environment references carry the same origin approval in the
-registry; dispatch, saved checks, and config generation reject a changed
-origin. Legacy environment references without approval metadata remain
-deployment-owned and compatible. Re-create them through the UI to add binding.
+Environment references carry the same origin approval in the registry;
+dispatch, saved checks, and config generation reject a missing or changed
+origin. Legacy environment references without approval metadata require
+explicit operator approval in the registry or re-creation through the UI.
 
 This protects a database copy taken without its encryption key. It does not
 protect against an attacker who controls the gateway's operating-system
@@ -101,6 +101,7 @@ services:
       provider_id: openrouter
       protocol: openai-compatible
       base_url: https://openrouter.ai/api/v1
+      credential_origin: https://openrouter.ai:443
       api_key_env: OPENROUTER_API_KEY
       models:
         - model_group: openrouter/anthropic/claude-sonnet
@@ -342,6 +343,12 @@ previously stored values.
 The secret schema lazily adds the approved origin. Stored keys from an older
 schema have no origin approval and cannot be dispatched until replaced through
 the credential API. Do not infer an approval from a mutable registry URL.
+For an existing environment reference, confirm its destination and explicitly
+set `credential_origin` to its scheme, hostname, and effective port, or remove
+and re-create the provider through the UI. The fixed bundled OpenRouter seed
+declares its official origin as data; custom endpoint overrides must receive
+their own explicit approval. Local engine and substrate environment keys are
+outside this remote-provider approval rule.
 
 Alternatively, set provider keys in the gateway service environment, for example:
 

@@ -15,6 +15,7 @@ def test_custom_decision_provider_reaches_dispatch_and_discovery(monkeypatch):
             "remote_provider": True, "provider_id": "custom-decider",
             "protocol": "typesafe-systemone", "base_url": "https://decider.test/v1",
             "api_key_env": "CUSTOM_DECIDER_TEST_KEY",
+            "credential_origin": "https://decider.test",
             "models": [{"id": "custom-decider/selected"},
                        {"id": "custom-decider/disabled", "enabled": False}],
         },

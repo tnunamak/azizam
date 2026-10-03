@@ -99,6 +99,8 @@ class FakeProviderAdminStore:
                         "remote_provider": True,
                         "provider_type": "chat",
                         "api_key_env": "OPENROUTER_API_KEY",
+                        "base_url": "https://openrouter.ai/api/v1",
+                        "credential_origin": "https://openrouter.ai:443",
                         "models": [
                             {
                                 "model_group": "openrouter/anthropic/claude-sonnet",
@@ -118,6 +120,8 @@ class FakeProviderAdminStore:
                         "provider_type": "chat",
                         "provider_id": "openrouter-canonical",
                         "api_key_env": "OPENROUTER_CANONICAL_API_KEY",
+                        "base_url": "https://openrouter-canonical.test/v1",
+                        "credential_origin": "https://openrouter-canonical.test:443",
                         "models": {
                             "anthropic/claude-haiku": "anthropic/claude-haiku",
                         },
@@ -133,6 +137,8 @@ class FakeProviderAdminStore:
                         "remote_provider": True,
                         "provider_type": "chat",
                         "api_key_env": "TYPESAFE_API_KEY",
+                        "base_url": "https://api.typesafe.ai/v1",
+                        "credential_origin": "https://api.typesafe.ai:443",
                         "default_model": "system-one",
                     },
                     "secret_refs": {"api_key_env": "TYPESAFE_API_KEY"},
@@ -312,6 +318,34 @@ class ProviderAdminApiTests(unittest.TestCase):
             "https://provider.test:8443/custom/v1",
         )
 
+    def test_add_provider_accepts_https_ipv6_base_url_and_binds_origin(self) -> None:
+        store = FakeProviderAdminStore()
+        store.registry["services"].pop("openrouter")
+        response = _client(store).post(
+            "/admin/api/providers",
+            headers={"authorization": "Bearer admin"},
+            json={
+                "preset_id": "openrouter",
+                "base_url": "https://[::1]:8443/custom/v1",
+                "expected_generation": 0,
+                "api_key": "sk-test-openrouter",
+                "models": [{"id": "upstream/model", "price": {"input_usd_per_million_tokens": "3", "output_usd_per_million_tokens": "15"}}],
+            },
+        )
+
+        self.assertEqual(response.status_code, 201, response.text)
+        config = store.registry["services"]["openrouter"]["config"]
+        self.assertEqual(config["base_url"], "https://[::1]:8443/custom/v1")
+        self.assertEqual(config["credential_origin"], "https://[::1]:8443")
+        self.assertEqual(
+            secret_store.get_provider_secret(
+                "provider:openrouter:api_key",
+                db_path=store.path,
+                expected_origin="https://[::1]:8443",
+            ),
+            "sk-test-openrouter",
+        )
+
     def test_saved_gateway_check_refuses_stored_key_after_origin_retarget(self) -> None:
         store = FakeProviderAdminStore()
         service = store.registry["services"]["openrouter"]
@@ -363,6 +397,39 @@ class ProviderAdminApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["code"], "provider_connection_failed")
         self.assertIn("approved for a different endpoint", response.json()["error"]["message"])
+
+    def test_bound_env_key_status_is_missing_after_origin_retarget(self) -> None:
+        store = FakeProviderAdminStore()
+        service = store.registry["services"]["openrouter"]
+        service["config"].update({
+            "api_key_env": "OPENROUTER_API_KEY",
+            "base_url": "https://evil.test/api/v1",
+            "credential_origin": "https://openrouter.ai:443",
+        })
+
+        with patch.dict(os.environ, {"OPENROUTER_API_KEY": "sk-openrouter"}):
+            response = _client(store).get(
+                "/admin/api/providers/openrouter",
+                headers={"authorization": "Bearer admin"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["provider"]["key_status"]["state"], "missing")
+
+
+    def test_env_key_status_is_missing_without_origin_metadata(self) -> None:
+        store = FakeProviderAdminStore()
+        service = store.registry["services"]["openrouter"]
+        service["config"].pop("credential_origin", None)
+
+        with patch.dict(os.environ, {"OPENROUTER_API_KEY": "sk-openrouter"}):
+            response = _client(store).get(
+                "/admin/api/providers/openrouter",
+                headers={"authorization": "Bearer admin"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["provider"]["key_status"]["state"], "missing")
 
 
 
@@ -506,6 +573,7 @@ class ProviderAdminApiTests(unittest.TestCase):
         store.path = db_path
         store.registry["services"]["openrouter"]["config"].pop("api_key_env", None)
         store.registry["services"]["openrouter"]["config"]["api_key_secret_id"] = "provider:openrouter:api_key"
+        store.registry["services"]["openrouter"]["config"]["base_url"] = "https://openrouter.ai/api/v1"
         client = _client(store)
 
         first = client.put(

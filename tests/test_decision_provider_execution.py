@@ -41,6 +41,7 @@ def _registry(*, provider_id="typesafe", protocols=("typesafe-systemone",), mode
         "provider_id": provider_id,
         "base_url": f"https://{provider_id}.test",
         "api_key_env": api_key_env or f"{provider_id.upper()}_TEST_KEY",
+        "credential_origin": f"https://{provider_id}.test",
         "cost_class": "paid-remote",
         "price": price if price is not None else {"input_usd_per_million_tokens": "1.00"},
     }
@@ -312,9 +313,9 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.body["error"]["code"], "invalid_model")
         self.assertFalse(self.ledger.exists())
 
-    async def test_typesafe_success_without_actual_cost_marks_reconciliation_and_cost_unknown(self) -> None:
+    async def test_typesafe_unpriced_usage_marks_reconciliation_and_cost_unknown(self) -> None:
         async def handler(_request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, json={"model": "jev-remote", "answers": {}, "usage": {"input_tokens": 1, "output_tokens": 0}})
+            return httpx.Response(200, json={"model": "jev-remote", "answers": {}, "usage": {"input_tokens": 1, "output_tokens": 0, "unpriced_units": 1}})
 
         real_client = httpx.AsyncClient
         transport = httpx.MockTransport(handler)
@@ -483,12 +484,12 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             rows = conn.execute("SELECT status, actual_usd FROM provider_spend").fetchall()
         self.assertEqual(rows, [("needs_reconciliation", None)])
 
-    async def test_openai_opaque_trusted_cost_header_settles_without_usage_pricing(self) -> None:
+    async def test_custom_openai_opaque_sdk_header_cannot_establish_an_actual_bill(self) -> None:
         async def handler(_request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, headers={"x-litellm-response-cost": "0.000333"}, json={"id": "dec_header", "usage": {"input_tokens": 1}})
 
         def fail_pricing(*_args, **_kwargs):
-            raise AssertionError("trusted header cost should not need usage pricing")
+            raise AssertionError("custom opaque response cannot use SDK pricing")
 
         real_client = httpx.AsyncClient
         transport = httpx.MockTransport(handler)
@@ -501,10 +502,10 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers["x-gateway-cost-usd"], "0.000333000")
+        self.assertEqual(response.headers["x-gateway-cost-usd"], "unknown")
         with sqlite3.connect(self.ledger) as conn:
             rows = conn.execute("SELECT status, actual_usd FROM provider_spend").fetchall()
-        self.assertEqual(rows, [("settled", "0.000333000")])
+        self.assertEqual(rows, [("needs_reconciliation", None)])
 
     async def test_openai_provider_hook_redacts_key_in_array_json_and_plain_text_but_preserves_safe_bytes(self) -> None:
         bodies = [
@@ -530,7 +531,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 api_key_env="OPENAI_TEST_KEY",
                 cost_class="paid-remote",
                 price={},
-                config={},
+                config={"credential_origin": "https://openai.test"},
             )
             async with real_client(transport=transport, timeout=1) as client:
                 payload, _cost, _usage, _headers, content, status = await execution.providers.call_openai_json(
@@ -559,11 +560,11 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             id="openai",
             base_url="https://openai.test/v1",
             protocols=("openai-compatible",),
-            api_key_env="OPENAI_TEST_KEY",
-            cost_class="paid-remote",
-            price={},
-            config={},
-        )
+                api_key_env="OPENAI_TEST_KEY",
+                cost_class="paid-remote",
+                price={},
+                config={"credential_origin": "https://openai.test"},
+            )
         raw = b'{"model":"gpt-5", "input":"spacing kept"}'
 
         async with real_client(transport=transport, timeout=1) as client:

@@ -23,6 +23,7 @@ def test_catalog_uses_canonical_provider_and_both_plan_gates(
             "remote_provider": True, "provider_id": "cloud-canonical",
             "protocol": "openai-compatible", "api_key_env": "TEST_PROVIDER_KEY",
             "base_url": "http://127.0.0.1:18395/v1",
+            "credential_origin": "http://127.0.0.1:18395",
         },
     }}}
     profile = DEFAULT_PROFILE.with_overrides(

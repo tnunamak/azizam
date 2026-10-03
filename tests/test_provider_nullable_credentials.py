@@ -9,6 +9,7 @@ def test_paid_model_validation_accepts_one_reference_and_an_unset_alternative(re
     config = {
         "remote_provider": True, "provider_id": "cloud-test",
         "protocol": "openai-compatible", "base_url": "https://cloud.test/v1",
+        "credential_origin": "https://cloud.test:443",
         "api_key_env": None, "api_key_secret_id": None,
         "models": [{"id": "cloud-test/model", "model_group": "cloud-test/model",
                     "upstream_model": "model", "enabled": True}],

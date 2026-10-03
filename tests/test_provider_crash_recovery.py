@@ -21,7 +21,7 @@ def _provider(**overrides: object) -> providers.ProviderRef:
         "api_key_env": "OPENROUTER_TEST_KEY",
         "cost_class": "paid-remote",
         "price": {},
-        "config": {},
+        "config": {"credential_origin": "https://openrouter.test"},
     }
     data.update(overrides)
     return providers.ProviderRef(**data)  # type: ignore[arg-type]

@@ -140,11 +140,10 @@ def build_sidecar_env(
     registry = _read_service_registry(db_path) or {}
     resolved_map = dict(env_map or provider_secret_env_map_from_registry(registry))
     origin_map = provider_secret_origin_map_from_registry(registry)
-    require_origin = env_map is None
     for env_name, secret_id in resolved_map.items():
         try:
             expected_origin = origin_map.get(str(env_name))
-            if require_origin and not expected_origin:
+            if not expected_origin:
                 raise PermissionError("provider secret has no approved execution origin")
             child_env[str(env_name)] = get_provider_secret(
                 str(secret_id),

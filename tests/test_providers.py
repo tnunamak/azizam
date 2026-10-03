@@ -56,7 +56,7 @@ def provider(**overrides: object) -> ProviderRef:
         "api_key_env": "TYPESAFE_TEST_KEY",
         "cost_class": "paid-remote",
         "price": {"input_usd_per_million_tokens": "0.10"},
-        "config": {},
+        "config": {"credential_origin": "https://api.typesafe.test:443"},
     }
     data.update(overrides)
     return ProviderRef(**data)  # type: ignore[arg-type]
@@ -70,7 +70,7 @@ def anthropic_provider(**overrides: object) -> ProviderRef:
         "api_key_env": "ANTHROPIC_TEST_KEY",
         "cost_class": "paid-remote",
         "price": {},
-        "config": {"preset_id": "anthropic"},
+        "config": {"preset_id": "anthropic", "credential_origin": "https://api.anthropic.com:443"},
     }
     data.update(overrides)
     return ProviderRef(**data)  # type: ignore[arg-type]
@@ -936,7 +936,7 @@ class TestCosts(unittest.TestCase):
         )
 
         self.assertIsNone(cost.usd)
-        self.assertEqual(cost.source, "unknown")
+        self.assertEqual(cost.source, "missing-provider-price")
 
     def test_chat_estimate_requires_output_limit(self) -> None:
         ref = provider(

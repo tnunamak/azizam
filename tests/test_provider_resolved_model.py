@@ -124,6 +124,7 @@ class ProviderResolvedModelTests(unittest.IsolatedAsyncioTestCase):
                 "output_usd_per_million_tokens": "2.00",
             },
             config={
+                "credential_origin": "https://openrouter.ai",
                 "models": [
                     {
                         "id": "basic",
@@ -169,6 +170,7 @@ class ProviderResolvedModelTests(unittest.IsolatedAsyncioTestCase):
                 "output_usd_per_million_tokens": "2.00",
             },
             config={
+                "credential_origin": "https://openrouter.ai",
                 "models": [
                     {
                         "id": "basic",

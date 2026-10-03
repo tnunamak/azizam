@@ -924,6 +924,8 @@ def test_remote_provider_form_preserves_exact_validated_base_url() -> None:
             "name": "OpenRouter",
             "remote_provider": True,
             "provider_type": "paid-remote",
+            "protocol": "openai-compatible",
+            "capabilities": ["openai"],
             "base_url": "https://provider.test:8443/custom/v1",
             "api_key_secret_id": "provider:openrouter:api_key",
             "models": [{"id": "provider/model", "upstream_model": "model"}],
@@ -974,6 +976,7 @@ def test_remote_provider_requires_env_key_reference() -> None:
                 "provider_type": "paid-remote",
                 "protocol": "openai-compatible",
                 "base_url": "https://openrouter.ai/api/v1",
+                "credential_origin": "https://openrouter.ai:443",
                 "models": [{"id": "openai/gpt-4.1-mini"}],
             },
             source="ui",
@@ -990,6 +993,7 @@ def test_remote_provider_rejects_inline_secret_value() -> None:
                 "provider_type": "paid-remote",
                 "protocol": "openai-compatible",
                 "base_url": "https://openrouter.ai/api/v1",
+                "credential_origin": "https://openrouter.ai:443",
                 "api_key": "sk-should-not-be-stored",
                 "api_key_env": "OPENROUTER_API_KEY",
                 "models": [{"id": "openai/gpt-4.1-mini"}],
@@ -1009,6 +1013,7 @@ def test_remote_provider_rejects_native_passthrough() -> None:
                 "native_passthrough": True,
                 "protocol": "openai-compatible",
                 "base_url": "https://openrouter.ai/api/v1",
+                "credential_origin": "https://openrouter.ai:443",
                 "api_key_env": "OPENROUTER_API_KEY",
                 "auth_inject": [
                     {"header": "authorization", "secret_env": "OPENROUTER_API_KEY"}

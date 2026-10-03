@@ -1207,7 +1207,7 @@ function AddProviderDialog({
   const [monthlyCap, setMonthlyCap] = useState("50");
   const [allowedPlans, setAllowedPlans] = useState<string[]>([]);
   const checkGeneration = useRef(0);
-  const credentialOrigin = useRef(" ");
+  const credentialOrigin = useRef("\u0000");
 
   function resetCheck() {
     checkGeneration.current += 1;
@@ -1234,7 +1234,7 @@ function AddProviderDialog({
   }
 
   useEffect(() => {
-    const origin = `${selected?.id ?? ""} ${baseUrl}`;
+    const origin = `${selected?.id ?? ""}\u0000${baseUrl}`;
     if (credentialOrigin.current === origin) return;
     credentialOrigin.current = origin;
     setSecret("");

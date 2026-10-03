@@ -43,7 +43,8 @@ def canonical_provider_base_url(value: str) -> str:
     if port is None:
         port = 443 if scheme == "https" else 80
     path = (parsed.path or "").rstrip("/")
-    return f"{scheme}://{host}:{port}{path}"
+    authority_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+    return f"{scheme}://{authority_host}:{port}{path}"
 
 
 def provider_auth_headers(config: Mapping[str, Any], api_key: str) -> dict[str, str]:

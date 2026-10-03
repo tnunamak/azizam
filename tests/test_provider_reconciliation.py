@@ -42,7 +42,7 @@ def test_unknown_charge_blocks_only_affected_caps_until_owner_reconciles(tmp_pat
     monkeypatch.setenv('RECON_TEST_KEY', 'test')
     ledger = tmp_path / 'spend.db'
     ref = providers.ProviderRef('one', 'https://provider.test', ('openai',), 'RECON_TEST_KEY',
-                                'paid-remote', {}, {'spend_caps_usd': {'daily': '0.02'}})
+                                'paid-remote', {}, {'credential_origin': 'https://provider.test', 'spend_caps_usd': {'daily': '0.02'}})
     plan = AppProfile(id='one-plan', remote=RemoteProviderPolicy(providers=frozenset({'one','two'})))
     estimate = providers.Cost(Decimal('0.001'), 'price-table', 'one')
     reservation = providers.reserve_provider_spend(plan, ref, estimate, path=ledger)
@@ -65,10 +65,10 @@ def test_reconciliation_barrier_does_not_age_out(scope, tmp_path, monkeypatch):
     admin_db = tmp_path / 'admin.db'
     admin_store.init_db(admin_db)
     ref = providers.ProviderRef('one', 'https://provider.test', ('openai',), 'RECON_TEST_KEY',
-                                'paid-remote', {}, {})
+                                'paid-remote', {}, {'credential_origin': 'https://provider.test'})
     plan = AppProfile(id='one-plan', remote=RemoteProviderPolicy(providers=frozenset({'one', 'two'})))
     if scope == 'provider':
-        ref = replace(ref, config={'spend_caps_usd': {'monthly': '0.02'}})
+        ref = replace(ref, config={'credential_origin': 'https://provider.test', 'spend_caps_usd': {'monthly': '0.02'}})
     elif scope == 'plan':
         plan = replace(plan, remote=replace(plan.remote, budget_usd_per_month=Decimal('0.02')))
     else:
@@ -171,7 +171,7 @@ def test_direct_estimator_resolves_upstream_price_and_preserves_alias_override()
         {'input_usd_per_million_tokens':'1', 'output_usd_per_million_tokens':'1', 'models': {
             'upstream': {'output_usd_per_million_tokens':'100'},
             'one/alias': {'input_usd_per_million_tokens':'5'}}},
-        {'models':[{'id':'alias', 'upstream_model':'upstream'}]})
+        {'credential_origin': 'https://provider.test', 'models':[{'id':'alias', 'upstream_model':'upstream'}]})
     cost = providers.estimate_chat_cost(ref, {'model':'one/alias', 'messages':[], 'max_tokens':100})
     assert cost.usd >= Decimal('0.01')
 

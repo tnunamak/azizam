@@ -899,7 +899,7 @@ def _project_key_status(provider_id: str, config: Mapping[str, Any], db_path: Pa
     api_key_env = str(config.get("api_key_env") or "").strip()
     if api_key_env:
         return {
-            "state": "set" if os.environ.get(api_key_env) else "missing",
+            "state": "set" if os.environ.get(api_key_env) and _provider_env_ref_origin_matches(config) else "missing",
             "source": "env",
             "api_key_env": api_key_env,
         }
@@ -947,10 +947,11 @@ def _provider_credential_origin(config: Mapping[str, Any]) -> str:
 
 
 def _provider_env_ref_origin_matches(config: Mapping[str, Any]) -> bool:
-    expected = str(config.get("credential_origin") or "").strip()
-    if not expected:
-        return True
+    expected_raw = str(config.get("credential_origin") or "").strip()
+    if not expected_raw:
+        return False
     try:
+        expected = secret_store.credential_origin_from_url(expected_raw)
         actual = secret_store.credential_origin_from_url(str(config.get("base_url") or ""))
     except Exception:
         return False

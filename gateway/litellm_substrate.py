@@ -157,13 +157,22 @@ def litellm_provider_key_statuses(
         provider_id = _provider_id(service, config)
         env_name = str(config.get("api_key_env") or "")
         secret_id = str(config.get("api_key_secret_id") or "")
+        env_usable = False
+        if env_name and environ.get(env_name):
+            expected_origin_raw = str(config.get("credential_origin") or "").strip()
+            if expected_origin_raw:
+                try:
+                    env_usable = (
+                        credential_origin_from_url(str(config.get("base_url") or ""))
+                        == credential_origin_from_url(expected_origin_raw)
+                    )
+                except Exception:
+                    env_usable = False
         statuses[provider_id] = {
             "service_id": service["id"],
             "api_key_env": env_name,
             "api_key_secret_id": secret_id,
-            "key_status": "set" if (
-                env_name and bool(environ.get(env_name))
-            ) else "unknown" if secret_id else "missing",
+            "key_status": "set" if env_usable else "unknown" if secret_id else "missing",
         }
     return statuses
 
@@ -555,9 +564,12 @@ def _service_base_url(config: Mapping[str, Any]) -> str:
 def _api_key_ref(config: Mapping[str, Any], secret_refs: Mapping[str, Any]) -> str:
     env_name = config.get("api_key_env") or config.get("api_key_ref")
     if env_name:
-        expected_origin = str(config.get("credential_origin") or "").strip()
-        if expected_origin:
+        if is_remote_provider_config(config):
+            expected_origin_raw = str(config.get("credential_origin") or "").strip()
+            if not expected_origin_raw:
+                raise ValueError("provider credential origin is required")
             try:
+                expected_origin = credential_origin_from_url(expected_origin_raw)
                 actual_origin = credential_origin_from_url(str(config.get("base_url") or ""))
             except Exception:
                 raise ValueError("provider credential origin cannot be verified") from None

@@ -136,14 +136,10 @@ class ProviderRef:
 
     @property
     def configured(self) -> bool:
-        if self.api_key_secret_id:
-            try:
-                return bool(resolve_provider_api_key(self, db_path=admin_store.DB_PATH))
-            except Exception:
-                return False
-        if self.api_key_env and os.environ.get(self.api_key_env):
-            return True
-        return False
+        try:
+            return bool(resolve_provider_api_key(self, db_path=admin_store.DB_PATH))
+        except Exception:
+            return False
 
 
 @dataclass(frozen=True)
@@ -707,6 +703,8 @@ def estimate_chat_cost(provider: ProviderRef, body: Mapping[str, Any]) -> Cost:
     price = price_for_provider_model(provider, model)
     input_rate = _decimal_or_none(price.get("input_usd_per_million_tokens", price.get("input_per_million_usd")))
     output_rate = _decimal_or_none(price.get("output_usd_per_million_tokens", price.get("output_per_million_usd")))
+    if _has_unsupported_owned_rates(price):
+        return Cost(None, "missing-provider-price", provider.id, provider.cost_class)
     if (owns_prices and (input_rate is None or (output_rate is None and not _looks_like_embeddings_request(body)))) or (not owns_prices and not _official_sdk_cost_model(provider, body)):
         return Cost(None, "missing-provider-price", provider.id, provider.cost_class)
     if _has_unbounded_media_payload(body):
@@ -846,14 +844,16 @@ def resolve_provider_api_key(provider: ProviderRef, *, db_path: Path | None = No
         except Exception:
             return ""
     if provider.api_key_env:
-        expected_origin = str(provider.config.get("credential_origin") or "").strip()
-        if expected_origin:
-            try:
-                actual_origin = secret_store.credential_origin_from_url(provider.base_url)
-            except Exception:
-                return ""
-            if actual_origin != expected_origin:
-                return ""
+        expected_origin_raw = str(provider.config.get("credential_origin") or "").strip()
+        if not expected_origin_raw:
+            return ""
+        try:
+            expected_origin = secret_store.credential_origin_from_url(expected_origin_raw)
+            actual_origin = secret_store.credential_origin_from_url(provider.base_url)
+        except Exception:
+            return ""
+        if actual_origin != expected_origin:
+            return ""
         value = os.environ.get(provider.api_key_env, "")
         if value:
             return value
@@ -1190,6 +1190,8 @@ def _cost_from_tokens(
     output_tokens: int | None,
 ) -> Decimal | None:
     price = price_for_provider_model(provider, model)
+    if _has_unsupported_owned_rates(price):
+        return None
     input_price = _decimal_or_none(price.get("input_usd_per_million_tokens", price.get("input_per_million_usd")))
     output_price = _decimal_or_none(price.get("output_usd_per_million_tokens", price.get("output_per_million_usd")))
     total = Decimal("0")
@@ -1222,6 +1224,13 @@ def _has_any_owned_token_prices(provider: ProviderRef) -> bool:
         isinstance(models, Mapping)
         and any(isinstance(price, Mapping) and _contains_owned_prices(price) for price in models.values())
     )
+
+
+def _has_unsupported_owned_rates(price: Mapping[str, Any]) -> bool:
+    supported = {"input_usd_per_million_tokens", "output_usd_per_million_tokens",
+                 "input_per_million_usd", "output_per_million_usd",
+                 "cache_read_input_usd_per_million_tokens"}
+    return any(_contains_owned_prices({key: value}) for key, value in price.items() if key not in supported)
 
 
 def _official_sdk_cost_model(provider: ProviderRef, body: Mapping[str, Any]) -> str | None:
@@ -1267,6 +1276,16 @@ def _configured_usage_cost(provider: ProviderRef, body: Mapping[str, Any]) -> De
     usage = body.get("usage")
     if not isinstance(usage, Mapping):
         return None
+    choices = body.get("choices", [])
+    if not isinstance(choices, list):
+        return None
+    for choice in choices:
+        if not isinstance(choice, Mapping):
+            return None
+        message = choice.get("message")
+        if isinstance(message, Mapping) and (message.get("annotations") or message.get("audio")):
+            # Search and generated media can carry charges outside token usage.
+            return None
     supported = {"prompt_tokens", "completion_tokens", "input_tokens", "output_tokens", "total_tokens", "cost",
                  "prompt_tokens_details", "completion_tokens_details", "input_tokens_details", "output_tokens_details",
                  "cache_read_input_tokens", "cache_creation_input_tokens"}
@@ -1274,6 +1293,8 @@ def _configured_usage_cost(provider: ProviderRef, body: Mapping[str, Any]) -> De
         return None
     model = str(body.get("model") or "")
     price = price_for_provider_model(provider, model)
+    if _has_unsupported_owned_rates(price):
+        return None
     input_rate = _decimal_or_none(price.get("input_usd_per_million_tokens", price.get("input_per_million_usd")))
     output_rate = _decimal_or_none(price.get("output_usd_per_million_tokens", price.get("output_per_million_usd")))
     inputs = _usage_token_count(usage, "prompt_tokens", "input_tokens")

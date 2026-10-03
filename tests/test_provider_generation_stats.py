@@ -8,6 +8,7 @@ import httpx
 from gateway import admin_store, secret_store
 from gateway.provider_catalog import load_provider_catalog, normalize_provider_preset
 from gateway.provider_configuration import provider_service_from_body
+from gateway.provider_listing import canonical_provider_base_url
 from gateway.provider_reconciliation import lookup_generation_cost
 from gateway.providers import ProviderRef
 from gateway.providers import resolve_provider_api_key
@@ -21,6 +22,7 @@ def _provider(**overrides: object) -> ProviderRef:
             "cost_path": ["data", "total_cost"],
         },
         "auth": {"header": "Authorization", "prefix": "Bearer"},
+        "credential_origin": "https://provider.test:443",
     }
     data = {
         "id": "remote",
@@ -346,3 +348,19 @@ def test_env_provider_key_refuses_stale_origin_metadata(monkeypatch):
     )
 
     assert resolve_provider_api_key(provider) == ""
+
+
+def test_env_provider_key_refuses_missing_origin_metadata(monkeypatch):
+    monkeypatch.setenv("PROVIDER_STATS_KEY", "env-key")
+    config = dict(_provider().config)
+    config.pop("credential_origin", None)
+    provider = _provider(config=config)
+
+    assert resolve_provider_api_key(provider) == ""
+
+
+def test_ipv6_canonical_provider_base_url_is_idempotent():
+    url = canonical_provider_base_url("https://[::1]:8443/v1")
+
+    assert url == "https://[::1]:8443/v1"
+    assert canonical_provider_base_url(url) == url

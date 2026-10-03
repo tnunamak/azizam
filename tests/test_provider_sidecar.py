@@ -44,15 +44,30 @@ def test_registry_contract_maps_api_key_env_to_encrypted_secret_id() -> None:
 
 def test_build_sidecar_env_injects_decrypted_secret_without_printing_it(tmp_path: Path) -> None:
     db_path = tmp_path / "admin.db"
-    put_provider_secret("sec_openrouter", "sk-live-secret", db_path=db_path, now=1000)
+    _write_registry_json(
+        db_path,
+        {
+            "services": {
+                "openrouter": {
+                    "config": {
+                        "provider_id": "openrouter",
+                        "base_url": "https://openrouter.ai/api/v1",
+                        "api_key_secret_id": "sec_openrouter",
+                    },
+                    "secret_refs": {"api_key_secret_id": "sec_openrouter"},
+                }
+            }
+        },
+    )
+    put_provider_secret("sec_openrouter", "sk-live-secret", db_path=db_path, now=1000, approved_origin="https://openrouter.ai/api/v1")
 
     env = build_sidecar_env(
         db_path=db_path,
         base_env={"PATH": os.environ.get("PATH", "")},
-        env_map={"OPENROUTER_API_KEY": "sec_openrouter"},
+        env_map={secret_env_name_for_provider("openrouter", "sec_openrouter"): "sec_openrouter"},
     )
 
-    assert env["OPENROUTER_API_KEY"] == "sk-live-secret"
+    assert env[secret_env_name_for_provider("openrouter", "sec_openrouter")] == "sk-live-secret"
     assert env["PATH"] == os.environ.get("PATH", "")
 
 
@@ -168,6 +183,24 @@ def test_sidecar_omits_registry_secret_when_actual_base_url_missing(tmp_path: Pa
     env = build_sidecar_env(db_path=db_path, base_env={env_name: "stale"})
 
     assert env_name not in env
+
+
+def test_explicit_env_map_still_requires_registered_origin(tmp_path: Path) -> None:
+    db_path = tmp_path / "admin.db"
+    put_provider_secret(
+        "sec_openrouter",
+        "sk-live-secret",
+        db_path=db_path,
+        approved_origin="https://openrouter.ai/api/v1",
+    )
+
+    env = build_sidecar_env(
+        db_path=db_path,
+        base_env={"OPENROUTER_API_KEY": "stale"},
+        env_map={"OPENROUTER_API_KEY": "sec_openrouter"},
+    )
+
+    assert "OPENROUTER_API_KEY" not in env
 
 
 def test_env_map_can_come_from_admin_db_service_registry(tmp_path: Path) -> None:

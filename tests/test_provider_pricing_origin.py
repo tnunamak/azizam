@@ -20,7 +20,7 @@ def _provider(*, price=None, base_url="https://custom.invalid/v1", preset_id="ge
         id="custom", base_url=base_url, protocols=("openai-chat",),
         api_key_env="PRICING_REGRESSION_KEY", cost_class="paid-remote",
         price={"input_usd_per_million_tokens": "100", "output_usd_per_million_tokens": "100"} if price is None else price,
-        config={"preset_id": preset_id},
+        config={"preset_id": preset_id, "credential_origin": "https://custom.invalid:443"},
     )
 
 
@@ -132,6 +132,21 @@ def test_unpriced_usage_dimensions_remain_unresolved_instead_of_borrowing_sdk_pr
 
 def test_sdk_header_cost_is_not_authority_for_a_custom_provider():
     assert extract_provider_cost(_provider(), headers={"x-litellm-response-cost": "0.002"}).usd is None
+
+
+@pytest.mark.parametrize("message", [
+    {"annotations": [{"type": "url_citation", "url_citation": {"url": "https://example.invalid"}}]},
+    {"audio": {"id": "generated-audio"}},
+])
+def test_non_token_response_billing_is_not_settled_from_own_text_rates(message):
+    body = {**_response(), "choices": [{"message": message}]}
+    assert extract_provider_cost(_provider(), body=body).usd is None
+
+
+def test_declared_non_token_fee_cannot_be_ignored_in_estimates_or_settlement():
+    provider = _provider(price={"input_usd_per_million_tokens": "100", "output_usd_per_million_tokens": "100", "request_usd": "0.05"})
+    assert extract_provider_cost(provider, body=_response()).usd is None
+    assert estimate_chat_cost(provider, {"model": "gpt-4.1-mini", "messages": [], "max_tokens": 1000}).source == "missing-provider-price"
 
 
 def test_actual_provider_reported_bill_overrides_own_prices_and_sdk_header():

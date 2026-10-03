@@ -8,6 +8,7 @@ def test_duplicate_paid_deployments_cannot_disagree_with_gateway_lookup() -> Non
         "provider_type": "paid-remote", "provider_id": "openrouter",
         "api_key_env": "TEST_PROVIDER_KEY", "protocol": "openai-compatible",
         "base_url": "https://provider.test/v1", "models": ["test-model"],
+        "credential_origin": "https://provider.test:443",
     }}
     with pytest.raises(ValueError, match="ambiguous"):
         compile_litellm_substrate_config({"first": service, "second": service})
@@ -254,6 +255,7 @@ def test_secret_store_refs_compile_to_deterministic_env_indirection() -> None:
                     "provider_id": "openrouter",
                     "protocol": "openai-compatible",
                     "base_url": "https://openrouter.ai/api/v1",
+                    "credential_origin": "https://openrouter.ai:443",
                     "api_key_secret_id": "provider:openrouter:api_key",
                     "models": ["anthropic/claude-sonnet"],
                 },
@@ -275,6 +277,7 @@ def test_remote_credentials_cannot_disagree_between_adapter_and_sidecar() -> Non
             "kind": "provider", "capabilities": ["openai"], "config": {
                 "remote_provider": True, "provider_id": "cloud", "protocol": "openai-compatible",
                 "base_url": "https://provider.test/v1", "models": ["test-model"],
+                "credential_origin": "https://provider.test:443",
                 "api_key_env": "OPERATOR_PROVIDER_KEY", "api_key_secret_id": "provider:cloud:api_key",
             },
         }})
@@ -309,6 +312,20 @@ def test_remote_env_ref_is_omitted_when_origin_metadata_is_stale() -> None:
         }})
 
 
+def test_remote_env_ref_requires_credential_origin_metadata() -> None:
+    with pytest.raises(ValueError, match="credential origin"):
+        compile_litellm_substrate_config({"cloud": {
+            "kind": "provider", "capabilities": ["openai"], "config": {
+                "remote_provider": True,
+                "provider_id": "cloud",
+                "protocol": "openai-compatible",
+                "base_url": "https://provider.test/v1",
+                "api_key_env": "OPERATOR_PROVIDER_KEY",
+                "models": ["test-model"],
+            },
+        }})
+
+
 def test_remote_openrouter_models_are_provider_prefixed() -> None:
     compiled = compile_litellm_substrate_config(
         {
@@ -321,6 +338,7 @@ def test_remote_openrouter_models_are_provider_prefixed() -> None:
                     "provider_type": "paid-remote",
                     "protocol": "openai-compatible",
                     "base_url": "https://openrouter.ai/api/v1",
+                    "credential_origin": "https://openrouter.ai:443",
                     "api_key_env": "OPENROUTER_API_KEY",
                     "models": [
                         {
@@ -357,6 +375,7 @@ def test_remote_mixed_case_provider_id_uses_canonical_public_prefix_once() -> No
                     "provider_type": "paid-remote",
                     "protocol": "openai-compatible",
                     "base_url": "https://openrouter.ai/api/v1",
+                    "credential_origin": "https://openrouter.ai:443",
                     "api_key_env": "OPENROUTER_API_KEY",
                     "models": [
                         {
@@ -387,6 +406,7 @@ def test_paid_remote_models_disable_litellm_retries() -> None:
                     "provider_type": "paid-remote",
                     "protocol": "openai-compatible",
                     "base_url": "https://openrouter.ai/api/v1",
+                    "credential_origin": "https://openrouter.ai:443",
                     "api_key_env": "OPENROUTER_API_KEY",
                     "models": [{"id": "openai/gpt-4.1-mini"}],
                 },
@@ -407,6 +427,8 @@ def test_remote_openai_and_anthropic_models_use_provider_adapters() -> None:
                     "provider_id": "openai",
                     "provider_type": "paid-remote",
                     "protocol": "openai",
+                    "base_url": "https://api.openai.com/v1",
+                    "credential_origin": "https://api.openai.com:443",
                     "api_key_env": "OPENAI_API_KEY",
                     "models": [{"id": "gpt-4.1-mini"}],
                 },
@@ -418,6 +440,8 @@ def test_remote_openai_and_anthropic_models_use_provider_adapters() -> None:
                     "provider_id": "anthropic",
                     "provider_type": "paid-remote",
                     "protocol": "openai",
+                    "base_url": "https://api.anthropic.com/v1",
+                    "credential_origin": "https://api.anthropic.com:443",
                     "api_key_env": "ANTHROPIC_API_KEY",
                     "models": [{"id": "claude-sonnet-4.5"}],
                 },
@@ -446,6 +470,7 @@ def test_remote_generic_openai_compatible_models_keep_public_provider_prefix() -
                     "litellm_provider": "openai",
                     "protocol": "openai-compatible",
                     "base_url": "https://llm.acme.test/v1",
+                    "credential_origin": "https://llm.acme.test:443",
                     "api_key_env": "ACME_API_KEY",
                     "models": [{"id": "chat", "upstream_model": "vendor-chat"}],
                 },
@@ -470,6 +495,7 @@ def test_remote_provider_lookup_exposes_paid_model_facts() -> None:
                     "provider_type": "paid-remote",
                     "protocol": "openai-compatible",
                     "base_url": "https://openrouter.ai/api/v1",
+                    "credential_origin": "https://openrouter.ai:443",
                     "api_key_env": "OPENROUTER_API_KEY",
                     "models": [{"id": "openai/gpt-4.1-mini"}],
                 },
@@ -501,6 +527,8 @@ def test_remote_provider_key_status_reports_only_set_or_missing() -> None:
                     "provider_id": "openai",
                     "provider_type": "paid-remote",
                     "protocol": "openai",
+                    "base_url": "https://api.openai.com/v1",
+                    "credential_origin": "https://api.openai.com:443",
                     "api_key_env": "OPENAI_API_KEY",
                     "models": [{"id": "gpt-4.1-mini"}],
                 },
@@ -523,6 +551,13 @@ def test_remote_provider_key_status_reports_only_set_or_missing() -> None:
     assert present["openai"]["key_status"] == "set"
     assert "sk-test-secret" not in repr(present)
 
+    registry["services"]["openai"]["config"].pop("credential_origin")
+    unbound = litellm_provider_key_statuses(
+        registry,
+        environ={"OPENAI_API_KEY": "sk-test-secret"},
+    )
+    assert unbound["openai"]["key_status"] == "missing"
+
 
 def test_remote_provider_rejects_unprefixed_alias_rows() -> None:
     with pytest.raises(ValueError, match="provider-prefixed"):
@@ -537,6 +572,7 @@ def test_remote_provider_rejects_unprefixed_alias_rows() -> None:
                         "provider_type": "paid-remote",
                         "protocol": "openai-compatible",
                         "base_url": "https://openrouter.ai/api/v1",
+                        "credential_origin": "https://openrouter.ai:443",
                         "api_key_env": "OPENROUTER_API_KEY",
                         "models": [
                             {
@@ -570,6 +606,7 @@ def test_remote_provider_rejects_litellm_fallback_config() -> None:
                         "provider_type": "paid-remote",
                         "protocol": "openai-compatible",
                         "base_url": "https://openrouter.ai/api/v1",
+                        "credential_origin": "https://openrouter.ai:443",
                         "api_key_env": "OPENROUTER_API_KEY",
                         "router_settings": {"fallbacks": [{"gpt": ["paid"]}]},
                         "models": [{"id": "openai/gpt-4.1-mini"}],
@@ -592,6 +629,7 @@ def test_remote_compile_rejects_remote_shape_without_provider_kind() -> None:
                         "provider_type": "paid-remote",
                         "protocol": "openai-compatible",
                         "base_url": "https://openrouter.ai/api/v1",
+                        "credential_origin": "https://openrouter.ai:443",
                         "api_key_env": "OPENROUTER_API_KEY",
                         "models": [{"id": "openai/gpt-4.1-mini"}],
                     },

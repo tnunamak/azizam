@@ -242,7 +242,8 @@ def _normalize_origin(value: str | None) -> str:
         raise ValueError("provider credential origin has an invalid port") from None
     if port is None:
         port = 443 if scheme == "https" else 80
-    return f"{scheme}://{host}:{port}"
+    authority_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+    return f"{scheme}://{authority_host}:{port}"
 
 
 def _secret_aad(secret_id: str, approved_origin: str | None) -> bytes:
