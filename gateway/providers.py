@@ -542,7 +542,7 @@ async def call_typesafe_systemone(
     client = client or httpx.AsyncClient(timeout=timeout)
     try:
         response = await client.post(
-            f"{provider.base_url.rstrip('/')}/v1/systemone",
+            provider.base_url.rstrip('/') + ("/systemone" if provider.base_url.rstrip('/').endswith('/v1') else "/v1/systemone"),
             headers={"Authorization": f"Bearer {api_key}"},
             json=_vendor_typesafe_body(provider, body),
         )

@@ -18,7 +18,7 @@ from gateway import providers
 from gateway.backends.llm_execution import (
     LiteLlmRuntimeConfig, LlmExecutionRequest, litellm_headers, litellm_url,
     send_llm_execution_request, RequestDisconnectWatcher,
-    ClientDisconnectedBeforeHeaders,
+    ClientDisconnectedBeforeHeaders, read_llm_response_body,
 )
 from gateway.policy import AppProfile, PolicyRequest, evaluate
 from gateway.receipts import ReceiptLifecycleOwner, RouteReceipt
@@ -65,7 +65,7 @@ async def execute_paid_litellm(
     model = str(body.get("model") or "")
     protocol, intent = (
         ("openai.embeddings", "text.embeddings") if request_path == "/v1/embeddings"
-        else ("openai.chat", "chat.generate")
+        else ("openai.chat", "text.completions" if request_path == "/v1/completions" else "chat.completions")
     )
     receipt = RouteReceipt(
         protocol=protocol, intent=intent, path=request_path, backend=provider.id,
@@ -122,12 +122,14 @@ async def execute_paid_litellm(
             owner.report(status="failed", reason="connect_error")
             return JSONResponse({"error": {"code": "provider_unavailable", "message": "Remote execution is unavailable"}}, status_code=502)
         finally:
-            await watcher.aclose()
+            if response is None:
+                await watcher.aclose()
         cost = providers.extract_provider_cost(provider, headers=response.headers)
         headers = {"x-gateway-request-id": receipt.request_id, "x-gateway-remote": "1"}
         if response.headers.get("retry-after"):
             headers["retry-after"] = response.headers["retry-after"]
         if response.status_code >= 400:
+            await watcher.aclose()
             await response.aclose()
             await client.aclose()
             # Do not reflect vendor exception text, URLs or auth headers.
@@ -147,6 +149,7 @@ async def execute_paid_litellm(
             providers.settle_provider_spend(reservation, final_cost, path=ledger_path)
 
         if "text/event-stream" in response.headers.get("content-type", ""):
+            await watcher.aclose()
             async def stream():
                 pending = b""
                 final_body: Mapping[str, Any] = {}
@@ -172,7 +175,10 @@ async def execute_paid_litellm(
                     await client.aclose()
             return StreamingResponse(owner.handoff_stream(stream()), media_type="text/event-stream", headers=headers)
         try:
-            content = await response.aread()
+            content = await read_llm_response_body(client, response, disconnect_watcher=watcher)
+            if content is None:
+                owner.report(status="cancelled", reason="cancelled")
+                return Response(status_code=499)
             try:
                 result = json.loads(content)
             except (ValueError, UnicodeError):
@@ -185,5 +191,6 @@ async def execute_paid_litellm(
             owner.report(status="failed", reason="idle_timeout")
             return error_response(providers.ProviderTimeout("Remote provider request timed out"))
         finally:
+            await watcher.aclose()
             await response.aclose()
             await client.aclose()

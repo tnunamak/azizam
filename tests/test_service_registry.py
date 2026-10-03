@@ -9,6 +9,24 @@ from gateway import admin_store, service_registry
 from tests.registry_test_helpers import write_service_registry_for_test
 
 
+def test_shaped_remote_service_rejects_inline_config_key() -> None:
+    with pytest.raises(ValueError, match="inline secret fields"):
+        service_registry.normalize_service_record("openrouter", {
+            "kind": "provider", "config": {
+                "provider_type": "paid-remote", "api_key_env": "TEST_PROVIDER_KEY",
+                "api_key": "test-inline-secret",
+            },
+        })
+
+
+@pytest.mark.parametrize("config", [
+    {"provider_type": "Paid-Remote"},
+    {"provider_type": "local", "cost_class": "PAID-REMOTE"},
+])
+def test_remote_metadata_case_cannot_bypass_policy(config) -> None:
+    assert service_registry.is_remote_provider_config(config)
+
+
 def _run_concurrent_ensure(
     *, proxy_config: dict, path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> list[dict]:

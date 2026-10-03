@@ -748,7 +748,7 @@ def validate_provider_secret_refs(
         return
     inline_keys = [
         key
-        for key in secret_refs
+        for key in (*secret_refs, *config)
         if is_secret_key(str(key)) and not is_secret_reference_key(str(key))
     ]
     if inline_keys:
@@ -769,9 +769,8 @@ def validate_provider_secret_refs(
 
 
 def is_remote_provider_config(config: Mapping[str, Any]) -> bool:
-    provider_type = str(config.get("provider_type") or config.get("cost_class") or "").strip()
     return (
-        provider_type in REMOTE_PROVIDER_TYPES
+        any(str(config.get(key) or "").strip().lower() in REMOTE_PROVIDER_TYPES for key in ("provider_type", "cost_class"))
         or bool_from_config(config.get("remote_provider"), False)
         or bool_from_config(config.get("paid_remote"), False)
     )
