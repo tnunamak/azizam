@@ -132,7 +132,7 @@ class DecisionProviderReconciliationTests(unittest.IsolatedAsyncioTestCase):
                 json={
                     "model": "jev-latest",
                     "answers": {"q": {"type": "noul", "noul": 1.0}},
-                    "usage": {"input_tokens": 1, "output_tokens": 0},
+                    "usage": {"input_tokens": 1, "output_tokens": 0, "unpriced_usage_units": 1},
                 },
             )
 

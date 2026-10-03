@@ -372,7 +372,6 @@ def _model_list_entries(
         service.get("secret_refs") if isinstance(service.get("secret_refs"), Mapping) else {}
     )
     base_url = _service_base_url(config)
-    api_key_ref = _api_key_ref(config, secret_refs)
 
     out: list[dict[str, Any]] = []
     for deployment in deployments:
@@ -407,6 +406,7 @@ def _model_list_entries(
         else:
             if is_remote_provider_config(config) and not base_url:
                 raise ValueError("remote provider requires an explicit api_base")
+            api_key_ref = _api_key_ref(config, secret_refs)
             if base_url:
                 litellm_params["api_base"] = base_url
             if api_key_ref:

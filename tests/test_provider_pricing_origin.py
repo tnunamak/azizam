@@ -149,6 +149,12 @@ def test_declared_non_token_fee_cannot_be_ignored_in_estimates_or_settlement():
     assert estimate_chat_cost(provider, {"model": "gpt-4.1-mini", "messages": [], "max_tokens": 1000}).source == "missing-provider-price"
 
 
+def test_missing_usage_is_not_a_zero_bill_even_with_zero_base_rates():
+    provider = _provider(price={"input_usd_per_million_tokens": "0", "output_usd_per_million_tokens": "0", "cache_read_input_usd_per_million_tokens": "100"})
+    assert extract_provider_cost(provider, body={"model": "gpt-4.1-mini", "usage": {}}).usd is None
+    assert extract_provider_cost(provider, body={"model": "gpt-4.1-mini", "usage": {"prompt_tokens": 0, "completion_tokens": 0}}).usd == Decimal("0")
+
+
 def test_actual_provider_reported_bill_overrides_own_prices_and_sdk_header():
     cost = extract_provider_cost(_provider(), body=_response(cost="0.27"), headers={"x-litellm-response-cost": "0.002"})
     assert cost.usd == Decimal("0.27")

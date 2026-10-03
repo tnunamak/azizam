@@ -49,6 +49,8 @@ from gateway.receipts import RouteReceipt  # noqa: E402
 
 
 def provider(**overrides: object) -> ProviderRef:
+    config = {"credential_origin": "https://api.typesafe.test:443"}
+    config.update(overrides.pop("config", {}) if isinstance(overrides.get("config"), dict) else {})
     data = {
         "id": "typesafe",
         "base_url": "https://api.typesafe.test",
@@ -56,13 +58,15 @@ def provider(**overrides: object) -> ProviderRef:
         "api_key_env": "TYPESAFE_TEST_KEY",
         "cost_class": "paid-remote",
         "price": {"input_usd_per_million_tokens": "0.10"},
-        "config": {"credential_origin": "https://api.typesafe.test:443"},
+        "config": config,
     }
     data.update(overrides)
     return ProviderRef(**data)  # type: ignore[arg-type]
 
 
 def anthropic_provider(**overrides: object) -> ProviderRef:
+    config = {"preset_id": "anthropic", "credential_origin": "https://api.anthropic.com:443"}
+    config.update(overrides.pop("config", {}) if isinstance(overrides.get("config"), dict) else {})
     data = {
         "id": "anthropic",
         "base_url": "https://api.anthropic.com",
@@ -70,7 +74,7 @@ def anthropic_provider(**overrides: object) -> ProviderRef:
         "api_key_env": "ANTHROPIC_TEST_KEY",
         "cost_class": "paid-remote",
         "price": {},
-        "config": {"preset_id": "anthropic", "credential_origin": "https://api.anthropic.com:443"},
+        "config": config,
     }
     data.update(overrides)
     return ProviderRef(**data)  # type: ignore[arg-type]

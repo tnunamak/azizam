@@ -24,6 +24,7 @@ def _provider(**overrides: object) -> ProviderRef:
         "auth": {"header": "Authorization", "prefix": "Bearer"},
         "credential_origin": "https://provider.test:443",
     }
+    config.update(overrides.pop("config", {}) if isinstance(overrides.get("config"), dict) else {})
     data = {
         "id": "remote",
         "base_url": "https://provider.test/api/v1",

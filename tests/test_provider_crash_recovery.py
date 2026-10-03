@@ -160,7 +160,10 @@ class ProviderCrashRecoveryTests(unittest.TestCase):
         self.assertEqual(row["expires_at"], 1_700_000_120)
 
     def test_recovered_unknown_blocks_provider_cap(self) -> None:
-        capped_provider = _provider(config={"spend_caps_usd": {"daily": "0.02"}})
+        capped_provider = _provider(config={
+            "credential_origin": "https://openrouter.test",
+            "spend_caps_usd": {"daily": "0.02"},
+        })
         self._reserve(generation="505:old", provider=capped_provider)
 
         with patch.object(providers, "current_process_generation", return_value="606:new"):

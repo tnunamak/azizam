@@ -177,13 +177,20 @@ def test_direct_estimator_resolves_upstream_price_and_preserves_alias_override()
 
 
 class RejectedChargeCleanupTests(ReconciliationExecutionFixture):
-    async def test_cleanup_cancellation_cannot_leave_reported_charge_unsettled(self):
+    async def test_cleanup_cancellation_cannot_leave_official_sdk_charge_unsettled(self):
         import asyncio
         class CancelledClose(_Response):
             async def aclose(self):
                 raise asyncio.CancelledError()
+        self.provider = providers.ProviderRef(
+            'openai', 'https://api.openai.com/v1', ('openai',),
+            'OPENROUTER_API_KEY', 'paid-remote', {'cost_model': 'openai/gpt-4.1-mini'},
+            {'preset_id': 'openai', 'credential_origin': 'https://api.openai.com',
+             'models': [{'id': 'gpt-4.1-mini'}]},
+        )
+        self.body = {**self.body, 'model': 'openai/gpt-4.1-mini'}
         self.profile = AppProfile(id='paid-app', remote=RemoteProviderPolicy(
-            providers=frozenset({'openrouter'}), budget_usd_per_day=Decimal('0.02')))
+            providers=frozenset({'openai'}), budget_usd_per_day=Decimal('0.02')))
         send = AsyncMock(return_value=(_Client(), CancelledClose(status_code=500,
             headers={'content-type':'application/json', 'x-litellm-response-cost':'0.03'})))
         with self.assertRaises(asyncio.CancelledError):
@@ -210,7 +217,10 @@ class AliasPriceAdmissionTests(ReconciliationExecutionFixture):
     async def test_alias_price_override_is_not_replaced_by_upstream_default(self):
         from unittest.mock import patch
         self.provider = replace(self.provider,
-            config={'models':[{'id':'basic','upstream_model':'upstream'}]},
+            config={
+                **self.provider.config,
+                'models':[{'id':'basic','upstream_model':'upstream'}],
+            },
             price={'input_usd_per_million_tokens':'1', 'output_usd_per_million_tokens':'1', 'models': {
                 'upstream': {'output_usd_per_million_tokens':'1'},
                 'openrouter/basic': {'output_usd_per_million_tokens':'100'}}})

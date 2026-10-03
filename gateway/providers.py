@@ -1299,8 +1299,6 @@ def _configured_usage_cost(provider: ProviderRef, body: Mapping[str, Any]) -> De
     output_rate = _decimal_or_none(price.get("output_usd_per_million_tokens", price.get("output_per_million_usd")))
     inputs = _usage_token_count(usage, "prompt_tokens", "input_tokens")
     outputs = _usage_token_count(usage, "completion_tokens", "output_tokens")
-    inputs = 0 if inputs is None and input_rate == 0 else inputs
-    outputs = 0 if outputs is None and output_rate == 0 else outputs
     if inputs is None or outputs is None:
         return None
     cached = 0

@@ -327,7 +327,7 @@ def test_typesafe_provider_unknown_actual_cost_is_projected_as_unknown_not_zero_
             json={
                 "model": "jev-latest",
                 "answers": {"is_urgent": {"type": "noul", "noul": 0.91}},
-                "usage": {"input_tokens": 1000, "output_tokens": 0},
+                "usage": {"input_tokens": 1000, "output_tokens": 0, "unpriced_usage_units": 1},
                 "echo": "ts_secret_test_key",
             },
         )

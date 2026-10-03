@@ -761,7 +761,7 @@ class ProviderAdminApiTests(unittest.TestCase):
             api_key_env="OPENROUTER_API_KEY",
             cost_class="paid-remote",
             price={},
-            config={"concurrency_limit": 3},
+            config={"concurrency_limit": 3, "credential_origin": "https://openrouter.test:443"},
         )
         with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-provider-key"}):
             for _ in range(3):
@@ -923,7 +923,7 @@ class ProviderAdminApiTests(unittest.TestCase):
             api_key_env="TYPESAFE_API_KEY",
             cost_class="paid-remote",
             price={},
-            config={},
+            config={"credential_origin": "https://typesafe.test:443"},
         )
         with patch.dict(os.environ, {"TYPESAFE_API_KEY": "test-key"}, clear=False):
             reserve_provider_spend(
