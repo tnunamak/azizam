@@ -8,9 +8,13 @@ import sys
 import unittest
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+import proxy  # noqa: E402
+from gateway import stable_aliases as sa  # noqa: E402
 from gateway.manifests import (  # noqa: E402
     apply_backend_binding,
     load_workflow_manifest,
@@ -121,6 +125,25 @@ class TestAnimaTurboWorkflow(unittest.TestCase):
         for entries in self.manifest["bindings"]["comfyui"]["map"].values():
             for e in entries:
                 self.assertIn(e["input"], self.workflow[e["node"]]["inputs"])
+
+
+class TestDiscoveryAndAliases(unittest.TestCase):
+    """Manifests are picked up at startup; no DB registry row is needed."""
+
+    def test_models_listing_includes_both_workflows_from_manifests(self) -> None:
+        ids = {e["id"] for e in proxy._build_workflow_model_entries()}
+        self.assertLessEqual({"krea2-turbo-snofs", "anima-turbo"}, ids)
+
+    def test_stable_aliases_resolve_and_default_image_is_unchanged(self) -> None:
+        cfg = yaml.safe_load((ROOT / "proxy_config.yml").read_text())["model_aliases"]
+        targets = sa.concrete_targets(cfg, "images")
+        self.assertEqual(targets["image-uncensored"], "krea2-turbo-snofs")
+        self.assertEqual(targets["image-anime"], "anima-turbo")
+        self.assertEqual(targets["image"], "krea2-turbo")
+        for name in ("gpt-image-1", "dall-e-3", "chatgpt-image-latest"):
+            self.assertEqual(sa.resolve_alias(cfg, "images", name).target, "krea2-turbo", name)
+        res = sa.resolve_alias(cfg, "images", "image-uncensored")
+        self.assertEqual(res.target, "krea2-turbo-snofs")
 
 
 if __name__ == "__main__":

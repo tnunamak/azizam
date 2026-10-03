@@ -1407,7 +1407,7 @@ Authentication:  gateway:$AI_GATEWAY_API_KEY  (user:password; the password is th
 ```
 
 Click Connect, then pick a model. The model list holds the stable image aliases
-(`image`, `image-fast`) first, then each image workflow. The chosen model is
+(`image`, `image-fast`, `image-uncensored`, `image-anime`) first, then each image workflow. The chosen model is
 remembered per API key until the gateway restarts; the default is `image`.
 
 What maps and what does not:
@@ -1454,6 +1454,8 @@ an exact model or settings. Unknown names pass through unchanged.
 | Embeddings | `embed` | `nomic-embed-text-v1.5` (768-dim; not vector-compatible with OpenAI's) | `text-embedding-*` |
 | Image generate | `image` | `krea2-turbo` | `gpt-image-*`, `chatgpt-image-*`, `dall-e-*` |
 | | `image-fast` | `flux2-klein-4b` | |
+| | `image-uncensored` | `krea2-turbo-snofs` (Krea 2 Turbo + SNOFS v1.4 LoRA; explicit output for adults, opt-in) | none |
+| | `image-anime` | `anima-turbo` (Anima Turbo v1.1, anime, uncensored) | none |
 | Image edit / variations | `image-edit` (also `image`) | `qwen-image-2.1-edit`; masks and 2+ images switch to inpaint / multiref automatically | `gpt-image-*`, `dall-e-*` |
 | | `image-edit-fast` (also `image-fast`) | `flux2-klein-4b-edit` | |
 | Video | `video` | `video-ltx-2.5-t2v`; `input_reference` switches to image-to-video | `sora-2`, `sora-2-pro`, `sora*` |

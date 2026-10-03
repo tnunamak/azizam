@@ -1054,6 +1054,8 @@ model_aliases:
     stable:
       image: krea2-turbo           # default text-to-image
       image-fast: flux2-klein-4b   # Apache-licensed lighter fallback
+      image-uncensored: krea2-turbo-snofs  # Krea 2 Turbo + SNOFS LoRA; explicit output for adults. Opt-in, never behind `image`
+      image-anime: anima-turbo     # Anima Turbo anime (fast); also uncensored
     openai:
       - {match: "gpt-image-*", to: image}
       - {match: "chatgpt-image-*", to: image}

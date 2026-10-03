@@ -148,7 +148,7 @@ class ShippedConfigTests(unittest.TestCase):
         expected = {
             "chat": {"default", "fast", "coder", "vision", "rp"},
             "embeddings": {"embed"},
-            "images": {"image", "image-fast"},
+            "images": {"image", "image-fast", "image-uncensored", "image-anime"},
             "image_edits": {"image", "image-edit", "image-fast", "image-edit-fast"},
             "videos": {"video", "video-fast", "video-long"},
             "speech": {"tts", "tts-fast", "tts-quality"},
@@ -214,7 +214,8 @@ class ShippedConfigTests(unittest.TestCase):
             },
             "images": {"gpt-image-1": "krea2-turbo", "gpt-image-1-mini": "krea2-turbo", "gpt-image-1.5": "krea2-turbo",
                        "dall-e-3": "krea2-turbo", "dall-e-2": "krea2-turbo", "chatgpt-image-latest": "krea2-turbo",
-                       "image": "krea2-turbo", "image-fast": "flux2-klein-4b"},
+                       "image": "krea2-turbo", "image-fast": "flux2-klein-4b",
+                       "image-uncensored": "krea2-turbo-snofs", "image-anime": "anima-turbo"},
             "image_edits": {"gpt-image-1": "qwen-image-2.1-edit", "dall-e-2": "qwen-image-2.1-edit",
                             "image-edit": "qwen-image-2.1-edit", "image-edit-fast": "flux2-klein-4b-edit"},
             "videos": {"sora-2": "video-ltx-2.5-t2v", "sora-2-pro": "video-ltx-2.5-t2v",
