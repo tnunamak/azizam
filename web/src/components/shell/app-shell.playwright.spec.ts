@@ -57,7 +57,7 @@ async function installMemberRoutes(page: Page) {
         ...(await response.json()),
         user: member,
         apps: [],
-        status: { state: "available", reason: "Models are available." },
+        status: { state: "ready", reason: "Models are available." },
       },
     });
   });
@@ -146,6 +146,9 @@ async function verifyMemberStatusPath(page: Page) {
     .getByRole("link", { name: "View status" })
     .click();
   await expect(page).toHaveURL(/\/ui\/status\/?$/);
+  await expect(
+    page.getByRole("heading", { name: "Status", exact: true }),
+  ).toBeVisible();
 }
 
 test("tablet rail restores focus, closes from the button, and navigates", async ({

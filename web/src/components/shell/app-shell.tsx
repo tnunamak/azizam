@@ -697,7 +697,7 @@ function Shell({ children }: { children: React.ReactNode }) {
               >
                 <Fish className="text-primary size-5 shrink-0" />
                 <span className="shell-nav-label min-w-0">
-                  <span className="block">{PRODUCT_NAME}</span>
+                  <span className="block">{PRODUCT_NAME} </span>
                   {instanceData?.service?.name && (
                     <span className="text-muted-foreground block truncate text-xs font-normal">
                       {instanceData.service.name}

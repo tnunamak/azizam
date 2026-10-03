@@ -1,6 +1,6 @@
 {
   "title": "Gateway shell audit fixes",
-  "url": "http://127.0.0.1:18180/ui/",
+  "url": "http://127.0.0.1:18872/ui/",
   "start": "/home/",
   "authScript": "../../../e2e/darshana-auth.mjs",
   "authStorage": "../../../test-results/shell-darshana-auth.json",
