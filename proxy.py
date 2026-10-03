@@ -12411,6 +12411,7 @@ async def _workflow_drift_loop(stop_event: asyncio.Event) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """App lifespan manager."""
+    providers.recover_provider_spend(path=ADMIN_DB_PATH.parent / "provider_spend.db")
     print(f"[proxy] Vivid Fish AI Gateway starting on port {PROXY_PORT}", flush=True)
     print(f"[proxy] TabbyAPI backend: {TABBY_HOST}", flush=True)
     print(f"[proxy] TTS backend: {TTS_HOST} (enabled: {TTS_ENABLED})", flush=True)

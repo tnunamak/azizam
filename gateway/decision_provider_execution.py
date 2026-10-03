@@ -404,7 +404,10 @@ async def openai(
             if not api_key:
                 raise providers.ProviderKeyMissing(f"provider {provider.id!r} key is missing")
             estimate = providers.Cost(None, "unknown", provider.id, provider.cost_class)
-            reservation = providers.reserve_provider_spend(profile, provider, estimate, path=ledger_path, admin_db_path=admin_db_path)
+            reservation = providers.reserve_provider_spend(
+                profile, provider, estimate, path=ledger_path, admin_db_path=admin_db_path,
+                request_timeout_s=DEFAULT_DECISION_TIMEOUT_S,
+            )
             providers.identify_provider_spend(reservation, request_id=receipt.request_id, path=ledger_path)
             async with asyncio.timeout(DEFAULT_DECISION_TIMEOUT_S):
                 payload, cost, usage, upstream_headers, upstream_content, upstream_status = await providers.call_openai_json(

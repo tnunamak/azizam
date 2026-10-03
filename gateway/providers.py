@@ -13,6 +13,7 @@ import os
 import sqlite3
 import time
 import calendar
+import uuid
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -26,9 +27,11 @@ from gateway.service_registry import canonical_provider_id, is_remote_provider_c
 
 USD_QUANTUM = Decimal("0.000000001")
 DEFAULT_PROVIDER_CONCURRENCY_LIMIT = 2
+DEFAULT_PROVIDER_REQUEST_TIMEOUT_S = 120.0
 DEFAULT_LEDGER_PATH = Path(
     os.environ.get("AI_GATEWAY_PROVIDER_LEDGER_DB", "data/provider_spend.db")
 )
+_PROCESS_UUID = uuid.uuid4().hex
 DEFAULT_USAGE_PRICE_REQUIREMENTS = (
     {
         "usage_path": ("prompt_tokens_details", "cache_creation_tokens"),
@@ -277,23 +280,63 @@ def ensure_ledger(path: Path = DEFAULT_LEDGER_PATH) -> None:
                 created_at INTEGER NOT NULL,
                 settled_at INTEGER,
                 request_id TEXT,
-                generation_id TEXT
+                generation_id TEXT,
+                process_generation TEXT,
+                expires_at INTEGER
             )
             """
         )
         columns = {row[1] for row in conn.execute("PRAGMA table_info(provider_spend)")}
-        if "request_id" not in columns:
+        ownership_columns = {"request_id", "generation_id", "process_generation", "expires_at"}
+        if not ownership_columns.issubset(columns):
             # Older ledgers cannot distinguish in-flight work from completed
             # unknown bills. Across this schema upgrade, require owner settlement.
             conn.execute("UPDATE provider_spend SET status = 'needs_reconciliation' "
                          "WHERE status = 'reserved'")
-        for name in ("request_id", "generation_id"):
+        column_types = {
+            "request_id": "TEXT",
+            "generation_id": "TEXT",
+            "process_generation": "TEXT",
+            "expires_at": "INTEGER",
+        }
+        for name, column_type in column_types.items():
             if name not in columns:
-                conn.execute(f"ALTER TABLE provider_spend ADD COLUMN {name} TEXT")
+                conn.execute(f"ALTER TABLE provider_spend ADD COLUMN {name} {column_type}")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_provider_spend_window "
             "ON provider_spend(provider, profile_id, created_at, status)"
         )
+
+
+def current_process_generation() -> str:
+    return f"{os.getpid()}:{_PROCESS_UUID}"
+
+
+def recover_provider_spend(
+    *, path: Path = DEFAULT_LEDGER_PATH, now: int | None = None
+) -> int:
+    ensure_ledger(path)
+    timestamp = int(now if now is not None else time.time())
+    generation = current_process_generation()
+    with sqlite3.connect(path, isolation_level=None) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        cursor = conn.execute(
+            """
+            UPDATE provider_spend
+            SET status = 'needs_reconciliation', actual_usd = NULL,
+                settled_at = ?, cost_source = 'unknown'
+            WHERE status = 'reserved'
+              AND (
+                process_generation IS NULL
+                OR expires_at IS NULL
+                OR process_generation != ?
+                OR expires_at <= ?
+              )
+            """,
+            (timestamp, generation, timestamp),
+        )
+        conn.execute("COMMIT")
+        return int(cursor.rowcount or 0)
 
 
 def reserve_provider_spend(
@@ -305,6 +348,7 @@ def reserve_provider_spend(
     admin_db_path: Path | None = None,
     now: int | None = None,
     paid_fallback: bool = False,
+    request_timeout_s: float = DEFAULT_PROVIDER_REQUEST_TIMEOUT_S,
 ) -> Reservation:
     require_remote_allowed(profile, provider, paid_fallback=paid_fallback)
     provider_admin = _provider_admin_snapshot(
@@ -327,6 +371,9 @@ def reserve_provider_spend(
 
     ensure_ledger(path)
     timestamp = int(now if now is not None else time.time())
+    recover_provider_spend(path=path, now=timestamp)
+    expires_at = timestamp + max(0, int(request_timeout_s))
+    process_generation = current_process_generation()
     with sqlite3.connect(path, isolation_level=None) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -411,8 +458,9 @@ def reserve_provider_spend(
             cursor = conn.execute(
                 """
                 INSERT INTO provider_spend
-                (provider, profile_id, status, estimated_usd, cost_source, created_at)
-                VALUES (?, ?, 'reserved', ?, ?, ?)
+                (provider, profile_id, status, estimated_usd, cost_source, created_at,
+                 process_generation, expires_at)
+                VALUES (?, ?, 'reserved', ?, ?, ?, ?, ?)
                 """,
                 (
                     provider_id,
@@ -420,6 +468,8 @@ def reserve_provider_spend(
                     str(estimate),
                     estimated_cost.source,
                     timestamp,
+                    process_generation,
+                    expires_at,
                 ),
             )
             conn.execute("COMMIT")
@@ -495,7 +545,13 @@ def list_provider_reconciliations(
             where += " AND lower(provider) = ?"
             params.append(canonical_provider_id(provider_id))
         return [dict(row) for row in conn.execute(
-            f"SELECT * FROM provider_spend WHERE {where} ORDER BY id", params)]
+            f"""
+            SELECT id, provider, profile_id, status, estimated_usd, actual_usd,
+                   cost_source, created_at, settled_at, request_id, generation_id
+            FROM provider_spend WHERE {where} ORDER BY id
+            """,
+            params,
+        )]
 
 
 def reconcile_provider_spend(
@@ -695,6 +751,7 @@ async def call_typesafe_systemone(
         path=ledger_path,
         admin_db_path=admin_db_path,
         paid_fallback=paid_fallback,
+        request_timeout_s=timeout,
     )
     identify_provider_spend(reservation, request_id=request_id, path=ledger_path)
     close_client = client is None

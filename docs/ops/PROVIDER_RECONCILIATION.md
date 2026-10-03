@@ -12,6 +12,22 @@ requests. The ledger's request ID links owner reconciliation to the original
 receipt. Receipts describe the result at completion; the durable ledger and
 owner audit describe later corrections.
 
+## Crash and timeout recovery
+
+Each reservation records the process generation that owns it and its expiry.
+Startup recovers reservations from a previous process generation. Admission also
+recovers expired reservations and reservations without a current process owner.
+Recovered charges enter `needs_reconciliation`; their estimates are never treated
+as actual bills. Recovery commits before a denied admission returns, so the owner
+can list and reconcile the charge.
+
+Current-process reservations before their expiry remain in flight. Chat uses its
+120-second transport timeout; paid Decisions use their 15-second request timeout.
+A request that later supplies an actual bill can still settle an expired charge.
+The budget barrier is conservative for requests that outlive the recorded timeout.
+This ownership policy follows the gateway's single-process deployment; separate
+gateway processes sharing a ledger cannot treat one another's reservations as live.
+
 ## Automatic reconciliation
 
 When a provider record declares `config.generation_stats`, the gateway queries
@@ -53,8 +69,9 @@ UI can use this status and the endpoints above.
 ## Deployment
 
 No new environment variables or separate migration command are required.
-The ledger schema adds nullable `request_id` and `generation_id` columns lazily.
-On upgrade from a ledger lacking these columns, existing `reserved` rows become
+The ledger schema adds `request_id`, `generation_id`, `process_generation`, and
+`expires_at` columns lazily. On upgrade from a ledger lacking ownership metadata,
+existing `reserved` rows become
 `needs_reconciliation`: the old schema cannot prove whether those charges were
 completed or still in flight. Reconcile those rows against provider records.
 Do not use the estimate as an actual bill. This lane does not restart services.

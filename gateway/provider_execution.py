@@ -576,6 +576,7 @@ async def execute_paid_litellm(
             reservation = providers.reserve_provider_spend(
                 profile, provider, estimate, path=ledger_path,
                 admin_db_path=admin_db_path, paid_fallback=paid_fallback,
+                request_timeout_s=execution.read_timeout,
             )
         except providers.ProviderError as error:
             receipt.set_policy_decision("denied", reason=error.code, source="gateway:remote-provider")
