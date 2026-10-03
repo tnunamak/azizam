@@ -34,7 +34,6 @@ import {
   PageHeader,
   EmptyState,
   ErrorState,
-  CodeBlock,
   SecretReveal,
 } from "@/components/product";
 
@@ -171,9 +170,9 @@ async function publicRequest(path: string, key: string, init: RequestInit) {
 
 function receiptFrom(response: Response, payload: unknown) {
   const header =
+    response.headers.get("x-ai-gateway-receipt-id") ??
     response.headers.get("x-ai-gateway-request-id") ??
-    response.headers.get("x-request-id") ??
-    response.headers.get("x-ai-gateway-receipt-id");
+    response.headers.get("x-request-id");
   if (header) return header;
   if (typeof payload === "object" && payload !== null) {
     const requestId = (payload as Record<string, unknown>).request_id;
@@ -813,7 +812,7 @@ export default function TryPage() {
                   key before running requests.
                 </p>
               </div>
-              <Button onClick={() => void prepareKey()}>
+              <Button variant="outline" onClick={() => void prepareKey()}>
                 <KeyRound aria-hidden="true" />
                 Prepare Try key
               </Button>
@@ -859,7 +858,11 @@ export default function TryPage() {
         value={activeTab}
         onValueChange={(value) => setActiveTab(value as TryTab)}
       >
-        <div className="overflow-x-auto pb-1">
+        <div
+          className="overflow-x-auto pb-1"
+          tabIndex={0}
+          aria-label="Try capability tabs"
+        >
           <TabsList aria-label="Try capability" className="min-w-max">
             {TAB_ITEMS.map((tab) => (
               <TabsTrigger key={tab.value} value={tab.value}>
@@ -1002,6 +1005,7 @@ export default function TryPage() {
                   )}
                   <Button
                     type="submit"
+                    variant="outline"
                     disabled={!key?.secret || running !== null}
                   >
                     {running === tab.value ? (
@@ -1126,7 +1130,7 @@ function ResultView({ result }: { result: Result }) {
           <Copy aria-hidden="true" className="size-4" />
           Copy as
         </h3>
-        <CodeBlock snippets={codeSnippets(result.request)} />
+        <SnippetBlock snippets={codeSnippets(result.request)} />
       </div>
     </div>
   );
@@ -1138,6 +1142,68 @@ function Fact({ label, value }: { label: string; value: ReactNode }) {
       <dt className="text-muted-foreground text-xs">{label}</dt>
       <dd className="mt-1 font-medium break-words">{value}</dd>
     </div>
+  );
+}
+
+function SnippetBlock({
+  snippets,
+}: {
+  snippets: Array<{ language: string; code: string }>;
+}) {
+  const firstLanguage = snippets[0]?.language ?? "";
+  const [activeLanguage, setActiveLanguage] = useState(firstLanguage);
+  const [copied, setCopied] = useState<string | null>(null);
+  async function copy(language: string, code: string) {
+    await navigator.clipboard.writeText(code);
+    setCopied(language);
+  }
+  return (
+    <Tabs
+      value={activeLanguage || firstLanguage}
+      onValueChange={(language) => {
+        setActiveLanguage(language);
+        setCopied(null);
+      }}
+      className="bg-muted rounded-lg border"
+    >
+      <div className="flex flex-col gap-2 border-b p-2 sm:flex-row sm:items-center sm:justify-between">
+        <TabsList aria-label="Snippet format" className="w-full sm:w-auto">
+          {snippets.map((snippet) => (
+            <TabsTrigger key={snippet.language} value={snippet.language}>
+              {snippet.language}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="self-end sm:self-auto"
+          onClick={() => {
+            const snippet =
+              snippets.find((item) => item.language === activeLanguage) ??
+              snippets[0];
+            if (snippet) void copy(snippet.language, snippet.code);
+          }}
+        >
+          {copied ? "Copied" : "Copy"}
+        </Button>
+      </div>
+      {snippets.map((snippet) => (
+        <TabsContent
+          key={snippet.language}
+          value={snippet.language}
+          className="m-0"
+        >
+          <pre
+            tabIndex={0}
+            className="overflow-x-auto p-3 font-mono text-xs leading-relaxed"
+          >
+            <code>{snippet.code}</code>
+          </pre>
+        </TabsContent>
+      ))}
+    </Tabs>
   );
 }
 
@@ -1167,6 +1233,7 @@ function ModelSelect({
   ];
   return (
     <select
+      aria-label="Model"
       className="border-input bg-background h-11 w-full rounded-md border px-3 text-sm"
       value={value}
       onChange={(event) => onChange(event.target.value)}

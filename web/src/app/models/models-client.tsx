@@ -46,7 +46,12 @@ import {
   PageHeader,
 } from "@/components/product";
 
-type AvailabilityState = "ready" | "starting" | "busy" | "unavailable";
+type AvailabilityState =
+  | "ready"
+  | "starting"
+  | "busy"
+  | "unavailable"
+  | "not measured yet";
 type CostKind = "free" | "paid" | "unknown";
 type Locality = "local" | "remote" | "unknown";
 
@@ -184,10 +189,8 @@ function descriptionFor(row: CatalogRow): string {
   return `${label} model visible to your access plan.`;
 }
 
-function titleCase(value: string): string {
-  return value
-    .replace(/[-_]/g, " ")
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+function availabilityLabel(value: AvailabilityState): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function costLabel(row: CatalogRow): string {
@@ -217,6 +220,7 @@ function timingLabel(row: CatalogRow): string {
 }
 
 function availabilityState(row: CatalogRow): AvailabilityState {
+  if (!row.availability.measured) return "not measured yet";
   if (row.availability.status) {
     const status = row.availability.status.toLowerCase();
     if (["ready", "starting", "busy", "unavailable"].includes(status)) {
@@ -305,7 +309,7 @@ function Availability({ row }: { row: CatalogRow }) {
         )}
       />
       <div className="min-w-0">
-        <div className="font-medium">{titleCase(state)}</div>
+        <div className="font-medium">{availabilityLabel(state)}</div>
         <p className="text-muted-foreground line-clamp-2 text-xs">
           {row.availability.reason}
         </p>
@@ -343,7 +347,7 @@ function AliasCard({
       <button
         type="button"
         onClick={copyAlias}
-        className="bg-muted hover:bg-muted/80 focus-visible:ring-ring flex min-w-0 items-center justify-between gap-2 rounded-md px-3 py-2 text-left font-mono text-xs transition outline-none focus-visible:ring-[3px]"
+        className="bg-muted hover:bg-muted/80 focus-visible:ring-ring flex min-h-11 min-w-0 items-center justify-between gap-2 rounded-md px-3 py-2 text-left font-mono text-xs transition outline-none focus-visible:ring-[3px]"
       >
         <span className="truncate">{row.id}</span>
         {copied ? (
@@ -654,13 +658,13 @@ export default function ModelsClient() {
                   active={showFree}
                   onClick={() => setShowFree((value) => !value)}
                 >
-                  Free (local)
+                  Free
                 </FilterButton>
                 <FilterButton
                   active={showPaid}
                   onClick={() => setShowPaid((value) => !value)}
                 >
-                  Paid (remote)
+                  Paid
                 </FilterButton>
               </div>
             </div>
@@ -766,7 +770,7 @@ export default function ModelsClient() {
                         </TableCell>
                         <TableCell>{costLabel(row)}</TableCell>
                         <TableCell>
-                          {titleCase(availabilityState(row))}
+                          {availabilityLabel(availabilityState(row))}
                         </TableCell>
                       </TableRow>
                     ))}

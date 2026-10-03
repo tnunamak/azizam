@@ -14295,6 +14295,12 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
         default_profile_id=default_profile_id,
         path=ADMIN_STORE.path,
     )
+    if not user_snapshot.get("authenticated"):
+        raise UserPortalError(
+            "not_authenticated",
+            "Sign in to view the models catalog",
+            status_code=401,
+        )
     auth_contexts = auth_contexts_from_user_snapshot(
         user_snapshot,
         default_profile_id=default_profile_id,
@@ -25378,6 +25384,7 @@ async def _forward_current_loaded_openai_request(
                 k: v for k, v in resp.headers.items() if k.lower() not in excluded
             }
             response_headers["X-AI-Gateway-LLM-Execution"] = "current-loaded"
+            response_headers["X-AI-Gateway-Receipt-Id"] = receipt.request_id
             response_headers["X-AI-Gateway-Backend"] = target.backend
             response_headers["X-AI-Gateway-Resolved-Model"] = target.model
 
@@ -25683,6 +25690,7 @@ async def _forward_litellm_proxy_request(
             k: v for k, v in resp.headers.items() if k.lower() not in excluded
         }
         response_headers["X-AI-Gateway-LLM-Execution"] = "litellm"
+        response_headers["X-AI-Gateway-Receipt-Id"] = receipt.request_id
         _attach_litellm_response_metadata(receipt, resp.headers)
         record_request_shape_stage(
             receipt.metadata,

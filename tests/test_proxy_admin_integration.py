@@ -843,6 +843,49 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 401, response.text)
         self.assertEqual(response.json()["error"]["code"], "not_authenticated")
 
+    def test_user_models_catalog_rejects_session_for_deleted_user(self) -> None:
+        cfg = OIDCConfig(
+            enabled=True,
+            issuer="https://idp.example",
+            client_id="ai-gateway",
+            client_secret="secret",
+            redirect_uri="http://testserver/admin/oidc/callback",
+            scopes=("openid", "email", "profile"),
+            allowed_email_domains=frozenset(),
+            admin_emails=frozenset(),
+            signing_key=b"d" * 32,
+            cookie=CookieConfig(secure=False),
+            authorization_endpoint="https://idp.example/authorize",
+            token_endpoint="https://idp.example/token",
+            jwks_uri="https://idp.example/jwks",
+        )
+        proxy.ADMIN_OIDC_CONFIG = cfg
+        proxy.ADMIN_AUTH.signing_key = cfg.signing_key
+        proxy.ADMIN_AUTH.cookie = cfg.cookie
+        session = session_from_claims(
+            {"sub": "deleted-user-id", "email": "deleted@example.com"},
+            role="none",
+            cookie=cfg.cookie,
+        )
+        self.client.cookies.set(
+            cfg.cookie.name,
+            encode_session_cookie(session, signing_key=cfg.signing_key),
+        )
+
+        with patch.object(
+            proxy,
+            "_default_profile_id_for_session",
+            return_value="default-local",
+        ), patch.object(
+            proxy,
+            "_gateway_capabilities_for_auth_context",
+            side_effect=AssertionError("deleted users must not get default catalog capabilities"),
+        ):
+            response = self.client.get("/me/api/models/catalog")
+
+        self.assertEqual(response.status_code, 401, response.text)
+        self.assertEqual(response.json()["error"]["code"], "not_authenticated")
+
     def test_user_models_catalog_uses_app_profile_and_own_receipts(self) -> None:
         from gateway import receipt_store
         from gateway.capabilities import Capability
@@ -855,6 +898,8 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
+            allowed_email_domains=frozenset(),
+            admin_emails=frozenset(),
             signing_key=b"m" * 32,
             cookie=CookieConfig(secure=False),
             authorization_endpoint="https://idp.example/authorize",
@@ -1007,6 +1052,8 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
+            allowed_email_domains=frozenset(),
+            admin_emails=frozenset(),
             signing_key=b"n" * 32,
             cookie=CookieConfig(secure=False),
             authorization_endpoint="https://idp.example/authorize",

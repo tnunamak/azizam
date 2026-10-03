@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from gateway.capabilities import Capability  # noqa: E402
+from gateway.local_capabilities import build_alias_capabilities, build_local_capabilities  # noqa: E402
 from gateway.models_catalog import (  # noqa: E402
     auth_contexts_from_user_snapshot,
     build_models_catalog,
@@ -110,6 +111,19 @@ class ModelsCatalogBuildTests(unittest.TestCase):
 
         self.assertEqual(catalog["aliases"], [])
 
+    def test_denied_workflow_public_target_hides_alias(self) -> None:
+        views = {"images": {"stable": [{"alias": "image", "resolves_to": "poster"}]}}
+        catalog = build_models_catalog(
+            alias_views=views,
+            capabilities=[
+                *build_alias_capabilities(views),
+                Capability(intent="image.generate", backend="image-service",
+                           workflow="image.poster", policy_available=False),
+            ],
+            model_entries=[{"id": "poster", "vivid_fish_workflow_id": "image.poster"}],
+        )
+        self.assertEqual(catalog["aliases"], [])
+
     def test_alias_operation_does_not_use_wrong_capability(self) -> None:
         catalog = build_models_catalog(
             alias_views={
@@ -137,11 +151,95 @@ class ModelsCatalogBuildTests(unittest.TestCase):
         self.assertEqual(catalog["aliases"][0]["operations"], ["embeddings"])
         self.assertEqual(catalog["aliases"][0]["capabilities"][0]["intent"], "text.embeddings")
 
+    def test_shared_alias_merges_capabilities_across_operations(self) -> None:
+        catalog = build_models_catalog(
+            alias_views={
+                "chat": {"stable": [{"alias": "omni", "resolves_to": "chat-model"}]},
+                "embeddings": {"stable": [{"alias": "omni", "resolves_to": "embed-model"}]},
+            },
+            capabilities=[
+                Capability(
+                    intent="chat.completions",
+                    backend="svc",
+                    model="chat-model",
+                    input_modalities=("text",),
+                    output_modalities=("text",),
+                ),
+                Capability(
+                    intent="text.embeddings",
+                    backend="svc",
+                    model="embed-model",
+                    input_modalities=("text",),
+                    output_modalities=("embedding",),
+                ),
+            ],
+        )
+
+        self.assertEqual(len(catalog["aliases"]), 1)
+        alias = catalog["aliases"][0]
+        self.assertEqual(alias["id"], "omni")
+        self.assertEqual(alias["operations"], ["chat", "embeddings"])
+        self.assertEqual(alias["resolves_to"], {"chat": "chat-model", "embeddings": "embed-model"})
+        self.assertEqual([cap["intent"] for cap in alias["capabilities"]], ["chat.completions", "text.embeddings"])
+        self.assertEqual(alias["io"], {"input": ["text"], "output": ["embedding", "text"]})
+
+    def test_real_alias_producers_keep_speech_and_transcription_without_target_model_cap(self) -> None:
+        views = {
+            "speech": {
+                "stable": [
+                    {
+                        "alias": "tts",
+                        "resolves_to": "voice-engine",
+                        "engine": "voice-engine",
+                        "service": "voice-service",
+                    }
+                ]
+            },
+            "transcriptions": {
+                "stable": [
+                    {
+                        "alias": "stt",
+                        "resolves_to": "speech-engine",
+                        "engine": "speech-engine",
+                        "service": "speech-service",
+                    }
+                ]
+            },
+        }
+        capabilities = [
+            *build_local_capabilities(
+                {},
+                backends={
+                    "voice-service": {"capabilities": ["speech"]},
+                    "speech-service": {"capabilities": ["transcriptions"]},
+                },
+                enabled_flags={
+                    "llm": False,
+                    "embeddings": False,
+                    "tts": True,
+                    "stt": True,
+                    "images": False,
+                    "videos": False,
+                    "audio": False,
+                },
+            ),
+            *build_alias_capabilities(views),
+        ]
+
+        catalog = build_models_catalog(alias_views=views, capabilities=capabilities)
+
+        self.assertEqual([row["id"] for row in catalog["aliases"]], ["stt", "tts"])
+        by_id = {row["id"]: row for row in catalog["aliases"]}
+        self.assertEqual(by_id["tts"]["resolves_to"], {"speech": "voice-engine"})
+        self.assertEqual(by_id["tts"]["capabilities"][0]["intent"], "speech.synthesis")
+        self.assertEqual(by_id["stt"]["resolves_to"], {"transcriptions": "speech-engine"})
+        self.assertEqual(by_id["stt"]["capabilities"][0]["intent"], "speech.transcription")
+
     def test_capability_sets_do_not_flatten_policy_across_profiles(self) -> None:
         catalog = build_models_catalog(
             alias_views={"chat": {"stable": [{"alias": "chat", "resolves_to": "target"}]}},
             capability_sets=[
-                [Capability(intent="chat.completions", backend="svc-a", model="chat")],
+                [Capability(intent="chat.completions", backend="svc-a", model="other-chat")],
                 [Capability(intent="text.embeddings", backend="svc-b", model="target")],
             ],
         )

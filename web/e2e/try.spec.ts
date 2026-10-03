@@ -9,10 +9,18 @@ async function prepareTryKey(page: import("@playwright/test").Page) {
   await expect(page.getByText("Session key ready")).toBeVisible();
 }
 
+async function waitForCatalog(page: import("@playwright/test").Page) {
+  await expect(page.getByText("Catalog loaded")).toBeVisible();
+  await expect(page.getByLabel("Model", { exact: true })).not.toContainText(
+    "Not in catalog",
+  );
+}
+
 test("try creates a session key, runs public chat, and links a receipt", async ({
   page,
 }) => {
   await prepareTryKey(page);
+  await waitForCatalog(page);
   const chatResponse = page.waitForResponse(
     (response) =>
       response.url().includes("/openai/v1/chat/completions") &&
@@ -20,7 +28,8 @@ test("try creates a session key, runs public chat, and links a receipt", async (
   );
   await page.getByRole("button", { name: "Run", exact: true }).click();
   const response = await chatResponse;
-  expect(response.headers()["x-ai-gateway-request-id"]).toBeTruthy();
+  const receiptId = response.headers()["x-ai-gateway-receipt-id"] ?? "";
+  expect(receiptId).not.toBe("");
   expect(response.ok()).toBe(true);
   await expect(page.getByText("Chat result", { exact: true })).toBeVisible();
   await expect(
@@ -30,9 +39,7 @@ test("try creates a session key, runs public chat, and links a receipt", async (
     ),
   ).toBeVisible();
   await expect(page.getByText("Copy as", { exact: true })).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: /req_|chatcmpl|cmpl|resp/i }),
-  ).toBeVisible();
+  await expect(page.getByRole("link", { name: receiptId })).toBeVisible();
 });
 
 test("try shows empty, public API error, decision 404, and non-chat results", async ({
@@ -43,6 +50,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
     page.getByText("Prepare a session key", { exact: true }),
   ).toBeVisible();
   await prepareTryKey(page);
+  await waitForCatalog(page);
 
   await page.route("**/openai/v1/chat/completions", (route) =>
     route.fulfill({
@@ -53,6 +61,35 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("This key cannot use demo-chat.")).toBeVisible();
   await page.unroute("**/openai/v1/chat/completions");
+
+  await page.route("**/me/api/receipts/receipt_preferred", (route) =>
+    route.fulfill({ json: { id: "receipt_preferred" } }),
+  );
+  await page.route("**/me/api/receipts/generic_request", (route) =>
+    route.fulfill({ status: 404, json: { error: "not found" } }),
+  );
+  await page.route("**/openai/v1/chat/completions", (route) =>
+    route.fulfill({
+      headers: {
+        "x-ai-gateway-receipt-id": "receipt_preferred",
+        "x-request-id": "generic_request",
+      },
+      json: {
+        choices: [{ message: { content: "Receipt header priority works." } }],
+      },
+    }),
+  );
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(page.getByText("Receipt header priority works.")).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "receipt_preferred" }),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "generic_request" })).toHaveCount(
+    0,
+  );
+  await page.unroute("**/openai/v1/chat/completions");
+  await page.unroute("**/me/api/receipts/receipt_preferred");
+  await page.unroute("**/me/api/receipts/generic_request");
 
   await page.getByRole("tab", { name: "Image" }).click();
   await page.route("**/openai/v1/images/generations", (route) =>
@@ -100,12 +137,19 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   await expect(page.getByText("The gateway is ready.")).toBeVisible();
 
   await page.getByRole("tab", { name: "Decide" }).click();
-  await page.route("**/v1/systemone", (route) =>
-    route.fulfill({
+  await page.route("**/v1/systemone", async (route) => {
+    const body = route.request().postDataJSON();
+    expect(body.state).toBe("Gateway smoke test is starting.");
+    expect(body.questions.route.type).toBe("choice");
+    expect(body.questions.route.criteria).toEqual({
+      "Run chat": "Run chat",
+      "Run embeddings": "Run embeddings",
+    });
+    await route.fulfill({
       status: 404,
       json: { error: { message: "not found" } },
-    }),
-  );
+    });
+  });
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(
     page.getByText("Decisions not enabled on this gateway", { exact: true }),
@@ -132,13 +176,20 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   await page.getByRole("tab", { name: "Embed" }).click();
   await page.route("**/openai/v1/embeddings", (route) =>
     route.fulfill({
-      headers: { "x-ai-gateway-request-id": "req_embed_try" },
+      headers: {
+        "x-ai-gateway-request-id": "req_embed_try",
+        "x-litellm-response-cost": "0.0025",
+      },
       json: { data: [{ embedding: [0.1, -0.2, 0.4] }] },
     }),
   );
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Dimensions")).toBeVisible();
   await expect(page.getByText("3", { exact: true })).toBeVisible();
+  await expect(page.getByText("$0.002500")).toBeVisible();
+  await expect(page.getByRole("link", { name: "req_embed_try" })).toHaveCount(
+    0,
+  );
 });
 
 test("try catalog maps exact capability intents to the right tabs", async ({
@@ -150,7 +201,11 @@ test("try catalog maps exact capability intents to the right tabs", async ({
         schema_version: 1,
         object: "models.catalog",
         aliases: [
-          catalogRow("chat", "chat.completions"),
+          catalogRow("chat", "chat.completions", {
+            locality: "remote",
+            provider: "OpenRouter",
+            cost: { kind: "paid", price: "$0.01/request" },
+          }),
           catalogRow("image", "image.generate"),
           catalogRow("tts", "speech.synthesis"),
           catalogRow("stt", "speech.transcription"),
@@ -163,14 +218,25 @@ test("try catalog maps exact capability intents to the right tabs", async ({
   );
   await prepareTryKey(page);
   await expect(page.getByText("Catalog loaded")).toBeVisible();
+  await expect(page.getByLabel("Model", { exact: true })).toContainText(
+    "Remote · OpenRouter · Paid · $0.01/request",
+  );
 
   await page.getByRole("tab", { name: "Transcribe" }).click();
-  await expect(page.getByLabel("Model")).toContainText("stt model");
-  await expect(page.getByLabel("Model")).not.toContainText("tts model");
+  await expect(page.getByLabel("Model", { exact: true })).toContainText(
+    "stt model",
+  );
+  await expect(page.getByLabel("Model", { exact: true })).not.toContainText(
+    "tts model",
+  );
 
   await page.getByRole("tab", { name: "Embed" }).click();
-  await expect(page.getByLabel("Model")).toContainText("embeddings model");
-  await expect(page.getByLabel("Model")).not.toContainText("chat model");
+  await expect(page.getByLabel("Model", { exact: true })).toContainText(
+    "embeddings model",
+  );
+  await expect(page.getByLabel("Model", { exact: true })).not.toContainText(
+    "chat model",
+  );
 });
 
 for (const theme of ["light", "dark"] as const) {
@@ -192,6 +258,7 @@ for (const theme of ["light", "dark"] as const) {
       await checkState(page, `try-empty-${theme}-${width}.png`);
 
       await prepareTryKey(page);
+      await waitForCatalog(page);
       await page.getByRole("button", { name: "Run", exact: true }).click();
       await expect(
         page.getByText("Chat result", { exact: true }),
@@ -226,11 +293,24 @@ async function checkState(page: import("@playwright/test").Page, file: string) {
     .filter((violation) =>
       ["serious", "critical"].includes(violation.impact ?? ""),
     )
-    .map((violation) => violation.id);
+    .map((violation) => ({
+      id: violation.id,
+      nodes: violation.nodes.map((node) => ({
+        target: node.target,
+        summary: node.failureSummary,
+      })),
+    }));
+  if (violations.length) {
+    console.log(JSON.stringify(violations, null, 2));
+  }
   expect(violations).toEqual([]);
 }
 
-function catalogRow(id: string, intent: string) {
+function catalogRow(
+  id: string,
+  intent: string,
+  overrides: Record<string, unknown> = {},
+) {
   return {
     id,
     display_name: `${id} model`,
@@ -239,5 +319,6 @@ function catalogRow(id: string, intent: string) {
     cost: { kind: "free", price: null },
     capabilities: [{ intent, label: intent }],
     use: { model: id },
+    ...overrides,
   };
 }

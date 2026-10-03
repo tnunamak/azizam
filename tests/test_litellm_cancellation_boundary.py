@@ -639,6 +639,9 @@ class RealSocketCancellationTests(unittest.TestCase):
                 },
             )
             self.assertEqual(response.status_code, 200, response.text)
+            receipt_id = response.headers.get("x-ai-gateway-receipt-id")
+            self.assertTrue(receipt_id)
+            self.assertEqual(receipt_id, self.litellm_hop.forwarded_request_ids[-1])
             self.assertEqual(response.json()["choices"][0]["message"]["content"], "ok")
 
         self._run(run())
@@ -656,10 +659,12 @@ class RealSocketCancellationTests(unittest.TestCase):
                 },
             ) as response:
                 self.assertEqual(response.status_code, 200)
+                receipt_id = response.headers.get("x-ai-gateway-receipt-id")
                 body = b"".join([chunk async for chunk in response.aiter_bytes()])
             self.assertIn(b"data: [DONE]", body)
             self.assertTrue(self.litellm_hop.forwarded_request_ids)
             self.assertTrue(self.litellm_hop.forwarded_request_ids[0])
+            self.assertEqual(receipt_id, self.litellm_hop.forwarded_request_ids[0])
 
         self._run(run())
 

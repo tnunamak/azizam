@@ -167,11 +167,13 @@ def _rows_for_capabilities(
     service_model_metadata: Mapping[str, Mapping[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
     allowed_caps = [cap for cap in capabilities if cap.policy_available is not False]
-    denied_targets = {
-        str(cap.model or cap.workflow)
-        for cap in capabilities
-        if cap.policy_available is False and (cap.model or cap.workflow)
-    }
+    denied_targets: set[str] = set()
+    for cap in capabilities:
+        if cap.policy_available is not False:
+            continue
+        denied_targets.update(str(target) for target in (cap.model, cap.workflow) if target)
+        if cap.workflow:
+            denied_targets.update(_public_model_ids_for_workflow(model_entries, str(cap.workflow)))
     caps_by_model: dict[str, list[Capability]] = defaultdict(list)
     for cap in allowed_caps:
         if cap.model:
@@ -218,12 +220,20 @@ def _merge_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
         current["operations"] = sorted(set(current.get("operations") or []) | set(row.get("operations") or []))
         current.setdefault("resolves_to", {}).update(row.get("resolves_to") or {})
         current["capabilities"] = _merge_capability_summaries(current.get("capabilities") or [], row.get("capabilities") or [])
+        current["io"] = _merge_io_summary(current.get("io") or {}, row.get("io") or {})
         if current.get("availability", {}).get("available") is not True and row.get("availability", {}).get("available") is True:
             current["availability"] = row["availability"]
     out = list(merged.values())
     for row in out:
         row["operations"] = sorted(set(row.get("operations") or []))
     return sorted(out, key=lambda r: (not r["availability"]["available"], r["id"]))
+
+
+def _merge_io_summary(left: Mapping[str, Any], right: Mapping[str, Any]) -> dict[str, list[str]]:
+    return {
+        "input": sorted(set(left.get("input") or []) | set(right.get("input") or [])),
+        "output": sorted(set(left.get("output") or []) | set(right.get("output") or [])),
+    }
 
 
 def _merge_capability_summaries(left: Sequence[Mapping[str, Any]], right: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
@@ -268,28 +278,31 @@ def _alias_rows(
             target = str(raw.get("resolves_to") or "")
             target_caps = _capabilities_for_operation(caps_by_model.get(target, ()), str(operation)) if target else []
             alias_caps = _capabilities_for_operation(caps_by_model.get(alias, ()), str(operation))
-            if target and not target_caps:
+            if target and not target_caps and target in denied_targets:
                 continue
             caps = target_caps or alias_caps
             if not caps:
                 continue
-            row = by_alias.setdefault(
-                alias,
-                _base_row(
-                    row_id=alias,
-                    display_name=alias,
-                    is_alias=True,
-                    capabilities=caps,
-                    service_id=str(raw.get("service") or _first_backend(caps) or ""),
-                    target=target or None,
-                    model_entry=model_entries.get(target) or model_entries.get(alias),
-                    service_records=service_records,
-                    receipt_stats=receipt_stats,
-                    health_evidence=health_evidence,
-                    workflow_metadata=workflow_metadata,
-                    service_model_metadata=service_model_metadata,
-                ),
+            operation_row = _base_row(
+                row_id=alias,
+                display_name=alias,
+                is_alias=True,
+                capabilities=caps,
+                service_id=str(raw.get("service") or _first_backend(caps) or ""),
+                target=target or None,
+                model_entry=model_entries.get(target) or model_entries.get(alias),
+                service_records=service_records,
+                receipt_stats=receipt_stats,
+                health_evidence=health_evidence,
+                workflow_metadata=workflow_metadata,
+                service_model_metadata=service_model_metadata,
             )
+            row = by_alias.setdefault(alias, operation_row)
+            if row is not operation_row:
+                row["capabilities"] = _merge_capability_summaries(row.get("capabilities") or [], operation_row.get("capabilities") or [])
+                row["io"] = _merge_io_summary(row.get("io") or {}, operation_row.get("io") or {})
+                if row.get("availability", {}).get("available") is not True and operation_row.get("availability", {}).get("available") is True:
+                    row["availability"] = operation_row["availability"]
             row["operations"].append(str(operation))
             if target:
                 row["resolves_to"][str(operation)] = target
