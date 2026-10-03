@@ -198,7 +198,7 @@ def _paid_priced_outbound_payload(
     if unsupported_tool is not None:
         return paid_option_unsupported_response(unsupported_tool)
 
-    pricing_model = resolved_upstream_model or payload.get("model")
+    pricing_model = resolved_upstream_model or providers.resolve_provider_model(provider, str(payload.get("model") or ""))
 
     unsupported_modifier = _unsupported_model_modifier(pricing_model, provider)
     if unsupported_modifier is not None:
@@ -617,9 +617,6 @@ async def execute_paid_litellm(
         if response.headers.get("retry-after"):
             headers["retry-after"] = response.headers["retry-after"]
         if response.status_code >= 400:
-            await watcher.aclose()
-            await response.aclose()
-            await client.aclose()
             # Do not reflect vendor exception text, URLs or auth headers.
             unbilled_rejection = cost.usd is None and response.status_code in {401, 403, 429}
             if unbilled_rejection:
@@ -629,6 +626,9 @@ async def execute_paid_litellm(
             providers.attach_cost_to_receipt(receipt, cost)
             receipt.cost.update({"reservation_id": reservation.id, "reconciliation_status": "released" if unbilled_rejection else "needs_reconciliation" if cost.usd is None else "settled"})
             owner.report(status="failed", reason="failed")
+            await watcher.aclose()
+            await response.aclose()
+            await client.aclose()
             if response.status_code in {401, 403}:
                 return error_response(providers.ProviderAuthFailed("Remote provider rejected the operator key"))
             if response.status_code == 429:
@@ -661,7 +661,14 @@ async def execute_paid_litellm(
             })
 
         if "text/event-stream" in response.headers.get("content-type", ""):
-            await watcher.aclose()
+            try:
+                await watcher.aclose()
+            except BaseException:
+                providers.settle_provider_spend(reservation, None, path=ledger_path)
+                receipt.cost.update({"reservation_id": reservation.id, "reconciliation_status": "needs_reconciliation"})
+                await response.aclose()
+                await client.aclose()
+                raise
             async def stream():
                 pending = b""
                 final_body: dict[str, Any] = {}

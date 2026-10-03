@@ -164,3 +164,43 @@ class LaterStatsRetryTests(ReconciliationExecutionFixture):
         assert next_response.status_code == 200
         next_send.assert_awaited_once()
         assert not providers.list_provider_reconciliations(path=self.ledger)
+
+
+def test_direct_estimator_resolves_upstream_price_and_preserves_alias_override():
+    ref = providers.ProviderRef('one', 'https://provider.test', ('openai',), 'KEY', 'paid-remote',
+        {'input_usd_per_million_tokens':'1', 'output_usd_per_million_tokens':'1', 'models': {
+            'upstream': {'output_usd_per_million_tokens':'100'},
+            'one/alias': {'input_usd_per_million_tokens':'5'}}},
+        {'models':[{'id':'alias', 'upstream_model':'upstream'}]})
+    cost = providers.estimate_chat_cost(ref, {'model':'one/alias', 'messages':[], 'max_tokens':100})
+    assert cost.usd >= Decimal('0.01')
+
+
+class RejectedChargeCleanupTests(ReconciliationExecutionFixture):
+    async def test_cleanup_cancellation_cannot_leave_reported_charge_unsettled(self):
+        import asyncio
+        class CancelledClose(_Response):
+            async def aclose(self):
+                raise asyncio.CancelledError()
+        self.profile = AppProfile(id='paid-app', remote=RemoteProviderPolicy(
+            providers=frozenset({'openrouter'}), budget_usd_per_day=Decimal('0.02')))
+        send = AsyncMock(return_value=(_Client(), CancelledClose(status_code=500,
+            headers={'content-type':'application/json', 'x-litellm-response-cost':'0.03'})))
+        with self.assertRaises(asyncio.CancelledError):
+            await self._execute(send=send)
+        next_response, next_send = await self._execute()
+        assert next_response.status_code == 402
+        next_send.assert_not_awaited()
+        with sqlite3.connect(self.ledger) as conn:
+            assert conn.execute('SELECT status,actual_usd FROM provider_spend').fetchone() == ('settled','0.030000000')
+
+
+class MalformedHeaderChargeTests(ReconciliationExecutionFixture):
+    async def test_unrepresentable_header_bill_cannot_leave_reserved_charge(self):
+        send = AsyncMock(return_value=(_Client(), _Response(
+            headers={'content-type':'application/json', 'x-litellm-response-cost':'1e1000'}, body=b'{}')))
+        response, _ = await self._execute(send=send)
+        assert response.status_code == 200
+        second, second_send = await self._execute()
+        assert second.status_code == 402
+        second_send.assert_not_awaited()

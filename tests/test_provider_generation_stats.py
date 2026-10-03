@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from decimal import Decimal
 
 import httpx
 
@@ -52,7 +53,7 @@ def test_lookup_generation_cost_reads_configured_total_cost(monkeypatch):
     cost = _run(call())
 
     assert cost.usd is not None
-    assert str(cost.usd) == "0.0015"
+    assert cost.usd == Decimal("0.0015")
     assert cost.source == "provider-generation-stats"
     assert cost.cost_class == "usage-metered"
     assert str(seen[0].url) == "https://provider.test/api/v1/generation?id=gen-123"

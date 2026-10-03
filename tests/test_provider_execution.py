@@ -1200,7 +1200,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsInstance(payload, dict)
 
-    async def test_stream_success_without_actual_cost_keeps_reservation_open(self) -> None:
+    async def test_stream_success_without_actual_cost_marks_reconciliation(self) -> None:
         self.body = {**self.body, "stream": True}
         send = AsyncMock(
             return_value=(
@@ -1227,7 +1227,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             ).fetchall()
         self.assertEqual(rows, [("needs_reconciliation", None)])
 
-    async def test_stream_unknown_usage_extension_keeps_reservation_open(self) -> None:
+    async def test_stream_unknown_usage_extension_marks_reconciliation(self) -> None:
         self.body = {**self.body, "stream": True}
         send = AsyncMock(
             return_value=(

@@ -241,7 +241,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.body["error"]["code"], "invalid_model")
         self.assertFalse(self.ledger.exists())
 
-    async def test_typesafe_success_without_actual_cost_keeps_reservation_open_and_cost_unknown(self) -> None:
+    async def test_typesafe_success_without_actual_cost_marks_reconciliation_and_cost_unknown(self) -> None:
         async def handler(_request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"model": "jev-remote", "answers": {}, "usage": {"input_tokens": 1, "output_tokens": 0}})
 
@@ -262,7 +262,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             rows = conn.execute("SELECT status, actual_usd FROM provider_spend").fetchall()
         self.assertEqual(rows, [("needs_reconciliation", None)])
 
-    async def test_typesafe_cancellation_before_headers_cancels_vendor_and_keeps_reservation(self) -> None:
+    async def test_typesafe_cancellation_before_headers_cancels_vendor_and_marks_reconciliation(self) -> None:
         entered = asyncio.Event()
         cancelled = asyncio.Event()
 
@@ -292,7 +292,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             rows = conn.execute("SELECT status, actual_usd FROM provider_spend").fetchall()
         self.assertEqual(rows, [("needs_reconciliation", None)])
 
-    async def test_openai_cancellation_before_headers_marks_receipt_cancelled_and_keeps_reservation(self) -> None:
+    async def test_openai_cancellation_before_headers_marks_receipt_cancelled_and_marks_reconciliation(self) -> None:
         entered = asyncio.Event()
         cancelled = asyncio.Event()
 
@@ -325,7 +325,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows, [("needs_reconciliation", None)])
 
 
-    async def test_openai_success_with_unknown_actual_cost_emits_unknown_header_and_keeps_reservation(self) -> None:
+    async def test_openai_success_with_unknown_actual_cost_emits_unknown_header_and_marks_reconciliation(self) -> None:
         async def handler(_request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"id": "dec_unknown", "usage": {"input_tokens": 1, "output_tokens": 0}})
 

@@ -619,7 +619,7 @@ def estimate_typesafe_cost(provider: ProviderRef, body: Mapping[str, Any]) -> Co
     )
     estimated = _cost_from_tokens(
         provider,
-        model=resolve_provider_model(provider, str(body.get("model") or "")),
+        model=str(body.get("model") or ""),
         input_tokens=estimated_tokens,
         output_tokens=0,
     )
@@ -642,7 +642,7 @@ def estimate_chat_cost(provider: ProviderRef, body: Mapping[str, Any]) -> Cost:
         return Cost(None, "unknown", provider.id, provider.cost_class)
     estimated = _cost_from_tokens(
         provider,
-        model=resolve_provider_model(provider, str(body.get("model") or "")),
+        model=str(body.get("model") or ""),
         input_tokens=input_tokens,
         output_tokens=output_limit * candidates,
     )
@@ -1212,7 +1212,10 @@ def _decimal_or_none(value: object) -> Decimal | None:
         return None
     if not amount.is_finite() or amount < 0:
         return None
-    return _quantize_usd(amount)
+    try:
+        return _quantize_usd(amount)
+    except InvalidOperation:
+        return None
 
 
 def _cap_decimal_or_none(value: object, *, where: str) -> Decimal | None:
