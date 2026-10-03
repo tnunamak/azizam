@@ -1,13 +1,15 @@
 ---
 name: openai-proxy-gateway
-description: Use Vivid Fish AI Gateway (the local OpenAI-compatible AI gateway, formerly openai-proxy) for chat, embeddings, image generation/editing, TTS, STT, audio generation, video jobs, Anthropic Messages, Ollama-compatible chat/generate/model routes, and gateway-native capabilities/receipts. Use when a task mentions Vivid Fish AI Gateway, AI Gateway, openai-proxy, ai.vivid.fish, openai.vivid.fish, /gateway/v1, opk_ keys, local AI backends, or apps that need one local AI endpoint.
+description: Use Vivid Fish AI Gateway (the local OpenAI-compatible AI gateway, formerly openai-proxy) for chat, embeddings, image generation/editing, TTS, STT, audio generation, video jobs, Anthropic Messages, Ollama-compatible chat/generate/model routes, and gateway-native capabilities/receipts. Use when a task mentions Vivid Fish AI Gateway, AI Gateway, openai-proxy, /gateway/v1, opk_ keys, local AI backends, or apps that need one local AI endpoint.
 ---
 
 # Vivid Fish AI Gateway
 
 Use this skill when you need to call the user's local AI gateway. Treat the gateway as local infrastructure owned by the user. Discover capabilities first, use the narrowest working protocol, and never expose secrets.
 
-The canonical public host is `https://ai.vivid.fish`. The older `https://openai.vivid.fish` host is kept as a compatibility alias so existing OpenAI-shaped client configs keep working unchanged — prefer the canonical host for new setups, but never rewrite a working app's base URL just because it points at the alias.
+Set `BASE` to the operator's chosen gateway host, such as `http://127.0.0.1:5000`
+for a local install or `https://ai.example.com` for a public deployment. Keep a
+working app's base URL when it uses an operator-supported compatibility alias.
 
 ## Discover First
 
@@ -118,5 +120,5 @@ Example JSON body shape:
 - Assuming a model or modality exists because OpenAI has it.
 - Assuming Ollama model mutation routes pull/create/delete local files; they return unsupported-operation by design. Manage model files on the backend that owns them.
 - Sending ComfyUI-specific knobs as random top-level OpenAI fields. Put gateway workflow controls under `extensions.com.vividfish.workflow` when a manifest supports them.
-- Rewriting a working app from `openai.vivid.fish` to `ai.vivid.fish` purely for cosmetic reasons — the alias is supported and changing it churns user config.
+- Rewriting a working app's hostname purely for cosmetic reasons when the operator still supports its compatibility alias.
 - Reading secret files to "check" credentials.

@@ -2,9 +2,9 @@
 
 Date: 2026-05-15
 Status: recommendation plus live vertical-slice checkpoint
-Product: **Vivid Fish AI Gateway** (the "AI Gateway"). Canonical host
-`https://ai.vivid.fish`. The historical `https://openai.vivid.fish` host is a
-preserved compatibility alias and resolves to the same routes.
+Product: **Vivid Fish AI Gateway** (the "AI Gateway"). Example public host:
+`https://ai.example.com`. Keep old hostnames as compatibility aliases until
+configured apps have moved.
 
 This document is the product and architecture recommendation for evolving
 the codebase still known internally as `openai-proxy` into the local-first
@@ -915,7 +915,7 @@ The self-hoster-friendly flow that this architecture must support end-to-end:
 4. **App API key.** The owner mints an App Credential through `/admin/api`
    (`POST /admin/api/apps/{app_id}/keys`). The returned `opk_...` value is
    shown once and pasted into the App's config with base URL
-   `https://ai.vivid.fish/openai/v1` (`/v1` remains a convenience route).
+   `https://ai.example.com/openai/v1` (`/v1` remains a convenience route).
 
 Rotation is per-App; the User and Profile survive key rotation. Dashboard
 key-minting should inherit the App's current Profile by default. Per-key
