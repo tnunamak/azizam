@@ -49,7 +49,7 @@ class NoShuffle:
 
 
 class LlamaServerClient(decision_engine.OptionScorer):
-    def __init__(self, *, base_url: str, gguf: str) -> None:
+    def __init__(self, *, base_url: str, gguf: str, ctx_tokens: int) -> None:
         try:
             from decider.prompt import MAX_OPTIONS, build, letter_ids
             from decider import temperature as decider_temperature
@@ -65,6 +65,7 @@ class LlamaServerClient(decision_engine.OptionScorer):
             raise RuntimeError("numpy is required for live probability readout") from exc
 
         self.base_url = base_url.rstrip("/")
+        self.ctx_tokens = ctx_tokens
         self._decider_temperature = decider_temperature
         self._build = build
         self._max_options = MAX_OPTIONS
@@ -86,42 +87,44 @@ class LlamaServerClient(decision_engine.OptionScorer):
     def usage(self) -> dict[str, int]:
         return {"input_tokens": self.input_tokens, "output_tokens": self.output_tokens}
 
-    def score_options(self, ctx: decision_engine.ScoreContext) -> Mapping[str, float]:
+    def score_options(self, ctx: decision_engine.ScoreContext) -> Mapping[int, float]:
         with self._lock:
             item = self._build(
                 PromptExample(_render_state(ctx.state), [PromptQuestion(ctx.question, list(ctx.options), 0)]),
                 self.tokenizer,
                 NoShuffle(),
                 max_options=self._max_options,
-                max_ctx_tokens=32768,
+                max_ctx_tokens=self.ctx_tokens,
             )
             slot = item["slots"][0]
             option_count = item["nopts"][0]
             prompt_ids = [int(token_id) for token_id in item["ids"][: slot + 1]]
+            if len(prompt_ids) > self.ctx_tokens:
+                raise decision_engine.DecisionInputError(
+                    f"decision prompt has {len(prompt_ids)} tokens; runtime context is {self.ctx_tokens}",
+                    code="context_length_exceeded",
+                    param="state",
+                )
             payload = {
                 "prompt": prompt_ids,
                 "n_predict": 1,
                 "n_probs": max(100, min(255, option_count)),
+                "logit_bias": [[self.letter_ids[index], 100.0] for index in range(option_count)],
                 "cache_prompt": True,
                 "temperature": 0,
                 "post_sampling_probs": False,
             }
             raw = self._post("/completion", payload)
-            timings = raw.get("timings") if isinstance(raw, Mapping) else None
-            prompt_n = timings.get("prompt_n") if isinstance(timings, Mapping) else None
-            if isinstance(prompt_n, int):
-                self.input_tokens += prompt_n
-            else:
-                self.input_tokens += len(prompt_ids)
+            self.input_tokens += len(prompt_ids)
             self.output_tokens += 1
         top_logprobs = raw["completion_probabilities"][0]["top_logprobs"]
         by_token = {int(entry["id"]): float(entry["logprob"]) for entry in top_logprobs}
         temperature = self._decider_temperature.for_types(self.T, self.T_by_type, [ctx.kind])[0]
-        out: dict[str, float] = {}
+        out: dict[int, float] = {}
         for index, option in enumerate(ctx.options[:option_count]):
             token_id = self.letter_ids[index]
             if token_id in by_token:
-                out[option] = by_token[token_id] / float(temperature)
+                out[index] = by_token[token_id] / float(temperature)
         return out
 
     def _post(self, path: str, body: Mapping[str, Any]) -> dict[str, Any]:
@@ -134,10 +137,25 @@ class LlamaServerClient(decision_engine.OptionScorer):
             return json.loads(resp.read())
 
 
+def _annotate_indices(value: Any, min_len: int = 8) -> Any:
+    if isinstance(value, list):
+        if len(value) >= min_len:
+            return [
+                {"_index": index, **_annotate_indices(item, min_len)}
+                if isinstance(item, dict)
+                else {"_index": index, "value": _annotate_indices(item, min_len)}
+                for index, item in enumerate(value)
+            ]
+        return [_annotate_indices(item, min_len) for item in value]
+    if isinstance(value, dict):
+        return {key: _annotate_indices(item, min_len) for key, item in value.items()}
+    return value
+
+
 def _render_state(state: Any) -> str:
     if isinstance(state, str):
         return state
-    return json.dumps(state, ensure_ascii=False, separators=(",", ":"))
+    return json.dumps(_annotate_indices(state), ensure_ascii=False)
 
 
 class TokenizerAdapter:
@@ -155,6 +173,8 @@ class Handler(BaseHTTPRequestHandler):
     engine: str
     placement: str
     residency: str
+    request_lock = threading.Lock()
+    admission = threading.BoundedSemaphore(5)
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/health":
@@ -178,45 +198,77 @@ class Handler(BaseHTTPRequestHandler):
         if self.path not in {"/v1/systemone", "/typesafe/v1/systemone"}:
             self._json(404, decision_engine.error_body("Not found.", code="not_found"))
             return
+        admitted = self.admission.acquire(blocking=False)
+        if not admitted:
+            self._json(
+                529,
+                decision_engine.error_body("Decision engine queue is full.", code="overloaded", kind="server_error"),
+                headers={"Retry-After": "1"},
+            )
+            return
         try:
             length = int(self.headers.get("content-length") or "0")
             body = json.loads(self.rfile.read(length) or b"{}")
             req = decision_engine.parse_request(body)
             started = time.perf_counter()
-            out = decision_engine.build_systemone_response(
-                req,
-                self.scorer,
-                model=self.model_id,
-                engine=self.engine,
-                placement=self.placement,
-                residency=self.residency,
-                start_time=started,
-            )
+            with self.request_lock:
+                out = decision_engine.build_systemone_response(
+                    req,
+                    self.scorer,
+                    model=self.model_id,
+                    engine=self.engine,
+                    placement=self.placement,
+                    residency=self.residency,
+                    start_time=started,
+                )
             self._json(200, out)
         except decision_engine.DecisionInputError as exc:
             self._json(422, decision_engine.error_body(str(exc), code=exc.code, param=exc.param))
         except Exception as exc:
             self._json(502, decision_engine.error_body(str(exc), code="decision_engine_error", kind="server_error"))
+        finally:
+            self.admission.release()
 
     def log_message(self, fmt: str, *args: Any) -> None:
         print(f"{self.address_string()} - {fmt % args}", file=sys.stderr)
 
-    def _json(self, status: int, body: Mapping[str, Any]) -> None:
+    def _json(self, status: int, body: Mapping[str, Any], headers: Mapping[str, str] | None = None) -> None:
         data = json.dumps(body).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("x-vivid-engine", self.engine)
         self.send_header("x-decision-engine", self.engine)
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(data)
 
 
 def main() -> int:
     args = parse_args()
-    llama = start_llama(args)
+    server: ThreadingHTTPServer | None = None
+    current_process: dict[str, subprocess.Popen[Any] | None] = {"process": None}
+
+    def stop(_signum: int, _frame: Any) -> None:
+        proc = current_process.get("process")
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=10)
+        if server is not None:
+            threading.Thread(target=server.shutdown, daemon=True).start()
+        else:
+            raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    llama = start_llama(args, current_process=current_process)
     try:
-        scorer = LlamaServerClient(base_url=f"http://127.0.0.1:{args.llama_port}", gguf=args.model)
+        scorer = LlamaServerClient(base_url=f"http://127.0.0.1:{args.llama_port}", gguf=args.model, ctx_tokens=args.ctx)
         Handler.scorer = scorer
         Handler.model_id = args.model_id
         Handler.engine = llama["engine"]
@@ -234,7 +286,7 @@ def main() -> int:
     return 0
 
 
-def start_llama(args: argparse.Namespace) -> dict[str, Any]:
+def start_llama(args: argparse.Namespace, *, current_process: dict[str, subprocess.Popen[Any] | None] | None = None) -> dict[str, Any]:
     attempts = _placement_attempts(args.placement)
     last_error = ""
     for engine, placement, cuda_visible, ngl in attempts:
@@ -259,6 +311,8 @@ def start_llama(args: argparse.Namespace) -> dict[str, Any]:
             "--no-webui",
         ]
         proc = subprocess.Popen(cmd, env=env, stdout=sys.stderr, stderr=sys.stderr)
+        if current_process is not None:
+            current_process["process"] = proc
         if wait_health(args.llama_port, args.startup_timeout_s):
             return {"process": proc, "engine": engine, "placement": placement}
         last_error = f"{engine} llama-server did not become healthy"
@@ -267,6 +321,9 @@ def start_llama(args: argparse.Namespace) -> dict[str, Any]:
             proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             proc.kill()
+        finally:
+            if current_process is not None and current_process.get("process") is proc:
+                current_process["process"] = None
     raise RuntimeError(last_error)
 
 

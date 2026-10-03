@@ -64,8 +64,8 @@ class ScoreContext:
 class OptionScorer(Protocol):
     """One-pass scorer used by the engine wrapper and fake tests."""
 
-    def score_options(self, ctx: ScoreContext) -> Mapping[str, float]:
-        """Return log probabilities keyed by option label."""
+    def score_options(self, ctx: ScoreContext) -> Mapping[Any, float]:
+        """Return log probabilities keyed by stable option index."""
 
 
 def parse_request(body: Any) -> DecisionRequest:
@@ -244,11 +244,10 @@ def build_systemone_response(
     answers: dict[str, Any] = {}
     for question, start, count, kind in index:
         if kind == "isolated_score":
-            distribution = _combine_isolated([flat[start + offset]["yes"] for offset in range(count)])
+            distribution = _combine_isolated([flat[start + offset][1] for offset in range(count)])
             answers[question.key] = _score_answer(question, distribution)
         else:
-            probs = [flat[start][option] for option in question.options]
-            answers[question.key] = _answer_for_question(question, probs)
+            answers[question.key] = _answer_for_question(question, flat[start])
 
     scorer_usage = getattr(scorer, "usage", None)
     usage_body = scorer_usage() if callable(scorer_usage) else usage
@@ -272,14 +271,14 @@ def build_systemone_response(
     }
 
 
-def probabilities_from_logprobs(logprobs: Mapping[str, float], options: tuple[str, ...]) -> dict[str, float]:
+def probabilities_from_logprobs(logprobs: Mapping[Any, float], options: tuple[str, ...]) -> list[float]:
     if not options:
         raise ValueError("options must not be empty")
     values = []
-    for option in options:
-        if option not in logprobs:
+    for index, option in enumerate(options):
+        if index not in logprobs:
             raise DecisionReadoutError(f"missing logprob for option {option!r}")
-        raw = logprobs[option]
+        raw = logprobs[index]
         if isinstance(raw, bool) or not isinstance(raw, (int, float)) or math.isnan(float(raw)):
             raise DecisionReadoutError(f"invalid logprob for option {option!r}")
         values.append(float(raw))
@@ -288,7 +287,7 @@ def probabilities_from_logprobs(logprobs: Mapping[str, float], options: tuple[st
     total = sum(weights)
     if not math.isfinite(total) or total <= 0:
         raise DecisionReadoutError("logprobs produced an invalid probability total")
-    return {option: weight / total for option, weight in zip(options, weights)}
+    return [weight / total for weight in weights]
 
 
 def _clip01(value: float) -> float:

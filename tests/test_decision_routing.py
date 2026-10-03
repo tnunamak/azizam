@@ -98,7 +98,7 @@ def test_receipt_metadata_visible_and_scrubbed():
     receipt = RouteReceipt(protocol="typesafe.systemone", path="/v1/systemone", intent="decision.systemone")
     receipt.metadata["decisions"] = {"question_count": 2, "engine": "cpu", "remote": False, "cost_usd": 0, "secret": "never expose"}
     for audience in ("client", "admin"):
-        assert receipt.to_summary(audience=audience)["decisions"] == {"question_count": 2, "engine": "cpu", "remote": False, "cost_usd": 0.0}
+        assert receipt.to_dict(audience=audience)["decisions"] == {"question_count": 2, "engine": "cpu", "remote": False, "cost_usd": 0.0}
 
 
 def test_mounted_gateway_path_and_owned_receipt(monkeypatch):
@@ -121,3 +121,57 @@ def test_mounted_gateway_path_and_owned_receipt(monkeypatch):
     assert records[0].requested_model == "decide"
     assert records[0].resolved_model == "small-v1"
     assert records[0].metadata["decisions"]["question_count"] == 1
+
+
+def test_existing_only_plan_never_starts_service():
+    from types import SimpleNamespace
+    ensure = AsyncMock(return_value=None)
+    rt = runtime(ensure=ensure)
+    real = httpx.AsyncClient
+    profile = SimpleNamespace(target_policy=SimpleNamespace(activation="existing_only"))
+    with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(503, json={})))):
+        with pytest.raises(DecisionsError) as error:
+            asyncio.run(rt.dispatch(None, profile, BODY, "r"))
+    assert error.value.status == 529 and error.value.headers["retry-after"] == "5"
+    ensure.assert_not_called()
+
+
+def test_available_only_models_hide_cold_engines():
+    from types import SimpleNamespace
+    rt = runtime()
+    rt.observed = {key: (__import__('time').monotonic(), None) for key in config()["backends"]}
+    profile = SimpleNamespace(target_policy=SimpleNamespace(visibility="available"))
+    assert rt.models_for(None, profile) == []
+
+
+def test_receipt_usage_rejects_untrusted_fields():
+    receipt = RouteReceipt(protocol="typesafe.systemone", path="/v1/systemone", intent="decision.systemone")
+    receipt.metadata["decisions"] = {"question_count": 1, "engine": "cpu", "remote": False, "cost_usd": 0,
+                                     "usage": {"input_tokens": 8, "output_tokens": 0, "key": "untrusted"}}
+    assert receipt.to_dict(audience="client")["decisions"]["usage"] == {"input_tokens": 8, "output_tokens": 0}
+
+
+def test_persisted_receipt_client_reads_cost_and_usage(tmp_path):
+    from gateway import receipt_store
+    db = tmp_path / "receipts.db"
+    receipt_store.init_db(path=db)
+    receipt = RouteReceipt(protocol="typesafe.systemone", path="/v1/systemone", intent="decision.systemone", app_id="owner")
+    receipt.metadata["decisions"] = {"question_count": 1, "engine": "cpu", "remote": False, "cost_usd": 0,
+                                     "usage": {"input_tokens": 9, "output_tokens": 0}}
+    receipt.finish("ok")
+    receipt_store.record(receipt, path=db)
+    stored = receipt_store.get(receipt.request_id, path=db, audience="client")
+    assert stored["decisions"]["cost_usd"] == 0
+    assert stored["decisions"]["usage"]["input_tokens"] == 9
+
+
+def test_default_bootstrap_aliases_use_cpu_on_demand():
+    from pathlib import Path
+    import yaml
+    cfg = yaml.safe_load((Path(__file__).resolve().parents[1] / "proxy_config.yml").read_text())
+    assert validate_aliases(cfg["model_aliases"]) == []
+    for alias in ("decide", "decide-quality", "jev-latest"):
+        resolved = resolve_alias(cfg["model_aliases"], "decisions", alias)
+        assert resolved.engine_spec["placement"] == "cpu"
+        assert resolved.engine_spec["residency"] == "on_demand"
+        assert cfg["backends"][resolved.service]["lifecycle"]["driver"] == "systemd"

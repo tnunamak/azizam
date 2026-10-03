@@ -100,12 +100,6 @@ class Capability:
 
     intent: str
     backend: str
-    backend_kind: str | None = None
-    cost_class: str | None = None
-    engine: str | None = None
-    latency_class: str | None = None
-    calibrated: bool | None = None
-    reason: str | None = None
     model: str | None = None
     workflow: str | None = None
     input_modalities: tuple[str, ...] = ()
@@ -126,6 +120,12 @@ class Capability:
     # Published numeric/string limits as (name, value) pairs (kept a tuple so the record stays
     # hashable). Video capabilities carry ``max_total_seconds`` and ``segment_seconds`` here.
     limits: tuple[tuple[str, Any], ...] = ()
+    backend_kind: str | None = None
+    cost_class: str | None = None
+    engine: str | None = None
+    latency_class: str | None = None
+    calibrated: bool | None = None
+    reason: str | None = None
 
     def __post_init__(self) -> None:
         if self.execution not in EXECUTION_MODES:

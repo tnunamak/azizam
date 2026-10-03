@@ -13215,7 +13215,10 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
     ))
 
     capabilities.extend(build_alias_capabilities(_gateway_aliases_provider()))
-    capabilities.extend(DECISION_RUNTIME.capabilities())
+    decision_capabilities = DECISION_RUNTIME.capabilities()
+    if _profile_target_visibility(auth_context) == "available":
+        decision_capabilities = [cap for cap in decision_capabilities if cap.engine is not None]
+    capabilities.extend(decision_capabilities)
 
     for record in GATEWAY_WORKFLOW_REGISTRY.records():
         for backend in record.supported_backends:
@@ -13621,7 +13624,11 @@ def _decision_authorized(auth: AuthContext, model: str, service: str | None) -> 
         backend=service, capability_exposure="default", capability_trust_tier="stable",
         capability_resource_tier="interactive",
     ))
-    return not decision.denied
+    if decision.denied:
+        return False
+    if _profile_target_activation(auth) == "existing_only":
+        return bool(service and DECISION_RUNTIME.observed_engine(service, fresh=True) is not None)
+    return True
 
 
 async def _decision_ensure_ready(service: str) -> Response | None:
@@ -13641,12 +13648,16 @@ def _record_decision_receipt(auth: AuthContext, result: decisions_api.DecisionRe
         app_id=identity.app_id if identity else None,
         api_key_name=identity.name if identity else None,
     )
-    receipt.latency_ms = result.latency_ms
-    receipt.status = "ok" if result.status_code < 400 else "rejected" if result.status_code < 500 else "error"
+    receipt.begin(now_ms=int(time.time() * 1000 - result.latency_ms))
+    receipt.finish("ok" if result.status_code < 400 else "rejected" if result.status_code < 500 else "error",
+                   latency_ms=result.latency_ms)
     receipt.fallback_reasons = list(result.fallback_reasons)
+    receipt.metadata["status_code"] = result.status_code
+    if result.error_code:
+        receipt.reject_input(result.error_param or "request", result.error_code)
     receipt.metadata["decisions"] = {
         "question_count": result.question_count, "engine": result.engine,
-        "remote": result.remote, "cost_usd": result.cost_usd,
+        "remote": result.remote, "cost_usd": result.cost_usd, "usage": dict(result.usage or {}),
     }
     receipt_store.record(receipt)
 
@@ -22955,7 +22966,7 @@ async def list_models(request: Request):
         if desc:
             item["description"] = desc
 
-    for decision_model in await asyncio.to_thread(DECISION_RUNTIME.models_for, auth_context):
+    for decision_model in await asyncio.to_thread(DECISION_RUNTIME.models_for, auth_context, _profile_for_auth_context(auth_context)):
         entry = {"id": decision_model.id, "object": "model", "owned_by": "vivid-fish",
                  "created": 0, "capabilities": decision_model.view()["capabilities"]}
         if entry["id"] not in {item.get("id") for item in data if isinstance(item, dict)}:

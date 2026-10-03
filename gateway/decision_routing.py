@@ -39,9 +39,9 @@ class DecisionRuntime:
             raise DecisionsError(422, "invalid_model", "This decision model is not configured.", param="model")
         return result
 
-    def observed_engine(self, service_id: str) -> str | None:
+    def observed_engine(self, service_id: str, *, fresh: bool = False) -> str | None:
         cached = self.observed.get(service_id)
-        if cached is not None and time.monotonic() - cached[0] < 10:
+        if not fresh and cached is not None and time.monotonic() - cached[0] < 10:
             return cached[1]
         service = self.config().get("backends", {}).get(service_id, {})
         engine = None
@@ -74,6 +74,9 @@ class DecisionRuntime:
                 continue
             spec = resolved.engine_spec or {}
             engine = self.observed_engine(str(resolved.service))
+            target_policy = getattr(_profile, "target_policy", None)
+            if getattr(target_policy, "visibility", "catalog") == "available" and engine is None:
+                continue
             rows.append(DecisionModel(
                 id=name, root=resolved.upstream_model, backend=resolved.service, engine=engine,
                 limits={key: spec[key] for key in ("max_options", "max_levels", "max_state_tokens", "context_tokens") if key in spec},
@@ -117,14 +120,18 @@ class DecisionRuntime:
         for engine_id, service_id in candidates:
             if time.monotonic() >= deadline:
                 break
-            if not self.authorize(auth, body["model"], service_id):
+            if not await asyncio.to_thread(self.authorize, auth, body["model"], service_id):
                 raise DecisionsError(403, "permission_denied", "Your access plan does not allow this decision model.")
             service = self.config().get("backends", {}).get(service_id, {})
             # Only free local services are admitted here. Paid forwarding belongs to the provider hook.
             if service.get("cost_class", "free-local") != "free-local" or service.get("kind") == "provider":
                 raise DecisionsError(403, "remote_provider_not_allowed", "This dispatcher only serves configured local decision engines.")
             try:
-                readiness = await asyncio.wait_for(self.ensure_ready(service_id), max(0.001, deadline - time.monotonic()))
+                policy = getattr(_profile, "target_policy", None)
+                if getattr(policy, "activation", "may_activate") == "existing_only":
+                    readiness = None  # Authorization probed it; never activate a cold service for this plan.
+                else:
+                    readiness = await asyncio.wait_for(self.ensure_ready(service_id), max(0.001, deadline - time.monotonic()))
             except TimeoutError:
                 readiness = False
             if readiness is not None:

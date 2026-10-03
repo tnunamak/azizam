@@ -106,7 +106,14 @@ def _sanitize_decision_metadata(value: Any) -> dict[str, Any] | None:
     engine = value.get("engine")
     if engine not in (None, "cpu", "gpu"):
         return None
-    return {"question_count": count, "engine": engine, "remote": False, "cost_usd": 0.0}
+    out = {"question_count": count, "engine": engine, "remote": False, "cost_usd": 0.0}
+    usage = value.get("usage")
+    if isinstance(usage, Mapping):
+        safe_usage = {key: usage[key] for key in ("input_tokens", "output_tokens")
+                      if type(usage.get(key)) is int and usage[key] >= 0}
+        if safe_usage:
+            out["usage"] = safe_usage
+    return out
 
 
 def sanitize_admin_metadata(metadata: Any) -> dict[str, Any]:

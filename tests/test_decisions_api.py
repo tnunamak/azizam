@@ -177,6 +177,7 @@ def test_systemone_accepts_typesafe_noul_fixture_and_records_receipt(env):
     assert receipt.question_count == 1
     assert receipt.cost_usd == 0.0
     assert receipt.engine == "cpu"
+    assert receipt.usage == {"input_tokens": 307, "output_tokens": 20}
 
 
 def test_typesafe_prefixed_systemone_accepts_choice_and_score_fixture(env):
@@ -236,9 +237,30 @@ def test_unknown_top_level_and_question_fields_are_rejected(env):
     assert resp.json()["error"]["param"] == "questions.is_urgent.max_tokens"
 
 
+def test_validation_handles_non_string_type_and_criteria_only_noul(env):
+    body = _fixture("typesafe_systemone_noul.json")["request"]
+    body["questions"]["is_urgent"]["type"] = ["noul"]
+    resp = env.client.post("/v1/systemone", json=body, headers=H)
+    assert resp.status_code == 422
+    assert resp.json()["error"]["param"] == "questions.is_urgent.type"
+
+    body = _fixture("typesafe_systemone_noul.json")["request"]
+    del body["questions"]["is_urgent"]["instructions"]
+    resp = env.client.post("/v1/systemone", json=body, headers=H)
+    assert resp.status_code == 200
+
+    body = _fixture("typesafe_systemone_noul.json")["request"]
+    body["questions"]["is_urgent"]["criteria"]["true"] = 1
+    resp = env.client.post("/v1/systemone", json=body, headers=H)
+    assert resp.status_code == 422
+    assert resp.json()["error"]["param"] == "questions.is_urgent.criteria.true"
+
+
 def test_authentication_runs_before_models_and_systemone(env):
     assert env.client.get("/typesafe/v1/models").status_code == 401
-    assert env.client.post("/v1/systemone", json=_fixture("typesafe_systemone_noul.json")["request"]).status_code == 401
+    resp = env.client.post("/v1/systemone", json=_fixture("typesafe_systemone_noul.json")["request"])
+    assert resp.status_code == 401
+    assert resp.headers["x-gateway-request-id"].startswith("req_")
 
 
 def test_policy_denial_from_dispatch_is_safe_error(env):
@@ -286,6 +308,24 @@ def test_backend_exception_does_not_leak_details(env):
     assert env.fakes.receipts[0][1].error_code == "decision_backend_error"
 
 
+@pytest.mark.parametrize("status,headers", [(422, {}), (429, {"retry-after": "3"}), (529, {"retry-after": "5"})])
+def test_backend_error_statuses_are_relayed_without_response_validation(env, status, headers):
+    body = {"error": {"type": "invalid_request_error", "message": "backend says no", "code": "backend_code"}}
+    env.fakes.reply = lambda _body: DecisionDispatchResult(
+        body=body,
+        status_code=status,
+        headers=headers,
+        backend="decider-cpu",
+    )
+    resp = env.client.post("/v1/systemone", json=_fixture("typesafe_systemone_noul.json")["request"], headers=H)
+    assert resp.status_code == status
+    assert resp.json() == body
+    assert resp.headers["x-gateway-request-id"].startswith("req_")
+    for key, value in headers.items():
+        assert resp.headers[key] == value
+    assert env.fakes.receipts[0][1].status_code == status
+
+
 def test_invalid_backend_response_is_rejected_before_client_response(env):
     env.fakes.reply = lambda _body: DecisionDispatchResult(
         body={"model": "decider-test", "answers": {"q": {"noul": 0.5}}, "usage": {"input_tokens": 1, "output_tokens": 0}},
@@ -295,6 +335,62 @@ def test_invalid_backend_response_is_rejected_before_client_response(env):
     assert resp.status_code == 502
     assert resp.json()["error"]["code"] == "decision_backend_error"
     assert env.fakes.receipts[0][1].error_code == "decision_backend_error"
+
+
+def test_invalid_backend_numbers_do_not_become_json_500(env):
+    fixture = _fixture("typesafe_systemone_noul.json")
+    bad = json.loads(json.dumps(fixture["response"]))
+    bad["answers"]["is_urgent"]["noul"] = float("nan")
+    env.fakes.reply = lambda _body: DecisionDispatchResult(body=bad, backend="decider-cpu")
+    resp = env.client.post("/v1/systemone", json=fixture["request"], headers=H)
+    assert resp.status_code == 502
+    assert resp.json()["error"]["code"] == "decision_backend_error"
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda body: body["answers"].pop("frustration"),
+        lambda body: body["answers"]["department"].update({"type": "score"}),
+        lambda body: body["answers"]["department"].update({"choice": "support"}),
+        lambda body: body["answers"]["department"].update({"probabilities": {"billing": 0.4, "technical": 0.4, "sales": 0.4}}),
+        lambda body: body["answers"]["department"].update({"confidence": 1.2}),
+        lambda body: body["answers"]["frustration"].update({"score": 3.1}),
+        lambda body: body["answers"]["frustration"].update({"legend": {"0": "Calm", "1": "Frustrated"}}),
+        lambda body: body["answers"]["frustration"].update({"probabilities": {"0": 0.5, "1": 0.5}}),
+        lambda body: body["usage"].update({"input_tokens": -1}),
+    ],
+)
+def test_backend_response_must_match_request_shape_and_domains(env, mutate):
+    fixture = _fixture("typesafe_systemone_choice_score.json")
+    bad = json.loads(json.dumps(fixture["response"]))
+    mutate(bad)
+    env.fakes.reply = lambda _body: DecisionDispatchResult(body=bad, backend="decider-cpu")
+    resp = env.client.post("/v1/systemone", json=fixture["request"], headers=H)
+    assert resp.status_code == 502
+    assert resp.json()["error"]["code"] == "decision_backend_error"
+
+
+def test_sync_dependency_returning_awaitable_is_awaited(env):
+    async def models_result():
+        return [DecisionModel(id="decide", root="decider-2b-v11")]
+
+    def models_for(_auth, _profile):
+        return models_result()
+
+    app = FastAPI()
+    register_decision_routes(
+        app,
+        DecisionsApiDeps(
+            authenticate=env.fakes.authenticate,
+            profile_for=env.fakes.profile_for,
+            models_for=models_for,
+            dispatch=env.fakes.dispatch,
+        ),
+    )
+    resp = TestClient(app).get("/typesafe/v1/models", headers=H)
+    assert resp.status_code == 200
+    assert resp.json()["models"][0]["name"] == "decide"
 
 
 def test_receipt_callback_failure_does_not_break_success(env):

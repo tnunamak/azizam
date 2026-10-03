@@ -4,12 +4,17 @@ set -u
 : "${DECIDER_PORT:?}" "${DECIDER_MODEL:?}" "${LLAMA_SERVER:?}"
 idle_limit=${DECIDER_IDLE_EXIT_S:-600}
 poll=10
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+repo_root=$(cd -- "$script_dir/.." && pwd -P)
+decider_python=${DECIDER_PYTHON:-"$repo_root/venv/bin/python"}
 
 if [[ ${DECIDER_RESIDENCY:-on_demand} == "resident" ]]; then
-  exec "$(dirname "$0")/../engines/decision_engine_server.py"
+  cd "$repo_root"
+  exec "$decider_python" "$repo_root/engines/decision_engine_server.py"
 fi
 
-"$(dirname "$0")/../engines/decision_engine_server.py" &
+cd "$repo_root"
+"$decider_python" "$repo_root/engines/decision_engine_server.py" &
 server=$!
 trap 'kill "$server" 2>/dev/null; wait "$server" 2>/dev/null; exit 0' TERM INT
 

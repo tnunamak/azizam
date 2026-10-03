@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import inspect
 import asyncio
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Mapping, Sequence
@@ -129,6 +130,7 @@ class DecisionReceipt:
     fallback_reasons: Sequence[str] = field(default_factory=tuple)
     error_code: str | None = None
     error_param: str | None = None
+    usage: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -190,6 +192,7 @@ def _receipt(
     fallback_reasons: Sequence[str] = (),
     error_code: str | None = None,
     error_param: str | None = None,
+    usage: Mapping[str, Any] | None = None,
 ) -> DecisionReceipt:
     return DecisionReceipt(
         protocol="typesafe.systemone",
@@ -208,6 +211,7 @@ def _receipt(
         fallback_reasons=tuple(fallback_reasons),
         error_code=error_code,
         error_param=error_param,
+        usage=usage,
     )
 
 
@@ -251,10 +255,8 @@ def _validate_question(question_id: str, question: Mapping[str, Any]) -> JSON:
     _reject_unknown_fields(question, {"type", "instructions", "criteria"}, f"questions.{question_id}")
     qtype = question.get("type")
     param = f"questions.{question_id}"
-    if qtype not in {"noul", "choice", "score"}:
+    if not isinstance(qtype, str) or qtype not in {"noul", "choice", "score"}:
         raise DecisionsError(422, "invalid_question_type", "question type must be noul, choice, or score.", param=f"{param}.type")
-    if not _is_structured_text(question.get("instructions")):
-        raise DecisionsError(422, "invalid_instructions", "instructions is required.", param=f"{param}.instructions")
 
     if qtype == "noul":
         criteria = question.get("criteria")
@@ -264,7 +266,14 @@ def _validate_question(question_id: str, question: Mapping[str, Any]) -> JSON:
             for key in criteria:
                 if key not in {"true", "false"}:
                     raise DecisionsError(422, "invalid_criteria", "noul criteria may only contain true and false.", param=f"{param}.criteria")
+                if not _is_structured_text(criteria[key]):
+                    raise DecisionsError(422, "invalid_criteria", "noul criteria values must be strings, objects, or arrays.", param=f"{param}.criteria.{key}")
+        if not _is_structured_text(question.get("instructions")) and not criteria:
+            raise DecisionsError(422, "invalid_instructions", "instructions or non-empty criteria is required.", param=f"{param}.instructions")
         return dict(question)
+
+    if not _is_structured_text(question.get("instructions")):
+        raise DecisionsError(422, "invalid_instructions", "instructions is required.", param=f"{param}.instructions")
 
     if qtype == "choice":
         criteria = question.get("criteria")
@@ -325,10 +334,10 @@ async def _maybe_await(value: Any) -> Any:
 async def _call_maybe_async(func: Callable[..., Any], *args: Any) -> Any:
     if inspect.iscoroutinefunction(func):
         return await func(*args)
-    return await asyncio.to_thread(func, *args)
+    return await _maybe_await(await asyncio.to_thread(func, *args))
 
 
-def validate_systemone_response(body: Mapping[str, Any]) -> None:
+def validate_systemone_response(body: Mapping[str, Any], request_body: Mapping[str, Any]) -> None:
     if not isinstance(body.get("model"), str) or not body["model"]:
         raise BackendShapeError("response.model must be a non-empty string")
     usage = body.get("usage")
@@ -341,48 +350,97 @@ def validate_systemone_response(body: Mapping[str, Any]) -> None:
     answers = body.get("answers")
     if not isinstance(answers, Mapping):
         raise BackendShapeError("response.answers must be an object")
+    questions = request_body.get("questions")
+    if not isinstance(questions, Mapping):
+        raise BackendShapeError("request questions missing")
+    if set(answers) != set(questions):
+        raise BackendShapeError("response.answers keys must match request questions")
     for answer_id, answer in answers.items():
         if not isinstance(answer_id, str) or not isinstance(answer, Mapping):
             raise BackendShapeError("response.answers must map ids to answer objects")
+        question = questions[answer_id]
         atype = answer.get("type")
+        if atype != question.get("type"):
+            raise BackendShapeError("answer.type must match question.type")
         if atype == "noul":
-            _expect_number(answer, "noul")
+            _expect_probability(answer, "noul")
         elif atype == "choice":
             if not isinstance(answer.get("choice"), str):
                 raise BackendShapeError("choice answer requires a string choice")
-            _expect_number(answer, "confidence")
-            _expect_probabilities(answer)
+            criteria = question.get("criteria")
+            if not isinstance(criteria, Mapping):
+                raise BackendShapeError("choice request criteria missing")
+            if answer["choice"] not in criteria:
+                raise BackendShapeError("choice answer choice must be one of request criteria")
+            _expect_probability(answer, "confidence")
+            _expect_probabilities(answer, set(criteria), normalize_keys=False)
         elif atype == "score":
-            _expect_number(answer, "score")
-            _expect_number(answer, "confidence")
-            if not isinstance(answer.get("legend"), Mapping):
+            criteria = question.get("criteria")
+            if not isinstance(criteria, list):
+                raise BackendShapeError("score request criteria missing")
+            score = _expect_number(answer, "score")
+            if not 0 <= score <= len(criteria) - 1:
+                raise BackendShapeError("score answer must be within rubric range")
+            _expect_probability(answer, "confidence")
+            legend = answer.get("legend")
+            if not isinstance(legend, Mapping):
                 raise BackendShapeError("score answer requires legend")
-            _expect_probabilities(answer)
+            expected = {str(i) for i in range(len(criteria))}
+            if {_score_key(k) for k in legend} != expected:
+                raise BackendShapeError("score legend keys must match rubric indexes")
+            _expect_probabilities(answer, expected, normalize_keys=True)
         else:
             raise BackendShapeError("answer.type must be noul, choice, or score")
 
 
-def _expect_number(value: Mapping[str, Any], key: str) -> None:
+def _expect_number(value: Mapping[str, Any], key: str) -> float:
     raw = value.get(key)
-    if not isinstance(raw, (int, float)) or isinstance(raw, bool):
+    if not isinstance(raw, (int, float)) or isinstance(raw, bool) or not math.isfinite(float(raw)):
         raise BackendShapeError(f"answer.{key} must be a number")
+    return float(raw)
 
 
-def _expect_probabilities(value: Mapping[str, Any]) -> None:
+def _expect_probability(value: Mapping[str, Any], key: str) -> float:
+    raw = _expect_number(value, key)
+    if not 0 <= raw <= 1:
+        raise BackendShapeError(f"answer.{key} must be between 0 and 1")
+    return raw
+
+
+def _score_key(value: Any) -> str:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    if isinstance(value, str) and value.isdigit():
+        return str(int(value))
+    return str(value)
+
+
+def _expect_probabilities(value: Mapping[str, Any], expected_keys: set[str], *, normalize_keys: bool) -> None:
     probabilities = value.get("probabilities")
     if not isinstance(probabilities, Mapping) or not probabilities:
         raise BackendShapeError("answer.probabilities must be a non-empty object")
+    normalized_keys = {_score_key(k) for k in probabilities} if normalize_keys else set(probabilities)
+    if normalized_keys != expected_keys:
+        raise BackendShapeError("answer.probabilities keys must match request criteria")
+    total = 0.0
     for probability in probabilities.values():
-        if not isinstance(probability, (int, float)) or isinstance(probability, bool):
-            raise BackendShapeError("answer.probabilities values must be numbers")
+        if not isinstance(probability, (int, float)) or isinstance(probability, bool) or not math.isfinite(float(probability)):
+            raise BackendShapeError("answer.probabilities values must be finite numbers")
+        if not 0 <= float(probability) <= 1:
+            raise BackendShapeError("answer.probabilities values must be between 0 and 1")
+        total += float(probability)
+    tolerance = max(len(probabilities) * 0.0001, 0.0001)
+    if abs(total - 1.0) > tolerance:
+        raise BackendShapeError("answer.probabilities values must sum to 1")
 
 
 def _response_headers(request_id: str, result: DecisionDispatchResult) -> dict[str, str]:
     headers = {
-        "x-gateway-request-id": request_id,
         "x-gateway-remote": "1" if result.remote else "0",
         "x-gateway-cost-usd": str(result.cost_usd if result.cost_usd is not None else 0),
     }
+    headers.update({str(k): str(v) for k, v in result.headers.items()})
+    headers["x-gateway-request-id"] = request_id
     if result.backend:
         headers["x-gateway-backend"] = result.backend
     if result.engine:
@@ -390,7 +448,12 @@ def _response_headers(request_id: str, result: DecisionDispatchResult) -> dict[s
         headers["x-decision-engine"] = result.engine
     if result.fallback_reasons:
         headers["x-gateway-fallback-reasons"] = ",".join(result.fallback_reasons)
-    headers.update({str(k): str(v) for k, v in result.headers.items()})
+    return headers
+
+
+def _request_headers(request_id: str, extra: Mapping[str, str] | None = None) -> dict[str, str]:
+    headers = {"x-gateway-request-id": request_id}
+    headers.update({str(k): str(v) for k, v in (extra or {}).items()})
     return headers
 
 
@@ -415,7 +478,12 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
         started = time.perf_counter()
         gate = guard(request, request.url.path)
         if isinstance(gate, Response):
-            return error_response(401, "unauthorized", "Missing or invalid API key.")
+            return error_response(
+                401,
+                "unauthorized",
+                "Missing or invalid API key.",
+                headers=_request_headers(request_id),
+            )
         auth, profile = gate
         try:
             raw = await request.json()
@@ -433,7 +501,13 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
                     error_param=exc.param,
                 ),
             )
-            return error_response(exc.status, exc.code, exc.message, param=exc.param, headers=exc.headers)
+            return error_response(
+                exc.status,
+                exc.code,
+                exc.message,
+                param=exc.param,
+                headers=_request_headers(request_id, exc.headers),
+            )
         except Exception:
             await _record_receipt(
                 deps,
@@ -446,7 +520,12 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
                     error_code="invalid_json",
                 ),
             )
-            return error_response(400, "invalid_json", "Request body must be valid JSON.")
+            return error_response(
+                400,
+                "invalid_json",
+                "Request body must be valid JSON.",
+                headers=_request_headers(request_id),
+            )
 
         try:
             result = await _call_maybe_async(deps.dispatch, auth, profile, body, request_id)
@@ -465,7 +544,13 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
                     error_param=exc.param,
                 ),
             )
-            return error_response(exc.status, exc.code, exc.message, param=exc.param, headers=exc.headers)
+            return error_response(
+                exc.status,
+                exc.code,
+                exc.message,
+                param=exc.param,
+                headers=_request_headers(request_id, exc.headers),
+            )
         except Exception:
             await _record_receipt(
                 deps,
@@ -480,25 +565,36 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
                     error_code="decision_backend_error",
                 ),
             )
-            return error_response(502, "decision_backend_error", "The decision backend did not return a usable response.")
-
-        try:
-            validate_systemone_response(result.body)
-        except BackendShapeError:
-            await _record_receipt(
-                deps,
-                auth,
-                _receipt(
-                    request_id=request_id,
-                    path=request.url.path,
-                    requested_model=body.get("model"),
-                    question_count=len(body["questions"]),
-                    status_code=502,
-                    error_code="decision_backend_error",
-                    started=started,
-                ),
+            return error_response(
+                502,
+                "decision_backend_error",
+                "The decision backend did not return a usable response.",
+                headers=_request_headers(request_id),
             )
-            return error_response(502, "decision_backend_error", "The decision backend did not return a usable response.")
+
+        if 200 <= result.status_code < 300:
+            try:
+                validate_systemone_response(result.body, body)
+            except BackendShapeError:
+                await _record_receipt(
+                    deps,
+                    auth,
+                    _receipt(
+                        request_id=request_id,
+                        path=request.url.path,
+                        requested_model=body.get("model"),
+                        question_count=len(body["questions"]),
+                        status_code=502,
+                        error_code="decision_backend_error",
+                        started=started,
+                    ),
+                )
+                return error_response(
+                    502,
+                    "decision_backend_error",
+                    "The decision backend did not return a usable response.",
+                    headers=_request_headers(request_id),
+                )
 
         await _record_receipt(
             deps,
@@ -515,6 +611,7 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
                 cost_usd=result.cost_usd,
                 engine=result.engine,
                 fallback_reasons=tuple(result.fallback_reasons),
+                usage=result.body.get("usage") if isinstance(result.body.get("usage"), Mapping) else None,
                 started=started,
             ),
         )

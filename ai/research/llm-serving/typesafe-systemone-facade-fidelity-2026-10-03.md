@@ -123,4 +123,3 @@ For `gateway/decisions_api.py`:
 - The facade should reject unsupported top-level and question fields. The SDK's `extra_body` can add or override top-level fields, and silently accepting those fields would be dishonest.
 - Rejection and backend-error receipts should be written after authentication, with auth passed to the receipt callback so the parent can owner-scope receipt storage.
 - Receipt callback failure must not convert a successful decision response into a 500.
-
