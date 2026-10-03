@@ -856,8 +856,13 @@ class AdminSQLiteStore:
             data.get("id") or data.get("name")
         )
         raw = service_registry.service_form_to_raw(data)
+        current_registry = self.get_service_registry()
+        if service_id not in current_registry.get("services", {}) and raw.get("models"):
+            # Newly authored model mappings use the current schema. Existing
+            # collections still require an explicit migration before routing.
+            raw.setdefault("model_policy_schema_version", service_registry.MODEL_POLICY_SCHEMA_VERSION)
         registry, _record = service_registry.upsert_service_in_registry(
-            self.get_service_registry(),
+            current_registry,
             service_id=service_id,
             raw=raw,
             source="ui",

@@ -20,7 +20,7 @@ The gateway is still in active development. The engine registry migration (confi
 
 ## 5-minute quickstart
 
-**Prerequisites:** Python 3.12+, an OpenAI-compatible engine already running (e.g. [Ollama](https://ollama.com) on `http://localhost:11434`, or llama.cpp server on `http://localhost:8080`).
+**Prerequisites:** Python 3.12+. For bare Python, install [`uv`](https://docs.astral.sh/uv/). For chat, you also need an OpenAI-compatible engine already running (for example llama.cpp server on `http://localhost:8080`, vLLM, TabbyAPI, or Ollama's OpenAI-compatible `/v1` endpoint).
 
 ### Option A — Docker Compose (recommended)
 
@@ -28,15 +28,21 @@ The gateway is still in active development. The engine registry migration (confi
 git clone https://github.com/Vivid-Fish/openai-proxy.git
 cd openai-proxy
 
-# Configure your engine (edit the URL to match your running engine)
-cat > .env <<'EOF'
-AI_GATEWAY_LITELLM_BASE_URL=http://host.docker.internal:11434   # Ollama example
-EOF
-
 docker compose up -d
 ```
 
-The gateway starts on port 5000. Open `http://localhost:5000/setup` to claim the first owner account and mint an API key, then:
+The gateway starts on `http://127.0.0.1:5000` and uses `first-run.yml`, a minimal setup config with no bundled engine records. Open `http://127.0.0.1:5000/setup` to claim the first owner account and mint an API key. Then add your engine in `/admin` → Services with:
+
+- base URL: the engine's OpenAI-compatible base URL as seen from Docker, such as `http://host.docker.internal:8080/v1` on Docker Desktop or Linux Compose
+- health endpoint: `/v1/models`
+- capabilities: `chat`
+- models: one public model name and the upstream engine model name
+
+`AI_GATEWAY_LITELLM_BASE_URL` is already set by Compose to the bundled LiteLLM sidecar (`http://litellm:4000`). Do not point it at Ollama, llama.cpp, vLLM, or another user engine.
+
+On Linux, Compose maps `host.docker.internal` to the host gateway. The engine still has to listen on an address the gateway container can reach; a server bound only to host loopback may need to bind to `0.0.0.0` or another reachable host address for this local setup.
+
+After setup:
 
 ```bash
 # Always works on a fresh install (no backend required)
@@ -44,15 +50,14 @@ curl -s http://localhost:5000/health
 curl -s http://localhost:5000/v1/models \
      -H "Authorization: Bearer opk_YOUR_KEY_HERE"
 
-# Chat completion — requires a running engine pointed at AI_GATEWAY_LITELLM_BASE_URL
-# Without one, this returns a 502/503. Add a backend via /admin first.
+# Chat completion requires one Services record with a model mapping.
 curl -s http://localhost:5000/v1/chat/completions \
      -H "Authorization: Bearer opk_YOUR_KEY_HERE" \
      -H "Content-Type: application/json" \
-     -d '{"model":"llama3","messages":[{"role":"user","content":"Hello"}]}'
+     -d '{"model":"my-llama","messages":[{"role":"user","content":"Hello"}]}'
 ```
 
-> **Engines are not included.** The gateway routes to engines you already run — Ollama, llama.cpp, vLLM, etc. `/health` and the admin UI work immediately on a fresh install with no engine. Chat requests will fail until you add at least one backend in `/admin`.
+> **Engines are not included.** The gateway routes to engines you already run. `/health`, `/setup`, and the admin UI work immediately on a fresh install with no engine. Chat requests will fail until you add a Services record with at least one model mapping.
 
 Point any OpenAI-compatible client at `http://localhost:5000/openai/v1` with your `opk_...` key.
 
@@ -62,15 +67,15 @@ Point any OpenAI-compatible client at `http://localhost:5000/openai/v1` with you
 git clone https://github.com/Vivid-Fish/openai-proxy.git
 cd openai-proxy
 
-python3 -m venv venv
-./venv/bin/pip install -r requirements.txt
-
+AI_GATEWAY_CONFIG_PATH=first-run.yml \
+AI_GATEWAY_REQUIREMENTS_FILE=tests/requirements-hermetic.lock \
+AI_GATEWAY_REQUIREMENTS_HASHES=true \
 ./start.sh   # listens on :5000 by default
 ```
 
 Open `http://localhost:5000/setup` to create the owner account.
 
-> **Note:** The gateway boots with no config — `/health` and the admin UI work immediately on a fresh checkout. To route chat requests to a local engine, configure `proxy_config.yml` with your backend URLs (see the Setup section below) or add a backend from `/admin` after first login.
+> **Note:** `first-run.yml` boots with no engine records — `/health`, `/setup`, and the admin UI work immediately on a fresh checkout. To route chat requests to a local engine, add a service from `/admin` after first login.
 
 ---
 

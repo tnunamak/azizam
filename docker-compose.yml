@@ -1,14 +1,18 @@
 services:
   gateway:
     build: .
+    command: ["python3", "-m", "uvicorn", "proxy:app", "--host", "0.0.0.0", "--port", "5000", "--log-level", "warning"]
     ports:
-      - "${OPENAI_PROXY_PORT:-5000}:5000"
+      - "127.0.0.1:${OPENAI_PROXY_PORT:-5000}:5000"
     env_file:
       - path: .env
         required: false
     environment:
+      AI_GATEWAY_CONFIG_PATH: /app/first-run.yml
       AI_GATEWAY_LITELLM_BASE_URL: ${AI_GATEWAY_LITELLM_BASE_URL:-http://litellm:4000}
       AI_GATEWAY_LITELLM_API_KEY: ${AI_GATEWAY_LITELLM_API_KEY:-sk-local-litellm}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - gateway-data:/app/data
     restart: unless-stopped
@@ -20,7 +24,7 @@ services:
       start_period: 10s
 
   litellm:
-    image: ghcr.io/berriai/litellm:main-stable
+    image: ghcr.io/berriai/litellm:1.86.2@sha256:cae1ac3492d6d0bea69c26f4485381624e073eb753f3534ae7703a4204a4ce6b
     entrypoint:
       - /bin/sh
       - -lc

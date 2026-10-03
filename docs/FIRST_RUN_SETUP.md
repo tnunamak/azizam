@@ -25,6 +25,39 @@ docker compose up -d
 Then open `http://127.0.0.1:5000/setup` to claim the first owner account and
 mint a runtime key. No `.env` file is required.
 
+Docker Compose starts two containers:
+
+- `gateway`, the public API and admin UI on port 5000;
+- `litellm`, the managed LiteLLM sidecar that executes chat-shaped requests.
+
+`AI_GATEWAY_LITELLM_BASE_URL` is the URL of that sidecar as seen by the
+gateway container. Compose sets it to `http://litellm:4000`. Do not use this
+variable for Ollama, llama.cpp, vLLM, TabbyAPI, or another user engine.
+Add user engines as Services records instead.
+
+Compose publishes the gateway as `127.0.0.1:${OPENAI_PROXY_PORT:-5000}:5000`
+and sets `AI_GATEWAY_CONFIG_PATH=/app/first-run.yml`. That file is a minimal
+fresh-install config:
+
+- `proxy.host: 127.0.0.1`, so bare Python stays local by default;
+- `admin.oidc.cookie.secure: false`, so localhost HTTP setup clients can store
+  the browser admin session cookie;
+- no engine records.
+
+Compose overrides only the container listener with
+`python3 -m uvicorn proxy:app --host 0.0.0.0 --port 5000`, then publishes that
+container port only on host loopback.
+
+`cookie.secure: false` is only for localhost HTTP first-run. Before exposing
+the gateway over HTTPS, change the deployment config back to secure cookies
+(`admin.oidc.cookie.secure: true`) and publish it behind TLS.
+
+On Linux, Compose also maps `host.docker.internal` to `host-gateway` for the
+gateway container. The engine must still listen on an address reachable from
+the container. If a local engine only binds to `127.0.0.1` on the host, either
+start it on `0.0.0.0` for local setup or use another host address the container
+can reach.
+
 To override the port, store paths, or session key, copy `.env.example` to
 `.env` and uncomment the relevant lines before starting:
 
@@ -46,20 +79,107 @@ volumes:
   - ./data:/app/data
 ```
 
+The LiteLLM sidecar image is pinned to the same LiteLLM version used by the
+Python dependency lock: `ghcr.io/berriai/litellm:1.86.2` at digest
+`sha256:cae1ac3492d6d0bea69c26f4485381624e073eb753f3534ae7703a4204a4ce6b`.
+
 ## Short Path
 
 If you just want a working gateway, in order:
 
-1. Start the service (`./start.sh`, `docker compose up -d`, or the systemd unit).
+1. Start the service with Docker Compose:
+
+   ```bash
+   docker compose up -d
+   ```
+
+   For bare Python, use the same first-run config and the hash-locked
+   dependency file:
+
+   ```bash
+   AI_GATEWAY_CONFIG_PATH=first-run.yml \
+   AI_GATEWAY_REQUIREMENTS_FILE=tests/requirements-hermetic.lock \
+   AI_GATEWAY_REQUIREMENTS_HASHES=true \
+   ./start.sh
+   ```
+
 2. Open `http://127.0.0.1:5000/setup`.
 3. Claim or create the first owner (see [Setup States](#setup-states)).
 4. Mint the first `opk_...` runtime key from the same page and configure your
    client against `/openai/v1`.
-5. Everything else — Profiles, identity/Profile mappings, role/model bindings,
-   service/provider records, admission caps, OIDC details, additional Apps
-   and keys — is dashboard work at `/admin`. Restart is only required for
-   deployment bootstrap changes such as listener/TLS settings or secret/env
-   changes.
+5. Add a chat engine from `/admin` -> Services. Use the engine's
+   OpenAI-compatible base URL as seen by the gateway and add at least one model
+   mapping. For generic OpenAI-compatible engines, set health endpoint
+   `/v1/models`. Example: public model `my-llama` -> upstream model
+   `TheBloke_Llama-3-8B`.
+6. Test chat with the minted key:
+
+   ```bash
+   curl -s http://127.0.0.1:5000/v1/chat/completions \
+        -H "Authorization: Bearer opk_YOUR_KEY_HERE" \
+        -H "Content-Type: application/json" \
+        -d '{"model":"my-llama","messages":[{"role":"user","content":"Hello"}]}'
+   ```
+
+Everything else — Profiles, identity/Profile mappings, role/model bindings,
+service/provider records, admission caps, OIDC details, additional Apps and
+keys — is dashboard work at `/admin`. Restart is only required for deployment
+bootstrap changes such as listener/TLS settings or secret/env changes.
+
+For headless automation, first fetch the current service-registry generation,
+then post the service with `If-Match`:
+
+```bash
+etag="$(
+  curl -si http://127.0.0.1:5000/admin/api/operator/service-registry \
+       -H "Authorization: Bearer oak_YOUR_ADMIN_KEY_HERE" \
+  | awk 'BEGIN{IGNORECASE=1} /^etag:/ {gsub("\r",""); print $2}'
+)"
+
+curl -s -X POST http://127.0.0.1:5000/admin/api/operator/services \
+     -H "Authorization: Bearer oak_YOUR_ADMIN_KEY_HERE" \
+     -H "If-Match: ${etag}" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "name": "Local chat engine",
+       "preset": "openai-compatible",
+       "base_url": "http://host.docker.internal:8080/v1",
+       "health_endpoint": "/v1/models",
+       "capabilities": ["chat"],
+       "models": [
+         {"public": "my-llama", "upstream": "TheBloke_Llama-3-8B"}
+       ]
+     }'
+```
+
+Do not send inline provider or engine secrets to this API. If a service needs a
+key, set the key in the process environment and send its variable name as
+`api_key_env`.
+
+The executable first-run check is `scripts/e2e/fresh_instance.sh`. It uses only
+HTTP APIs:
+
+1. `GET /setup` confirms the local-owner form exists.
+2. `POST /setup/local-owner` creates the first owner and browser session.
+3. `GET /admin/api/session` reads the signed-in actor and CSRF token.
+4. `POST /setup/first-app` mints the first `opk_...` runtime key.
+5. `GET /admin/api/operator/service-registry` reads the registry `ETag`.
+6. `POST /admin/api/operator/services` registers the fake OpenAI-compatible
+   engine with `If-Match`, `health_endpoint: /v1/models`, and a model mapping.
+7. `POST /openai/v1/chat/completions` verifies unauthenticated 401 first, then
+   authenticated chat success.
+
+Run the native variant with:
+
+```bash
+scripts/e2e/fresh_instance.sh
+```
+
+Run the Compose variant, when Docker is available, with:
+
+```bash
+scripts/e2e/fresh_instance.sh --compose
+```
 
 ## Bootstrap Config
 

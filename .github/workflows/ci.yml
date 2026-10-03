@@ -13,15 +13,80 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
-          python-version: "3.12"
+          version: "0.12.21"
+          enable-cache: true
+          cache-dependency-glob: tests/requirements-hermetic.lock
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - uses: actions/cache@v4
+        with:
+          path: ~/.tmp/hermetic-uv-cache
+          key: hermetic-uv-${{ runner.os }}-py312-${{ hashFiles('tests/requirements-hermetic.lock') }}
 
-      - name: Run pytest
-        run: pytest -q
+      - name: Install sandbox tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap iproute2
+          if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+
+      - name: Provision pinned Python
+        run: |
+          set -euo pipefail
+          python_store="$HOME/.tmp/vivid-fish-hermetic-python"
+          expected="$python_store/cpython-3.12.13-linux-x86_64-gnu"
+          mkdir -p "$python_store"
+          uv python install 3.12.13 --install-dir "$python_store" --managed-python --no-progress
+          if [[ ! -x "$expected/bin/python3.12" ]]; then
+            actual=$(find "$python_store" -mindepth 3 -maxdepth 3 -type f -path '*/bin/python3.12' -print -quit)
+            [[ -n "$actual" ]] || { echo "uv did not install Python 3.12.13" >&2; exit 1; }
+            ln -sfn "$(dirname "$(dirname "$actual")")" "$expected"
+          fi
+          "$expected/bin/python3.12" --version
+
+      - name: Prime hermetic dependency cache
+        run: |
+          set -euo pipefail
+          python_store="$HOME/.tmp/vivid-fish-hermetic-python"
+          python_root="$python_store/cpython-3.12.13-linux-x86_64-gnu"
+          seed_env="$HOME/.tmp/vivid-fish-hermetic-cache-seed"
+          env -i HOME="$HOME/.tmp/hermetic-uv-home" PATH="$(dirname "$(command -v uv)"):/usr/bin:/bin" UV_CACHE_DIR="$HOME/.tmp/hermetic-uv-cache" UV_NO_CONFIG=1 uv venv --no-project --no-managed-python --no-python-downloads --python "$python_root/bin/python3.12" "$seed_env"
+          env -i HOME="$HOME/.tmp/hermetic-uv-home" PATH="$(dirname "$(command -v uv)"):/usr/bin:/bin" UV_CACHE_DIR="$HOME/.tmp/hermetic-uv-cache" UV_NO_CONFIG=1 uv pip sync --no-build --strict --require-hashes --link-mode copy --python "$seed_env/bin/python" tests/requirements-hermetic.lock
+
+      - name: Run hermetic pytest
+        run: scripts/run-hermetic-pytest.sh -q
+
+  fresh-instance:
+    name: Fresh instance e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.21"
+          enable-cache: true
+          cache-dependency-glob: tests/requirements-hermetic.lock
+
+      - name: Provision test environment
+        run: |
+          set -euo pipefail
+          uv python install 3.12.13 --managed-python --no-progress
+          uv venv --python 3.12.13 "$RUNNER_TEMP/vivid-fish-fresh-instance-venv"
+          uv pip sync --no-build --strict --require-hashes --link-mode copy --python "$RUNNER_TEMP/vivid-fish-fresh-instance-venv/bin/python" tests/requirements-hermetic.lock
+
+      - name: Run native fresh-instance journey
+        env:
+          FRESH_INSTANCE_PYTHON: ${{ runner.temp }}/vivid-fish-fresh-instance-venv/bin/python
+        run: scripts/e2e/fresh_instance.sh
+
+      - name: Run compose fresh-instance journey
+        env:
+          FRESH_INSTANCE_PYTHON: ${{ runner.temp }}/vivid-fish-fresh-instance-venv/bin/python
+        run: scripts/e2e/fresh_instance.sh --compose
 
   web-check:
     name: Web check

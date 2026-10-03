@@ -109,6 +109,25 @@ def test_openai_compatible_host_port_and_model_id_compile() -> None:
     assert compiled["model_list"][0]["litellm_params"]["api_key"] == "sk-local"
 
 
+def test_no_auth_container_engine_gets_sdk_placeholder_key() -> None:
+    compiled = compile_litellm_substrate_config({"chat": {"config": {
+        "protocol": "openai-compatible", "base_url": "http://engine:18001/v1",
+        "models": ["fresh-test"],
+    }}})
+    params = compiled["model_list"][0]["litellm_params"]
+    assert params["api_base"] == "http://engine:18001/v1"
+    assert params["api_key"] == "sk-local"
+
+
+def test_missing_custom_endpoint_does_not_get_placeholder_key() -> None:
+    compiled = compile_litellm_substrate_config({"chat": {"config": {
+        "protocol": "openai-compatible", "models": ["fresh-test"],
+    }}})
+    params = compiled["model_list"][0]["litellm_params"]
+    assert "api_base" not in params
+    assert "api_key" not in params
+
+
 def test_keeps_litellm_settings_minimal() -> None:
     compiled = compile_litellm_substrate_config(
         {

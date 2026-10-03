@@ -19,7 +19,6 @@ import os
 from pathlib import Path
 from collections.abc import Iterable, Mapping
 from typing import Any
-from urllib.parse import urlparse
 
 import yaml
 
@@ -312,7 +311,9 @@ def _model_list_entries(
                 litellm_params["api_base"] = base_url
             if api_key_ref:
                 litellm_params["api_key"] = api_key_ref
-            elif _is_loopback_url(base_url):
+            elif base_url:
+                # The OpenAI SDK requires a key even for no-auth custom endpoints.
+                # Container DNS and LAN addresses are as valid as loopback here.
                 litellm_params["api_key"] = "sk-local"
 
         entry: dict[str, Any] = {
@@ -357,14 +358,6 @@ def _service_base_url(config: Mapping[str, Any]) -> str:
     scheme = str(config.get("scheme") or "http").strip() or "http"
     base_path = str(config.get("base_path") or "/v1").strip() or "/v1"
     return f"{scheme}://{host}:{port}/{base_path.strip('/')}".rstrip("/")
-
-
-def _is_loopback_url(raw_url: str) -> bool:
-    if not raw_url:
-        return False
-    parsed = urlparse(raw_url)
-    hostname = (parsed.hostname or "").lower()
-    return hostname in {"127.0.0.1", "localhost", "::1"}
 
 
 def _api_key_ref(config: Mapping[str, Any], secret_refs: Mapping[str, Any]) -> str:

@@ -1206,6 +1206,41 @@ class ServicePatchRoundTripTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
+    def test_new_model_mappings_use_current_policy_schema(self) -> None:
+        registry = self.store.add_service(
+            data={"name": "first-chat", "preset": "openai-compatible",
+                  "base_url": "http://engine:18001/v1",
+                  "models": [{"public": "chat", "upstream": "engine-model"}]},
+            actor=self.ctx,
+        )
+        config = registry["services"]["first-chat"]["config"]
+        self.assertEqual(config["model_policy_schema_version"], service_registry.MODEL_POLICY_SCHEMA_VERSION)
+        self.assertEqual(config["models"], [{"model_group": "chat", "upstream_model": "engine-model"}])
+
+    def test_add_preserves_explicit_model_policy_schema(self) -> None:
+        registry = self.store.add_service(
+            data={"name": "explicit-schema", "base_url": "http://engine:18001/v1",
+                  "models": [{"public": "chat", "upstream": "engine-model"}],
+                  "model_policy_schema_version": 0},
+            actor=self.ctx,
+        )
+        self.assertEqual(registry["services"]["explicit-schema"]["config"]["model_policy_schema_version"], 0)
+
+    def test_existing_unversioned_models_are_not_implicitly_migrated(self) -> None:
+        seed = service_registry.build_service_registry_seed({"backends": {
+            "legacy": {"protocol": "openai-compatible", "host": "engine", "port": 18001,
+                       "models": [{"model_group": "chat", "upstream_model": "engine-model"}]},
+        }})
+        write_service_registry_for_test(seed, path=self.db)
+        form = {"name": "legacy", "base_url": "http://engine:18001/v1",
+                "models": [{"public": "chat", "upstream": "engine-model"}]}
+        with self.assertRaisesRegex(ValueError, "already exists"):
+            self.store.add_service(data=form, actor=self.ctx)
+        registry = self.store.get_service_registry()
+        self.assertNotIn("model_policy_schema_version", registry["services"]["legacy"]["config"])
+        registry = self.store.update_service(service_id="legacy", data={"note": "edit"}, actor=self.ctx)
+        self.assertNotIn("model_policy_schema_version", registry["services"]["legacy"]["config"])
+
     def _seed_embeddings(self) -> None:
         """Add the canonical 'embeddings' service from the spec example."""
         self.store.add_service(

@@ -17,15 +17,20 @@ fi
 # Use proxy's own isolated venv
 if [ ! -d "venv" ]; then
     echo "Creating venv..."
-    python3 -m venv venv
+    uv venv venv --python 3.12
 fi
 
 source venv/bin/activate
 
-REQ_HASH="$(sha256sum requirements.txt | awk '{print $1}')"
+REQ_FILE="${AI_GATEWAY_REQUIREMENTS_FILE:-requirements.txt}"
+REQ_HASH="$(sha256sum "$REQ_FILE" | awk '{print $1}')"
 REQ_STAMP="venv/.requirements.sha256"
 if [ ! -f "$REQ_STAMP" ] || [ "$(cat "$REQ_STAMP")" != "$REQ_HASH" ]; then
-    python3 -m pip install -r requirements.txt
+    if [ "${AI_GATEWAY_REQUIREMENTS_HASHES:-false}" = "true" ]; then
+        uv pip install --python ./venv/bin/python --require-hashes -r "$REQ_FILE"
+    else
+        uv pip install --python ./venv/bin/python -r "$REQ_FILE"
+    fi
     echo "$REQ_HASH" > "$REQ_STAMP"
 fi
 
