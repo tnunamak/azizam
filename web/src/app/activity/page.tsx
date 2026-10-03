@@ -39,11 +39,21 @@ export default function ActivityPage() {
   const [entry, setEntry] = useState<AuditEntry | null>(null);
   // Filter choices come from an unfiltered page; labels never infer identity
   // from an opaque actor ID. The filter itself is applied by the server.
-  const options = useQuery({
+  const { data: optionsData } = useQuery({
     queryKey: ["activity", "actors"],
     queryFn: () => api.audit.list({ limit: 100 }),
   });
-  const audit = useInfiniteQuery({
+  const {
+    data: auditData,
+    refetch: refetchAudit,
+    isFetching: auditFetching,
+    isError: auditError,
+    isFetchNextPageError: nextPageError,
+    isPending: auditPending,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage: fetchingNextPage,
+  } = useInfiniteQuery({
     queryKey: ["activity", "audit", category, actor],
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
@@ -55,10 +65,10 @@ export default function ActivityPage() {
       }),
     getNextPageParam: (page) => page.next_cursor ?? undefined,
   });
-  const entries = audit.data?.pages.flatMap((page) => page.records) ?? [];
+  const entries = auditData?.pages.flatMap((page) => page.records) ?? [];
   const actors = Array.from(
     new Map(
-      (options.data?.records ?? []).map((row) => [
+      (optionsData?.records ?? []).map((row) => [
         row.actor_id,
         row.actor_label,
       ]),
@@ -123,8 +133,8 @@ export default function ActivityPage() {
             </div>
             <Button
               variant="outline"
-              onClick={() => void audit.refetch()}
-              disabled={audit.isFetching}
+              onClick={() => void refetchAudit()}
+              disabled={auditFetching}
             >
               Refresh
             </Button>
@@ -163,15 +173,13 @@ export default function ActivityPage() {
               </Button>
             </form>
           </details>
-          {audit.isError &&
-            entries.length > 0 &&
-            !audit.isFetchNextPageError && (
-              <ErrorState
-                message="These events could not be refreshed. Try again."
-                onRetry={() => void audit.refetch()}
-              />
-            )}
-          {audit.isPending ? (
+          {auditError && entries.length > 0 && !nextPageError && (
+            <ErrorState
+              message="These events could not be refreshed. Try again."
+              onRetry={() => void refetchAudit()}
+            />
+          )}
+          {auditPending ? (
             <div
               aria-label="Loading audit events"
               aria-busy="true"
@@ -181,10 +189,10 @@ export default function ActivityPage() {
                 <Skeleton className="h-14 w-full" key={i} />
               ))}
             </div>
-          ) : audit.isError && !entries.length ? (
+          ) : auditError && !entries.length ? (
             <ErrorState
               message="Audit events could not be loaded. Try again."
-              onRetry={() => void audit.refetch()}
+              onRetry={() => void refetchAudit()}
             />
           ) : !entries.length ? (
             <EmptyState
@@ -251,19 +259,19 @@ export default function ActivityPage() {
                 ))}
               </div>
               <div className="flex flex-col items-center gap-4">
-                {audit.isFetchNextPageError && (
+                {nextPageError && (
                   <ErrorState
                     message="More events could not be loaded. Try again."
-                    onRetry={() => void audit.fetchNextPage()}
+                    onRetry={() => void fetchNextPage()}
                   />
                 )}
-                {audit.hasNextPage ? (
+                {hasNextPage ? (
                   <Button
                     variant="outline"
-                    disabled={audit.isFetchingNextPage}
-                    onClick={() => void audit.fetchNextPage()}
+                    disabled={fetchingNextPage}
+                    onClick={() => void fetchNextPage()}
                   >
-                    {audit.isFetchingNextPage ? "Loading…" : "Load more"}
+                    {fetchingNextPage ? "Loading…" : "Load more"}
                   </Button>
                 ) : (
                   <p className="text-muted-foreground text-xs">

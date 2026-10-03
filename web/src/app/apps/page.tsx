@@ -53,11 +53,16 @@ function AppsContents() {
   const createFromCommand = searchParams.get("action") === "create-key";
   const commandConsumed = useRef(false);
   const queryClient = useQueryClient();
-  const account = useQuery({
+  const {
+    data: accountData,
+    isPending: accountPending,
+    isError: accountError,
+    refetch: refetchAccount,
+  } = useQuery({
     queryKey: accountKey,
     queryFn: accountApi.session,
   });
-  const discovery = useQuery({
+  const { data: discoveryData } = useQuery({
     queryKey: ["gateway", "discovery"],
     queryFn: accountApi.discovery,
   });
@@ -72,7 +77,7 @@ function AppsContents() {
   const [saved, setSaved] = useState(false);
   const refresh = () => queryClient.invalidateQueries({ queryKey: accountKey });
   const baseUrl =
-    discovery.data?.recipes.openai?.canonical_base_url ??
+    discoveryData?.recipes.openai?.canonical_base_url ??
     (typeof window === "undefined"
       ? ""
       : `${window.location.origin}/openai/v1`);
@@ -80,18 +85,18 @@ function AppsContents() {
   useEffect(() => {
     if (
       createFromCommand &&
-      account.data?.authenticated &&
+      accountData?.authenticated &&
       !commandConsumed.current
     ) {
       commandConsumed.current = true;
       setCreating(true);
     }
-  }, [createFromCommand, account.data?.authenticated]);
+  }, [createFromCommand, accountData?.authenticated]);
 
   useEffect(() => {
-    if (!requestedApp || !account.data) return;
+    if (!requestedApp || !accountData) return;
     document.getElementById(`app-${requestedApp}`)?.focus();
-  }, [requestedApp, account.data]);
+  }, [requestedApp, accountData]);
 
   async function create(event: FormEvent) {
     event.preventDefault();
@@ -205,7 +210,7 @@ function AppsContents() {
     }
   }
 
-  const apps = account.data?.apps ?? [];
+  const apps = accountData?.apps ?? [];
   return (
     <div className="space-y-8">
       <PageHeader
@@ -218,25 +223,25 @@ function AppsContents() {
               setError(null);
               setCreatedApp(null);
             }}
-            disabled={!account.data?.authenticated}
+            disabled={!accountData?.authenticated}
           >
             <Plus aria-hidden="true" />
             New app
           </Button>
         }
       />
-      {account.isPending ? (
+      {accountPending ? (
         <div aria-label="Loading apps" aria-busy="true" className="space-y-4">
           {[0, 1, 2].map((i) => (
             <Skeleton key={i} className="h-24 w-full" />
           ))}
         </div>
-      ) : account.isError ? (
+      ) : accountError ? (
         <ErrorState
           message="Your apps could not be loaded. Try again."
-          onRetry={() => void account.refetch()}
+          onRetry={() => void refetchAccount()}
         />
-      ) : !account.data?.authenticated ? (
+      ) : !accountData?.authenticated ? (
         <EmptyState
           title="Sign in to connect your apps"
           description="Each app gets its own key and uses your account's access plan."

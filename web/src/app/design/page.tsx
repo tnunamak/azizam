@@ -576,6 +576,7 @@ export default function DesignPage() {
             <State title="Skeleton">
               <div
                 aria-busy="true"
+                role="status"
                 aria-label="Loading example"
                 className="flex items-center gap-3"
               >
@@ -717,6 +718,7 @@ export default function DesignPage() {
                 retrying={retrying}
               />
               <div
+                role="status"
                 aria-label="Loading list"
                 aria-busy
                 className="flex flex-col gap-3"

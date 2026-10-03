@@ -167,13 +167,13 @@ function AccountMenu() {
 
 function HealthLink() {
   const viewer = useViewer();
-  const status = useQuery({
+  const { data: statusData, isError: statusError } = useQuery({
     queryKey: ["foundation", "health"],
     queryFn: api.status,
     enabled: viewer.admin,
     refetchInterval: 60000,
   });
-  const gateway = useQuery({
+  const { data: gatewayData, isError: gatewayError } = useQuery({
     queryKey: ["foundation", "reachability"],
     queryFn: async () => {
       const r = await fetch("/health");
@@ -182,14 +182,14 @@ function HealthLink() {
     },
     refetchInterval: 60000,
   });
-  const health = status.data?.current_health;
+  const health = statusData?.current_health;
   // /health reports gateway reachability only; it does not prove engine health.
   const { label, tone } = gatewayHealthLabel({
     admin: viewer.admin,
     health,
-    statusError: status.isError,
-    reachable: Boolean(gateway.data),
-    reachabilityError: gateway.isError,
+    statusError: statusError,
+    reachable: Boolean(gatewayData),
+    reachabilityError: gatewayError,
   });
   return (
     <Link
@@ -301,7 +301,7 @@ function CommandPalette({
   const viewer = useViewer();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
-  const apps = useQuery({
+  const { data: appData } = useQuery({
     queryKey: ["foundation", "command-apps"],
     queryFn: async () => {
       const r = await fetch("/me/api/session");
@@ -310,12 +310,12 @@ function CommandPalette({
     },
     enabled: open && viewer.authenticated,
   });
-  const people = useQuery({
+  const { data: peopleData } = useQuery({
     queryKey: ["foundation", "command-people"],
     queryFn: api.users.list,
     enabled: open && viewer.admin,
   });
-  const models = useQuery({
+  const { data: modelData } = useQuery({
     queryKey: ["foundation", "command-models"],
     queryFn: async () => {
       const registry = await api.services.registry();
@@ -403,9 +403,9 @@ function CommandPalette({
                   );
                 })}
             </CommandGroup>
-            {apps.data?.apps.length ? (
+            {appData?.apps.length ? (
               <CommandGroup heading="Apps">
-                {apps.data.apps.map((app) => (
+                {appData.apps.map((app) => (
                   <CommandItem
                     key={app.id}
                     onSelect={() =>
@@ -418,9 +418,9 @@ function CommandPalette({
                 ))}
               </CommandGroup>
             ) : null}
-            {Object.keys(models.data?.aliases || {}).length ? (
+            {Object.keys(modelData?.aliases || {}).length ? (
               <CommandGroup heading="Models">
-                {Object.keys(models.data?.aliases || {}).map((name) => (
+                {Object.keys(modelData?.aliases || {}).map((name) => (
                   <CommandItem
                     key={name}
                     onSelect={() =>
@@ -433,9 +433,9 @@ function CommandPalette({
                 ))}
               </CommandGroup>
             ) : null}
-            {people.data?.length ? (
+            {peopleData?.length ? (
               <CommandGroup heading="People">
-                {people.data.map((person) => (
+                {peopleData.map((person) => (
                   <CommandItem
                     key={person.id}
                     onSelect={() =>
@@ -478,9 +478,14 @@ function CommandPalette({
 
 function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const session = useViewerQuery();
-  const viewer = session.data;
-  const instance = useQuery({
+  const {
+    data: viewer,
+    isPending: sessionPending,
+    isError: sessionError,
+    refetch: refreshSession,
+    isFetching: sessionRefreshing,
+  } = useViewerQuery();
+  const { data: instanceData } = useQuery({
     queryKey: ["foundation", "instance"],
     queryFn: async () => {
       const response = await fetch("/.well-known/ai-gateway");
@@ -507,19 +512,19 @@ function Shell({ children }: { children: React.ReactNode }) {
   );
   const content = publicPage ? (
     children
-  ) : session.isPending ? (
+  ) : sessionPending ? (
     <div aria-label="Loading your account" className="flex flex-col gap-4">
       <Skeleton className="h-8 w-48" />
       <Skeleton className="h-4 w-72 max-w-full" />
       <Skeleton className="mt-8 h-40 w-full" />
     </div>
-  ) : session.isError ? (
+  ) : sessionError ? (
     <ErrorState
       message="Your account could not be loaded. Check your connection and try again."
       onRetry={() => {
-        void session.refetch();
+        void refreshSession();
       }}
-      retrying={session.isFetching}
+      retrying={sessionRefreshing}
     />
   ) : ownerPage && !viewer?.admin ? (
     <ErrorState message="This page is available to gateway owners and admins. Sign in with an owner account to continue." />
@@ -569,9 +574,9 @@ function Shell({ children }: { children: React.ReactNode }) {
                 <Fish className="text-primary size-5 shrink-0" />
                 <span className="shell-nav-label min-w-0">
                   <span className="block">{PRODUCT_NAME}</span>
-                  {instance.data?.service?.name && (
+                  {instanceData?.service?.name && (
                     <span className="text-muted-foreground block truncate text-xs font-normal">
-                      {instance.data.service.name}
+                      {instanceData.service.name}
                     </span>
                   )}
                 </span>

@@ -10,11 +10,13 @@ const routes = [
   ["apps", "/ui/apps/"],
   ["status", "/ui/status/"],
   ["engines", "/ui/engines/"],
+  ["services", "/ui/services/"],
   ["providers", "/ui/providers/"],
   ["people", "/ui/people/"],
   ["activity", "/ui/activity/"],
   ["settings", "/ui/settings/"],
   ["design", "/ui/design/"],
+  ["gallery", "/ui/gallery/"],
   ["sign-in", "/ui/sign-in/"],
   ["setup", "/ui/setup/"],
   ["invite", "/ui/invite/"],
@@ -57,11 +59,14 @@ for (const theme of ["light", "dark"] as const) {
           ).toBeVisible();
           await expect(page.getByLabel("Loading audit events")).toHaveCount(0);
         }
-        await expect(
-          page
-            .getByRole("alert")
-            .filter({ hasText: /could not|failed to|unable to/i }),
-        ).toHaveCount(0);
+        if (name !== "design") {
+          // Design examples intentionally show error states; axe still checks them.
+          await expect(
+            page
+              .getByRole("alert")
+              .filter({ hasText: /could not|failed to|unable to/i }),
+          ).toHaveCount(0);
+        }
         expect(
           await page.evaluate(
             () => document.documentElement.scrollWidth <= window.innerWidth,

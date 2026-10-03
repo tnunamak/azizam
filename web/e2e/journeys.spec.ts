@@ -99,7 +99,8 @@ test("create, rotate and revoke an app key, then inspect its audit receipt", asy
   const detail = page.getByRole("dialog");
   await expect(detail).toBeVisible();
   await detail.getByText("Technical details", { exact: true }).click();
-  await expect(detail).toContainText("app.create");
+  await expect(detail).toContainText("app.self_create");
+  await expect(detail).toContainText(firstKey.app_id);
 });
 
 test("apps explain an empty account and recover after an API error", async ({
@@ -115,12 +116,16 @@ test("apps explain an empty account and recover after an API error", async ({
     page.getByText("Connect your first app", { exact: true }),
   ).toBeVisible();
   await page.unroute("**/me/api/session");
-  await page.route("**/me/api/session", (route) =>
-    route.fulfill({
+  let sessionCalls = 0;
+  await page.route("**/me/api/session", (route) => {
+    // Keep the shell's viewer request real; fail the Apps request that follows.
+    sessionCalls += 1;
+    if (sessionCalls === 1) return route.continue();
+    return route.fulfill({
       status: 503,
       json: { error: { message: "Unavailable for this test" } },
-    }),
-  );
+    });
+  });
   await page.reload();
   await expect(
     page.getByText("Your apps could not be loaded. Try again."),

@@ -7,6 +7,8 @@ import { ScrollArea as ScrollAreaPrimitive } from "radix-ui";
 function ScrollArea({
   className,
   children,
+  "aria-label": ariaLabel,
+  "aria-labelledby": ariaLabelledBy,
   ...props
 }: React.ComponentProps<typeof ScrollAreaPrimitive.Root>) {
   return (
@@ -17,6 +19,10 @@ function ScrollArea({
     >
       <ScrollAreaPrimitive.Viewport
         data-slot="scroll-area-viewport"
+        tabIndex={0}
+        role={ariaLabel || ariaLabelledBy ? "region" : undefined}
+        aria-label={ariaLabel}
+        aria-labelledby={ariaLabelledBy}
         className="focus-visible:ring-ring/50 size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:outline-1"
       >
         {children}

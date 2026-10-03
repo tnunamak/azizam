@@ -8,12 +8,23 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CopyField } from "@/components/product/copy-field";
 import { SecretReveal } from "@/components/product/secret-reveal";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Progress } from "@/components/ui/progress";
 import { Money } from "@/components/product/money";
 import { CommandDialog, CommandInput } from "@/components/ui/command";
 
 afterEach(cleanup);
 describe("foundation product contracts", () => {
+  it("makes a named scroll region reachable with the keyboard", () => {
+    render(
+      <ScrollArea aria-label="Request details">
+        <p>Scrollable content</p>
+      </ScrollArea>,
+    );
+    expect(
+      screen.getByRole("region", { name: "Request details" }),
+    ).toHaveAttribute("tabindex", "0");
+  });
   it("reports measured progress to assistive technology", () => {
     render(<Progress value={64} aria-label="Loading model" />);
     expect(

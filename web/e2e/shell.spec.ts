@@ -173,6 +173,14 @@ test("member shell hides owner controls and makes no owner API calls", async ({
   ).toBeVisible();
   for (const name of ownerPages)
     await expect(sheet.getByRole("link", { name, exact: true })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await page.goto("/ui/status/");
+  await expect(
+    page.getByText(
+      "This page is available to gateway owners and admins. Sign in with an owner account to continue.",
+      { exact: true },
+    ),
+  ).toBeVisible();
   expect(ownerCalls).toEqual([]);
 });
 
@@ -195,3 +203,30 @@ for (const width of [1024, 768]) {
     await expect(page).toHaveURL(/\/ui\/status\/?$/);
   });
 }
+
+test("session failure explains the problem and retry restores the account", async ({
+  page,
+}) => {
+  await page.route("**/me/api/session", (route) =>
+    route.fulfill({
+      status: 503,
+      json: { error: { message: "Unavailable for this test" } },
+    }),
+  );
+  await page.goto("/ui/");
+  await expect(
+    page.getByText(
+      "Your account could not be loaded. Check your connection and try again.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Settings", exact: true }),
+  ).toHaveCount(0);
+  await page.unroute("**/me/api/session");
+  await page.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Settings", exact: true }),
+  ).toBeVisible();
+});
