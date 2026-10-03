@@ -7,6 +7,7 @@ raw request bodies or secrets.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from time import perf_counter, time
 import asyncio
 from collections.abc import AsyncIterator
@@ -59,6 +60,7 @@ ADMIN_VISIBLE_METADATA_FIELDS = {
     "litellm",
     "status_code",
     "stt",
+    "decisions",
 }
 
 # Canonical allowlist for metadata["litellm"] — mirrors the keys
@@ -91,6 +93,46 @@ def _sanitize_litellm_metadata_for_admin(value: Any) -> dict[str, str] | None:
         if isinstance(raw, str) and raw:
             out[key] = raw[:_LITELLM_ADMIN_MAX_VALUE_LENGTH]
     return out or None
+
+
+def _sanitize_decision_metadata(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    count = value.get("question_count")
+    if type(count) is not int or count < 0:
+        return None
+    remote = value.get("remote")
+    if type(remote) is not bool:
+        return None
+    raw_cost = value.get("cost_usd")
+    if remote:
+        if raw_cost is None:
+            cost = None
+        elif isinstance(raw_cost, (str, int, float)) and not isinstance(raw_cost, bool):
+            try:
+                amount = Decimal(str(raw_cost))
+            except InvalidOperation:
+                return None
+            if not amount.is_finite() or amount < 0:
+                return None
+            cost = str(amount)
+        else:
+            return None
+    else:
+        if raw_cost != 0:
+            return None
+        cost = 0.0
+    engine = value.get("engine")
+    if engine not in (None, "cpu", "gpu") or (remote and engine is not None):
+        return None
+    out = {"question_count": count, "engine": engine, "remote": remote, "cost_usd": cost}
+    usage = value.get("usage")
+    if isinstance(usage, Mapping):
+        safe_usage = {key: usage[key] for key in ("input_tokens", "output_tokens")
+                      if type(usage.get(key)) is int and usage[key] >= 0}
+        if safe_usage:
+            out["usage"] = safe_usage
+    return out
 
 
 def sanitize_admin_metadata(metadata: Any) -> dict[str, Any]:
@@ -135,6 +177,9 @@ def sanitize_admin_metadata(metadata: Any) -> dict[str, Any]:
                 "attempts_started": attempts_started,
                 "chunked": chunked,
             }
+    decisions = _sanitize_decision_metadata(metadata.get("decisions"))
+    if decisions:
+        out["decisions"] = decisions
     litellm_meta = _sanitize_litellm_metadata_for_admin(metadata.get("litellm"))
     if litellm_meta:
         out["litellm"] = litellm_meta
@@ -324,6 +369,10 @@ def serialize_receipt_for_audience(data: Mapping[str, Any], audience: str = "int
             for name, value in cost.items()
             if name in {"usd", "source", "cost_class"}
         }
+    metadata = data.get("metadata")
+    decisions = _sanitize_decision_metadata(metadata.get("decisions")) if isinstance(metadata, Mapping) else {}
+    if decisions:
+        client_data["decisions"] = decisions
     return client_data
 
 

@@ -36,6 +36,7 @@ import hmac
 import ipaddress
 import secrets
 import uuid
+from decimal import Decimal
 from dataclasses import dataclass, replace
 from pathlib import Path
 import contextlib
@@ -80,6 +81,8 @@ from gateway import video_subject
 from gateway import video_job_records
 from gateway.showcase import build_showcase_router, is_public_showcase_path
 from gateway import realtime_proxy
+from gateway import decisions_api, decision_provider_execution
+from gateway.decision_routing import DecisionRuntime
 from gateway import rerank as rerank_api
 from gateway import stable_aliases
 from gateway import speech_stream
@@ -13154,6 +13157,8 @@ async def _filter_model_list_for_profile(
 
 
 def _protocol_for_intent(intent: str) -> str:
+    if intent == "decision.systemone":
+        return "typesafe.systemone"
     if intent.startswith("image."):
         return "openai.images"
     if intent.startswith("video."):
@@ -13211,6 +13216,15 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
     ))
 
     capabilities.extend(build_alias_capabilities(_gateway_aliases_provider()))
+    decision_capabilities = DECISION_RUNTIME.capabilities()
+    if _profile_target_visibility(auth_context) == "available":
+        decision_capabilities = [cap for cap in decision_capabilities if cap.engine is not None]
+    capabilities.extend(decision_capabilities)
+
+    for model in _remote_decision_models(auth_context, _profile_for_auth_context(auth_context)):
+        provider = providers.provider_refs(ADMIN_STORE.get_service_registry()).get("typesafe")
+        if provider:
+            capabilities.append(decision_provider_execution.capability_for(provider, model.id))
 
     for record in GATEWAY_WORKFLOW_REGISTRY.records():
         for backend in record.supported_backends:
@@ -13606,6 +13620,146 @@ mcp_server.register_mcp_routes(
         public_base_url=lambda request: _public_base_url(request),
         server_version=str((config.get("proxy") or {}).get("version") or "1"),
         allowed_origins=lambda: [str(o) for o in ((config.get("mcp") or {}).get("allowed_origins") or [])],
+    ),
+)
+
+# System One facades use the existing registry lifecycle and profile evaluator.
+def _decision_catalog_authorized(auth: AuthContext, model: str, service: str | None) -> bool:
+    try:
+        capability = DECISION_RUNTIME.capability_for(model, service)
+    except decisions_api.DecisionsError:
+        return False
+    return _capability_for_profile(capability, auth).policy_available is not False
+
+
+def _profile_may_need_decision_engine_probe(auth: AuthContext) -> bool:
+    allowed = getattr(getattr(_profile_for_auth_context(auth), "allow", None), "tags", None)
+    return bool(allowed and ({"engine:gpu", "engine:cpu"} & set(allowed)))
+
+
+def _decision_authorized(auth: AuthContext, model: str, service: str | None) -> bool:
+    allowed = _decision_catalog_authorized(auth, model, service)
+    if _profile_target_activation(auth) != "existing_only":
+        return allowed
+    if not allowed and not _profile_may_need_decision_engine_probe(auth):
+        return False
+    if not service or DECISION_RUNTIME.observed_engine(service, fresh=True) is None:
+        return False
+    return _decision_catalog_authorized(auth, model, service)
+
+
+async def _decision_ensure_ready(service: str) -> Response | None:
+    return await _ensure_speech_service_ready(service, label="Decision engine")
+
+
+DECISION_RUNTIME = DecisionRuntime(
+    lambda: config,
+    _decision_authorized,
+    _decision_ensure_ready,
+    catalog_authorize=_decision_catalog_authorized,
+)
+
+
+def _decision_provider_context() -> dict[str, Any]:
+    return {
+        "registry": ADMIN_STORE.get_service_registry(),
+        "ledger_path": ADMIN_DB_PATH.parent / "provider_spend.db",
+        "admin_db_path": ADMIN_DB_PATH,
+    }
+
+
+async def _dispatch_decision(auth: AuthContext, profile: Any, body: Mapping[str, Any], request_id: str) -> decisions_api.DecisionDispatchResult:
+    if str(body.get("model") or "").startswith("typesafe/"):
+        return await decision_provider_execution.systemone(auth, profile, body, request_id, **_decision_provider_context())
+    return await DECISION_RUNTIME.dispatch(auth, profile, body, request_id)
+
+
+async def _openai_decisions(request: Request, auth: AuthContext, profile: Any) -> Response:
+    return await decision_provider_execution.openai(request, auth, profile, **_decision_provider_context())
+
+
+def _remote_decision_models(auth: AuthContext, profile: Any) -> list[decisions_api.DecisionModel]:
+    if not auth.identity or not auth.identity.app_id:
+        return []
+    registry = ADMIN_STORE.get_service_registry()
+    provider = providers.provider_refs(registry).get("typesafe")
+    if not provider or not provider.enabled or "typesafe-systemone" not in provider.protocols:
+        return []
+    try:
+        providers.require_remote_allowed(profile, provider)
+    except providers.ProviderError:
+        return []
+    rows = []
+    for model in decision_provider_execution.catalog_models(provider):
+        cap = decision_provider_execution.capability_for(provider, model)
+        if _capability_for_profile(cap, auth).policy_available is False:
+            continue
+        if _profile_target_visibility(auth) == "available" and not provider.configured:
+            continue
+        rows.append(decisions_api.DecisionModel(
+            id=model, root=model.partition("/")[2], backend=provider.id,
+            backend_kind="provider", cost_class=provider.cost_class, remote=True,
+            available=provider.configured, reason=None if provider.configured else "provider_key_missing",
+            capabilities={"calibrated": True},
+        ))
+    return rows
+
+
+def _decision_models_for(auth: AuthContext, profile: Any) -> list[decisions_api.DecisionModel]:
+    return DECISION_RUNTIME.models_for(auth, profile) + _remote_decision_models(auth, profile)
+
+
+def _record_decision_receipt(auth: AuthContext, result: decisions_api.DecisionReceipt) -> None:
+    identity = auth.identity
+    receipt = RouteReceipt(
+        protocol=result.protocol, intent=result.intent, path=result.path,
+        request_id=result.request_id, requested_model=result.requested_model,
+        resolved_model=result.resolved_model, backend=result.backend,
+        app_profile=identity.profile.id if identity else None,
+        app_id=identity.app_id if identity else None,
+        api_key_name=identity.name if identity else None,
+    )
+    receipt.begin(now_ms=int(time.time() * 1000 - result.latency_ms))
+    receipt.finish("ok" if result.status_code < 400 else "rejected" if result.status_code < 500 else "error",
+                   latency_ms=result.latency_ms)
+    receipt.fallback_reasons = list(result.fallback_reasons)
+    receipt.metadata["status_code"] = result.status_code
+    if result.error_code:
+        receipt.reject_input(result.error_param or "request", result.error_code)
+    safe_usage = providers.extract_usage({"usage": result.usage or {}})
+    safe_usage_metadata = {
+        key: value
+        for key, value in {
+            "input_tokens": safe_usage.input_tokens,
+            "output_tokens": safe_usage.output_tokens,
+        }.items()
+        if value is not None
+    }
+    usage_for_receipt = safe_usage if safe_usage_metadata else None
+    if result.remote:
+        providers.attach_cost_to_receipt(
+            receipt,
+            providers.Cost(
+                Decimal(str(result.cost_usd)) if result.cost_usd is not None else None,
+                result.cost_source or "unknown", result.backend or "typesafe",
+            ),
+            usage_for_receipt,
+        )
+    receipt.metadata["decisions"] = {
+        "question_count": result.question_count, "engine": result.engine,
+        "remote": result.remote, "cost_usd": result.cost_usd, "usage": safe_usage_metadata,
+    }
+    receipt_store.record(receipt)
+
+
+decisions_api.register_decision_routes(
+    app, decisions_api.DecisionsApiDeps(
+        authenticate=lambda request, path: authenticate_request(request, path),
+        profile_for=_profile_for_auth_context,
+        models_for=_decision_models_for,
+        dispatch=_dispatch_decision,
+        record_receipt=_record_decision_receipt,
+        openai_decisions=_openai_decisions,
     ),
 )
 
@@ -22857,6 +23011,8 @@ async def list_models(request: Request):
 
     by_id = {item.get("id"): item for item in data if isinstance(item, dict)}
     for alias_entry in _stable_alias_model_entries():
+        if "decisions" in alias_entry["vivid_fish_resolves_to"]:
+            continue  # Decision models use their own policy and runtime metadata below.
         existing = by_id.get(alias_entry["id"])
         if existing is not None:
             existing.update({k: v for k, v in alias_entry.items() if k.startswith("vivid_fish_")})
@@ -22900,6 +23056,12 @@ async def list_models(request: Request):
             desc = str(extra.get("description") or "") if isinstance(extra, Mapping) else ""
         if desc:
             item["description"] = desc
+
+    for decision_model in await asyncio.to_thread(_decision_models_for, auth_context, _profile_for_auth_context(auth_context)):
+        entry = {"id": decision_model.id, "object": "model", "owned_by": "vivid-fish",
+                 "created": 0, "capabilities": decision_model.view()["capabilities"]}
+        if entry["id"] not in {item.get("id") for item in data if isinstance(item, dict)}:
+            data.append(entry)
 
     await _annotate_model_context_windows(data)
 

@@ -11,3 +11,4 @@
 - [Built-in accounts and recovery links](account-authentication-sources.md) -
   2026-10-03 - OWASP password and recovery guidance, reuse of signed sessions,
   verified OIDC invitation binding, persistent throttles and removal tombstones.
+- [TypeSafe System One facade fidelity for Vivid Fish Gateway](llm-serving/typesafe-systemone-facade-fidelity-2026-10-03.md) — 2026-10-03 — Live `api.md` and `models.md` fetched with sha256s; local saved snapshot compared; `typesafe-sdk` package import and response models probed offline; confirms `/typesafe/v1/models` uses `{"models":[...]}`, System One responses require `model`, `usage`, and typed answers, and the sync SDK can be tested offline with a custom `httpx2.BaseTransport`.

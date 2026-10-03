@@ -482,6 +482,7 @@ def extract_provider_cost(
     body: Mapping[str, Any] | None = None,
     headers: Mapping[str, str] | None = None,
     stream: bool = False,
+    allow_usage_pricing: bool = True,
 ) -> Cost:
     headers = headers or {}
     if body is not None:
@@ -490,14 +491,15 @@ def extract_provider_cost(
             reported = _decimal_or_none(usage.get("cost"))
             if reported is not None:
                 return Cost(reported, "provider-reported", provider.id, provider.cost_class)
-            sdk_cost = _litellm_full_usage_cost(
-                _litellm_cost_model(provider, body),
-                body,
-                provider.price.get("usage_price_requirements"),
-            )
-            if sdk_cost is not None:
-                return Cost(sdk_cost, "litellm", provider.id, provider.cost_class)
-            return Cost(None, "unknown", provider.id, provider.cost_class)
+            if allow_usage_pricing:
+                sdk_cost = _litellm_full_usage_cost(
+                    _litellm_cost_model(provider, body),
+                    body,
+                    provider.price.get("usage_price_requirements"),
+                )
+                if sdk_cost is not None:
+                    return Cost(sdk_cost, "litellm", provider.id, provider.cost_class)
+                return Cost(None, "unknown", provider.id, provider.cost_class)
     header_cost = _decimal_or_none(headers.get("x-litellm-response-cost"))
     if header_cost is not None and not stream:
         return Cost(header_cost, "litellm", provider.id, provider.cost_class)
@@ -1127,7 +1129,69 @@ def _redact_provider_payload(value: Any, secret: str) -> Any:
         return [_redact_provider_payload(item, secret) for item in value]
     if isinstance(value, dict):
         return {
-            key: _redact_provider_payload(item, secret)
+            _redact_provider_payload(key, secret): _redact_provider_payload(item, secret)
             for key, item in value.items()
         }
     return value
+
+
+async def call_openai_json(
+    provider: ProviderRef,
+    path: str,
+    body: Mapping[str, Any],
+    *,
+    content: bytes | None = None,
+    timeout: float = 15.0,
+    client: httpx.AsyncClient | None = None,
+) -> tuple[dict[str, Any], Cost, Usage, Mapping[str, str], bytes, int]:
+    """Call an OpenAI-compatible provider JSON endpoint without LiteLLM.
+
+    Admission, reservation and receipts stay with the caller because different
+    OpenAI-shaped routes have different bounded-cost preconditions. ``content``
+    lets opaque routes preserve the caller's original JSON bytes; when a
+    response body contains the provider key, the returned bytes are replaced by
+    redacted JSON.
+    """
+
+    api_key = os.environ.get(provider.api_key_env or "")
+    if not api_key:
+        raise ProviderKeyMissing(f"provider {provider.id!r} key is missing")
+    close_client = client is None
+    client = client or httpx.AsyncClient(timeout=timeout)
+    try:
+        response = await client.post(
+            _provider_url(provider, path),
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            content=content if content is not None else json.dumps(body, separators=(",", ":")).encode("utf-8"),
+        )
+        original_content = response.content
+        parsed_json = True
+        try:
+            parsed = response.json()
+        except ValueError:
+            parsed_json = False
+            parsed = None
+        redacted = _redact_provider_payload(parsed, api_key) if parsed_json else None
+        payload = redacted if isinstance(redacted, dict) else {}
+        returned_content = original_content
+        if parsed_json and redacted != parsed:
+            returned_content = json.dumps(redacted, separators=(",", ":")).encode("utf-8")
+        elif not parsed_json:
+            returned_content = original_content.replace(api_key.encode("utf-8"), b"<redacted>")
+        cost = extract_provider_cost(provider, body=payload, headers=response.headers, allow_usage_pricing=False)
+        return payload, cost, extract_usage(payload), response.headers, returned_content, response.status_code
+    except httpx.TimeoutException as exc:
+        raise ProviderTimeout("provider request timed out") from exc
+    except httpx.HTTPError as exc:
+        raise ProviderUpstreamError("remote provider request failed") from exc
+    finally:
+        if close_client:
+            await client.aclose()
+
+
+def _provider_url(provider: ProviderRef, path: str) -> str:
+    base = provider.base_url.rstrip("/")
+    suffix = "/" + path.lstrip("/")
+    if base.endswith("/v1") and suffix.startswith("/v1/"):
+        suffix = suffix[3:]
+    return base + suffix

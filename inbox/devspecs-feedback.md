@@ -59,3 +59,15 @@
 
 - Useful: `ds tldr` and `ds recent` returned workflow guidance and the merged shell/account/settings boundaries.
 - Rough edge: a three-slice task creation returned no task ID or progress during a minute of waiting. After I terminated that process, it reported “task index preflight failed before repository mutation” and “Repository files written: no.” No shared index state was removed; integration continued from the brief and repository evidence.
+## 2026-10-03 — decision implementation worktree
+
+- `ds tldr` and `ds recent` succeeded. Recent returned source/test/doc groups
+  for five earlier changes and gave useful file pointers.
+- `ds find 'stable aliases capabilities registry lifecycle'` produced no
+  result over several polls. A subsequent sliced `ds task` reported
+  `Task index preflight: waiting for another index update` and did not advance.
+- Stopped only those two task-owned CLI processes after the wait. Continued
+  repository orientation through direct source reads. No DevSpecs state was
+  deleted and no other indexing processes were terminated.
+- A bounded timeout with the indexing owner's status would make this failure
+  easier to diagnose in a worktree shared by concurrent implementation lanes.
