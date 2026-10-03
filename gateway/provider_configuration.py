@@ -73,8 +73,9 @@ def provider_service_from_body(body: Mapping[str, Any]) -> dict[str, Any]:
         "billing_dimensions": list(preset.billing_dimensions),
         "recommendations": [dict(row) for row in preset.recommendations],
         "models": model_records_from_body(body, provider_id),
-        "model_policy_schema_version": service_registry.MODEL_POLICY_SCHEMA_VERSION,
     }
+    if config["models"]:
+        config["model_policy_schema_version"] = service_registry.MODEL_POLICY_SCHEMA_VERSION
     price = price_config_from_body(body, provider_id)
     _validate_enabled_model_prices(config["models"], price)
     if price:

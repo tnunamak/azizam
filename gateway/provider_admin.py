@@ -11,6 +11,7 @@ from __future__ import annotations
 import hmac
 import math
 import json
+import hashlib
 import os
 import sqlite3
 import calendar
@@ -400,9 +401,11 @@ def create_provider_admin_router(
         provider = _one_provider_payload(store, effective_spending_provider, provider_id)
         if provider is None:
             return _RouteError(status.HTTP_404_NOT_FOUND, "provider_not_found", f"provider {provider_id!r} was not found").as_response()
-        _, service = _service_for_provider(store.get_service_registry(), provider_id)
-        config = dict(service.get("config") or {})
-        config.setdefault("provider_id", service_registry.canonical_provider_id(provider_id))
+        with secret_store.provider_mutation_lock(_admin_db_path(store)):
+            _, service = _service_for_provider(store.get_service_registry(), provider_id)
+            config = dict(service.get("config") or {})
+            config.setdefault("provider_id", service_registry.canonical_provider_id(provider_id))
+            key_fingerprint = _provider_key_fingerprint(config, _admin_db_path(store))
         try:
             secret_id = str(config.get("api_key_secret_id") or "")
             if secret_id:
@@ -414,13 +417,17 @@ def create_provider_admin_router(
                 api_key = os.environ.get(str(config.get("api_key_env") or ""), "")
             result = await provider_listing.probe_provider(config, api_key)
         except provider_listing.ProviderListingError as exc:
-            state = store.get_provider_admin_state()
-            _provider_state_for_update(state, provider_id)["connection"] = {"reachable": False, "checked_at": int(time.time())}
-            store.update_provider_admin_state(data=state, actor=ctx)
+            with secret_store.provider_mutation_lock(_admin_db_path(store)):
+                if _saved_provider_probe_still_current(store, provider_id, key_fingerprint):
+                    state = store.get_provider_admin_state()
+                    _provider_state_for_update(state, provider_id)["connection"] = {"reachable": False, "checked_at": int(time.time())}
+                    store.update_provider_admin_state(data=state, actor=ctx)
             return _RouteError(exc.status_code, exc.code, str(exc)).as_response()
-        state = store.get_provider_admin_state()
-        _provider_state_for_update(state, provider_id)["connection"] = {"reachable": True, "checked_at": result["checked_at"]}
-        store.update_provider_admin_state(data=state, actor=ctx)
+        with secret_store.provider_mutation_lock(_admin_db_path(store)):
+            if _saved_provider_probe_still_current(store, provider_id, key_fingerprint):
+                state = store.get_provider_admin_state()
+                _provider_state_for_update(state, provider_id)["connection"] = {"reachable": True, "checked_at": result["checked_at"]}
+                store.update_provider_admin_state(data=state, actor=ctx)
         return JSONResponse(status_code=status.HTTP_200_OK, content=result)
 
     @router.put("/{provider_id}/models")
@@ -787,6 +794,34 @@ def _project_provider(
             "billing_dimensions": list(config.get("billing_dimensions") or []),
         },
     }
+
+
+def _provider_key_fingerprint(config: Mapping[str, Any], db_path: Path) -> tuple[Any, ...]:
+    config_revision = hashlib.sha256(
+        json.dumps(config, sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    secret_id = str(config.get("api_key_secret_id") or "").strip()
+    if secret_id:
+        try:
+            secret_revision = secret_store.provider_secret_revision(secret_id, db_path=db_path)
+        except Exception:
+            secret_revision = "unavailable"
+        return ("secret", secret_id, secret_revision, config_revision)
+    api_key_env = str(config.get("api_key_env") or "").strip()
+    env_value = os.environ.get(api_key_env) if api_key_env else None
+    env_revision = hashlib.sha256(env_value.encode("utf-8")).hexdigest() if env_value is not None else "missing"
+    return ("env", api_key_env, env_revision, config_revision)
+
+
+def _saved_provider_probe_still_current(
+    store: ProviderAdminStore, provider_id: str, key_fingerprint: tuple[Any, ...]
+) -> bool:
+    try:
+        _service_id, service = _service_for_provider(store.get_service_registry(), provider_id)
+    except _RouteError:
+        return False
+    config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+    return _provider_key_fingerprint(config, _admin_db_path(store)) == key_fingerprint
 
 
 def _project_key_status(provider_id: str, config: Mapping[str, Any], db_path: Path) -> dict[str, Any]:
@@ -1210,11 +1245,8 @@ def _sync_profile_remote_provider_grants(
             remote["providers"] = sorted(providers)
             profile_doc["remote"] = remote
         elif remote:
-            remote.pop("providers", None)
-            if remote:
-                profile_doc["remote"] = remote
-            else:
-                profile_doc.pop("remote", None)
+            remote["providers"] = []
+            profile_doc["remote"] = remote
         else:
             profile_doc.pop("remote", None)
         store.update_profile(profile_id=record_id, data={"profile": profile_doc}, actor=actor)

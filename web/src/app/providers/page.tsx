@@ -1363,6 +1363,42 @@ function AddProviderDialog({
   );
 }
 
+function ProviderEmptyState({ onAdd }: { onAdd: () => void }) {
+  return (
+    <div className="bg-card relative overflow-hidden rounded-3xl border p-8 text-center sm:p-12">
+      <div className="bg-primary/10 pointer-events-none absolute inset-x-8 top-8 h-24 rounded-full blur-3xl" />
+      <div className="relative mx-auto flex max-w-xl flex-col items-center gap-5">
+        <div className="bg-primary/10 text-primary relative flex size-20 items-center justify-center rounded-[2rem]">
+          <Fish className="size-9" aria-hidden="true" />
+          <span className="bg-warning absolute top-3 -right-2 size-3 rounded-full" />
+          <span className="bg-primary/40 absolute -bottom-2 left-4 h-1.5 w-10 rounded-full" />
+        </div>
+        <div className="space-y-3">
+          <p className="font-serif text-3xl font-semibold tracking-tight">
+            No providers yet
+          </p>
+          <p className="text-muted-foreground text-sm leading-6 sm:text-base">
+            Connect a provider to use cloud models alongside your local ones.
+            Requests only go to a provider when a model names it.
+          </p>
+        </div>
+        <div className="bg-background/70 grid w-full gap-2 rounded-2xl border p-3 text-left text-sm sm:grid-cols-3">
+          <div className="bg-primary/5 text-foreground rounded-xl p-3">
+            1. Pick a preset
+          </div>
+          <div className="bg-muted rounded-xl p-3">2. Run Gateway check</div>
+          <div className="bg-muted rounded-xl p-3">
+            3. Allow plans explicitly
+          </div>
+        </div>
+        <Button onClick={onAdd}>
+          <Plus aria-hidden="true" /> Add provider
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function GlobalCapsEditor({
   global,
   busy,
@@ -1623,16 +1659,7 @@ export default function ProvidersPage() {
             </Button>
           </div>
         ) : records.length === 0 ? (
-          <EmptyState
-            title="No providers yet"
-            description="Connect a provider to use cloud models alongside your local ones. Requests only go to a provider when a model names it."
-            icon={Fish}
-            action={
-              <Button onClick={() => setAddOpen(true)}>
-                <Plus aria-hidden="true" /> Add provider
-              </Button>
-            }
-          />
+          <ProviderEmptyState onAdd={() => setAddOpen(true)} />
         ) : (
           <div className="space-y-5">
             <GlobalCapsEditor

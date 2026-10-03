@@ -215,8 +215,8 @@ class FakeProviderAdminStore:
     def update_service(
         self, *, service_id: str, data: Mapping[str, Any], actor: AdminContext, expected_generation: int
     ) -> dict[str, Any]:
-        self.registry["services"][service_id] = service_registry.normalize_service_record(
-            service_id, service_registry.service_form_to_raw(data),
+        self.registry["services"][service_id] = service_registry.service_from_backend_config(
+            service_id, service_registry.service_form_to_raw(data), source="ui",
         )
         self.audit.append({"action": "operator.service.update", "actor": actor.subject})
         return {"value": self.registry}
@@ -286,14 +286,67 @@ class ProviderAdminApiTests(unittest.TestCase):
         self.assertNotIn("sk-", response.text)
 
 
+
+    def test_saved_gateway_check_does_not_repopulate_stale_success_after_key_rotation(self) -> None:
+        store = FakeProviderAdminStore()
+        store.registry["services"]["openrouter"]["config"].pop("api_key_env", None)
+        store.registry["services"]["openrouter"]["config"]["api_key_secret_id"] = "provider:openrouter:api_key"
+        secret_store.put_provider_secret(
+            "provider:openrouter:api_key",
+            "sk-original-4f2a",
+            db_path=store.path,
+            now=1234,
+        )
+        client = _client(store)
+        probe_entered = threading.Event()
+        release_probe = threading.Event()
+
+        async def blocking_probe(config, api_key):
+            self.assertEqual(api_key, "sk-original-4f2a")
+            probe_entered.set()
+            self.assertTrue(release_probe.wait(5), "test did not release blocked probe")
+            return {"ok": True, "reachable": True, "checked_at": 1700000000, "models": []}
+
+        check_result: dict[str, object] = {}
+
+        def run_check() -> None:
+            check_result["response"] = client.post(
+                "/admin/api/providers/openrouter/test",
+                headers={"authorization": "Bearer admin"},
+            )
+
+        with patch("gateway.provider_admin.provider_listing.probe_provider", new=AsyncMock(side_effect=blocking_probe)):
+            check_thread = threading.Thread(target=run_check)
+            check_thread.start()
+            self.assertTrue(probe_entered.wait(5), "saved check did not reach provider probe")
+            with patch("gateway.secret_store.time.time", return_value=1234):
+                rotated = client.put(
+                    "/admin/api/providers/openrouter/key",
+                    headers={"authorization": "Bearer admin"},
+                    json={"api_key": "sk-rotated-4f2a"},
+                )
+            self.assertEqual(rotated.status_code, 200)
+            release_probe.set()
+            check_thread.join(5)
+
+        self.assertFalse(check_thread.is_alive())
+        self.assertEqual(check_result["response"].status_code, 200)
+        provider = client.get(
+            "/admin/api/providers/openrouter",
+            headers={"authorization": "Bearer admin"},
+        ).json()["provider"]
+        self.assertIsNone(provider["reachable"])
+        self.assertIsNone(provider["checked_at"])
+
     def test_remove_recreate_mutation_lock_preserves_replacement_secret(self) -> None:
         store = FakeProviderAdminStore()
         store.registry["services"]["openrouter"]["config"].pop("api_key_env", None)
         store.registry["services"]["openrouter"]["config"]["api_key_secret_id"] = "provider:openrouter:api_key"
         secret_store.put_provider_secret(
             "provider:openrouter:api_key",
-            "sk-original-openrouter",
+            "sk-original-4f2a",
             db_path=store.path,
+            now=1234,
         )
         client = _client(store)
         delete_entered = threading.Event()

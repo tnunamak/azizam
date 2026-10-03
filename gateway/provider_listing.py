@@ -68,7 +68,13 @@ def _price(value: Any, rule: Any) -> str | None:
         return None
 
 
-def project_models(payload: Any, listing: Mapping[str, Any], *, provider_id: str) -> list[dict[str, Any]]:
+def project_models(
+    payload: Any,
+    listing: Mapping[str, Any],
+    *,
+    provider_id: str,
+    deny_substring: str | None = None,
+) -> list[dict[str, Any]]:
     rows = _at_path(payload, str(listing.get("items_path", "data")))
     if not isinstance(rows, list):
         raise ProviderListingError("The provider returned an unsupported model list.", code="provider_model_list_invalid")
@@ -77,6 +83,8 @@ def project_models(payload: Any, listing: Mapping[str, Any], *, provider_id: str
     price_rules = listing.get("prices") if isinstance(listing.get("prices"), Mapping) else {}
     for row in rows:
         if not isinstance(row, Mapping):
+            continue
+        if deny_substring and deny_substring in str(row):
             continue
         model_id = _at_path(row, str(listing.get("id_path") or "id"))
         if not isinstance(model_id, str) or not model_id.strip() or model_id in seen:
@@ -136,12 +144,7 @@ async def probe_provider(
             await get_json(auth_test)
         payload = await get_json(listing)
         provider_id = str(config.get("provider_id") or "")
-        models = project_models(payload, listing, provider_id=provider_id)
-        # Treat successful upstream metadata as untrusted too. A credential
-        # echoed into an ID/name must never escape this write-only boundary.
-        models = [row for row in models if not any(
-            api_key in str(row.get(field) or "") for field in ("id", "upstream_model", "name")
-        )]
+        models = project_models(payload, listing, provider_id=provider_id, deny_substring=api_key)
         more = bool(_at_path(payload, str(listing.get("has_more_path") or "has_more")))
         return {
             "ok": True, "reachable": True, "checked_at": int(time.time()),

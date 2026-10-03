@@ -10,6 +10,7 @@ import stat
 import tempfile
 import time
 import fcntl
+import hashlib
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -144,6 +145,20 @@ def provider_secret_status(secret_id: str, *, db_path: Path) -> SecretStatus:
     if row is None:
         return SecretStatus(secret_id, "missing", None, None)
     return SecretStatus(secret_id, "set", str(row[0]), int(row[1]))
+
+
+def provider_secret_revision(secret_id: str, *, db_path: Path) -> str:
+    secret_id = _normalize_secret_id(secret_id)
+    ensure_provider_secret_schema(db_path)
+    with closing(sqlite3.connect(db_path)) as conn:
+        row = conn.execute(
+            "SELECT nonce_b64, ciphertext_b64 FROM provider_secrets WHERE id = ?",
+            (secret_id,),
+        ).fetchone()
+    if row is None:
+        return "missing"
+    payload = f"{secret_id}\0{row[0]}\0{row[1]}".encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def export_provider_secret_env(db_path: Path, secret_refs: dict[str, str]) -> dict[str, str]:

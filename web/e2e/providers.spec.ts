@@ -409,7 +409,7 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
         profile: {
           id: `provider-denied-${unique}`,
           protocols: ["openai"],
-          remote: { providers: [], budget_usd_per_day: "2.00" },
+          remote: { providers: ["openrouter"], budget_usd_per_day: "2.00" },
           status_visibility: { level: "full" },
         },
       },
@@ -484,8 +484,16 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
         max_tokens: 100,
       },
     });
-    expect(denied.status()).toBe(403);
-    expect(await denied.json()).toMatchObject({
+    const deniedText = await denied.text();
+    const deniedBody = (() => {
+      try {
+        return JSON.parse(deniedText);
+      } catch {
+        return { error: { code: "non_json_error", message: deniedText } };
+      }
+    })();
+    expect(denied.status(), JSON.stringify(deniedBody)).toBe(403);
+    expect(deniedBody).toMatchObject({
       error: { code: "paid_provider_not_allowed" },
     });
 
