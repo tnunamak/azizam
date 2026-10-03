@@ -325,12 +325,6 @@ def reserve_provider_spend(
     with sqlite3.connect(path, isolation_level=None) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
-            _enforce_reconciliation_clear(
-                conn,
-                profile=profile,
-                provider=provider,
-                provider_admin=provider_admin,
-            )
             _enforce_window_cap(
                 conn,
                 profile=profile,
@@ -585,13 +579,25 @@ def extract_provider_cost(
     return Cost(None, "unknown", provider.id, provider.cost_class)
 
 
+def resolve_provider_model(provider: ProviderRef, model: str) -> str:
+    """Resolve registry model aliases using the same mapping as LiteLLM dispatch."""
+    from gateway.litellm_substrate import litellm_provider_model_lookup
+    registry = {"services": {provider.id: {
+        "id": provider.id, "kind": "provider", "capabilities": ["openai"],
+        "config": {**provider.config, "provider_id": provider.id,
+                   "provider_type": "paid-remote", "api_key_env": provider.api_key_env},
+    }}}
+    facts = litellm_provider_model_lookup(registry).get(model)
+    return str(facts.get("upstream_model") or model) if facts else model
+
+
 def estimate_typesafe_cost(provider: ProviderRef, body: Mapping[str, Any]) -> Cost:
     estimated_tokens = _estimate_tokens_from_json(
         {"state": body.get("state", ""), "questions": body.get("questions", {})}
     )
     estimated = _cost_from_tokens(
         provider,
-        model=str(body.get("model") or ""),
+        model=resolve_provider_model(provider, str(body.get("model") or "")),
         input_tokens=estimated_tokens,
         output_tokens=0,
     )
@@ -614,7 +620,7 @@ def estimate_chat_cost(provider: ProviderRef, body: Mapping[str, Any]) -> Cost:
         return Cost(None, "unknown", provider.id, provider.cost_class)
     estimated = _cost_from_tokens(
         provider,
-        model=str(body.get("model") or ""),
+        model=resolve_provider_model(provider, str(body.get("model") or "")),
         input_tokens=input_tokens,
         output_tokens=output_limit * candidates,
     )
@@ -772,49 +778,6 @@ def _has_any_cap(
             _admin_global_cap(provider_admin, "monthly"),
         )
     )
-
-
-def _enforce_reconciliation_clear(
-    conn: sqlite3.Connection,
-    *,
-    profile: AppProfile,
-    provider: ProviderRef,
-    provider_admin: Mapping[str, Any],
-) -> None:
-    if not _has_any_cap(profile, provider, provider_admin):
-        return
-    provider_id = canonical_provider_id(provider.id)
-    provider_pending = conn.execute(
-        "SELECT id FROM provider_spend WHERE lower(provider) = ? AND status = 'needs_reconciliation' LIMIT 1",
-        (provider_id,),
-    ).fetchone()
-    if provider_pending is not None:
-        raise BudgetExceeded(
-            f"provider {provider_id!r} needs reconciliation before more paid requests can be admitted"
-        )
-    if (
-        profile.remote.budget_usd_per_day is not None
-        or profile.remote.budget_usd_per_month is not None
-    ):
-        profile_pending = conn.execute(
-            "SELECT id FROM provider_spend WHERE profile_id = ? AND status = 'needs_reconciliation' LIMIT 1",
-            (profile.id,),
-        ).fetchone()
-        if profile_pending is not None:
-            raise BudgetExceeded(
-                f"access plan {profile.id!r} needs provider spend reconciliation before more paid requests can be admitted"
-            )
-    if (
-        _admin_global_cap(provider_admin, "daily") is not None
-        or _admin_global_cap(provider_admin, "monthly") is not None
-    ):
-        global_pending = conn.execute(
-            "SELECT id FROM provider_spend WHERE status = 'needs_reconciliation' LIMIT 1"
-        ).fetchone()
-        if global_pending is not None:
-            raise BudgetExceeded(
-                "provider spend needs reconciliation before more paid requests can be admitted"
-            )
 
 
 def _enforce_window_cap(

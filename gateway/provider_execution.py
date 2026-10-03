@@ -628,7 +628,7 @@ async def execute_paid_litellm(
         async def finish(body: Mapping[str, Any], generation_id: str | None = None) -> None:
             final_cost = providers.extract_provider_cost(
                 provider,
-                body={**body, "model": model},
+                body={**body, "model": resolved_upstream_model},
                 headers=response.headers,
                 stream="text/event-stream" in response.headers.get("content-type", ""),
             )
