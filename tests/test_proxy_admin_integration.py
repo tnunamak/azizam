@@ -837,6 +837,275 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             "/login?return_to=%2F",
         )
 
+    def test_user_models_catalog_requires_session(self) -> None:
+        response = self.client.get("/me/api/models/catalog")
+
+        self.assertEqual(response.status_code, 401, response.text)
+        self.assertEqual(response.json()["error"]["code"], "not_authenticated")
+
+    def test_user_models_catalog_rejects_session_for_deleted_user(self) -> None:
+        cfg = OIDCConfig(
+            enabled=True,
+            issuer="https://idp.example",
+            client_id="ai-gateway",
+            client_secret="secret",
+            redirect_uri="http://testserver/admin/oidc/callback",
+            scopes=("openid", "email", "profile"),
+            allowed_email_domains=frozenset(),
+            admin_emails=frozenset(),
+            signing_key=b"d" * 32,
+            cookie=CookieConfig(secure=False),
+            authorization_endpoint="https://idp.example/authorize",
+            token_endpoint="https://idp.example/token",
+            jwks_uri="https://idp.example/jwks",
+        )
+        proxy.ADMIN_OIDC_CONFIG = cfg
+        proxy.ADMIN_AUTH.signing_key = cfg.signing_key
+        proxy.ADMIN_AUTH.cookie = cfg.cookie
+        session = session_from_claims(
+            {"sub": "deleted-user-id", "email": "deleted@example.com"},
+            role="none",
+            cookie=cfg.cookie,
+        )
+        self.client.cookies.set(
+            cfg.cookie.name,
+            encode_session_cookie(session, signing_key=cfg.signing_key),
+        )
+
+        with patch.object(
+            proxy,
+            "_default_profile_id_for_session",
+            return_value="default-local",
+        ), patch.object(
+            proxy,
+            "_gateway_capabilities_for_auth_context",
+            side_effect=AssertionError("deleted users must not get default catalog capabilities"),
+        ):
+            response = self.client.get("/me/api/models/catalog")
+
+        self.assertEqual(response.status_code, 401, response.text)
+        self.assertEqual(response.json()["error"]["code"], "not_authenticated")
+
+    def test_user_models_catalog_uses_app_profile_and_own_receipts(self) -> None:
+        from gateway import receipt_store
+        from gateway.capabilities import Capability
+        from gateway.receipts import RouteReceipt
+
+        cfg = OIDCConfig(
+            enabled=True,
+            issuer="https://idp.example",
+            client_id="ai-gateway",
+            client_secret="secret",
+            redirect_uri="http://testserver/admin/oidc/callback",
+            scopes=("openid", "email", "profile"),
+            allowed_email_domains=frozenset(),
+            admin_emails=frozenset(),
+            signing_key=b"m" * 32,
+            cookie=CookieConfig(secure=False),
+            authorization_endpoint="https://idp.example/authorize",
+            token_endpoint="https://idp.example/token",
+            jwks_uri="https://idp.example/jwks",
+        )
+        proxy.ADMIN_OIDC_CONFIG = cfg
+        proxy.ADMIN_AUTH.signing_key = cfg.signing_key
+        proxy.ADMIN_AUTH.cookie = cfg.cookie
+        user = admin_store.upsert_oidc_user(
+            issuer=cfg.issuer,
+            subject="models-user",
+            email="models@example.com",
+            display_name="Models User",
+            path=self.db,
+        )
+        other_user = admin_store.upsert_oidc_user(
+            issuer=cfg.issuer,
+            subject="other-models-user",
+            email="other-models@example.com",
+            display_name="Other Models User",
+            path=self.db,
+        )
+        profile = self.client.post(
+            "/admin/api/profiles",
+            json={
+                "name": "Models profile",
+                "profile": {"id": "models-profile", "models": ["allowed-model"]},
+            },
+            headers=self._auth(),
+        ).json()["profile"]
+        app = self.client.post(
+            "/admin/api/apps",
+            json={
+                "name": "models-app",
+                "kind": "personal",
+                "owner_user_id": user["id"],
+                "profile_id": profile["id"],
+            },
+            headers=self._auth(),
+        ).json()["app"]
+        other_app = self.client.post(
+            "/admin/api/apps",
+            json={
+                "name": "other-models-app",
+                "kind": "personal",
+                "owner_user_id": other_user["id"],
+                "profile_id": profile["id"],
+            },
+            headers=self._auth(),
+        ).json()["app"]
+        receipts_db = Path(self.tmp.name) / "models-receipts.db"
+        old_receipts_path = receipt_store.DB_PATH
+        receipt_store.DB_PATH = receipts_db
+        try:
+            receipt_store.init_db(receipts_db)
+            receipt_store.record(
+                RouteReceipt(
+                    protocol="openai.chat",
+                    intent="chat.completions",
+                    app_id=app["id"],
+                    requested_model="chat-ok",
+                    resolved_model="allowed-model",
+                    status="succeeded",
+                    latency_ms=120,
+                ),
+                path=receipts_db,
+            )
+            receipt_store.record(
+                RouteReceipt(
+                    protocol="openai.chat",
+                    intent="chat.completions",
+                    app_id=other_app["id"],
+                    requested_model="chat-ok",
+                    resolved_model="allowed-model",
+                    status="succeeded",
+                    latency_ms=130,
+                    request_id="req_other",
+                ),
+                path=receipts_db,
+            )
+            session = session_from_claims(
+                {"sub": user["id"], "email": "models@example.com"},
+                role="none",
+                cookie=cfg.cookie,
+            )
+            self.client.cookies.set(
+                cfg.cookie.name,
+                encode_session_cookie(session, signing_key=cfg.signing_key),
+            )
+
+            def capabilities_for(auth_context):
+                return [
+                    proxy._capability_for_profile(
+                        Capability(
+                            intent="chat.completions",
+                            backend="svc",
+                            model="allowed-model",
+                            input_modalities=("text",),
+                            output_modalities=("text",),
+                        ),
+                        auth_context,
+                    ),
+                    proxy._capability_for_profile(
+                        Capability(
+                            intent="chat.completions",
+                            backend="svc",
+                            model="denied-model",
+                        ),
+                        auth_context,
+                    ),
+                ]
+
+            with patch.object(
+                proxy,
+                "_gateway_capabilities_for_auth_context",
+                side_effect=capabilities_for,
+            ), patch.object(
+                proxy,
+                "_gateway_aliases_provider",
+                return_value={
+                    "chat": {
+                        "stable": [
+                            {"alias": "chat-ok", "resolves_to": "allowed-model"},
+                            {"alias": "chat-no", "resolves_to": "denied-model"},
+                        ]
+                    }
+                },
+            ), patch.object(
+                proxy,
+                "_models_catalog_health_evidence",
+                return_value={},
+            ):
+                response = self.client.get("/me/api/models/catalog")
+        finally:
+            receipt_store.DB_PATH = old_receipts_path
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual([row["id"] for row in body["aliases"]], ["chat-ok"])
+        self.assertEqual([row["id"] for row in body["models"]], ["allowed-model"])
+        self.assertTrue(body["aliases"][0]["recent_receipts"])
+        self.assertNotIn("req_other", response.text)
+
+    def test_user_models_catalog_fails_closed_for_missing_or_disabled_app_profiles(self) -> None:
+        cfg = OIDCConfig(
+            enabled=True,
+            issuer="https://idp.example",
+            client_id="ai-gateway",
+            client_secret="secret",
+            redirect_uri="http://testserver/admin/oidc/callback",
+            scopes=("openid", "email", "profile"),
+            allowed_email_domains=frozenset(),
+            admin_emails=frozenset(),
+            signing_key=b"n" * 32,
+            cookie=CookieConfig(secure=False),
+            authorization_endpoint="https://idp.example/authorize",
+            token_endpoint="https://idp.example/token",
+            jwks_uri="https://idp.example/jwks",
+        )
+        proxy.ADMIN_OIDC_CONFIG = cfg
+        proxy.ADMIN_AUTH.signing_key = cfg.signing_key
+        proxy.ADMIN_AUTH.cookie = cfg.cookie
+        session = session_from_claims(
+            {"sub": "user-missing-profile", "email": "missing@example.com"},
+            role="none",
+            cookie=cfg.cookie,
+        )
+        self.client.cookies.set(
+            cfg.cookie.name,
+            encode_session_cookie(session, signing_key=cfg.signing_key),
+        )
+
+        with patch.object(
+            proxy,
+            "build_user_portal_snapshot",
+            return_value={
+                "authenticated": True,
+                "apps": [
+                    {"id": "disabled", "effective_profile_id": "family", "self_service_enabled": False},
+                    {"id": "missing", "effective_profile_id": "missing-profile"},
+                ],
+            },
+        ), patch.object(
+            proxy.ADMIN_STORE,
+            "profile_for_id",
+            return_value=None,
+        ), patch.object(
+            proxy,
+            "_gateway_capabilities_for_auth_context",
+            side_effect=AssertionError("missing profiles must not produce catalog contexts"),
+        ), patch.object(
+            proxy,
+            "_models_catalog_health_evidence",
+            return_value={},
+        ), patch.object(
+            proxy,
+            "build_user_activity_snapshot",
+            return_value={"authenticated": True, "receipts": []},
+        ):
+            response = self.client.get("/me/api/models/catalog")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["aliases"], [])
+        self.assertEqual(response.json()["models"], [])
+
     def test_user_portal_shows_oidc_owned_apps_and_self_manages_keys(self) -> None:
         cfg = OIDCConfig(
             enabled=True,

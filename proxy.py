@@ -150,6 +150,13 @@ from gateway.admin_runtime import (
     session_admin_role_subject,
 )
 from gateway.api import create_gateway_router
+from gateway.models_catalog import (
+    auth_contexts_from_user_snapshot,
+    build_models_catalog,
+    create_models_catalog_router,
+    registered_model_capabilities,
+    probe_service_health,
+)
 from gateway import engine_quarantine
 from gateway.user_render import render_user_portal
 from gateway.user_runtime import (
@@ -14262,6 +14269,115 @@ async def user_portal_session(request: Request):
     )
 
 
+def _catalog_auth_context_for_profile(profile: Any, _profile_id: str) -> AuthContext:
+    identity = AuthIdentity(
+        name="user-session",
+        key_hash="session",
+        downstream={},
+        profile=profile,
+    )
+    return AuthContext(identity=identity)
+
+
+async def _models_catalog_health_evidence(
+    service_records: Mapping[str, Any],
+    *,
+    service_ids: Iterable[str],
+) -> dict[str, dict[str, Any]]:
+    async def get_json(url: str) -> Mapping[str, Any] | None:
+        if not url.startswith(("http://", "https://")):
+            return None
+        async with httpx.AsyncClient(timeout=0.75) as client:
+            response = await client.get(url)
+        if response.status_code >= 400:
+            return None
+        payload = response.json()
+        return payload if isinstance(payload, Mapping) else {}
+
+    return await probe_service_health(
+        service_records,
+        get_json=get_json,
+        service_ids=service_ids,
+    )
+
+
+async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
+    session = _oidc_session_from_request(request)
+    if session is None:
+        raise UserPortalError(
+            "not_authenticated",
+            "Sign in to view the models catalog",
+            status_code=401,
+        )
+    default_profile_id = _default_profile_id_for_session(session)
+    user_snapshot = build_user_portal_snapshot(
+        session,
+        default_profile_id=default_profile_id,
+        path=ADMIN_STORE.path,
+    )
+    if not user_snapshot.get("authenticated"):
+        raise UserPortalError(
+            "not_authenticated",
+            "Sign in to view the models catalog",
+            status_code=401,
+        )
+    auth_contexts = auth_contexts_from_user_snapshot(
+        user_snapshot,
+        default_profile_id=default_profile_id,
+        profile_loader=lambda profile_id: DEFAULT_PROFILE if profile_id == "default-local" else ADMIN_STORE.profile_for_id(profile_id),
+        context_for_profile=_catalog_auth_context_for_profile,
+    )
+    activity = build_user_activity_snapshot(
+        session,
+        limit=50,
+        path=ADMIN_STORE.path,
+        receipts_path=receipt_store.DB_PATH,
+    )
+    try:
+        service_records: Mapping[str, Any] = ADMIN_STORE.get_service_registry()
+    except Exception:  # noqa: BLE001
+        service_records = {}
+    registered_capabilities = registered_model_capabilities(service_records)
+    capability_sets = [
+        [*_gateway_capabilities_for_auth_context(auth_context),
+         *(_capability_for_profile(capability, auth_context) for capability in registered_capabilities)]
+        for auth_context in auth_contexts
+    ]
+    visible_service_ids = {
+        str(capability.backend)
+        for capabilities in capability_sets
+        for capability in capabilities
+        if capability.policy_available is not False and capability.backend
+    }
+    try:
+        health_evidence = await _models_catalog_health_evidence(
+            service_records,
+            service_ids=visible_service_ids,
+        )
+    except Exception:  # noqa: BLE001
+        health_evidence = {}
+    model_entries = [
+        *_stable_alias_model_entries(),
+        *_build_workflow_model_entries(),
+        *_current_loaded_model_entries(),
+    ]
+    return build_models_catalog(
+        alias_views=_gateway_aliases_provider(),
+        capability_sets=capability_sets,
+        model_entries=model_entries,
+        service_records=service_records,
+        recent_receipts=activity.get("receipts") or (),
+        health_evidence=health_evidence,
+        workflow_records=[
+            {"id": record.id, "manifest": record.manifest}
+            for record in GATEWAY_WORKFLOW_REGISTRY.records()
+        ],
+    )
+
+
+app.include_router(create_models_catalog_router(_user_models_catalog_payload))
+
+
 @app.get("/me/api/activity", include_in_schema=False)
 async def user_portal_activity(request: Request):
     """The signed-in user's own recent API-call receipts (owner-scoped).
@@ -25291,6 +25407,7 @@ async def _forward_current_loaded_openai_request(
             }
             response_headers["X-AI-Gateway-LLM-Execution"] = "current-loaded"
             response_headers["X-AI-Gateway-Request-Id"] = receipt.request_id
+            response_headers["X-AI-Gateway-Receipt-Id"] = receipt.request_id
             response_headers["X-AI-Gateway-Backend"] = target.backend
             response_headers["X-AI-Gateway-Resolved-Model"] = target.model
 
@@ -25597,6 +25714,7 @@ async def _forward_litellm_proxy_request(
         }
         response_headers["X-AI-Gateway-LLM-Execution"] = "litellm"
         response_headers["X-AI-Gateway-Request-Id"] = receipt.request_id
+        response_headers["X-AI-Gateway-Receipt-Id"] = receipt.request_id
         _attach_litellm_response_metadata(receipt, resp.headers)
         record_request_shape_stage(
             receipt.metadata,
