@@ -105,6 +105,9 @@ from gateway.admin_api import (
     derive_admin_attention,
 )
 from gateway.admin_catalog import admin_api_surfaces, profile_policy_catalog
+from gateway.settings_api import create_settings_router, instance_settings
+from gateway.activity_api import create_activity_router
+from gateway.setup_api import build_setup_api_router
 from gateway.config_sources import KNOWN_ENV_SOURCE_NAMES, inventory_config_sources
 from gateway.admin_oidc import (
     IDTokenClaimsError,
@@ -13359,6 +13362,7 @@ app.include_router(
         examples_dir=_SHOWCASE_EXAMPLES_DIR,
         authenticate=lambda request, path: authenticate_request(request, path),
         status_provider=_showcase_status,
+        gallery_ui_url=("/ui/showcase/" if (Path(__file__).resolve().parent / "web/out/showcase/index.html").is_file() else None),
     )
 )
 
@@ -14130,6 +14134,34 @@ app.include_router(
         effective_oidc_config_provider=lambda: _admin_oidc_config_snapshot(),
     )
 )
+
+
+def _instance_presentation_defaults() -> dict[str, str]:
+    brand = admin_cfg.get("brand") or {}
+    proxy_cfg = config.get("proxy") or {}
+    brand = brand if isinstance(brand, Mapping) else {}
+    proxy_cfg = proxy_cfg if isinstance(proxy_cfg, Mapping) else {}
+    return {
+        "name": str(os.environ.get("AI_GATEWAY_BRAND") or brand.get("product") or "AI Gateway"),
+        "base_url": str(os.environ.get("OPENAI_PROXY_PUBLIC_URL") or proxy_cfg.get("public_url") or ""),
+        "theme_default": "system",
+    }
+
+
+app.include_router(create_settings_router(
+    auth=ADMIN_AUTH, admin_path=ADMIN_DB_PATH, config_provider=lambda: {
+        **config, "oidc": _admin_oidc_config_snapshot() or {},
+        "service_registry": ADMIN_STORE.get_service_registry(),
+    },
+    instance_defaults=_instance_presentation_defaults,
+    overrides_provider=ADMIN_STORE.operator_overrides,
+))
+app.include_router(create_activity_router(auth=ADMIN_AUTH, admin_path=ADMIN_DB_PATH))
+app.include_router(build_setup_api_router(lambda request: {
+    "owner_exists": _owner_or_admin_exists(),
+    "oidc_enabled": _effective_admin_oidc_config().enabled,
+    "can_recover": bool(_browser_admin_session_signing_key()),
+}))
 
 
 @app.get("/me/login", include_in_schema=False)
@@ -15507,6 +15539,8 @@ async def setup_page(request: Request):
     live_admin_target = _setup_live_admin_session_target(session)
     if live_admin_target and not wants_operator_console:
         return RedirectResponse(live_admin_target, status_code=303)
+    if not wants_operator_console and (Path(__file__).resolve().parent / "web/out/setup/index.html").is_file():
+        return RedirectResponse("/ui/setup/", status_code=303)
     return await _setup_page_response(request)
 
 
@@ -16580,16 +16614,14 @@ async def health():
 def _public_base_url(request: Request) -> str | None:
     """Best-effort public origin for absolute discovery links.
 
-    Operators can pin the public origin via ``OPENAI_PROXY_PUBLIC_URL`` or
-    a ``proxy.public_url`` config key. Otherwise we honor standard reverse
+    Saved instance settings own the public URL after the first dashboard save.
+    ``OPENAI_PROXY_PUBLIC_URL`` and ``proxy.public_url`` provide initial defaults.
+    Otherwise we honor standard reverse
     proxy headers, then fall back to the request's host. We return
     ``None`` if no candidate is available so the discovery helper can
     emit relative links rather than fabricate an origin.
     """
-    pinned = os.environ.get("OPENAI_PROXY_PUBLIC_URL")
-    if not pinned:
-        proxy_cfg = config.get("proxy") or {}
-        pinned = proxy_cfg.get("public_url") or None
+    pinned = instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults())["base_url"]
     if pinned:
         return pinned
     host = (
@@ -16607,8 +16639,9 @@ def _public_base_url(request: Request) -> str | None:
 def _brand_settings() -> tuple[str, tuple[str, str] | None]:
     """Return ``(product_label, wordmark)`` for the shared header chrome.
 
-    The deployment brand is data, not baked into product code. Operators set
-    it via ``admin.brand`` (or ``AI_GATEWAY_BRAND`` / ``AI_GATEWAY_WORDMARK``):
+    Saved instance settings own the product name after the first dashboard save.
+    ``admin.brand`` (or ``AI_GATEWAY_BRAND`` / ``AI_GATEWAY_WORDMARK``) seeds
+    the initial name and provides the optional wordmark:
 
       admin:
         brand:
@@ -16620,11 +16653,7 @@ def _brand_settings() -> tuple[str, tuple[str, str] | None]:
     """
     brand_cfg = admin_cfg.get("brand") if isinstance(admin_cfg, Mapping) else {}
     brand_cfg = brand_cfg if isinstance(brand_cfg, Mapping) else {}
-    product = (
-        os.environ.get("AI_GATEWAY_BRAND")
-        or brand_cfg.get("product")
-        or "AI Gateway"
-    )
+    product = instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults())["name"]
     raw_wordmark = (
         os.environ.get("AI_GATEWAY_WORDMARK")
         or brand_cfg.get("wordmark")
@@ -16643,19 +16672,20 @@ def _brand_settings() -> tuple[str, tuple[str, str] | None]:
 @app.get("/.well-known/ai-gateway", include_in_schema=False)
 async def well_known_ai_gateway(request: Request):
     """Unauthenticated agent-client discovery for this AI gateway."""
-    return build_gateway_discovery_metadata(
+    metadata = build_gateway_discovery_metadata(
         base_url=_public_base_url(request),
         registry=ADMIN_STORE.get_service_registry(),
     )
+    metadata["presentation"] = {
+        "theme_default": instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults())["theme_default"],
+    }
+    return metadata
 
 
 @app.get("/.well-known/openai-proxy", include_in_schema=False)
 async def well_known_openai_proxy(request: Request):
     """Alias of /.well-known/ai-gateway for OpenAI-style SDK clients."""
-    return build_gateway_discovery_metadata(
-        base_url=_public_base_url(request),
-        registry=ADMIN_STORE.get_service_registry(),
-    )
+    return await well_known_ai_gateway(request)
 
 
 @app.get("/.well-known/skills", include_in_schema=False)

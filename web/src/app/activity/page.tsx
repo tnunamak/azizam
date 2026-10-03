@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Requests } from "./requests";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { History, ChevronRight } from "lucide-react";
 import { api, type AuditEntry } from "@/lib/api";
@@ -76,7 +77,10 @@ export default function ActivityPage() {
   );
   return (
     <div className="space-y-8">
-      <PageHeader title="Activity" answer="Who changed what in your gateway?" />
+      <PageHeader
+        title="Activity"
+        answer="Who changed what, and how did requests go?"
+      />
       <Tabs defaultValue="audit">
         <TabsList>
           <TabsTrigger value="audit">Audit</TabsTrigger>
@@ -285,10 +289,7 @@ export default function ActivityPage() {
           )}
         </TabsContent>
         <TabsContent value="requests" className="mt-6">
-          <EmptyState
-            title="Coming in this release"
-            description="Request receipts for everyone in your gateway will appear here."
-          />
+          <Requests />
         </TabsContent>
       </Tabs>
       <Sheet
@@ -297,16 +298,16 @@ export default function ActivityPage() {
           if (!open) setEntry(null);
         }}
       >
-        <SheetContent className="overflow-y-auto">
+        <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
           {entry && (
             <>
-              <SheetHeader>
+              <SheetHeader className="pr-14">
                 <SheetTitle>{auditDescription(entry)}</SheetTitle>
                 <SheetDescription>
                   {entry.actor_label} · <RelativeTime ts={entry.created_at} />
                 </SheetDescription>
               </SheetHeader>
-              <div className="mt-8 space-y-6">
+              <div className="min-w-0 space-y-6 px-4 pb-8">
                 <dl className="space-y-4 text-sm">
                   <div>
                     <dt className="text-muted-foreground">Person</dt>
@@ -334,7 +335,16 @@ export default function ActivityPage() {
                   <div className="mt-4">
                     <CodeBlock
                       language="json"
-                      code={JSON.stringify(entry, null, 2)}
+                      code={JSON.stringify(
+                        {
+                          ...entry,
+                          created_at: new Date(
+                            entry.created_at * 1000,
+                          ).toISOString(),
+                        },
+                        null,
+                        2,
+                      )}
                     />
                   </div>
                 </details>

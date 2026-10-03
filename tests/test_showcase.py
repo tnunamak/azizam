@@ -67,6 +67,20 @@ class ShowcaseRouteTests(unittest.TestCase):
         self.assertEqual(r.status_code, 307)
         self.assertEqual(r.headers["location"], "/showcase")
 
+    def test_gallery_redirect_preserves_public_recorded_data(self) -> None:
+        _write_example(self.examples, "chat", {"card": "chat"})
+        app = FastAPI()
+        app.include_router(showcase.build_showcase_router(
+            static_dir=STATIC,
+            examples_dir=self.examples,
+            gallery_ui_url="/ui/showcase/",
+        ))
+        client = TestClient(app)
+        response = client.get("/showcase", follow_redirects=False)
+        self.assertEqual(response.status_code, 307)
+        self.assertEqual(response.headers["location"], "/ui/showcase/")
+        self.assertEqual(client.get("/showcase/examples/index.json").json()["data"][0]["id"], "chat")
+
     def test_static_assets_and_types(self) -> None:
         c = _app(self.examples)
         self.assertIn("javascript", c.get("/showcase/static/app.js").headers["content-type"])

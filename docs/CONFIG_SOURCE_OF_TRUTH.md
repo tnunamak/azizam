@@ -29,6 +29,18 @@ For the operator-facing first-run story this model implies, see
   `GET /admin/api/config/export` serializes the current registry's service
   records and omits ephemeral runtime state. It is an operator download, not an
   authoritative configuration file or a restore command.
+- **Instance presentation is dashboard-owned.** The owner settings API stores
+  the instance name, public base URL and default theme in the existing
+  `admin.db` operator settings table. Bootstrap branding and public URL values
+  provide defaults until the first save. Saving does not change listener or
+  TLS configuration. Default access-plan edits atomically replace only the
+  universal `all_users` runtime Profile mapping; specific identity mappings
+  retain their existing priority and grants. Model aliases remain read-only
+  bootstrap data.
+- **Advanced export is a redacted snapshot.** Owner-only
+  `GET /admin/api/settings/effective/export` exports the current configuration,
+  resolved OIDC provider, registry and runtime overrides. It is for inspection,
+  does not restore a gateway, and cannot write bootstrap configuration.
 - **Full provisioning / as-code reconciliation is deferred.** Default Profiles
   and user-access defaults are seeded into `admin.db` on startup; once seeded,
   the dashboard is authoritative. No YAML "policy file" exists for those
@@ -97,7 +109,7 @@ pins the mapping; if you change one side you must change the other.
 | `resource admission` | dashboard   | caps, throttles, reserved tokens                | nothing                                          |
 | `workflow manifests` | provisioned | nothing                                         | the manifest files themselves                    |
 | `model compatibility`| bootstrap   | nothing                                         | the compatibility table file                     |
-| `auth/admin`         | dashboard   | OIDC provider settings, admin user list, roles, Profiles, Apps, App keys, user access defaults, identity/Profile mappings | explicit session keys, trust roots, optional OIDC bootstrap fallback |
+| `auth/admin`         | dashboard   | instance presentation, OIDC provider settings, admin user list, roles, Profiles, Apps, App keys, user access defaults, identity/Profile mappings | explicit session keys, trust roots, optional OIDC bootstrap fallback |
 
 Implications:
 

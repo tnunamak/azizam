@@ -44,6 +44,7 @@ _PAGE_CSS = """
     gap: var(--space-5);
   }
   .setup-card {
+    min-width: 0;
     background: var(--panel);
     border: 1px solid var(--line);
     border-radius: var(--radius);
@@ -150,6 +151,10 @@ _PAGE_CSS = """
     color: var(--text);
   }
   .recovery pre {
+    min-width: 0;
+    max-width: 100%;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
     margin: 0;
     padding: var(--space-3);
     border-radius: var(--radius-sm);
@@ -174,6 +179,8 @@ _PAGE_CSS = """
     font-size: 0.88rem;
   }
   .setup-form input {
+    box-sizing: border-box;
+    min-width: 0;
     width: 100%;
     min-height: 2.75rem;
     border: 1px solid var(--line);

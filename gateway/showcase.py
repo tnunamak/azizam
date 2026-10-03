@@ -112,6 +112,7 @@ def build_showcase_router(
     examples_dir: Path,
     authenticate: Callable[[Request, str], Any] | None = None,
     status_provider: StatusProvider | None = None,
+    gallery_ui_url: str | None = None,
 ) -> APIRouter:
     """Build the router. ``authenticate`` follows ``proxy.authenticate_request``:
     it returns a ``Response`` on failure and anything else on success."""
@@ -119,6 +120,8 @@ def build_showcase_router(
 
     @router.get(SHOWCASE_PREFIX, include_in_schema=False)
     async def showcase_index() -> Response:
+        if gallery_ui_url:
+            return RedirectResponse(gallery_ui_url, status_code=307)
         index = static_dir / "index.html"
         if not index.is_file():
             return JSONResponse({"error": {"code": "showcase_missing"}}, status_code=404)

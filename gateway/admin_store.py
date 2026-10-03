@@ -1391,6 +1391,39 @@ def list_runtime_profile_mappings(
     return [_row_to_dict(r) for r in rows]  # type: ignore[misc]
 
 
+def replace_default_runtime_profile_mapping(
+    *, profile_id: str | None, actor: Any, path: Path = DB_PATH,
+) -> None:
+    """Atomically replace the universal grant, preserving specific identity mappings."""
+    ts = _now()
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if profile_id not in {None, "default", "default-local"} and conn.execute(
+            "SELECT 1 FROM profiles WHERE id = ?", (profile_id,)
+        ).fetchone() is None:
+            raise ValueError("access plan not found")
+        conn.execute(
+            "UPDATE runtime_profile_mappings SET disabled_at = ? WHERE source_kind = 'all_users' AND disabled_at IS NULL",
+            (ts,),
+        )
+        if profile_id is not None:
+            conn.execute(
+                "INSERT INTO runtime_profile_mappings "
+                "(id, source_kind, source_value, profile_id, priority, created_at, created_by) "
+                "VALUES (?, 'all_users', '*', ?, 100, ?, ?) "
+                "ON CONFLICT(source_kind, source_value, profile_id) DO UPDATE SET "
+                "disabled_at = NULL, priority = 100, created_at = excluded.created_at, created_by = excluded.created_by",
+                (_gen_id("map"), profile_id, ts, actor.subject),
+            )
+        _record_audit_in_transaction(
+            conn, "operator.default_access_plan.update", actor_kind=actor.actor_kind,
+            actor_id=actor.audit_actor_id, actor_label=actor.actor_label,
+            target_kind="runtime_profile_mapping", target_id="all_users",
+            metadata={"profile_id": profile_id}, now=ts,
+        )
+        conn.commit()
+
+
 def resolve_runtime_profile_mapping(
     *,
     email: str,

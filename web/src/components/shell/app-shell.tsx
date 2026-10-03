@@ -478,6 +478,7 @@ function CommandPalette({
 
 function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const { setTheme } = useTheme();
   const {
     data: viewer,
     isPending: sessionPending,
@@ -490,9 +491,22 @@ function Shell({ children }: { children: React.ReactNode }) {
     queryFn: async () => {
       const response = await fetch("/.well-known/ai-gateway");
       if (!response.ok) throw new Error("Instance details are unavailable");
-      return response.json() as Promise<{ service?: { name?: string } }>;
+      return response.json() as Promise<{
+        service?: { name?: string };
+        presentation?: { theme_default?: string };
+      }>;
     },
   });
+  useEffect(() => {
+    const theme = instanceData?.presentation?.theme_default;
+    if (
+      theme &&
+      ["system", "light", "dark"].includes(theme) &&
+      !localStorage.getItem("theme")
+    ) {
+      setTheme(theme);
+    }
+  }, [instanceData?.presentation?.theme_default, setTheme]);
   const [moreOpen, setMoreOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [railOpen, setRailOpen] = useState(false);
