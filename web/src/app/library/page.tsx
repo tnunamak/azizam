@@ -166,6 +166,7 @@ function Preview({
     return (
       <video
         src={src}
+        preload="metadata"
         className={cn(
           "h-full w-full",
           large ? "rounded-lg object-contain" : "object-cover",
@@ -396,7 +397,7 @@ export default function LibraryPage() {
       </section>
       {owner === "everyone" ? (
         <p className="border-warning/30 bg-warning/10 text-muted-foreground mb-4 rounded-lg border px-3 py-2 text-sm">
-          Owner view is showing everyone’s media. The API audits this filter.
+          Showing everyone’s media. Access through this owner view is audited.
         </p>
       ) : null}
       {isLoading ? (

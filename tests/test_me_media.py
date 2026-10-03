@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import json
+import shutil
+import subprocess
 import tempfile
 import time
 import unittest
@@ -360,6 +362,14 @@ class MeMediaRouterTests(unittest.TestCase):
             self.assertIn("workflow", media_metadata.png_text_chunks(workflow_png.content))
             self.assertIn(provenance.PROVENANCE_KEY, media_metadata.png_text_chunks(workflow_png.content))
             self.assertEqual(client.get(workflow_url.replace("md=full", "md=none")).status_code, 403)
+            self.assertEqual(client.delete(f"/me/api/media/{asset_id}").status_code, 403)
+            removed = client.delete(f"/me/api/media/{asset_id}", headers={
+                "x-ai-gateway-user-action": "1",
+                "x-ai-gateway-csrf": proxy._csrf_token_for_oidc_session(session),
+            })
+            self.assertEqual(removed.status_code, 200, removed.text)
+            self.assertTrue(removed.json()["physical_removed"])
+            self.assertEqual(client.get(download_url).status_code, 404)
             client.cookies.clear()
             self.assertEqual(client.get(f"/me/api/media/{asset_id}/download").status_code, 401)
         finally:
@@ -385,6 +395,8 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(item["seed"], 7)
         self.assertEqual(item["width"], 512)
         self.assertEqual(item["created_at"], 1_700_000_000)
+        self.assertEqual(item["provenance"]["created_at"], item["created_at"])
+        self.assertEqual(item["provenance"]["seed"], item["seed"])
         self.assertTrue(item["workflow_download_url"])
         second = self.client.get("/me/api/media?limit=1&q=boat&cursor=" + first["next_cursor"]).json()
         self.assertEqual(len(second["assets"]), 1)
@@ -393,6 +405,7 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(self.client.get("/me/api/media?start=2026-01-01").json()["assets"], [])
         self.assertEqual(self.client.get("/me/api/media?cursor=bad").status_code, 400)
         self.assertEqual(self.client.get("/me/api/media?start=invalid").status_code, 400)
+        self.assertEqual(me_media._date_to_epoch("2023-11-14"), 1_699_920_000)
 
     def test_cross_user_delete_and_download_do_not_reveal_foreign_assets(self) -> None:
         asset_id = "img_" + "5" * 64
@@ -449,6 +462,22 @@ class MeMediaRouterTests(unittest.TestCase):
             self.assertEqual(embedded["seed"], 4)
             self.assertEqual(embedded["parameters"]["prompt"], "EXIF boat")
 
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg/ffprobe required")
+    def test_audio_video_embedded_provenance(self) -> None:
+        record = provenance.build_provenance_record(kind="audio", created_at=1700000000,
+                                                    parameters={"prompt": "container boat"}, seed=8)
+        for suffix, source, codec in ((".wav", "sine=duration=0.1", "pcm_s16le"),
+                                      (".mp4", "color=c=teal:s=16x16:d=0.1", "mpeg4")):
+            path = self.cache / ("container" + suffix)
+            subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i", source,
+                            "-c", codec, str(path)], check=True, capture_output=True, timeout=10)
+            path.write_bytes(media_delivery.attach_provenance(path.read_bytes(), suffix, record,
+                                                               workdir=self.root / "metadata"))
+            embedded = me_media._embedded_provenance(path)
+            self.assertEqual(embedded["seed"], 8)
+            self.assertEqual(embedded["parameters"]["prompt"], "container boat")
+            self.assertFalse(embedded["workflow_available"])
+
     def test_cache_only_media_counts_and_spend_absence_are_honest(self) -> None:
         asset_id = "img_" + "9" * 64
         self._write_asset(asset_id, ["sha256:alice"])
@@ -471,9 +500,19 @@ class MeMediaRouterTests(unittest.TestCase):
         usage = self.client.get("/me/api/usage/summary").json()
         self.assertEqual(usage["requests"], 1)
         self.assertIsNone(usage["by_model"][0]["remote_spend"])
+        self.assertEqual(usage["by_model"][0]["capability"], "image")
+        self.assertEqual(me_media._capability({"intent": "audio.transcribe"}), "transcribe")
+        self.assertEqual(me_media._capability({"path": "/v1/audio/translations"}), "transcribe")
         self.assertIsNone(usage["receipts"][0]["remote_spend"])
-        for invalid in ("NaN", "Infinity", "-1", "bad"):
+        for invalid in ("NaN", "Infinity", "-1", "bad", True):
             self.assertIsNone(me_media._receipt_cost({"metadata": {"litellm": {"response_cost": invalid}}}))
+
+    def test_expired_asset_is_not_listed_or_downloadable(self) -> None:
+        asset_id = "img_" + "0" * 64
+        self._receipt(self.app_a["id"], "req_expired")
+        self._job("req_expired", asset_id)
+        self.assertEqual(self.client.get("/me/api/media").json()["assets"], [])
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}/download").status_code, 404)
 
 
 if __name__ == "__main__":

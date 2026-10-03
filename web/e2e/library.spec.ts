@@ -83,6 +83,11 @@ for (const mode of ["light", "dark"] as const) {
       expect(mediaRequests.at(-1)).toContain("kind=image");
       await page.getByLabel("Search prompts").fill("desk");
       await expect.poll(() => mediaRequests.at(-1) ?? "").toContain("q=desk");
+      await auditPage(page);
+      await page.screenshot({
+        path: `test-results/screens/library-grid-${mode}-${width}.png`,
+        fullPage: true,
+      });
       await page
         .getByRole("button", { name: /A clean product render/ })
         .click();
@@ -92,8 +97,8 @@ for (const mode of ["light", "dark"] as const) {
       ).toHaveAttribute("href", mediaFixture.assets[0].download_url!);
       await auditPage(page);
       await page.screenshot({
-        path: `test-results/screens/library-seeded-${mode}-${width}.png`,
-        fullPage: true,
+        path: `test-results/screens/library-sheet-${mode}-${width}.png`,
+        fullPage: false,
       });
     });
 

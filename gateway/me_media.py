@@ -508,7 +508,9 @@ def _media_items(
             seen.add(asset_id)
             kind = _asset_kind(asset_id, asset)
             path = asset_path_resolver(asset_id)
-            embedded = _embedded_provenance(path) if path is not None and path.exists() else {}
+            if path is None or not path.is_file():
+                continue
+            embedded = _embedded_provenance(path)
             media_type = str(asset.get("media_type") or asset_media_type_resolver(asset_id, path))
             created_at = _asset_created_at(path, job, receipt, embedded)
             prompt = _string_first(
@@ -548,7 +550,7 @@ def _media_items(
                 "download_url": signed_url_builder(request, asset_id, "none"),
                 "workflow_download_url": signed_url_builder(request, asset_id, "full") if embedded.get("workflow_available") else None,
                 "generation_ms": receipt.get("latency_ms") if receipt else None,
-                "provenance": _provenance(asset, job, receipt, embedded),
+                "provenance": _provenance(asset, job, receipt, embedded, created_at=created_at),
             })
     if asset_catalog_provider is not None and asset_metadata_reader is not None:
         credential_hashes = _credential_hashes_for_scope(scope, admin_db_path)
@@ -773,6 +775,8 @@ def _provenance(
     job: Mapping[str, Any],
     receipt: Mapping[str, Any] | None,
     embedded: Mapping[str, Any] | None = None,
+    *,
+    created_at: int,
 ) -> dict[str, Any]:
     embedded = embedded or {}
     return {
@@ -791,12 +795,12 @@ def _provenance(
             embedded.get("workflow_id"),
             embedded.get("workflow"),
         ),
-        "seed": _first_present(asset.get("seed"), _nested(job, "metadata", "seed"), embedded.get("seed")),
+        "seed": _first_present(asset.get("seed"), _nested(job, "metadata", "seed"), _nested(receipt, "metadata", "seed"), embedded.get("seed")),
         "size": {
             "width": _first_present(asset.get("width"), _nested(job, "metadata", "width"), _nested(embedded, "parameters", "width")),
             "height": _first_present(asset.get("height"), _nested(job, "metadata", "height"), _nested(embedded, "parameters", "height")),
         },
-        "created_at": int(job.get("created_at") or 0),
+        "created_at": created_at,
         "request_id": job.get("request_id"),
         "job_id": job.get("job_id"),
     }
@@ -860,7 +864,10 @@ def _usage_summary(
         daily = by_day.setdefault(day, {"date": day})
         daily[capability] = daily.get(capability, 0) + 1
         model = str(receipt.get("resolved_model") or receipt.get("requested_model") or "Unknown model")
-        row = by_model.setdefault(model, {"model": model, "requests": 0, "remote_spend": None})
+        row = by_model.setdefault(model, {"model": model, "requests": 0, "remote_spend": None,
+                                          "capability": capability})
+        if row["capability"] != capability:
+            row["capability"] = "other"
         row["requests"] += 1
         cost = _receipt_cost(receipt)
         if cost is not None:
@@ -911,7 +918,7 @@ def _usage_summary(
         "by_day": [by_day[day] for day in sorted(by_day)],
         "by_model": sorted(by_model.values(), key=lambda row: (-row["requests"], row["model"])),
         "receipts": receipt_list,
-        "people": [{"id": u["id"], "name": u.get("name") or u.get("email") or "Person"}
+        "people": [{"id": u["id"], "name": u.get("display_name") or u.get("email") or "Person"}
                    for u in admin_store.list_users(path=admin_db_path)] if actor.owner else [],
     }
 
@@ -929,7 +936,7 @@ def _usage_app_scope(request: Request, actor: _Actor, admin_db_path: Path) -> tu
 
 def _receipt_cost(receipt: Mapping[str, Any]) -> float | None:
     value = _nested(receipt, "metadata", "litellm", "response_cost")
-    if value is None:
+    if value is None or isinstance(value, bool):
         return None
     try:
         parsed = float(value)
@@ -940,10 +947,12 @@ def _receipt_cost(receipt: Mapping[str, Any]) -> float | None:
 
 def _capability(receipt: Mapping[str, Any]) -> str:
     intent = str(receipt.get("intent") or "")
+    path = str(receipt.get("path") or "")
+    if intent.startswith("audio.transcri") or path.startswith(("/v1/audio/transcriptions", "/v1/audio/translations")):
+        return "transcribe"
     prefix = intent.split(".", 1)[0]
     if prefix in _CAPABILITY_BY_INTENT_PREFIX:
         return _CAPABILITY_BY_INTENT_PREFIX[prefix]
-    path = str(receipt.get("path") or "")
     if "/images" in path:
         return "image"
     if "/videos" in path:
@@ -996,11 +1005,11 @@ def _date_to_epoch(raw: str | None, *, end: bool = False) -> int | None:
     if not raw:
         return None
     try:
-        parsed = time.strptime(raw, "%Y-%m-%d")
+        parsed = datetime.strptime(raw, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     except ValueError:
         raise _ApiError("invalid_date", "Dates must use YYYY-MM-DD", 400)
     offset = 86399 if end else 0
-    return int(time.mktime(parsed)) + offset
+    return int(parsed.timestamp()) + offset
 
 
 def _nested(data: Mapping[str, Any] | None, *keys: str) -> Any:

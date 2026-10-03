@@ -105,6 +105,9 @@ interface UsageSummary {
   people: UsagePerson[];
   retentionDays: number;
   coverageStart: string | null;
+  coverageNote: string | null;
+  spendMeasuredRequests: number | null;
+  spendTotalRequests: number | null;
   truncated: boolean;
 }
 
@@ -136,16 +139,16 @@ const capabilityLabels: Record<UsageCapability, string> = {
 };
 
 const chartColors: Record<UsageCapability, string> = {
-  chat: "var(--vf-accent)",
-  image: "var(--vf-info)",
-  video: "var(--vf-warn)",
-  audio: "var(--vf-ok)",
-  voice: "var(--vf-ok)",
-  transcribe: "var(--vf-text-subtle)",
-  decide: "var(--vf-accent)",
-  embed: "color-mix(in srgb, var(--vf-accent) 55%, var(--vf-text-subtle))",
-  embeddings: "color-mix(in srgb, var(--vf-accent) 55%, var(--vf-text-subtle))",
-  rerank: "color-mix(in srgb, var(--vf-info) 55%, var(--vf-text-subtle))",
+  chat: "var(--capability-chat)",
+  image: "var(--capability-image)",
+  video: "var(--capability-video)",
+  audio: "var(--capability-voice)",
+  voice: "var(--capability-voice)",
+  transcribe: "var(--capability-transcribe)",
+  decide: "var(--capability-decide)",
+  embed: "var(--capability-embed)",
+  embeddings: "var(--capability-embed)",
+  rerank: "var(--capability-decide)",
   other: "var(--vf-border-strong)",
 };
 
@@ -157,7 +160,9 @@ export default function UsagePage() {
     queryKey: ["usage", "summary", person],
     queryFn: () => fetchUsageSummary(person),
   });
-  const hasUsage = Boolean(data && (data.requests > 0 || data.receipts.length));
+  const hasUsage = Boolean(
+    data && (data.requests > 0 || data.mediaCount > 0 || data.receipts.length),
+  );
 
   return (
     <div className="space-y-8">
@@ -199,8 +204,13 @@ export default function UsagePage() {
           <SummaryRow summary={data} />
           <p className="text-muted-foreground text-sm">
             Receipts are retained for {data.retentionDays} days
-            {data.coverageStart ? `, covering usage since ${data.coverageStart}` : ""}.
-            {data.truncated ? " This view is limited to the most recent stored receipts." : ""}
+            {data.coverageStart
+              ? `, covering usage since ${formatDate(data.coverageStart)}`
+              : ""}
+            .{data.coverageNote ? ` ${formatSentence(data.coverageNote)}` : ""}
+            {data.truncated
+              ? " This view is limited to the most recent stored receipts."
+              : ""}
           </p>
           <DailyChart days={data.byDay} />
           <ModelTable rows={data.byModel} />
@@ -271,9 +281,17 @@ function SummaryRow({ summary }: { summary: UsageSummary }) {
       <MetricCard
         icon={DollarSign}
         label="Remote spend"
-        value={<Money amount={summary.remoteSpendUsd} />}
+        value={
+          summary.spendMeasured ? (
+            <Money amount={summary.remoteSpendUsd} />
+          ) : (
+            "Not measured yet"
+          )
+        }
         detail={
-          summary.spendMeasured ? "Measured from receipts" : "Not measured yet"
+          summary.spendMeasured
+            ? spendCoverageDetail(summary)
+            : "No recorded provider costs"
         }
       />
       <MetricCard
@@ -282,7 +300,7 @@ function SummaryRow({ summary }: { summary: UsageSummary }) {
         value={formatNumber(summary.mediaCount)}
         detail="Images, video and audio"
       />
-      <Card className="md:col-span-3">
+      <Card className="border-0 bg-transparent shadow-none md:col-span-3">
         <CardHeader>
           <CardTitle>Capability sparklines</CardTitle>
           <CardDescription>Requests by capability this month</CardDescription>
@@ -290,7 +308,10 @@ function SummaryRow({ summary }: { summary: UsageSummary }) {
         <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {spark.length ? (
             spark.map((item) => (
-              <div key={item.capability} className="min-w-0 rounded-lg border p-3">
+              <div
+                key={item.capability}
+                className="bg-muted/30 min-w-0 rounded-lg p-3"
+              >
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <CapabilityLabel capability={item.capability} />
                   <span className="text-sm tabular-nums">
@@ -326,7 +347,7 @@ function MetricCard({
   detail: string;
 }) {
   return (
-    <Card>
+    <Card className="border-0 bg-transparent shadow-none">
       <CardHeader className="flex-row items-center gap-3 space-y-0">
         <span className="bg-muted inline-flex size-10 shrink-0 items-center justify-center rounded-lg">
           <Icon aria-hidden="true" className="text-muted-foreground size-5" />
@@ -352,7 +373,7 @@ function DailyChart({ days }: { days: UsageDay[] }) {
     days.some((day) => (day.byCapability[capability] ?? 0) > 0),
   );
   return (
-    <Card>
+    <Card className="border-0 bg-transparent shadow-none">
       <CardHeader>
         <CardTitle>Requests by day</CardTitle>
         <CardDescription>Stacked by capability</CardDescription>
@@ -422,7 +443,10 @@ function DailyChart({ days }: { days: UsageDay[] }) {
             </table>
             <div className="mt-4 flex flex-wrap gap-3 text-xs">
               {active.map((capability) => (
-                <span key={capability} className="inline-flex items-center gap-2">
+                <span
+                  key={capability}
+                  className="inline-flex items-center gap-2"
+                >
                   <span
                     className="size-2 rounded-full"
                     style={{ background: chartColors[capability] }}
@@ -440,7 +464,7 @@ function DailyChart({ days }: { days: UsageDay[] }) {
 
 function ModelTable({ rows }: { rows: UsageModel[] }) {
   return (
-    <Card>
+    <Card className="border-0 bg-transparent shadow-none">
       <CardHeader>
         <CardTitle>Models</CardTitle>
         <CardDescription>Requests, duration and measured cost</CardDescription>
@@ -509,7 +533,7 @@ function ReceiptsList({
   loading: boolean;
 }) {
   return (
-    <Card>
+    <Card className="border-0 bg-transparent shadow-none">
       <CardHeader>
         <CardTitle>Receipts</CardTitle>
         <CardDescription>
@@ -536,7 +560,9 @@ function ReceiptsList({
               >
                 <CapabilityLabel capability={receipt.capability} compact />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{receipt.summary}</p>
+                  <p className="truncate text-sm font-medium">
+                    {receipt.summary}
+                  </p>
                   <p className="text-muted-foreground mt-1 text-xs">
                     {receipt.createdAt ? (
                       <RelativeTime ts={receipt.createdAt} />
@@ -579,7 +605,7 @@ function ReceiptSheet({
 }) {
   return (
     <Sheet open={receipt !== null} onOpenChange={onOpenChange}>
-      <SheetContent className="overflow-y-auto">
+      <SheetContent className="overflow-y-auto px-4 pb-4">
         {receipt && (
           <>
             <SheetHeader>
@@ -595,12 +621,18 @@ function ReceiptSheet({
                 <p className="text-sm">{receipt.summary}</p>
               </div>
               <dl className="grid gap-4 text-sm sm:grid-cols-2">
-                <Detail label="Model" value={receipt.model ?? "Not measured yet"} />
+                <Detail
+                  label="Model"
+                  value={receipt.model ?? "Not measured yet"}
+                />
                 <Detail
                   label="Duration"
                   value={formatDuration(receipt.durationMs)}
                 />
-                <Detail label="Cost" value={<Money amount={receipt.costUsd} />} />
+                <Detail
+                  label="Cost"
+                  value={<Money amount={receipt.costUsd} />}
+                />
                 <Detail
                   label="When"
                   value={
@@ -666,7 +698,11 @@ function CapabilityLabel({
       </span>
     );
   }
-  if (capability === "embeddings" || capability === "rerank" || capability === "other") {
+  if (
+    capability === "embeddings" ||
+    capability === "rerank" ||
+    capability === "other"
+  ) {
     return (
       <span className="inline-flex items-center gap-2">
         <span className="bg-muted inline-flex size-8 items-center justify-center rounded-md">
@@ -709,7 +745,7 @@ function MiniSparkline({
           key={index}
           className="w-full rounded-t-sm"
           style={{
-            height: `${Math.max(3, (value / max) * 40)}px`,
+            height: value === 0 ? 0 : `${Math.max(3, (value / max) * 40)}px`,
             background: chartColors[capability],
           }}
         />
@@ -751,18 +787,31 @@ async function fetchUsageSummary(person: string): Promise<UsageSummary> {
 function normalizeSummary(raw: unknown): UsageSummary {
   const data = object(raw);
   const receipts = array(data.receipts).map(normalizeReceipt);
-  const byDay = array(data.by_day ?? data.days ?? data.series).map(normalizeDay);
-  const byModel = array(data.by_model ?? data.models).map(normalizeModel);
-  const remoteSpendUsd = nullableNumber(
-    data.remote_spend ?? data.remote_spend_usd ?? data.remoteSpendUsd,
+  const byDay = array(data.by_day ?? data.days ?? data.series).map(
+    normalizeDay,
   );
+  const byModel = array(data.by_model ?? data.models).map(normalizeModel);
+  const remoteSpendRaw =
+    data.remote_spend ?? data.remote_spend_usd ?? data.remoteSpendUsd;
+  const hasRemoteSpendFlag =
+    data.remote_spend_available != null ||
+    data.spend_measured != null ||
+    data.spendMeasured != null;
+  const remoteSpendAvailable = hasRemoteSpendFlag
+    ? Boolean(
+        data.remote_spend_available ??
+        data.spend_measured ??
+        data.spendMeasured,
+      )
+    : remoteSpendRaw != null;
+  const remoteSpendUsd = remoteSpendAvailable
+    ? nullableNumber(remoteSpendRaw)
+    : null;
   return {
     requests: number(data.requests ?? data.request_count, receipts.length),
     mediaCount: number(data.media_count ?? data.mediaCount, 0),
     remoteSpendUsd,
-    spendMeasured: Boolean(
-      data.remote_spend_available ?? data.spend_measured ?? data.spendMeasured ?? remoteSpendUsd !== null,
-    ),
+    spendMeasured: remoteSpendAvailable || remoteSpendUsd !== null,
     byDay,
     byModel,
     receipts,
@@ -779,7 +828,14 @@ function normalizeSummary(raw: unknown): UsageSummary {
       })
       .filter((item) => item.id),
     retentionDays: number(data.retention_days, 14),
-    coverageStart: nullableString(data.coverage_note ?? data.coverage_start),
+    coverageStart: nullableString(data.coverage_start ?? data.coverageStart),
+    coverageNote: nullableString(data.coverage_note ?? data.coverageNote),
+    spendMeasuredRequests: nullableNumber(
+      data.spend_measured_requests ?? data.spendMeasuredRequests,
+    ),
+    spendTotalRequests: nullableNumber(
+      data.spend_total_requests ?? data.spendTotalRequests,
+    ),
     truncated: Boolean(data.truncated),
   };
 }
@@ -799,7 +855,10 @@ function normalizeReceipt(raw: unknown): UsageReceipt {
     data.duration_ms ?? data.latency_ms ?? data.latencyMs,
   );
   const costUsd = nullableNumber(
-    data.remote_spend ?? data.cost_usd ?? data.remote_cost_usd ?? metadata.cost_usd,
+    data.remote_spend ??
+      data.cost_usd ??
+      data.remote_cost_usd ??
+      metadata.cost_usd,
   );
   return {
     requestId,
@@ -837,7 +896,9 @@ function normalizeModel(raw: unknown): UsageModel {
     durationMs: nullableNumber(
       data.duration_ms ?? data.latency_ms ?? data.typical_ms,
     ),
-    costUsd: nullableNumber(data.remote_spend ?? data.cost_usd ?? data.remote_cost_usd),
+    costUsd: nullableNumber(
+      data.remote_spend ?? data.cost_usd ?? data.remote_cost_usd,
+    ),
   };
 }
 
@@ -846,7 +907,10 @@ function normalizeCapabilityCounts(
 ): Record<UsageCapability, number> {
   const data = object(raw);
   return capabilities.reduce(
-    (acc, capability) => ({ ...acc, [capability]: number(data[capability], 0) }),
+    (acc, capability) => ({
+      ...acc,
+      [capability]: number(data[capability], 0),
+    }),
     {} as Record<UsageCapability, number>,
   );
 }
@@ -875,7 +939,11 @@ function normalizeCapability(value: unknown): UsageCapability {
   if (text.includes("voice")) return "voice";
   if (text.includes("transcrib")) return "transcribe";
   if (text.includes("decision") || text.includes("decide")) return "decide";
-  if (text.includes("chat") || text.includes("completion") || text.includes("openai"))
+  if (
+    text.includes("chat") ||
+    text.includes("completion") ||
+    text.includes("openai")
+  )
     return "chat";
   return "other";
 }
@@ -946,12 +1014,42 @@ function formatDuration(value: number | null) {
   return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)} s`;
 }
 
+function spendCoverageDetail(summary: UsageSummary) {
+  if (
+    summary.spendMeasuredRequests != null &&
+    summary.spendTotalRequests != null &&
+    summary.spendTotalRequests > 0
+  ) {
+    return `Measured for ${formatNumber(summary.spendMeasuredRequests)} of ${formatNumber(summary.spendTotalRequests)} requests`;
+  }
+  return "Measured from receipts";
+}
+
 function shortDate(value: string) {
-  const date = new Date(`${value}T00:00:00Z`);
+  const date = parseDate(value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
     timeZone: "UTC",
   }).format(date);
+}
+
+function formatDate(value: string) {
+  const date = parseDate(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(date);
+}
+
+function parseDate(value: string) {
+  return new Date(value.includes("T") ? value : `${value}T00:00:00Z`);
+}
+
+function formatSentence(value: string) {
+  return /[.!?]$/.test(value) ? value : `${value}.`;
 }
