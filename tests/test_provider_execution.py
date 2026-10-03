@@ -417,10 +417,44 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             {"background": True},
             {"tools": [{"type": "web_search"}]},
             {"tools": [{"type": "code_interpreter"}]},
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "document",
+                                "source": {
+                                    "type": "url",
+                                    "url": "https://example.test/large.pdf",
+                                },
+                            },
+                        ],
+                    },
+                ],
+            },
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "cache this",
+                                "cache_control": {"type": "ephemeral"},
+                            },
+                        ],
+                    },
+                ],
+            },
+            {"model": "openrouter/openai/gpt-4.1-mini:online"},
             {"unknown_paid_option": "must reject"},
         ):
             with self.subTest(option=option):
                 self.receipts.clear()
+                if self.ledger.exists():
+                    self.ledger.unlink()
+                option = dict(option)
                 self.provider = ProviderRef(
                     id="openrouter",
                     base_url="https://openrouter.ai/api/v1",
@@ -435,6 +469,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                         "models": [
                             {"id": "openai/gpt-4.1-mini"},
                             {"id": "openai/gpt-4o-search-preview"},
+                            {"id": "openai/gpt-4.1-mini:online"},
                         ],
                         "price": {
                             "input_usd_per_million_tokens": "2.50",
@@ -451,10 +486,10 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                     )
                 )
                 self.body = {
-                    "model": option.pop("model", "openrouter/openai/gpt-4.1-mini"),
+                    "model": option.get("model", "openrouter/openai/gpt-4.1-mini"),
                     "messages": [{"role": "user", "content": "hi"}],
                     "max_tokens": 1,
-                    **option,
+                    **{key: value for key, value in option.items() if key != "model"},
                 }
                 send = AsyncMock(
                     return_value=(
@@ -646,6 +681,84 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 "SELECT status, actual_usd FROM provider_spend"
             ).fetchall()
         self.assertEqual(rows, [("settled", "0.000222000")])
+
+    async def test_stream_cost_settlement_accounts_for_cache_write_usage(self) -> None:
+        self.provider = ProviderRef(
+            id="openrouter",
+            base_url="https://openrouter.ai/api/v1",
+            protocols=("openai",),
+            api_key_env="OPENROUTER_API_KEY",
+            cost_class="paid-remote",
+            price={
+                "input_usd_per_million_tokens": "3",
+                "output_usd_per_million_tokens": "15",
+            },
+            config={
+                "models": [{"id": "anthropic/claude-sonnet-4.5"}],
+                "price": {
+                    "input_usd_per_million_tokens": "3",
+                    "output_usd_per_million_tokens": "15",
+                },
+            },
+        )
+        self.body = {
+            "model": "openrouter/anthropic/claude-sonnet-4.5",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 1,
+            "stream": True,
+        }
+        send = AsyncMock(
+            return_value=(
+                _Client(),
+                _Response(
+                    headers={"content-type": "text/event-stream"},
+                    chunks=[
+                        b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
+                        (
+                            b'data: {"usage":{"input_tokens":10000,'
+                            b'"cache_creation_input_tokens":10000,'
+                            b'"output_tokens":1}}\n\n'
+                        ),
+                        b"data: [DONE]\n\n",
+                    ],
+                ),
+            )
+        )
+
+        response, _ = await self._execute(send=send)
+        await _body(response)
+
+        self.assertEqual(len(self.receipts), 1)
+        self.assertEqual(self.receipts[0].cost["usd"], "0.060015000")
+        with sqlite3.connect(self.ledger) as conn:
+            rows = conn.execute(
+                "SELECT status, actual_usd FROM provider_spend"
+            ).fetchall()
+        self.assertEqual(rows, [("settled", "0.060015000")])
+
+    async def test_stream_success_without_actual_cost_keeps_reservation_open(self) -> None:
+        self.body = {**self.body, "stream": True}
+        send = AsyncMock(
+            return_value=(
+                _Client(),
+                _Response(
+                    headers={"content-type": "text/event-stream"},
+                    chunks=[
+                        b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
+                        b"data: [DONE]\n\n",
+                    ],
+                ),
+            )
+        )
+
+        response, _ = await self._execute(send=send)
+        await _body(response)
+
+        with sqlite3.connect(self.ledger) as conn:
+            rows = conn.execute(
+                "SELECT status, actual_usd FROM provider_spend"
+            ).fetchall()
+        self.assertEqual(rows, [("reserved", None)])
 
     async def test_paid_fallback_denied_without_profile_opt_in_before_provider_call(self) -> None:
         send = AsyncMock()

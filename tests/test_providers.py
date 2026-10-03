@@ -138,6 +138,55 @@ class TestSpendReservations(unittest.TestCase):
             results = list(pool.map(lambda _: reserve(), range(2)))
         self.assertEqual(sorted(results), ["allowed", "denied"])
 
+    def test_provider_default_concurrency_limit_releases_on_terminal_states(self) -> None:
+        first_profile = DEFAULT_PROFILE.with_overrides(
+            id="first-plan",
+            remote=RemoteProviderPolicy(
+                providers=frozenset({"openrouter"}),
+                budget_usd_per_day=Decimal("10"),
+            ),
+        )
+        second_profile = first_profile.with_overrides(id="second-plan")
+        third_profile = first_profile.with_overrides(id="third-plan")
+        fourth_profile = first_profile.with_overrides(id="fourth-plan")
+        ref = provider(id="openrouter")
+        first = reserve_provider_spend(
+            first_profile,
+            ref,
+            Cost(Decimal("0.001"), "price-table", "openrouter"),
+            path=self.ledger,
+        )
+        second = reserve_provider_spend(
+            second_profile,
+            ref,
+            Cost(Decimal("0.001"), "price-table", "openrouter"),
+            path=self.ledger,
+        )
+
+        with self.assertRaises(ProviderError):
+            reserve_provider_spend(
+                third_profile,
+                ref,
+                Cost(Decimal("0.001"), "price-table", "openrouter"),
+                path=self.ledger,
+            )
+
+        release_provider_spend(first, path=self.ledger)
+        third = reserve_provider_spend(
+            third_profile,
+            ref,
+            Cost(Decimal("0.001"), "price-table", "openrouter"),
+            path=self.ledger,
+        )
+        settle_provider_spend(second, Cost(Decimal("0.001"), "provider-reported", "openrouter"), path=self.ledger)
+        reserve_provider_spend(
+            fourth_profile,
+            ref,
+            Cost(Decimal("0.001"), "price-table", "openrouter"),
+            path=self.ledger,
+        )
+        release_provider_spend(third, path=self.ledger)
+
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.ledger = Path(self.tmp.name) / "ledger.db"
@@ -859,6 +908,11 @@ class TestCosts(unittest.TestCase):
 
         reported = extract_provider_cost(ref, body={"usage": {"cost": "0.25"}})
         litellm = extract_provider_cost(ref, headers={"x-litellm-response-cost": "0.5"})
+        reported_with_header = extract_provider_cost(
+            ref,
+            body={"usage": {"cost": "0.25"}},
+            headers={"x-litellm-response-cost": "0.5"},
+        )
         priced = extract_provider_cost(
             ref,
             body={"model": "m", "usage": {"input_tokens": 1000}},
@@ -867,6 +921,8 @@ class TestCosts(unittest.TestCase):
         self.assertEqual(reported.usd, Decimal("0.250000000"))
         self.assertEqual(reported.source, "provider-reported")
         self.assertEqual(litellm.source, "litellm")
+        self.assertEqual(reported_with_header.usd, Decimal("0.250000000"))
+        self.assertEqual(reported_with_header.source, "provider-reported")
         self.assertEqual(priced.source, "price-table")
 
 
