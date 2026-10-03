@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from gateway import provider_configuration
+from gateway.litellm_substrate import secret_env_name_for_provider
 from gateway.provider_sidecar import (
     build_sidecar_env,
     main,
@@ -112,7 +113,7 @@ def test_env_map_can_come_from_admin_db_service_registry(tmp_path: Path) -> None
     )
 
     assert provider_secret_env_map_from_db(db_path) == {
-        provider_configuration.provider_secret_env("openrouter", "sec_openrouter"): "sec_openrouter"
+        secret_env_name_for_provider("openrouter", "sec_openrouter"): "sec_openrouter"
     }
 
 
@@ -163,7 +164,7 @@ def test_run_exec_uses_secret_env_without_putting_secret_in_argv(
     assert captured["file"] == "litellm"
     assert captured["args"] == ["litellm", "--config", "litellm.config.yaml"]
     assert "sk-live-secret" not in repr(captured["args"])
-    env_name = provider_configuration.provider_secret_env("openrouter", "sec_openrouter")
+    env_name = secret_env_name_for_provider("openrouter", "sec_openrouter")
     assert captured["env"][env_name] == "sk-live-secret"  # type: ignore[index]
 
 
@@ -187,12 +188,12 @@ def test_missing_referenced_secret_omits_env_without_blocking_start(tmp_path: Pa
     env = build_sidecar_env(
         db_path=db_path,
         base_env={
-            provider_configuration.provider_secret_env("openrouter", "sec_missing"): "stale",
+            secret_env_name_for_provider("openrouter", "sec_missing"): "stale",
             "PATH": os.environ.get("PATH", ""),
         },
     )
 
-    assert provider_configuration.provider_secret_env("openrouter", "sec_missing") not in env
+    assert secret_env_name_for_provider("openrouter", "sec_missing") not in env
 
 
 def test_missing_encryption_key_file_omits_provider_env_without_blocking_locals(

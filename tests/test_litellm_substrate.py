@@ -269,6 +269,17 @@ def test_secret_store_refs_compile_to_deterministic_env_indirection() -> None:
     )
 
 
+def test_remote_credentials_cannot_disagree_between_adapter_and_sidecar() -> None:
+    with pytest.raises(ValueError, match="choose one credential"):
+        compile_litellm_substrate_config({"cloud": {
+            "kind": "provider", "capabilities": ["openai"], "config": {
+                "remote_provider": True, "provider_id": "cloud", "protocol": "openai-compatible",
+                "base_url": "https://provider.test/v1", "models": ["test-model"],
+                "api_key_env": "OPERATOR_PROVIDER_KEY", "api_key_secret_id": "provider:cloud:api_key",
+            },
+        }})
+
+
 def test_remote_openrouter_models_are_provider_prefixed() -> None:
     compiled = compile_litellm_substrate_config(
         {

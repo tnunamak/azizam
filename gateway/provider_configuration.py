@@ -119,6 +119,8 @@ def model_records_from_body(body: Mapping[str, Any], provider_id: str) -> list[d
         if not public_id.startswith(f"{provider_id}/"):
             public_id = f"{provider_id}/{public_id}"
         row = {"id": public_id, "model_group": public_id, "upstream_model": upstream}
+        if isinstance(item.get("name"), str) and item["name"].strip():
+            row["name"] = item["name"].strip()
         enabled = item.get("enabled")
         if enabled is not None:
             row["enabled"] = bool(enabled)

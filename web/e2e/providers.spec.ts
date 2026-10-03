@@ -107,6 +107,9 @@ async function setViewport(
 
 async function routeProviders(page: Page, state: "seeded" | "empty" | "error") {
   let saved = false;
+  let savedModels = false;
+  let savedCaps = false;
+  let savedPlans = false;
   await page.route("**/admin/api/profiles", (route: Route) =>
     route.fulfill({ json: plans }),
   );
@@ -150,6 +153,44 @@ async function routeProviders(page: Page, state: "seeded" | "empty" | "error") {
         },
       });
     }
+    if (path === "/admin/api/providers/openrouter/models") {
+      savedModels = true;
+      const body = route.request().postDataJSON();
+      expect(route.request().method()).toBe("PUT");
+      expect(body.models[0]).toMatchObject({
+        id: "openrouter/anthropic/claude-sonnet-4.5",
+        name: "Claude Sonnet 4.5",
+        enabled: false,
+        price: { output_usd_per_million_tokens: 12 },
+      });
+      return route.fulfill({
+        json: { provider: seededProviders.providers[0] },
+      });
+    }
+    if (path === "/admin/api/providers/openrouter/caps") {
+      savedCaps = true;
+      expect(route.request().method()).toBe("PUT");
+      expect(route.request().postDataJSON()).toEqual({
+        daily_usd: 7,
+        monthly_usd: 70,
+      });
+      return route.fulfill({
+        json: { provider: seededProviders.providers[0] },
+      });
+    }
+    if (path === "/admin/api/providers/openrouter/allowed-plans") {
+      savedPlans = true;
+      expect(route.request().method()).toBe("PUT");
+      expect(route.request().postDataJSON()).toEqual({
+        allowed_plans: ["paid"],
+      });
+      return route.fulfill({
+        json: { provider: seededProviders.providers[0] },
+      });
+    }
+    if (path === "/__provider-test-flags") {
+      return route.fulfill({ json: { savedModels, savedCaps, savedPlans } });
+    }
     if (path !== "/admin/api/providers") return route.continue();
     if (route.request().method() === "POST") {
       saved = true;
@@ -163,6 +204,7 @@ async function routeProviders(page: Page, state: "seeded" | "empty" | "error") {
       });
       expect(body.models[0]).toEqual({
         id: "openrouter/anthropic/claude-sonnet-4.5",
+        name: "Claude Sonnet 4.5",
         upstream_model: "anthropic/claude-sonnet-4.5",
         enabled: true,
         price: {
@@ -264,6 +306,32 @@ for (const theme of ["light", "dark"] as const) {
   }
 }
 
+test("providers detail edits models caps and plans through real admin paths", async ({
+  page,
+}) => {
+  await routeProviders(page, "seeded");
+  await page.goto("/ui/providers/");
+  await page.getByRole("button", { name: "Edit models" }).click();
+  await page.getByLabel("Enable Claude Sonnet 4.5").click();
+  await page.getByLabel("Claude Sonnet 4.5 managed output price").fill("12");
+  await page.getByRole("button", { name: "Save models" }).click();
+  await page.getByRole("button", { name: "Edit caps" }).click();
+  await page.getByLabel("OpenRouter daily cap").fill("7");
+  await page.getByLabel("OpenRouter monthly cap").fill("70");
+  await page.getByRole("button", { name: "Save caps" }).click();
+  await page.getByRole("button", { name: "Edit plans" }).click();
+  await page.getByLabel("Allow Paid cloud for OpenRouter").click();
+  await page.getByRole("button", { name: "Save plans" }).click();
+  const flags = await page.evaluate(() =>
+    fetch("/__provider-test-flags").then((response) => response.json()),
+  );
+  expect(flags).toEqual({
+    savedModels: true,
+    savedCaps: true,
+    savedPlans: true,
+  });
+});
+
 test("providers add OpenRouter and keep paid access gated", async ({
   page,
 }) => {
@@ -331,101 +399,139 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
     "x-ai-gateway-csrf": session.actor.csrf_token,
   };
   const unique = Date.now().toString(36);
-  const profileResponse = await request.post("/admin/api/profiles", {
-    headers,
-    data: {
-      name: `Provider denied plan ${unique}`,
-      profile: {
-        id: `provider-denied-${unique}`,
-        protocols: ["openai"],
-        backends: ["capture-engine"],
-        models: ["demo-chat"],
-        remote: { providers: [], budget_usd_per_day: "2.00" },
-      },
-    },
-  });
-  expect(profileResponse.status()).toBe(201);
-  const { profile } = await profileResponse.json();
-  const users = await (await request.get("/admin/api/users")).json();
-  const appResponse = await request.post("/admin/api/apps", {
-    headers,
-    data: {
-      name: `Provider test app ${unique}`,
-      kind: "personal",
-      owner_user_id: users.users[0].id,
-      profile_id: profile.id,
-    },
-  });
-  expect(appResponse.status()).toBe(201);
-  const { app } = await appResponse.json();
-  const keyResponse = await request.post(`/admin/api/apps/${app.id}/keys`, {
-    headers,
-    data: { label: `Provider journey key ${unique}` },
-  });
-  expect(keyResponse.status()).toBe(201);
-  const { credential } = await keyResponse.json();
-
-  const port = Number(new URL(baseURL!).port);
-  await page.goto("/ui/providers/");
-  await page.getByRole("button", { name: "Add provider" }).first().click();
-  await page.getByLabel("Search providers").fill("openrouter");
-  await page.getByRole("button", { name: /OpenRouter/ }).click();
-  await page
-    .getByLabel("Provider base URL")
-    .fill(`http://127.0.0.1:${port + 1}/provider/v1`);
-  await page.getByLabel("Provider API key").fill("sk-or-isolated-browser-test");
-  await page.getByRole("button", { name: "Gateway check" }).click();
-  await expect(page.getByText(/model/i).first()).toBeVisible();
-  await page.getByRole("button", { name: "Next" }).click();
-  await expect(page.getByText("Claude Sonnet 4.5")).toBeVisible();
-  await expect(page.getByLabel("Claude Sonnet 4.5 input price")).toHaveValue(
-    "3.000000",
-  );
-  await expect(page.getByLabel("Claude Sonnet 4.5 output price")).toHaveValue(
-    "15.000000",
-  );
-  await page.getByRole("button", { name: "Next" }).click();
-  await expect(
-    page.getByText(
-      "No plans selected. Paid requests will be denied until an owner allows a plan.",
-    ),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Save provider" }).click();
-  await expect(page.getByRole("heading", { name: "OpenRouter" })).toBeVisible();
-  await expect(
-    page.getByRole("cell", { name: "Claude Sonnet 4.5" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("columnheader", { name: "Input $/M" }),
-  ).toBeVisible();
-  await expect(page.getByRole("cell", { name: "3.000000" })).toBeVisible();
-
-  const denied = await request.post("/openai/v1/chat/completions", {
-    headers: { authorization: `Bearer ${credential.api_key}` },
-    data: {
-      model: "openrouter/anthropic/claude-sonnet-4.5",
-      messages: [{ role: "user", content: "hello" }],
-    },
-  });
-  expect(denied.status()).toBe(403);
-  expect(await denied.json()).toMatchObject({
-    error: { code: "paid_provider_not_allowed" },
-  });
-
-  const allowResponse = await request.put(
-    "/admin/api/providers/openrouter/allowed-plans",
-    {
+  let profile: { id: string } | undefined;
+  let app: { id: string } | undefined;
+  try {
+    const profileResponse = await request.post("/admin/api/profiles", {
       headers,
-      data: { allowed_plans: [profile.id] },
-    },
-  );
-  expect(allowResponse.status()).toBe(200);
-  const allowed = await request.post("/openai/v1/chat/completions", {
-    headers: { authorization: `Bearer ${credential.api_key}` },
-    data: {
-      model: "openrouter/anthropic/claude-sonnet-4.5",
-      messages: [{ role: "user", content: "hello" }],
-    },
-  });
-  expect(allowed.status(), await allowed.text()).toBe(200);
+      data: {
+        name: `Provider denied plan ${unique}`,
+        profile: {
+          id: `provider-denied-${unique}`,
+          protocols: ["openai"],
+          remote: { providers: [], budget_usd_per_day: "2.00" },
+          status_visibility: { level: "full" },
+        },
+      },
+    });
+    expect(profileResponse.status()).toBe(201);
+    ({ profile } = await profileResponse.json());
+    const users = await (await request.get("/admin/api/users")).json();
+    const appResponse = await request.post("/admin/api/apps", {
+      headers,
+      data: {
+        name: `Provider test app ${unique}`,
+        kind: "personal",
+        owner_user_id: users.users[0].id,
+        profile_id: profile!.id,
+      },
+    });
+    expect(appResponse.status()).toBe(201);
+    ({ app } = await appResponse.json());
+    const keyResponse = await request.post(`/admin/api/apps/${app!.id}/keys`, {
+      headers,
+      data: { label: `Provider journey key ${unique}` },
+    });
+    expect(keyResponse.status()).toBe(201);
+    const { credential } = await keyResponse.json();
+
+    const port = Number(new URL(baseURL!).port);
+    await page.goto("/ui/providers/");
+    await page.getByRole("button", { name: "Add provider" }).first().click();
+    await page.getByLabel("Search providers").fill("openrouter");
+    await page.getByRole("button", { name: /OpenRouter/ }).click();
+    await page
+      .getByLabel("Provider base URL")
+      .fill(`http://127.0.0.1:${port + 1}/provider/v1`);
+    await page
+      .getByLabel("Provider API key")
+      .fill("sk-or-isolated-browser-test");
+    await page.getByRole("button", { name: "Gateway check" }).click();
+    await expect(page.getByText(/model/i).first()).toBeVisible();
+    await page.getByRole("button", { name: "Next" }).click();
+    await expect(page.getByText("Claude Sonnet 4.5")).toBeVisible();
+    await expect(page.getByLabel("Claude Sonnet 4.5 input price")).toHaveValue(
+      "3.000000",
+    );
+    await expect(page.getByLabel("Claude Sonnet 4.5 output price")).toHaveValue(
+      "15.000000",
+    );
+    await page.getByRole("button", { name: "Next" }).click();
+    await expect(
+      page.getByText(
+        "No plans selected. Paid requests will be denied until an owner allows a plan.",
+      ),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Save provider" }).click();
+    await expect(
+      page.getByRole("heading", { name: "OpenRouter" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("cell", { name: "Claude Sonnet 4.5" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("columnheader", { name: "Input $/M" }),
+    ).toBeVisible();
+    await expect(page.getByRole("cell", { name: "3.000000" })).toBeVisible();
+
+    const denied = await request.post("/openai/v1/chat/completions", {
+      headers: { authorization: `Bearer ${credential.api_key}` },
+      data: {
+        model: "openrouter/anthropic/claude-sonnet-4.5",
+        messages: [{ role: "user", content: "hello" }],
+        max_tokens: 100,
+      },
+    });
+    expect(denied.status()).toBe(403);
+    expect(await denied.json()).toMatchObject({
+      error: { code: "paid_provider_not_allowed" },
+    });
+
+    const allowResponse = await request.put(
+      "/admin/api/providers/openrouter/allowed-plans",
+      {
+        headers,
+        data: { allowed_plans: [profile!.id] },
+      },
+    );
+    expect(allowResponse.status()).toBe(200);
+
+    await page.goto("/ui/models/");
+    await expect(page.getByRole("heading", { name: "Models" })).toBeVisible();
+    await expect(page.getByText("Claude Sonnet 4.5")).toBeVisible();
+    await expect(page.getByText(/Paid/)).toBeVisible();
+
+    const allowed = await request.post("/openai/v1/chat/completions", {
+      headers: { authorization: `Bearer ${credential.api_key}` },
+      data: {
+        model: "openrouter/anthropic/claude-sonnet-4.5",
+        messages: [{ role: "user", content: "hello" }],
+        max_tokens: 100,
+      },
+    });
+    expect(allowed.status(), await allowed.text()).toBe(200);
+  } finally {
+    await request
+      .put("/admin/api/providers/openrouter/allowed-plans", {
+        headers,
+        data: { allowed_plans: [] },
+      })
+      .catch(() => undefined);
+    await request
+      .delete("/admin/api/providers/openrouter", {
+        headers,
+        data: { expected_generation: null },
+      })
+      .catch(() => undefined);
+    if (app?.id) {
+      await request
+        .delete(`/admin/api/apps/${app.id}`, { headers })
+        .catch(() => undefined);
+    }
+    if (profile?.id) {
+      await request
+        .delete(`/admin/api/profiles/${profile.id}`, { headers })
+        .catch(() => undefined);
+    }
+  }
 });

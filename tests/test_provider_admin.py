@@ -213,7 +213,9 @@ class FakeProviderAdminStore:
     def update_service(
         self, *, service_id: str, data: Mapping[str, Any], actor: AdminContext, expected_generation: int
     ) -> dict[str, Any]:
-        self.registry["services"][service_id] = dict(data)
+        self.registry["services"][service_id] = service_registry.normalize_service_record(
+            service_id, service_registry.service_form_to_raw(data),
+        )
         self.audit.append({"action": "operator.service.update", "actor": actor.subject})
         return {"value": self.registry}
 

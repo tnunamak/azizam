@@ -53,6 +53,8 @@ def test_ui_key_model_price_and_plan_survive_into_paid_admission(
             "price": {
                 "input_usd_per_million_tokens": "3.00",
                 "output_usd_per_million_tokens": "15.00",
+                "cache_read_input_usd_per_million_tokens": "0.30",
+                "dimensions": {"cache_control": True},
             },
         }],
         "allowed_plans": [],
@@ -114,6 +116,9 @@ def test_ui_key_model_price_and_plan_survive_into_paid_admission(
     assert updated.json()["provider"]["models"][0]["enabled"] is False
     assert not compile_litellm_config_from_registry(store.get_service_registry())["model_list"]
     assert store.get_service_registry()["services"]["cloud-test"]["config"]["api_key_secret_id"]
+    preserved_price = store.get_service_registry()["services"]["cloud-test"]["config"]["price"]["models"]["cloud-test/test/model"]
+    assert preserved_price["cache_read_input_usd_per_million_tokens"] == "0.30"
+    assert preserved_price["dimensions"] == {"cache_control": True}
     removed = client.delete("/admin/api/providers/cloud-test")
     assert removed.status_code == 200, removed.json()
     assert client.get("/admin/api/providers/cloud-test").status_code == 404

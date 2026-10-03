@@ -2,7 +2,8 @@
 
 The service registry owns provider identity and secret references.  This module
 owns the UI-facing policy state for those providers: spend caps and which
-Profiles may use them.  It never reads or returns a provider key value.
+Profiles may use them. Keys are read only for checks and custody validation;
+API projections never return their values.
 """
 
 from __future__ import annotations
@@ -451,7 +452,7 @@ def create_provider_admin_router(
             merged["config"] = config
             record = store.update_service(
                 service_id=service_id,
-                data=merged,
+                data=_provider_service_to_store_form(merged),
                 actor=ctx,
                 expected_generation=_expected_registry_generation(store, body),
             )

@@ -12,6 +12,7 @@ import {
   Fish,
   KeyRound,
   Loader2,
+  MoreHorizontal,
   Plus,
   RefreshCw,
   RotateCw,
@@ -37,6 +38,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -97,6 +104,13 @@ interface ProviderRecord {
   plans: string[];
   recommendation?: string;
   recommendations?: Array<{ message: string; url?: string }>;
+}
+
+interface GlobalProviderState {
+  spendToday?: number | null;
+  spendMonth?: number | null;
+  capDaily?: number | null;
+  capMonthly?: number | null;
 }
 
 interface TestResult {
@@ -191,10 +205,7 @@ function mapModel(raw: unknown): ProviderModel {
   return {
     id,
     upstreamModel,
-    name: text(
-      obj.display_name,
-      text(obj.name, modelLabel(upstreamModel || id)),
-    ),
+    name: displayModelName(obj, upstreamModel || id),
     context: text(obj.context, ""),
     priceInput,
     priceOutput,
@@ -253,7 +264,13 @@ function mapPlans(raw: unknown): AccessPlan[] {
     const row =
       item && typeof item === "object" ? (item as Record<string, unknown>) : {};
     return {
-      id: text(row.id, `plan-${index}`),
+      id: text(
+        row.policy_id,
+        text(
+          (row.profile as { id?: unknown } | undefined)?.id,
+          text(row.id, `plan-${index}`),
+        ),
+      ),
       name: text(row.name, text(row.label, `Plan ${index + 1}`)),
       description: text(row.description, "") || undefined,
       paidAllowed:
@@ -348,6 +365,42 @@ function mapProviders(raw: unknown): ProviderRecord[] {
   });
 }
 
+function mapGlobal(raw: unknown): GlobalProviderState {
+  const obj =
+    raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const globalObj =
+    obj.global && typeof obj.global === "object"
+      ? (obj.global as Record<string, unknown>)
+      : {};
+  const spendObj =
+    globalObj.spend && typeof globalObj.spend === "object"
+      ? (globalObj.spend as Record<string, unknown>)
+      : {};
+  const capsObj =
+    globalObj.caps && typeof globalObj.caps === "object"
+      ? (globalObj.caps as Record<string, unknown>)
+      : {};
+  return {
+    spendToday: numberOrNull(spendObj.daily_usd),
+    spendMonth: numberOrNull(spendObj.monthly_usd),
+    capDaily: numberOrNull(capsObj.daily_usd),
+    capMonthly: numberOrNull(capsObj.monthly_usd),
+  };
+}
+
+function modelPayload(models: ProviderModel[]) {
+  return models.map((model) => ({
+    id: model.id,
+    name: model.name,
+    upstream_model: model.upstreamModel,
+    enabled: model.enabled,
+    price: {
+      input_usd_per_million_tokens: priceNumber(model.priceInput),
+      output_usd_per_million_tokens: priceNumber(model.priceOutput),
+    },
+  }));
+}
+
 async function jsonFetch(path: string, init?: RequestInit) {
   const response = await fetch(path, {
     credentials: "same-origin",
@@ -430,14 +483,16 @@ function SpendBar({
   cap?: number | null;
 }) {
   const pct =
-    spent != null && cap ? Math.min(100, Math.round((spent / cap) * 100)) : 0;
+    spent != null && cap != null && cap > 0
+      ? Math.min(100, Math.round((spent / cap) * 100))
+      : 0;
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-3 text-sm">
         <span className="text-muted-foreground">{label}</span>
         <span className="font-medium">
           {money(spent)}
-          {cap ? ` of ${money(cap)}` : ""}
+          {cap != null ? ` of ${money(cap)}` : ""}
         </span>
       </div>
       <Progress value={pct} aria-label={`${label} spend`} />
@@ -448,14 +503,42 @@ function SpendBar({
 function DetailCard({
   provider,
   plans,
+  busy,
   onAction,
+  onSaveModels,
+  onSaveCaps,
+  onSavePlans,
 }: {
   provider: ProviderRecord;
   plans: AccessPlan[];
+  busy?: boolean;
   onAction: (action: string, provider: ProviderRecord) => void;
+  onSaveModels: (provider: ProviderRecord, models: ProviderModel[]) => void;
+  onSaveCaps: (
+    provider: ProviderRecord,
+    daily: string,
+    monthly: string,
+  ) => void;
+  onSavePlans: (provider: ProviderRecord, allowedPlans: string[]) => void;
 }) {
   const state = providerState(provider);
   const enabledModels = provider.models.filter((model) => model.enabled);
+  const [modelDraft, setModelDraft] = useState<ProviderModel[]>(
+    provider.models,
+  );
+  const [capsDraft, setCapsDraft] = useState({
+    daily: provider.capDaily == null ? "" : String(provider.capDaily),
+    monthly: provider.capMonthly == null ? "" : String(provider.capMonthly),
+  });
+  const [planDraft, setPlanDraft] = useState<string[]>(provider.plans);
+  const [editing, setEditing] = useState<"models" | "caps" | "plans" | null>(
+    null,
+  );
+  function updateModel(id: string, patch: Partial<ProviderModel>) {
+    setModelDraft((rows) =>
+      rows.map((row) => (row.id === id ? { ...row, ...patch } : row)),
+    );
+  }
   return (
     <article className="border-border bg-card min-w-0 rounded-xl border p-5 shadow-xs">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -569,32 +652,201 @@ function DetailCard({
         <Button
           variant="outline"
           size="sm"
+          onClick={() => onAction("toggle-enabled", provider)}
+          disabled={busy}
+        >
+          {provider.enabled === false ? "Enable provider" : "Disable provider"}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setEditing(editing === "models" ? null : "models")}
+        >
+          Edit models
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setEditing(editing === "caps" ? null : "caps")}
+        >
+          Edit caps
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setEditing(editing === "plans" ? null : "plans")}
+        >
+          Edit plans
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
           onClick={() => onAction("test", provider)}
         >
           <RefreshCw aria-hidden="true" /> Gateway check
         </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => onAction("rotate", provider)}
-        >
-          <RotateCw aria-hidden="true" /> Rotate key
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => onAction("delete-key", provider)}
-        >
-          <KeyRound aria-hidden="true" /> Delete key
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => onAction("remove", provider)}
-        >
-          <Trash2 aria-hidden="true" /> Remove provider
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              aria-label={`More actions for ${provider.name}`}
+            >
+              <MoreHorizontal aria-hidden="true" /> More
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {provider.keySource === "env" ? (
+              <DropdownMenuItem disabled>
+                Key owned by {provider.apiKeyEnv ?? "environment"}
+              </DropdownMenuItem>
+            ) : (
+              <>
+                <DropdownMenuItem onClick={() => onAction("rotate", provider)}>
+                  <RotateCw aria-hidden="true" /> Rotate key
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => onAction("delete-key", provider)}
+                >
+                  <KeyRound aria-hidden="true" /> Delete key
+                </DropdownMenuItem>
+              </>
+            )}
+            <DropdownMenuItem
+              variant="destructive"
+              onClick={() => onAction("remove", provider)}
+            >
+              <Trash2 aria-hidden="true" /> Remove provider
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
+      {editing === "models" && (
+        <div className="mt-4 space-y-3 rounded-lg border p-3">
+          <h3 className="text-sm font-medium">Edit models and prices</h3>
+          {modelDraft.map((model) => (
+            <div
+              key={model.id}
+              className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_110px_110px_auto]"
+            >
+              <label className="flex items-start gap-3 text-sm">
+                <Checkbox
+                  checked={model.enabled}
+                  onCheckedChange={(checked) =>
+                    updateModel(model.id, { enabled: checked === true })
+                  }
+                  aria-label={`Enable ${model.name}`}
+                />
+                <span>
+                  <span className="block font-medium">{model.name}</span>
+                  <span className="text-muted-foreground break-words">
+                    {model.upstreamModel}
+                  </span>
+                </span>
+              </label>
+              <Input
+                aria-label={`${model.name} managed input price`}
+                value={model.priceInput}
+                onChange={(event) =>
+                  updateModel(model.id, { priceInput: event.target.value })
+                }
+                placeholder="Input $/M"
+              />
+              <Input
+                aria-label={`${model.name} managed output price`}
+                value={model.priceOutput}
+                onChange={(event) =>
+                  updateModel(model.id, { priceOutput: event.target.value })
+                }
+                placeholder="Output $/M"
+              />
+              <Button
+                size="sm"
+                onClick={() => onSaveModels(provider, modelDraft)}
+                disabled={busy}
+              >
+                Save models
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+      {editing === "caps" && (
+        <div className="mt-4 grid gap-3 rounded-lg border p-3 sm:grid-cols-[1fr_1fr_auto]">
+          <label className="space-y-2 text-sm font-medium">
+            Daily cap{" "}
+            <Input
+              aria-label={`${provider.name} daily cap`}
+              value={capsDraft.daily}
+              onChange={(event) =>
+                setCapsDraft((draft) => ({
+                  ...draft,
+                  daily: event.target.value,
+                }))
+              }
+            />
+          </label>
+          <label className="space-y-2 text-sm font-medium">
+            Monthly cap{" "}
+            <Input
+              aria-label={`${provider.name} monthly cap`}
+              value={capsDraft.monthly}
+              onChange={(event) =>
+                setCapsDraft((draft) => ({
+                  ...draft,
+                  monthly: event.target.value,
+                }))
+              }
+            />
+          </label>
+          <Button
+            className="self-end"
+            size="sm"
+            onClick={() =>
+              onSaveCaps(provider, capsDraft.daily, capsDraft.monthly)
+            }
+            disabled={busy}
+          >
+            Save caps
+          </Button>
+        </div>
+      )}
+      {editing === "plans" && (
+        <div className="mt-4 space-y-3 rounded-lg border p-3">
+          <h3 className="text-sm font-medium">Edit access plans</h3>
+          {planDraft.length === 0 && (
+            <p className="text-muted-foreground text-sm">
+              No plans selected. Paid requests will be denied.
+            </p>
+          )}
+          {plans.map((plan) => (
+            <label
+              key={plan.id}
+              className="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm"
+            >
+              <span>{plan.name}</span>
+              <Switch
+                checked={planDraft.includes(plan.id)}
+                onCheckedChange={(checked) =>
+                  setPlanDraft((rows) =>
+                    checked
+                      ? [...new Set([...rows, plan.id])]
+                      : rows.filter((id) => id !== plan.id),
+                  )
+                }
+                aria-label={`Allow ${plan.name} for ${provider.name}`}
+              />
+            </label>
+          ))}
+          <Button
+            size="sm"
+            onClick={() => onSavePlans(provider, planDraft)}
+            disabled={busy}
+          >
+            Save plans
+          </Button>
+        </div>
+      )}
     </article>
   );
 }
@@ -627,6 +879,16 @@ function AddProviderDialog({
   function resetCheck() {
     setTestResult(null);
     setModels([]);
+  }
+
+  function closeDialog(nextOpen: boolean) {
+    if (!nextOpen) {
+      setSecret("");
+      setTestResult(null);
+      setModels([]);
+      setStep("catalog");
+    }
+    onOpenChange(nextOpen);
   }
 
   const filtered = useMemo(() => {
@@ -688,17 +950,7 @@ function AddProviderDialog({
           key_mode: mode === "env" ? "env" : "secret",
           api_key: mode === "key" ? secret : undefined,
           api_key_env: mode === "env" ? envName : undefined,
-          models: models
-            .filter((model) => model.enabled)
-            .map((model) => ({
-              id: model.id,
-              upstream_model: model.upstreamModel,
-              enabled: model.enabled,
-              price: {
-                input_usd_per_million_tokens: priceNumber(model.priceInput),
-                output_usd_per_million_tokens: priceNumber(model.priceOutput),
-              },
-            })),
+          models: modelPayload(models.filter((model) => model.enabled)),
           caps: {
             daily_usd: Number(dailyCap),
             monthly_usd: Number(monthlyCap),
@@ -710,8 +962,7 @@ function AddProviderDialog({
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers"] });
-      onOpenChange(false);
-      setStep("catalog");
+      closeDialog(false);
     },
   });
 
@@ -738,7 +989,7 @@ function AddProviderDialog({
   const canSave = selected && models.some((model) => model.enabled);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={closeDialog}>
       <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>Add provider</DialogTitle>
@@ -1056,7 +1307,7 @@ function AddProviderDialog({
           </div>
         )}
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" onClick={() => closeDialog(false)}>
             Cancel
           </Button>
           {step !== "catalog" && (
@@ -1112,6 +1363,64 @@ function AddProviderDialog({
   );
 }
 
+function GlobalCapsEditor({
+  global,
+  busy,
+  onSave,
+}: {
+  global: GlobalProviderState;
+  busy?: boolean;
+  onSave: (daily: string, monthly: string) => void;
+}) {
+  const [daily, setDaily] = useState(
+    global.capDaily == null ? "" : String(global.capDaily),
+  );
+  const [monthly, setMonthly] = useState(
+    global.capMonthly == null ? "" : String(global.capMonthly),
+  );
+  return (
+    <section className="rounded-xl border p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="font-medium">Global spend cap</h2>
+          <p className="text-muted-foreground mt-1 text-sm">
+            Gateway-wide backstop for paid provider reservations.
+          </p>
+        </div>
+        <div className="text-muted-foreground text-sm">
+          Month: {money(global.spendMonth)}
+        </div>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
+        <label className="space-y-2 text-sm font-medium">
+          Daily cap{" "}
+          <Input
+            aria-label="Global daily provider cap"
+            value={daily}
+            onChange={(event) => setDaily(event.target.value)}
+          />
+        </label>
+        <label className="space-y-2 text-sm font-medium">
+          Monthly cap{" "}
+          <Input
+            aria-label="Global monthly provider cap"
+            value={monthly}
+            onChange={(event) => setMonthly(event.target.value)}
+          />
+        </label>
+        <Button
+          className="self-end"
+          size="sm"
+          onClick={() => onSave(daily, monthly)}
+          disabled={busy}
+        >
+          Save global cap
+        </Button>
+      </div>
+    </section>
+  );
+}
+
 export default function ProvidersPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [confirmTarget, setConfirmTarget] = useState<{
@@ -1119,17 +1428,23 @@ export default function ProvidersPage() {
     provider: ProviderRecord;
   } | null>(null);
   const queryClient = useQueryClient();
-  const providers = useQuery({
+  const {
+    data: providersData,
+    error: providersError,
+    isError: providersIsError,
+    isPending: providersIsPending,
+    refetch: refetchProviders,
+  } = useQuery({
     queryKey: ["providers"],
-    queryFn: () => jsonFetch("/admin/api/providers").then(mapProviders),
+    queryFn: () => jsonFetch("/admin/api/providers"),
     retry: false,
   });
-  const catalog = useQuery({
+  const { data: catalogData, isPending: catalogIsPending } = useQuery({
     queryKey: ["providers", "catalog"],
     queryFn: () => jsonFetch("/admin/api/providers/-/catalog").then(mapCatalog),
     retry: false,
   });
-  const plans = useQuery({
+  const { data: plansData, isPending: plansIsPending } = useQuery({
     queryKey: ["providers", "plans"],
     queryFn: () => jsonFetch("/admin/api/profiles").then(mapPlans),
     retry: false,
@@ -1161,6 +1476,12 @@ export default function ProvidersPage() {
           body: { expected_generation: null },
         });
       }
+      if (name === "toggle-enabled") {
+        return adminFetch(`/admin/api/operator/services/${encoded}/enabled`, {
+          method: "POST",
+          body: { enabled: provider.enabled === false },
+        });
+      }
       if (name === "rotate") {
         const replacement = window.prompt(
           `Paste a replacement key for ${provider.name}. It will not be shown again.`,
@@ -1175,14 +1496,82 @@ export default function ProvidersPage() {
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["providers"] }),
   });
+  const saveModels = useMutation({
+    mutationFn: ({
+      provider,
+      models,
+    }: {
+      provider: ProviderRecord;
+      models: ProviderModel[];
+    }) =>
+      adminFetch(
+        `/admin/api/providers/${encodeURIComponent(provider.id)}/models`,
+        {
+          method: "PUT",
+          body: { models: modelPayload(models), expected_generation: null },
+        },
+      ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["providers"] }),
+  });
+  const saveCaps = useMutation({
+    mutationFn: ({
+      provider,
+      daily,
+      monthly,
+    }: {
+      provider: ProviderRecord;
+      daily: string;
+      monthly: string;
+    }) =>
+      adminFetch(
+        `/admin/api/providers/${encodeURIComponent(provider.id)}/caps`,
+        {
+          method: "PUT",
+          body: { daily_usd: Number(daily), monthly_usd: Number(monthly) },
+        },
+      ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["providers"] }),
+  });
+  const savePlans = useMutation({
+    mutationFn: ({
+      provider,
+      allowedPlans,
+    }: {
+      provider: ProviderRecord;
+      allowedPlans: string[];
+    }) =>
+      adminFetch(
+        `/admin/api/providers/${encodeURIComponent(provider.id)}/allowed-plans`,
+        {
+          method: "PUT",
+          body: { allowed_plans: allowedPlans },
+        },
+      ),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["providers"] }),
+  });
+  const saveGlobalCaps = useMutation({
+    mutationFn: ({ daily, monthly }: { daily: string; monthly: string }) =>
+      adminFetch("/admin/api/providers/-/global-caps", {
+        method: "PUT",
+        body: { daily_usd: Number(daily), monthly_usd: Number(monthly) },
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["providers"] }),
+  });
 
-  const loading = providers.isPending || catalog.isPending || plans.isPending;
+  const loading = providersIsPending || catalogIsPending || plansIsPending;
   const missingApi =
-    providers.error instanceof Error &&
-    /404|not found/i.test(providers.error.message);
-  const records = providers.data ?? [];
-  const catalogRows = catalog.data ?? [];
-  const planRows = plans.data ?? [];
+    providersError instanceof Error &&
+    /404|not found/i.test(providersError.message);
+  const records = mapProviders(providersData);
+  const globalState = mapGlobal(providersData);
+  const catalogRows = catalogData ?? [];
+  const planRows = plansData ?? [];
+  const busy =
+    action.isPending ||
+    saveModels.isPending ||
+    saveCaps.isPending ||
+    savePlans.isPending ||
+    saveGlobalCaps.isPending;
 
   return (
     <>
@@ -1213,14 +1602,14 @@ export default function ProvidersPage() {
             description="This gateway does not expose the provider admin API yet. Local engines and explicit model aliases keep working."
             icon={ServerOff}
           />
-        ) : providers.isError ? (
+        ) : providersIsError ? (
           <div
             role="alert"
             className="border-danger/30 bg-danger/10 text-danger rounded-lg border p-4 text-sm"
           >
             <p>
-              {providers.error instanceof Error
-                ? providers.error.message
+              {providersError instanceof Error
+                ? providersError.message
                 : "Provider status failed."}
             </p>
             <Button
@@ -1228,7 +1617,7 @@ export default function ProvidersPage() {
               variant="outline"
               size="sm"
               className="mt-3"
-              onClick={() => providers.refetch()}
+              onClick={() => refetchProviders()}
             >
               <RefreshCw aria-hidden="true" /> Retry providers
             </Button>
@@ -1246,6 +1635,13 @@ export default function ProvidersPage() {
           />
         ) : (
           <div className="space-y-5">
+            <GlobalCapsEditor
+              global={globalState}
+              busy={busy}
+              onSave={(daily, monthly) =>
+                saveGlobalCaps.mutate({ daily, monthly })
+              }
+            />
             <section className="grid gap-3 sm:grid-cols-3">
               <div className="rounded-xl border p-4">
                 <DollarSign className="text-primary size-5" />
@@ -1285,6 +1681,20 @@ export default function ProvidersPage() {
                   key={provider.id}
                   provider={provider}
                   plans={planRows}
+                  busy={busy}
+                  onSaveModels={(providerRecord, models) =>
+                    saveModels.mutate({ provider: providerRecord, models })
+                  }
+                  onSaveCaps={(providerRecord, daily, monthly) =>
+                    saveCaps.mutate({
+                      provider: providerRecord,
+                      daily,
+                      monthly,
+                    })
+                  }
+                  onSavePlans={(providerRecord, allowedPlans) =>
+                    savePlans.mutate({ provider: providerRecord, allowedPlans })
+                  }
                   onAction={(name, providerRecord) =>
                     name === "delete-key" || name === "remove"
                       ? setConfirmTarget({
@@ -1299,11 +1709,25 @@ export default function ProvidersPage() {
                 />
               ))}
             </div>
-            {action.error && (
+            {(action.error ||
+              saveModels.error ||
+              saveCaps.error ||
+              savePlans.error ||
+              saveGlobalCaps.error) && (
               <div role="alert" className="text-danger text-sm">
                 <AlertCircle className="mr-1 inline size-4" />
-                {action.error instanceof Error
-                  ? action.error.message
+                {(action.error ||
+                  saveModels.error ||
+                  saveCaps.error ||
+                  savePlans.error ||
+                  saveGlobalCaps.error) instanceof Error
+                  ? (
+                      action.error ||
+                      saveModels.error ||
+                      saveCaps.error ||
+                      savePlans.error ||
+                      saveGlobalCaps.error
+                    )?.message
                   : "Provider action failed."}
               </div>
             )}

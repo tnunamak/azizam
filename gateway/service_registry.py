@@ -788,6 +788,8 @@ def validate_provider_secret_refs(
         )
     has_env = config.get("api_key_env") not in (None, "")
     has_secret = config.get("api_key_secret_id") not in (None, "")
+    if has_env and has_secret:
+        raise ValueError(f"remote provider {service_id!r} must choose one credential reference")
     if not has_env and not has_secret:
         raise ValueError(
             f"remote provider {service_id!r} requires api_key_env or api_key_secret_id"
