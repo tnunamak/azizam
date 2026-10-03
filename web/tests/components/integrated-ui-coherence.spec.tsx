@@ -64,9 +64,9 @@ describe("integrated UI coherence", () => {
               name: "OpenRouter",
               enabled: true,
               reachable: true,
-              key_set: true,
-              spend_usd: 1.25,
-              cap_usd: 10,
+              key_status: { state: "set", source: "secret_store", suffix: "4f2a" },
+              spend: { daily_usd: 1.25, monthly_usd: 1.25, status: "measured" },
+              caps: { daily_usd: 10, monthly_usd: 10 },
               secret_ref: "OPENROUTER_API_KEY",
             },
           ],
@@ -78,8 +78,8 @@ describe("integrated UI coherence", () => {
       await screen.findByRole("heading", { name: "OpenRouter" }),
     ).toBeVisible();
     expect(screen.getByText("Ready")).toBeVisible();
-    expect(screen.getByText("Set")).toBeVisible();
-    expect(screen.getByText("$1.25 of $10.00")).toBeVisible();
+    expect(screen.getByText("Set · ends in 4f2a")).toBeVisible();
+    expect(screen.getAllByText("$1.25 of $10.00")).toHaveLength(2);
     await waitFor(() =>
       expect(screen.queryByText("OPENROUTER_API_KEY")).toBeNull(),
     );
@@ -107,7 +107,7 @@ describe("integrated UI coherence", () => {
       await screen.findByRole("heading", { name: "Disabled remote" }),
     ).toBeVisible();
     expect(screen.getByText("Unavailable")).toBeVisible();
-    expect(screen.getByText("Provider is disabled.")).toBeVisible();
+    expect(screen.getByText("Configured, currently disabled.")).toBeVisible();
     expect(screen.queryByText("Starting")).toBeNull();
   });
 

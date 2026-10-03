@@ -10,7 +10,7 @@ references, never plaintext keys.
 
 Open **Providers** and select **Add provider**. Choose a shipped preset or a
 generic compatible endpoint, enter a key or environment-variable name, and
-test the connection. The test lists models; presets can also declare an
+run **Gateway check**. The check lists models; presets can also declare an
 authentication probe when model listing alone does not verify the key.
 Choose models, review their input/output prices, set daily and monthly caps,
 and select the access plans that may use the provider. Missing prices require
@@ -93,9 +93,9 @@ The important fields are:
 
 - `remote_provider: true`, `paid_remote: true`, or `provider_type` /
   `cost_class` set to `remote`, `paid-remote`, or `cloud`.
-- `api_key_env`: the environment variable name used by LiteLLM. For an
-  environment reference, deployment supplies its value. For an encrypted UI
-  key, the gateway supplies it only to the execution process at runtime.
+- `api_key_env`: the environment variable name supplied by deployment.
+- `api_key_secret_id`: an encrypted UI key reference. The compiler derives an
+  environment name and the launcher supplies its value to the sidecar at runtime.
 - `models`: the provider-qualified public model names the gateway may route.
 - `price`: optional cost table used for pre-call estimates. If a capped request
   has no bounded cost estimate, the request fails closed before the provider
@@ -170,15 +170,26 @@ response must still provide enough information for actual-cost settlement.
 The Providers UI uses:
 
 - `GET /admin/api/providers`
+- `GET /admin/api/providers/-/catalog`
+- `POST /admin/api/providers`
+- `POST /admin/api/providers/-/test` (unsaved configuration)
 - `GET /admin/api/providers/{provider}`
+- `POST /admin/api/providers/{provider}/test` (stored configuration)
+- `PUT /admin/api/providers/{provider}/key`
+- `DELETE /admin/api/providers/{provider}/key`
+- `PUT /admin/api/providers/{provider}/models`
+- `DELETE /admin/api/providers/{provider}`
 - `PUT /admin/api/providers/{provider}/caps`
 - `DELETE /admin/api/providers/{provider}/caps`
 - `PUT /admin/api/providers/{provider}/allowed-plans`
 - `PUT /admin/api/providers/-/global-caps`
 - `DELETE /admin/api/providers/-/global-caps`
 
-`key_status` is only `set` or `missing` plus the env var name.  It never
-contains the key value.
+`key_status` reports its state and source. Stored keys include their suffix and
+update time; environment references include the variable name. It never contains
+the key value. Reachability is unknown until a check observes success or failure.
+Registry writes accept `expected_generation` for conflict detection. A stale
+generation returns HTTP 409; refresh before retrying.
 
 ## Spend Ledger And Caps
 

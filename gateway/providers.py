@@ -810,6 +810,12 @@ def _raise_mapped_response_error(response: httpx.Response) -> None:
             "remote provider rate limited the request",
             retry_after=response.headers.get("retry-after"),
         )
+    if response.status_code >= 400:
+        status_code = response.status_code if response.status_code < 500 else 502
+        raise ProviderUpstreamError(
+            "remote provider request failed",
+            status_code=status_code,
+        )
 
 
 def resolve_provider_api_key(provider: ProviderRef, *, db_path: Path | None = None) -> str:
@@ -826,12 +832,6 @@ def resolve_provider_api_key(provider: ProviderRef, *, db_path: Path | None = No
         if value:
             return value
     return ""
-    if response.status_code >= 400:
-        status_code = response.status_code if response.status_code < 500 else 502
-        raise ProviderUpstreamError(
-            "remote provider request failed",
-            status_code=status_code,
-        )
 
 
 def _vendor_typesafe_body(

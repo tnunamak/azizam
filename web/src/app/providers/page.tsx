@@ -96,6 +96,7 @@ interface ProviderRecord {
   capMonthly?: number | null;
   plans: string[];
   recommendation?: string;
+  recommendations?: Array<{ message: string; url?: string }>;
 }
 
 interface TestResult {
@@ -134,6 +135,30 @@ function priceNumber(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function modelLabel(value: string): string {
+  const raw = value.split("/").filter(Boolean).at(-1) ?? value;
+  return raw
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) =>
+      /^\d+(\.\d+)?$/.test(part)
+        ? part
+        : part.charAt(0).toUpperCase() + part.slice(1),
+    )
+    .join(" ");
+}
+
+function displayModelName(
+  obj: Record<string, unknown>,
+  fallback: string,
+): string {
+  const display = text(obj.display_name, "");
+  if (display) return display;
+  const name = text(obj.name, "");
+  if (name && !name.includes("/") && !name.includes("-")) return name;
+  return modelLabel(fallback);
+}
+
 function mapModel(raw: unknown): ProviderModel {
   const obj =
     raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
@@ -166,7 +191,10 @@ function mapModel(raw: unknown): ProviderModel {
   return {
     id,
     upstreamModel,
-    name: text(obj.name, id),
+    name: text(
+      obj.display_name,
+      text(obj.name, modelLabel(upstreamModel || id)),
+    ),
     context: text(obj.context, ""),
     priceInput,
     priceOutput,
@@ -188,13 +216,24 @@ function mapCatalog(raw: unknown): CatalogProvider[] {
       item && typeof item === "object" ? (item as Record<string, unknown>) : {};
     return {
       id: text(row.id, `provider-${index}`),
-      name: text(row.name, text(row.display_name, `Provider ${index + 1}`)),
+      name: text(row.display_name, text(row.name, `Provider ${index + 1}`)),
       logoKey: text(row.logo_key, text(row.id, "cloud")),
       protocol: text(row.protocol, "openai-chat"),
       baseUrl: text(row.base_url, "Not supplied"),
       docsUrl: text(row.docs_url, "") || undefined,
       keyUrl: text(row.key_url, "") || undefined,
-      recommendation: text(row.recommendation, "") || undefined,
+      recommendation:
+        (Array.isArray(row.recommendations) &&
+        row.recommendations.find((entry) => entry && typeof entry === "object")
+          ? text(
+              (
+                row.recommendations.find(
+                  (entry) => entry && typeof entry === "object",
+                ) as Record<string, unknown>
+              ).message,
+              "",
+            )
+          : text(row.recommendation, "")) || undefined,
       billingDimensions: Array.isArray(row.billing_dimensions)
         ? row.billing_dimensions.map((v) => String(v))
         : [],
@@ -501,8 +540,8 @@ function DetailCard({
           <thead className="bg-muted/40 text-muted-foreground">
             <tr>
               <th className="px-3 py-2 text-left font-medium">Model</th>
-              <th className="px-3 py-2 text-left font-medium">Input</th>
-              <th className="px-3 py-2 text-left font-medium">Output</th>
+              <th className="px-3 py-2 text-left font-medium">Input $/M</th>
+              <th className="px-3 py-2 text-left font-medium">Output $/M</th>
               <th className="px-3 py-2 text-left font-medium">State</th>
             </tr>
           </thead>
@@ -527,6 +566,13 @@ function DetailCard({
         </table>
       </div>
       <div className="mt-5 flex flex-wrap gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => onAction("test", provider)}
+        >
+          <RefreshCw aria-hidden="true" /> Gateway check
+        </Button>
         <Button
           variant="outline"
           size="sm"
@@ -571,6 +617,7 @@ function AddProviderDialog({
   const [mode, setMode] = useState<CredentialMode>("key");
   const [secret, setSecret] = useState("");
   const [envName, setEnvName] = useState("OPENROUTER_API_KEY");
+  const [baseUrl, setBaseUrl] = useState("");
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [models, setModels] = useState<ProviderModel[]>([]);
   const [dailyCap, setDailyCap] = useState("5");
@@ -595,14 +642,14 @@ function AddProviderDialog({
     mutationFn: async () => {
       if (!selected) throw new Error("Choose a provider first.");
       const raw = await adminFetch<Record<string, unknown>>(
-        `/admin/api/providers/${encodeURIComponent(selected.id)}/test`,
+        `/admin/api/providers/-/test`,
         {
           method: "POST",
           body: {
             preset_id: selected.id,
             provider_id: selected.id,
             name: selected.name,
-            base_url: selected.baseUrl,
+            base_url: baseUrl.trim() || selected.baseUrl,
             key_mode: mode === "env" ? "env" : "secret",
             api_key: mode === "key" ? secret : undefined,
             api_key_env: mode === "env" ? envName : undefined,
@@ -637,7 +684,7 @@ function AddProviderDialog({
           preset_id: selected.id,
           provider_id: selected.id,
           name: selected.name,
-          base_url: selected.baseUrl,
+          base_url: baseUrl.trim() || selected.baseUrl,
           key_mode: mode === "env" ? "env" : "secret",
           api_key: mode === "key" ? secret : undefined,
           api_key_env: mode === "env" ? envName : undefined,
@@ -685,7 +732,9 @@ function AddProviderDialog({
   }
 
   const canCredential =
-    selected && (mode === "env" ? envName.trim() : secret.trim());
+    selected &&
+    (baseUrl.trim() || selected.baseUrl) &&
+    (mode === "env" ? envName.trim() : secret.trim());
   const canSave = selected && models.some((model) => model.enabled);
 
   return (
@@ -740,6 +789,11 @@ function AddProviderDialog({
                   type="button"
                   onClick={() => {
                     setSelected(provider);
+                    setBaseUrl(
+                      provider.baseUrl === "Not supplied"
+                        ? ""
+                        : provider.baseUrl,
+                    );
                     resetCheck();
                     setStep("credentials");
                   }}
@@ -780,9 +834,18 @@ function AddProviderDialog({
           <div className="space-y-4">
             <div className="rounded-lg border p-4">
               <div className="font-medium">{selected.name}</div>
-              <div className="text-muted-foreground mt-1 text-sm">
-                {selected.baseUrl}
-              </div>
+              <label className="mt-3 block space-y-2 text-sm font-medium">
+                Provider base URL
+                <Input
+                  aria-label="Provider base URL"
+                  value={baseUrl}
+                  onChange={(e) => {
+                    setBaseUrl(e.target.value);
+                    resetCheck();
+                  }}
+                  placeholder={selected.baseUrl}
+                />
+              </label>
               {selected.keyUrl && (
                 <a
                   className="text-primary mt-2 inline-flex items-center gap-1 text-sm"
@@ -1072,17 +1135,44 @@ export default function ProvidersPage() {
     retry: false,
   });
   const action = useMutation({
-    mutationFn: ({
+    mutationFn: async ({
       action: name,
       provider,
     }: {
       action: string;
       provider: ProviderRecord;
-    }) =>
-      adminFetch(
-        `/admin/api/providers/${encodeURIComponent(provider.id)}/${name}`,
-        { method: "POST", body: {} },
-      ),
+    }) => {
+      const encoded = encodeURIComponent(provider.id);
+      if (name === "test") {
+        return adminFetch(`/admin/api/providers/${encoded}/test`, {
+          method: "POST",
+          body: {},
+        });
+      }
+      if (name === "delete-key") {
+        return adminFetch(`/admin/api/providers/${encoded}/key`, {
+          method: "DELETE",
+          body: {},
+        });
+      }
+      if (name === "remove") {
+        return adminFetch(`/admin/api/providers/${encoded}`, {
+          method: "DELETE",
+          body: { expected_generation: null },
+        });
+      }
+      if (name === "rotate") {
+        const replacement = window.prompt(
+          `Paste a replacement key for ${provider.name}. It will not be shown again.`,
+        );
+        if (!replacement) throw new Error("Rotation cancelled.");
+        return adminFetch(`/admin/api/providers/${encoded}/key`, {
+          method: "PUT",
+          body: { api_key: replacement },
+        });
+      }
+      throw new Error("Unknown provider action.");
+    },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["providers"] }),
   });
 

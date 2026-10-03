@@ -13210,6 +13210,7 @@ def _capability_for_profile(
             capability_trust_tier=capability.trust_tier,
             capability_resource_tier=capability.resource_tier,
             capability_tags=capability.tags,
+            remote_provider=(capability.backend if "remote" in capability.tags else None),
         ),
     )
 

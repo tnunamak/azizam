@@ -10,6 +10,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
+from decimal import Decimal, InvalidOperation
+import re
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -63,6 +66,8 @@ def load_provider_catalog(path: Path = CATALOG_DIR) -> dict[str, ProviderPreset]
 
 
 def normalize_provider_preset(raw: Mapping[str, Any], *, source: Path | str = "<memory>") -> ProviderPreset:
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"{source}: provider preset must be a mapping")
     preset_id = _required_id(raw, "id", source)
     protocol = str(raw.get("protocol") or "").strip()
     if protocol not in PROTOCOLS:
@@ -73,6 +78,38 @@ def normalize_provider_preset(raw: Mapping[str, Any], *, source: Path | str = "<
     listing = raw.get("model_listing")
     if not isinstance(listing, Mapping) or not str(listing.get("path") or "").startswith("/"):
         raise ValueError(f"{source}: provider {preset_id!r} requires model_listing.path")
+    for key in ("display_name", "logo_key", "litellm_provider"):
+        if not isinstance(raw.get(key), str) or not raw[key].strip():
+            raise ValueError(f"{source}: provider preset requires {key}")
+    for key in ("base_url", "docs_url", "key_url"):
+        value = raw.get(key)
+        if not isinstance(value, str):
+            raise ValueError(f"{source}: provider preset requires {key}")
+        if value:
+            parsed = urlsplit(value)
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+                raise ValueError(f"{source}: invalid {key}")
+    if not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", str(auth["header"])) or any(ch in str(auth.get("prefix", "")) for ch in "\r\n"):
+        raise ValueError(f"{source}: invalid authentication header")
+    dimensions = raw.get("billing_dimensions")
+    if not isinstance(dimensions, list) or not dimensions or not all(isinstance(item, str) and item.strip() for item in dimensions):
+        raise ValueError(f"{source}: billing_dimensions must be a non-empty list")
+    _validate_listing_spec(listing, source)
+    if raw.get("auth_test"):
+        if not isinstance(raw["auth_test"], Mapping):
+            raise ValueError(f"{source}: auth_test must be a mapping")
+        _validate_listing_spec(raw["auth_test"], source)
+    if not isinstance(listing.get("prices", {}), Mapping):
+        raise ValueError(f"{source}: model_listing.prices must be a mapping")
+    for rule in listing.get("prices", {}).values():
+        if not isinstance(rule, Mapping) or not isinstance(rule.get("path"), str) or not rule["path"]:
+            raise ValueError(f"{source}: price rules require a path")
+        try:
+            scale = Decimal(str(rule.get("scale", "1")))
+        except InvalidOperation:
+            raise ValueError(f"{source}: invalid price scale") from None
+        if not scale.is_finite() or scale <= 0:
+            raise ValueError(f"{source}: invalid price scale")
     return ProviderPreset(
         id=preset_id,
         display_name=str(raw.get("display_name") or preset_id).strip(),
@@ -111,3 +148,18 @@ def _required_id(raw: Mapping[str, Any], key: str, source: Path | str) -> str:
     if not value.replace("-", "").replace("_", "").isalnum():
         raise ValueError(f"{source}: provider preset id {value!r} is invalid")
     return value
+
+
+def _validate_listing_spec(spec: Mapping[str, Any], source: Path | str) -> None:
+    path = str(spec.get("path") or "")
+    if not path.startswith("/") or path.startswith("//") or any(char in path for char in "?#\r\n"):
+        raise ValueError(f"{source}: invalid model-listing path")
+    if str(spec.get("method", "GET")).upper() != "GET":
+        raise ValueError(f"{source}: model listing must use GET")
+    headers = spec.get("headers", {})
+    if not isinstance(headers, Mapping) or not all(
+        isinstance(key, str) and re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", key)
+        and isinstance(value, str) and not any(char in value for char in "\r\n")
+        for key, value in headers.items()
+    ):
+        raise ValueError(f"{source}: invalid model-listing headers")

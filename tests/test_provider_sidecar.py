@@ -37,7 +37,7 @@ def test_registry_contract_maps_api_key_env_to_encrypted_secret_id() -> None:
     }
 
     assert provider_secret_env_map_from_registry(registry) == {
-        "AI_GATEWAY_PROVIDER_SECRET_OPENROUTER": "provider:openrouter:api_key"
+        provider_configuration.provider_secret_env("openrouter"): "provider:openrouter:api_key"
     }
 
 
@@ -60,7 +60,7 @@ def test_created_provider_service_maps_to_sidecar_env_and_rotates(tmp_path: Path
     service = provider_configuration.provider_service_from_body(
         {
             "preset_id": "openrouter",
-            "models": [{"id": "anthropic/claude-3-haiku"}],
+            "models": [{"id": "anthropic/claude-3-haiku", "price": {"input_usd_per_million_tokens": "1", "output_usd_per_million_tokens": "2"}}],
             "api_key": "sk-not-stored-here",
         }
     )
@@ -112,7 +112,7 @@ def test_env_map_can_come_from_admin_db_service_registry(tmp_path: Path) -> None
     )
 
     assert provider_secret_env_map_from_db(db_path) == {
-        "AI_GATEWAY_PROVIDER_SECRET_OPENROUTER": "sec_openrouter"
+        provider_configuration.provider_secret_env("openrouter", "sec_openrouter"): "sec_openrouter"
     }
 
 
@@ -163,7 +163,8 @@ def test_run_exec_uses_secret_env_without_putting_secret_in_argv(
     assert captured["file"] == "litellm"
     assert captured["args"] == ["litellm", "--config", "litellm.config.yaml"]
     assert "sk-live-secret" not in repr(captured["args"])
-    assert captured["env"]["AI_GATEWAY_PROVIDER_SECRET_OPENROUTER"] == "sk-live-secret"  # type: ignore[index]
+    env_name = provider_configuration.provider_secret_env("openrouter", "sec_openrouter")
+    assert captured["env"][env_name] == "sk-live-secret"  # type: ignore[index]
 
 
 def test_missing_referenced_secret_omits_env_without_blocking_start(tmp_path: Path) -> None:
@@ -186,12 +187,12 @@ def test_missing_referenced_secret_omits_env_without_blocking_start(tmp_path: Pa
     env = build_sidecar_env(
         db_path=db_path,
         base_env={
-            "AI_GATEWAY_PROVIDER_SECRET_OPENROUTER": "stale",
+            provider_configuration.provider_secret_env("openrouter", "sec_missing"): "stale",
             "PATH": os.environ.get("PATH", ""),
         },
     )
 
-    assert "AI_GATEWAY_PROVIDER_SECRET_OPENROUTER" not in env
+    assert provider_configuration.provider_secret_env("openrouter", "sec_missing") not in env
 
 
 def test_missing_encryption_key_file_omits_provider_env_without_blocking_locals(

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import stat
+import sqlite3
+import base64
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -12,6 +14,7 @@ from gateway.secret_store import (
     put_provider_secret,
 )
 import pytest
+from cryptography.exceptions import InvalidTag
 
 
 def test_provider_secret_round_trip_is_encrypted_and_key_file_is_0600(tmp_path: Path) -> None:
@@ -78,3 +81,19 @@ def test_secret_store_refuses_a_symlink_key_file(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="regular file"):
         put_provider_secret("provider:test:api_key", "synthetic-key", db_path=tmp_path / "admin.db")
     assert target.read_bytes() == b"operator-owned"
+
+
+def test_ciphertext_is_authenticated_and_bound_to_record_identity(tmp_path: Path) -> None:
+    db = tmp_path / "admin.db"
+    put_provider_secret("provider:first:api_key", "synthetic-authenticated-key", db_path=db)
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE provider_secrets SET id = ?", ("provider:other:api_key",))
+    with pytest.raises(InvalidTag):
+        get_provider_secret("provider:other:api_key", db_path=db)
+    with sqlite3.connect(db) as conn:
+        encoded = conn.execute("SELECT ciphertext_b64 FROM provider_secrets").fetchone()[0]
+        data = bytearray(base64.b64decode(encoded))
+        data[0] ^= 1
+        conn.execute("UPDATE provider_secrets SET id = ?, ciphertext_b64 = ?", ("provider:first:api_key", base64.b64encode(data).decode()))
+    with pytest.raises(InvalidTag):
+        get_provider_secret("provider:first:api_key", db_path=db)

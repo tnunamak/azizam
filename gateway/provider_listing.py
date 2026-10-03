@@ -137,6 +137,11 @@ async def probe_provider(
         payload = await get_json(listing)
         provider_id = str(config.get("provider_id") or "")
         models = project_models(payload, listing, provider_id=provider_id)
+        # Treat successful upstream metadata as untrusted too. A credential
+        # echoed into an ID/name must never escape this write-only boundary.
+        models = [row for row in models if not any(
+            api_key in str(row.get(field) or "") for field in ("id", "upstream_model", "name")
+        )]
         more = bool(_at_path(payload, str(listing.get("has_more_path") or "has_more")))
         return {
             "ok": True, "reachable": True, "checked_at": int(time.time()),

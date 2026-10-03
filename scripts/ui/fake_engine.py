@@ -17,7 +17,30 @@ def models():
     return {"object": "list", "data": [{"id": "demo-chat", "object": "model", "owned_by": "demo"}]}
 
 
+@app.get("/provider/v1/key")
+def provider_key_probe():
+    return {"data": {"label": "isolated-provider-key"}}
+
+
+@app.get("/provider/v1/models")
+def provider_models():
+    return {
+        "object": "list",
+        "data": [
+            {
+                "id": "anthropic/claude-sonnet-4.5",
+                "name": "Claude Sonnet 4.5",
+                "object": "model",
+                "owned_by": "isolated-openrouter",
+                "pricing": {"prompt": "0.000003", "completion": "0.000015"},
+                "context_length": 200000,
+            },
+        ],
+    }
+
+
 @app.post("/v1/chat/completions")
+@app.post("/provider/v1/chat/completions")
 async def chat(request: Request):
     body = await request.json()
     return {

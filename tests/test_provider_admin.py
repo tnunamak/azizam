@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from gateway import admin_store  # noqa: E402
+from gateway import admin_store, service_registry  # noqa: E402
 from gateway.admin_api import AdminAuthError, AdminContext  # noqa: E402
 from gateway.provider_admin import (  # noqa: E402
     PROVIDER_ADMIN_SETTING_KEY,
@@ -195,29 +195,30 @@ class FakeProviderAdminStore:
     def add_service(
         self, *, data: Mapping[str, Any], actor: AdminContext, expected_generation: int
     ) -> dict[str, Any]:
-        raw = dict(data)
-        service_id = str(raw["id"])
+        form = dict(data)
+        service_id = str(form["id"])
+        raw = service_registry.service_form_to_raw(form)
         self.registry.setdefault("services", {})[service_id] = {
             "id": service_id,
-            "name": raw.get("name") or service_id,
-            "kind": raw.get("kind") or "provider",
+            "name": form.get("name") or service_id,
+            "kind": form.get("kind") or "provider",
             "enabled": raw.get("enabled", True),
             "capabilities": raw.get("capabilities") or ["openai"],
-            "config": raw.get("config") or {},
+            "config": raw,
             "secret_refs": raw.get("secret_refs") or {},
         }
         self.audit.append({"action": "operator.service.add", "actor": actor.subject})
         return {"value": self.registry}
 
     def update_service(
-        self, service_id: str, *, data: Mapping[str, Any], actor: AdminContext, expected_generation: int
+        self, *, service_id: str, data: Mapping[str, Any], actor: AdminContext, expected_generation: int
     ) -> dict[str, Any]:
         self.registry["services"][service_id] = dict(data)
         self.audit.append({"action": "operator.service.update", "actor": actor.subject})
         return {"value": self.registry}
 
     def remove_service(
-        self, service_id: str, *, actor: AdminContext, expected_generation: int
+        self, *, service_id: str, actor: AdminContext, expected_generation: int
     ) -> dict[str, Any]:
         self.registry["services"].pop(service_id, None)
         self.audit.append({"action": "operator.service.remove", "actor": actor.subject})

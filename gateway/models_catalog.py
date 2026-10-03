@@ -25,6 +25,10 @@ from gateway.capabilities import Capability
 from gateway.availability import project_service
 from gateway.local_capabilities import build_local_capabilities
 from gateway.model_presentation import engine_label, model_locality, service_health_endpoint
+from gateway.provider_model_catalog import (
+    remote_provider_model_capabilities,
+    remote_provider_model_metadata,
+)
 from gateway.service_registry import runtime_backend_from_service
 
 CatalogProvider = Callable[[Request], Mapping[str, Any] | Response | Awaitable[Mapping[str, Any] | Response]]
@@ -105,6 +109,10 @@ def registered_model_capabilities(service_records: Mapping[str, Any]) -> list[Ca
     out: list[Capability] = []
     for service_id, service in _services_mapping(service_records).items():
         if not service.get("enabled", True):
+            continue
+        remote_capabilities = remote_provider_model_capabilities(service_id, service)
+        if remote_capabilities:
+            out.extend(remote_capabilities)
             continue
         config = service.get("config") if isinstance(service.get("config"), Mapping) else service
         models = config.get("models")
@@ -698,12 +706,17 @@ def _cost(service: Mapping[str, Any], model_entry: Mapping[str, Any] | None) -> 
         if not isinstance(source, Mapping):
             continue
         price = source.get("price") or source.get("cost")
+        if isinstance(price, Mapping) and isinstance(price.get("models"), Mapping):
+            price = None
         if price is not None:
             return {"kind": "paid", "price": price}
         if source.get("free") is True:
             return {"kind": "free", "price": None}
-    if _locality(service, model_entry) == "local":
+    locality = _locality(service, model_entry)
+    if locality == "local":
         return {"kind": "free", "price": None}
+    if locality == "remote":
+        return {"kind": "paid", "price": None}
     return {"kind": "unknown", "price": None}
 
 
@@ -743,6 +756,10 @@ def _service_model_metadata(service_records: Mapping[str, Any]) -> dict[str, Map
     services = _services_mapping(service_records)
     out: dict[str, Mapping[str, Any]] = {}
     for service_id, service in services.items():
+        remote_metadata = remote_provider_model_metadata(service_id, service)
+        if remote_metadata:
+            out.update(remote_metadata)
+            continue
         config = service.get("config") if isinstance(service.get("config"), Mapping) else service
         models = config.get("models") if isinstance(config, Mapping) else None
         if isinstance(models, Mapping):

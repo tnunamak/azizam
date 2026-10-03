@@ -123,9 +123,9 @@ Use exactly four status states in user-facing UI: Ready, Starting, Busy, and
 Unavailable. Each state needs a reason sentence. Member UI must not expose engine
 jargon.
 
-Use direct money language. Local means "Free (your hardware)." Remote calls show
+Use direct money language. Local means "Local · no provider charge." Remote calls show
 a price per request or per million tokens and a Paid badge. A paid call must not
-sit one click away from a free call without that badge.
+sit one click away from a local call without that badge.
 
 Empty states must teach. Say what the list will contain and name the one action
 that will fill it.

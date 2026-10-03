@@ -77,6 +77,20 @@ def test_auth_probe_failure_stops_before_public_model_catalog() -> None:
     assert paths == ["/v1/key"]
 
 
+def test_successful_upstream_metadata_cannot_echo_write_only_credentials() -> None:
+    credential = "synthetic-key-4f2a"
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"data": [
+            {"id": credential, "name": "Echo"},
+            {"id": "valid", "name": f"Reflected {credential}"},
+            {"id": "safe", "name": "Safe model"},
+        ]}))) as client:
+            return await probe_provider(_config("openai"), credential, client=client)
+    result = asyncio.run(run())
+    assert credential not in str(result)
+    assert [model["upstream_model"] for model in result["models"]] == ["safe"]
+
+
 def test_invalid_prices_remain_unknown_and_zero_is_explicit() -> None:
     listing = load_provider_catalog()["openrouter"].model_listing
     for rate, expected in [("NaN", None), ("-1", None), ("0", "0"), (None, None)]:

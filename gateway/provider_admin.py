@@ -58,11 +58,11 @@ class ProviderAdminStore(Protocol):
     ) -> dict[str, Any]: ...
 
     def update_service(
-        self, service_id: str, *, data: Mapping[str, Any], actor: AdminContext, expected_generation: int
+        self, *, service_id: str, data: Mapping[str, Any], actor: AdminContext, expected_generation: int
     ) -> dict[str, Any]: ...
 
     def remove_service(
-        self, service_id: str, *, actor: AdminContext, expected_generation: int
+        self, *, service_id: str, actor: AdminContext, expected_generation: int
     ) -> dict[str, Any]: ...
 
 
@@ -197,43 +197,42 @@ def create_provider_admin_router(
             return ctx
         try:
             body = await _read_json_body(request)
-            service = provider_configuration.provider_service_from_body(body)
-            expected_generation = _expected_registry_generation(store, body)
-            provider_id = service_registry.canonical_provider_id(service["id"])
-            if provider_id in _remote_providers(store):
-                raise _RouteError(status.HTTP_409_CONFLICT, "provider_exists", f"provider {provider_id!r} already exists")
-            create_caps = _normalize_caps(body.get("caps") if isinstance(body.get("caps"), Mapping) else body)
-            create_allowed = (
-                _normalize_allowed_plans(body, _profile_ids(store))
-                if "allowed_plans" in body or "plans" in body
-                else None
-            )
-            config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
-            secret_id = str(config.get("api_key_secret_id") or "").strip()
-            wrote_secret = False
-            if secret_id:
-                secret_value = str(body.get("api_key") or "").strip()
-                if not secret_value:
-                    raise _RouteError(status.HTTP_400_BAD_REQUEST, "missing_provider_key", "api_key is required when storing the provider key in the gateway")
-                secret_store.put_provider_secret(secret_id, secret_value, db_path=_admin_db_path(store))
-                wrote_secret = True
-            try:
-                record = store.add_service(data=service, actor=ctx, expected_generation=expected_generation)
-                if create_caps or create_allowed is not None:
+            with secret_store.provider_creation_lock(_admin_db_path(store)):
+                service = provider_configuration.provider_service_from_body(body)
+                expected_generation = _expected_registry_generation(store, body)
+                provider_id = service_registry.canonical_provider_id(service["id"])
+                if provider_id in (store.get_service_registry().get("services") or {}):
+                    raise _RouteError(status.HTTP_409_CONFLICT, "provider_exists", f"provider {provider_id!r} already exists")
+                create_caps = _normalize_caps(body.get("caps") if isinstance(body.get("caps"), Mapping) else body)
+                create_allowed = (
+                    _normalize_allowed_plans(body, _profile_ids(store))
+                    if "allowed_plans" in body or "plans" in body
+                    else None
+                )
+                config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+                secret_id = str(config.get("api_key_secret_id") or "").strip()
+                wrote_secret = False
+                if secret_id:
+                    secret_value = str(body.get("api_key") or "").strip()
+                    if not secret_value:
+                        raise _RouteError(status.HTTP_400_BAD_REQUEST, "missing_provider_key", "api_key is required when storing the provider key in the gateway")
+                    secret_store.put_provider_secret(secret_id, secret_value, db_path=_admin_db_path(store))
+                    wrote_secret = True
+                try:
                     state = store.get_provider_admin_state()
                     provider_state = _provider_state_for_update(state, provider_id)
                     if create_caps:
                         provider_state["caps"] = create_caps
-                    if create_allowed is not None:
-                        provider_state["allowed_plans"] = create_allowed
+                    provider_state["allowed_plans"] = create_allowed if create_allowed is not None else []
                     store.update_provider_admin_state(data=state, actor=ctx)
+                    record = store.add_service(data=_provider_service_to_store_form(service), actor=ctx, expected_generation=expected_generation)
                     if create_allowed is not None:
                         _sync_profile_remote_provider_grants(store, provider_id, create_allowed, actor=ctx)
-            except Exception:
-                if wrote_secret:
-                    secret_store.delete_provider_secret(secret_id, db_path=_admin_db_path(store))
-                raise
-            provider = _one_provider_payload(store, effective_spending_provider, provider_id)
+                except Exception:
+                    if wrote_secret:
+                        secret_store.delete_provider_secret(secret_id, db_path=_admin_db_path(store))
+                    raise
+                provider = _one_provider_payload(store, effective_spending_provider, provider_id)
         except _RouteError as exc:
             return exc.as_response()
         except admin_store.OperatorSettingsGenerationConflict:
@@ -348,8 +347,11 @@ def create_provider_admin_router(
                 secret_value,
                 db_path=_admin_db_path(store),
             ).to_dict()
+            _clear_provider_connection_state(store, provider_id, actor=ctx)
         except _RouteError as exc:
             return exc.as_response()
+        except ValueError:
+            return _RouteError(400, "invalid_provider_key", "Enter a provider key longer than four characters.").as_response()
         return JSONResponse(status_code=status.HTTP_200_OK, content={"key_status": _secret_key_status(status_row)})
 
     @router.delete("/{provider_id}/key")
@@ -363,6 +365,7 @@ def create_provider_admin_router(
             if not secret_id:
                 raise _RouteError(status.HTTP_409_CONFLICT, "env_key_provider", "This provider uses an environment-variable key. Remove the environment reference from provider settings.")
             status_row = secret_store.delete_provider_secret(secret_id, db_path=_admin_db_path(store)).to_dict()
+            _clear_provider_connection_state(store, provider_id, actor=ctx)
         except _RouteError as exc:
             return exc.as_response()
         return JSONResponse(status_code=status.HTTP_200_OK, content={"key_status": _secret_key_status(status_row)})
@@ -447,7 +450,7 @@ def create_provider_admin_router(
             config["model_policy_schema_version"] = service_registry.MODEL_POLICY_SCHEMA_VERSION
             merged["config"] = config
             record = store.update_service(
-                service_id,
+                service_id=service_id,
                 data=merged,
                 actor=ctx,
                 expected_generation=_expected_registry_generation(store, body),
@@ -471,7 +474,7 @@ def create_provider_admin_router(
             registry = store.get_service_registry()
             service_id, service = _service_for_provider(registry, provider_id)
             record = store.remove_service(
-                service_id,
+                service_id=service_id,
                 actor=ctx,
                 expected_generation=_expected_registry_generation(store, body),
             )
@@ -790,6 +793,8 @@ def _project_key_status(provider_id: str, config: Mapping[str, Any], db_path: Pa
     if secret_id:
         try:
             status_row = secret_store.provider_secret_status(secret_id, db_path=db_path).to_dict()
+            if status_row.get("state") == "set":
+                secret_store.get_provider_secret(secret_id, db_path=db_path)
         except Exception:
             status_row = {"state": "missing", "suffix": None, "updated_at": None}
         out = _secret_key_status(status_row)
@@ -829,7 +834,10 @@ def _expected_registry_generation(
     requested = provider_configuration.expected_generation(body)
     if not hasattr(store, "path"):
         return 0 if requested is None else requested
-    record = admin_store.get_service_registry_with_generation(path=_admin_db_path(store))
+    try:
+        record = admin_store.get_service_registry_with_generation(path=_admin_db_path(store))
+    except sqlite3.Error:
+        return 0 if requested is None else requested
     current = int(record["operator_settings_generation"]) if record is not None else 0
     if requested is None:
         return current
@@ -859,7 +867,15 @@ def _merge_provider_price_config(
     incoming_models = incoming.get("models") if isinstance(incoming.get("models"), Mapping) else {}
     if incoming_models:
         existing_models = dict(merged.get("models") if isinstance(merged.get("models"), Mapping) else {})
-        existing_models.update({str(model): dict(price) for model, price in incoming_models.items() if isinstance(price, Mapping)})
+        for model, price in incoming_models.items():
+            if not isinstance(price, Mapping):
+                continue
+            model_key = str(model)
+            current = existing_models.get(model_key)
+            if isinstance(current, Mapping):
+                existing_models[model_key] = {**dict(current), **dict(price)}
+            else:
+                existing_models[model_key] = dict(price)
         merged["models"] = existing_models
     for key, value in incoming.items():
         if key == "models":
@@ -912,6 +928,28 @@ def _provider_model_summaries(registry: Mapping[str, Any]) -> dict[str, list[dic
             rows.append(row)
         models[provider_id] = rows
     return models
+
+
+def _provider_service_to_store_form(service: Mapping[str, Any]) -> dict[str, Any]:
+    config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+    form: dict[str, Any] = {
+        "id": service.get("id"),
+        "name": service.get("name"),
+        "kind": service.get("kind"),
+        "enabled": service.get("enabled", True),
+        "capabilities": service.get("capabilities") or [],
+    }
+    form.update(dict(config))
+    return form
+
+
+def _clear_provider_connection_state(
+    store: ProviderAdminStore, provider_id: str, *, actor: AdminContext
+) -> None:
+    state = store.get_provider_admin_state()
+    provider_state = _provider_state_for_update(state, provider_id)
+    provider_state.pop("connection", None)
+    store.update_provider_admin_state(data=state, actor=actor)
 
 
 def _provider_state(state: Mapping[str, Any], provider_id: str) -> dict[str, Any]:

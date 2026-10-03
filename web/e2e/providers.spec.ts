@@ -5,18 +5,23 @@ const catalog = {
   providers: [
     {
       id: "openrouter",
-      name: "OpenRouter",
+      display_name: "OpenRouter",
       logo_key: "or",
       protocol: "openai-chat",
       base_url: "https://openrouter.ai/api/v1",
       key_url: "https://openrouter.ai/keys",
-      recommendation:
-        "Set an OpenRouter credit limit as a second backstop before enabling paid plans.",
+      recommendations: [
+        {
+          message:
+            "Set an OpenRouter credit limit as a second backstop before enabling paid plans.",
+          url: "https://openrouter.ai/settings/credits",
+        },
+      ],
       billing_dimensions: ["input tokens", "output tokens"],
     },
     {
       id: "generic-openai",
-      name: "Generic OpenAI-compatible",
+      display_name: "Generic OpenAI-compatible",
       logo_key: "go",
       protocol: "openai-chat",
       base_url: "https://provider.example/v1",
@@ -110,12 +115,13 @@ async function routeProviders(page: Page, state: "seeded" | "empty" | "error") {
     if (path === "/admin/api/providers/-/catalog") {
       return route.fulfill({ json: catalog });
     }
-    if (path === "/admin/api/providers/openrouter/test") {
+    if (path === "/admin/api/providers/-/test") {
       expect(route.request().postDataJSON()).toMatchObject({
         preset_id: "openrouter",
         provider_id: "openrouter",
         key_mode: "secret",
         api_key: "sk-or-browser-test",
+        base_url: "https://openrouter.ai/api/v1",
         models: [],
       });
       return route.fulfill({
@@ -266,6 +272,9 @@ test("providers add OpenRouter and keep paid access gated", async ({
   await page.getByRole("button", { name: "Add provider" }).first().click();
   await page.getByLabel("Search providers").fill("openrouter");
   await page.getByRole("button", { name: /OpenRouter/ }).click();
+  await expect(page.getByLabel("Provider base URL")).toHaveValue(
+    "https://openrouter.ai/api/v1",
+  );
   await page.getByLabel("Provider API key").fill("sk-or-browser-test");
   await page.getByRole("button", { name: "Gateway check" }).click();
   await expect(
@@ -309,4 +318,114 @@ test("providers add OpenRouter and keep paid access gated", async ({
     status: 403,
     body: { error: { code: "paid_provider_not_allowed" } },
   });
+});
+
+test("providers real backend OpenRouter journey keeps paid access denied until allowed", async ({
+  page,
+  request,
+  baseURL,
+}) => {
+  const session = await (await request.get("/admin/api/session")).json();
+  const headers = {
+    "x-ai-gateway-admin-action": "1",
+    "x-ai-gateway-csrf": session.actor.csrf_token,
+  };
+  const unique = Date.now().toString(36);
+  const profileResponse = await request.post("/admin/api/profiles", {
+    headers,
+    data: {
+      name: `Provider denied plan ${unique}`,
+      profile: {
+        id: `provider-denied-${unique}`,
+        protocols: ["openai"],
+        backends: ["capture-engine"],
+        models: ["demo-chat"],
+        remote: { providers: [], budget_usd_per_day: "2.00" },
+      },
+    },
+  });
+  expect(profileResponse.status()).toBe(201);
+  const { profile } = await profileResponse.json();
+  const users = await (await request.get("/admin/api/users")).json();
+  const appResponse = await request.post("/admin/api/apps", {
+    headers,
+    data: {
+      name: `Provider test app ${unique}`,
+      kind: "personal",
+      owner_user_id: users.users[0].id,
+      profile_id: profile.id,
+    },
+  });
+  expect(appResponse.status()).toBe(201);
+  const { app } = await appResponse.json();
+  const keyResponse = await request.post(`/admin/api/apps/${app.id}/keys`, {
+    headers,
+    data: { label: `Provider journey key ${unique}` },
+  });
+  expect(keyResponse.status()).toBe(201);
+  const { credential } = await keyResponse.json();
+
+  const port = Number(new URL(baseURL!).port);
+  await page.goto("/ui/providers/");
+  await page.getByRole("button", { name: "Add provider" }).first().click();
+  await page.getByLabel("Search providers").fill("openrouter");
+  await page.getByRole("button", { name: /OpenRouter/ }).click();
+  await page
+    .getByLabel("Provider base URL")
+    .fill(`http://127.0.0.1:${port + 1}/provider/v1`);
+  await page.getByLabel("Provider API key").fill("sk-or-isolated-browser-test");
+  await page.getByRole("button", { name: "Gateway check" }).click();
+  await expect(page.getByText(/model/i).first()).toBeVisible();
+  await page.getByRole("button", { name: "Next" }).click();
+  await expect(page.getByText("Claude Sonnet 4.5")).toBeVisible();
+  await expect(page.getByLabel("Claude Sonnet 4.5 input price")).toHaveValue(
+    "3.000000",
+  );
+  await expect(page.getByLabel("Claude Sonnet 4.5 output price")).toHaveValue(
+    "15.000000",
+  );
+  await page.getByRole("button", { name: "Next" }).click();
+  await expect(
+    page.getByText(
+      "No plans selected. Paid requests will be denied until an owner allows a plan.",
+    ),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Save provider" }).click();
+  await expect(page.getByRole("heading", { name: "OpenRouter" })).toBeVisible();
+  await expect(
+    page.getByRole("cell", { name: "Claude Sonnet 4.5" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("columnheader", { name: "Input $/M" }),
+  ).toBeVisible();
+  await expect(page.getByRole("cell", { name: "3.000000" })).toBeVisible();
+
+  const denied = await request.post("/openai/v1/chat/completions", {
+    headers: { authorization: `Bearer ${credential.api_key}` },
+    data: {
+      model: "openrouter/anthropic/claude-sonnet-4.5",
+      messages: [{ role: "user", content: "hello" }],
+    },
+  });
+  expect(denied.status()).toBe(403);
+  expect(await denied.json()).toMatchObject({
+    error: { code: "paid_provider_not_allowed" },
+  });
+
+  const allowResponse = await request.put(
+    "/admin/api/providers/openrouter/allowed-plans",
+    {
+      headers,
+      data: { allowed_plans: [profile.id] },
+    },
+  );
+  expect(allowResponse.status()).toBe(200);
+  const allowed = await request.post("/openai/v1/chat/completions", {
+    headers: { authorization: `Bearer ${credential.api_key}` },
+    data: {
+      model: "openrouter/anthropic/claude-sonnet-4.5",
+      messages: [{ role: "user", content: "hello" }],
+    },
+  });
+  expect(allowed.status(), await allowed.text()).toBe(200);
 });

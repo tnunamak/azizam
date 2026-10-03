@@ -9,6 +9,7 @@ from fastapi import status
 
 from gateway import provider_catalog, service_registry
 from gateway.litellm_substrate import secret_env_name_for_provider
+from gateway.provider_listing import validate_provider_base_url, ProviderListingError
 
 
 class ProviderConfigurationError(ValueError):
@@ -45,7 +46,13 @@ def provider_service_from_body(body: Mapping[str, Any]) -> dict[str, Any]:
             "missing_provider_base_url",
             "base_url is required",
         )
+    try:
+        base_url = validate_provider_base_url(base_url)
+    except ProviderListingError as exc:
+        raise ProviderConfigurationError(400, "invalid_provider_base_url", exc.args[0]) from None
     key_mode = str(body.get("key_mode") or "secret").strip()
+    if key_mode not in {"env", "secret"}:
+        raise ProviderConfigurationError(400, "invalid_provider_key_mode", "Choose a stored key or environment reference.")
     api_key_env = str(body.get("api_key_env") or "").strip()
     secret_id = provider_secret_id(provider_id)
     config: dict[str, Any] = {

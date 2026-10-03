@@ -2,6 +2,7 @@
 
 from decimal import Decimal
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from fastapi import FastAPI, Request
@@ -14,6 +15,7 @@ from gateway.litellm_substrate import compile_litellm_config_from_registry
 from gateway.profiles import load_profile
 from gateway.provider_admin import create_provider_admin_router
 from gateway.provider_sidecar import build_sidecar_env
+from gateway.secret_store import get_provider_secret
 
 
 OWNER = AdminContext(subject="test-owner", roles=frozenset({"owner"}))
@@ -102,11 +104,65 @@ def test_ui_key_model_price_and_plan_survive_into_paid_admission(
     assert provider is not None
     with pytest.raises(providers.ProviderKeyMissing):
         providers.require_remote_allowed(allowed_plan, provider)
+    # Exercise the real keyword-only store update/remove contracts, including
+    # disabled models and lossless preservation of credential references.
+    updated = client.put("/admin/api/providers/cloud-test/models", json={"models": [{
+        "id": "cloud-test/test/model", "upstream_model": "test/model", "enabled": False,
+        "price": {"input_usd_per_million_tokens": "3", "output_usd_per_million_tokens": "15"},
+    }]})
+    assert updated.status_code == 200, updated.json()
+    assert updated.json()["provider"]["models"][0]["enabled"] is False
+    assert not compile_litellm_config_from_registry(store.get_service_registry())["model_list"]
+    assert store.get_service_registry()["services"]["cloud-test"]["config"]["api_key_secret_id"]
+    removed = client.delete("/admin/api/providers/cloud-test")
+    assert removed.status_code == 200, removed.json()
+    assert client.get("/admin/api/providers/cloud-test").status_code == 404
+    assert "cloud-test" not in store.get_profile(plan["id"])["profile"]["remote"]["providers"]
+
+
+@pytest.mark.parametrize("rate", ["NaN", "Infinity", "-1", True, ""])
+def test_invalid_paid_prices_fail_before_secret_or_registry_writes(tmp_path: Path, rate: object) -> None:
+    db = tmp_path / "admin.db"
+    store = AdminSQLiteStore(db)
+    store.init_db()
+    app = FastAPI()
+    app.include_router(create_provider_admin_router(store, auth=_owner))
+    with TestClient(app) as client:
+        result = client.post("/admin/api/providers", json={
+            "preset_id": "openai", "api_key": "synthetic-price-key", "allowed_plans": [],
+            "models": [{"id": "test-model", "enabled": True, "price": {
+                "input_usd_per_million_tokens": rate, "output_usd_per_million_tokens": "1",
+            }}],
+        })
+    assert result.status_code == 400
+    assert result.json()["error"]["code"] == "missing_model_price"
+    assert not store.get_service_registry()["services"]
+    assert not (tmp_path / "provider-secrets.key").exists()
+
+
+def test_concurrent_provider_creates_cannot_delete_the_winning_key(tmp_path: Path) -> None:
+    db = tmp_path / "admin.db"
+    store = AdminSQLiteStore(db)
+    store.init_db()
+    app = FastAPI()
+    app.include_router(create_provider_admin_router(store, auth=_owner))
+    def create(index: int):
+        with TestClient(app) as client:
+            return index, client.post("/admin/api/providers", json={
+                "preset_id": "openai", "provider_id": "same-provider", "models": [],
+                "api_key": f"synthetic-concurrent-key-{index}", "allowed_plans": [],
+            })
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(create, range(2)))
+    assert sorted(result.status_code for _, result in results) == [201, 409]
+    winner = next(index for index, result in results if result.status_code == 201)
+    config = store.get_service_registry()["services"]["same-provider"]["config"]
+    assert get_provider_secret(config["api_key_secret_id"], db_path=db) == f"synthetic-concurrent-key-{winner}"
 
 
 @pytest.mark.parametrize("path", [
     "/admin/api/providers", "/admin/api/providers/-/catalog",
-    "/admin/api/providers/cloud-test", "/admin/api/providers/cloud-test/key",
+    "/admin/api/providers/cloud-test",
 ])
 def test_provider_owner_data_is_hidden_from_members(tmp_path: Path, path: str) -> None:
     store = AdminSQLiteStore(tmp_path / "admin.db")
