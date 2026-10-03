@@ -23,7 +23,11 @@ an appropriate period.” These are the only verbatim excerpts retained here.
 
 - No email delivery service is introduced. The owner shares a recovery or invite
   link through their chosen channel. This matches the requested household workflow.
-- Tokens live in URL fragments on the browser pages, so navigation and Referer
+- API-created invitation tokens use a domain-separated HMAC of the persistent
+  browser signing key and a random link ID; the database retains only their
+  hashes. Owners can recover a pending link for copying without storing the
+  token. Password-reset tokens remain independently random and shown once.
+  Tokens live in URL fragments on the browser pages, so navigation and Referer
   headers do not send them to servers. Inspection necessarily sends a token to
   the JSON endpoint; account API responses use no-store and no-referrer.
 - Anonymous and known-account login attempts perform the same scrypt work for

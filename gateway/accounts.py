@@ -6,6 +6,7 @@ work runs outside the write transaction; persistent throttles limit that work.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
@@ -16,10 +17,10 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from gateway import admin_store
-from gateway.admin_runtime import generate_app_api_key
+from gateway.admin_runtime import generate_app_api_key, is_human_user_record
 from gateway.local_owner import verify_password as verify_legacy_password
 from gateway.runtime_auth import hash_api_key
 
@@ -27,7 +28,7 @@ _SCRYPT_N = 2**17
 _PASSWORD_WORK = threading.BoundedSemaphore(2)
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS account_access (
- user_id TEXT PRIMARY KEY REFERENCES users(id), profile_id TEXT REFERENCES profiles(id),
+ user_id TEXT PRIMARY KEY REFERENCES users(id), profile_id TEXT REFERENCES profiles(id) ON DELETE SET NULL,
  disabled_at INTEGER, removed_at INTEGER, require_registered_session INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS account_sessions (
@@ -35,7 +36,7 @@ CREATE TABLE IF NOT EXISTS account_sessions (
 );
 CREATE TABLE IF NOT EXISTS account_links (
  id TEXT PRIMARY KEY, kind TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
- profile_id TEXT REFERENCES profiles(id), user_id TEXT REFERENCES users(id), email TEXT,
+ profile_id TEXT REFERENCES profiles(id) ON DELETE SET NULL, user_id TEXT REFERENCES users(id), email TEXT,
  created_by TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
  used_at INTEGER, revoked_at INTEGER
 );
@@ -129,13 +130,11 @@ def access(user_id: str, *, path: Path) -> dict[str, Any] | None:
         return dict(row) if row else None
 
 
-def profile_for_email(email: str, *, path: Path) -> str | None:
+def profile_for_user(user_id: str, *, path: Path) -> str | None:
     with connection(path) as conn:
         if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='account_access'").fetchone():
             return None
-        row = conn.execute("SELECT a.profile_id FROM account_access a JOIN users u ON u.id=a.user_id "
-                           "WHERE LOWER(u.email)=? AND a.removed_at IS NULL ORDER BY u.created_at LIMIT 1",
-                           (email.strip().lower(),)).fetchone()
+        row = conn.execute("SELECT profile_id FROM account_access WHERE user_id=? AND removed_at IS NULL", (user_id,)).fetchone()
         return row[0] if row else None
 
 
@@ -202,13 +201,14 @@ def _public_link(row) -> dict:
 
 
 def create_link(kind: str, actor: str, *, path: Path, profile_id: str | None = None,
-                user_id: str | None = None, email: str | None = None, expires_in: int = 604800) -> tuple[dict, str]:
+                user_id: str | None = None, email: str | None = None, expires_in: int = 604800, token_factory: Callable[[str], str] | None = None) -> tuple[dict, str]:
     if kind not in {"invite", "reset"}:
         raise AccountError("invalid_link", "Invalid link type.")
     if isinstance(expires_in, bool) or not isinstance(expires_in, int) or not 60 <= expires_in <= 30 * 86400:
         raise AccountError("invalid_expiry", "Link expiry must be between one minute and 30 days.")
     email = normalize_email(email) if email else None
-    token, link_id, ts = secrets.token_urlsafe(32), _id("link"), int(time.time())
+    link_id, ts = _id("link"), int(time.time())
+    token = token_factory(link_id) if token_factory else secrets.token_urlsafe(32)
     with connection(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         if kind == "invite":
@@ -292,6 +292,10 @@ def accept_invite(token: str, email: str, name: str, password: str | None, *, pa
             user_id = _id("usr")
             conn.execute("INSERT INTO users VALUES(?,?,?,?,?,?,?)", (user_id, "local", email, email, name.strip(), ts, ts))
             conn.execute("INSERT INTO local_password_credentials VALUES(?,?,?,?)", (user_id, verifier, ts, ts))
+        # OIDC may have provisioned Apps before invitation acceptance. The
+        # invite plan must replace every explicit old App/key override.
+        conn.execute("UPDATE apps SET default_profile_id=? WHERE owner_user_id=?", (link["profile_id"], user_id))
+        conn.execute("UPDATE credentials SET profile_id=? WHERE app_id IN (SELECT id FROM apps WHERE owner_user_id=?)", (link["profile_id"], user_id))
         conn.execute("INSERT INTO account_access(user_id,profile_id) VALUES(?,?)", (user_id, link["profile_id"]))
         app_id, credential_id = _id("app"), _id("cred")
         conn.execute("INSERT INTO apps(id,kind,name,owner_user_id,default_profile_id,created_at) VALUES(?,?,?,?,?,?)",
@@ -326,12 +330,22 @@ def reset_password(token: str, password: str, *, path: Path):
 
 def people(*, path: Path) -> list[dict]:
     with connection(path) as conn:
-        rows = conn.execute("SELECT u.id,u.display_name name,u.email,a.profile_id,p.name plan_name,"
+        rows = conn.execute("SELECT u.id,u.issuer,u.subject,u.display_name name,u.email,a.profile_id,p.name plan_name,"
                             "a.disabled_at,MAX(u.last_login_at,(SELECT COALESCE(MAX(c.last_used_at),0) FROM credentials c "
                             "JOIN apps app ON app.id=c.app_id WHERE app.owner_user_id=u.id)) last_active "
                             "FROM users u LEFT JOIN account_access a ON a.user_id=u.id LEFT JOIN profiles p ON p.id=a.profile_id "
                             "WHERE a.removed_at IS NULL ORDER BY u.created_at").fetchall()
-        return [{**dict(row), "disabled": row["disabled_at"] is not None, "requests_this_month": None} for row in rows]
+        people = []
+        for row in rows:
+            if not is_human_user_record(dict(row)):
+                continue
+            roles = conn.execute("SELECT role FROM admin_role_assignments WHERE subject_kind='user' AND subject_id=? AND revoked_at IS NULL", (row["id"],)).fetchall()
+            person = {key: value for key, value in dict(row).items() if key not in {"issuer", "subject"}}
+            person.update(disabled=row["disabled_at"] is not None, requests_this_month=None,
+                          builtin=conn.execute("SELECT 1 FROM local_password_credentials WHERE user_id=?", (row["id"],)).fetchone() is not None,
+                          protected=any(role[0] in {"owner", "admin", "superadmin"} for role in roles))
+            people.append(person)
+        return people
 
 
 def change_person(user_id: str, actor: str, *, path: Path, profile_id: str | None = None,
@@ -383,3 +397,34 @@ def oidc_email_verified(user_id: str, *, path: Path) -> bool:
     with connection(path) as conn:
         row = conn.execute("SELECT email_verified FROM account_oidc_verification WHERE user_id=?", (user_id,)).fetchone()
         return bool(row and row[0])
+
+
+def invite_token(link_id: str, signing_key: bytes) -> str:
+    """Recover an owner's copyable invite without storing its bearer token.
+
+    The existing persistent signing secret is domain-separated from cookie
+    signatures. Random link IDs ensure distinct tokens; the DB retains only
+    their hashes. Rotation of that secret makes old copy operations unavailable.
+    """
+    if not signing_key or len(signing_key) < 32:
+        raise AccountError("sessions_unavailable", "Browser sessions are unavailable.", 503)
+    digest = hmac.new(signing_key, b"gateway.invite.v1:" + link_id.encode(), hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+
+
+def copy_invite(link_id: str, actor: str, signing_key: bytes, *, path: Path) -> str:
+    token = invite_token(link_id, signing_key)
+    ts = int(time.time())
+    with connection(path) as conn:
+        link = _usable_link(conn, token, "invite", ts)
+        if link["id"] != link_id:
+            raise AccountError("link_unavailable", "This link is no longer available.", 404)
+        _audit(conn, "account.invite.copy", actor, link_id, ts)
+    return token
+
+
+def profile_reference_count(conn, profile_id: str) -> int:
+    """Active product references that an owner must clear before deletion."""
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='account_access'").fetchone():
+        return 0
+    return conn.execute("SELECT COUNT(*) FROM account_access WHERE profile_id=? AND removed_at IS NULL", (profile_id,)).fetchone()[0] + conn.execute("SELECT COUNT(*) FROM account_links WHERE profile_id=? AND kind='invite' AND used_at IS NULL AND revoked_at IS NULL AND expires_at>?", (profile_id, int(time.time()))).fetchone()[0]

@@ -150,12 +150,16 @@ def _build_receipt_providers(
         audience: str,
         limit: int,
         app_profile: str | None = None,
+        app_ids: list[str] | None = None,
+        owner_key_hashes: list[str] | None = None,
         since_s: int | None = None,
     ) -> list[dict[str, Any]]:
         return _receipt_store.recent(
             limit=limit,
             audience=audience,
             app_profile=app_profile,
+            app_ids=app_ids,
+            owner_key_hashes=owner_key_hashes,
             since_s=since_s,
             path=store_path,
         )
@@ -214,6 +218,8 @@ def _build_media_job_providers(
         audience: str,
         limit: int,
         app_profile: str | None = None,
+        app_ids: list[str] | None = None,
+        owner_key_hashes: list[str] | None = None,
         status: str | None = None,
         since_s: int | None = None,
     ) -> list[dict[str, Any]]:
@@ -221,6 +227,8 @@ def _build_media_job_providers(
             limit=limit,
             audience=audience,
             app_profile=app_profile,
+            app_ids=app_ids,
+            owner_key_hashes=owner_key_hashes,
             status=status,
             since_s=since_s,
             path=store_path,
@@ -290,6 +298,7 @@ def create_gateway_router(
     media_job_submitter: MediaJobSubmitter | None = None,
     media_job_store_path: str | Path | None = None,
     record_authorizer: RecordAuthorizer | None = None,
+    record_scope_provider: Callable[[Request], dict[str, Any]] | None = None,
     aliases_provider: Callable[[str | None], dict[str, Any]] | None = None,
     alias_resolver: Callable[[str, str], dict[str, Any]] | None = None,
     prefix: str = "/gateway/v1",
@@ -315,6 +324,9 @@ def create_gateway_router(
     filtering controls field disclosure, not ownership. The authorizer sees
     internal records and the request, and must fail closed for unattributed
     records. It is invoked before reads and mutations of receipts/media jobs.
+    ``record_scope_provider`` passes trusted App/key allow-lists to list
+    providers so ownership is applied before their limit. Custom list providers
+    must accept these scope fields when this callback is configured.
     """
     resolve_audience = audience_resolver or _default_audience_resolver
     receipt_getter, receipt_lister = _build_receipt_providers(
@@ -486,6 +498,7 @@ def create_gateway_router(
                         limit=limit,
                         app_profile=app_profile,
                         since_s=since_s,
+                        **(record_scope_provider(request) if record_scope_provider else {}),
                     )
                 )
                 rows = scoped_rows(rows, receipt_getter, request, "receipt", audience)
@@ -617,6 +630,7 @@ def create_gateway_router(
                         app_profile=app_profile,
                         status=job_status,
                         since_s=since_s,
+                        **(record_scope_provider(request) if record_scope_provider else {}),
                     )
                 )
                 rows = scoped_rows(rows, media_job_getter, request, "media_job", audience)

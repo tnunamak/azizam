@@ -13,6 +13,8 @@ export interface Person {
   disabled: boolean;
   last_active: number | null;
   requests_this_month: number | null;
+  builtin?: boolean;
+  protected?: boolean;
 }
 export interface Invite {
   id: string;
@@ -54,6 +56,10 @@ export const peopleApi = {
     adminFetch(`/admin/api/invites/${encodeURIComponent(id)}`, {
       method: "DELETE",
     }),
+  inviteLink: (id: string) =>
+    adminFetch<{ url: string }>(
+      `/admin/api/invites/${encodeURIComponent(id)}/link`,
+    ),
 };
 
 export function planSummary(policy: ProfilePolicyDocument): string {

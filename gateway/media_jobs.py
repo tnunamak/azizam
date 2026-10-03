@@ -114,7 +114,7 @@ ADMIN_ONLY_FIELDS = frozenset(
 # Metadata bag and the raw event payloads are internal-only. They are the
 # place where adapter-specific breadcrumbs live (prompt_id, queue position,
 # probe response codes, etc.) and they have already passed the safety guard.
-INTERNAL_ONLY_FIELDS = frozenset({"metadata"})
+INTERNAL_ONLY_FIELDS = frozenset({"metadata", "owner_key_hash"})
 
 # Metadata/event keys that smell like raw payloads, secrets, or media bytes.
 # Sourced from ``gateway.redaction`` so receipts and media jobs share one
@@ -159,6 +159,7 @@ class MediaJob:
     # Trusted submission code sets this from the authenticated App. Keep it
     # with the job so receipt retention cannot erase its ownership boundary.
     app_id: str | None = None
+    owner_key_hash: str | None = None
 
     def __post_init__(self) -> None:
         if not self.intent:
@@ -191,6 +192,7 @@ class MediaJob:
             "updated_at": self.updated_at,
             "app_profile": self.app_profile,
             "app_id": self.app_id,
+            "owner_key_hash": self.owner_key_hash,
             "api_key_name": self.api_key_name,
             "parent_request_id": self.parent_request_id,
             "metadata": dict(self.metadata),
@@ -356,6 +358,7 @@ def _coerce_to_job(job_or_dict: Any) -> MediaJob:
             updated_at=int(data.get("updated_at") or _now()),
             app_profile=data.get("app_profile"),
             app_id=data.get("app_id"),
+            owner_key_hash=data.get("owner_key_hash"),
             api_key_name=data.get("api_key_name"),
             parent_request_id=data.get("parent_request_id"),
             metadata=dict(data.get("metadata") or {}),
@@ -488,6 +491,8 @@ def recent(
     *,
     audience: str = "internal",
     app_profile: str | None = None,
+    app_ids: list[str] | None = None,
+    owner_key_hashes: list[str] | None = None,
     status: str | None = None,
     since_s: int | None = None,
     path: Path = DB_PATH,
@@ -497,8 +502,18 @@ def recent(
         raise ValueError(f"audience must be one of {_AUDIENCES}")
     if limit <= 0:
         return []
+    if app_ids is not None or owner_key_hashes is not None:
+        if not app_ids and not owner_key_hashes:
+            return []
     clauses: list[str] = []
     params: list[Any] = []
+    if app_ids is not None or owner_key_hashes is not None:
+        ownership = []
+        for field, values in (("app_id", app_ids), ("owner_key_hash", owner_key_hashes)):
+            if values:
+                ownership.append(f"json_extract(job_json, '$.{field}') IN ({','.join('?' for _ in values)})")
+                params.extend(values)
+        clauses.append("(" + " OR ".join(ownership) + ")")
     if app_profile is not None:
         clauses.append("app_profile = ?")
         params.append(app_profile)

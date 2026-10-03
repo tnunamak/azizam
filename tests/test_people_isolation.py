@@ -307,3 +307,33 @@ def test_audience_visibility_and_record_authorization_are_independent(people, au
         response = client.get(f"/gateway/v1/{path}")
         assert response.status_code == 200
         assert len(response.json()[field]) == (2 if authorized else 0)
+
+
+@pytest.mark.parametrize("resource,list_field,id_field", [
+    ("receipts", "receipts", "request_id"), ("media/jobs", "jobs", "job_id"),
+])
+def test_owner_filter_precedes_limit_when_another_member_is_more_active(people, resource, list_field, id_field):
+    for index in range(5):
+        receipt = RouteReceipt(protocol="openai.images", intent="image.generate", app_id=people.bob.app["id"])
+        receipt_store.record(receipt)
+        media_jobs.create(media_jobs.MediaJob(intent="image.generate", app_id=people.bob.app["id"],
+                                             request_id=receipt.request_id, updated_at=4_000_000_000 + index))
+    response = people.client.get(f"/gateway/v1/{resource}?limit=1", headers=people.alice.bearer)
+    assert response.status_code == 200
+    expected = people.alice.receipt_id if resource == "receipts" else people.alice.job_id
+    assert [row[id_field] for row in response.json()[list_field]] == [expected]
+
+
+def test_legacy_runtime_key_owns_its_new_queued_jobs_without_app_identity(people, monkeypatch):
+    from gateway.runtime_auth import RuntimeIdentity
+    identity = RuntimeIdentity(name="legacy-key", key_hash="a" * 64)
+    monkeypatch.setattr(proxy, "_auth_context_from_scope", lambda request: proxy.AuthContext(identity=identity))
+    job = media_jobs.create(media_jobs.MediaJob(intent="image.generate", owner_key_hash=identity.key_hash))
+    request = SimpleNamespace()
+    assert proxy._gateway_record_authorizer(request, "media_job", job.to_dict("internal"))
+    assert "owner_key_hash" not in job.to_dict("client")
+    assert "owner_key_hash" not in job.to_dict("admin")
+    assert media_jobs.recent(owner_key_hashes=[identity.key_hash], limit=1)[0]["job_id"] == job.job_id
+    monkeypatch.setattr(proxy, "_auth_context_from_scope", lambda request: proxy.AuthContext(identity=RuntimeIdentity(name="same-label", key_hash="b" * 64)))
+    assert not proxy._gateway_record_authorizer(request, "media_job", job.to_dict("internal"))
+    assert media_jobs.recent(owner_key_hashes=["b" * 64]) == []

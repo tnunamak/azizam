@@ -760,6 +760,10 @@ def delete_profile(
                 f"profile {profile_id!r} is used by {mapping_count} active runtime "
                 "mapping(s); disable those mappings before deleting"
             )
+        from gateway.accounts import profile_reference_count
+        if profile_reference_count(conn, profile_id):
+            raise ValueError("access plan is assigned to people or pending invitations; "
+                             "change their plan or revoke the invitations before deleting")
         conn.execute("DELETE FROM profiles WHERE id = ?", (profile_id,))
         conn.commit()
     return _profile_row_to_dict(row)

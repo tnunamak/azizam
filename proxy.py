@@ -1838,9 +1838,6 @@ def _default_profile_id_for_user(
     oidc_roles: Iterable[str] = (),
 ) -> str | None:
     normalized_email = email.strip().lower()
-    account_profile = accounts.profile_for_email(normalized_email, path=ADMIN_STORE.path)
-    if account_profile:
-        return account_profile
     mapped_profile = admin_store.resolve_runtime_profile_mapping(
         email=normalized_email,
         gateway_role=role,
@@ -1889,6 +1886,9 @@ def _admin_role_for_user_id(user_id: str) -> str:
 
 def _default_profile_id_for_session(session) -> str | None:
     user_id = str(getattr(session, "subject", "") or "")
+    account_profile = accounts.profile_for_user(user_id, path=ADMIN_STORE.path)
+    if account_profile:
+        return account_profile
     oidc_access = _stored_oidc_access_names_for_user(user_id)
     return _default_profile_id_for_user(
         email=str(getattr(session, "email", "") or ""),
@@ -1907,6 +1907,9 @@ def _inherited_profile_id_for_app(app: Mapping[str, Any]) -> str | None:
     user = admin_store.get_user(owner_user_id, path=ADMIN_STORE.path)
     if user is None or not is_human_user_record(user):
         return None
+    account_profile = accounts.profile_for_user(owner_user_id, path=ADMIN_STORE.path)
+    if account_profile:
+        return account_profile
     oidc_access = _stored_oidc_access_names_for_user(owner_user_id)
     return _default_profile_id_for_user(
         email=str(user.get("email") or ""),
@@ -4715,6 +4718,7 @@ def _stt_receipt(
         backend=service_id,
         app_profile=profile.id,
         app_id=auth_context.identity.app_id if auth_context.identity else None,
+        owner_key_hash=auth_context.identity.key_hash if auth_context.identity else None,
         api_key_name=auth_context.identity.name if auth_context.identity else None,
         visibility=profile.status_visibility.level,
     )
@@ -13261,12 +13265,20 @@ def _gateway_audience_resolver(request: Request) -> str:
     return discovery_audience_for_profile(_profile_for_auth_context(auth_context))
 
 
+def _gateway_record_scope(request: Request) -> dict[str, Any]:
+    identity = _auth_context_from_scope(request).identity
+    if not AUTH_ENABLED and identity is None:
+        return {}
+    return {"app_ids": [identity.app_id] if identity and identity.app_id else [],
+            "owner_key_hashes": [identity.key_hash] if identity else []}
+
+
 def _gateway_record_authorizer(request: Request, kind: str, record: Mapping[str, Any]) -> bool:
     from gateway.record_ownership import owns_record
     auth_context = _auth_context_from_scope(request)
     identity = auth_context.identity
     return owns_record(
-        kind, record, app_id=identity.app_id if identity else None,
+        kind, record, app_id=identity.app_id if identity else None, key_hash=identity.key_hash if identity else None,
         receipt_reader=lambda request_id: receipt_store.get(request_id, audience="internal", path=receipt_store.DB_PATH),
         asset_authorizer=lambda asset_id: _asset_access_allowed(asset_id, auth_context),
         unrestricted=not AUTH_ENABLED and identity is None,
@@ -13476,6 +13488,7 @@ app.include_router(
         media_job_store_path=media_jobs.DB_PATH,
         media_job_submitter=_gateway_media_job_submitter,
         record_authorizer=_gateway_record_authorizer,
+        record_scope_provider=_gateway_record_scope,
     )
 )
 
@@ -13723,6 +13736,7 @@ async def _identity_submit_job(
         api_key_name=auth_context.identity.name if auth_context.identity else None,
         metadata={"mode": "async_identity", "attempts": req.attempts, "photos": len(req.photos)},
     )
+    job.owner_key_hash = auth_context.identity.key_hash if auth_context.identity else None
     job.app_id = auth_context.identity.app_id if auth_context.identity else None
     media_jobs.create(job, path=media_jobs.DB_PATH)
     shim = _identity_request_shim(request)
@@ -16233,7 +16247,7 @@ async def admin_oidc_callback(request: Request):
             )
         if _user_self_service_enabled() and _auto_create_personal_app_enabled():
             label = user.get("email") or user.get("display_name") or user["id"]
-            default_profile_id = _default_profile_id_for_user(
+            default_profile_id = accounts.profile_for_user(str(user["id"]), path=ADMIN_STORE.path) or _default_profile_id_for_user(
                 email=str(user.get("email") or ""),
                 role=role,
                 oidc_groups=oidc_access_names["oidc_group"],
@@ -17176,6 +17190,7 @@ def start_image_route_receipt(
         backend="comfyui",
         api_key_name=key_name,
         app_id=app_id,
+        owner_key_hash=auth_context.identity.key_hash if auth_context.identity else None,
         app_profile=profile.id,
         visibility=profile.status_visibility.level,
     )
@@ -19906,6 +19921,7 @@ async def _submit_audio_media_job(
             request=request,
             auth_context=auth_context,
         )
+        job.owner_key_hash = auth_context.identity.key_hash if auth_context.identity else None
         job.app_id = auth_context.identity.app_id if auth_context.identity else None
         created = media_jobs.create(job, path=media_jobs.DB_PATH)
     except Exception as exc:  # noqa: BLE001
@@ -20446,6 +20462,7 @@ async def _submit_video_media_job(
             request=request,
             auth_context=auth_context,
         )
+        job.owner_key_hash = auth_context.identity.key_hash if auth_context.identity else None
         job.app_id = auth_context.identity.app_id if auth_context.identity else None
         created = media_jobs.create(job, path=media_jobs.DB_PATH)
     except Exception as exc:  # noqa: BLE001
@@ -20671,6 +20688,7 @@ async def gateway_image_generations_media_job(request: Request):
             request=request,
             auth_context=auth_context,
         )
+        job.owner_key_hash = auth_context.identity.key_hash if auth_context.identity else None
         job.app_id = auth_context.identity.app_id if auth_context.identity else None
         created = media_jobs.create(job, path=media_jobs.DB_PATH)
     except Exception as exc:  # noqa: BLE001
@@ -24298,6 +24316,7 @@ async def create_response(request: Request):
             intent="chat.responses",
             app_profile=profile.id,
             app_id=auth_context.identity.app_id if auth_context.identity else None,
+            owner_key_hash=auth_context.identity.key_hash if auth_context.identity else None,
             api_key_name=auth_context.identity.name if auth_context.identity else None,
             requested_model=(str(req_body["model"]) if isinstance(req_body.get("model"), str) else None),
             resolved_model=(str(cc_body["model"]) if isinstance(cc_body.get("model"), str) else None),
@@ -24975,6 +24994,7 @@ def _start_litellm_route_receipt(
         requested_model=requested_model,
         app_profile=profile.id,
         app_id=auth_context.identity.app_id if auth_context.identity else None,
+        owner_key_hash=auth_context.identity.key_hash if auth_context.identity else None,
         api_key_name=auth_context.identity.name if auth_context.identity else None,
         visibility=profile.status_visibility.level,
     )
@@ -26873,6 +26893,7 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
             backend=target_service,
             app_profile=(auth_context.identity.profile.id if auth_context.identity is not None else None),
             app_id=auth_context.identity.app_id if auth_context.identity is not None else None,
+            owner_key_hash=auth_context.identity.key_hash if auth_context.identity else None,
             api_key_name=auth_context.identity.name if auth_context.identity is not None else None,
             requested_model=(str(_native_shape_body.get("model")) if _native_shape_body and _native_shape_body.get("model") else None),
             visibility=(auth_context.identity.profile.status_visibility.level if auth_context.identity is not None else "internal"),

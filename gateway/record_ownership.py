@@ -10,16 +10,18 @@ from typing import Any
 
 def owns_record(kind: str, record: Mapping[str, Any], *, app_id: str | None,
                 receipt_reader: Callable, asset_authorizer: Callable,
-                unrestricted: bool = False) -> bool:
+                unrestricted: bool = False, key_hash: str | None = None) -> bool:
     if unrestricted:
         return True
-    if kind == "receipt":
-        return bool(app_id and record.get("app_id") == app_id)
-    if kind != "media_job":
-        return False
     owner = record.get("app_id") or (record.get("metadata") or {}).get("owner_app_id")
     if owner:
         return bool(app_id and owner == app_id)
+    if record.get("owner_key_hash"):
+        return bool(key_hash and record["owner_key_hash"] == key_hash)
+    if kind == "receipt":
+        return False
+    if kind != "media_job":
+        return False
     for request_id in (record.get("request_id"), record.get("parent_request_id")):
         if request_id:
             receipt = receipt_reader(request_id)

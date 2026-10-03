@@ -202,7 +202,7 @@ def test_plan_change_updates_every_app_and_existing_key(account_db, fast_passwor
     assert accounts.access(user["id"], path=path)["profile_id"] == new["id"]
     assert {row["default_profile_id"] for row in rows(path, "SELECT * FROM apps")} == {new["id"]}
     assert {row["profile_id"] for row in rows(path, "SELECT * FROM credentials")} == {new["id"]}
-    assert accounts.profile_for_email(user["email"], path=path) == new["id"]
+    assert accounts.profile_for_user(user["id"], path=path) == new["id"]
 
 
 @pytest.mark.parametrize("remove", [False, True])
@@ -251,7 +251,7 @@ def test_password_reset_is_single_use_revokes_earlier_reset_and_all_old_sessions
 def account_client(account_db):
     path, _ = account_db
     cookie = CookieConfig(secure=False)
-    state = {"session": None, "oidc_enabled": True}
+    state = {"session": None, "oidc_enabled": True, "signing_key": SIGNING_KEY}
 
     def auth(request):
         role = request.headers.get("x-test-role")
@@ -263,7 +263,7 @@ def account_client(account_db):
     app.include_router(accounts_api.create_account_router(
         path_provider=lambda: path, auth=auth,
         session_reader=lambda request: state["session"],
-        cookie_provider=lambda: cookie, signing_key_provider=lambda: SIGNING_KEY,
+        cookie_provider=lambda: cookie, signing_key_provider=lambda: state["signing_key"],
         oidc_provider=lambda: {"enabled": state["oidc_enabled"], "label": "Test identity"},
     ))
     with TestClient(app) as client:
@@ -441,3 +441,200 @@ def test_proxy_rejects_revoked_session_for_portal_and_browser_before_and_after_r
     assert redirected.headers["location"] == "/ui/sign-in/"
     client.cookies.set(cookie.name, raw)
     assert client.get("/auth/api/options").status_code == 200
+
+
+def test_invite_acceptance_without_session_signing_key_does_not_consume_link_or_create_account(account_db, account_client, fast_password_work):
+    path, plan = account_db
+    client, state = account_client
+    _, token = accounts.create_link("invite", "owner", profile_id=plan["id"], path=path)
+    state["signing_key"] = None
+    response = client.post("/auth/api/invite/accept", json={"token": token, "email": "member@example.test", "name": "Member", "password": PASSWORD})
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "sessions_unavailable"
+    assert accounts.inspect_invite(token, path=path)["used_at"] is None
+    for table in ("users", "account_access", "apps", "credentials"):
+        assert rows(path, f"SELECT * FROM {table}") == []
+
+
+def test_proxy_http_full_member_lifecycle_from_owner_invitation_through_reset_and_removal(account_db, fast_password_work, monkeypatch):
+    import proxy
+    from gateway.admin_oidc import encode_session_cookie
+    from gateway.admin_runtime import AdminSQLiteStore
+
+    path, plan = account_db
+    owner = admin_store.upsert_oidc_user("https://identity.example", "owner", email="owner@example.test", path=path)
+    admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=owner["id"], path=path)
+    cookie = CookieConfig(secure=False)
+    owner_session = session_from_claims({"sub": owner["id"], "email": owner["email"]}, role="owner", cookie=cookie)
+    store = AdminSQLiteStore(path)
+    monkeypatch.setattr(proxy, "ADMIN_STORE", store)
+    # The existing routers close over this authenticator instance. Changing its
+    # dependencies preserves the real HTTP authentication and CSRF behavior.
+    monkeypatch.setattr(proxy.ADMIN_AUTH, "store", store)
+    monkeypatch.setattr(proxy.ADMIN_AUTH, "signing_key", SIGNING_KEY)
+    monkeypatch.setattr(proxy.ADMIN_AUTH, "cookie", cookie)
+    monkeypatch.setattr(proxy, "_browser_admin_session_signing_key", lambda: SIGNING_KEY)
+    monkeypatch.setattr(proxy, "_browser_admin_cookie_config", lambda: cookie)
+    admin = TestClient(proxy.app)
+    member = TestClient(proxy.app)
+    admin.cookies.set(cookie.name, encode_session_cookie(owner_session, signing_key=SIGNING_KEY))
+    owner_csrf = {"x-ai-gateway-csrf": csrf_token_for_session(owner_session, signing_key=SIGNING_KEY)}
+    invitation = admin.post("/admin/api/invites", headers=owner_csrf, json={"profile_id": plan["id"], "email": "member@example.test"})
+    assert invitation.status_code == 200
+    token = invitation.json()["url"].split("token=", 1)[1]
+    assert member.get("/auth/api/invite", params={"token": token}).status_code == 200
+    accepted = member.post("/auth/api/invite/accept", json={"token": token, "email": "member@example.test", "name": "Member", "password": PASSWORD})
+    assert accepted.status_code == 200
+    first_key = accepted.json()["credential"]["id"]
+    snapshot = member.get("/me/api/session").json()
+    assert snapshot["authenticated"] is True
+    user_id = snapshot["user"]["id"]
+    assert snapshot["csrf_token"]
+    assert snapshot["apps"][0]["default_profile_id"] == plan["id"]
+    assert member.get("/admin/api/people").status_code == 403
+    member.cookies.clear()
+    logged_in = member.post("/auth/api/login", json={"email": "member@example.test", "password": PASSWORD})
+    assert logged_in.status_code == 200
+    old_cookie = member.cookies.get(cookie.name)
+    changed_plan = admin_store.create_profile("Changed plan", {"allow": {"model_groups": []}}, path=path)
+    changed = admin.patch(f"/admin/api/people/{user_id}", headers=owner_csrf, json={"profile_id": changed_plan["id"]})
+    assert changed.status_code == 200
+    assert member.get("/me/api/session").json()["apps"][0]["default_profile_id"] == changed_plan["id"]
+    assert rows(path, "SELECT profile_id FROM credentials WHERE id=?", (first_key,))[0]["profile_id"] == changed_plan["id"]
+    assert admin.patch(f"/admin/api/people/{user_id}", headers=owner_csrf, json={"disabled": True}).status_code == 200
+    assert member.get("/me/api/session").status_code == 401
+    assert member.post("/auth/api/login", json={"email": "member@example.test", "password": PASSWORD}).status_code == 401
+    assert admin.patch(f"/admin/api/people/{user_id}", headers=owner_csrf, json={"disabled": False}).status_code == 200
+    member.cookies.set(cookie.name, old_cookie, domain="testserver.local", path="/")
+    assert member.get("/me/api/session").status_code == 401
+    assert rows(path, "SELECT revoked_at FROM credentials WHERE id=?", (first_key,))[0]["revoked_at"] is not None
+    assert member.post("/auth/api/login", json={"email": "member@example.test", "password": PASSWORD}).status_code == 200
+    reset = admin.post(f"/admin/api/people/{user_id}/reset", json={}, headers=owner_csrf)
+    assert reset.status_code == 200
+    reset_token = reset.json()["url"].split("reset=", 1)[1]
+    pre_reset_cookie = member.cookies.get(cookie.name)
+    new_password = "a replacement member password"
+    assert member.post("/auth/api/password-reset", json={"token": reset_token, "password": new_password}).status_code == 200
+    member.cookies.set(cookie.name, pre_reset_cookie, domain="testserver.local", path="/")
+    assert member.get("/me/api/session").status_code == 401
+    assert member.post("/auth/api/login", json={"email": "member@example.test", "password": new_password}).status_code == 200
+    assert admin.delete(f"/admin/api/people/{user_id}", headers=owner_csrf).status_code == 200
+    assert member.get("/me/api/session").status_code == 401
+    assert user_id not in {person["id"] for person in admin.get("/admin/api/people").json()["people"]}
+
+
+def test_oidc_users_with_same_email_in_different_issuers_do_not_share_account_plans(account_db, monkeypatch):
+    import proxy
+    from gateway.admin_runtime import AdminSQLiteStore
+
+    path, plan = account_db
+    first = admin_store.upsert_oidc_user("https://first-identity.example", "shared-subject", email="shared@example.test", path=path)
+    second = admin_store.upsert_oidc_user("https://second-identity.example", "shared-subject", email="shared@example.test", path=path)
+    _, token = accounts.create_link("invite", "owner", profile_id=plan["id"], email=first["email"], path=path)
+    accounts.accept_invite(token, first["email"], "First", None, oidc_user_id=first["id"], path=path)
+    monkeypatch.setattr(proxy, "ADMIN_STORE", AdminSQLiteStore(path))
+    monkeypatch.setattr(proxy, "_default_profile_id_for_user", lambda **kwargs: "unassigned-fallback")
+    sessions = [session_from_claims({"sub": user["id"], "email": user["email"]}, role="none", cookie=CookieConfig()) for user in (first, second)]
+    assert accounts.profile_for_user(first["id"], path=path) == plan["id"]
+    assert accounts.profile_for_user(second["id"], path=path) is None
+    assert proxy._default_profile_id_for_session(sessions[0]) == plan["id"]
+    assert proxy._default_profile_id_for_session(sessions[1]) == "unassigned-fallback"
+    second_plan = admin_store.create_profile("Second issuer plan", {}, path=path)
+    _, second_token = accounts.create_link("invite", "owner", profile_id=second_plan["id"], email=second["email"], path=path)
+    accounts.accept_invite(second_token, second["email"], "Second", None, oidc_user_id=second["id"], path=path)
+    assert proxy._default_profile_id_for_session(sessions[0]) == plan["id"]
+    assert proxy._default_profile_id_for_session(sessions[1]) == second_plan["id"]
+
+
+def test_owner_can_copy_pending_invite_after_listing_and_router_reload_without_persisting_plaintext(account_db, account_client):
+    path, plan = account_db
+    client, state = account_client
+    created = client.post("/admin/api/invites", headers=OWNER_HEADERS, json={"profile_id": plan["id"]})
+    assert created.status_code == 200
+    url = created.json()["url"]
+    token = url.split("token=", 1)[1]
+    listed = client.get("/admin/api/invites", headers=OWNER_HEADERS).json()["invites"]
+    link_id = listed[0]["id"]
+    assert token not in str(listed)
+    assert "token_hash" not in str(listed)
+    accounts.initialize(path)
+    with TestClient(client.app) as reloaded:
+        copied = reloaded.get(f"/admin/api/invites/{link_id}/link", headers=OWNER_HEADERS)
+        assert copied.status_code == 200
+        assert copied.json()["url"] == url
+        assert copied.headers["cache-control"] == "no-store"
+        assert reloaded.get(f"/admin/api/invites/{link_id}/link").status_code == 401
+        for role in ("none", "admin"):
+            assert reloaded.get(f"/admin/api/invites/{link_id}/link", headers={"x-test-role": role}).status_code == 403
+    stored = rows(path, "SELECT * FROM account_links WHERE id=?", (link_id,))[0]
+    assert stored["token_hash"] == hashlib.sha256(token.encode()).hexdigest()
+    assert token not in str(stored)
+    assert token not in str(rows(path, "SELECT * FROM audit_events"))
+    assert token not in str(state)
+    assert len(rows(path, "SELECT * FROM audit_events WHERE action='account.invite.copy'")) == 1
+
+
+@pytest.mark.parametrize("state", ["expired", "revoked", "used"])
+def test_owner_cannot_copy_unavailable_invites(account_db, account_client, fast_password_work, state):
+    path, plan = account_db
+    client, _ = account_client
+    created = client.post("/admin/api/invites", headers=OWNER_HEADERS, json={"profile_id": plan["id"]}).json()
+    link_id = created["invite"]["id"]
+    token = created["url"].split("token=", 1)[1]
+    if state == "expired":
+        with accounts.connection(path) as conn:
+            conn.execute("UPDATE account_links SET expires_at=0 WHERE id=?", (link_id,))
+    elif state == "revoked":
+        assert client.delete(f"/admin/api/invites/{link_id}", headers=OWNER_HEADERS).status_code == 200
+    else:
+        accounts.accept_invite(token, "person@example.test", "Person", PASSWORD, path=path)
+    copied = client.get(f"/admin/api/invites/{link_id}/link", headers=OWNER_HEADERS)
+    assert copied.status_code == 404
+    assert "url" not in copied.json()
+    assert rows(path, "SELECT * FROM audit_events WHERE action='account.invite.copy'") == []
+
+
+def test_oidc_invite_binding_reassigns_all_preexisting_apps_and_keys_to_invited_plan(account_db, account_client):
+    path, plan = account_db
+    client, state = account_client
+    user = admin_store.upsert_oidc_user("https://identity.example", "existing-subject", email="person@example.test", path=path)
+    legacy_plan = admin_store.create_profile("Legacy OIDC plan", {}, path=path)
+    for index in range(2):
+        app = admin_store.create_app(f"Existing app {index}", kind="personal", owner_user_id=user["id"], default_profile_id=legacy_plan["id"], path=path)
+        admin_store.create_credential_hash(subject_kind="app", subject_id=app["id"], hash=f"preexisting-{index}", prefix="test", profile_id=legacy_plan["id"], path=path)
+    accounts.record_oidc_verification(user["id"], True, path=path)
+    session = session_from_claims({"sub": user["id"], "email": user["email"]}, role="none", cookie=CookieConfig(secure=False))
+    state["session"] = session
+    _, token = accounts.create_link("invite", "owner", profile_id=plan["id"], email=user["email"], path=path)
+    response = client.post("/auth/api/invite/accept", json={"token": token, "email": user["email"], "name": "Person"}, headers={"x-ai-gateway-csrf": csrf_token_for_session(session, signing_key=SIGNING_KEY)})
+    assert response.status_code == 200
+    apps = rows(path, "SELECT * FROM apps WHERE owner_user_id=?", (user["id"],))
+    keys = rows(path, "SELECT * FROM credentials")
+    assert len(apps) == 3
+    assert len(keys) == 3
+    assert {app["default_profile_id"] for app in apps} == {plan["id"]}
+    assert {key["profile_id"] for key in keys} == {plan["id"]}
+    assert accounts.profile_for_user(user["id"], path=path) == plan["id"]
+
+
+def test_plan_with_pending_invite_cannot_delete_until_revoked(account_db):
+    path, plan = account_db
+    invite, _ = accounts.create_link("invite", "owner", profile_id=plan["id"], path=path)
+    with pytest.raises(ValueError, match="pending invitations"):
+        admin_store.delete_profile(plan["id"], path=path)
+    accounts.revoke_invite(invite["id"], "owner", path=path)
+    assert admin_store.delete_profile(plan["id"], path=path)["id"] == plan["id"]
+    assert accounts.list_invites(path=path)[0]["profile_id"] is None
+
+
+def test_people_excludes_key_claim_placeholders_and_reports_protected_oidc_users(account_db):
+    from gateway.admin_runtime import LOCAL_ADMIN_KEY_ISSUER
+    path, _ = account_db
+    admin_store.upsert_oidc_user(LOCAL_ADMIN_KEY_ISSUER, "claim-placeholder", path=path)
+    user = admin_store.upsert_oidc_user("https://identity.example", "real-owner", email="owner@example.test", path=path)
+    admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=user["id"], path=path)
+    result = accounts.people(path=path)
+    assert len(result) == 1
+    assert result[0]["id"] == user["id"]
+    assert result[0]["protected"] is True
+    assert result[0]["builtin"] is False

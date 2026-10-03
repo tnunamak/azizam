@@ -168,6 +168,8 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
             oidc_user_id = user["id"]
         elif not opts["built_in"]:
             raise accounts.AccountError("builtin_disabled", "Use the identity provider to accept this invitation.", 403)
+        if not signing_key_provider():
+            raise accounts.AccountError("sessions_unavailable", "Browser sessions are unavailable.", 503)
         user, app, credential = accounts.accept_invite(body.token, body.email, body.name, body.password,
                                                        path=path, oidc_user_id=oidc_user_id)
         return issue(user, {"next": "/ui/", "app": app, "credential": credential})
@@ -227,9 +229,20 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         ctx = owner(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        invite, token = accounts.create_link("invite", ctx.subject, profile_id=body.profile_id,
+        key = signing_key_provider()
+        if not key:
+            raise accounts.AccountError("sessions_unavailable", "Browser sessions are unavailable.", 503)
+        invite, token = accounts.create_link("invite", ctx.subject, token_factory=lambda link_id: accounts.invite_token(link_id, key), profile_id=body.profile_id,
                                              email=body.email, expires_in=body.expires_in, path=path_provider())
         return {"invite": invite, "url": f"/ui/invite/#token={token}"}
+
+    @router.get("/admin/api/invites/{link_id}/link")
+    def copy_invite(request: Request, link_id: str):
+        ctx = owner(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        token = accounts.copy_invite(link_id, ctx.subject, signing_key_provider(), path=path_provider())
+        return {"url": f"/ui/invite/#token={token}"}
 
     @router.delete("/admin/api/invites/{link_id}")
     def revoke_invite(request: Request, link_id: str):

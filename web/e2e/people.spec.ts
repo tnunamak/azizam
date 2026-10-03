@@ -271,6 +271,23 @@ test("people lane invite create, plan change, disable, reset and remove journeys
     /#token=browser-test-token$/,
   );
   await page.getByRole("button", { name: "I’ve saved the link" }).click();
+  await page.route(`**/admin/api/invites/${invitation.id}/link`, (route) =>
+    route.fulfill({ json: { url: "/ui/invite/#token=browser-test-token" } }),
+  );
+  await page.reload();
+  await page.getByRole("tab", { name: "Invites", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Actions for invitation to sam@example.test" })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "Copy invite link", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).toContainText("Invitation link");
+  await expect(page.getByLabel("Link", { exact: true })).toHaveValue(
+    /#token=browser-test-token$/,
+  );
+  await page.getByRole("button", { name: "I’ve saved the link" }).click();
+  await page.getByRole("tab", { name: "People", exact: true }).click();
   const writes: object[] = [];
   await page.route(`**/admin/api/people/${person.id}`, async (route) => {
     writes.push({
@@ -417,9 +434,11 @@ test("people lane sign-in handles denial, retries successfully, and resets passw
     .getByLabel("Password", { exact: true })
     .fill("Browser sign in password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText(
-    "Email or password is incorrect.",
-  );
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: "Email or password is incorrect." }),
+  ).toContainText("Email or password is incorrect.");
   failed = false;
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page).toHaveURL(/\/ui\/$/);
@@ -467,4 +486,209 @@ test("people lane failed list retries, pending invitation revokes with confirmat
   await page.getByRole("button", { name: "Confirm", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   expect(revoked).toBe(true);
+});
+
+test("people lane OIDC invitation resumes its private token and accepts with session CSRF", async ({
+  page,
+}) => {
+  await mock(page, "seeded");
+  await page.addInitScript(() =>
+    sessionStorage.setItem("gateway-invitation", "oidc-resume-token"),
+  );
+  await page.route("**/auth/api/options", (route) =>
+    route.fulfill({
+      json: {
+        ...signIn,
+        built_in: false,
+        signed_in_oidc: {
+          email: invitation.email,
+          name: "Sam Rivera",
+          csrf_token: "test-oidc-csrf",
+        },
+      },
+    }),
+  );
+  await page.route("**/auth/api/invite/accept", (route) => {
+    expect(route.request().postDataJSON()).toEqual({
+      token: "oidc-resume-token",
+      name: "Sam Rivera",
+      email: invitation.email,
+    });
+    expect(route.request().headers()["x-ai-gateway-csrf"]).toBe(
+      "test-oidc-csrf",
+    );
+    return route.fulfill({
+      json: { next: "/ui/", credential: { api_key: "oidc-test-display-once" } },
+    });
+  });
+  await page.goto("/ui/invite/");
+  await expect(
+    page.getByText("Accept as sam@example.test.", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Accept invitation", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Your account is ready" }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(() => sessionStorage.getItem("gateway-invitation")),
+  ).toBeNull();
+});
+
+test("people lane real invitation creates an account, app and working key, then revokes access", async ({
+  page,
+  request,
+}) => {
+  const session = await (await request.get("/admin/api/session")).json();
+  const headers = { "x-ai-gateway-csrf": session.actor.csrf_token };
+  const profiles = await (await request.get("/admin/api/profiles")).json();
+  const local = profiles.profiles.find(
+    (p: { name: string }) => p.name === "Local chat",
+  );
+  expect(local).toBeTruthy();
+  const result = await request.post("/admin/api/invites", {
+    headers,
+    data: {
+      profile_id: local.id,
+      email: "real-browser-member@example.test",
+      expires_in: 86400,
+    },
+  });
+  expect(result.ok()).toBe(true);
+  const created = await result.json();
+  const recovered = await request.get(
+    `/admin/api/invites/${created.invite.id}/link`,
+  );
+  expect(recovered.ok()).toBe(true);
+  expect((await recovered.json()).url).toBe(created.url);
+  await page.goto(created.url);
+  await page.getByLabel("Your name").fill("Real browser member");
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("Real browser acceptance password");
+  const acceptedResponse = page.waitForResponse((r) =>
+    r.url().endsWith("/auth/api/invite/accept"),
+  );
+  await page
+    .getByRole("button", { name: "Create account", exact: true })
+    .click();
+  const accepted = await (await acceptedResponse).json();
+  await expect(
+    page.getByRole("heading", { name: "Your account is ready" }),
+  ).toBeVisible();
+  expect(
+    (
+      await request.get("/openai/v1/models", {
+        headers: { authorization: `Bearer ${accepted.credential.api_key}` },
+      })
+    ).ok(),
+  ).toBe(true);
+  await page.getByRole("button", { name: "I’ve saved it" }).click();
+  await expect(page).toHaveURL(/\/ui\/$/);
+  const member = await page.request.get("/me/api/session");
+  const memberData = await member.json();
+  expect(memberData.authenticated).toBe(true);
+  expect(memberData.user.email).toBe("real-browser-member@example.test");
+  expect(
+    memberData.apps.some(
+      (app: { name: string }) => app.name === "My first app",
+    ),
+  ).toBe(true);
+  const ownerPeople = await (await request.get("/admin/api/people")).json();
+  const added = ownerPeople.people.find(
+    (p: { email: string }) => p.email === "real-browser-member@example.test",
+  );
+  expect(added).toBeTruthy();
+  const removed = await request.delete(`/admin/api/people/${added.id}`, {
+    headers,
+  });
+  expect(removed.ok()).toBe(true);
+  expect(
+    (
+      await request.get("/openai/v1/models", {
+        headers: { authorization: `Bearer ${accepted.credential.api_key}` },
+      })
+    ).status(),
+  ).toBe(401);
+  expect((await page.request.get("/me/api/session")).status()).toBe(401);
+});
+
+test("people lane protects owner actions and explains permanent key revocation", async ({
+  page,
+}) => {
+  await mock(page, "seeded");
+  await page.route("**/admin/api/people", (route) =>
+    route.fulfill({
+      json: {
+        people: [{ ...person, builtin: false, protected: true }],
+        profiles: [plan],
+      },
+    }),
+  );
+  await page.goto("/ui/people/");
+  await expect(page.getByText("Owner", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Actions for Morgan Rivera" }),
+  ).toHaveCount(0);
+  await page.unroute("**/admin/api/people");
+  await page.route("**/admin/api/people", (route) =>
+    route.fulfill({
+      json: {
+        people: [{ ...person, builtin: true, protected: true }],
+        profiles: [plan],
+      },
+    }),
+  );
+  await page.reload();
+  await page.getByRole("button", { name: "Actions for Morgan Rivera" }).click();
+  await expect(
+    page.getByRole("menuitem", { name: "Create password reset link" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("menuitem", { name: "Change access plan" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("menuitem", { name: "Disable access" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("menuitem", { name: "Remove person" }),
+  ).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await page.unroute("**/admin/api/people");
+  await page.route("**/admin/api/people", (route) =>
+    route.fulfill({
+      json: {
+        people: [{ ...person, builtin: false, protected: false }],
+        profiles: [plan],
+      },
+    }),
+  );
+  await page.reload();
+  await page.getByRole("button", { name: "Actions for Morgan Rivera" }).click();
+  await expect(
+    page.getByRole("menuitem", { name: "Create password reset link" }),
+  ).toHaveCount(0);
+  await page.getByRole("menuitem", { name: "Disable access" }).click();
+  await expect(page.getByRole("dialog")).toContainText(
+    "keys are permanently revoked",
+  );
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.unroute("**/admin/api/people");
+  await page.route("**/admin/api/people", (route) =>
+    route.fulfill({
+      json: {
+        people: [
+          { ...person, builtin: true, protected: false, disabled: true },
+        ],
+        profiles: [plan],
+      },
+    }),
+  );
+  await page.reload();
+  await page.getByRole("button", { name: "Actions for Morgan Rivera" }).click();
+  await page.getByRole("menuitem", { name: "Enable access" }).click();
+  await expect(page.getByRole("dialog")).toContainText(
+    "Previously revoked keys stay revoked",
+  );
 });

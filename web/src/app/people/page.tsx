@@ -145,64 +145,89 @@ export default function PeoplePage() {
     onSuccess: (data) => setLink({ ...data, title: "Password reset link" }),
     onError: (error) => toast.error(message(error)),
   });
+  const copyInvite = useMutation({
+    mutationFn: async (invite: Invite) => ({
+      ...(await peopleApi.inviteLink(invite.id)),
+      expires_at: invite.expires_at,
+    }),
+    onSuccess: (data) => setLink({ ...data, title: "Invitation link" }),
+    onError: (error) => toast.error(message(error)),
+  });
   const profiles =
     plansData || peopleData?.profiles || invitesData?.profiles || [];
   const pending = (invitesData?.invites || []).filter(
     (i) => !i.used_at && !i.revoked_at && i.expires_at * 1000 > Date.now(),
   );
-  const actions = (person: Person) => (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label={`Actions for ${person.name || person.email || "person"}`}
-        >
-          <MoreHorizontal />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem onSelect={() => setPersonPlan(person)}>
-          Change access plan
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          disabled={reset.isPending}
-          onSelect={() => reset.mutate(person.id)}
-        >
-          Create password reset link
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          onSelect={() =>
-            setConfirmation({
-              title: person.disabled ? "Enable access?" : "Disable access?",
-              description: person.disabled
-                ? "This person will be able to sign in and use their apps again."
-                : "This person will lose access to sign-in, apps and keys until you enable them again.",
-              run: () =>
-                peopleApi.change(person.id, { disabled: !person.disabled }),
-            })
-          }
-        >
-          {person.disabled ? "Enable access" : "Disable access"}
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          variant="destructive"
-          onSelect={() =>
-            setConfirmation({
-              title: "Remove person?",
-              name: person.name || person.email || "person",
-              description:
-                "This permanently removes the account and revokes access to its apps and keys.",
-              run: () => peopleApi.remove(person.id),
-            })
-          }
-        >
-          Remove person
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
+  const actions = (person: Person) =>
+    person.protected && person.builtin === false ? null : (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={`Actions for ${person.name || person.email || "person"}`}
+          >
+            <MoreHorizontal />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          {!person.protected && (
+            <DropdownMenuItem onSelect={() => setPersonPlan(person)}>
+              Change access plan
+            </DropdownMenuItem>
+          )}
+          {person.builtin !== false && (
+            <DropdownMenuItem
+              disabled={reset.isPending}
+              onSelect={() => reset.mutate(person.id)}
+            >
+              Create password reset link
+            </DropdownMenuItem>
+          )}
+          {!person.protected && (
+            <>
+              <DropdownMenuItem
+                onSelect={() =>
+                  setConfirmation({
+                    title: person.disabled
+                      ? "Enable access?"
+                      : "Disable access?",
+                    description: person.disabled
+                      ? "This person can sign in again. Previously revoked keys stay revoked; create new keys for their apps."
+                      : "This person cannot sign in. Their apps are disabled and their keys are permanently revoked.",
+                    run: () =>
+                      peopleApi.change(person.id, {
+                        disabled: !person.disabled,
+                      }),
+                  })
+                }
+              >
+                {person.disabled ? "Enable access" : "Disable access"}
+              </DropdownMenuItem>
+            </>
+          )}
+          {!person.protected && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={() =>
+                  setConfirmation({
+                    title: "Remove person?",
+                    name: person.name || person.email || "person",
+                    description:
+                      "This permanently removes the account and revokes access to its apps and keys.",
+                    run: () => peopleApi.remove(person.id),
+                  })
+                }
+              >
+                Remove person
+              </DropdownMenuItem>
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
   return (
     <div>
       <PageHeader
@@ -277,6 +302,9 @@ export default function PeoplePage() {
                       {person.disabled && (
                         <Badge variant="secondary">Disabled</Badge>
                       )}
+                      {person.protected && (
+                        <Badge variant="secondary">Owner</Badge>
+                      )}
                     </div>
                     <p className="text-muted-foreground text-sm break-all">
                       {person.email || "No email provided"}
@@ -338,6 +366,8 @@ export default function PeoplePage() {
                 <InviteRow
                   key={invite.id}
                   invite={invite}
+                  copy={() => copyInvite.mutate(invite)}
+                  copying={copyInvite.isPending}
                   revoke={() =>
                     setConfirmation({
                       title: "Revoke invitation?",
@@ -349,8 +379,8 @@ export default function PeoplePage() {
                 />
               ))}
               <p className="text-muted-foreground pt-4 text-sm">
-                Invite links are shown once when created. Create a new invite if
-                you no longer have its link.
+                Each invitation can be accepted once. Revoke a link to stop it
+                from being used.
               </p>
             </div>
           )}
@@ -485,8 +515,9 @@ export default function PeoplePage() {
             <DialogHeader>
               <DialogTitle>{link.title}</DialogTitle>
               <DialogDescription>
-                Copy and share this link privately. It is only available in this
-                step.
+                {link.title === "Password reset link"
+                  ? "Copy and share this link privately. It is only available in this step."
+                  : "Copy and share this link privately. Each invitation can be accepted once."}
               </DialogDescription>
             </DialogHeader>
             <CopyField
@@ -514,7 +545,17 @@ export default function PeoplePage() {
   );
 }
 
-function InviteRow({ invite, revoke }: { invite: Invite; revoke: () => void }) {
+function InviteRow({
+  invite,
+  revoke,
+  copy,
+  copying,
+}: {
+  invite: Invite;
+  revoke: () => void;
+  copy: () => void;
+  copying: boolean;
+}) {
   return (
     <div className="flex items-start justify-between gap-4 py-5">
       <div className="min-w-0">
@@ -536,6 +577,10 @@ function InviteRow({ invite, revoke }: { invite: Invite; revoke: () => void }) {
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
+          <DropdownMenuItem onSelect={copy} disabled={copying}>
+            Copy invite link
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
           <DropdownMenuItem variant="destructive" onSelect={revoke}>
             Revoke invitation
           </DropdownMenuItem>

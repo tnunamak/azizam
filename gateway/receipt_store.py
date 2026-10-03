@@ -62,7 +62,7 @@ _IMMUTABLE_ACCEPTED_FIELDS = frozenset(
     {
         "request_id", "protocol", "path", "intent", "app_profile", "app_id",
         "api_key_name", "requested_model", "stream",
-        "effective_output_limit", "accepted_at_ms", "parent_request_id", "visibility",
+        "effective_output_limit", "accepted_at_ms", "parent_request_id", "visibility", "owner_key_hash",
     }
 )
 
@@ -321,6 +321,7 @@ def _filter_for_audience(data: Mapping[str, Any], audience: str) -> dict[str, An
         return dict(data)
     if audience == "admin":
         out = dict(data)
+        out.pop("owner_key_hash", None)
         metadata = out.pop("metadata", None)
         out.update(sanitize_admin_metadata(metadata))
         return out
@@ -419,6 +420,7 @@ def recent(
     audience: str = "internal",
     app_profile: str | None = None,
     app_ids: list[str] | None = None,
+    owner_key_hashes: list[str] | None = None,
     since_s: int | None = None,
     outer_only: bool = True,
     now_ms: int | None = None,
@@ -440,7 +442,7 @@ def recent(
     """
     if limit <= 0:
         return []
-    if app_ids is not None and not app_ids:
+    if (app_ids is not None or owner_key_hashes is not None) and not app_ids and not owner_key_hashes:
         # The caller explicitly owns no Apps — never fall through to an
         # unfiltered query (that would leak everyone's receipts).
         return []
@@ -449,10 +451,15 @@ def recent(
     if app_profile is not None:
         clauses.append("app_profile = ?")
         params.append(app_profile)
-    if app_ids is not None:
-        placeholders = ", ".join("?" for _ in app_ids)
-        clauses.append(f"app_id IN ({placeholders})")
-        params.extend(app_ids)
+    if app_ids is not None or owner_key_hashes is not None:
+        ownership = []
+        if app_ids:
+            ownership.append(f"app_id IN ({','.join('?' for _ in app_ids)})")
+            params.extend(app_ids)
+        if owner_key_hashes:
+            ownership.append(f"json_extract(receipt_json, '$.owner_key_hash') IN ({','.join('?' for _ in owner_key_hashes)})")
+            params.extend(owner_key_hashes)
+        clauses.append("(" + " OR ".join(ownership) + ")")
     if since_s is not None:
         clauses.append("created_at >= ?")
         params.append(int(time.time()) - int(since_s))
