@@ -388,6 +388,53 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             rows = conn.execute("SELECT status, actual_usd FROM provider_spend").fetchall()
         self.assertEqual(rows, [("released", None)])
 
+
+    async def test_openai_opaque_usage_tokens_do_not_invoke_litellm_pricing_for_known_model(self) -> None:
+        async def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"id": "dec_unknown", "usage": {"input_tokens": 1, "output_tokens": 0}})
+
+        def fail_pricing(*_args, **_kwargs):
+            raise AssertionError("opaque OpenAI Decisions must not infer chat pricing from usage tokens")
+
+        real_client = httpx.AsyncClient
+        transport = httpx.MockTransport(handler)
+        registry = _registry(provider_id="openai", protocols=("openai-compatible", "decisions"), models=[{"id": "gpt-5"}], api_key_env="OPENAI_TEST_KEY")
+        with patch.object(execution.providers.httpx, "AsyncClient", lambda *a, **kw: real_client(transport=transport, timeout=kw.get("timeout"))), \
+             patch.object(execution.providers, "_litellm_full_usage_cost", fail_pricing):
+            response = await execution.openai(
+                _request({"model": "gpt-5", "input": "hi"}),
+                _auth(), _profile(max_request=None, budget=None, monthly=None), registry, self.ledger,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["x-gateway-cost-usd"], "unknown")
+        with sqlite3.connect(self.ledger) as conn:
+            rows = conn.execute("SELECT status, actual_usd FROM provider_spend").fetchall()
+        self.assertEqual(rows, [("reserved", None)])
+
+    async def test_openai_opaque_trusted_cost_header_settles_without_usage_pricing(self) -> None:
+        async def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, headers={"x-litellm-response-cost": "0.000333"}, json={"id": "dec_header", "usage": {"input_tokens": 1}})
+
+        def fail_pricing(*_args, **_kwargs):
+            raise AssertionError("trusted header cost should not need usage pricing")
+
+        real_client = httpx.AsyncClient
+        transport = httpx.MockTransport(handler)
+        registry = _registry(provider_id="openai", protocols=("openai-compatible", "decisions"), models=[{"id": "gpt-5"}], api_key_env="OPENAI_TEST_KEY")
+        with patch.object(execution.providers.httpx, "AsyncClient", lambda *a, **kw: real_client(transport=transport, timeout=kw.get("timeout"))), \
+             patch.object(execution.providers, "_litellm_full_usage_cost", fail_pricing):
+            response = await execution.openai(
+                _request({"model": "gpt-5", "input": "hi"}),
+                _auth(), _profile(max_request=None, budget=None, monthly=None), registry, self.ledger,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["x-gateway-cost-usd"], "0.000333000")
+        with sqlite3.connect(self.ledger) as conn:
+            rows = conn.execute("SELECT status, actual_usd FROM provider_spend").fetchall()
+        self.assertEqual(rows, [("settled", "0.000333000")])
+
     async def test_openai_provider_hook_redacts_key_in_array_json_and_plain_text_but_preserves_safe_bytes(self) -> None:
         bodies = [
             (b'["oa-key"]', b'["<redacted>"]', {}),

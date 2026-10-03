@@ -482,6 +482,7 @@ def extract_provider_cost(
     body: Mapping[str, Any] | None = None,
     headers: Mapping[str, str] | None = None,
     stream: bool = False,
+    allow_usage_pricing: bool = True,
 ) -> Cost:
     headers = headers or {}
     if body is not None:
@@ -490,14 +491,15 @@ def extract_provider_cost(
             reported = _decimal_or_none(usage.get("cost"))
             if reported is not None:
                 return Cost(reported, "provider-reported", provider.id, provider.cost_class)
-            sdk_cost = _litellm_full_usage_cost(
-                _litellm_cost_model(provider, body),
-                body,
-                provider.price.get("usage_price_requirements"),
-            )
-            if sdk_cost is not None:
-                return Cost(sdk_cost, "litellm", provider.id, provider.cost_class)
-            return Cost(None, "unknown", provider.id, provider.cost_class)
+            if allow_usage_pricing:
+                sdk_cost = _litellm_full_usage_cost(
+                    _litellm_cost_model(provider, body),
+                    body,
+                    provider.price.get("usage_price_requirements"),
+                )
+                if sdk_cost is not None:
+                    return Cost(sdk_cost, "litellm", provider.id, provider.cost_class)
+                return Cost(None, "unknown", provider.id, provider.cost_class)
     header_cost = _decimal_or_none(headers.get("x-litellm-response-cost"))
     if header_cost is not None and not stream:
         return Cost(header_cost, "litellm", provider.id, provider.cost_class)
@@ -1176,7 +1178,7 @@ async def call_openai_json(
             returned_content = json.dumps(redacted, separators=(",", ":")).encode("utf-8")
         elif not parsed_json:
             returned_content = original_content.replace(api_key.encode("utf-8"), b"<redacted>")
-        cost = extract_provider_cost(provider, body=payload, headers=response.headers)
+        cost = extract_provider_cost(provider, body=payload, headers=response.headers, allow_usage_pricing=False)
         return payload, cost, extract_usage(payload), response.headers, returned_content, response.status_code
     except httpx.TimeoutException as exc:
         raise ProviderTimeout("provider request timed out") from exc

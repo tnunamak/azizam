@@ -367,7 +367,6 @@ async def openai(
                     content=raw_body,
                     timeout=DEFAULT_DECISION_TIMEOUT_S,
                 )
-            cost = providers.extract_provider_cost(provider, body={**payload, "model": model}, headers=upstream_headers)
             providers.attach_cost_to_receipt(receipt, cost, usage)
             if reservation is not None and cost.usd is not None:
                 providers.settle_provider_spend(reservation, cost, path=ledger_path)
