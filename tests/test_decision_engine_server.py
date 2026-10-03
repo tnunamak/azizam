@@ -304,3 +304,63 @@ def test_sigterm_during_startup_cleans_owned_child_without_systemctl(monkeypatch
     assert excinfo.value.code == 0
     assert signal.SIGTERM in captured_handlers
     assert proc.terminated and proc.wait_calls == 1 and not proc.killed
+
+
+def test_prepare_request_validates_all_contexts_before_prime_post(monkeypatch, tmp_path):
+    calls: list[tuple[str, dict]] = []
+
+    prompt = ModuleType("decider.prompt")
+    prompt.MAX_OPTIONS = 255
+    prompt.letter_ids = lambda _tokenizer: [101, 102]
+    build_calls = []
+
+    def fake_build(*_args, **_kwargs):
+        build_calls.append(len(build_calls))
+        if len(build_calls) == 1:
+            return {"ids": [1, 2, 3], "slots": [2], "nopts": [2]}
+        return {"ids": list(range(9)), "slots": [8], "nopts": [2]}
+
+    prompt.build = fake_build
+    temperature = ModuleType("decider.temperature")
+    temperature.from_config = lambda _cfg: ((1.0, {}), None)
+    temperature.for_types = lambda _t, _by_type, kinds: [1.0 for _kind in kinds]
+    decider = ModuleType("decider")
+    decider.temperature = temperature
+
+    tokenizers = ModuleType("tokenizers")
+
+    class FakeTokenizer:
+        @staticmethod
+        def from_file(_path):
+            return SimpleNamespace(
+                encode=lambda *_args, **_kwargs: SimpleNamespace(ids=[]),
+                get_vocab_size=lambda with_added_tokens=True: 32000,
+            )
+
+    tokenizers.Tokenizer = FakeTokenizer
+    numpy = ModuleType("numpy")
+    numpy.asarray = lambda value: value
+
+    monkeypatch.setitem(sys.modules, "decider", decider)
+    monkeypatch.setitem(sys.modules, "decider.prompt", prompt)
+    monkeypatch.setitem(sys.modules, "decider.temperature", temperature)
+    monkeypatch.setitem(sys.modules, "tokenizers", tokenizers)
+    monkeypatch.setitem(sys.modules, "numpy", numpy)
+
+    gguf = tmp_path / "model.gguf"
+    gguf.write_text("fake")
+    (tmp_path / "decider_config.json").write_text("{}")
+    (tmp_path / "tokenizer.json").write_text("{}")
+    client = server.LlamaServerClient(base_url="http://127.0.0.1:1", gguf=str(gguf), ctx_tokens=4)
+    client._post = lambda path, body: calls.append((path, dict(body))) or {}
+
+    contexts = [
+        decision_engine.ScoreContext(state="x", question="q1", options=("no", "yes"), kind="noul", index=0),
+        decision_engine.ScoreContext(state="x", question="q2", options=("no", "yes"), kind="noul", index=1),
+    ]
+    with pytest.raises(decision_engine.DecisionInputError) as excinfo:
+        client.prepare_request(contexts)
+
+    assert excinfo.value.code == "context_length_exceeded"
+    assert calls == []
+    assert len(build_calls) == 2

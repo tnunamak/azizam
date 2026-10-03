@@ -20,7 +20,7 @@ Environment=DECIDER_PYTHON=%h/applications/openai-proxy/venv/bin/python
 ExecStart=%h/applications/openai-proxy/scripts/decider-idle-exit.sh
 Restart=on-failure
 RestartSec=10
-MemoryMax=6G
+MemoryMax=8G
 LimitCORE=0
 
 [Install]

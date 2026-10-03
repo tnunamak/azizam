@@ -2,8 +2,9 @@
 """Serve TypeSafe ``/v1/systemone`` over a stock llama-server.
 
 The wrapper keeps decider prompt/readout knowledge outside gateway core. It can
-run the default 2B model on GPU0 and fall back to CPU when startup health never
-arrives. The scoring loop follows the measured bench path: build the model's
+run the configured 2B or 4B model on CPU by default, or on a configured CUDA
+placement with CPU fallback when startup health never arrives. The scoring loop
+follows the measured bench path: build the model's
 single-token answer prompts, call llama-server ``/completion`` with
 ``n_probs``, then calibrate option probabilities locally.
 """
@@ -23,7 +24,7 @@ import urllib.request
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -88,45 +89,66 @@ class LlamaServerClient(decision_engine.OptionScorer):
     def usage(self) -> dict[str, int]:
         return {"input_tokens": self.input_tokens, "output_tokens": self.output_tokens}
 
+    def prepare_request(self, contexts: Sequence[decision_engine.ScoreContext]) -> None:
+        if len(contexts) <= 1:
+            return
+        with self._lock:
+            prepared = [self._prompt_for_context(ctx) for ctx in contexts]
+            rows = [prompt_ids for prompt_ids, _option_count in prepared]
+            prefix_len = _shared_prefix_len(rows)
+            if prefix_len <= 0:
+                return
+            prefix_ids = [int(token_id) for token_id in rows[0][:prefix_len]]
+            self._post("/completion", {"prompt": prefix_ids, "n_predict": 0, "cache_prompt": True})
+
     def score_options(self, ctx: decision_engine.ScoreContext) -> Mapping[int, float]:
         with self._lock:
-            item = self._build(
-                PromptExample(_render_state(ctx.state), [PromptQuestion(ctx.question, list(ctx.options), 0)]),
-                self.tokenizer,
-                NoShuffle(),
-                max_options=self._max_options,
-                max_ctx_tokens=self.ctx_tokens,
-            )
-            slot = item["slots"][0]
-            option_count = item["nopts"][0]
-            prompt_ids = [int(token_id) for token_id in item["ids"][: slot + 1]]
-            if len(prompt_ids) > self.ctx_tokens:
-                raise decision_engine.DecisionInputError(
-                    f"decision prompt has {len(prompt_ids)} tokens; runtime context is {self.ctx_tokens}",
-                    code="context_length_exceeded",
-                    param="state",
-                )
-            payload = {
-                "prompt": prompt_ids,
-                "n_predict": 1,
-                "n_probs": self.vocab_size,
-                "logit_bias": [[self.letter_ids[index], 100.0] for index in range(option_count)],
-                "cache_prompt": True,
-                "temperature": 0,
-                "post_sampling_probs": False,
-            }
-            raw = self._post("/completion", payload)
+            prompt_ids, option_count = self._prompt_for_context(ctx)
+            by_token = self._score_prompt(prompt_ids, option_count, full_vocab=option_count > 100)
+            missing = [index for index in range(option_count) if self.letter_ids[index] not in by_token]
+            if missing and option_count <= 100:
+                by_token = self._score_prompt(prompt_ids, option_count, full_vocab=True)
             self.input_tokens += len(prompt_ids)
             self.output_tokens += 1
-        top_logprobs = raw["completion_probabilities"][0]["top_logprobs"]
-        by_token = {int(entry["id"]): float(entry["logprob"]) for entry in top_logprobs}
         temperature = self._decider_temperature.for_types(self.T, self.T_by_type, [ctx.kind])[0]
         out: dict[int, float] = {}
-        for index, option in enumerate(ctx.options[:option_count]):
+        for index in range(option_count):
             token_id = self.letter_ids[index]
             if token_id in by_token:
                 out[index] = by_token[token_id] / float(temperature)
         return out
+
+    def _prompt_for_context(self, ctx: decision_engine.ScoreContext) -> tuple[list[int], int]:
+        item = self._build(
+            PromptExample(_render_state(ctx.state), [PromptQuestion(ctx.question, list(ctx.options), 0)]),
+            self.tokenizer,
+            NoShuffle(),
+            max_options=self._max_options,
+            max_ctx_tokens=self.ctx_tokens,
+        )
+        slot = item["slots"][0]
+        prompt_ids = [int(token_id) for token_id in item["ids"][: slot + 1]]
+        if len(prompt_ids) > self.ctx_tokens:
+            raise decision_engine.DecisionInputError(
+                f"decision prompt has {len(prompt_ids)} tokens; runtime context is {self.ctx_tokens}",
+                code="context_length_exceeded",
+                param="state",
+            )
+        return prompt_ids, int(item["nopts"][0])
+
+    def _score_prompt(self, prompt_ids: list[int], option_count: int, *, full_vocab: bool) -> dict[int, float]:
+        payload = {
+            "prompt": prompt_ids,
+            "n_predict": 1,
+            "n_probs": self.vocab_size if full_vocab else max(100, option_count),
+            "logit_bias": [[self.letter_ids[index], 100.0] for index in range(option_count)],
+            "cache_prompt": True,
+            "temperature": 0,
+            "post_sampling_probs": False,
+        }
+        raw = self._post("/completion", payload)
+        top_logprobs = raw["completion_probabilities"][0]["top_logprobs"]
+        return {int(entry["id"]): float(entry["logprob"]) for entry in top_logprobs}
 
     def _post(self, path: str, body: Mapping[str, Any]) -> dict[str, Any]:
         req = urllib.request.Request(
@@ -136,6 +158,15 @@ class LlamaServerClient(decision_engine.OptionScorer):
         )
         with urllib.request.urlopen(req, timeout=120) as resp:
             return json.loads(resp.read())
+
+
+def _shared_prefix_len(rows: Sequence[Sequence[int]]) -> int:
+    if not rows:
+        return 0
+    prefix_len = 0
+    while all(len(row) > prefix_len and row[prefix_len] == rows[0][prefix_len] for row in rows):
+        prefix_len += 1
+    return prefix_len
 
 
 def _annotate_indices(value: Any, min_len: int = 8) -> Any:
@@ -316,6 +347,8 @@ def start_llama(args: argparse.Namespace, *, current_process: dict[str, subproce
             str(args.llama_port),
             "--metrics",
             "--no-webui",
+            "-cms",
+            "0",
         ]
         proc = subprocess.Popen(cmd, env=env, stdout=sys.stderr, stderr=sys.stderr)
         if current_process is not None:

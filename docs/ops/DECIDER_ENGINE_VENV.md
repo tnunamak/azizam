@@ -21,3 +21,7 @@ Observed package versions:
 The wrapper imports only the pure prompt helpers from `decider-ai` and loads
 `tokenizer.json` through `tokenizers`; it does not import `decider.infer` or
 `torch`.
+
+## Memory sizing
+
+Live CPU proof for `decider-2b-v11-Q8_0` measured about 2.9 GiB whole-process RSS for the wrapper plus child llama-server on ordinary narrow readouts, and an earlier run with full-vocabulary readouts sampled 5979 MiB (5.84 GiB) at `-c 4096`. Keep the 2B unit above the observed full-vocabulary value; the seed unit uses `MemoryMax=8G`. The 4B quality unit uses `MemoryMax=10G` as an unmeasured starting budget and should be remeasured on the target GGUF before tightening.

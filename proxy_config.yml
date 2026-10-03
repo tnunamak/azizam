@@ -519,7 +519,7 @@ backends:
     default_model: decider-2b-v11
     placement: cpu
     residency: on_demand
-    note: "On-demand CPU decision service (about 2.4 GB RAM); configurable CUDA placement with CPU startup fallback."
+    note: "On-demand CPU decision service (observed about 2.9 GiB RSS for narrow readouts, up to 5.84 GiB for 255-option full-vocab readout); configurable CUDA placement with CPU startup fallback."
     lifecycle:
       driver: systemd
       driver_config:
@@ -540,7 +540,7 @@ backends:
     default_model: decider-4b-v2.1
     placement: cpu
     residency: on_demand
-    note: "Opt-in CPU decision service (about 5 GB RAM); exits after 10 minutes idle."
+    note: "Opt-in CPU decision service (4B memory budget is unmeasured; unit starts at 10G); exits after 10 minutes idle."
     lifecycle:
       driver: systemd
       driver_config:

@@ -147,3 +147,34 @@ def test_rendered_option_text_collisions_do_not_collapse_probabilities() -> None
     assert out["answers"]["collision"]["choice"] == "a: b"
     assert out["answers"]["collision"]["probabilities"]["a"] < 0.02
     assert out["answers"]["collision"]["probabilities"]["a: b"] > 0.98
+
+class PreparingFakeScorer(FakeScorer):
+    def __init__(self, rows):
+        super().__init__(rows)
+        self.prepared = []
+
+    def prepare_request(self, contexts):
+        self.prepared.append(tuple(contexts))
+
+
+def test_prepare_request_receives_planned_contexts_without_changing_math() -> None:
+    req = decision_engine.parse_request(
+        {
+            "state": "shared state",
+            "questions": {
+                "route": {"type": "choice", "instructions": "Pick.", "criteria": {"left": None, "right": None}},
+                "allowed": {"type": "noul", "instructions": "Allowed?"},
+            },
+        }
+    )
+    scorer = PreparingFakeScorer([{0: -2, 1: 0}, {0: -4, 1: 0}])
+
+    out = decision_engine.build_systemone_response(req, scorer, model="decider-test")
+
+    assert out["answers"]["route"]["choice"] == "right"
+    assert out["answers"]["allowed"]["noul"] > 0.86
+    assert len(scorer.prepared) == 1
+    assert [ctx.index for ctx in scorer.prepared[0]] == [0, 1]
+    assert [ctx.index for ctx in scorer.seen] == [0, 1]
+    assert scorer.prepared[0][0].state == "shared state"
+    assert scorer.prepared[0][1].options == ("no", "yes")

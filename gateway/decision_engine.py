@@ -221,26 +221,27 @@ def build_systemone_response(
     if callable(reset_usage):
         reset_usage()
     rows, index = _planned_rows(req)
-    flat: list[dict[str, float]] = []
+    contexts: list[ScoreContext] = []
     for row_index, (question, options) in enumerate(rows):
         row_offset = None
         if question.kind == "score" and question.isolated:
             prior_for_question = sum(1 for q, _ in rows[:row_index] if q is question)
             row_offset = prior_for_question
-        flat.append(
-            probabilities_from_logprobs(
-                scorer.score_options(
-                    ScoreContext(
-                        state=req.state,
-                        question=_row_question(question, row_offset),
-                        options=options,
-                        kind=question.kind,
-                        index=row_index,
-                    )
-                ),
-                options,
+        contexts.append(
+            ScoreContext(
+                state=req.state,
+                question=_row_question(question, row_offset),
+                options=options,
+                kind=question.kind,
+                index=row_index,
             )
         )
+    prepare_request = getattr(scorer, "prepare_request", None)
+    if callable(prepare_request):
+        prepare_request(contexts)
+    flat: list[dict[str, float]] = []
+    for context, (_question, options) in zip(contexts, rows, strict=True):
+        flat.append(probabilities_from_logprobs(scorer.score_options(context), options))
     answers: dict[str, Any] = {}
     for question, start, count, kind in index:
         if kind == "isolated_score":
