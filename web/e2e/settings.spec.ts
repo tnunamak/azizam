@@ -195,6 +195,11 @@ test("settings saves each section through its own API and keeps OIDC secret writ
   await expect(page.getByLabel("Instance name")).toHaveValue(
     "Browser settings journey",
   );
+  await expect(
+    page
+      .locator("aside")
+      .getByText("Browser settings journey", { exact: true }),
+  ).toBeVisible();
   await page.getByLabel("Maximum queued jobs").fill("7");
   const mediaSaved = page.waitForResponse(
     (r) =>

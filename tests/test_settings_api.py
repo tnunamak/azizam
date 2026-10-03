@@ -136,5 +136,6 @@ def test_saved_presentation_drives_existing_brand_and_discovery(settings, monkey
     assert proxy._public_base_url(request) == "https://saved.example.test"
     response = TestClient(proxy.app).get("/.well-known/ai-gateway")
     assert response.status_code == 200
+    assert response.json()["service"]["name"] == "Saved gateway"
     assert response.json()["presentation"] == {"theme_default": "dark"}
     assert "instance_presentation" not in response.text

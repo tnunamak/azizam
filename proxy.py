@@ -16676,6 +16676,7 @@ async def well_known_ai_gateway(request: Request):
         base_url=_public_base_url(request),
         registry=ADMIN_STORE.get_service_registry(),
     )
+    metadata["service"]["name"] = instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults())["name"]
     metadata["presentation"] = {
         "theme_default": instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults())["theme_default"],
     }
