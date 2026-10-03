@@ -9,6 +9,7 @@ gateway core code does not learn model-specific prompt details.
 
 from __future__ import annotations
 
+import inspect
 import math
 import time
 from dataclasses import dataclass
@@ -93,12 +94,17 @@ def parse_request(body: Any) -> DecisionRequest:
             )
         instructions = raw.get("instructions")
         criteria = raw.get("criteria")
-        if instructions in (None, "") and not (kind == "noul" and isinstance(criteria, Mapping) and criteria):
+        options, names, legend = _question_options(kind, raw, key)
+        if instructions == "":
             raise DecisionInputError(
-                f"questions.{key}.instructions must be non-empty unless noul criteria describe true or false.",
+                f"questions.{key}.instructions must be non-empty when present.",
                 param=f"questions.{key}.instructions",
             )
-        options, names, legend = _question_options(kind, raw, key)
+        if instructions is None and not _has_meaningful_criteria(kind, options, legend):
+            raise DecisionInputError(
+                f"questions.{key}.instructions must be supplied unless criteria describe the question.",
+                param=f"questions.{key}.instructions",
+            )
         parsed.append(
             DecisionQuestion(
                 key=key,
@@ -120,9 +126,15 @@ def _text(value: Any) -> str:
 
 
 def _question_text(question: DecisionQuestion) -> str:
-    if question.kind == "noul" and question.instructions in (None, ""):
+    if question.instructions in (None, ""):
         return "Which answer fits the context?"
     return _text(question.instructions)
+
+
+def _has_meaningful_criteria(kind: str, options: tuple[str, ...], legend: tuple[str, ...] | None) -> bool:
+    if kind == "score":
+        return bool(legend) and any(bool(item.strip()) for item in legend)
+    return bool(options) and any(bool(option.strip()) for option in options)
 
 
 def _question_options(kind: str, raw: Mapping[str, Any], key: str) -> tuple[tuple[str, ...], tuple[Any, ...], tuple[str, ...] | None]:
@@ -144,9 +156,9 @@ def _question_options(kind: str, raw: Mapping[str, Any], key: str) -> tuple[tupl
     if kind == "score":
         if isinstance(criteria, Mapping):
             criteria = [criteria[k] for k in sorted(criteria, key=float)]
-        if not isinstance(criteria, list) or not 2 <= len(criteria) <= MAX_LEVELS:
+        if not isinstance(criteria, list) or not 1 <= len(criteria) <= MAX_LEVELS:
             raise DecisionInputError(
-                f"questions.{key}.criteria must list 2 to {MAX_LEVELS} score levels.",
+                f"questions.{key}.criteria must list 1 to {MAX_LEVELS} score levels.",
                 param=f"questions.{key}.criteria",
             )
         legend = tuple(_text(value) for value in criteria)
@@ -199,6 +211,8 @@ def _strip_level_number(text: str) -> str:
 
 
 def _combine_isolated(p_yes: list[float]) -> list[float]:
+    if len(p_yes) == 1:
+        return [1.0]
     total = sum(p_yes)
     if total <= 0 or not math.isfinite(total):
         raise DecisionReadoutError("isolated score rows produced invalid fit mass")
@@ -215,6 +229,8 @@ def build_systemone_response(
     residency: str = "on_demand",
     start_time: float | None = None,
     usage: Mapping[str, int] | None = None,
+    deadline: float | None = None,
+    cancel_check: Any | None = None,
 ) -> dict[str, Any]:
     started = time.perf_counter() if start_time is None else start_time
     reset_usage = getattr(scorer, "reset_usage", None)
@@ -236,12 +252,24 @@ def build_systemone_response(
                 index=row_index,
             )
         )
+    fallback_deadline = time.monotonic() + 15.0 if deadline is None else deadline
+
+    def check_continue() -> None:
+        if time.monotonic() >= fallback_deadline:
+            raise DecisionReadoutError("decision deadline exceeded")
+        if callable(cancel_check) and cancel_check():
+            raise DecisionReadoutError("decision request cancelled")
+
+    check_continue()
     prepare_request = getattr(scorer, "prepare_request", None)
     if callable(prepare_request):
-        prepare_request(contexts)
+        _call_with_controls(prepare_request, contexts, deadline=fallback_deadline, cancel_check=cancel_check)
     flat: list[dict[str, float]] = []
     for context, (_question, options) in zip(contexts, rows, strict=True):
-        flat.append(probabilities_from_logprobs(scorer.score_options(context), options))
+        check_continue()
+        raw_scores = _call_with_controls(scorer.score_options, context, deadline=fallback_deadline, cancel_check=cancel_check)
+        flat.append(probabilities_from_logprobs(raw_scores, options))
+        check_continue()
     answers: dict[str, Any] = {}
     for question, start, count, kind in index:
         if kind == "isolated_score":
@@ -270,6 +298,22 @@ def build_systemone_response(
             "residency": residency,
         },
     }
+
+
+def _call_with_controls(func: Any, *args: Any, deadline: float | None, cancel_check: Any | None) -> Any:
+    kwargs: dict[str, Any] = {}
+    try:
+        sig = inspect.signature(func)
+    except (TypeError, ValueError):
+        sig = None
+    if sig is not None:
+        params = sig.parameters
+        accepts_kwargs = any(param.kind is inspect.Parameter.VAR_KEYWORD for param in params.values())
+        if accepts_kwargs or "deadline" in params:
+            kwargs["deadline"] = deadline
+        if accepts_kwargs or "cancel_check" in params:
+            kwargs["cancel_check"] = cancel_check
+    return func(*args, **kwargs)
 
 
 def probabilities_from_logprobs(logprobs: Mapping[Any, float], options: tuple[str, ...]) -> list[float]:

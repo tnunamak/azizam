@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import signal
+import socket
 import sys
 import threading
 import time
@@ -258,7 +259,7 @@ def test_cuda_startup_failure_falls_back_to_cpu(monkeypatch):
 
     monkeypatch.setattr(server.subprocess, "Popen", fake_popen)
     health = iter([False, True])
-    monkeypatch.setattr(server, "wait_health", lambda _port, _timeout: next(health))
+    monkeypatch.setattr(server, "wait_health", lambda _port, _timeout, *, expected_model=None, process=None: next(health))
     current = {"process": None}
     args = SimpleNamespace(
         placement="cuda:0",
@@ -512,11 +513,28 @@ def test_disconnected_queued_request_does_not_score_and_admission_is_reusable():
     assert scorer.total_calls == 1
 
 
+
+
+def _raw_post_wait_then_close(base_url: str, path: str, body: dict, ready: threading.Event) -> None:
+    from http.client import HTTPConnection
+    from urllib.parse import urlparse
+
+    parsed = urlparse(base_url)
+    conn = HTTPConnection(parsed.hostname, parsed.port, timeout=2)
+    payload = json.dumps(body).encode("utf-8")
+    conn.putrequest("POST", path)
+    conn.putheader("Host", parsed.netloc)
+    conn.putheader("Content-Type", "application/json")
+    conn.putheader("Content-Length", str(len(payload)))
+    conn.endheaders(payload)
+    assert ready.wait(timeout=2)
+    conn.close()
+
 def test_disconnect_during_first_row_stops_later_rows():
     scorer = MultiRowBlockingScorer()
     handler = _handler_for(scorer)
     with _ThreadedServer(handler) as base_url:
-        worker = threading.Thread(target=_raw_post_then_close, args=(base_url, "/v1/systemone", _multirow_body()))
+        worker = threading.Thread(target=_raw_post_wait_then_close, args=(base_url, "/v1/systemone", _multirow_body(), scorer.first_entered))
         worker.start()
         assert scorer.first_entered.wait(timeout=2)
         scorer.release_first.set()
@@ -678,3 +696,232 @@ def test_wait_health_requires_expected_model_identity(monkeypatch):
     monkeypatch.setattr(server.urllib.request, "urlopen", lambda *_args, **_kwargs: FakeResponse())
 
     assert server.wait_health(18024, 0.2, expected_model="decider-test") is True
+
+
+def test_cancellable_post_decodes_chunked_json_response():
+    response = b'{"ok": true}'
+    seen_request = threading.Event()
+
+    def serve(listener):
+        conn, _addr = listener.accept()
+        with conn:
+            conn.recv(4096)
+            seen_request.set()
+            conn.sendall(
+                b"HTTP/1.1 200 OK\r\n"
+                b"Transfer-Encoding: chunked\r\n"
+                b"Content-Type: application/json\r\n"
+                b"\r\n"
+                b"4\r\n{\"ok\r\n"
+                b"8\r\n\": true}\r\n"
+                b"0\r\n\r\n"
+            )
+
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    thread = threading.Thread(target=serve, args=(listener,), daemon=True)
+    thread.start()
+    try:
+        port = listener.getsockname()[1]
+        body = server._post_json_cancellable(f"http://127.0.0.1:{port}", "/completion", {}, deadline=time.monotonic() + 2, cancel_check=None)
+    finally:
+        listener.close()
+        thread.join(timeout=2)
+
+    assert body == {"ok": True}
+    assert seen_request.is_set()
+
+
+def test_cancellable_post_closes_upstream_socket_on_cancel_before_response():
+    got_eof = threading.Event()
+    accepted = threading.Event()
+    cancel = threading.Event()
+
+    def serve(listener):
+        conn, _addr = listener.accept()
+        accepted.set()
+        with conn:
+            conn.recv(4096)
+            cancel.set()
+            conn.settimeout(2)
+            while True:
+                try:
+                    data = conn.recv(4096)
+                except socket.timeout:
+                    return
+                if data == b"":
+                    got_eof.set()
+                    return
+
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    thread = threading.Thread(target=serve, args=(listener,), daemon=True)
+    thread.start()
+    try:
+        port = listener.getsockname()[1]
+        with pytest.raises(Exception):
+            server._post_json_cancellable(
+                f"http://127.0.0.1:{port}",
+                "/completion",
+                {},
+                deadline=time.monotonic() + 15,
+                cancel_check=cancel.is_set,
+            )
+    finally:
+        listener.close()
+        thread.join(timeout=2)
+
+    assert accepted.is_set()
+    assert got_eof.is_set()
+
+
+def test_startup_rejects_foreign_same_model_listener_even_with_live_child(monkeypatch):
+    proc = FakeProc()
+    proc.pid = 99999999
+    monkeypatch.setattr(server, "_port_is_available", lambda _host, _port: True)
+    monkeypatch.setattr(server.subprocess, "Popen", lambda *_args, **_kwargs: proc)
+    monkeypatch.setattr(server, "_matches_expected_model", lambda _port, _body, _expected_model: True)
+    monkeypatch.setattr(server, "_owned_process_listens", lambda _process, _port: False)
+
+    responses = iter([{"status": "ok"}])
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            self.body = next(responses)
+            return self
+
+        def __exit__(self, _exc_type, _exc, _tb):
+            return None
+
+        def read(self):
+            return json.dumps(self.body).encode("utf-8")
+
+    monkeypatch.setattr(server.urllib.request, "urlopen", lambda *_args, **_kwargs: FakeResponse())
+    args = SimpleNamespace(
+        placement="cpu",
+        llama_server="llama-server",
+        model="/models/decider.gguf",
+        model_id="decider-test",
+        ctx=4096,
+        threads=8,
+        llama_port=18024,
+        startup_timeout_s=0.01,
+    )
+
+    with pytest.raises(RuntimeError, match="healthy|owned|listener"):
+        server.start_llama(args, current_process={"process": None})
+
+
+def test_cancellable_post_closes_close_response_socket_during_drip_body():
+    got_eof = threading.Event()
+    sent_headers = threading.Event()
+    cancel = threading.Event()
+
+    def serve(listener):
+        conn, _addr = listener.accept()
+        with conn:
+            conn.recv(4096)
+            conn.sendall(
+                b"HTTP/1.1 200 OK\r\n"
+                b"Connection: close\r\n"
+                b"Content-Length: 1000000\r\n"
+                b"Content-Type: application/json\r\n"
+                b"\r\n"
+            )
+            sent_headers.set()
+            cancel.set()
+            conn.settimeout(2)
+            try:
+                while True:
+                    conn.sendall(b" ")
+                    try:
+                        data = conn.recv(4096)
+                    except socket.timeout:
+                        return
+                    if data == b"":
+                        got_eof.set()
+                        return
+                    time.sleep(0.02)
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                got_eof.set()
+
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    thread = threading.Thread(target=serve, args=(listener,), daemon=True)
+    thread.start()
+    started = time.perf_counter()
+    try:
+        port = listener.getsockname()[1]
+        with pytest.raises(server.DecisionCancelled):
+            server._post_json_cancellable(
+                f"http://127.0.0.1:{port}",
+                "/completion",
+                {},
+                deadline=time.monotonic() + 15,
+                cancel_check=cancel.is_set,
+            )
+    finally:
+        listener.close()
+        thread.join(timeout=2)
+
+    assert sent_headers.is_set()
+    assert got_eof.is_set()
+    assert time.perf_counter() - started < 0.5
+
+
+def test_cancellable_post_deadline_closes_close_response_socket_during_drip_body():
+    got_eof = threading.Event()
+
+    def serve(listener):
+        conn, _addr = listener.accept()
+        with conn:
+            conn.recv(4096)
+            conn.sendall(
+                b"HTTP/1.1 200 OK\r\n"
+                b"Connection: close\r\n"
+                b"Content-Length: 1000000\r\n"
+                b"Content-Type: application/json\r\n"
+                b"\r\n"
+            )
+            conn.settimeout(2)
+            try:
+                while True:
+                    conn.sendall(b" ")
+                    try:
+                        data = conn.recv(4096)
+                    except socket.timeout:
+                        return
+                    if data == b"":
+                        got_eof.set()
+                        return
+                    time.sleep(0.02)
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                got_eof.set()
+
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    thread = threading.Thread(target=serve, args=(listener,), daemon=True)
+    thread.start()
+    started = time.perf_counter()
+    try:
+        port = listener.getsockname()[1]
+        with pytest.raises(server.DecisionDeadlineExceeded):
+            server._post_json_cancellable(
+                f"http://127.0.0.1:{port}",
+                "/completion",
+                {},
+                deadline=time.monotonic() + 0.05,
+                cancel_check=None,
+            )
+    finally:
+        listener.close()
+        thread.join(timeout=2)
+
+    assert got_eof.is_set()
+    assert time.perf_counter() - started < 0.5

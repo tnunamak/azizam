@@ -217,3 +217,44 @@ def test_build_response_uses_generic_question_text_for_nullable_choice_and_score
     assert out["answers"]["risk"]["score"] == pytest.approx(0.0)
     assert scorer.seen[0].question == "Which answer fits the context?"
     assert "Proposed answer: only" in scorer.seen[1].question
+
+
+class GuardedFakeScorer(FakeScorer):
+    def __init__(self):
+        super().__init__([])
+        self.prepare_calls = 0
+
+    def prepare_request(self, contexts, *, deadline=None, cancel_check=None):
+        self.prepare_calls += 1
+
+    def score_options(self, ctx, *, deadline=None, cancel_check=None):
+        raise AssertionError("score must not run after expired deadline")
+
+
+def test_preexpired_deadline_stops_before_prepare_or_score() -> None:
+    req = decision_engine.parse_request(
+        {
+            "state": "state",
+            "questions": {"q": {"type": "noul", "instructions": "Allowed?"}},
+        }
+    )
+    scorer = GuardedFakeScorer()
+
+    with pytest.raises(decision_engine.DecisionReadoutError, match="deadline"):
+        decision_engine.build_systemone_response(req, scorer, deadline=0.0)
+
+    assert scorer.prepare_calls == 0
+    assert scorer.seen == []
+
+
+def test_parse_accepts_nullable_choice_instructions_with_all_null_criteria() -> None:
+    req = decision_engine.parse_request(
+        {
+            "state": "state",
+            "questions": {
+                "q": {"type": "choice", "instructions": None, "criteria": {"left": None, "right": None}},
+            },
+        }
+    )
+
+    assert req.questions[0].options == ("left", "right")
