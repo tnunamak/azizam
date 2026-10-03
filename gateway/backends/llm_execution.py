@@ -224,7 +224,7 @@ def _strip_litellm_router_body_overrides(
     trusted_max_retries: int | None,
 ) -> bytes:
     try:
-        payload = json.loads(body.decode("utf-8") or "{}")
+        payload = json.loads(body or b"{}")
     except (UnicodeDecodeError, ValueError):
         return body
     if not isinstance(payload, dict):
