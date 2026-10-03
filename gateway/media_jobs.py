@@ -106,6 +106,7 @@ ADMIN_ONLY_FIELDS = frozenset(
         "workflow",
         "backend",
         "app_profile",
+        "app_id",
         "api_key_name",
     }
 )
@@ -155,6 +156,9 @@ class MediaJob:
     api_key_name: str | None = None
     parent_request_id: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Trusted submission code sets this from the authenticated App. Keep it
+    # with the job so receipt retention cannot erase its ownership boundary.
+    app_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.intent:
@@ -186,6 +190,7 @@ class MediaJob:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "app_profile": self.app_profile,
+            "app_id": self.app_id,
             "api_key_name": self.api_key_name,
             "parent_request_id": self.parent_request_id,
             "metadata": dict(self.metadata),
@@ -350,6 +355,7 @@ def _coerce_to_job(job_or_dict: Any) -> MediaJob:
             created_at=int(data.get("created_at") or _now()),
             updated_at=int(data.get("updated_at") or _now()),
             app_profile=data.get("app_profile"),
+            app_id=data.get("app_id"),
             api_key_name=data.get("api_key_name"),
             parent_request_id=data.get("parent_request_id"),
             metadata=dict(data.get("metadata") or {}),

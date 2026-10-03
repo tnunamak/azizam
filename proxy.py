@@ -309,9 +309,11 @@ from gateway.runtime_auth import (
 from gateway.protocols import anthropic as anthropic_protocol
 from gateway.protocols import ollama as ollama_protocol
 
-# =============================================================================
+# ======================================================================
+
 # Configuration
-# =============================================================================
+# ======================================================================
+
 
 _default_config = Path(__file__).parent / "proxy_config.yml"
 CONFIG_PATH = Path(os.environ["AI_GATEWAY_CONFIG_PATH"]) if os.environ.get("AI_GATEWAY_CONFIG_PATH") else _default_config
@@ -920,9 +922,11 @@ VISION_MODEL_PATTERNS = [
 ]
 
 
-# =============================================================================
+# ======================================================================
+
 # Live runtime registry — hot-reload without process restart
-# =============================================================================
+# ======================================================================
+
 # Module-level names (TABBY_HOST, KOBOLD_HOST, LLM_BACKEND_HOSTS, …) are
 # Python globals: every function that references them looks up the current
 # value at call time, not at import time.  reload_runtime_config() re-derives
@@ -1060,9 +1064,11 @@ TTS_PATHS = [
     "/v1/audio/speech",
 ]
 
-# =============================================================================
+# ======================================================================
+
 # Model routing - detect backend from filesystem
-# =============================================================================
+# ======================================================================
+
 
 async def get_active_backend() -> Optional[str]:
     """Check which LLM backend is currently running.
@@ -1418,9 +1424,11 @@ async def ensure_target(
         )
 
 
-# =============================================================================
+# ======================================================================
+
 # Load credentials
-# =============================================================================
+# ======================================================================
+
 
 TABBY_ADMIN_KEY_ENV = auth_cfg.get("admin_key_env", "TABBY_ADMIN_KEY")
 TABBY_API_KEY_ENV = auth_cfg.get("api_key_env", "TABBY_API_KEY")
@@ -1448,9 +1456,11 @@ if API_KEY:
     os.environ.setdefault(TABBY_API_KEY_ENV, API_KEY)
 
 
-# =============================================================================
+# ======================================================================
+
 # Proxy auth
-# =============================================================================
+# ======================================================================
+
 
 CLIENT_AUTH_HEADERS = [
     "authorization",
@@ -1828,6 +1838,9 @@ def _default_profile_id_for_user(
     oidc_roles: Iterable[str] = (),
 ) -> str | None:
     normalized_email = email.strip().lower()
+    account_profile = accounts.profile_for_email(normalized_email, path=ADMIN_STORE.path)
+    if account_profile:
+        return account_profile
     mapped_profile = admin_store.resolve_runtime_profile_mapping(
         email=normalized_email,
         gateway_role=role,
@@ -2650,9 +2663,11 @@ except Exception:
     pass
 
 
-# =============================================================================
+# ======================================================================
+
 # Model compatibility
-# =============================================================================
+# ======================================================================
+
 
 compat_cfg = config.get("model_compatibility", {})
 MODEL_COMPAT_ENABLED = bool_from_config(
@@ -3524,9 +3539,11 @@ async def refresh_openai_model_aliases() -> int:
     return 0
 
 
-# =============================================================================
+# ======================================================================
+
 # State management
-# =============================================================================
+# ======================================================================
+
 
 class ProxyState:
     def __init__(self):
@@ -3574,9 +3591,11 @@ class ProxyState:
 state = ProxyState()
 
 
-# =============================================================================
+# ======================================================================
+
 # TabbyAPI subprocess management
-# =============================================================================
+# ======================================================================
+
 
 # Tabby process spawn/stop/log/wait-for-ready removed. The gateway no longer
 # owns tabby's existence — an operator who wants the gateway to *start* tabby
@@ -3728,9 +3747,11 @@ async def check_embeddings_health() -> bool:
     return await check_service_health("embeddings")
 
 
-# =============================================================================
+# ======================================================================
+
 # TTS Backend
-# =============================================================================
+# ======================================================================
+
 
 async def check_tts_health() -> bool:
     """Check if TTS backend is healthy."""
@@ -4381,9 +4402,11 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
         return _tts_error(f"TTS proxy error: {str(e)}", 502)
 
 
-# =============================================================================
+# ======================================================================
+
 # STT Backend
-# =============================================================================
+# ======================================================================
+
 
 async def check_stt_health() -> bool:
     """Check if STT backend is healthy."""
@@ -5088,9 +5111,11 @@ async def proxy_stt_request(
         return response
 
 
-# =============================================================================
+# ======================================================================
+
 # ComfyUI Backend (Image Generation)
-# =============================================================================
+# ======================================================================
+
 
 _UI_WORKFLOW_CACHE: dict[str, Optional[dict]] = {}
 
@@ -5292,9 +5317,11 @@ def _record_image_size_adjustment(
     return {"X-Vivid-Size-Adjusted": adjustment}
 
 
-# =============================================================================
+# ======================================================================
+
 # Image cache, signed URLs, and adaptive batching (Fix 1 + Fix 2)
-# =============================================================================
+# ======================================================================
+
 # Single source of truth for everything in the image hot path that needs to
 # survive restarts: VRAM-per-(workflow,size) measurements and on-disk PNG bytes.
 # Implementation rules:
@@ -8780,9 +8807,11 @@ async def proxy_comfy_variations_request(
     return response
 
 
-# =============================================================================
+# ======================================================================
+
 # ComfyUI Backend (Video Generation — Sora-shaped async API)
-# =============================================================================
+# ======================================================================
+
 #
 # Endpoints (mirror Sora 2):
 #   POST /v1/videos                     -> {video_id, status: "queued", ...}
@@ -8797,9 +8826,11 @@ async def proxy_comfy_variations_request(
 VIDEO_ID_PREFIX = "video_"
 
 
-# =============================================================================
+# ======================================================================
+
 # ComfyUI websocket listener for real-time progress
-# =============================================================================
+# ======================================================================
+
 #
 # A single long-lived websocket subscription per proxy process. ComfyUI emits
 # events keyed by `prompt_id`; we cache the latest progress so /v1/videos/{id}
@@ -10927,9 +10958,11 @@ async def proxy_comfy_video_create(
 
 
 
-# =============================================================================
+# ======================================================================
+
 # Long video: extensions, storyboards, long `seconds`
-# =============================================================================
+# ======================================================================
+
 #
 # One request makes one ComfyUI prompt (gateway/video_extend.py builds it). The
 # video id is that prompt's id, so status, content, list, delete, ownership and
@@ -12100,9 +12133,11 @@ async def proxy_comfy_video_edit(request: Request, auth_context: AuthContext) ->
     )
 
 
-# =============================================================================
+# ======================================================================
+
 # Model management
-# =============================================================================
+# ======================================================================
+
 
 async def is_model_loaded() -> bool:
     """Check if a model is currently loaded."""
@@ -12244,9 +12279,11 @@ async def unload_model() -> bool:
     return success
 
 
-# =============================================================================
+# ======================================================================
+
 # Background tasks
-# =============================================================================
+# ======================================================================
+
 
 async def maintenance_loop():
     """Background task for idle checking and health monitoring.
@@ -12282,9 +12319,11 @@ async def maintenance_loop():
                 await unload_model()
 
 
-# =============================================================================
+# ======================================================================
+
 # FastAPI app
-# =============================================================================
+# ======================================================================
+
 
 _DRIFT_CACHE_PATH = Path(__file__).parent / "cache" / "drift_status.json"
 _DRIFT_SCRIPT_PATH = Path(__file__).parent / "scripts" / "check_workflow_drift.py"
@@ -13222,6 +13261,18 @@ def _gateway_audience_resolver(request: Request) -> str:
     return discovery_audience_for_profile(_profile_for_auth_context(auth_context))
 
 
+def _gateway_record_authorizer(request: Request, kind: str, record: Mapping[str, Any]) -> bool:
+    from gateway.record_ownership import owns_record
+    auth_context = _auth_context_from_scope(request)
+    identity = auth_context.identity
+    return owns_record(
+        kind, record, app_id=identity.app_id if identity else None,
+        receipt_reader=lambda request_id: receipt_store.get(request_id, audience="internal", path=receipt_store.DB_PATH),
+        asset_authorizer=lambda asset_id: _asset_access_allowed(asset_id, auth_context),
+        unrestricted=not AUTH_ENABLED and identity is None,
+    )
+
+
 async def _gateway_media_job_submitter(
     *,
     request: Request,
@@ -13424,6 +13475,7 @@ app.include_router(
         asset_url_ttl_s=IMAGE_SIGNED_URL_TTL,
         media_job_store_path=media_jobs.DB_PATH,
         media_job_submitter=_gateway_media_job_submitter,
+        record_authorizer=_gateway_record_authorizer,
     )
 )
 
@@ -13671,6 +13723,7 @@ async def _identity_submit_job(
         api_key_name=auth_context.identity.name if auth_context.identity else None,
         metadata={"mode": "async_identity", "attempts": req.attempts, "photos": len(req.photos)},
     )
+    job.app_id = auth_context.identity.app_id if auth_context.identity else None
     media_jobs.create(job, path=media_jobs.DB_PATH)
     shim = _identity_request_shim(request)
     task = asyncio.create_task(_run_identity_job(job.job_id, shim, auth_context, req, response_format))
@@ -13831,8 +13884,12 @@ def _resolved_admin_oidc_config() -> tuple[Any, Mapping[str, Any]]:
 
 
 def _effective_admin_oidc_config():
-    """Return the parsed effective OIDC config for runtime authentication."""
-    return _resolved_admin_oidc_config()[0]
+    """Return OIDC configuration with the owner's sign-in choice applied."""
+    cfg = _resolved_admin_oidc_config()[0]
+    setting = admin_store.get_operator_setting("sign_in", path=ADMIN_STORE.path)
+    if setting and setting["value"].get("mode") == "built-in":
+        return replace(cfg, enabled=False)
+    return cfg
 
 
 def _merged_admin_oidc_config_candidate(db_value: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -14013,10 +14070,13 @@ def _oidc_session_from_request(request: Request):
     if not raw:
         return None
     try:
-        return decode_session_cookie(
+        session = decode_session_cookie(
             raw,
             signing_key=signing_key,
         )
+        if not accounts.session_allowed(session.subject, session.session_id, path=ADMIN_STORE.path):
+            return None
+        return session
     except SessionError:
         return None
 
@@ -14162,6 +14222,45 @@ app.include_router(build_setup_api_router(lambda request: {
     "oidc_enabled": _effective_admin_oidc_config().enabled,
     "can_recover": bool(_browser_admin_session_signing_key()),
 }))
+
+
+from gateway import accounts
+from gateway.accounts_api import create_account_router
+
+accounts.initialize(ADMIN_STORE.path)
+app.include_router(create_account_router(
+    path_provider=lambda: ADMIN_STORE.path,
+    auth=ADMIN_AUTH,
+    session_reader=lambda request: _oidc_session_from_request(request),
+    cookie_provider=_browser_admin_cookie_config,
+    signing_key_provider=_browser_admin_session_signing_key,
+    oidc_provider=lambda: {"enabled": _resolved_admin_oidc_config()[0].enabled},
+))
+
+
+@app.middleware("http")
+async def _account_session_revocation(request: Request, call_next):
+    # Login routes must accept a revoked cookie so the person can sign in again.
+    public_auth = (request.url.path.startswith("/auth/api/")
+                   or request.url.path in {"/admin/login", "/admin/oidc/callback", "/me/logout", "/admin/logout"}
+                   or request.url.path.startswith("/ui/sign-in")
+                   or request.url.path.startswith("/ui/invite"))
+    if not public_auth:
+        key = _browser_admin_session_signing_key()
+        cookie = _browser_admin_cookie_config()
+        raw = request.cookies.get(cookie.name)
+        if key and raw:
+            try:
+                session = decode_session_cookie(raw, signing_key=key)
+            except SessionError:
+                session = None
+            if session and not accounts.session_allowed(session.subject, session.session_id, path=ADMIN_STORE.path):
+                response = JSONResponse({"error": {"code": "session_revoked", "message": "Sign in again to continue."}}, status_code=401)
+                if "/api/" not in request.url.path and not request.url.path.startswith("/gateway/"):
+                    response = RedirectResponse("/ui/sign-in/", status_code=303)
+                response.delete_cookie(cookie.name, path=cookie.path, domain=cookie.domain)
+                return response
+    return await call_next(request)
 
 
 @app.get("/me/login", include_in_schema=False)
@@ -15713,6 +15812,8 @@ def _issue_browser_admin_session(
         role=role,
         cookie=cookie,
     )
+    accounts.initialize(ADMIN_STORE.path)
+    accounts.register_session(user_id, session.session_id, int(session.expires_at), path=ADMIN_STORE.path)
     response = RedirectResponse(redirect_to, status_code=303)
     response.set_cookie(
         cookie.name,
@@ -15862,6 +15963,14 @@ async def setup_local_login(request: Request):
             status_code=400,
         )
 
+    from gateway.accounts_api import signin_options
+    if not signin_options(ADMIN_STORE.path, {"enabled": _resolved_admin_oidc_config()[0].enabled})["built_in"]:
+        return JSONResponse({"error": {"code": "builtin_disabled", "message": "Use the identity provider to sign in."}}, status_code=403)
+    try:
+        accounts.initialize(ADMIN_STORE.path)
+        accounts.throttle(request.client.host if request.client else "unknown", email, path=ADMIN_STORE.path)
+    except accounts.AccountError as exc:
+        return JSONResponse({"error": {"code": exc.code, "message": exc.message}}, status_code=exc.status)
     user = admin_store.find_user_by_email(
         email, issuer=_LOCAL_OWNER_ISSUER, path=ADMIN_STORE.path
     )
@@ -15875,7 +15984,7 @@ async def setup_local_login(request: Request):
     verifier_row = admin_store.get_local_password_verifier(
         str(user["id"]), path=ADMIN_STORE.path
     )
-    if verifier_row is None or not local_verify_password(
+    if verifier_row is None or not accounts.verify_password(
         password, str(verifier_row.get("verifier") or "")
     ):
         return await _setup_page_response(
@@ -16093,6 +16202,10 @@ async def admin_oidc_callback(request: Request):
             display_name=str(claims.get("name") or claims.get("email") or ""),
             path=ADMIN_STORE.path,
         )
+        accounts.record_oidc_verification(str(user["id"]), claims.get("email_verified") is True, path=ADMIN_STORE.path)
+        account_state = accounts.access(str(user["id"]), path=ADMIN_STORE.path)
+        if account_state and (account_state["disabled_at"] is not None or account_state["removed_at"] is not None):
+            return JSONResponse({"error": {"code": "account_disabled", "message": "This account is disabled."}}, status_code=403)
         oidc_access_names = access_names_from_oidc_claims(
             claims,
             client_id=cfg.client_id,
@@ -16155,6 +16268,7 @@ async def admin_oidc_callback(request: Request):
             role=role,
             cookie=cfg.cookie,
         )
+        accounts.register_session(str(user["id"]), session.session_id, int(session.expires_at), path=ADMIN_STORE.path)
         response = RedirectResponse(_safe_admin_return_to(state.return_to), status_code=302)
         response.set_cookie(
             cfg.cookie.name,
@@ -19792,6 +19906,7 @@ async def _submit_audio_media_job(
             request=request,
             auth_context=auth_context,
         )
+        job.app_id = auth_context.identity.app_id if auth_context.identity else None
         created = media_jobs.create(job, path=media_jobs.DB_PATH)
     except Exception as exc:  # noqa: BLE001
         _delete_audio_media_job_payload(job.job_id)
@@ -20331,6 +20446,7 @@ async def _submit_video_media_job(
             request=request,
             auth_context=auth_context,
         )
+        job.app_id = auth_context.identity.app_id if auth_context.identity else None
         created = media_jobs.create(job, path=media_jobs.DB_PATH)
     except Exception as exc:  # noqa: BLE001
         _delete_video_media_job_payload(job.job_id)
@@ -20555,6 +20671,7 @@ async def gateway_image_generations_media_job(request: Request):
             request=request,
             auth_context=auth_context,
         )
+        job.app_id = auth_context.identity.app_id if auth_context.identity else None
         created = media_jobs.create(job, path=media_jobs.DB_PATH)
     except Exception as exc:  # noqa: BLE001
         _delete_image_media_job_payload(job.job_id)
@@ -20611,6 +20728,8 @@ async def gateway_media_job_content(job_id: str, request: Request):
     if preflight_response is not None:
         return preflight_response
     job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
+    if job is not None and not _gateway_record_authorizer(request, "media_job", job):
+        return JSONResponse({"error": {"code": "media_job_not_found", "message": "Media job not found."}}, status_code=404)
     # Signed URLs minted below carry the delivery mode: the GET's own query
     # override, else the choice made when the job was submitted, else the
     # caller's profile default.
@@ -21306,9 +21425,11 @@ async def videos_extend(request: Request):
     return await proxy_comfy_video_extend(request, auth_context)
 
 
-# =============================================================================
+# ======================================================================
+
 # Audio Generation via ComfyUI (ACE-Step + TangoFlux)
-# =============================================================================
+# ======================================================================
+
 
 _audio_cfg = config.get("audio", {}) or {}
 AUDIO_DEFAULT_WORKFLOW = _audio_cfg.get("default_workflow", "ace-step-1.5-2b-base")
@@ -22752,14 +22873,16 @@ async def status_favicon():
     return Response(status_code=204)
 
 
-# =============================================================================
+# ======================================================================
+
 # /v1/responses — OpenAI Responses API (spring 2025 surface).
 # Implemented as a translation layer over /v1/chat/completions. Stateful
 # conversations (previous_response_id + store=true) are persisted in
 # data/responses.db. Hosted tools (web_search, file_search, code_interpreter,
 # computer_use) are rejected with 400 — the proxy backs onto a local llama
 # server with no first-party hosted-tool surface.
-# =============================================================================
+# ======================================================================
+
 
 async def _responses_prune_loop(stop_event: asyncio.Event) -> None:
     """Hourly prune of expired Responses rows. Bounded disk."""
@@ -26994,9 +27117,11 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
 app.add_middleware(InflightMiddleware, state=DRAIN_STATE)
 
 
-# =============================================================================
+# ======================================================================
+
 # Main
-# =============================================================================
+# ======================================================================
+
 
 def _gateway_openapi() -> dict[str, Any]:
     """FastAPI's schema plus the typed native workflow surface (cached)."""
