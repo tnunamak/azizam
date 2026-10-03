@@ -183,6 +183,109 @@ class PipelineTests(unittest.TestCase):
                 scene(fakes, req)
 
 
+class WhoIsWhoTests(unittest.TestCase):
+    """Without boxes every person must get their own face, chosen from cues or refused."""
+
+    ADULT = face(373, 43, vec(2), "female")
+    BABY = face(576, 2, vec(1), "male")
+    GRANDMA = face(872, 68, vec(0), "female")
+
+    def resolve(self, people, faces=None, photos=None):
+        shot = png((40, 41, 42))
+        FACES[shot] = list(faces or [self.ADULT, self.BABY, self.GRANDMA])
+        fakes = Fakes([])
+        deps = IdentityDeps(analyze=fakes.analyze, run_workflow=fakes.run_workflow, models=("buffalo_l",))
+        req = SceneRequest(refine="off", photos=photos or [shot], prompt="x", people=people)
+        return run(ids.resolve_people(req, deps, with_heads=False))
+
+    def test_infant_gets_the_youngest_face_and_grandma_the_old_one(self) -> None:
+        got = self.resolve([PersonSpec(label="grandma", description="elderly woman with glasses"),
+                            PersonSpec(label="baby", infant=True)])
+        by = {r.label: r for r in got}
+        self.assertEqual(by["grandma"].face_bbox[0], 872)
+        self.assertEqual(by["baby"].face_bbox[0], 576)
+        self.assertEqual(by["baby"].reason, "infant-youngest")
+        self.assertEqual(by["grandma"].reason, "age-match")
+        self.assertNotEqual(by["grandma"].face_bbox, by["baby"].face_bbox)
+
+    def test_the_order_of_the_people_does_not_matter(self) -> None:
+        got = self.resolve([PersonSpec(label="baby", infant=True), PersonSpec(label="grandma")])
+        self.assertEqual([r.face_bbox[0] for r in got], [576, 872])
+
+    def test_age_words_alone_are_enough(self) -> None:
+        got = self.resolve([PersonSpec(label="the toddler"), PersonSpec(label="mom", description="woman in her forties")])
+        self.assertEqual([r.face_bbox[0] for r in got], [576, 373])
+
+    def test_gender_words_separate_two_adults(self) -> None:
+        a, b = face(100, 40, vec(0), "male"), face(400, 42, vec(1), "female")
+        got = self.resolve([PersonSpec(label="the man"), PersonSpec(label="the woman")], faces=[a, b])
+        self.assertEqual([r.face_bbox[0] for r in got], [100, 400])
+
+    def test_unboxed_people_with_no_cues_are_refused_with_the_face_list(self) -> None:
+        with self.assertRaises(IdentityError) as ctx:
+            self.resolve([PersonSpec(label="person 1"), PersonSpec(label="person 2")])
+        self.assertEqual(ctx.exception.code, "ambiguous_faces")
+        self.assertEqual(len(ctx.exception.faces), 3)
+        self.assertEqual({"photo", "bbox", "age_estimate", "gender_estimate"} <= set(ctx.exception.faces[0]), True)
+        self.assertIn("box", str(ctx.exception))
+
+    def test_one_unboxed_person_among_several_faces_is_refused_not_the_largest(self) -> None:
+        with self.assertRaises(IdentityError) as ctx:
+            self.resolve([PersonSpec(label="Sam")])
+        self.assertEqual(ctx.exception.code, "ambiguous_faces")
+
+    def test_a_lone_person_with_a_lone_face_needs_no_cue(self) -> None:
+        got = self.resolve([PersonSpec(label="Sam")], faces=[self.GRANDMA])
+        self.assertEqual(got[0].reason, "only-face")
+
+    def test_more_people_than_faces_is_refused(self) -> None:
+        with self.assertRaises(IdentityError) as ctx:
+            self.resolve([PersonSpec(label="grandma"), PersonSpec(label="baby", infant=True)], faces=[self.GRANDMA])
+        self.assertEqual(ctx.exception.code, "ambiguous_faces")
+
+    def test_two_boxes_on_the_same_face_are_refused(self) -> None:
+        with self.assertRaises(IdentityError) as ctx:
+            self.resolve([PersonSpec(label="a", box=(800, 0, 1000, 300)), PersonSpec(label="b", box=(850, 0, 1000, 300))])
+        self.assertEqual(ctx.exception.code, "same_face")
+
+    def test_boxed_people_keep_their_box_and_unboxed_ones_get_what_is_left(self) -> None:
+        got = self.resolve([PersonSpec(label="grandma", box=(800, 0, 1000, 300)),
+                            PersonSpec(label="baby", infant=True)])
+        self.assertEqual([r.reason for r in got], ["box", "infant-youngest"])
+        self.assertEqual(got[1].face_bbox[0], 576)
+
+    def test_a_person_cannot_take_a_face_a_boxed_person_already_has(self) -> None:
+        # the only way left for "baby" is the youngest of the faces nobody claimed
+        got = self.resolve([PersonSpec(label="baby", box=(500, 50, 800, 300), infant=True),
+                            PersonSpec(label="grandma")])
+        self.assertEqual(got[1].face_bbox[0], 872)
+
+    def test_auto_detection_reports_its_reason(self) -> None:
+        got = self.resolve([])
+        self.assertEqual({r.reason for r in got}, {"auto"})
+        self.assertEqual(len({r.face_bbox for r in got}), 3)
+
+    def test_the_scene_response_reports_the_chosen_face_and_reason(self) -> None:
+        shot = png((43, 44, 45))
+        FACES[shot] = [self.ADULT, self.BABY, self.GRANDMA]
+        fakes = Fakes([OUT_LIST[1]])
+        people = [PersonSpec(label="grandma"), PersonSpec(label="baby", infant=True)]
+        result = scene(fakes, SceneRequest(refine="off", photos=[shot], prompt="x", people=people, photo_as_canvas=False, attempts=1))
+        self.assertEqual([(p["label"], p["face_bbox"][0], p["reason"]) for p in result.people],
+                         [("grandma", 872.0, "age-match"), ("baby", 576.0, "infant-youngest")])
+
+    def test_two_people_in_an_extra_photo_cannot_share_a_face(self) -> None:
+        group = png((46, 47, 48))
+        FACES[group] = [face(50, 70, vec(0)), face(250, 3, vec(1))]
+        shot = png((49, 50, 51))
+        FACES[shot] = [face(100, 70, vec(0)), face(400, 3, vec(1))]
+        people = [PersonSpec(label="grandma", box=(0, 0, 300, 400), more=[RefSource(image=1)]),
+                  PersonSpec(label="baby", box=(350, 0, 600, 400), more=[RefSource(image=1)])]
+        got = self.resolve(people, photos=[shot, group])
+        used = [tuple(f.bbox) for r in got for f, i in r.sources_used if i == 1]
+        self.assertEqual(len(used), len(set(used)))
+
+
 class SteeringTests(unittest.TestCase):
     def test_profile_and_forehead_phrases_are_rewritten_with_a_warning(self) -> None:
         text = "Two subjects in profile facing each other, foreheads nearly touching, golden light."

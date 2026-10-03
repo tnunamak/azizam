@@ -29,6 +29,21 @@ multi-reference edit, which is given the reference photos as images. The gateway
 5. **refines** any person still below the match threshold in its own pass (below);
 6. returns the best picture with the scores, the attempts, the refinements and any warnings.
 
+### Who is who (no guessing)
+
+Every person gets their own face; one face is never given to two people. A person with a `box` gets the
+face inside it (`reason: box`). Without boxes the gateway assigns faces one to one from the cues you
+give: `infant:true` takes the youngest face (`infant-youngest`); age and gender words in `label` or
+`description` (baby, toddler, child, grandma, elderly, older, man, woman, mom, dad...) are matched to the age
+and gender estimates (`age-match`); a lone person with a lone face needs no cue (`only-face`). It tries every
+one-to-one assignment and accepts the best only if it beats the second best clearly. If the cues cannot
+decide, or there are more people than faces, or two boxes hit one face, the call fails with `400`
+(`ambiguous_faces` or `same_face`) and `error.faces` lists the detected faces (`photo`, `bbox`,
+`age_estimate`, `gender_estimate`) so the client can pass boxes. It never falls back to the largest face.
+The chosen face and the reason are in `people[].face_bbox` and `people[].reason` of every response.
+Auto-detection (no `people`) uses every face of a single photo, or the largest face of each of several photos
+(`reason: auto`).
+
 ### Several reference photos per person
 
 `people[].images` lists every photo of a person: `{"label":"grandma","images":[{"image":0,"box":[x1,y1,x2,y2]},3,4]}`.

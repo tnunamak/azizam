@@ -7975,7 +7975,7 @@ async def _identity_edit_alias(
             return await app.state.identity_submit(request, auth_context, req, response_format)
         return await app.state.identity_run_scene(request, auth_context, req, response_format)
     except (identity_scene.IdentityError, likeness_module.LikenessError) as exc:
-        return identity_api.error(400, getattr(exc, "code", "invalid_request"), str(exc), param=getattr(exc, "param", None))
+        return identity_api.error(400, getattr(exc, "code", "invalid_request"), str(exc), param=getattr(exc, "param", None), faces=getattr(exc, "faces", None))
     except (TypeError, ValueError) as exc:
         return identity_api.error(400, "invalid_option", f"invalid identity option: {exc}", param="extensions")
     except (httpx.HTTPError, RuntimeError) as exc:

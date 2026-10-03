@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import copy
 import io
+import itertools
 import re
 import time
 from dataclasses import dataclass, field
@@ -49,10 +50,18 @@ MIN_REF_FACE_PX = 32      # a reference face narrower than this carries too litt
 class IdentityError(ValueError):
     """The request cannot be run (no face found, bad box, too many people)."""
 
-    def __init__(self, message: str, *, param: str | None = None, code: str = "invalid_request") -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        param: str | None = None,
+        code: str = "invalid_request",
+        faces: list[dict[str, Any]] | None = None,
+    ) -> None:
         super().__init__(message)
         self.param = param
         self.code = code
+        self.faces = faces  # detected faces to choose from, for ambiguous_faces errors
 
 
 @dataclass
@@ -73,6 +82,7 @@ class PersonSpec:
     infant: bool | None = None
     more: list[RefSource] = field(default_factory=list)  # further photos of the same person
     generate_first: bool = True
+    auto: bool = False   # created by auto-detection, not by the caller
 
     def sources(self) -> list[RefSource]:
         return [RefSource(self.image, self.box, self.generate_first), *self.more]
@@ -122,6 +132,7 @@ class ResolvedPerson:
     gender: str | None
     sources_used: list[tuple[FaceRecord, int]] = field(default_factory=list)   # (face, photo) behind the heads
     primary_photo: int = 0                                                      # photo of the best reference face
+    reason: str = "box"                                                         # how the anchor face was chosen
 
     @property
     def head_png(self) -> bytes:
@@ -392,6 +403,125 @@ async def _faces(deps: IdentityDeps, image: bytes) -> list[FaceRecord]:
     return likeness.merge_models(per_model)
 
 
+# ---- who is who: one face per person, chosen from the cues the caller gave -------------------
+
+ASSIGN_MIN_MARGIN = 0.3   # best assignment must beat the next best by this much, else the caller must give boxes
+
+# (pattern, lowest age, highest age); the first matching band wins, so specific words come first.
+_AGE_BANDS: tuple[tuple[re.Pattern[str], int, int], ...] = (
+    (re.compile(r"\b(?:baby|infant|newborn)\b", re.I), 0, 3),
+    (re.compile(r"\b(?:toddler)\b", re.I), 1, 5),
+    (re.compile(r"\b(?:child|kid|boy|girl|son|daughter|grandchild|grandson|granddaughter)\b", re.I), 3, 14),
+    (re.compile(r"\b(?:grandma|grandmother|grandpa|grandfather|granny|nana|nanna|elderly|older|senior)\b", re.I), 58, 100),
+    (re.compile(r"\b(?:teen|teenager)\b", re.I), 13, 19),
+    (re.compile(r"\b(?:man|woman|adult|mom|mum|mother|dad|father|husband|wife|lady|guy)\b", re.I), 22, 57),
+)
+_FEMALE = re.compile(r"\b(?:grandma|grandmother|granny|nana|nanna|woman|mom|mum|mother|wife|lady|girl|daughter|granddaughter|she|her)\b", re.I)
+_MALE = re.compile(r"\b(?:grandpa|grandfather|man|dad|father|husband|boy|son|grandson|guy|he|him)\b", re.I)
+_GENDER_MIN_AGE = 12   # the gender estimate is not trusted on small children
+
+
+def _cue_text(spec: PersonSpec, label: str) -> str:
+    return f"{label} {spec.description or ''}"
+
+
+def pair_score(
+    spec: PersonSpec, label: str, face: FaceRecord, youngest: int | None
+) -> tuple[float, str | None]:
+    """How well one face fits one person's cues, and the reason when a cue fired.
+
+    Cues: ``infant`` (the youngest face), age words ("grandma", "toddler", "man"...) against the age
+    estimate, and gender words against the gender estimate. No cue gives (0, None).
+    """
+    score = 0.0
+    reason: str | None = None
+    age = face.age
+    if spec.infant is True and age is not None and youngest is not None:
+        score += 1.0 - min(1.0, max(0, age - youngest) / 25.0)
+        reason = "infant-youngest"
+    elif spec.infant is False and age is not None and age <= likeness.INFANT_MAX_AGE:
+        score -= 0.5
+        reason = "age-match"
+    text = _cue_text(spec, label)
+    for pattern, low, high in _AGE_BANDS:
+        if pattern.search(text):
+            if age is not None:
+                gap = 0 if low <= age <= high else min(abs(age - low), abs(age - high))
+                score += max(0.0, 1.0 - gap / 20.0)
+            reason = reason or "age-match"
+            break
+    if face.gender and (age is None or age >= _GENDER_MIN_AGE):
+        if _FEMALE.search(text) and not _MALE.search(text):
+            score += 0.5 if face.gender == "female" else -0.5
+            reason = reason or "age-match"
+        elif _MALE.search(text) and not _FEMALE.search(text):
+            score += 0.5 if face.gender == "male" else -0.5
+            reason = reason or "age-match"
+    return score, reason
+
+
+def face_listing(faces: Sequence[FaceRecord], photo: int) -> list[dict[str, Any]]:
+    return [
+        {
+            "photo": photo,
+            "bbox": [round(v, 1) for v in f.bbox],
+            "age_estimate": f.age,
+            "gender_estimate": f.gender,
+            "det_score": round(f.det_score, 3),
+        }
+        for f in sorted(faces, key=lambda f: f.bbox[0])
+    ]
+
+
+def _ambiguous(photo: int, faces: Sequence[FaceRecord], why: str) -> IdentityError:
+    listing = face_listing(faces, photo)
+    return IdentityError(
+        f"{why} Pass people[].box = [x1, y1, x2, y2] (a face from the list in `faces`, in photo {photo} pixels) "
+        "for each person, or add cues: infant:true, or words like grandma, toddler, man in label or description.",
+        param="people",
+        code="ambiguous_faces",
+        faces=listing,
+    )
+
+
+def assign_faces(
+    photo: int,
+    wanted: Sequence[tuple[PersonSpec, str]],
+    faces: Sequence[FaceRecord],
+) -> list[tuple[FaceRecord, str]]:
+    """One face per person, no face twice. Raises ``ambiguous_faces`` instead of guessing.
+
+    Tries every one-to-one assignment (at most 5 people), scores it by the cues, and accepts the best
+    only if it beats the second best by ``ASSIGN_MIN_MARGIN``. A lone person with a lone face needs no cue.
+    """
+    usable = [f for f in faces if f.width >= MIN_REF_FACE_PX]
+    if len(wanted) > len(usable):
+        raise _ambiguous(photo, faces, f"{len(wanted)} people were named but photo {photo} has {len(usable)} usable face(s).")
+    if len(wanted) == 1 and len(usable) == 1:
+        return [(usable[0], "only-face")]
+    ages = [f.age for f in usable if f.age is not None]
+    youngest = min(ages) if ages else None
+    pair = [[pair_score(spec, label, f, youngest) for f in usable] for spec, label in wanted]
+    results: list[tuple[float, tuple[int, ...]]] = []
+    for chosen in itertools.permutations(range(len(usable)), len(wanted)):
+        results.append((sum(pair[i][c][0] for i, c in enumerate(chosen)), chosen))
+    results.sort(key=lambda r: r[0], reverse=True)
+    best_total, best = results[0]
+    runner_up = results[1][0] if len(results) > 1 else None
+    if runner_up is not None and best_total - runner_up < ASSIGN_MIN_MARGIN:
+        raise _ambiguous(photo, faces, f"Cannot tell which of the {len(usable)} faces in photo {photo} is which person.")
+    out: list[tuple[FaceRecord, str]] = []
+    for i, c in enumerate(best):
+        reason = pair[i][c][1]
+        if reason is None:
+            # No cue for this person: the cued people took their faces and exactly one face was left over.
+            if len(usable) - len(wanted) > 0:
+                raise _ambiguous(photo, faces, f"Cannot tell which face in photo {photo} is {wanted[i][1]}.")
+            reason = "only-remaining-face"
+        out.append((usable[c], reason))
+    return out
+
+
 async def resolve_people(
     req: SceneRequest,
     deps: IdentityDeps,
@@ -415,33 +545,86 @@ async def resolve_people(
         faces = [f for f in await faces_of(0) if f.width >= MIN_REF_FACE_PX]
         if not faces:
             raise IdentityError("no face was found in the reference photo", param="image", code="no_face")
-        specs = [PersonSpec(label=f"person {i + 1}", image=0, box=tuple(f.bbox)) for i, f in enumerate(faces)]
+        specs = [PersonSpec(label=f"person {i + 1}", image=0, box=tuple(f.bbox), auto=True) for i, f in enumerate(faces)]
     elif not specs:  # auto with several photos: the largest face of each photo is one person
-        specs = [PersonSpec(label=f"person {i + 1}", image=i) for i in range(len(req.photos))]
+        specs = []
+        for i in range(len(req.photos)):
+            faces = [f for f in await faces_of(i) if f.width >= MIN_REF_FACE_PX]
+            if not faces:
+                raise IdentityError(f"no face was found in photo {i}", param="image", code="no_face")
+            largest = max(faces, key=lambda f: f.width)
+            specs.append(PersonSpec(label=f"person {i + 1}", image=i, box=tuple(largest.bbox), auto=True))
     if len(specs) > MAX_PEOPLE:
         raise IdentityError(f"at most {MAX_PEOPLE} people are supported", param="people")
+    labels = [spec.label or f"person {n}" for n, spec in enumerate(specs, start=1)]
+    if len(set(labels)) != len(labels):
+        raise IdentityError("people labels must be unique", param="people")
 
+    # Phase 1: the anchor face of every person, one face per person.
+    anchors: list[tuple[FaceRecord, str]] = [None] * len(specs)  # type: ignore[list-item]
+    unboxed: dict[int, list[int]] = {}
+    for n, spec in enumerate(specs):
+        source = spec.sources()[0]
+        faces = await faces_of(source.image)
+        if source.box is None:
+            unboxed.setdefault(source.image, []).append(n)
+            continue
+        chosen = (pick_face([{"bbox": f.bbox, "face": f} for f in faces], source.box) or {}).get("face")
+        if chosen is None:
+            raise IdentityError(
+                f"no face was found for {labels[n]} in photo {source.image} inside the given box",
+                param="people", code="no_face", faces=face_listing(faces, source.image),
+            )
+        anchors[n] = (chosen, "auto" if spec.auto else "box")
+    for photo, members in unboxed.items():
+        faces = await faces_of(photo)
+        taken = [a[0].bbox for k, a in enumerate(anchors) if a is not None and specs[k].sources()[0].image == photo]
+        free = [f for f in faces if all(tuple(f.bbox) != tuple(b) for b in taken)]
+        if not faces:
+            raise IdentityError(f"no face was found in photo {photo}", param="people", code="no_face")
+        picked = assign_faces(photo, [(specs[n], labels[n]) for n in members], free)
+        for n, choice in zip(members, picked):
+            anchors[n] = choice
+    seen: dict[tuple[int, tuple[float, ...]], str] = {}
+    for n, spec in enumerate(specs):
+        key = (spec.sources()[0].image, tuple(round(v, 1) for v in anchors[n][0].bbox))
+        if key in seen:
+            raise IdentityError(
+                f"{labels[n]} and {seen[key]} point at the same face in photo {key[0]}; give each person a different box",
+                param="people", code="same_face", faces=face_listing(await faces_of(key[0]), key[0]),
+            )
+        seen[key] = labels[n]
+
+    # Phase 2: further photos of each person (sources after the anchor), one face per person per photo.
+    extra_claimed: dict[int, list[tuple[float, ...]]] = {}
     resolved: list[ResolvedPerson] = []
-    for number, spec in enumerate(specs, start=1):
-        label = spec.label or f"person {number}"
-        found: list[tuple[FaceRecord, int]] = []   # (face, photo index)
-        scoring_only: set[int] = set()              # photo indices used only for scoring
-        for position, source in enumerate(spec.sources()):
+    for n, spec in enumerate(specs):
+        label = labels[n]
+        anchor_face, reason = anchors[n]
+        anchor_source = spec.sources()[0]
+        found: list[tuple[FaceRecord, int]] = [(anchor_face, anchor_source.image)]
+        scoring_only: set[int] = set() if anchor_source.generate else {0}
+        if anchor_face.width < MIN_REF_FACE_PX:
+            raise IdentityError(
+                f"the face of {label} in photo {anchor_source.image} is only {anchor_face.width:.0f}px wide; "
+                "use a photo with a larger face",
+                param="people", code="face_too_small",
+            )
+        for source in spec.sources()[1:]:
             faces = await faces_of(source.image)
-            if position == 0 or source.box is not None:
-                # The anchor photo, or a photo where the caller says where the face is.
+            if source.box is not None:
                 chosen_face = (pick_face([{"bbox": f.bbox, "face": f} for f in faces], source.box) or {}).get("face")
                 if chosen_face is None:
                     raise IdentityError(
-                        f"no face was found for {label} in photo {source.image}"
-                        + (" inside the given box" if source.box else ""),
-                        param="people",
-                        code="no_face",
+                        f"no face was found for {label} in photo {source.image} inside the given box",
+                        param="people", code="no_face", faces=face_listing(faces, source.image),
                     )
             else:
-                # An extra photo without a box may hold several people: take the face that looks like this person.
+                # An extra photo may hold several people: take the unclaimed face that looks like this person.
+                claimed = extra_claimed.setdefault(source.image, [])
+                free = [f for f in faces if tuple(f.bbox) not in claimed]
                 minimum = REF_MATCH_MIN_INFANT if likeness.Person(label, tuple(f for f, _ in found), spec.infant).is_infant() else REF_MATCH_MIN
-                chosen_face, similarity = best_match_face(faces, [f for f, _ in found], minimum)
+                chosen_face, similarity = best_match_face(free, [f for f, _ in found], minimum)
                 if chosen_face is None:
                     if warnings is not None:
                         warnings.append({
@@ -453,24 +636,17 @@ async def resolve_people(
                             ),
                         })
                     continue
-            face: FaceRecord = chosen_face
-            if face.width < MIN_REF_FACE_PX:
-                if position == 0:
-                    raise IdentityError(
-                        f"the face of {label} in photo {source.image} is only {face.width:.0f}px wide; "
-                        "use a photo with a larger face",
-                        param="people",
-                        code="face_too_small",
-                    )
+                claimed.append(tuple(chosen_face.bbox))
+            if chosen_face.width < MIN_REF_FACE_PX:
                 continue
-            found.append((face, source.image))
+            found.append((chosen_face, source.image))
             if not source.generate:
                 scoring_only.add(len(found) - 1)
         # Best reference first: a larger, sharper face gives the generator more to copy.
         eligible = [fp for k, fp in enumerate(found) if k not in scoring_only] or list(found)
         ranked = sorted(eligible, key=lambda fp: reference_quality(fp[0]), reverse=True)
         keep = ranked[: max(1, min(req.max_refs_per_person, MAX_REFS_PER_PERSON))]
-        primary = ranked[0][0]
+        primary = anchor_face   # the chosen face, reported as such; ranking only orders what is sent
         resolved.append(
             ResolvedPerson(
                 label=label,
@@ -481,12 +657,10 @@ async def resolve_people(
                 age=primary.age,
                 gender=primary.gender,
                 sources_used=keep,
-                primary_photo=ranked[0][1],
+                primary_photo=anchor_source.image,
+                reason=reason,
             )
         )
-    labels = [r.label for r in resolved]
-    if len(set(labels)) != len(labels):
-        raise IdentityError("people labels must be unique", param="people")
     return resolved
 
 
@@ -721,6 +895,7 @@ async def run_identity_scene(
                 "label": rp.label,
                 "photo": rp.primary_photo,
                 "face_bbox": [round(v, 1) for v in rp.face_bbox],
+                "reason": rp.reason,
                 "age_estimate": rp.age,
                 "reference_photos": len(rp.person.faces),
                 "reference_photo_indices": [i for _, i in rp.sources_used],

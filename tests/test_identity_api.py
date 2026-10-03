@@ -178,7 +178,7 @@ class PhotoLimitTests(unittest.TestCase):
     def test_up_to_twelve_reference_photos_are_accepted(self) -> None:
         client, _, _ = build([])
         many = [("reference", (f"p{i}.png", PHOTO, "image/png")) for i in range(identity_api.MAX_PHOTOS)]
-        people = json.dumps([{"label": "a", "images": list(range(identity_api.MAX_PHOTOS))}])
+        people = json.dumps([{"label": "a", "images": [{"image": 0, "box": [0, 0, 300, 400]}, *range(1, identity_api.MAX_PHOTOS)]}])
         r = client.post(identity_api.LIKENESS_PATH, files=many + [("candidate", ("c.png", GOOD, "image/png"))], data={"people": people})
         self.assertEqual(r.status_code, 200, r.text)
         too_many = many + [("reference", ("x.png", PHOTO, "image/png"))]
@@ -265,6 +265,66 @@ async def _none():
 
 async def _good():
     return GOOD
+
+
+THREE = png((77, 78, 79))
+FACES[THREE] = [
+    {"bbox": [373, 91, 486, 252], "det_score": 0.9, "age": 43, "gender": "female", "embedding": vec(2)},
+    {"bbox": [576, 379, 665, 483], "det_score": 0.9, "age": 2, "gender": "male", "embedding": vec(1)},
+    {"bbox": [872, 38, 994, 209], "det_score": 0.9, "age": 68, "gender": "female", "embedding": vec(0)},
+]
+
+
+class WhoIsWhoRouteTests(unittest.TestCase):
+    def post(self, client, path, people, **data):
+        files = [("image" if path == identity_api.IDENTITY_PATH else "reference", ("p.png", THREE, "image/png"))]
+        if path == identity_api.LIKENESS_PATH:
+            files.append(("candidate", ("c.png", GOOD, "image/png")))
+        return client.post(path, files=files, data={"prompt": "x", "people": json.dumps(people), **data})
+
+    def test_ambiguous_people_get_a_400_with_the_detected_faces_on_every_route(self) -> None:
+        client, calls, _ = build([GOOD])
+        people = [{"label": "person 1"}, {"label": "person 2"}]
+        for path, extra in ((identity_api.IDENTITY_PATH, {"mode": "sync"}), (identity_api.LIKENESS_PATH, {})):
+            r = self.post(client, path, people, **extra)
+            self.assertEqual(r.status_code, 400, path)
+            body = r.json()["error"]
+            self.assertEqual(body["code"], "ambiguous_faces")
+            self.assertEqual([f["bbox"][0] for f in body["faces"]], [373, 576, 872])
+            self.assertEqual([f["age_estimate"] for f in body["faces"]], [43, 2, 68])
+        self.assertEqual(calls, [])
+
+    def test_the_async_path_refuses_before_a_job_is_created(self) -> None:
+        submitted = []
+
+        async def submit_job(request, auth, req, fmt):
+            submitted.append(req)
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"id": "job"}, status_code=202)
+
+        from fastapi import FastAPI
+        app = FastAPI()
+        identity_api.register_identity_routes(app, identity_api.IdentityApiDeps(
+            authenticate=lambda r, p: "auth", enforce_policy=lambda a, p: None, ensure_face_service=lambda: _none(),
+            face_client=lambda: FakeClient(), run_workflow=lambda a, g, u: _good(), template=lambda: (TEMPLATE, BINDING),
+            store_image=lambda *a: {}, models=("buffalo_l",), submit_job=submit_job))
+        c = TestClient(app)
+        r = self.post(c, identity_api.IDENTITY_PATH, [{"label": "person 1"}, {"label": "person 2"}], mode="async")
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.json()["error"]["code"], "ambiguous_faces")
+        self.assertEqual(submitted, [])
+        ok = self.post(c, identity_api.IDENTITY_PATH, [{"label": "grandma"}, {"label": "baby", "infant": True}], mode="async")
+        self.assertEqual(ok.status_code, 202)
+        self.assertEqual(len(submitted), 1)
+
+    def test_the_likeness_route_reports_the_chosen_face_and_reason(self) -> None:
+        client, _, _ = build([])
+        r = self.post(client, identity_api.LIKENESS_PATH, [{"label": "grandma"}, {"label": "baby", "infant": True}])
+        self.assertEqual(r.status_code, 200, r.text)
+        refs = {x["label"]: x for x in r.json()["references"]}
+        self.assertEqual(refs["grandma"]["face_bbox"][0], 872.0)
+        self.assertEqual(refs["baby"]["face_bbox"][0], 576.0)
+        self.assertEqual((refs["grandma"]["reason"], refs["baby"]["reason"]), ("age-match", "infant-youngest"))
 
 
 class OpenApiTests(unittest.TestCase):

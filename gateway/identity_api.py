@@ -77,10 +77,14 @@ class IdentityApiDeps:
     submit_job: Callable[[Request, Any, SceneRequest, str], Awaitable[Response]] | None = None
 
 
-def error(status: int, code: str, message: str, *, param: str | None = None) -> JSONResponse:
+def error(
+    status: int, code: str, message: str, *, param: str | None = None, faces: list[dict[str, Any]] | None = None
+) -> JSONResponse:
     body: dict[str, Any] = {"message": message, "type": "invalid_request_error" if status < 500 else "api_error", "code": code}
     if param:
         body["param"] = param
+    if faces:
+        body["faces"] = faces  # the detected faces (photo, bbox, age, gender) to pick boxes from
     return JSONResponse({"error": body}, status_code=status)
 
 
@@ -272,6 +276,8 @@ def _people_schema() -> dict[str, Any]:
             "box? [x1,y1,x2,y2] in that photo's pixels, description?, infant? (overrides the age guess)}. "
             "A person with several photos: {label, images: [0, {image: 2, box: [..]}]}; entries that repeat a label merge. "
             "Each reference may also say generate:false to be used for scoring only (sunglasses, profile, tiny face). The first photo is the anchor (give a box if it holds several faces); in later photos without a box the face that looks like the anchor is chosen, and a photo with nobody who matches is skipped with a warning. "
+            "Without a box, people are matched to faces one to one by infant:true (youngest face) and age/gender words in label or description; "
+            "ambiguous cases fail with 400 ambiguous_faces and the list of detected faces, never a guess. "
             "Omit to auto-detect: every face of a single photo, or the largest face of each of several photos."
         ),
     }
@@ -411,12 +417,12 @@ def register_identity_routes(app: FastAPI, deps: IdentityApiDeps) -> None:
                 pooling=req.pooling,
             )
             report["references"] = [
-                {"label": p.label, "photo": p.primary_photo, "reference_photos": len(p.person.faces), "face_bbox": [round(v, 1) for v in p.face_bbox], "age_estimate": p.age}
+                {"label": p.label, "photo": p.primary_photo, "reason": p.reason, "reference_photos": len(p.person.faces), "face_bbox": [round(v, 1) for v in p.face_bbox], "age_estimate": p.age}
                 for p in people
             ]
             return JSONResponse(report)
         except (IdentityError, LikenessError) as exc:
-            return error(400, getattr(exc, "code", "invalid_request"), str(exc), param=getattr(exc, "param", None))
+            return error(400, getattr(exc, "code", "invalid_request"), str(exc), param=getattr(exc, "param", None), faces=getattr(exc, "faces", None))
         except (httpx.HTTPError, RuntimeError) as exc:
             return error(502, "face_service_error", f"face service failed: {str(exc) or type(exc).__name__}")
 
@@ -441,7 +447,7 @@ def register_identity_routes(app: FastAPI, deps: IdentityApiDeps) -> None:
                 return await submit(request, auth, req, response_format)
             return await run_scene(request, auth, req, response_format)
         except (IdentityError, LikenessError) as exc:
-            return error(400, getattr(exc, "code", "invalid_request"), str(exc), param=getattr(exc, "param", None))
+            return error(400, getattr(exc, "code", "invalid_request"), str(exc), param=getattr(exc, "param", None), faces=getattr(exc, "faces", None))
         except (httpx.HTTPError, RuntimeError) as exc:
             return error(502, "identity_backend_error", f"identity workflow failed: {str(exc) or type(exc).__name__}")
 
@@ -473,6 +479,11 @@ def register_identity_routes(app: FastAPI, deps: IdentityApiDeps) -> None:
 
     async def submit(request: Request, auth: Any, req: SceneRequest, response_format: str) -> Response:
         assert deps.submit_job is not None
+        # Fail a bad people list now (400 with the detected faces), not minutes later inside the job.
+        not_ready = await deps.ensure_face_service()
+        if not_ready is not None:
+            return not_ready
+        await ids.resolve_people(req, face_deps(), with_heads=False)
         return await deps.submit_job(request, auth, req, response_format)
 
     app.add_api_route(LIKENESS_PATH, likeness_route, methods=["POST"], openapi_extra=LIKENESS_OPENAPI,
