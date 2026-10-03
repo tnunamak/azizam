@@ -29,6 +29,32 @@ DEFAULT_PROVIDER_CONCURRENCY_LIMIT = 2
 DEFAULT_LEDGER_PATH = Path(
     os.environ.get("AI_GATEWAY_PROVIDER_LEDGER_DB", "data/provider_spend.db")
 )
+DEFAULT_USAGE_PRICE_REQUIREMENTS = (
+    {
+        "usage_path": ("prompt_tokens_details", "cache_creation_tokens"),
+        "price_keys": ("cache_creation_input_token_cost",),
+    },
+    {
+        "usage_path": (
+            "prompt_tokens_details",
+            "cache_creation_token_details",
+            "ephemeral_1h_input_tokens",
+        ),
+        "price_keys": ("cache_creation_input_token_cost_above_1hr",),
+    },
+    {
+        "usage_path": (
+            "prompt_tokens_details",
+            "cache_creation_token_details",
+            "ephemeral_5m_input_tokens",
+        ),
+        "price_keys": ("cache_creation_input_token_cost",),
+    },
+    {
+        "usage_path": ("prompt_tokens_details", "cached_tokens"),
+        "price_keys": ("cache_read_input_token_cost",),
+    },
+)
 
 
 class ProviderError(RuntimeError):
@@ -468,7 +494,11 @@ def extract_provider_cost(
     if header_cost is not None and not stream:
         return Cost(header_cost, "litellm", provider.id, provider.cost_class)
     if body is not None and isinstance(body.get("usage"), Mapping):
-        sdk_cost = _litellm_full_usage_cost(_litellm_cost_model(provider, body), body)
+        sdk_cost = _litellm_full_usage_cost(
+            _litellm_cost_model(provider, body),
+            body,
+            provider.price.get("usage_price_requirements"),
+        )
         if sdk_cost is not None:
             return Cost(sdk_cost, "litellm", provider.id, provider.cost_class)
     return Cost(None, "unknown", provider.id, provider.cost_class)
@@ -930,9 +960,13 @@ def _cost_from_tokens(
     return _quantize_usd(total)
 
 
-def _litellm_full_usage_cost(model: str, body: Mapping[str, Any]) -> Decimal | None:
+def _litellm_full_usage_cost(
+    model: str,
+    body: Mapping[str, Any],
+    requirements: object = None,
+) -> Decimal | None:
     try:
-        from litellm import ModelResponse, Usage, completion_cost  # type: ignore[import-not-found]
+        from litellm import ModelResponse, Usage, completion_cost, get_model_info  # type: ignore[import-not-found]
     except Exception:
         return None
     try:
@@ -947,11 +981,69 @@ def _litellm_full_usage_cost(model: str, body: Mapping[str, Any]) -> Decimal | N
             full_usage = dict(usage)
             full_usage.setdefault("prompt_tokens", usage.get("input_tokens", 0))
             full_usage.setdefault("completion_tokens", usage.get("output_tokens", 0))
+            full_usage.pop("input_tokens", None)
+            full_usage.pop("output_tokens", None)
             response.usage = Usage(**full_usage)
+            if _sdk_usage_has_unknown_fields(response.usage):
+                return None
+            model_info = get_model_info(model)
+            if not _usage_price_requirements_met(
+                usage,
+                model_info if isinstance(model_info, Mapping) else {},
+                requirements,
+            ):
+                return None
         value = completion_cost(completion_response=response, model=model)
     except Exception:
         return None
     return _decimal_or_none(value)
+
+
+def _sdk_usage_has_unknown_fields(value: object) -> bool:
+    if getattr(value, "model_extra", None):
+        return True
+    if isinstance(value, Mapping):
+        return any(_sdk_usage_has_unknown_fields(child) for child in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_sdk_usage_has_unknown_fields(child) for child in value)
+    fields = getattr(type(value), "model_fields", {})
+    return any(
+        _sdk_usage_has_unknown_fields(getattr(value, name, None)) for name in fields
+    )
+
+
+def _usage_price_requirements_met(
+    usage: Mapping[str, Any],
+    model_info: Mapping[str, Any],
+    requirements: object = None,
+) -> bool:
+    for requirement in _usage_price_requirements(requirements):
+        units = _path_value(usage, requirement.get("usage_path"))
+        amount = _optional_int(units)
+        if amount is None or amount <= 0:
+            continue
+        if not any(_path_value(model_info, key) is not None for key in requirement.get("price_keys", ())):
+            return False
+    return True
+
+
+def _usage_price_requirements(value: object = None) -> tuple[Mapping[str, Any], ...]:
+    raw = value if isinstance(value, (list, tuple)) else DEFAULT_USAGE_PRICE_REQUIREMENTS
+    out: list[Mapping[str, Any]] = []
+    for item in raw:
+        if isinstance(item, Mapping):
+            out.append(item)
+    return tuple(out)
+
+
+def _path_value(value: object, path: object) -> object:
+    keys = path if isinstance(path, (list, tuple)) else (path,)
+    current = value
+    for key in keys:
+        if not isinstance(current, Mapping):
+            return None
+        current = current.get(key)
+    return current
 
 
 def _litellm_cost_model(provider: ProviderRef, body: Mapping[str, Any]) -> str:

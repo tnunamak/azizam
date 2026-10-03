@@ -8,6 +8,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+import types
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
@@ -64,6 +65,37 @@ def provider(**overrides: object) -> ProviderRef:
 def profile(**overrides: object):
     remote = RemoteProviderPolicy(providers=frozenset({"typesafe"}), **overrides)
     return DEFAULT_PROFILE.with_overrides(id="paid-plan", remote=remote)
+
+
+def _fake_litellm(*, model_info: dict, cost: str):
+    class Usage(dict):
+        model_fields = {
+            "prompt_tokens": object(),
+            "completion_tokens": object(),
+            "total_tokens": object(),
+            "prompt_tokens_details": object(),
+        }
+
+        def __init__(self, **kwargs):
+            super().__init__(kwargs)
+
+    class ModelResponse(dict):
+        def __init__(self, **kwargs):
+            super().__init__(kwargs)
+            self.__dict__.update(kwargs)
+
+    def get_model_info(_model):
+        return model_info
+
+    def completion_cost(*, completion_response, model):
+        return cost
+
+    return types.SimpleNamespace(
+        Usage=Usage,
+        ModelResponse=ModelResponse,
+        get_model_info=get_model_info,
+        completion_cost=completion_cost,
+    )
 
 
 class TestProviderLookup(unittest.TestCase):
@@ -1023,6 +1055,78 @@ class TestCosts(unittest.TestCase):
             extract_provider_cost(ref, body=input_output).usd,
             extract_provider_cost(ref, body=prompt_completion).usd,
         )
+
+    def test_incomplete_sdk_cache_price_catalog_returns_unknown(self) -> None:
+        fake = _fake_litellm(
+            model_info={"input_cost_per_token": 0.000003},
+            cost="0.000015",
+        )
+        previous = sys.modules.get("litellm")
+        sys.modules["litellm"] = fake
+        try:
+            ref = provider(id="openrouter", price={"cost_model": "anthropic/test"})
+            cost = extract_provider_cost(
+                ref,
+                body={
+                    "model": "openrouter/anthropic/test",
+                    "usage": {
+                        "prompt_tokens": 10000,
+                        "completion_tokens": 1,
+                        "prompt_tokens_details": {
+                            "cache_creation_tokens": 10000,
+                            "cache_creation_token_details": {
+                                "ephemeral_1h_input_tokens": 10000,
+                            },
+                        },
+                    },
+                },
+            )
+        finally:
+            if previous is None:
+                sys.modules.pop("litellm", None)
+            else:
+                sys.modules["litellm"] = previous
+
+        self.assertIsNone(cost.usd)
+        self.assertEqual(cost.source, "unknown")
+
+    def test_complete_sdk_cache_price_catalog_accepts_sdk_oracle_cost(self) -> None:
+        fake = _fake_litellm(
+            model_info={
+                "input_cost_per_token": 0.000003,
+                "output_cost_per_token": 0.000015,
+                "cache_creation_input_token_cost_above_1hr": 0.000006,
+            },
+            cost="0.060015",
+        )
+        previous = sys.modules.get("litellm")
+        sys.modules["litellm"] = fake
+        try:
+            ref = provider(id="openrouter", price={"cost_model": "anthropic/test"})
+            cost = extract_provider_cost(
+                ref,
+                body={
+                    "model": "openrouter/anthropic/test",
+                    "usage": {
+                        "prompt_tokens": 10000,
+                        "completion_tokens": 1,
+                        "prompt_tokens_details": {
+                            "cache_creation_tokens": 10000,
+                            "cache_creation_token_details": {
+                                "ephemeral_1h_input_tokens": 10000,
+                            },
+                        },
+                    },
+                },
+            )
+        finally:
+            if previous is None:
+                sys.modules.pop("litellm", None)
+            else:
+                sys.modules["litellm"] = previous
+
+        self.assertEqual(cost.usd, Decimal("0.060015000"))
+        self.assertEqual(cost.source, "litellm")
 
 
 class TestTypeSafeHttpHook(unittest.TestCase):

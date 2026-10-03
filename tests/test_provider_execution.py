@@ -6,6 +6,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from contextlib import ExitStack
 from decimal import Decimal
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -794,6 +795,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows, [("settled", "0.000222000")])
 
     async def test_stream_cost_settlement_accounts_for_cache_write_usage(self) -> None:
+        import litellm
         self.provider = ProviderRef(
             id="openrouter",
             base_url="https://openrouter.ai/api/v1",
@@ -841,8 +843,20 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
-        response, _ = await self._execute(send=send)
-        await _body(response)
+        # Supply a complete pricing snapshot to the real pinned SDK. Its
+        # bundled offline catalog omits the one-hour cache-write price.
+        with ExitStack() as prices:
+            for model in (
+                "claude-sonnet-4-5-20250929",
+                "anthropic/claude-sonnet-4-5-20250929",
+            ):
+                row = litellm.model_cost.get(model)
+                if isinstance(row, dict):
+                    prices.enter_context(patch.dict(row, {
+                        "cache_creation_input_token_cost_above_1hr": 0.000006,
+                    }))
+            response, _ = await self._execute(send=send)
+            await _body(response)
 
         self.assertEqual(len(self.receipts), 1)
         self.assertEqual(self.receipts[0].cost["usd"], "0.060015000")
