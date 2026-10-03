@@ -180,6 +180,8 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | `POST` | `/sdapi/v1/txt2img` | partial | Protocol subset or configured-backend feature; see vendor facades | [gateway/a1111_api.py](../gateway/a1111_api.py) `route` |
 | `GET` | `/sdapi/v1/upscalers` | partial | Protocol subset or configured-backend feature; see vendor facades | [gateway/a1111_api.py](../gateway/a1111_api.py) `route` |
 | `GET` | `/status` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `status_dashboard_index` |
+| `GET` | `/typesafe/v1/models` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/decisions_api.py](../gateway/decisions_api.py) `list_typesafe_models` |
+| `POST` | `/typesafe/v1/systemone` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/decisions_api.py](../gateway/decisions_api.py) `systemone` |
 | `GET` | `/v1/assets/{asset_id}/content` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `assets_content` |
 | `DELETE` | `/v1/assistants{rest:path}` | unsupported | 400 unsupported_operation (not 501) | [proxy.py](../proxy.py) `openai_assistants_unsupported` |
 | `GET` | `/v1/assistants{rest:path}` | unsupported | 400 unsupported_operation (not 501) | [proxy.py](../proxy.py) `openai_assistants_unsupported` |
@@ -207,6 +209,7 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | `POST` | `/v1/batches{rest:path}` | unsupported | 400 unsupported_operation (not 501) | [proxy.py](../proxy.py) `openai_batches_unsupported` |
 | `POST` | `/v1/chat/completions` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `chat_completions` |
 | `POST` | `/v1/completions` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `completions` |
+| `POST` | `/v1/decisions` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/decisions_api.py](../gateway/decisions_api.py) `reserved_openai_decisions` |
 | `POST` | `/v1/embeddings` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `embeddings` |
 | `DELETE` | `/v1/files{rest:path}` | unsupported | 400 unsupported_operation (not 501) | [proxy.py](../proxy.py) `openai_files_unsupported` |
 | `GET` | `/v1/files{rest:path}` | unsupported | 400 unsupported_operation (not 501) | [proxy.py](../proxy.py) `openai_files_unsupported` |
@@ -234,6 +237,7 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | `POST` | `/v1/responses/{response_id}/cancel` | unsupported | 400 unsupported_operation; no local tokenizer or cancellation | [proxy.py](../proxy.py) `cancel_response` |
 | `GET` | `/v1/responses/{response_id}/input_items` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `list_response_input_items` |
 | `GET` | `/v1/status` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `v1_status` |
+| `POST` | `/v1/systemone` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/decisions_api.py](../gateway/decisions_api.py) `systemone` |
 | `GET` | `/v1/videos` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `videos_list` |
 | `POST` | `/v1/videos` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `videos_create` |
 | `POST` | `/v1/videos/edits` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `videos_edit` |

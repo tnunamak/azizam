@@ -56,6 +56,8 @@ def classification(route):
         return "unsupported", "501 after authentication and policy checks"
     if "_openai_unsupported_api(" in source:
         return "unsupported", "400 unsupported_operation (not 501)"
+    if endpoint.__name__ == "reserved_openai_decisions":
+        return "partial", "501 without configured provider passthrough; no local schema"
     if endpoint.__name__ in {"count_response_input_tokens", "cancel_response"}:
         return "unsupported", "400 unsupported_operation; no local tokenizer or cancellation"
     if endpoint.__name__ == "mcp_no_stream":
