@@ -175,7 +175,14 @@ def _map_provider_error(error: providers.ProviderError) -> PaidDecisionError:
     return PaidDecisionError(error.status_code, error.code, str(error), headers=headers)
 
 
-def _error_result(error: PaidDecisionError, *, request_id: str, provider: providers.ProviderRef | None, model: str) -> DecisionDispatchResult:
+def _error_result(
+    error: PaidDecisionError,
+    *,
+    request_id: str,
+    provider: providers.ProviderRef | None,
+    model: str,
+    reconciliation_status: str | None = None,
+) -> DecisionDispatchResult:
     headers = {"x-gateway-request-id": request_id, "x-gateway-remote": "1", **error.headers}
     if provider is not None:
         headers["x-gateway-provider"] = provider.id
@@ -188,6 +195,27 @@ def _error_result(error: PaidDecisionError, *, request_id: str, provider: provid
         remote=True,
         cost_usd=None,
         cost_source=UNKNOWN_COST_SOURCE,
+        reconciliation_status=reconciliation_status,
+    )
+
+
+def _reconciliation_status_for(
+    reservation: providers.Reservation | None,
+    cost: providers.Cost,
+) -> str | None:
+    if reservation is None:
+        return None
+    return "settled" if cost.usd is not None else "needs_reconciliation"
+
+
+def _link_receipt_to_reservation(receipt: RouteReceipt, reservation: providers.Reservation, cost: providers.Cost) -> None:
+    if receipt.cost.get("usd") is None and cost.usd is not None:
+        providers.attach_cost_to_receipt(receipt, cost)
+    receipt.cost.update(
+        {
+            "reservation_id": reservation.id,
+            "reconciliation_status": _reconciliation_status_for(reservation, cost),
+        }
     )
 
 
@@ -258,13 +286,14 @@ async def systemone(
 
     try:
         async with asyncio.timeout(DEFAULT_DECISION_TIMEOUT_S):
-            payload, cost, usage, _reservation = await providers.call_typesafe_systemone(
+            payload, cost, usage, reservation = await providers.call_typesafe_systemone(
                 provider,
                 profile,
                 body,
                 ledger_path=ledger_path,
                 admin_db_path=admin_db_path,
                 timeout=DEFAULT_DECISION_TIMEOUT_S,
+                request_id=request_id,
             )
     except TimeoutError:
         return _error_result(
@@ -272,9 +301,16 @@ async def systemone(
             request_id=request_id,
             provider=provider,
             model=requested_model,
+            reconciliation_status="needs_reconciliation",
         )
     except providers.ProviderError as exc:
-        return _error_result(_map_provider_error(exc), request_id=request_id, provider=provider, model=requested_model)
+        return _error_result(
+            _map_provider_error(exc),
+            request_id=request_id,
+            provider=provider,
+            model=requested_model,
+            reconciliation_status="needs_reconciliation" if isinstance(exc, providers.ProviderTimeout) else None,
+        )
     cost_usd = str(cost.usd) if cost.usd is not None else None
     headers = {
         "x-gateway-request-id": request_id,
@@ -293,6 +329,8 @@ async def systemone(
         remote=True,
         cost_usd=cost_usd,
         cost_source=cost.source,
+        reservation_id=reservation.id,
+        reconciliation_status=_reconciliation_status_for(reservation, cost),
     )
 
 
@@ -334,6 +372,8 @@ async def openai(
     providers.attach_cost_to_receipt(receipt, providers.Cost(None, UNKNOWN_COST_SOURCE, provider.id))
     async with ReceiptLifecycleOwner(receipt) as owner:
         reservation = None
+        final_cost = providers.Cost(None, UNKNOWN_COST_SOURCE, provider.id, provider.cost_class)
+        released = False
         try:
             cap = capability_for(provider, model, protocol="openai.decisions")
             decision = evaluate(
@@ -359,6 +399,7 @@ async def openai(
                 raise providers.ProviderKeyMissing(f"provider {provider.id!r} key is missing")
             estimate = providers.Cost(None, "unknown", provider.id, provider.cost_class)
             reservation = providers.reserve_provider_spend(profile, provider, estimate, path=ledger_path, admin_db_path=admin_db_path)
+            providers.identify_provider_spend(reservation, request_id=receipt.request_id, path=ledger_path)
             async with asyncio.timeout(DEFAULT_DECISION_TIMEOUT_S):
                 payload, cost, usage, upstream_headers, upstream_content, upstream_status = await providers.call_openai_json(
                     provider,
@@ -367,11 +408,15 @@ async def openai(
                     content=raw_body,
                     timeout=DEFAULT_DECISION_TIMEOUT_S,
                 )
-            providers.attach_cost_to_receipt(receipt, cost, usage)
+            final_cost = cost
             if reservation is not None and (cost.usd is not None or upstream_status not in {401, 429}):
-                providers.settle_provider_spend(reservation, cost, path=ledger_path)
+                cost = providers.settle_provider_spend(reservation, cost, path=ledger_path)
+                final_cost = cost
+                providers.attach_cost_to_receipt(receipt, cost, usage)
             elif reservation is not None and upstream_status in {401, 429}:
                 providers.release_provider_spend(reservation, path=ledger_path)
+                released = True
+                providers.attach_cost_to_receipt(receipt, cost, usage)
             if reservation is not None and upstream_status not in {401, 429}:
                 receipt.cost.update({"reservation_id": reservation.id, "reconciliation_status": "needs_reconciliation" if cost.usd is None else "settled"})
             receipt.set_policy_decision("allowed", source="gateway:remote-provider")
@@ -391,8 +436,13 @@ async def openai(
         except providers.ProviderError as exc:
             if reservation is not None and isinstance(exc, (providers.ProviderAuthFailed, providers.ProviderRateLimited)):
                 providers.release_provider_spend(reservation, path=ledger_path)
+                released = True
             owner.report(status="failed", reason="failed")
             return _map_provider_error(exc).response()
+        finally:
+            if reservation is not None and not released:
+                final_cost = providers.settle_provider_spend(reservation, final_cost, path=ledger_path)
+                _link_receipt_to_reservation(receipt, reservation, final_cost)
 
 
 OpenAI = openai

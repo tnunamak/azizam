@@ -13758,6 +13758,9 @@ def _record_decision_receipt(auth: AuthContext, result: decisions_api.DecisionRe
             ),
             usage_for_receipt,
         )
+    if result.remote and result.reservation_id is not None:
+        receipt.cost.update({"reservation_id": result.reservation_id,
+                             "reconciliation_status": result.reconciliation_status})
     receipt.metadata["decisions"] = {
         "question_count": result.question_count, "engine": result.engine,
         "remote": result.remote, "cost_usd": result.cost_usd, "usage": safe_usage_metadata,

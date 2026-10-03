@@ -113,6 +113,8 @@ class DecisionDispatchResult:
     engine: str | None = None
     fallback_reasons: Sequence[str] = field(default_factory=tuple)
     cost_source: str | None = None
+    reservation_id: int | None = None
+    reconciliation_status: str | None = None
 
 
 @dataclass(frozen=True)
@@ -135,6 +137,8 @@ class DecisionReceipt:
     error_param: str | None = None
     usage: Mapping[str, Any] | None = None
     cost_source: str | None = None
+    reservation_id: int | None = None
+    reconciliation_status: str | None = None
 
 
 @dataclass(frozen=True)
@@ -249,6 +253,8 @@ def _receipt(
     error_param: str | None = None,
     usage: Mapping[str, Any] | None = None,
     cost_source: str | None = None,
+    reservation_id: int | None = None,
+    reconciliation_status: str | None = None,
 ) -> DecisionReceipt:
     return DecisionReceipt(
         protocol="typesafe.systemone",
@@ -269,6 +275,8 @@ def _receipt(
         error_param=error_param,
         usage=usage,
         cost_source=cost_source,
+        reservation_id=reservation_id,
+        reconciliation_status=reconciliation_status,
     )
 
 
@@ -809,6 +817,8 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
                         remote=result.remote,
                         cost_usd=result.cost_usd,
                         cost_source=result.cost_source,
+                        reservation_id=result.reservation_id,
+                        reconciliation_status=result.reconciliation_status,
                         usage=result.body.get("usage") if isinstance(result.body.get("usage"), Mapping) else None,
                         started=started,
                     ),
@@ -834,6 +844,8 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
                 remote=result.remote,
                 cost_usd=result.cost_usd,
                 cost_source=result.cost_source,
+                reservation_id=result.reservation_id,
+                reconciliation_status=result.reconciliation_status,
                 engine=result.engine,
                 fallback_reasons=tuple(result.fallback_reasons),
                 usage=result.body.get("usage") if isinstance(result.body.get("usage"), Mapping) else None,

@@ -282,6 +282,11 @@ def ensure_ledger(path: Path = DEFAULT_LEDGER_PATH) -> None:
             """
         )
         columns = {row[1] for row in conn.execute("PRAGMA table_info(provider_spend)")}
+        if "request_id" not in columns:
+            # Older ledgers cannot distinguish in-flight work from completed
+            # unknown bills. Across this schema upgrade, require owner settlement.
+            conn.execute("UPDATE provider_spend SET status = 'needs_reconciliation' "
+                         "WHERE status = 'reserved'")
         for name in ("request_id", "generation_id"):
             if name not in columns:
                 conn.execute(f"ALTER TABLE provider_spend ADD COLUMN {name} TEXT")
@@ -436,22 +441,33 @@ def settle_provider_spend(
     *,
     path: Path = DEFAULT_LEDGER_PATH,
     now: int | None = None,
-) -> None:
+) -> Cost:
+    """Transition a charge atomically and return its persisted cost.
+
+    Unknown finalization cannot overwrite a reconciled charge. Competing owner
+    and automatic reconciliations keep the first settlement and report it honestly.
+    """
     actual = None if actual_cost is None else actual_cost.usd
     settled_amount = None if actual is None else _quantize_usd(actual)
     timestamp = int(now if now is not None else time.time())
     ensure_ledger(path)
-    with sqlite3.connect(path) as conn:
+    with sqlite3.connect(path, isolation_level=None) as conn:
+        conn.execute("BEGIN IMMEDIATE")
         conn.execute(
             """
             UPDATE provider_spend
             SET status = ?, actual_usd = ?, settled_at = ?, cost_source = ?
-            WHERE id = ? AND status IN ('reserved', 'needs_reconciliation')
+            WHERE id = ? AND (status = 'reserved' OR (status = 'needs_reconciliation' AND ? IS NOT NULL))
             """,
             ("needs_reconciliation" if settled_amount is None else "settled",
              None if settled_amount is None else str(settled_amount), timestamp,
-             actual_cost.source if actual_cost is not None else "unknown", reservation.id),
+             actual_cost.source if actual_cost is not None else "unknown", reservation.id,
+             None if settled_amount is None else str(settled_amount)),
         )
+        row = conn.execute("SELECT actual_usd, cost_source FROM provider_spend WHERE id = ?", (reservation.id,)).fetchone()
+        conn.execute("COMMIT")
+    return Cost(_decimal_or_none(row[0]) if row else None, row[1] if row else "unknown",
+                reservation.provider, actual_cost.cost_class if actual_cost else "paid-remote")
 
 
 def identify_provider_spend(
@@ -591,6 +607,12 @@ def resolve_provider_model(provider: ProviderRef, model: str) -> str:
     return str(facts.get("upstream_model") or model) if facts else model
 
 
+def price_for_provider_model(provider: ProviderRef, model: str) -> Mapping[str, Any]:
+    resolved = resolve_provider_model(provider, model)
+    upstream_price = _price_for_model(provider.price, resolved)
+    return _price_for_model(upstream_price, model)
+
+
 def estimate_typesafe_cost(provider: ProviderRef, body: Mapping[str, Any]) -> Cost:
     estimated_tokens = _estimate_tokens_from_json(
         {"state": body.get("state", ""), "questions": body.get("questions", {})}
@@ -660,6 +682,7 @@ async def call_typesafe_systemone(
     paid_fallback: bool = False,
     timeout: float = 15.0,
     client: httpx.AsyncClient | None = None,
+    request_id: str | None = None,
 ) -> tuple[dict[str, Any], Cost, Usage, Reservation]:
     require_remote_allowed(profile, provider, paid_fallback=paid_fallback)
     api_key = os.environ.get(provider.api_key_env or "")
@@ -673,6 +696,7 @@ async def call_typesafe_systemone(
         admin_db_path=admin_db_path,
         paid_fallback=paid_fallback,
     )
+    identify_provider_spend(reservation, request_id=request_id, path=ledger_path)
     close_client = client is None
     client = client or httpx.AsyncClient(timeout=timeout)
     try:
@@ -687,7 +711,7 @@ async def call_typesafe_systemone(
             raise ProviderError("provider returned a non-object JSON body")
         payload = _redact_provider_payload(payload, api_key)
         actual_cost = extract_provider_cost(provider, body=payload, headers=response.headers)
-        settle_provider_spend(reservation, actual_cost, path=ledger_path)
+        actual_cost = settle_provider_spend(reservation, actual_cost, path=ledger_path)
         return payload, actual_cost, extract_usage(payload), reservation
     except httpx.TimeoutException as exc:
         raise ProviderTimeout("provider request timed out") from exc
@@ -1052,7 +1076,7 @@ def _cost_from_tokens(
     input_tokens: int | None,
     output_tokens: int | None,
 ) -> Decimal | None:
-    price = _price_for_model(provider.price, model)
+    price = price_for_provider_model(provider, model)
     input_price = _decimal_or_none(price.get("input_usd_per_million_tokens", price.get("input_per_million_usd")))
     output_price = _decimal_or_none(price.get("output_usd_per_million_tokens", price.get("output_per_million_usd")))
     total = Decimal("0")

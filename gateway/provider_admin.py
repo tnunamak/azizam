@@ -142,7 +142,7 @@ def create_provider_admin_router(
     """
 
     router = APIRouter(prefix=prefix, tags=["admin-providers"])
-    effective_spending_provider = spending_provider or provider_ledger_spending_snapshot
+    effective_spending_provider = spending_provider or (lambda: provider_ledger_spending_snapshot(path=ledger_path))
 
     def _guard(request: Request) -> AdminContext | JSONResponse:
         return _require_admin(auth, request)
@@ -351,7 +351,7 @@ def provider_ledger_spending_snapshot(
                 """
                 SELECT provider, created_at, estimated_usd, actual_usd, status
                 FROM provider_spend
-                WHERE status IN ('reserved', 'settled') AND created_at >= ?
+                WHERE (status IN ('reserved', 'settled') AND created_at >= ?) OR status = 'needs_reconciliation'
                 """,
                 (since,),
             ).fetchall()
@@ -360,8 +360,11 @@ def provider_ledger_spending_snapshot(
     providers: dict[str, dict[str, Decimal]] = {}
     global_daily = Decimal("0")
     global_monthly = Decimal("0")
+    pending: dict[str, int] = {}
     for provider, created_at, estimated, actual, _status in rows:
         provider_id = service_registry.canonical_provider_id(provider)
+        if _status == "needs_reconciliation":
+            pending[provider_id] = pending.get(provider_id, 0) + 1
         amount = _ledger_amount(actual, estimated)
         provider_totals = providers.setdefault(
             provider_id, {"daily_usd": Decimal("0"), "monthly_usd": Decimal("0")}
@@ -378,12 +381,14 @@ def provider_ledger_spending_snapshot(
             provider: {
                 "daily_usd": float(totals["daily_usd"]),
                 "monthly_usd": float(totals["monthly_usd"]),
+                "pending_reconciliation_count": pending.get(provider, 0),
             }
             for provider, totals in providers.items()
         },
         "global": {
             "daily_usd": float(global_daily),
             "monthly_usd": float(global_monthly),
+            "pending_reconciliation_count": sum(pending.values()),
         },
     }
 
@@ -676,7 +681,8 @@ def _normalize_spend(
     return {
         "daily_usd": _coerce_non_negative_float(value.get("daily_usd")),
         "monthly_usd": _coerce_non_negative_float(value.get("monthly_usd")),
-        "status": "known",
+        "status": "needs_reconciliation" if value.get("pending_reconciliation_count") else "known",
+        "pending_reconciliation_count": value.get("pending_reconciliation_count", 0),
     }
 
 

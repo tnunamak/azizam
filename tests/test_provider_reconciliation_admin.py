@@ -96,6 +96,24 @@ class ProviderReconciliationAdminApiTests(unittest.TestCase):
         self.store = FakeProviderAdminStore()
         self.client = _client(self.store, self.ledger_path)
 
+    def test_member_cannot_reconcile_owner_charges(self) -> None:
+        response = self.client.post(
+            "/admin/api/providers/openrouter/reconciliation/1",
+            headers={"authorization": "Bearer member"}, json={"actual_usd": "0"},
+        )
+        self.assertIn(response.status_code, (401, 403))
+        with sqlite3.connect(self.ledger_path) as conn:
+            self.assertEqual(conn.execute("SELECT status FROM provider_spend WHERE id=1").fetchone()[0],
+                             "needs_reconciliation")
+
+    def test_provider_surface_reports_unknown_spend_even_after_window_rollover(self) -> None:
+        response = self.client.get("/admin/api/providers", headers={"authorization": "Bearer admin"})
+        self.assertEqual(response.status_code, 200)
+        rows = {row["id"]: row for row in response.json()["providers"]}
+        self.assertEqual(rows["openrouter"]["spend"]["status"], "needs_reconciliation")
+        self.assertEqual(rows["openrouter"]["spend"]["pending_reconciliation_count"], 1)
+        self.assertEqual(response.json()["global"]["spend"]["pending_reconciliation_count"], 2)
+
     def test_lists_pending_reconciliations_for_provider(self) -> None:
         response = self.client.get(
             "/admin/api/providers/openrouter/reconciliation",

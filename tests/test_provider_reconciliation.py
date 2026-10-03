@@ -1,16 +1,25 @@
 from dataclasses import replace
 from decimal import Decimal
 import sqlite3
+import unittest
+import httpx
 from unittest.mock import AsyncMock
 
 import pytest
 
 from gateway import providers
 from gateway.policy import AppProfile, RemoteProviderPolicy
-from test_provider_execution import ProviderExecutionTests, _Client, _Response, _body
+import test_provider_execution as execution_tests
+from test_provider_execution import _Client, _Response, _body
 
 
-class UnknownChargeExecutionTests(ProviderExecutionTests):
+class ReconciliationExecutionFixture(unittest.IsolatedAsyncioTestCase):
+    setUp = execution_tests.ProviderExecutionTests.setUp
+    tearDown = execution_tests.ProviderExecutionTests.tearDown
+    _execute = execution_tests.ProviderExecutionTests._execute
+
+
+class UnknownChargeExecutionTests(ReconciliationExecutionFixture):
     async def test_malformed_completed_charge_blocks_second_dispatch(self):
         self.profile = AppProfile(id='paid-app', remote=RemoteProviderPolicy(
             providers=frozenset({'openrouter'}), budget_usd_per_day=Decimal('0.02')))
@@ -80,7 +89,7 @@ def test_manual_reconciliation_rejects_invalid_cost(amount, tmp_path):
         providers.reconcile_provider_spend(1, amount, provider_id='one', path=tmp_path/'spend.db')
 
 
-class AutomaticReconciliationTests(ProviderExecutionTests):
+class AutomaticReconciliationTests(ReconciliationExecutionFixture):
     async def test_malformed_stream_reconciles_by_provider_generation_id(self):
         from unittest.mock import patch
         self.body = {**self.body, 'stream': True}
@@ -100,3 +109,58 @@ class AutomaticReconciliationTests(ProviderExecutionTests):
         assert row[3] == self.receipts[0].request_id
         assert self.receipts[0].cost['source'] == 'provider-generation-stats'
         assert self.receipts[0].cost['reconciliation_status'] == 'settled'
+
+
+class InterruptedChargeTests(ReconciliationExecutionFixture):
+    async def test_nonstream_read_error_blocks_next_admission(self):
+        from unittest.mock import patch
+        with patch('gateway.provider_execution.read_llm_response_body', side_effect=httpx.ReadError('interrupted')):
+            response, _ = await self._execute()
+        assert response.status_code == 502
+        second, send = await self._execute()
+        assert second.status_code == 402
+        send.assert_not_awaited()
+
+    async def test_concurrent_owner_settlement_is_reported_from_ledger(self):
+        from unittest.mock import patch
+        self.body = {**self.body, 'stream': True}
+        send = AsyncMock(return_value=(_Client(), _Response(headers={'content-type': 'text/event-stream'},
+            chunks=[b'data: {"id":"generation-1"}\n\n', b'data: [DONE]\n\n'])))
+        async def owner_reconciles(provider, generation_id):
+            pending = providers.list_provider_reconciliations(path=self.ledger)
+            providers.reconcile_provider_spend(pending[0]['id'], '0.05', provider_id=provider.id, path=self.ledger)
+            return providers.Cost(Decimal('0.03'), 'provider-generation-stats', provider.id)
+        with patch('gateway.provider_reconciliation.lookup_generation_cost', side_effect=owner_reconciles):
+            response, _ = await self._execute(send=send)
+            await _body(response)
+        assert self.receipts[0].cost['usd'] == '0.050000000'
+        assert self.receipts[0].cost['source'] == 'owner-reported'
+
+
+def test_legacy_unknown_reservations_migrate_conservatively(tmp_path):
+    path = tmp_path / 'legacy.db'
+    with sqlite3.connect(path) as conn:
+        conn.execute('CREATE TABLE provider_spend (id INTEGER PRIMARY KEY,provider TEXT,profile_id TEXT,status TEXT,estimated_usd TEXT,actual_usd TEXT,cost_source TEXT,created_at INTEGER,settled_at INTEGER)')
+        conn.execute("INSERT INTO provider_spend VALUES (1,'one','plan','reserved','0.001',NULL,'price-table',1,NULL)")
+    providers.ensure_ledger(path)
+    assert providers.list_provider_reconciliations(path=path)[0]['status'] == 'needs_reconciliation'
+
+
+class LaterStatsRetryTests(ReconciliationExecutionFixture):
+    async def test_later_admission_retries_unavailable_generation_stats(self):
+        from unittest.mock import patch
+        self.provider = replace(self.provider, config={**self.provider.config, 'generation_stats': {
+            'path': '/generation', 'id_param': 'id', 'cost_path': ['data', 'total_cost']}})
+        self.body = {**self.body, 'stream': True}
+        send = AsyncMock(return_value=(_Client(), _Response(headers={'content-type': 'text/event-stream'},
+            chunks=[b'data: {"id":"generation-1"}\n\n', b'data: [DONE]\n\n'])))
+        with patch('gateway.provider_reconciliation.lookup_generation_cost',
+                   AsyncMock(return_value=providers.Cost(None, 'unknown', 'openrouter'))):
+            first, _ = await self._execute(send=send)
+            await _body(first)
+        with patch('gateway.provider_reconciliation.lookup_generation_cost',
+                   AsyncMock(return_value=providers.Cost(Decimal('0.03'), 'provider-generation-stats', 'openrouter'))):
+            next_response, next_send = await self._execute()
+        assert next_response.status_code == 200
+        next_send.assert_awaited_once()
+        assert not providers.list_provider_reconciliations(path=self.ledger)

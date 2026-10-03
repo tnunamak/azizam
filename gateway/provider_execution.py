@@ -10,6 +10,7 @@ import re
 import time
 from collections.abc import Mapping
 from pathlib import Path
+from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -524,6 +525,7 @@ async def execute_paid_litellm(
             if not _model_declared(provider, model):
                 raise providers.RemoteProviderNotAllowed("Remote model is not declared in the provider model allow-list")
             resolved_upstream_model = _resolved_upstream_model(provider, model)
+            pricing_provider = replace(provider, price=providers.price_for_provider_model(provider, model))
             decision = evaluate(profile, PolicyRequest(protocol=protocol, intent=intent, model=model))
             if decision.denied:
                 raise providers.RemoteProviderNotAllowed("; ".join(decision.reasons))
@@ -532,7 +534,7 @@ async def execute_paid_litellm(
             prepared = _prepare_paid_litellm_payload(
                 body,
                 stream=receipt.stream,
-                provider=provider,
+                provider=pricing_provider,
                 resolved_upstream_model=resolved_upstream_model,
             )
             if isinstance(prepared, JSONResponse):
@@ -565,7 +567,9 @@ async def execute_paid_litellm(
                 **estimate_payload,
                 "model": resolved_upstream_model,
             }
-            estimate = providers.estimate_request_cost(provider, estimate_pricing_payload, protocol=protocol, intent=intent)
+            estimate = providers.estimate_request_cost(pricing_provider, estimate_pricing_payload, protocol=protocol, intent=intent)
+            from gateway.provider_reconciliation import reconcile_pending_generations
+            await reconcile_pending_generations(provider, path=ledger_path)
             reservation = providers.reserve_provider_spend(
                 profile, provider, estimate, path=ledger_path,
                 admin_db_path=admin_db_path, paid_fallback=paid_fallback,
@@ -594,6 +598,7 @@ async def execute_paid_litellm(
             return error_response(providers.ProviderTimeout("Remote provider request timed out"))
         except LlmExecutionPredispatchError:
             providers.release_provider_spend(reservation, path=ledger_path)
+            receipt.cost.update({"reservation_id": reservation.id, "reconciliation_status": "released"})
             owner.report(status="failed", reason="connect_error")
             return JSONResponse({"error": {"code": "provider_unavailable", "message": "Remote execution is unavailable"}}, status_code=502)
         except httpx.HTTPError:
@@ -603,6 +608,9 @@ async def execute_paid_litellm(
             return JSONResponse({"error": {"code": "provider_unavailable", "message": "Remote execution is unavailable"}}, status_code=502)
         finally:
             if response is None:
+                providers.settle_provider_spend(reservation, None, path=ledger_path)
+                if receipt.cost.get("reconciliation_status") != "released":
+                    receipt.cost.update({"reservation_id": reservation.id, "reconciliation_status": "needs_reconciliation"})
                 await watcher.aclose()
         cost = providers.extract_provider_cost(provider, headers=response.headers)
         headers = {"x-gateway-request-id": receipt.request_id, "x-gateway-remote": "1"}
@@ -613,9 +621,13 @@ async def execute_paid_litellm(
             await response.aclose()
             await client.aclose()
             # Do not reflect vendor exception text, URLs or auth headers.
-            providers.settle_provider_spend(reservation, cost, path=ledger_path)
+            unbilled_rejection = cost.usd is None and response.status_code in {401, 403, 429}
+            if unbilled_rejection:
+                providers.release_provider_spend(reservation, path=ledger_path)
+            else:
+                cost = providers.settle_provider_spend(reservation, cost, path=ledger_path)
             providers.attach_cost_to_receipt(receipt, cost)
-            receipt.cost.update({"reservation_id": reservation.id, "reconciliation_status": "needs_reconciliation" if cost.usd is None else "settled"})
+            receipt.cost.update({"reservation_id": reservation.id, "reconciliation_status": "released" if unbilled_rejection else "needs_reconciliation" if cost.usd is None else "settled"})
             owner.report(status="failed", reason="failed")
             if response.status_code in {401, 403}:
                 return error_response(providers.ProviderAuthFailed("Remote provider rejected the operator key"))
@@ -627,7 +639,7 @@ async def execute_paid_litellm(
 
         async def finish(body: Mapping[str, Any], generation_id: str | None = None) -> None:
             final_cost = providers.extract_provider_cost(
-                provider,
+                pricing_provider,
                 body={**body, "model": resolved_upstream_model},
                 headers=response.headers,
                 stream="text/event-stream" in response.headers.get("content-type", ""),
@@ -635,13 +647,13 @@ async def execute_paid_litellm(
             generation_id = generation_id or (body.get("id") if isinstance(body.get("id"), str) else None)
             providers.identify_provider_spend(reservation, generation_id=generation_id, path=ledger_path)
             # Mark unknown charges before any lookup so concurrent admission fails closed.
-            providers.settle_provider_spend(reservation, final_cost, path=ledger_path)
+            final_cost = providers.settle_provider_spend(reservation, final_cost, path=ledger_path)
             if final_cost.usd is None and generation_id:
                 from gateway.provider_reconciliation import lookup_generation_cost
                 reported_cost = await lookup_generation_cost(provider, generation_id)
                 if reported_cost.usd is not None:
                     final_cost = reported_cost
-                    providers.settle_provider_spend(reservation, final_cost, path=ledger_path)
+                    final_cost = providers.settle_provider_spend(reservation, final_cost, path=ledger_path)
             providers.attach_cost_to_receipt(receipt, final_cost, providers.extract_usage(body))
             receipt.cost.update({
                 "reservation_id": reservation.id,
@@ -738,7 +750,13 @@ async def execute_paid_litellm(
             receipt.cost.update({"reservation_id": reservation.id, "reconciliation_status": "needs_reconciliation"})
             owner.report(status="failed", reason="idle_timeout")
             return error_response(providers.ProviderTimeout("Remote provider request timed out"))
+        except httpx.HTTPError:
+            owner.report(status="failed", reason="connect_error")
+            return error_response(providers.ProviderUpstreamError("Remote provider response was interrupted"))
         finally:
+            persisted_cost = providers.settle_provider_spend(reservation, None, path=ledger_path)
+            if persisted_cost.usd is None:
+                receipt.cost.update({"reservation_id": reservation.id, "reconciliation_status": "needs_reconciliation"})
             await watcher.aclose()
             await response.aclose()
             await client.aclose()

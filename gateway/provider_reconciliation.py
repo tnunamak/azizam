@@ -15,7 +15,7 @@ from typing import Any
 
 import httpx
 
-from gateway.providers import Cost, ProviderRef
+from gateway.providers import Cost, ProviderRef, USD_QUANTUM
 
 DEFAULT_STATS_TIMEOUT = httpx.Timeout(10.0)
 
@@ -66,7 +66,12 @@ async def lookup_generation_cost(
         cost = _decimal_at_path(payload, cost_path)
         if cost is None or cost < 0:
             return _unknown_cost(provider)
-        return Cost(cost, "provider-generation-stats", provider.id)
+        return Cost(
+            cost,
+            "provider-generation-stats",
+            provider.id,
+            cost_class=provider.cost_class,
+        )
     except (httpx.HTTPError, ValueError, TypeError, InvalidOperation):
         return _unknown_cost(provider)
     finally:
@@ -75,7 +80,12 @@ async def lookup_generation_cost(
 
 
 def _unknown_cost(provider: ProviderRef) -> Cost:
-    return Cost(None, "provider-generation-stats-unavailable", provider.id)
+    return Cost(
+        None,
+        "provider-generation-stats-unavailable",
+        provider.id,
+        cost_class=provider.cost_class,
+    )
 
 
 def _stats_path(config: Mapping[str, Any]) -> str | None:
@@ -131,6 +141,28 @@ def _decimal_or_none(value: Any) -> Decimal | None:
     if isinstance(value, bool) or value in (None, ""):
         return None
     try:
-        return Decimal(str(value))
+        cost = Decimal(str(value))
     except (InvalidOperation, ValueError, TypeError):
         return None
+    if not cost.is_finite():
+        return None
+    try:
+        return cost.quantize(USD_QUANTUM)
+    except InvalidOperation:
+        return None
+
+
+async def reconcile_pending_generations(provider: ProviderRef, *, path) -> None:
+    """Retry provider stats on a later admission; unresolved caps stay blocked."""
+    from gateway import providers
+    if not isinstance(provider.config.get("generation_stats"), Mapping):
+        return
+    # Bound metadata traffic per attempt. Remaining charges continue to block caps.
+    for row in providers.list_provider_reconciliations(path=path, provider_id=provider.id)[:2]:
+        if not row.get("generation_id"):
+            continue
+        cost = await lookup_generation_cost(provider, row["generation_id"])
+        if cost.usd is not None:
+            reservation = providers.Reservation(row["id"], row["provider"], row["profile_id"],
+                                                Decimal(row["estimated_usd"]), row["cost_source"])
+            providers.settle_provider_spend(reservation, cost, path=path)
