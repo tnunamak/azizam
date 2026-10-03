@@ -39,9 +39,9 @@ import {
   SectionActionHeader,
   Skeleton,
   StatusDotLabel,
-  Switch,
   toast,
 } from "@/components/ui";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 
 type Tone = "ok" | "warn" | "bad" | "neutral";
@@ -206,7 +206,12 @@ function state(
   }
   if (health) {
     if (health.observation === "up") {
-      return { label: "Ready", tone: observedTone(health.tone, "ok") };
+      const healthTone = observedTone(health.tone, "ok");
+      return healthTone === "bad"
+        ? { label: "Unavailable", tone: "bad" }
+        : healthTone === "warn"
+          ? { label: "Ready with warning", tone: "warn" }
+          : { label: "Ready", tone: healthTone };
     }
     if (health.observation === "degraded") {
       return {
@@ -617,8 +622,12 @@ function EnginesContents() {
             Disabled engines are hidden by default.
           </p>
         </div>
-        <label className="flex min-h-11 items-center gap-3 text-sm">
+        <label
+          htmlFor="show-disabled-engines"
+          className="flex min-h-11 items-center gap-3 text-sm"
+        >
           <Switch
+            id="show-disabled-engines"
             checked={showDisabled}
             onCheckedChange={setShowDisabled}
             aria-label="Show disabled"
@@ -735,6 +744,7 @@ function EnginesContents() {
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <Switch
+                        id={`engine-enabled-${service.id}`}
                         checked={service.enabled}
                         aria-label={`Toggle ${service.name}`}
                         disabled={toggle.isPending}

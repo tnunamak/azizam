@@ -86,4 +86,84 @@ describe("provider status contract", () => {
     expect(JSON.stringify(views)).not.toContain("sk-secret-value");
     expect(JSON.stringify(views)).not.toContain("OPENROUTER_API_KEY");
   });
+
+  it("reads the production provider contract and reports monthly spend with its monthly cap", () => {
+    expect(
+      providerViews({
+        providers: [
+          {
+            id: "openrouter",
+            name: "OpenRouter",
+            enabled: true,
+            key_status: { state: "set", api_key_env: "OPENROUTER_API_KEY" },
+            spend: { daily_usd: 1.25, monthly_usd: 4.25, status: "known" },
+            caps: { daily_usd: 5, monthly_usd: 10 },
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        id: "openrouter",
+        name: "OpenRouter",
+        enabled: true,
+        reachable: null,
+        keyState: "set",
+        spendText: "$4.25 of $10.00 this month",
+        tone: "neutral",
+      },
+    ]);
+  });
+
+  it("uses the daily amount with the daily cap when monthly spend is absent", () => {
+    const [provider] = providerViews({
+      providers: [
+        {
+          id: "remote-one",
+          name: "Remote One",
+          spend: { daily_usd: 2.5, monthly_usd: null, status: "known" },
+          caps: { daily_usd: 5, monthly_usd: 100 },
+        },
+      ],
+    });
+
+    expect(provider.spendText).toBe("$2.50 of $5.00 today");
+  });
+
+  it("does not display stale amounts when spend status is unknown", () => {
+    const [provider] = providerViews({
+      providers: [
+        {
+          id: "remote-one",
+          spend: { daily_usd: 2, monthly_usd: 99, status: "unknown" },
+          caps: { daily_usd: 5, monthly_usd: 100 },
+          spend_usd: 88,
+          cap_usd: 90,
+        },
+      ],
+    });
+
+    expect(provider.spendText).toBe("Not measured yet");
+    expect(provider.spendText).not.toContain("99");
+    expect(provider.spendText).not.toContain("88");
+  });
+
+  it("uses a generic display name when the provider name is missing or only its ID", () => {
+    expect(
+      providerViews({
+        providers: [
+          { id: "provider-one", name: "provider-one" },
+          { id: "provider-two" },
+          {
+            id: "provider-three",
+            name: "provider-three",
+            label: "Remote Three",
+          },
+        ],
+      }).map(({ id, name }) => [id, name]),
+    ).toEqual([
+      ["provider-one", "Remote provider"],
+      ["provider-two", "Remote provider"],
+      ["provider-three", "Remote Three"],
+    ]);
+  });
 });

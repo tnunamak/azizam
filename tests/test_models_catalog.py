@@ -467,7 +467,7 @@ class ModelsCatalogBuildTests(unittest.TestCase):
     def test_service_health_probe_uses_declared_endpoint(self) -> None:
         async def run():
             async def get_json(url: str):
-                self.assertEqual(url, "http://svc/v1/health")
+                self.assertEqual(url, "http://svc/health")
                 return {"ok": True}
 
             return await probe_service_health(

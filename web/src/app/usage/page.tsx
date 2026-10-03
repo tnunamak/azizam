@@ -73,7 +73,6 @@ interface UsageModel {
   model: string;
   capability: UsageCapability;
   requests: number;
-  durationMs: number | null;
   costUsd: number | null;
 }
 
@@ -468,24 +467,18 @@ function ModelTable({ rows }: { rows: UsageModel[] }) {
     <Card className="border-0! bg-transparent! shadow-none!">
       <CardHeader>
         <CardTitle>Models</CardTitle>
-        <CardDescription>Requests, duration and measured cost</CardDescription>
+        <CardDescription>Requests and measured cost</CardDescription>
       </CardHeader>
       <CardContent className="overflow-x-auto" tabIndex={0}>
         {rows.length ? (
-          <table className="w-full min-w-[560px] text-sm">
+          <table className="w-full min-w-[420px] text-sm">
             <thead className="text-muted-foreground border-b text-left">
               <tr>
                 <th scope="col" className="py-3 pr-4 font-medium">
-                  Model
-                </th>
-                <th scope="col" className="py-3 pr-4 font-medium">
-                  Capability
+                  Capability and model
                 </th>
                 <th scope="col" className="py-3 pr-4 text-right font-medium">
                   Requests
-                </th>
-                <th scope="col" className="py-3 pr-4 text-right font-medium">
-                  Typical time
                 </th>
                 <th scope="col" className="py-3 text-right font-medium">
                   Cost
@@ -495,17 +488,16 @@ function ModelTable({ rows }: { rows: UsageModel[] }) {
             <tbody className="divide-y">
               {rows.map((row) => (
                 <tr key={`${row.model}-${row.capability}`}>
-                  <td className="max-w-[260px] truncate py-3 pr-4 font-medium">
-                    {row.model}
-                  </td>
-                  <td className="py-3 pr-4">
-                    <CapabilityLabel capability={row.capability} />
+                  <td className="max-w-[260px] py-3 pr-4">
+                    <div className="font-medium">
+                      <CapabilityLabel capability={row.capability} />
+                    </div>
+                    <code className="text-muted-foreground mt-1 block truncate text-xs">
+                      {row.model}
+                    </code>
                   </td>
                   <td className="py-3 pr-4 text-right tabular-nums">
                     {formatNumber(row.requests)}
-                  </td>
-                  <td className="py-3 pr-4 text-right tabular-nums">
-                    {formatDuration(row.durationMs)}
                   </td>
                   <td className="py-3 text-right">
                     <Money amount={row.costUsd} />
@@ -555,7 +547,7 @@ function ReceiptsList({
               <button
                 type="button"
                 key={receipt.requestId}
-                aria-label={`Receipt details for ${receipt.model ?? "unknown model"}`}
+                aria-label={`Receipt details for ${receipt.summary}`}
                 onClick={() => onSelect(receipt)}
                 className="hover:bg-muted/40 focus-visible:outline-ring flex w-full items-center gap-3 py-4 text-left focus-visible:outline-2"
               >
@@ -564,6 +556,11 @@ function ReceiptsList({
                   <p className="truncate text-sm font-medium">
                     {receipt.summary}
                   </p>
+                  {receipt.model && (
+                    <code className="text-muted-foreground mt-1 block truncate text-xs">
+                      {receipt.model}
+                    </code>
+                  )}
                   <p className="text-muted-foreground mt-1 text-xs">
                     {receipt.createdAt ? (
                       <RelativeTime ts={receipt.createdAt} />
@@ -590,6 +587,11 @@ function ReceiptsList({
             icon={FileText}
             title="No receipts yet"
             description="Receipts appear here after a gateway app makes a request."
+            action={
+              <Button asChild variant="outline">
+                <a href="/ui/apps/">Connect an app</a>
+              </Button>
+            }
           />
         )}
       </CardContent>
@@ -819,12 +821,10 @@ function normalizeSummary(raw: unknown): UsageSummary {
     people: array(data.people)
       .map((item) => {
         const person = object(item);
+        const label = string(person.label ?? person.name, "");
         return {
           id: string(person.id, ""),
-          label: string(
-            person.label ?? person.name ?? person.email,
-            "Unknown person",
-          ),
+          label: label && !/^[^\s@]+@[^\s@]+$/.test(label) ? label : "Person",
         };
       })
       .filter((item) => item.id),
@@ -871,7 +871,7 @@ function normalizeReceipt(raw: unknown): UsageReceipt {
     status,
     durationMs,
     costUsd,
-    summary: humanSummary({ capability, model, status, durationMs }),
+    summary: `${capabilityLabels[capability]} request`,
     raw,
   };
 }
@@ -894,9 +894,6 @@ function normalizeModel(raw: unknown): UsageModel {
     model: string(data.model ?? data.name, "Unknown model"),
     capability: normalizeCapability(data.capability ?? data.intent),
     requests: number(data.requests ?? data.count, 0),
-    durationMs: nullableNumber(
-      data.duration_ms ?? data.latency_ms ?? data.typical_ms,
-    ),
     costUsd: nullableNumber(
       data.remote_spend ?? data.cost_usd ?? data.remote_cost_usd,
     ),
@@ -947,23 +944,6 @@ function normalizeCapability(value: unknown): UsageCapability {
   )
     return "chat";
   return "other";
-}
-
-function humanSummary({
-  capability,
-  model,
-  status,
-  durationMs,
-}: {
-  capability: UsageCapability;
-  model: string | null;
-  status: string | null;
-  durationMs: number | null;
-}) {
-  const parts = [capabilityLabels[capability], model ?? "unknown model"];
-  if (status) parts.push(status);
-  if (durationMs != null) parts.push(formatDuration(durationMs));
-  return parts.join(" · ");
 }
 
 function object(value: unknown): Record<string, unknown> {

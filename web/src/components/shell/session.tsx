@@ -3,6 +3,7 @@
 import { createContext, useContext } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
+import { formatPersonName } from "@/lib/format";
 
 export interface Viewer {
   authenticated: boolean;
@@ -31,7 +32,7 @@ export async function fetchViewer(): Promise<Viewer> {
     const role = snapshot.user.role;
     return {
       authenticated: true,
-      name: snapshot.user.name || snapshot.user.email || "Your account",
+      name: formatPersonName(snapshot.user.name, "Your account"),
       email: snapshot.user.email,
       role,
       admin: ["owner", "superadmin", "admin"].includes(role),
@@ -42,7 +43,7 @@ export async function fetchViewer(): Promise<Viewer> {
     const { actor } = await api.session();
     return {
       authenticated: true,
-      name: actor.email || "Gateway owner",
+      name: "Gateway owner",
       email: actor.email,
       role: actor.roles[0] || "member",
       admin: actor.roles.some((role) =>

@@ -124,6 +124,11 @@ export default function InvitePage() {
             <EmptyState
               title="You need an invite link"
               description="Ask the gateway owner for an invitation, then open the complete link they share."
+              action={
+                <Button asChild variant="outline">
+                  <a href="/ui/home/">Return to gateway home</a>
+                </Button>
+              }
             />
           </div>
         ) : inviteIsError ? (
@@ -265,6 +270,11 @@ export default function InvitePage() {
                     <EmptyState
                       title="Sign-in is not configured"
                       description="Ask the gateway owner to enable accounts or an identity provider."
+                      action={
+                        <Button asChild variant="outline">
+                          <a href="/ui/">Return to gateway home</a>
+                        </Button>
+                      }
                     />
                   )}
                 </>

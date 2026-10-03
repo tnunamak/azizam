@@ -294,7 +294,7 @@ test("phone header navigation has 44px touch targets", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/ui/");
   await expect(
-    page.getByRole("heading", { name: "Home", exact: true }),
+    page.getByRole("heading", { name: "Hello, there.", exact: true }),
   ).toBeVisible();
   const header = page.locator("header").first();
   const navigation = page.getByRole("navigation", { name: "Phone navigation" });

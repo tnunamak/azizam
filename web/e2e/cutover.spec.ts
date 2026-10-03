@@ -21,7 +21,7 @@ test("anonymous front door signs in and returns to Home", async ({
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect(page).toHaveURL(/\/ui\/home\/\?connect=phone$/);
     await expect(
-      page.getByRole("heading", { name: "Home", exact: true }),
+      page.getByRole("heading", { level: 1, name: "Hello, there.", exact: true }),
     ).toBeVisible();
     await expect(
       page
@@ -39,7 +39,7 @@ test("owner admin bookmark opens Home with Gateway navigation", async ({
   await page.goto("/admin?from=bookmark");
   await expect(page).toHaveURL(/\/ui\/home\/\?from=bookmark$/);
   await expect(
-    page.getByRole("heading", { name: "Home", exact: true }),
+    page.getByRole("heading", { level: 1, name: "Hello, there.", exact: true }),
   ).toBeVisible();
   const nav = page.getByRole("navigation", { name: "Main navigation" });
   await expect(nav.getByText("Gateway", { exact: true })).toBeVisible();

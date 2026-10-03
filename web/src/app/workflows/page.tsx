@@ -190,22 +190,26 @@ function WorkflowCard({
           </p>
         </div>
       </div>
-      <button
+      <Button
         type="button"
+        size="sm"
+        variant="outline"
         aria-label={`Copy workflow id for ${workflow.title}`}
         onClick={copyId}
-        className="bg-muted hover:bg-muted/80 focus-visible:ring-ring flex min-h-11 min-w-0 items-center justify-between gap-2 rounded-md px-3 py-2 text-left font-mono text-xs transition outline-none focus-visible:ring-[3px]"
       >
-        <span className="truncate">{workflow.id}</span>
         {copied ? (
-          <Check className="size-4 shrink-0" />
+          <>
+            <Check className="size-4 shrink-0" /> ID copied
+          </>
         ) : (
-          <Copy className="size-4 shrink-0" />
+          <>
+            <Copy className="size-4 shrink-0" /> Copy ID
+          </>
         )}
-      </button>
+      </Button>
       {copyError && (
         <p role="alert" className="text-destructive text-sm">
-          Copy failed. Select the workflow id to copy it manually.
+          Copy failed. Try again or open workflow details to copy the ID.
         </p>
       )}
       <span role="status" className="sr-only">
@@ -285,7 +289,7 @@ function DetailSheet({
             <SheetHeader className="border-b pr-12">
               <SheetTitle>{workflow.title}</SheetTitle>
               <SheetDescription>
-                {workflow.description || workflow.id}
+                {workflow.description || "Workflow details and available routes."}
               </SheetDescription>
             </SheetHeader>
             <div className="space-y-6 p-4">

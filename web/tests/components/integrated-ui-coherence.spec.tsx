@@ -210,8 +210,11 @@ describe("integrated UI coherence", () => {
     );
     renderWithQuery(<HomePage />);
     expect(
-      await screen.findByText("Recent creations could not be loaded."),
+      await screen.findByText(
+        "Recent creations could not be loaded. Try again.",
+      ),
     ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
     expect(requested).toContain("/me/api/media?limit=5");
     expect(requested.some((url) => url.includes("scope=everyone"))).toBe(false);
   });
