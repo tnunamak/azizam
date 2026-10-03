@@ -54,7 +54,7 @@ def test_parse_typesafe_systemone_request() -> None:
         ({"questions": {"q": {"type": "maybe", "instructions": "x"}}}, "questions.q.type"),
         ({"questions": {"q": {"type": "choice", "instructions": "", "criteria": {"a": None, "b": None}}}}, "questions.q.instructions"),
         ({"questions": {"q": {"type": "choice", "instructions": "x", "criteria": {"a": None}}}}, "questions.q.criteria"),
-        ({"questions": {"q": {"type": "score", "instructions": "x", "criteria": ["one"]}}}, "questions.q.criteria"),
+        ({"questions": {"q": {"type": "score", "instructions": "x", "criteria": []}}}, "questions.q.criteria"),
     ],
 )
 def test_bad_request_reports_typesafe_422_details(body, param) -> None:

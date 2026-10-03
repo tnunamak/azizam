@@ -15,7 +15,7 @@ The official TypeSafe SDK uses `TYPESAFE_BASE_URL=http://HOST/typesafe` and the
 gateway App key as `TYPESAFE_API_KEY`. `GET /typesafe/v1/models` returns TypeSafe's
 `models` array. Root `/v1/models` retains OpenAI's `object: list, data` contract.
 Authenticated decision models and capabilities are filtered by access-plan
-protocol, intent, model and backend rules. Restricted existing plans need an
+protocol, intent, model, backend and capability-tag rules. Restricted existing plans need an
 explicit `typesafe` protocol and `decision.systemone` intent grant.
 
 `POST /v1/decisions` returns an OpenAI-shaped 501 with code
@@ -69,3 +69,19 @@ state tokens as an upper bound; question and rubric overhead reduce the usable
 state budget within that context. A wider context requires an explicit operator
 configuration change. There is no streaming or packed dependent-row
 mode in the gateway contract.
+
+System One validation failures use TypeSafe's `detail` array with `loc`, `msg`
+and `type`. Nullable instructions and Noul descriptions follow the pinned
+official OpenAPI schema in `tests/fixtures/typesafe_openapi.json`. Score accepts
+one to ten rubric levels locally. OpenAI Decisions retains its own error shape.
+
+The gateway propagates its remaining deadline to the engine. Lock admission,
+prefix preparation and every scoring row share that budget. Client disconnects
+cancel dispatch and close active upstream requests; expired work stops before
+another row starts. Engine deadline failures produce retryable 529 responses
+through the gateway.
+
+Startup rejects occupied child ports and verifies the listener's owned PID and
+model identity. Health becomes unhealthy when the owned llama-server child exits,
+and the wrapper exits with failure so the configured service restart policy can
+recover it. Operator-requested graceful shutdown exits successfully.
