@@ -1,6 +1,44 @@
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
+test("member Status offers sign-in when its account snapshot expires", async ({
+  page,
+}) => {
+  const ownerCalls: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.startsWith("/admin/api/"))
+      ownerCalls.push(request.url());
+  });
+  await page.route("**/me/api/session", (route) =>
+    route.fulfill({
+      json: {
+        authenticated: true,
+        apps: [],
+        user: {
+          id: "expired-member",
+          name: "Member",
+          role: "member",
+          email: null,
+        },
+      },
+    }),
+  );
+  await page.route("**/me/api/home", (route) =>
+    route.fulfill({
+      status: 401,
+      json: { error: { code: "unauthorized", message: "Session expired" } },
+    }),
+  );
+  await page.goto("/ui/status/");
+  await expect(
+    page.getByText("Sign in to see your status", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Sign in", exact: true }),
+  ).toHaveAttribute("href", "/ui/sign-in/?return_to=%2Fui%2Fstatus%2F");
+  expect(ownerCalls).toEqual([]);
+});
+
 for (const theme of ["light", "dark"] as const) {
   for (const width of [1440, 390]) {
     for (const state of ["seeded", "empty", "error"] as const) {

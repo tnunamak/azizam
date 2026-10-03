@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { mkdir, copyFile } from "node:fs/promises";
+import { workflowsPolishCatalog } from "./fixtures/workflows-polish";
 
 const finalScreens =
   process.env.UI_POLISH_SCREEN_DIR ??
@@ -59,7 +60,11 @@ const media = {
 };
 
 async function inspect(page: Page, name: string) {
-  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  await expect(
+    name.startsWith("workflows-detail-")
+      ? page.getByRole("dialog", { name: "Product render" })
+      : page.getByRole("heading", { level: 1 }),
+  ).toBeVisible();
   await page.waitForLoadState("networkidle");
   await expect(page.locator('[aria-busy="true"]:visible')).toHaveCount(0);
   await expect(page.locator('[data-slot="skeleton"]:visible')).toHaveCount(0);
@@ -103,7 +108,11 @@ async function inspect(page: Page, name: string) {
   );
   expect(serious, `${name} accessibility`).toEqual([]);
   const file = `test-results/screens/polish/${name}.png`;
-  await page.screenshot({ path: file, fullPage: true, animations: "disabled" });
+  await page.screenshot({
+    path: file,
+    fullPage: !name.startsWith("workflows-detail-"),
+    animations: "disabled",
+  });
   await copyFile(file, `${finalScreens}/${name}.png`);
 }
 
@@ -138,7 +147,14 @@ for (const theme of ["light", "dark"] as const) {
         theme,
       );
       await page.route("**/me/api/media?**", (route) =>
-        route.fulfill({ json: media }),
+        route.fulfill({
+          json: new URL(route.request().url()).searchParams.has("workflow")
+            ? { assets: [], models: [], next_cursor: null }
+            : media,
+        }),
+      );
+      await page.route("**/me/api/workflows", (route) =>
+        route.fulfill({ json: workflowsPolishCatalog }),
       );
       await page.route("**/test-polish-audio.wav", (route) =>
         route.fulfill({ contentType: "audio/wav", body: wav }),
@@ -170,6 +186,7 @@ for (const theme of ["light", "dark"] as const) {
       for (const name of [
         "home",
         "models",
+        "workflows",
         "try",
         "library",
         "usage",
@@ -182,6 +199,9 @@ for (const theme of ["light", "dark"] as const) {
         await page.goto(`/ui/${name}/`);
         await inspect(page, `${name}-seeded-${theme}-${width}`);
       }
+      await page.goto("/ui/workflows/");
+      await page.getByRole("button", { name: "Details" }).first().click();
+      await inspect(page, `workflows-detail-seeded-${theme}-${width}`);
       await page.goto("/ui/people/");
       for (const [name, tab] of [
         ["people", "People"],

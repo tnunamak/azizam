@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { workflowsPolishCatalog } from "./fixtures/workflows-polish";
 
 const seededCatalog = {
   schema_version: 1,
@@ -130,7 +131,7 @@ const seededRecentJobs = {
 async function setSurface(
   page: Page,
   theme: "light" | "dark",
-  width: 1440 | 390,
+  width: 1440 | 768 | 390,
 ) {
   await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
   await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
@@ -161,7 +162,7 @@ async function routeRecentJobs(
 async function preparePage(
   page: Page,
   theme: "light" | "dark",
-  width: 1440 | 390,
+  width: 1440 | 768 | 390,
   payload: unknown,
   status = 200,
 ) {
@@ -193,6 +194,151 @@ async function assertNoOverflow(page: Page) {
     "Workflows page must fit the viewport",
   ).toBe(true);
 }
+
+test("workflow cards use the available width at phone, tablet and desktop sizes", async ({
+  page,
+}) => {
+  for (const [width, columns] of [
+    [390, 1],
+    [768, 2],
+    [1440, 3],
+  ] as const) {
+    await preparePage(page, "light", width, workflowsPolishCatalog);
+    const cards = page
+      .getByRole("region", { name: "Images workflows" })
+      .locator("article");
+    await expect(cards).toHaveCount(3);
+    const geometry = await cards.evaluateAll((elements) =>
+      elements.map((element) => {
+        const rect = element.getBoundingClientRect();
+        return { x: rect.x, y: rect.y, width: rect.width };
+      }),
+    );
+    const firstRow = geometry.slice(0, columns);
+    expect(new Set(firstRow.map((card) => Math.round(card.x))).size).toBe(
+      columns,
+    );
+    expect(firstRow.every((card) => Math.abs(card.y - firstRow[0].y) < 2)).toBe(
+      true,
+    );
+    if (columns < 3) {
+      expect(geometry[columns].y).toBeGreaterThan(geometry[0].y);
+    }
+    const grid = await cards
+      .first()
+      .locator("xpath=..")
+      .evaluate((element) => ({
+        width: element.getBoundingClientRect().width,
+        gap: Number.parseFloat(getComputedStyle(element).columnGap),
+      }));
+    const expectedWidth = (grid.width - grid.gap * (columns - 1)) / columns;
+    expect(Math.abs(geometry[0].width - expectedWidth)).toBeLessThan(2);
+
+    await page.getByPlaceholder("Search workflows").fill("product-render");
+    await expect(cards).toHaveCount(1);
+    const singletonWidth = await cards
+      .first()
+      .evaluate((card) => card.getBoundingClientRect().width);
+    const contentWidth = await page
+      .getByLabel("Available workflows")
+      .evaluate((grid) => grid.getBoundingClientRect().width);
+    expect(singletonWidth).toBeGreaterThan(contentWidth - 2);
+    await assertNoOverflow(page);
+  }
+});
+
+test("typed input table fits desktop and exposes Range on a narrow sheet", async ({
+  page,
+}) => {
+  for (const width of [1440, 390] as const) {
+    await setSurface(page, "light", width);
+    await routeWorkflows(page, workflowsPolishCatalog);
+    await routeRecentJobs(page, { assets: [], models: [], next_cursor: null });
+    await page.goto("/ui/workflows/");
+    await page.getByRole("button", { name: "Details" }).first().click();
+
+    const sheet = page.getByRole("dialog", { name: "Product render" });
+    await expect(sheet).toBeVisible();
+    const scrollport = sheet.getByLabel("Scrollable typed controls");
+    const columnNames = ["Name", "Type", "Default", "Range", "Applies"];
+
+    if (width === 1440) {
+      const bounds = await scrollport.evaluate((element) => {
+        const viewport = element.getBoundingClientRect();
+        const columns = Array.from(
+          element.querySelectorAll('th[data-slot="table-head"]'),
+        ).map((column) => {
+          const rect = column.getBoundingClientRect();
+          return { left: rect.left, right: rect.right };
+        });
+        return {
+          clientWidth: element.clientWidth,
+          scrollWidth: element.scrollWidth,
+          left: viewport.left,
+          right: viewport.right,
+          columns,
+        };
+      });
+      expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.clientWidth);
+      expect(bounds.columns).toHaveLength(columnNames.length);
+      expect(
+        bounds.columns.every(
+          (column) =>
+            column.left >= bounds.left && column.right <= bounds.right,
+        ),
+      ).toBe(true);
+    } else {
+      const reachable = await scrollport.evaluate((element) => {
+        element.scrollLeft = element.scrollWidth;
+        const viewport = element.getBoundingClientRect();
+        const range = Array.from(
+          element.querySelectorAll('th[data-slot="table-head"]'),
+        ).find((column) => column.textContent?.trim() === "Range");
+        if (!range) return false;
+        const rect = range.getBoundingClientRect();
+        return rect.left >= viewport.left && rect.right <= viewport.right;
+      });
+      expect(reachable).toBe(true);
+      await assertNoOverflow(page);
+    }
+
+    for (const name of columnNames) {
+      await expect(
+        scrollport.getByRole("columnheader", { name, exact: true }),
+      ).toBeVisible();
+    }
+    await expect(
+      scrollport.getByRole("cell", { name: "0", exact: true }),
+    ).toHaveCount(2);
+    expect(
+      await scrollport
+        .getByRole("cell", { name: "guidance_scale", exact: true })
+        .evaluate((cell) => getComputedStyle(cell).whiteSpace),
+    ).toBe("normal");
+    await expect(scrollport.getByRole("cell", { name: "false" })).toBeVisible();
+    await expect(
+      scrollport.getByRole("cell", { name: "0 to 65535" }),
+    ).toBeVisible();
+    await expect(
+      scrollport.getByRole("cell", { name: "0 to 20" }),
+    ).toBeVisible();
+    await expect(scrollport.getByText("studio, flatlay")).toBeVisible();
+    await expect(scrollport.getByText("Not specified")).toHaveCount(0);
+  }
+});
+
+test("missing input details stay quiet while unknown time remains explicit", async ({
+  page,
+}) => {
+  await setSurface(page, "light", 390);
+  await routeWorkflows(page, seededCatalog);
+  await routeRecentJobs(page, { assets: [], models: [], next_cursor: null });
+  await page.goto("/ui/workflows/");
+  await page.getByRole("button", { name: "Details" }).nth(1).click();
+  const sheet = page.getByRole("dialog", { name: "Voiceover" });
+  await expect(sheet.getByText("Not measured yet")).toBeVisible();
+  await expect(sheet.getByText("Not specified")).toHaveCount(0);
+});
 
 async function checkState(page: Page, screenshotName: string) {
   await assertNoOverflow(page);
@@ -372,7 +518,12 @@ test("workflow sheet shows controls, code, links and seeded recent jobs", async 
   await expect(sheet.getByText("A teal desk lamp on walnut")).toBeVisible();
   await expect(sheet.getByText("12.4 s")).toBeVisible();
   await expect(sheet.locator("time").first()).toBeVisible();
-  await expect(sheet.getByRole("region", { name: "Recent jobs" }).getByText("image", { exact: true }).first()).toBeVisible();
+  await expect(
+    sheet
+      .getByRole("region", { name: "Recent jobs" })
+      .getByText("image", { exact: true })
+      .first(),
+  ).toBeVisible();
   await expect(
     sheet.getByText("image.product-render", { exact: true }).first(),
   ).toBeVisible();

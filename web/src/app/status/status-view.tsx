@@ -85,6 +85,16 @@ function MemberStatus() {
           onRetry={() => void refetch()}
           retrying={isFetching}
         />
+      ) : !("status" in data) ? (
+        <EmptyState
+          title="Sign in to see your status"
+          description="Your session has ended. Sign in to view the models available to your account."
+          action={
+            <Button asChild>
+              <Link href="/sign-in/?return_to=%2Fui%2Fstatus%2F">Sign in</Link>
+            </Button>
+          }
+        />
       ) : (
         <>
           <div className="border-b pb-6">

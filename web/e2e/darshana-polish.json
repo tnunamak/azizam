@@ -5,13 +5,14 @@
   "authScript": "./darshana-auth.mjs",
   "crawl": {
     "include": [
-      "^/ui/(home|models|try|library|usage|apps|status|engines|providers|people|activity|settings)/?$"
+      "^/ui/(home|models|workflows|try|library|usage|apps|status|engines|providers|people|activity|settings)/?$"
     ],
     "exclude": ["sign-out", "logout", "delete"],
-    "maxPages": 12,
+    "maxPages": 13,
     "extraRoutes": [
       "/home/",
       "/models/",
+      "/workflows/",
       "/try/",
       "/library/",
       "/usage/",

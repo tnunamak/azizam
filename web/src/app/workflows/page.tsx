@@ -41,6 +41,7 @@ import {
   ErrorState,
   PageHeader,
 } from "@/components/product";
+import { FilterToggle } from "@/components/product/filter-toggle";
 
 import {
   readJson,
@@ -127,11 +128,11 @@ function rangeLabel(input: WorkflowInput) {
   }
   if (input.minimum != null) return `At least ${input.minimum}`;
   if (input.maximum != null) return `At most ${input.maximum}`;
-  return "Not specified";
+  return "";
 }
 
 function valueLabel(value: unknown) {
-  if (value === undefined || value === null) return "Not specified";
+  if (value === undefined || value === null) return "";
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
 }
@@ -278,7 +279,7 @@ function DetailSheet({
 }) {
   return (
     <Sheet open={!!workflow} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full overflow-y-auto sm:max-w-3xl [&_a[data-slot=button]]:min-h-11 [&_button]:min-h-11">
+      <SheetContent className="w-full overflow-y-auto sm:!max-w-5xl [&_a[data-slot=button]]:min-h-11 [&_button]:min-h-11">
         {workflow && (
           <>
             <SheetHeader className="border-b pr-12">
@@ -349,11 +350,11 @@ function DetailSheet({
                   Scroll sideways to see every column.
                 </p>
                 <div
-                  className="mt-3 overflow-x-auto rounded-lg border [&>div]:overflow-visible"
+                  className="mt-3 max-w-full overflow-x-auto rounded-lg border [&>div]:overflow-visible"
                   tabIndex={0}
                   aria-label="Scrollable typed controls"
                 >
-                  <Table>
+                  <Table className="min-w-[40rem] table-fixed">
                     <TableHeader>
                       <TableRow>
                         <TableHead>Name</TableHead>
@@ -366,17 +367,17 @@ function DetailSheet({
                     <TableBody>
                       {workflow.inputs.map((input) => (
                         <TableRow key={input.name}>
-                          <TableCell className="font-mono text-xs">
+                          <TableCell className="font-mono text-xs break-all !whitespace-normal">
                             {input.name}
                             {input.required && (
                               <span className="text-destructive ml-1">*</span>
                             )}
                           </TableCell>
                           <TableCell>{input.type}</TableCell>
-                          <TableCell className="max-w-48 break-words whitespace-normal">
+                          <TableCell className="max-w-48 break-words !whitespace-normal">
                             {valueLabel(input.default)}
                           </TableCell>
-                          <TableCell className="max-w-48 break-words whitespace-normal">
+                          <TableCell className="max-w-48 break-words !whitespace-normal">
                             {rangeLabel(input)}
                           </TableCell>
                           <TableCell>
@@ -524,28 +525,6 @@ function RecentJobs({ workflow }: { workflow: WorkflowRow }) {
   );
 }
 
-function FilterButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <Button
-      type="button"
-      variant={active ? "default" : "outline"}
-      size="sm"
-      onClick={onClick}
-      aria-pressed={active}
-    >
-      {children}
-    </Button>
-  );
-}
-
 export default function WorkflowsPage() {
   const [query, setQuery] = useState("");
   const [capability, setCapability] = useState<WorkflowCapability | "all">(
@@ -627,21 +606,23 @@ export default function WorkflowsPage() {
               <span className="sr-only">Search workflows</span>
             </label>
             <div className="flex flex-wrap gap-2">
-              <FilterButton
-                active={capability === "all"}
+              <FilterToggle
+                pressed={capability === "all"}
+                size="sm"
                 onClick={() => setCapability("all")}
               >
                 <SlidersHorizontal aria-hidden="true" />
                 All
-              </FilterButton>
+              </FilterToggle>
               {availableCapabilities.map((cap) => (
-                <FilterButton
+                <FilterToggle
                   key={cap}
-                  active={capability === cap}
+                  pressed={capability === cap}
+                  size="sm"
                   onClick={() => setCapability(cap)}
                 >
                   {capabilityLabel(cap)}
-                </FilterButton>
+                </FilterToggle>
               ))}
             </div>
           </div>
@@ -663,13 +644,34 @@ export default function WorkflowsPage() {
               }
             />
           ) : (
-            <div className="space-y-8">
+            <div
+              aria-label="Available workflows"
+              className={cn(
+                "grid gap-6",
+                filtered.length > 1 && "sm:grid-cols-2",
+                filtered.length > 2 && "lg:grid-cols-3",
+              )}
+            >
               {grouped.map((group) => (
-                <section key={group.capability} className="space-y-3">
+                <section
+                  key={group.capability}
+                  aria-label={`${capabilityLabel(group.capability)} workflows`}
+                  className={cn(
+                    "min-w-0 space-y-3",
+                    group.rows.length > 1 && "sm:col-span-2",
+                    group.rows.length > 2 && "lg:col-span-3",
+                  )}
+                >
                   <h2 className="text-lg font-semibold">
                     {capabilityLabel(group.capability)}
                   </h2>
-                  <div className="grid gap-4 lg:grid-cols-2">
+                  <div
+                    className={cn(
+                      "grid gap-4",
+                      group.rows.length > 1 && "sm:grid-cols-2",
+                      group.rows.length > 2 && "lg:grid-cols-3",
+                    )}
+                  >
                     {group.rows.map((workflow) => (
                       <WorkflowCard
                         key={workflow.id}

@@ -28,6 +28,12 @@ export const destinations = [
     group: "You",
   },
   {
+    title: "Workflows",
+    href: "/workflows",
+    answer: "What can I create with a named workflow?",
+    group: "You",
+  },
+  {
     title: "Try",
     href: "/try",
     answer: "Does it work, and what does the request look like?",

@@ -6,6 +6,39 @@ test.afterEach(async ({ page }) => {
 
 const ownerPages = ["Engines", "Providers", "People", "Activity", "Settings"];
 
+test("You navigation keeps Workflows between Models and Try", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/ui/");
+  const navigation = page.getByRole("navigation", { name: "Main navigation" });
+  await expect(navigation.getByRole("link")).toHaveText([
+    "Home",
+    "Apps & keys",
+    "Models",
+    "Workflows",
+    "Try",
+    "Library",
+    "Usage",
+    "Status",
+    ...ownerPages,
+  ]);
+  await navigation
+    .getByRole("link", { name: "Workflows", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/ui\/workflows\/?$/);
+  await expect(
+    page.getByRole("heading", { name: "Workflows", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Control+k");
+  await page
+    .getByRole("combobox", { name: "Search your gateway" })
+    .fill("Workflows");
+  await expect(
+    page.getByRole("option", { name: "Workflows", exact: true }),
+  ).toBeVisible();
+});
+
 test("command palette navigates and runs three real actions", async ({
   page,
   context,
@@ -101,6 +134,7 @@ test("phone More and tablet expansion expose every destination", async ({
   for (const name of [
     "Home",
     "Models",
+    "Workflows",
     "Try",
     "Library",
     "Usage",
@@ -183,6 +217,9 @@ test("member shell hides owner controls and makes no owner API calls", async ({
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: "More", exact: true }).click();
   const sheet = page.getByRole("dialog", { name: "Explore your gateway" });
+  await expect(
+    sheet.getByRole("link", { name: "Workflows", exact: true }),
+  ).toBeVisible();
   await expect(
     sheet.getByRole("link", { name: "Try", exact: true }),
   ).toBeVisible();

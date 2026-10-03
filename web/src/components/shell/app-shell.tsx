@@ -15,6 +15,7 @@ import {
   ChevronRight,
   CircleHelp,
   Fish,
+  GitBranch,
   Home,
   KeyRound,
   Layers,
@@ -92,6 +93,7 @@ import { ViewerContext, useViewer, useViewerQuery } from "./session";
 const icons: Record<string, LucideIcon> = {
   Home,
   Models: Box,
+  Workflows: GitBranch,
   Try: Play,
   Library: Layers,
   Usage: Activity,
