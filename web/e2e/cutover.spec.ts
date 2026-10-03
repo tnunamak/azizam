@@ -121,11 +121,10 @@ test("anonymous legacy engine bookmark signs in and keeps its selection", async 
   const page = await context.newPage();
   try {
     await page.goto("/admin/services?service=capture-engine");
-    await expect(page).toHaveURL(/\/ui\/engines\/\?service=capture-engine$/);
-    await page
-      .getByRole("button", { name: "Account menu", exact: true })
-      .click();
-    await page.getByRole("menuitem", { name: "Sign in", exact: true }).click();
+    await expect(page).toHaveURL(/\/ui\/sign-in\//);
+    expect(new URL(page.url()).searchParams.get("return_to")).toBe(
+      "/ui/engines/?service=capture-engine",
+    );
     await page.getByLabel("Email", { exact: true }).fill("owner@example.test");
     await page
       .getByLabel("Password", { exact: true })
