@@ -584,6 +584,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             return httpx.Response(200, json={"id": "dec_1", "usage": {"input_tokens": 1, "output_tokens": 0, "cost": "0.000001"}})
 
         admin_db = Path(self.tmp.name) / "admin.db"
+        admin_store.init_db(path=admin_db)
         with patch.object(admin_store, "DB_PATH", admin_db):
             execution.providers.secret_store.put_provider_secret("provider:openai:api_key", "oa-stored-key", db_path=admin_db)
         registry = _registry(
@@ -603,7 +604,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 _auth(), _profile(max_request=None, budget=None, monthly=None), registry, self.ledger, admin_db_path=admin_db,
             )
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 200, await _response_body(response))
         self.assertEqual(seen["authorization"], "Bearer oa-stored-key")
 
     async def test_openai_decisions_ambiguous_provider_selection_fails_closed(self) -> None:
