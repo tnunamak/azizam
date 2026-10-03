@@ -19,8 +19,6 @@ STATIC_NA = {
     "gallery",
     "docs",
     "redoc",
-    "admin-profiles-p1v-fixture",
-    "admin-status-p1v-fixture",
 }
 
 THEMES = ("light", "dark")
@@ -38,24 +36,6 @@ ROUTE_COVERAGE = {
         "states": STATES,
         "note": "Activity has separate Audit and Requests tab matrices.",
     },
-    "/admin": {"groups": ("admin-overview",), "states": STATES, "note": "Retained legacy admin overview."},
-    "/admin/apps": {"groups": ("admin-apps",), "states": STATES, "note": "Retained legacy Apps surface."},
-    "/admin/audit": {"groups": ("admin-audit",), "states": STATES, "note": "Retained legacy Audit surface."},
-    "/admin/profiles": {"groups": ("admin-profiles",), "states": STATES, "note": "Retained legacy Profiles surface."},
-    "/admin/profiles/p1v-fixture": {
-        "groups": ("admin-profiles-p1v-fixture",),
-        "states": ("n-a",),
-        "note": "Static fixture route; data state is N/A.",
-    },
-    "/admin/services": {"groups": ("admin-services",), "states": STATES, "note": "Retained legacy Services surface."},
-    "/admin/settings": {"groups": ("admin-settings",), "states": STATES, "note": "Retained legacy Settings surface."},
-    "/admin/status": {"groups": ("admin-status",), "states": STATES, "note": "Retained legacy Status surface."},
-    "/admin/status/p1v-fixture": {
-        "groups": ("admin-status-p1v-fixture",),
-        "states": ("n-a",),
-        "note": "Static fixture route; data state is N/A.",
-    },
-    "/admin/users": {"groups": ("admin-users",), "states": STATES, "note": "Retained legacy Users surface."},
     "/apps": {"groups": ("apps",), "states": STATES, "note": "Canonical member Apps & keys route."},
     "/design": {"groups": ("design",), "states": ("n-a",), "note": "Static design-system route; data state is N/A."},
     "/engines": {"groups": ("status-engines-services",), "states": STATES, "note": "Canonical Engines matrix."},
@@ -85,6 +65,24 @@ ROUTE_COVERAGE = {
     "/docs": {"groups": ("docs",), "states": ("n-a",), "note": "Static API reference; data state is N/A."},
     "/redoc": {"groups": ("redoc",), "states": ("n-a",), "note": "Static API reference; data state is N/A."},
 }
+
+
+# Browser compatibility entries reuse the destination's capture matrix.
+for alias, canonical in {
+    "/admin": "/home",
+    "/admin/overview": "/home",
+    "/admin/apps": "/apps",
+    "/admin/audit": "/activity",
+    "/admin/profiles": "/people",
+    "/admin/services": "/engines",
+    "/admin/settings": "/settings",
+    "/admin/status": "/status",
+    "/admin/users": "/people",
+}.items():
+    ROUTE_COVERAGE[alias] = {
+        **ROUTE_COVERAGE[canonical],
+        "note": f"Compatibility redirect; covered by {canonical} and redirect journey tests.",
+    }
 
 
 def classify(path: Path) -> tuple[str, str]:
@@ -117,6 +115,9 @@ def main() -> int:
         if src.stat().st_mtime < args.since:
             continue
         rel = src.relative_to(SOURCE)
+        group, _ = classify(rel)
+        if group.startswith("admin-"):
+            continue
         dest = dest_root / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dest)
@@ -128,6 +129,9 @@ def main() -> int:
         if src.stat().st_mtime < args.since:
             continue
         rel = src.relative_to(SOURCE)
+        group, _ = classify(rel)
+        if group.startswith("admin-"):
+            continue
         dest = dest_root / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dest)
@@ -168,9 +172,8 @@ def main() -> int:
         "",
         "- Seeded/empty/error screenshots use the route's own e2e fixture when present.",
         "- Static routes `design`, `gallery`, `docs`, and `redoc` have data state N/A.",
-        "- Admin compatibility and fixture routes are listed separately; fixture routes have data state N/A.",
+        "- Admin compatibility routes reuse canonical page captures; removed fixtures are excluded.",
         "- `/` is covered by the Home matrix. `/services` is covered by the Engines/Services matrix.",
-        "- Legacy admin captures retain existing contrast defects. Their adjacent `.a11y.json` files record the findings; they do not represent a passed accessibility check.",
         "",
         "## Exported Route Coverage",
         "",
@@ -194,7 +197,7 @@ def main() -> int:
             lines.append(f"- [{rel}]({rel})")
         lines.append("")
 
-    lines.extend(["## Legacy accessibility evidence", ""])
+    lines.extend(["## Accessibility diagnostics", ""])
     for rel in diagnostics:
         lines.append(f"- [{rel}]({rel})")
 
