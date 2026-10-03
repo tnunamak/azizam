@@ -1,0 +1,416 @@
+import { expect, test, type Page } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
+
+const seededCatalog = {
+  schema_version: 1,
+  workflows: [
+    {
+      id: "image.product-render",
+      capability: "image",
+      title: "Product render",
+      description:
+        "Create a clean product render with the local image workflow.",
+      inputs: [
+        {
+          name: "prompt",
+          type: "string",
+          required: true,
+          accepted: true,
+          description: "What to render.",
+        },
+        {
+          name: "width",
+          type: "integer",
+          default: 1024,
+          minimum: 256,
+          maximum: 2048,
+          accepted: true,
+        },
+        {
+          name: "style_preset",
+          type: "string",
+          default: "studio",
+          enum: ["studio", "flatlay"],
+          accepted: false,
+        },
+      ],
+      engine_binding: "image-local",
+      availability: {
+        status: "configured",
+        reason:
+          "Configured for this access plan; live availability is not measured yet.",
+        available: true,
+        measured: false,
+      },
+      typical_seconds: 12,
+      aliases: ["image", "product-shot"],
+      examples: {
+        curl: 'curl $AI_GATEWAY_BASE/v1/images/generations -H "Authorization: Bearer $AI_GATEWAY_API_KEY" -H "Content-Type: application/json" -d \'{"workflow":"image.product-render","prompt":"A teal desk lamp"}\'',
+        python:
+          'from openai import OpenAI\nclient = OpenAI()\nclient.images.generate(model="image", prompt="A teal desk lamp", extra_body={"workflow":"image.product-render"})',
+        javascript:
+          'import OpenAI from "openai";\nconst client = new OpenAI();\nawait client.images.generate({ model: "image", prompt: "A teal desk lamp", workflow: "image.product-render" });',
+      },
+      native_route: "/v1/workflows/image.product-render/run",
+      discovery_url: "/gateway/v1/workflows/image.product-render",
+      try_url: "/ui/try/?workflow=image.product-render",
+    },
+    {
+      id: "audio.voiceover",
+      capability: "audio",
+      title: "Voiceover",
+      description: "Generate spoken audio from a short script.",
+      inputs: [
+        {
+          name: "text",
+          type: "string",
+          required: true,
+          accepted: true,
+        },
+      ],
+      engine_binding: null,
+      availability: {
+        status: "not_configured",
+        reason: "No speech service is enabled.",
+        available: false,
+        measured: false,
+      },
+      typical_seconds: null,
+      aliases: ["speech"],
+      examples: {
+        curl: 'curl $AI_GATEWAY_BASE/v1/audio/speech -H "Authorization: Bearer $AI_GATEWAY_API_KEY" -d \'{"workflow":"audio.voiceover","input":"Hello"}\'',
+        python:
+          'from openai import OpenAI\nclient = OpenAI()\nclient.audio.speech.create(model="voice", input="Hello", voice="alloy")',
+        javascript:
+          'import OpenAI from "openai";\nconst client = new OpenAI();\nawait client.audio.speech.create({ model: "voice", input: "Hello", voice: "alloy" });',
+      },
+      native_route: null,
+      discovery_url: "/gateway/v1/workflows/audio.voiceover",
+      try_url: "/ui/try/?workflow=audio.voiceover",
+    },
+  ],
+};
+
+const emptyCatalog = {
+  schema_version: 1,
+  workflows: [],
+};
+
+const seededRecentJobs = {
+  assets: [
+    {
+      asset_id: "asset_image_1",
+      job_id: "job_product_1",
+      kind: "image",
+      prompt: "A teal desk lamp on walnut",
+      model: "image",
+      workflow: "image.product-render",
+      created_at: 1_760_000_000,
+      generation_ms: 12_400,
+      download_url: "/me/api/media/asset_image_1/download",
+      receipt_id: "req_product_1",
+    },
+    {
+      asset_id: "asset_image_2",
+      job_id: "job_product_2",
+      kind: "image",
+      prompt: "A quiet studio product render",
+      model: "image",
+      workflow: "image.product-render",
+      created_at: 1_760_010_000,
+      generation_ms: 10_900,
+      download_url: "/me/api/media/asset_image_2/download",
+      receipt_id: "req_product_2",
+    },
+  ],
+  models: ["image"],
+  next_cursor: null,
+};
+
+async function setSurface(
+  page: Page,
+  theme: "light" | "dark",
+  width: 1440 | 390,
+) {
+  await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+  await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+  await page.addInitScript(
+    (value) => localStorage.setItem("theme", value),
+    theme,
+  );
+}
+
+async function routeWorkflows(page: Page, payload: unknown, status = 200) {
+  await page.route("**/me/api/workflows", (route) =>
+    route.fulfill({ status, json: payload }),
+  );
+}
+
+async function routeRecentJobs(
+  page: Page,
+  payload: unknown,
+  status = 200,
+  requests: string[] = [],
+) {
+  await page.route("**/me/api/media?**", (route) => {
+    requests.push(route.request().url());
+    return route.fulfill({ status, json: payload });
+  });
+}
+
+async function preparePage(
+  page: Page,
+  theme: "light" | "dark",
+  width: 1440 | 390,
+  payload: unknown,
+  status = 200,
+) {
+  await setSurface(page, theme, width);
+  await routeWorkflows(page, payload, status);
+  await routeRecentJobs(page, { assets: [], models: [], next_cursor: null });
+  const response = await page.goto("/ui/workflows/");
+  expect(response?.status()).toBeLessThan(500);
+  await expect(
+    page.getByRole("heading", { name: "Workflows", exact: true }),
+  ).toBeVisible();
+}
+
+async function assertNoSeriousAxe(page: Page) {
+  const a11y = await new AxeBuilder({ page }).analyze();
+  const violations = a11y.violations
+    .filter((violation) =>
+      ["serious", "critical"].includes(violation.impact ?? ""),
+    )
+    .map((violation) => violation.id);
+  expect(violations).toEqual([]);
+}
+
+async function assertNoOverflow(page: Page) {
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+    "Workflows page must fit the viewport",
+  ).toBe(true);
+}
+
+async function checkState(page: Page, screenshotName: string) {
+  await assertNoOverflow(page);
+  await assertNoSeriousAxe(page);
+  await page.screenshot({
+    path: `test-results/screens/${screenshotName}`,
+    fullPage: !screenshotName.includes("sheet"),
+  });
+}
+
+async function openSeededSheet(
+  page: Page,
+  theme: "light" | "dark",
+  width: 1440 | 390,
+  requests: string[] = [],
+) {
+  await setSurface(page, theme, width);
+  await routeWorkflows(page, seededCatalog);
+  await routeRecentJobs(page, seededRecentJobs, 200, requests);
+  await page.goto("/ui/workflows/");
+  await page.getByRole("button", { name: "Details" }).first().click();
+  const sheet = page.getByRole("dialog", { name: "Product render" });
+  await expect(sheet).toBeVisible();
+  return sheet;
+}
+
+for (const theme of ["light", "dark"] as const) {
+  for (const width of [1440, 390] as const) {
+    test(`workflows seeded catalog: ${theme} at ${width}px`, async ({
+      page,
+    }) => {
+      await preparePage(page, theme, width, seededCatalog);
+
+      await expect(
+        page.getByRole("heading", { name: "Images", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("heading", { name: "Audio", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("heading", { name: "Product render", exact: true }),
+      ).toBeVisible();
+      await expect(page.getByText("product-shot")).toBeVisible();
+      await expect(
+        page.getByText("No speech service is enabled."),
+      ).toBeVisible();
+      await expect(page.getByRole("button", { name: "Details" })).toHaveCount(
+        2,
+      );
+
+      await checkState(page, `workflows-seeded-${theme}-${width}.png`);
+    });
+
+    test(`workflows empty catalog: ${theme} at ${width}px`, async ({
+      page,
+    }) => {
+      await preparePage(page, theme, width, emptyCatalog);
+      await expect(page.getByText("No workflows available")).toBeVisible();
+      await checkState(page, `workflows-empty-${theme}-${width}.png`);
+    });
+
+    test(`workflows error catalog: ${theme} at ${width}px`, async ({
+      page,
+    }) => {
+      await preparePage(
+        page,
+        theme,
+        width,
+        { error: { message: "Unavailable for this test" } },
+        503,
+      );
+      await expect(
+        page.getByText("Workflows catalog could not be loaded. Try again."),
+      ).toBeVisible();
+      await checkState(page, `workflows-error-${theme}-${width}.png`);
+    });
+  }
+}
+
+test("workflows loading state stays accessible while the catalog is pending", async ({
+  page,
+}) => {
+  await setSurface(page, "light", 390);
+  let release: () => void = () => {};
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/me/api/workflows", async (route) => {
+    await pending;
+    await route.fulfill({ json: seededCatalog });
+  });
+  await routeRecentJobs(page, { assets: [], models: [], next_cursor: null });
+  await page.goto("/ui/workflows/", { waitUntil: "domcontentloaded" });
+
+  await expect(
+    page.getByRole("status", { name: "Loading workflows" }),
+  ).toBeVisible();
+  await assertNoOverflow(page);
+  await assertNoSeriousAxe(page);
+  release();
+  await expect(
+    page.getByRole("heading", { name: "Product render", exact: true }),
+  ).toBeVisible();
+});
+
+test("workflows search filters aliases and can be cleared", async ({
+  page,
+}) => {
+  await preparePage(page, "light", 1440, seededCatalog);
+  const search = page.getByPlaceholder("Search workflows");
+
+  await search.fill("product-shot");
+  await expect(
+    page.getByRole("heading", { name: "Product render", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Voiceover", exact: true }),
+  ).toHaveCount(0);
+
+  await search.fill("does-not-exist");
+  await expect(page.getByText("No matching workflows")).toBeVisible();
+  await search.clear();
+  await expect(
+    page.getByRole("heading", { name: "Product render", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Voiceover", exact: true }),
+  ).toBeVisible();
+});
+
+test("workflow sheet shows controls, code, links and seeded recent jobs", async ({
+  context,
+  page,
+}) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const mediaRequests: string[] = [];
+  const sheet = await openSeededSheet(page, "light", 1440, mediaRequests);
+  await expect(sheet.getByRole("columnheader", { name: "Name" })).toBeVisible();
+  await expect(sheet.getByRole("columnheader", { name: "Type" })).toBeVisible();
+  await expect(
+    sheet.getByRole("columnheader", { name: "Default" }),
+  ).toBeVisible();
+  await expect(
+    sheet.getByRole("columnheader", { name: "Range" }),
+  ).toBeVisible();
+  await expect(
+    sheet.getByRole("columnheader", { name: "Applies" }),
+  ).toBeVisible();
+  await expect(sheet.getByRole("cell", { name: "prompt" })).toBeVisible();
+  await expect(
+    sheet.getByRole("cell", { name: /256\s*(?:-|to)\s*2048/ }),
+  ).toBeVisible();
+  await expect(sheet.getByRole("cell", { name: "Ignored" })).toBeVisible();
+
+  await expect(sheet.getByText(/curl \$AI_GATEWAY_BASE/)).toBeVisible();
+  await sheet.getByRole("tab", { name: "Python" }).click();
+  await expect(sheet.getByText(/from openai import OpenAI/)).toBeVisible();
+  await sheet.getByRole("tab", { name: "JavaScript" }).click();
+  await expect(sheet.getByText(/import OpenAI from "openai"/)).toBeVisible();
+
+  await sheet.getByRole("button", { name: "Copy JavaScript code" }).click();
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toContain("image.product-render");
+
+  await expect(sheet.getByRole("link", { name: "Run in Try" })).toHaveAttribute(
+    "href",
+    "/ui/try/?workflow=image.product-render",
+  );
+  await expect(
+    sheet.getByRole("link", { name: "Machine-readable workflow" }),
+  ).toHaveAttribute("href", "/gateway/v1/workflows/image.product-render");
+
+  expect(mediaRequests.at(-1)).toContain("workflow=image.product-render");
+  expect(mediaRequests.at(-1)).toContain("limit=5");
+  await expect(sheet.getByText("Recent jobs")).toBeVisible();
+  await expect(sheet.getByText("A teal desk lamp on walnut")).toBeVisible();
+  await expect(sheet.getByText("12.4 s")).toBeVisible();
+  await expect(sheet.locator("time").first()).toBeVisible();
+  await expect(sheet.getByText("image", { exact: true })).toBeVisible();
+  await expect(
+    sheet.getByText("image.product-render", { exact: true }).first(),
+  ).toBeVisible();
+  await checkState(page, "workflows-sheet-seeded-light-1440.png");
+});
+
+for (const theme of ["light", "dark"] as const) {
+  for (const width of [1440, 390] as const) {
+    test(`workflow seeded sheet screenshot: ${theme} at ${width}px`, async ({
+      page,
+    }) => {
+      await openSeededSheet(page, theme, width);
+      await expect(page.getByText("A teal desk lamp on walnut")).toBeVisible();
+      await checkState(page, `workflows-sheet-seeded-${theme}-${width}.png`);
+    });
+  }
+}
+
+test("workflow sheet recent jobs handles empty records", async ({ page }) => {
+  await setSurface(page, "dark", 390);
+  await routeWorkflows(page, seededCatalog);
+  await routeRecentJobs(page, { assets: [], models: [], next_cursor: null });
+  await page.goto("/ui/workflows/");
+  await page.getByRole("button", { name: "Details" }).nth(1).click();
+  await expect(page.getByRole("dialog")).toContainText(
+    /No recent (jobs|records)/,
+  );
+  await checkState(page, "workflows-sheet-empty-dark-390.png");
+});
+
+test("workflow sheet recent jobs handles media errors", async ({ page }) => {
+  await setSurface(page, "dark", 390);
+  await routeWorkflows(page, seededCatalog);
+  await routeRecentJobs(page, { error: { message: "Unavailable" } }, 503);
+  await page.goto("/ui/workflows/");
+  await page.getByRole("button", { name: "Details" }).first().click();
+  await expect(page.getByRole("dialog")).toContainText(
+    /Recent jobs could not be loaded|Workflow data could not be loaded/,
+  );
+  await checkState(page, "workflows-sheet-error-dark-390.png");
+});

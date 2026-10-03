@@ -157,6 +157,10 @@ from gateway.models_catalog import (
     registered_model_capabilities,
     probe_service_health,
 )
+from gateway.workflows_catalog import (
+    build_workflows_catalog,
+    create_workflows_catalog_router,
+)
 from gateway import engine_quarantine
 from gateway.user_render import render_user_portal
 from gateway.user_runtime import (
@@ -14529,6 +14533,73 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
 
 
 app.include_router(create_models_catalog_router(_user_models_catalog_payload))
+
+
+async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
+    session = _oidc_session_from_request(request)
+    if session is None:
+        raise UserPortalError(
+            "not_authenticated",
+            "Sign in to view the workflows catalog",
+            status_code=401,
+        )
+    default_profile_id = _default_profile_id_for_session(session)
+    user_snapshot = build_user_portal_snapshot(
+        session,
+        default_profile_id=default_profile_id,
+        path=ADMIN_STORE.path,
+    )
+    if not user_snapshot.get("authenticated"):
+        raise UserPortalError(
+            "not_authenticated",
+            "Sign in to view the workflows catalog",
+            status_code=401,
+        )
+    auth_contexts = auth_contexts_from_user_snapshot(
+        user_snapshot,
+        default_profile_id=default_profile_id,
+        profile_loader=lambda profile_id: DEFAULT_PROFILE if profile_id == "default-local" else ADMIN_STORE.profile_for_id(profile_id),
+        context_for_profile=_catalog_auth_context_for_profile,
+    )
+    capability_sets = [
+        _gateway_capabilities_for_auth_context(auth_context)
+        for auth_context in auth_contexts
+    ]
+    capabilities = [
+        capability
+        for capability_set in capability_sets
+        for capability in capability_set
+    ]
+    activity = build_user_activity_snapshot(
+        session,
+        limit=50,
+        path=ADMIN_STORE.path,
+        receipts_path=receipt_store.DB_PATH,
+    )
+    scope = {
+        "app_ids": [
+            str(app["id"])
+            for app in user_snapshot.get("apps") or []
+            if isinstance(app, Mapping) and app.get("id")
+        ]
+    }
+    jobs = media_jobs.recent(
+        limit=50,
+        audience="client",
+        path=media_jobs.DB_PATH,
+        **scope,
+    )
+    return build_workflows_catalog(
+        records=GATEWAY_WORKFLOW_REGISTRY.records(),
+        capabilities=capabilities,
+        aliases=_gateway_aliases_provider(),
+        recent_receipts=activity.get("receipts") or (),
+        recent_jobs=jobs,
+        base_url=_public_base_url(request),
+    )
+
+
+app.include_router(create_workflows_catalog_router(_user_workflows_catalog_payload))
 
 
 @app.get("/me/api/activity", include_in_schema=False)

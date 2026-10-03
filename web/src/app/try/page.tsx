@@ -8,6 +8,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   AudioLines,
   MessageSquare,
@@ -43,15 +44,63 @@ import {
   SecretReveal,
 } from "@/components/product";
 
-type TryTab = "chat" | "image" | "speech" | "transcribe" | "decide" | "embed";
+type TryTab =
+  | "chat"
+  | "image"
+  | "speech"
+  | "transcribe"
+  | "decide"
+  | "embed"
+  | "workflow";
 type TryKey = { secret: string; appName: string };
-type RequestInfo = { path: string; body: unknown; multipart?: boolean };
+type RequestInfo = {
+  path: string;
+  body: unknown;
+  multipart?: boolean;
+  form?: Record<string, unknown>;
+  files?: WorkflowExampleFile[];
+};
+type WorkflowExampleFile = {
+  field: string;
+  name?: string;
+  type?: string;
+  required?: boolean;
+};
 type CatalogOption = {
   id: string;
   label: string;
   capability: TryTab;
   price: string;
   locality: string;
+  workflow?: WorkflowOption;
+};
+type WorkflowInput = {
+  name: string;
+  type: string;
+  required?: boolean;
+  default?: unknown;
+  enum?: unknown[];
+  minimum?: number;
+  accepted?: boolean;
+  ignored?: boolean;
+};
+type WorkflowOption = {
+  id: string;
+  short_id?: string;
+  title: string;
+  description?: string;
+  inputs: WorkflowInput[];
+  engine_binding?: string;
+  native_route?: { method?: string; path?: string; content_type?: string } | null;
+  examples?: Array<{ body?: Record<string, unknown> }>;
+  example_request?: {
+    method?: string;
+    path?: string;
+    content_type?: string;
+    body?: Record<string, unknown>;
+    form?: Record<string, unknown>;
+    files?: WorkflowExampleFile[];
+  };
 };
 type Result = {
   title: string;
@@ -78,6 +127,10 @@ const DEFAULTS: Record<TryTab, { model: string; prompt: string }> = {
   embed: {
     model: "embeddings",
     prompt: "Gateway receipts are useful evidence.",
+  },
+  workflow: {
+    model: "",
+    prompt: "{}",
   },
 };
 
@@ -123,6 +176,12 @@ const TAB_ITEMS: Array<{
     icon: Layers,
     help: "Create a vector and inspect its shape.",
   },
+  {
+    value: "workflow",
+    label: "Workflow",
+    icon: GitBranch,
+    help: "Run a manifest workflow by id.",
+  },
 ];
 
 const INTENT_TABS: Record<string, TryTab> = {
@@ -143,6 +202,7 @@ function baseUrl() {
 }
 
 function publicPath(path: string) {
+  if (path.startsWith("/gateway/")) return path;
   return path.startsWith("/v1/") ? path : `/openai/v1${path}`;
 }
 
@@ -365,6 +425,56 @@ function groupCatalog(payload: unknown) {
   return grouped;
 }
 
+function groupWorkflows(payload: unknown): CatalogOption[] {
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    !Array.isArray((payload as { workflows?: unknown }).workflows)
+  ) {
+    return [];
+  }
+  const options: CatalogOption[] = [];
+  for (const value of (payload as { workflows: unknown[] }).workflows) {
+      if (typeof value !== "object" || value === null) continue;
+      const record = value as Record<string, unknown>;
+      const workflow: WorkflowOption = {
+        id: String(record.id ?? ""),
+        short_id: stringValue(record.short_id) ?? undefined,
+        title:
+          stringValue(record.title) ??
+          stringValue(record.display_name) ??
+          String(record.id ?? ""),
+        description: stringValue(record.description) ?? undefined,
+        inputs: Array.isArray(record.inputs)
+          ? (record.inputs as WorkflowInput[])
+          : [],
+        engine_binding: stringValue(record.engine_binding) ?? undefined,
+        native_route:
+          typeof record.native_route === "object" && record.native_route !== null
+            ? (record.native_route as WorkflowOption["native_route"])
+            : null,
+        examples: Array.isArray(record.examples)
+          ? (record.examples as WorkflowOption["examples"])
+          : undefined,
+        example_request:
+          typeof record.example_request === "object" &&
+          record.example_request !== null
+            ? (record.example_request as WorkflowOption["example_request"])
+            : undefined,
+      };
+      if (!workflow.id) continue;
+      options.push({
+        id: workflow.id,
+        label: workflow.title || workflow.id,
+        capability: "workflow" as const,
+        price: "Cost not measured yet",
+        locality: "Workflow manifest",
+        workflow,
+      });
+  }
+  return options;
+}
+
 function stringValue(value: unknown) {
   return typeof value === "string" && value.trim() ? value : null;
 }
@@ -417,7 +527,24 @@ function localityLabel(record: Record<string, unknown>) {
   return "Locality not measured yet";
 }
 
+function workflowExampleBody(workflow: WorkflowOption) {
+  return (
+    workflow.example_request?.form ??
+    workflow.example_request?.body ??
+    workflow.examples?.find((example) => example.body)?.body ??
+    {}
+  );
+}
+
+function requestIsMultipart(workflow: WorkflowOption) {
+  return workflow.example_request?.content_type?.includes(
+    "multipart/form-data",
+  );
+}
+
 export default function TryPage() {
+  const searchParams = useSearchParams();
+  const requestedWorkflow = searchParams.get("workflow");
   const [key, setKey] = useState<TryKey | null>(null);
   const [keyBusy, setKeyBusy] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
@@ -441,6 +568,9 @@ export default function TryPage() {
   );
   const [options, setOptions] = useState("Run chat\nRun embeddings");
   const [file, setFile] = useState<File | null>(null);
+  const [workflowFiles, setWorkflowFiles] = useState<Record<string, File | null>>(
+    {},
+  );
   const [recording, setRecording] = useState(false);
   const recorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
@@ -466,6 +596,12 @@ export default function TryPage() {
         .slice(0, 3),
     [options],
   );
+  const selectedWorkflow = useMemo(
+    () =>
+      catalog.workflow?.find((option) => option.id === model.workflow)
+        ?.workflow,
+    [catalog.workflow, model.workflow],
+  );
   useEffect(() => {
     mounted.current = true;
     const urls = objectUrls.current;
@@ -476,6 +612,24 @@ export default function TryPage() {
       urls.forEach((url) => URL.revokeObjectURL(url));
     };
   }, []);
+
+  useEffect(() => {
+    if (requestedWorkflow) {
+      setActiveTab("workflow");
+      setModel((current) => ({ ...current, workflow: requestedWorkflow }));
+    }
+  }, [requestedWorkflow]);
+
+  useEffect(() => {
+    if (!selectedWorkflow) return;
+    const body = workflowExampleBody(selectedWorkflow);
+    const inputs = body && typeof body === "object" ? { ...body } : {};
+    setPrompt((current) => ({
+      ...current,
+      workflow: JSON.stringify(inputs, null, 2),
+    }));
+    setWorkflowFiles({});
+  }, [selectedWorkflow]);
 
   useEffect(() => {
     activeTabRef.current = activeTab;
@@ -552,14 +706,27 @@ export default function TryPage() {
       const catalogResponse = await fetch("/me/api/models/catalog", {
         credentials: "same-origin",
       });
+      const workflowsResponse = await fetch("/me/api/workflows", {
+        credentials: "same-origin",
+      });
+      const workflowOptions = workflowsResponse.ok
+        ? groupWorkflows(await workflowsResponse.json())
+        : [];
       if (catalogResponse.ok) {
         const grouped = groupCatalog(await catalogResponse.json());
+        if (workflowOptions.length) grouped.workflow = workflowOptions;
         setCatalog(grouped);
         setModel((current) => {
           const next = { ...current };
           for (const tab of TAB_ITEMS) {
             const options = grouped[tab.value] ?? [];
             if (options.length) next[tab.value] = options[0].id;
+          }
+          if (
+            requestedWorkflow &&
+            workflowOptions.some((option) => option.id === requestedWorkflow)
+          ) {
+            next.workflow = requestedWorkflow;
           }
           return next;
         });
@@ -641,6 +808,43 @@ export default function TryPage() {
         },
       };
     }
+    if (tab === "workflow") {
+      const route = selectedWorkflow?.example_request?.path;
+      if (!route) {
+        throw new Error(
+          "This workflow does not include a runnable example request yet.",
+        );
+      }
+      const multipart = requestIsMultipart(selectedWorkflow);
+      let body: Record<string, unknown> = selectedWorkflow.example_request?.body
+        ? { ...selectedWorkflow.example_request.body }
+        : {};
+      let formBody: Record<string, unknown> = selectedWorkflow.example_request?.form
+        ? { ...selectedWorkflow.example_request.form }
+        : {};
+      try {
+        const parsed = JSON.parse(prompt.workflow || "{}");
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          if (multipart) {
+            formBody = { ...formBody, ...(parsed as Record<string, unknown>) };
+          } else {
+            body = { ...body, ...(parsed as Record<string, unknown>) };
+          }
+        }
+      } catch {
+        throw new Error("Workflow inputs must be a JSON object.");
+      }
+      if (!multipart && body.model === undefined) {
+        body.model = selectedWorkflow.short_id ?? selectedWorkflow.id;
+      }
+      return {
+        path: route,
+        body,
+        form: formBody,
+        files: selectedWorkflow.example_request?.files ?? [],
+        multipart,
+      };
+    }
     return {
       path: "/embeddings",
       body: { model: model.embed, input: prompt.embed },
@@ -652,14 +856,39 @@ export default function TryPage() {
     if (!key?.secret) return;
     setRunning(tab);
     setErrors((current) => ({ ...current, [tab]: undefined }));
-    const request = buildRequest(tab);
     try {
+      const request = buildRequest(tab);
       let result: Awaited<ReturnType<typeof publicRequest>>;
       if (request.multipart) {
-        if (!file) throw new Error("Choose an audio file or record one first.");
         const form = new FormData();
-        form.set("model", model.transcribe);
-        form.set("file", file);
+        if (tab === "workflow") {
+          for (const fileSpec of request.files ?? []) {
+            const field = fileSpec.field;
+            const selectedFile = workflowFiles[field];
+            if (!selectedFile && fileSpec.required !== false) {
+              throw new Error(`Choose a file for workflow input ${field}.`);
+            }
+            if (selectedFile) {
+              form.set(field, selectedFile);
+            }
+          }
+          for (const [name, value] of Object.entries(
+            request.form ?? {},
+          )) {
+            if (value === undefined || value === null) continue;
+            if (typeof value === "object") {
+              form.set(name, JSON.stringify(value));
+            } else {
+              form.set(name, String(value));
+            }
+          }
+        } else {
+          if (!file) {
+            throw new Error("Choose an audio file or record one first.");
+          }
+          form.set("model", model.transcribe);
+          form.set("file", file);
+        }
         result = await publicRequest(request.path, key.secret, {
           method: "POST",
           body: form,
@@ -765,6 +994,21 @@ export default function TryPage() {
         title: "Decision result",
         body: JSON.stringify(payload, null, 2),
         probabilities: decisionRows(payload, parsedOptions),
+        elapsedMs,
+        cost,
+        receiptId,
+        request,
+      };
+    }
+    if (tab === "workflow") {
+      const body =
+        payload instanceof Blob
+          ? "Workflow returned media bytes."
+          : JSON.stringify(payload, null, 2);
+      return {
+        title: "Workflow result",
+        body,
+        audioUrl: payload instanceof Blob ? URL.createObjectURL(payload) : undefined,
         elapsedMs,
         cost,
         receiptId,
@@ -908,8 +1152,9 @@ export default function TryPage() {
                       }
                     />
                     <span className="text-muted-foreground text-xs">
-                      Aliases follow your gateway’s model choices. This Try key
-                      may still be denied by its access plan.
+                      {tab.value === "workflow"
+                        ? "Workflow choices come from your access plan."
+                        : "Aliases follow your gateway’s model choices. This Try key may still be denied by its access plan."}
                     </span>
                   </label>
                   {tab.value === activeTab && (
@@ -926,10 +1171,29 @@ export default function TryPage() {
                       />
                     </label>
                   )}
+                  {tab.value === "workflow" && selectedWorkflow && (
+                    <WorkflowInputs workflow={selectedWorkflow} />
+                  )}
+                  {tab.value === "workflow" && selectedWorkflow && (
+                    <WorkflowFileInputs
+                      workflow={selectedWorkflow}
+                      files={workflowFiles}
+                      onChange={(field, nextFile) =>
+                        setWorkflowFiles((current) => ({
+                          ...current,
+                          [field]: nextFile,
+                        }))
+                      }
+                    />
+                  )}
                   {tab.value !== "transcribe" && (
                     <label className="block space-y-2">
                       <span className="text-sm font-medium">
-                        {tab.value === "decide" ? "Question" : "Prompt"}
+                        {tab.value === "decide"
+                          ? "Question"
+                          : tab.value === "workflow"
+                            ? "Inputs JSON"
+                            : "Prompt"}
                       </span>
                       <Textarea
                         value={prompt[tab.value]}
@@ -1137,6 +1401,92 @@ function ResultView({ result }: { result: Result }) {
       </div>
     </div>
   );
+}
+
+function WorkflowInputs({ workflow }: { workflow: WorkflowOption }) {
+  const rows = workflow.inputs ?? [];
+  if (!rows.length) return null;
+  return (
+    <div className="rounded-lg border">
+      <div className="border-b p-3">
+        <h3 className="text-sm font-medium">Typed inputs</h3>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-muted-foreground border-b text-left">
+              <th className="p-3 font-medium">Name</th>
+              <th className="p-3 font-medium">Type</th>
+              <th className="p-3 font-medium">Default</th>
+              <th className="p-3 font-medium">Applies</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((input) => (
+              <tr key={input.name} className="border-b last:border-0">
+                <td className="p-3 font-mono text-xs">
+                  {input.name}
+                  {input.required && (
+                    <span className="text-destructive ml-1">*</span>
+                  )}
+                </td>
+                <td className="p-3">{input.type}</td>
+                <td className="p-3">{valueText(input.default)}</td>
+                <td className="p-3">
+                  {input.ignored ? "Ignored" : input.accepted === false ? "Unavailable" : "Accepted"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function WorkflowFileInputs({
+  workflow,
+  files,
+  onChange,
+}: {
+  workflow: WorkflowOption;
+  files: Record<string, File | null>;
+  onChange: (field: string, file: File | null) => void;
+}) {
+  const fileSpecs = workflow.example_request?.files ?? [];
+  if (!fileSpecs.length) return null;
+  return (
+    <div className="space-y-3">
+      {fileSpecs.map((fileSpec) => (
+        <label key={fileSpec.field} className="block space-y-2">
+          <span className="text-sm font-medium">
+            {fileSpec.field}
+            {fileSpec.required !== false && (
+              <span className="text-destructive ml-1">*</span>
+            )}
+          </span>
+          <Input
+            type="file"
+            accept={fileSpec.type}
+            onChange={(event) =>
+              onChange(fileSpec.field, event.target.files?.[0] ?? null)
+            }
+          />
+          <span className="text-muted-foreground text-xs">
+            {files[fileSpec.field]?.name ??
+              fileSpec.name ??
+              "Choose a file for this workflow input."}
+          </span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
+function valueText(value: unknown) {
+  if (value === undefined || value === null || value === "") return "None";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
 }
 
 function Fact({ label, value }: { label: string; value: ReactNode }) {

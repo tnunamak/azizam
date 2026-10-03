@@ -180,12 +180,12 @@ class MeMediaRouterTests(unittest.TestCase):
             receipt.metadata["litellm"] = {"response_cost": cost}
         receipt_store.record(receipt, created_at=int(time.time()), path=self.receipts_db)
 
-    def _job(self, request_id: str, asset_id: str) -> None:
+    def _job(self, request_id: str, asset_id: str, *, workflow: str = "wf.image") -> None:
         media_jobs.create(
             media_jobs.MediaJob(
                 request_id=request_id,
                 intent="image.generate",
-                workflow="wf.image",
+                workflow=workflow,
                 status=media_jobs.STATUS_SUCCEEDED,
                 progress=100,
                 assets=[{"asset_id": asset_id, "media_type": "image/png"}],
@@ -406,6 +406,33 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(self.client.get("/me/api/media?cursor=bad").status_code, 400)
         self.assertEqual(self.client.get("/me/api/media?start=invalid").status_code, 400)
         self.assertEqual(me_media._date_to_epoch("2023-11-14"), 1_699_920_000)
+
+    def test_workflow_filter_is_exact_and_stays_user_scoped(self) -> None:
+        alice_asset = "img_" + "f" * 64
+        alice_other_asset = "img_" + "a1" * 32
+        bob_asset = "img_" + "b1" * 32
+        self._write_asset(alice_asset, ["sha256:alice"], "alice first")
+        self._write_asset(alice_other_asset, ["sha256:alice"], "alice other")
+        self._write_asset(bob_asset, ["sha256:bob"], "bob first")
+        self._receipt(self.app_a["id"], "req_alice_workflow")
+        self._receipt(self.app_a["id"], "req_alice_other_workflow")
+        self._receipt(self.app_b["id"], "req_bob_workflow")
+        self._job("req_alice_workflow", alice_asset, workflow="wf.image")
+        self._job("req_alice_other_workflow", alice_other_asset, workflow="wf.image.other")
+        self._job("req_bob_workflow", bob_asset, workflow="wf.image")
+
+        own = self.client.get("/me/api/media?workflow=wf.image")
+        self.assertEqual(own.status_code, 200, own.text)
+        self.assertEqual([item["asset_id"] for item in own.json()["assets"]], [alice_asset])
+        self.assertEqual(self.client.get("/me/api/media?workflow=wf").json()["assets"], [])
+
+        self.current_user = self.owner
+        everyone = self.client.get("/me/api/media?scope=everyone&workflow=wf.image")
+        self.assertEqual(everyone.status_code, 200, everyone.text)
+        self.assertEqual(
+            {item["asset_id"] for item in everyone.json()["assets"]},
+            {alice_asset, bob_asset},
+        )
 
     def test_cross_user_delete_and_download_do_not_reveal_foreign_assets(self) -> None:
         asset_id = "img_" + "5" * 64
