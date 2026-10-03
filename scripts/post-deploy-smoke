@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Post-deploy smoke for a live gateway: real requests that catch "healthy but broken" deploys.
+# Usage: scripts/post-deploy-smoke [BASE_URL]   (default http://127.0.0.1:5000; LAN needs no key,
+# otherwise set AI_GATEWAY_SMOKE_KEY)
+set -uo pipefail
+BASE=${1:-http://127.0.0.1:5000}
+AUTH=(); [ -n "${AI_GATEWAY_SMOKE_KEY:-}" ] && AUTH=(-H "Authorization: Bearer $AI_GATEWAY_SMOKE_KEY")
+fail=0
+check() { if [ "$2" = ok ]; then echo "PASS $1"; else echo "FAIL $1: $2"; fail=1; fi; }
+for model in fast default; do
+  out=$(curl -s --max-time 180 "${AUTH[@]}" "$BASE/v1/chat/completions" -H 'Content-Type: application/json' \
+    -d "{\"model\":\"$model\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with the single word OK\"}],\"max_tokens\":400}")
+  verdict=$(printf '%s' "$out" | python3 -c 'import json,sys
+try:
+    d=json.load(sys.stdin); c=(d["choices"][0]["message"].get("content") or "").strip()
+    print("ok" if c else "empty content (finish_reason=%s)" % d["choices"][0].get("finish_reason"))
+except Exception as e: print("bad response: %s" % str(e)[:80])')
+  check "chat $model" "$verdict"
+done
+code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "${AUTH[@]}" "$BASE/sdapi/v1/sd-models"); check "a1111 models" "$([ "$code" = 200 ] && echo ok || echo "HTTP $code")"
+size=$(curl -s --max-time 60 "${AUTH[@]}" "$BASE/v1/audio/speech" -H 'Content-Type: application/json' -d '{"model":"tts-fast","input":"Smoke test.","voice":"alloy","response_format":"wav"}' | wc -c)
+check "tts-fast" "$([ "$size" -gt 1000 ] && echo ok || echo "only $size bytes")"
+code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "$BASE/ui/"); check "ui" "$([ "$code" = 200 ] && echo ok || echo "HTTP $code")"
+exit $fail
