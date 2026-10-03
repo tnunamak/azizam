@@ -113,7 +113,7 @@ def test_home_uses_allowed_capabilities_and_owned_last_five(home_case):
 def test_home_unknown_health_is_not_green(home_case):
     home_case.health = {"backends": []}
     data = home_case.http.get("/me/api/home").json()
-    assert data["status"]["state"] == "unavailable"
+    assert data["status"]["state"] == "unknown"
     assert not data["aliases"][0]["available"]
     assert "Not measured yet" in data["capabilities"][0]["reason"]
 

@@ -256,20 +256,17 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
         except UserPortalError as exc:
             return _error(exc)
         registry = store.get_service_registry()
-        try:
-            status_payload = await live_status_payload()
-            injected = status_payload.get("_availability_evidence")
-            availability_evidence = (
-                dict(injected)
-                if isinstance(injected, Mapping)
-                else availability_evidence_snapshot(
-                    service_records=registry,
-                    status_payload=status_payload,
-                    receipt_store_path=receipts_path(),
-                )
+        status_payload = await live_status_payload()
+        injected = status_payload.get("_availability_evidence")
+        availability_evidence = (
+            dict(injected)
+            if isinstance(injected, Mapping)
+            else availability_evidence_snapshot(
+                service_records=registry,
+                status_payload=status_payload,
+                receipt_store_path=receipts_path(),
             )
-        except Exception:  # noqa: BLE001
-            availability_evidence = {}
+        )
         alias_views = aliases()
         allowed: dict[tuple[str, str | None, str | None, str], Capability] = {}
         credential_aliases: dict[str, list[dict[str, Any]]] = {}

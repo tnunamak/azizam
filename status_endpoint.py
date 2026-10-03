@@ -28,6 +28,8 @@ from typing import Any, Mapping, Optional
 import httpx
 import yaml
 
+from gateway import lifecycle_drivers
+
 # Module-level cache (single in-process consumer is fine).
 _CACHE: dict[str, Any] = {"ts": 0.0, "data": None}
 _CACHE_TTL_S = 12.0
@@ -255,17 +257,119 @@ def _resolve_backend_targets(config: dict) -> list[dict[str, Any]]:
     return targets
 
 
+def _lifecycle_backend_targets(config: dict) -> list[dict[str, Any]]:
+    backends = config.get("backends", {}) or {}
+    targets: list[dict[str, Any]] = []
+    for key, cfg in backends.items():
+        if not isinstance(cfg, dict):
+            continue
+        lifecycle = cfg.get("lifecycle")
+        if not isinstance(lifecycle, Mapping):
+            continue
+        driver_name = str(lifecycle.get("driver") or "external").strip().lower()
+        if not driver_name or driver_name in {"external", "http-load-unload"}:
+            continue
+        name = cfg.get("name") or key
+        role = cfg.get("role", "required")
+        if role not in _VALID_ROLES:
+            role = "required"
+        targets.append({"key": key, "name": name, "role": role, "note": cfg.get("note"), "service": cfg})
+    targets.sort(key=lambda t: _ROLE_ORDER.get(t["role"], 99))
+    return targets
+
+
+def _row_for_lifecycle_state(target: Mapping[str, Any], state: str, warning: str | None = None) -> dict[str, Any]:
+    status = str(state or "unknown").strip().lower()
+    if warning:
+        live_status = "unknown"
+        error = warning
+    elif status == lifecycle_drivers.ProcessState.STARTING:
+        live_status = "starting"
+        error = None
+    elif status == lifecycle_drivers.ProcessState.DRAINING:
+        live_status = "busy"
+        error = None
+    elif status == lifecycle_drivers.ProcessState.STOPPED:
+        live_status = "stopped"
+        error = None
+    elif status == lifecycle_drivers.ProcessState.FAILED:
+        live_status = "down"
+        error = "lifecycle state failed"
+    else:
+        live_status = "unknown"
+        error = None
+    return {
+        "key": target["key"],
+        "service_id": target["key"],
+        "name": target["name"],
+        "url": None,
+        "role": target["role"],
+        "note": target.get("note"),
+        "status": live_status,
+        "live_status": live_status,
+        "latency_ms": None,
+        "last_error": error,
+        "source": "lifecycle",
+        "kind": "process",
+    }
+
+
+async def _lifecycle_probe(target: Mapping[str, Any], config_backends: Mapping[str, Any]) -> dict[str, Any]:
+    driver = lifecycle_drivers.driver_for_service(str(target["key"]), config_backends=config_backends)
+    service = target["service"]
+    warning: str | None = None
+    try:
+        warning = await asyncio.wait_for(driver.preflight(service), timeout=1.5)
+    except Exception as exc:  # noqa: BLE001
+        warning = _safe_err(exc)
+    try:
+        state = await asyncio.wait_for(driver.status(service), timeout=1.5)
+    except Exception as exc:  # noqa: BLE001
+        return _row_for_lifecycle_state(target, "unknown", _safe_err(exc))
+    return _row_for_lifecycle_state(target, state, warning)
+
+
+def _merge_backend_observations(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        key = str(row.get("service_id") or row.get("key") or "")
+        if not key:
+            continue
+        current = merged.get(key)
+        if current is None:
+            merged[key] = row
+            continue
+        incoming_status = str(row.get("live_status") or row.get("status") or "")
+        if row.get("source") == "lifecycle" and incoming_status in {"stopped", "starting", "busy"}:
+            merged[key] = row
+        elif current.get("source") == "lifecycle" and str(current.get("live_status") or current.get("status") or "") in {"stopped", "starting", "busy"}:
+            continue
+        elif row.get("source") == "lifecycle" and incoming_status == "unknown":
+            continue
+        else:
+            merged[key] = row
+    return sorted(merged.values(), key=lambda row: _ROLE_ORDER.get(str(row.get("role") or "required"), 99))
+
+
 async def _backend_grid(config: dict) -> list[dict]:
     targets = _resolve_backend_targets(config)
+    lifecycle_targets = _lifecycle_backend_targets(config)
+    backends = config.get("backends", {}) or {}
     async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
-        results = await asyncio.gather(
-            *[
-                _probe(client, t["key"], t["name"], t["url"], t["role"], t["note"])
-                for t in targets
-            ],
-            return_exceptions=False,
+        http_results, lifecycle_results = await asyncio.gather(
+            asyncio.gather(
+                *[
+                    _probe(client, t["key"], t["name"], t["url"], t["role"], t["note"])
+                    for t in targets
+                ],
+                return_exceptions=False,
+            ),
+            asyncio.gather(
+                *[_lifecycle_probe(t, backends) for t in lifecycle_targets],
+                return_exceptions=False,
+            ),
         )
-    return list(results)
+    return _merge_backend_observations([*http_results, *lifecycle_results])
 
 
 # --- llama.cpp /props + /slots -------------------------------------------

@@ -159,12 +159,19 @@ def evidence_from_receipts(
         if status not in SUCCESS_RECEIPT_STATUSES and status not in FAILED_RECEIPT_STATUSES:
             continue
         observed_at_ms = _receipt_timestamp_ms(receipt)
-        current = out.get(backend)
-        if current and int(current.get("observed_at_ms") or 0) >= int(observed_at_ms or 0):
-            continue
         success = status in SUCCESS_RECEIPT_STATUSES
         if not success and not _receipt_proves_backend_failure(receipt):
             continue
+        current = out.get(backend)
+        if current:
+            current_ms = int(current.get("observed_at_ms") or 0)
+            incoming_ms = int(observed_at_ms or 0)
+            if current_ms > incoming_ms:
+                continue
+            if current_ms == incoming_ms and current.get("available") is False:
+                continue
+            if current_ms == incoming_ms and success:
+                continue
         out[backend] = {
             "source": "request",
             "available": success,

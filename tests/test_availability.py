@@ -293,3 +293,145 @@ def test_receipt_order_uses_terminal_updated_time():
 
     assert evidence["svc"]["request_id"] == "finished_later"
     assert evidence["svc"]["available"] is False
+
+
+def test_backend_grid_reports_lifecycle_stopped_from_runtime_record(monkeypatch):
+    import asyncio
+    import status_endpoint
+
+    class FakeDriver:
+        async def preflight(self, svc):
+            assert svc["lifecycle"]["driver_config"]["unit"] == "fake.service"
+            return None
+        async def status(self, svc):
+            return "stopped"
+
+    monkeypatch.setattr(status_endpoint.lifecycle_drivers, "driver_for_service", lambda service_id, config_backends=None: FakeDriver())
+    rows = asyncio.run(status_endpoint._backend_grid({"backends": {"svc": {
+        "name": "Service",
+        "role": "required",
+        "lifecycle": {"driver": "systemd", "driver_config": {"unit": "fake.service"}},
+    }}}))
+
+    assert rows == [{
+        "key": "svc",
+        "service_id": "svc",
+        "name": "Service",
+        "url": None,
+        "role": "required",
+        "note": None,
+        "status": "stopped",
+        "live_status": "stopped",
+        "latency_ms": None,
+        "last_error": None,
+        "source": "lifecycle",
+        "kind": "process",
+    }]
+
+
+def test_backend_grid_lifecycle_starting_overrides_http_down(monkeypatch):
+    import asyncio
+    import status_endpoint
+
+    class FakeDriver:
+        async def preflight(self, svc):
+            return None
+        async def status(self, svc):
+            return "starting"
+
+    async def fake_probe(client, key, name, url, role, note):
+        return {"key": key, "service_id": key, "name": name, "url": url, "role": role,
+                "note": note, "status": "down", "live_status": "down", "latency_ms": None,
+                "last_error": "connect refused"}
+
+    monkeypatch.setattr(status_endpoint.lifecycle_drivers, "driver_for_service", lambda service_id, config_backends=None: FakeDriver())
+    monkeypatch.setattr(status_endpoint, "_probe", fake_probe)
+    rows = asyncio.run(status_endpoint._backend_grid({"backends": {"svc": {
+        "host": "127.0.0.1",
+        "port": 9,
+        "health_endpoint": "/health",
+        "lifecycle": {"driver": "command", "driver_config": {"status": ["true"]}},
+    }}}))
+
+    assert rows[0]["live_status"] == "starting"
+    assert rows[0]["source"] == "lifecycle"
+
+
+def test_backend_grid_lifecycle_running_does_not_hide_http_down(monkeypatch):
+    import asyncio
+    import status_endpoint
+
+    class FakeDriver:
+        async def preflight(self, svc):
+            return None
+        async def status(self, svc):
+            return "running"
+
+    async def fake_probe(client, key, name, url, role, note):
+        return {"key": key, "service_id": key, "name": name, "url": url, "role": role,
+                "note": note, "status": "down", "live_status": "down", "latency_ms": None,
+                "last_error": "connect refused"}
+
+    monkeypatch.setattr(status_endpoint.lifecycle_drivers, "driver_for_service", lambda service_id, config_backends=None: FakeDriver())
+    monkeypatch.setattr(status_endpoint, "_probe", fake_probe)
+    rows = asyncio.run(status_endpoint._backend_grid({"backends": {"svc": {
+        "host": "127.0.0.1",
+        "port": 9,
+        "health_endpoint": "/health",
+        "lifecycle": {"driver": "docker", "driver_config": {"container": "fake"}},
+    }}}))
+
+    assert rows[0]["live_status"] == "down"
+    assert rows[0].get("source") != "lifecycle"
+
+
+def test_backend_grid_lifecycle_unmanaged_is_unknown_not_stopped(monkeypatch):
+    import asyncio
+    import status_endpoint
+
+    class FakeDriver:
+        async def preflight(self, svc):
+            return None
+        async def status(self, svc):
+            return "unmanaged"
+
+    monkeypatch.setattr(status_endpoint.lifecycle_drivers, "driver_for_service", lambda service_id, config_backends=None: FakeDriver())
+    rows = asyncio.run(status_endpoint._backend_grid({"backends": {"svc": {
+        "lifecycle": {"driver": "systemd", "driver_config": {"unit": "missing.service"}},
+    }}}))
+
+    assert rows[0]["live_status"] == "unknown"
+
+
+def test_backend_grid_lifecycle_preflight_warning_is_unknown_not_stopped(monkeypatch):
+    import asyncio
+    import status_endpoint
+
+    class FakeDriver:
+        async def preflight(self, svc):
+            return "systemd driver_config.unit is required but not set"
+        async def status(self, svc):
+            return "stopped"
+
+    monkeypatch.setattr(status_endpoint.lifecycle_drivers, "driver_for_service", lambda service_id, config_backends=None: FakeDriver())
+    rows = asyncio.run(status_endpoint._backend_grid({"backends": {"svc": {
+        "lifecycle": {"driver": "systemd", "driver_config": {}},
+    }}}))
+
+    assert rows[0]["live_status"] == "unknown"
+    assert rows[0]["last_error"] == "systemd driver_config.unit is required but not set"
+
+
+def test_backend_grid_excludes_http_load_unload_from_process_lifecycle(monkeypatch):
+    import asyncio
+    import status_endpoint
+
+    def fail_driver(*args, **kwargs):
+        raise AssertionError("http-load-unload should not be treated as process lifecycle evidence")
+
+    monkeypatch.setattr(status_endpoint.lifecycle_drivers, "driver_for_service", fail_driver)
+    rows = asyncio.run(status_endpoint._backend_grid({"backends": {"svc": {
+        "lifecycle": {"driver": "http-load-unload", "driver_config": {"load_url": "/load"}},
+    }}}))
+
+    assert rows == []

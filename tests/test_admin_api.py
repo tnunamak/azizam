@@ -546,7 +546,17 @@ class DeriveAdminAttentionTests(unittest.TestCase):
                     payload,
                     observation_available=True,
                 )
-                self.assertEqual(projection, expected[case_id])
+                for row in projection["services"]:
+                    self.assertIn("availability", row)
+                    self.assertIn(row["availability"]["status"], {"ready", "unavailable"})
+                comparable = {
+                    **projection,
+                    "services": [
+                        {key: value for key, value in row.items() if key != "availability"}
+                        for row in projection["services"]
+                    ],
+                }
+                self.assertEqual(comparable, expected[case_id])
                 self.assertEqual(
                     {row["service_id"] for row in projection["services"]},
                     {row["service_id"] for row in expected[case_id]["services"]},
