@@ -74,8 +74,9 @@ it("shows the supplied engine label and measured speed without an unknown speed 
   expect(card.getByText("Local", { exact: true })).toBeVisible();
   expect(card.getByTitle("Household chat")).toBeVisible();
   expect(card.getByText("~151 ms · Measured")).toBeVisible();
-  expect(card.getByText("Availability not checked")).toBeVisible();
-  expect(card.queryByText(/Not measured yet/i)).toBeNull();
+  expect(card.getByText("Unknown", { exact: true })).toBeVisible();
+  expect(card.getByText("Live availability is not measured yet")).toBeVisible();
+  expect(card.queryByText("Not measured yet", { exact: true })).toBeNull();
   expect(card.queryByText(/capture-engine/)).toBeNull();
   expect(card.queryByText("Ready")).toBeNull();
   fireEvent.click(card.getByRole("button", { name: "Details" }));
