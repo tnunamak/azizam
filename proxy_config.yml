@@ -509,7 +509,7 @@ backends:
   realtime:
     name: speech-to-speech
     host: 127.0.0.1
-    port: 8021
+    port: 8022
     health_endpoint: /v1/pool
     timeout: 120
     # Higher number = lower priority: nothing else serves realtime, but the on-demand services stay behind the always-on ones.

@@ -3,7 +3,7 @@
 # The software is Hugging Face speech-to-speech in a uv venv at ~/applications/speech-to-speech (pinned to a
 # release tag; see run.sh there). It uses no GPU: CUDA is hidden and the installed torch is the CPU build.
 [Unit]
-Description=OpenAI Realtime server (Hugging Face speech-to-speech, CPU) - the gateway relays /v1/realtime here, port 8021
+Description=OpenAI Realtime server (Hugging Face speech-to-speech, CPU) - the gateway relays /v1/realtime here, port 8022
 After=network.target
 
 [Service]
@@ -14,7 +14,7 @@ Environment=HF_HOME=%h/.cache/huggingface
 Environment=HF_HUB_OFFLINE=1
 # One pipeline per concurrent session. They share the gateway's single LLM slot, so more than 2 only queues.
 Environment=REALTIME_POOL_SIZE=2
-Environment=REALTIME_PORT=8021
+Environment=REALTIME_PORT=8022
 Nice=5
 MemoryMax=6G
 ExecStart=%h/applications/speech-to-speech/run.sh
