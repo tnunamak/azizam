@@ -31,7 +31,7 @@ for (const theme of ["light", "dark"] as const) {
             (value) => localStorage.setItem("theme", value),
             theme,
           );
-          if (surface !== "showcase") {
+          if (surface === "setup") {
             await page.route("**/setup/api/state", (route) =>
               route.fulfill({
                 status: state === "error" ? 503 : 200,
@@ -41,6 +41,23 @@ for (const theme of ["light", "dark"] as const) {
                   oidc_enabled: false,
                   can_recover: true,
                 }),
+              }),
+            );
+          } else if (surface === "sign-in") {
+            await page.route("**/auth/api/options", (route) =>
+              route.fulfill({
+                status: state === "error" ? 503 : 200,
+                json:
+                  state === "error"
+                    ? { error: { message: "Sign-in options are unavailable." } }
+                    : {
+                        built_in: state === "seeded",
+                        oidc: false,
+                        oidc_label: "",
+                        oidc_url: "/admin/login?return_to=/ui/",
+                        instance_name: "Browser test gateway",
+                        owner_name: "Gateway owner",
+                      },
               }),
             );
           } else {
@@ -84,7 +101,7 @@ for (const theme of ["light", "dark"] as const) {
             await expect(
               page.getByRole("button", { name: "Try again" }),
             ).toBeVisible();
-          } else if (surface !== "showcase") {
+          } else if (surface === "setup") {
             await expect(page.getByLabel("Email or username")).toBeVisible();
             await page
               .getByText("Recovery and advanced setup", { exact: true })
@@ -94,6 +111,26 @@ for (const theme of ["light", "dark"] as const) {
               "action",
               state === "empty" ? "/setup/local-owner" : "/setup/local-login",
             );
+          } else if (surface === "sign-in") {
+            if (state === "empty") {
+              await expect(
+                page.getByText("Sign-in is not configured", { exact: true }),
+              ).toBeVisible();
+              await expect(page.locator("form")).toHaveCount(0);
+            } else {
+              await expect(
+                page.getByLabel("Email", { exact: true }),
+              ).toBeVisible();
+              await expect(
+                page.getByLabel("Password", { exact: true }),
+              ).toHaveAttribute("autocomplete", "current-password");
+              await expect(
+                page.getByRole("button", { name: "Sign in", exact: true }),
+              ).toBeVisible();
+            }
+            await expect(
+              page.getByText("Recovery and advanced setup", { exact: true }),
+            ).toHaveCount(0);
           } else if (state === "empty") {
             await expect(
               page.getByText(/No recorded examples yet/),
@@ -151,28 +188,55 @@ test("setup uses configured single sign-on without a password form", async ({
   await expect(page.getByLabel("Password", { exact: true })).toHaveCount(0);
 });
 
-test("local sign-in submits to the existing endpoint and preserves its failure form", async ({
+test("built-in sign-in posts JSON and retains its fields after denied credentials", async ({
   page,
   context,
 }) => {
   await context.clearCookies();
-  await page.route("**/setup/api/state", (route) =>
+  await page.route("**/auth/api/options", (route) =>
     route.fulfill({
-      json: { owner_exists: true, oidc_enabled: false, can_recover: true },
+      json: {
+        built_in: true,
+        oidc: false,
+        oidc_label: "",
+        oidc_url: "/admin/login?return_to=/ui/",
+        instance_name: "Browser test gateway",
+        owner_name: "Gateway owner",
+      },
     }),
   );
   await page.goto("/ui/sign-in/");
-  await page.getByLabel("Email or username").fill("unknown@example.test");
+  await page.getByLabel("Email", { exact: true }).fill("unknown@example.test");
   await page
     .getByLabel("Password", { exact: true })
     .fill("Invalid browser test password");
+  const posted = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/auth/api/login") &&
+      response.request().method() === "POST",
+  );
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page).toHaveURL(/\/setup\/local-login$/);
-  await expect(page.getByRole("alert")).toBeVisible();
-  await expect(page.locator('input[name="email"]')).toHaveValue(
+  const response = await posted;
+  expect(response.status()).toBe(401);
+  expect(response.request().postDataJSON()).toEqual({
+    email: "unknown@example.test",
+    password: "Invalid browser test password",
+  });
+  await expect(page).toHaveURL(/\/ui\/sign-in\/$/);
+  await expect(
+    page
+      .getByRole("alert")
+      .filter({ hasText: "Email or password is incorrect." }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Email", { exact: true })).toHaveValue(
     "unknown@example.test",
   );
-  await expect(page.locator('form[action="/setup/local-login"]')).toBeVisible();
+  await expect(page.getByLabel("Password", { exact: true })).toHaveValue(
+    "Invalid browser test password",
+  );
+  await expect(
+    page.getByRole("button", { name: "Sign in", exact: true }),
+  ).toBeEnabled();
 });
 
 for (const theme of ["light", "dark"] as const) {
