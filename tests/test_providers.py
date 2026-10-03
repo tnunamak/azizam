@@ -538,6 +538,32 @@ class TestSpendReservations(unittest.TestCase):
                 path=self.ledger,
             )
 
+    def test_conflicting_output_limits_reserve_conservative_maximum(self) -> None:
+        ref = provider(
+            price={
+                "input_usd_per_million_tokens": "0",
+                "output_usd_per_million_tokens": "10",
+            }
+        )
+        estimate = estimate_chat_cost(
+            ref,
+            {
+                "model": "m",
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 1,
+                "max_completion_tokens": 10000,
+            },
+        )
+
+        self.assertEqual(estimate.usd, Decimal("0.100000000"))
+        with self.assertRaises(BudgetExceeded):
+            reserve_provider_spend(
+                profile(max_usd_per_request=Decimal("0.0001")),
+                ref,
+                estimate,
+                path=self.ledger,
+            )
+
     def test_mixed_case_provider_id_uses_saved_admin_deny_all_plans(self) -> None:
         admin_store.put_operator_setting(
             "provider_admin",

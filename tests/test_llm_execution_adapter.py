@@ -742,6 +742,157 @@ class LiteLlmRoutingOverrideTransportTests(unittest.IsolatedAsyncioTestCase):
                 outbound = sanitize_litellm_execution_request(request)
                 self.assertNotIn("fallbacks", json.loads(outbound.body))
 
+
+    def test_sanitizer_strips_router_settings_override_and_unknown_litellm_envelopes(self) -> None:
+        from gateway.backends.llm_execution import LlmExecutionRequest, sanitize_litellm_execution_request
+
+        messages = [{"role": "user", "content": "preserve nested user content"}]
+        tools = [{
+            "type": "function",
+            "function": {
+                "name": "preserve_schema",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "router_settings_override": {"type": "string"},
+                        "metadata": {"type": "object"},
+                    },
+                },
+            },
+        }]
+        request = LlmExecutionRequest(
+            method="POST",
+            url="http://litellm.test/v1/chat/completions",
+            headers={"content-type": "application/json"},
+            body=json.dumps({
+                "model": "local-chat",
+                "messages": messages,
+                "tools": tools,
+                "router_settings_override": {
+                    "fallbacks": [{"local-chat": ["openrouter/paid-chat"]}],
+                    "model_group_retry_policy": {"local-chat": {"TimeoutErrorRetries": 2}},
+                },
+                "metadata": {"model_group": "openrouter/paid-chat"},
+                "litellm_metadata": {"model_group": "openrouter/paid-chat"},
+                "user_config": {"routing_strategy": "usage-based-routing"},
+                "unknown_litellm_knob": "must not pass through",
+            }).encode(),
+            read_timeout=5.0,
+        )
+
+        sanitized = json.loads(sanitize_litellm_execution_request(request).body.decode())
+
+        self.assertEqual(sanitized["model"], "local-chat")
+        self.assertEqual(sanitized["messages"], messages)
+        self.assertEqual(sanitized["tools"], tools)
+        for key in (
+            "router_settings_override",
+            "metadata",
+            "litellm_metadata",
+            "user_config",
+            "unknown_litellm_knob",
+        ):
+            with self.subTest(key=key):
+                self.assertNotIn(key, sanitized)
+
+    async def test_router_settings_override_fallback_cannot_reach_paid_model_after_sanitizer(self) -> None:
+        import litellm
+        from litellm import Router
+        from gateway.backends.llm_execution import LlmExecutionRequest, sanitize_litellm_execution_request
+
+        request = LlmExecutionRequest(
+            method="POST",
+            url="http://litellm.test/v1/chat/completions",
+            headers={"content-type": "application/json"},
+            body=json.dumps({
+                "model": "local-chat",
+                "messages": [{"role": "user", "content": "hi"}],
+                "num_retries": 0,
+                "router_settings_override": {
+                    "fallbacks": [{"local-chat": ["openrouter/paid-chat"]}],
+                },
+            }).encode(),
+            read_timeout=5.0,
+            trusted_num_retries=0,
+            trusted_max_retries=0,
+        )
+        sanitized = json.loads(sanitize_litellm_execution_request(request).body.decode())
+        router_settings = sanitized.pop("router_settings_override", {})
+        router = Router(
+            model_list=[
+                {"model_name": "local-chat", "litellm_params": {"model": "openai/local", "api_key": "sk-local"}},
+                {"model_name": "openrouter/paid-chat", "litellm_params": {"model": "openai/paid", "api_key": "sk-paid"}},
+            ],
+            num_retries=0,
+            fallbacks=[],
+        )
+        calls: list[str] = []
+
+        async def fake_dispatch(**kwargs):
+            model = str(kwargs.get("model") or "")
+            calls.append(model)
+            if model == "local-chat":
+                raise litellm.InternalServerError(message="local failed", model=model, llm_provider="openai")
+            return {"ok": model}
+
+        try:
+            await router.async_function_with_fallbacks(
+                original_function=fake_dispatch,
+                metadata={},
+                **sanitized,
+                **router_settings,
+            )
+        except litellm.InternalServerError:
+            pass
+
+        self.assertEqual(calls, ["local-chat"])
+
+    async def test_router_settings_override_retry_policy_cannot_create_extra_dispatches_after_sanitizer(self) -> None:
+        import litellm
+        from litellm import Router
+        from gateway.backends.llm_execution import LlmExecutionRequest, sanitize_litellm_execution_request
+
+        request = LlmExecutionRequest(
+            method="POST",
+            url="http://litellm.test/v1/chat/completions",
+            headers={"content-type": "application/json"},
+            body=json.dumps({
+                "model": "local-chat",
+                "messages": [{"role": "user", "content": "hi"}],
+                "num_retries": 0,
+                "max_retries": 0,
+                "router_settings_override": {
+                    "model_group_retry_policy": {"local-chat": {"TimeoutErrorRetries": 2}},
+                },
+            }).encode(),
+            read_timeout=5.0,
+            trusted_num_retries=0,
+            trusted_max_retries=0,
+        )
+        sanitized = json.loads(sanitize_litellm_execution_request(request).body.decode())
+        router_settings = sanitized.pop("router_settings_override", {})
+        router = Router(
+            model_list=[{"model_name": "local-chat", "litellm_params": {"model": "openai/local", "api_key": "sk-local"}}],
+            num_retries=0,
+            fallbacks=[],
+        )
+        calls: list[str] = []
+
+        async def fake_dispatch(**kwargs):
+            model = str(kwargs.get("model") or "")
+            calls.append(model)
+            raise litellm.Timeout(message="slow", model=model, llm_provider="openai")
+
+        with self.assertRaises(litellm.Timeout):
+            await router.async_function_with_fallbacks(
+                original_function=fake_dispatch,
+                metadata={},
+                **sanitized,
+                **router_settings,
+            )
+
+        self.assertEqual(calls, ["local-chat"])
+
     async def test_send_request_strips_caller_litellm_router_overrides(self) -> None:
         import gateway.backends.llm_execution as llm_execution_module
         from gateway.backends.llm_execution import LlmExecutionRequest
@@ -844,18 +995,20 @@ class LiteLlmRoutingOverrideTransportTests(unittest.IsolatedAsyncioTestCase):
         finally:
             llm_execution_module.httpx.AsyncClient = original_async_client
 
-    def test_sanitizer_preserves_url_when_query_has_no_router_override(self) -> None:
+    def test_sanitizer_strips_unknown_query_parameters(self) -> None:
         from gateway.backends.llm_execution import LlmExecutionRequest, sanitize_litellm_execution_request
 
         request = LlmExecutionRequest(
             method="POST",
-            url="http://litellm.test/v1/chat/completions?keep=hello%20world&blank=",
+            url="http://litellm.test/v1/chat/completions?model=openrouter/paid&keep=hello%20world&blank=",
             headers={},
             body=b"{}",
             read_timeout=5.0,
         )
 
-        self.assertIs(sanitize_litellm_execution_request(request), request)
+        sanitized = sanitize_litellm_execution_request(request)
+
+        self.assertEqual(sanitized.url, "http://litellm.test/v1/chat/completions")
 
     async def test_build_request_failure_closes_client_and_raises_predispatch_error(self) -> None:
         import httpx

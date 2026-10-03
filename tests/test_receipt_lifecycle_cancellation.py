@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+from decimal import Decimal
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
@@ -11,6 +13,7 @@ from unittest.mock import AsyncMock, patch
 from starlette.requests import Request
 
 import proxy
+from gateway.policy import DEFAULT_PROFILE, NativePassthroughPolicy, RemoteProviderPolicy
 
 
 def _request(path: str, payload: dict) -> Request:
@@ -27,6 +30,91 @@ def _request(path: str, payload: dict) -> Request:
 
 
 class ReceiptLifecycleCancellationTests(IsolatedAsyncioTestCase):
+    async def test_provider_native_rejects_paid_remote_record_before_dispatch(self) -> None:
+        class Upstream:
+            status_code = 200
+            headers = {"content-type": "application/json"}
+
+            async def aiter_bytes(self):
+                yield b'{"ok": true}'
+
+        class Context:
+            async def __aenter__(self):
+                client.opened = True
+                return Upstream()
+
+            async def __aexit__(self, *_args):
+                return False
+
+        class Client:
+            opened = False
+
+            def stream(self, *_args, **_kwargs):
+                return Context()
+
+            async def aclose(self):
+                return None
+
+        native_profile = DEFAULT_PROFILE.with_overrides(
+            id="native-only",
+            native_passthrough=NativePassthroughPolicy(
+                enabled=True,
+                allowed_backends=frozenset({"openrouter"}),
+                allowed_operations=frozenset({"POST /v1/chat/completions"}),
+            ),
+            remote=RemoteProviderPolicy(
+                providers=frozenset(),
+                max_usd_per_request=Decimal("0"),
+            ),
+        )
+        auth_context = proxy.AuthContext(
+            identity=proxy.AuthIdentity(
+                name="native-paid-test",
+                key_hash="sha256:native-paid-test",
+                profile=native_profile,
+                app_id="app_native_paid_test",
+            )
+        )
+        backend_cfg = {
+            "provider_type": "paid-remote",
+            "remote_provider": True,
+            "native_passthrough": True,
+            "api_key_env": "OPENROUTER_API_KEY",
+            "auth_inject": [
+                {"header": "authorization", "secret_env": "OPENROUTER_API_KEY"}
+            ],
+        }
+        target = {
+            "backend": "openrouter",
+            "service": "openrouter",
+            "host": "https://openrouter.test",
+            "enabled": True,
+            "timeout": 1,
+        }
+        client = Client()
+        began, finalized = [], []
+
+        with patch.object(proxy, "_PROVIDER_NATIVE_TARGETS", {"openrouter": target}), patch.object(
+            proxy, "_auth_context_from_scope", return_value=auth_context
+        ), patch.dict(proxy.config, {"backends": {"openrouter": backend_cfg}}, clear=False), patch.dict(
+            os.environ, {"OPENROUTER_API_KEY": "test-provider-key"}, clear=False
+        ), patch.object(proxy.httpx, "AsyncClient", return_value=client), patch.object(
+            proxy.receipt_store, "begin", side_effect=began.append
+        ), patch.object(
+            proxy.receipt_store, "finalize", side_effect=lambda receipt: finalized.append(receipt) or True
+        ):
+            response = await proxy.provider_native_request(
+                _request(
+                    "/gateway/v1/providers/openrouter/v1/chat/completions",
+                    {"model": "openrouter/paid-chat", "messages": []},
+                ),
+                "openrouter",
+                "v1/chat/completions",
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(client.opened)
+
     async def test_responses_post_begin_await_failures_are_owned(self) -> None:
         """Both outer Responses dispatch shapes finalize through the owner."""
         for stream in (False, True):

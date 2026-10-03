@@ -971,6 +971,27 @@ def test_remote_provider_rejects_inline_secret_value() -> None:
             source="ui",
         )
 
+def test_remote_provider_rejects_native_passthrough() -> None:
+    with pytest.raises(ValueError, match="native_passthrough"):
+        service_registry.service_from_backend_config(
+            "openrouter",
+            {
+                "kind": "provider",
+                "provider_id": "openrouter",
+                "provider_type": "paid-remote",
+                "remote_provider": True,
+                "native_passthrough": True,
+                "protocol": "openai-compatible",
+                "base_url": "https://openrouter.ai/api/v1",
+                "api_key_env": "OPENROUTER_API_KEY",
+                "auth_inject": [
+                    {"header": "authorization", "secret_env": "OPENROUTER_API_KEY"}
+                ],
+                "models": [{"id": "openai/gpt-4.1-mini"}],
+            },
+            source="ui",
+        )
+
 
 # ---------------------------------------------------------------------------
 # Fresh-install reproducibility: a nested lifecycle block in proxy_config.yml
