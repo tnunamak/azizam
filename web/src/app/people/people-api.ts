@@ -15,6 +15,7 @@ export interface Person {
   requests_this_month: number | null;
   builtin?: boolean;
   protected?: boolean;
+  role?: "owner" | "admin" | "member";
 }
 export interface Invite {
   id: string;

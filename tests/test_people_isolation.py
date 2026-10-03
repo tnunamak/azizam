@@ -337,3 +337,25 @@ def test_legacy_runtime_key_owns_its_new_queued_jobs_without_app_identity(people
     monkeypatch.setattr(proxy, "_auth_context_from_scope", lambda request: proxy.AuthContext(identity=RuntimeIdentity(name="same-label", key_hash="b" * 64)))
     assert not proxy._gateway_record_authorizer(request, "media_job", job.to_dict("internal"))
     assert media_jobs.recent(owner_key_hashes=["b" * 64]) == []
+
+
+def test_historical_client_supplied_receipt_and_asset_references_do_not_prove_job_ownership(people):
+    job = media_jobs.create(media_jobs.MediaJob(intent="image.generate", parent_request_id=people.alice.receipt_id,
+                                             assets=[{"asset_id": people.alice.asset_id}]))
+    response = people.client.get(f"/gateway/v1/media/jobs/{job.job_id}", headers=people.alice.bearer)
+    assert response.status_code == 404
+    listed = people.client.get("/gateway/v1/media/jobs", headers=people.alice.bearer)
+    assert job.job_id not in [row["job_id"] for row in listed.json()["jobs"]]
+
+
+def test_native_passthrough_receipt_retains_legacy_caller_ownership(people, monkeypatch):
+    from gateway.runtime_auth import RuntimeIdentity
+    identity = RuntimeIdentity(name="legacy-key", key_hash="c" * 64)
+    context = proxy.AuthContext(identity=identity)
+    receipt = proxy._native_passthrough_receipt(auth_context=context, provider="example",
+                                               gateway_path="/example/v1/models", native_path="models")
+    monkeypatch.setattr(proxy, "_auth_context_from_scope", lambda request: context)
+    assert proxy._gateway_record_authorizer(SimpleNamespace(), "receipt", receipt.to_dict("internal"))
+    assert receipt.owner_key_hash == identity.key_hash
+    assert "owner_key_hash" not in receipt.to_dict("admin")
+    assert "owner_key_hash" not in receipt.to_dict("client")

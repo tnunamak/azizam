@@ -303,7 +303,13 @@ export default function PeoplePage() {
                         <Badge variant="secondary">Disabled</Badge>
                       )}
                       {person.protected && (
-                        <Badge variant="secondary">Owner</Badge>
+                        <Badge variant="secondary">
+                          {person.role === "owner"
+                            ? "Owner"
+                            : person.role === "admin"
+                              ? "Administrator"
+                              : "Protected account"}
+                        </Badge>
                       )}
                     </div>
                     <p className="text-muted-foreground text-sm break-all">

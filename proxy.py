@@ -13279,8 +13279,6 @@ def _gateway_record_authorizer(request: Request, kind: str, record: Mapping[str,
     identity = auth_context.identity
     return owns_record(
         kind, record, app_id=identity.app_id if identity else None, key_hash=identity.key_hash if identity else None,
-        receipt_reader=lambda request_id: receipt_store.get(request_id, audience="internal", path=receipt_store.DB_PATH),
-        asset_authorizer=lambda asset_id: _asset_access_allowed(asset_id, auth_context),
         unrestricted=not AUTH_ENABLED and identity is None,
     )
 
@@ -14021,6 +14019,8 @@ def _safe_admin_return_to(value: str | None, *, default: str = "/admin") -> str:
     if value in {"/status", "/setup"}:
         return value
     if value.startswith("/admin"):
+        return value
+    if value in {"/ui/", "/ui/invite/", "/ui/sign-in/"}:
         return value
     if value == "/ui/admin" or value.startswith("/ui/admin/"):
         return value
@@ -25319,6 +25319,7 @@ async def _forward_current_loaded_openai_request(
         parent_request_id=request_id if is_internal_hop else None,
         app_profile=None if is_internal_hop else profile.id,
         app_id=None if is_internal_hop or auth_context.identity is None else auth_context.identity.app_id,
+        owner_key_hash=None if is_internal_hop or auth_context.identity is None else auth_context.identity.key_hash,
         api_key_name=None if is_internal_hop or auth_context.identity is None else auth_context.identity.name,
         visibility="internal" if is_internal_hop else profile.status_visibility.level,
         stream=bool(body_for_backend.get("stream")),
@@ -26519,6 +26520,7 @@ def _native_passthrough_receipt(
     if auth_context.identity is not None:
         receipt.app_profile = auth_context.identity.profile.id
         receipt.app_id = auth_context.identity.app_id
+        receipt.owner_key_hash = auth_context.identity.key_hash
         receipt.api_key_name = auth_context.identity.name
         receipt.visibility = auth_context.identity.profile.status_visibility.level
     receipt.metadata.update({

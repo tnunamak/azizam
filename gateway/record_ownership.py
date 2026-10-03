@@ -1,32 +1,21 @@
-"""Ownership decisions for gateway receipts and asynchronous media records.
+"""Authorize receipts and media jobs by immutable, trusted ownership.
 
-Visibility is not authorization: two Apps on the same plan remain distinct.
-Labels and shared profiles never establish ownership. Unattributed historical
-records are unavailable to scoped callers, even when a label happens to match.
+Visibility is not authorization. Shared plans, names, client-supplied parent
+receipt IDs, and asset references cannot prove who submitted a job. Historical
+records without trusted App/key attribution fail closed for scoped callers.
 """
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import Any
 
 
 def owns_record(kind: str, record: Mapping[str, Any], *, app_id: str | None,
-                receipt_reader: Callable, asset_authorizer: Callable,
-                unrestricted: bool = False, key_hash: str | None = None) -> bool:
+                key_hash: str | None = None, unrestricted: bool = False) -> bool:
+    if kind not in {"receipt", "media_job"}:
+        return False
     if unrestricted:
         return True
-    owner = record.get("app_id") or (record.get("metadata") or {}).get("owner_app_id")
-    if owner:
-        return bool(app_id and owner == app_id)
+    if record.get("app_id"):
+        return bool(app_id and record["app_id"] == app_id)
     if record.get("owner_key_hash"):
         return bool(key_hash and record["owner_key_hash"] == key_hash)
-    if kind == "receipt":
-        return False
-    if kind != "media_job":
-        return False
-    for request_id in (record.get("request_id"), record.get("parent_request_id")):
-        if request_id:
-            receipt = receipt_reader(request_id)
-            if receipt and receipt.get("app_id"):
-                return bool(app_id and receipt["app_id"] == app_id)
-    assets = record.get("assets") or []
-    return bool(assets and all(isinstance(asset, Mapping) and asset.get("asset_id")
-                               and asset_authorizer(asset["asset_id"]) for asset in assets))
+    return False

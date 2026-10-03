@@ -343,7 +343,8 @@ def people(*, path: Path) -> list[dict]:
             person = {key: value for key, value in dict(row).items() if key not in {"issuer", "subject"}}
             person.update(disabled=row["disabled_at"] is not None, requests_this_month=None,
                           builtin=conn.execute("SELECT 1 FROM local_password_credentials WHERE user_id=?", (row["id"],)).fetchone() is not None,
-                          protected=any(role[0] in {"owner", "admin", "superadmin"} for role in roles))
+                          protected=any(role[0] in {"owner", "admin", "superadmin"} for role in roles),
+                          role="owner" if any(role[0] == "owner" for role in roles) else "admin" if any(role[0] in {"admin", "superadmin"} for role in roles) else "member")
             people.append(person)
         return people
 

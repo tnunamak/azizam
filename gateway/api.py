@@ -571,9 +571,10 @@ def create_gateway_router(
                 return _internal_error(audience, exc)
             if submitted is not None:
                 return submitted
-        if record_authorizer is not None:
+        if record_authorizer is not None and not record_authorizer(request, "media_job", {}):
             # The executable submitter derives ownership from authentication.
-            # A raw store write would let the caller forge that attribution.
+            # A raw store write would let a scoped caller forge attribution.
+            # Explicit auth-disabled operation retains its unscoped store API.
             return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 content=_error_payload("unsupported_media_job", "Media job intent is not supported"),

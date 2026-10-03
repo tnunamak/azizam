@@ -627,7 +627,9 @@ test("people lane protects owner actions and explains permanent key revocation",
     }),
   );
   await page.goto("/ui/people/");
-  await expect(page.getByText("Owner", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Protected account", { exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Actions for Morgan Rivera" }),
   ).toHaveCount(0);
@@ -635,7 +637,7 @@ test("people lane protects owner actions and explains permanent key revocation",
   await page.route("**/admin/api/people", (route) =>
     route.fulfill({
       json: {
-        people: [{ ...person, builtin: true, protected: true }],
+        people: [{ ...person, builtin: true, protected: true, role: "owner" }],
         profiles: [plan],
       },
     }),

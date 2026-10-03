@@ -638,3 +638,10 @@ def test_people_excludes_key_claim_placeholders_and_reports_protected_oidc_users
     assert result[0]["id"] == user["id"]
     assert result[0]["protected"] is True
     assert result[0]["builtin"] is False
+
+
+@pytest.mark.parametrize("target", ["/ui/", "/ui/invite/", "/ui/sign-in/"])
+def test_oidc_returns_to_the_product_account_page(target):
+    import proxy
+    assert proxy._safe_admin_return_to(target) == target
+    assert proxy._safe_admin_return_to("//evil.example" + target) == "/admin"
