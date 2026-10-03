@@ -33,6 +33,7 @@ import {
 import { api, createQueryClient } from "@/lib/api";
 import { destinations, PRODUCT_NAME } from "@/lib/product";
 import { gatewayHealthLabel } from "@/lib/gateway-health";
+import { useOwnerAlert } from "./use-owner-alert";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -264,23 +265,14 @@ function Nav({
 
 function AlertSlot() {
   const viewer = useViewer();
-  const { data } = useQuery({
-    queryKey: ["foundation", "health"],
-    queryFn: api.status,
-    enabled: viewer.admin,
-  });
-  // Only enabled engines with a current failed probe are owner actionable.
-  // Hardware signals and configuration coverage never enter this global slot.
-  const failed = data?.current_health?.services.find(
-    (service) => service.enabled && service.observation === "down",
-  );
-  if (!viewer.admin || !failed) return null;
+  const alert = useOwnerAlert(viewer.admin);
+  if (!alert) return null;
   return (
     <div
       className="bg-warning-tint text-warning flex flex-wrap items-center justify-between gap-3 border-b px-5 py-3 text-sm sm:px-8"
       role="status"
     >
-      <span>{failed.name} is unavailable. Check its connection on Status.</span>
+      <span>{alert}</span>
       <Button variant="ghost" size="sm" asChild>
         <Link href="/status">
           View status

@@ -1,0 +1,201 @@
+"use client";
+
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+
+export type ProviderTone = "ok" | "warn" | "bad" | "neutral";
+export type ProviderKeyState = "set" | "missing" | "unknown";
+
+export interface ProviderStatusView {
+  id: string;
+  name: string;
+  enabled: boolean | null;
+  reachable: boolean | null;
+  keyState: ProviderKeyState;
+  spendText: string;
+  tone: ProviderTone;
+}
+
+export type OptionalProviderStatus =
+  | {
+      state: "hidden";
+      providers: [];
+      raw: null;
+      message: string;
+      refetch: () => void;
+    }
+  | {
+      state: "loading";
+      providers: [];
+      raw: null;
+      message: string;
+      refetch: () => void;
+    }
+  | {
+      state: "error";
+      providers: [];
+      raw: null;
+      message: string;
+      refetch: () => void;
+    }
+  | {
+      state: "ready";
+      providers: ProviderStatusView[];
+      raw: { providers: ProviderStatusView[] };
+      message: string;
+      refetch: () => void;
+    };
+
+function bool(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function money(value: unknown): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return `$${value.toFixed(2)}`;
+}
+
+function records(raw: unknown): unknown[] {
+  if (raw == null) return [];
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === "object") {
+    const obj = raw as Record<string, unknown>;
+    if (Array.isArray(obj.providers)) return obj.providers;
+  }
+  return [];
+}
+
+function assertProviderPayload(
+  raw: unknown,
+): asserts raw is unknown[] | { providers: unknown[] } {
+  if (Array.isArray(raw)) return;
+  if (
+    raw &&
+    typeof raw === "object" &&
+    Array.isArray((raw as Record<string, unknown>).providers)
+  )
+    return;
+  throw new Error("Provider status returned an unsupported response.");
+}
+
+export function providerViews(raw: unknown): ProviderStatusView[] {
+  return records(raw).map((item, index) => {
+    const obj =
+      item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+    const id =
+      stringValue(obj.id) ??
+      stringValue(obj.provider_id) ??
+      `provider-${index}`;
+    const name = stringValue(obj.name) ?? stringValue(obj.label) ?? id;
+    const enabled = bool(obj.enabled);
+    const reachable = bool(obj.reachable);
+    const keySet = bool(obj.key_set);
+    const keyState: ProviderKeyState =
+      keySet === true ? "set" : keySet === false ? "missing" : "unknown";
+    const spend =
+      money(obj.spend_usd) ??
+      money(obj.current_spend_usd) ??
+      "Not measured yet";
+    const cap = money(obj.cap_usd) ?? money(obj.spend_cap_usd);
+    const tone: ProviderTone =
+      enabled === true && (reachable === false || keyState === "missing")
+        ? "bad"
+        : enabled === true && reachable === true && keyState === "set"
+          ? "ok"
+          : "neutral";
+    return {
+      id,
+      name,
+      enabled,
+      reachable,
+      keyState,
+      spendText: cap ? `${spend} of ${cap}` : spend,
+      tone,
+    };
+  });
+}
+
+export async function fetchProviderStatus(): Promise<
+  unknown[] | { providers: unknown[] } | null
+> {
+  const response = await fetch("/admin/api/providers", {
+    credentials: "same-origin",
+    cache: "no-store",
+  });
+  if (response.status === 404) return null;
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message =
+      payload && typeof payload === "object"
+        ? (payload as { error?: { message?: string } }).error?.message
+        : null;
+    throw new Error(message || `Provider status failed (${response.status})`);
+  }
+  assertProviderPayload(payload);
+  return payload;
+}
+
+export function useOptionalProviderStatus(
+  enabled = true,
+): OptionalProviderStatus {
+  const {
+    data,
+    error,
+    isError,
+    isPending,
+    refetch: refetchQuery,
+  } = useQuery({
+    queryKey: ["status", "optional-providers"],
+    queryFn: fetchProviderStatus,
+    enabled,
+    refetchInterval: 30000,
+  });
+  const views = useMemo(() => providerViews(data), [data]);
+  const refetch = () => {
+    if (enabled) void refetchQuery();
+  };
+  if (!enabled)
+    return {
+      state: "hidden",
+      providers: [],
+      raw: null,
+      message: "Provider status is disabled for this view.",
+      refetch,
+    };
+  if (isPending)
+    return {
+      state: "loading",
+      providers: [],
+      raw: null,
+      message: "Checking provider status.",
+      refetch,
+    };
+  if (isError)
+    return {
+      state: "error",
+      providers: [],
+      raw: null,
+      message:
+        error instanceof Error ? error.message : "Provider status failed.",
+      refetch,
+    };
+  if (data === null)
+    return {
+      state: "hidden",
+      providers: [],
+      raw: null,
+      message: "Provider admin API is not available.",
+      refetch,
+    };
+  return {
+    state: "ready",
+    providers: views,
+    raw: { providers: views },
+    message: "Provider admin API is available.",
+    refetch,
+  };
+}

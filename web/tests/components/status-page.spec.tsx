@@ -1,19 +1,25 @@
 import type { ComponentPropsWithoutRef } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { axe } from "jest-axe";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-const statusState = vi.hoisted(() => ({
-  load: async (): Promise<any> => ({ current_health: null }),
+const state = vi.hoisted(() => ({
+  status: async (): Promise<any> => seededStatus,
+  registry: async (): Promise<any> => seededRegistry,
+  providers: {
+    state: "hidden" as const,
+    providers: [],
+    raw: null,
+    message: "hidden",
+    refetch: vi.fn(),
+  } as any,
   search: "",
-  push: vi.fn(),
-  replace: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
-  useSearchParams: () => new URLSearchParams(statusState.search),
-  useRouter: () => ({ push: statusState.push, replace: statusState.replace }),
+  useSearchParams: () => new URLSearchParams(state.search),
 }));
 
 vi.mock("next/link", () => ({
@@ -25,35 +31,138 @@ vi.mock("next/link", () => ({
 }));
 
 vi.mock("@/lib/api", () => ({
-  api: { status: () => statusState.load() },
-  queryKeys: { status: ["status"] },
+  ApiError: class ApiError extends Error {},
+  queryKeys: { status: ["status"], serviceRegistry: ["serviceRegistry"] },
+  api: {
+    status: () => state.status(),
+    services: { registry: () => state.registry() },
+  },
+}));
+
+vi.mock("@/lib/provider-status", () => ({
+  useOptionalProviderStatus: () => state.providers,
 }));
 
 import AdminStatusPage from "@/app/admin/status/page";
 
-function health(overrides: Record<string, unknown> = {}) {
-  return {
-    state: "ok",
-    tone: "ok",
-    label: "All configured services are available",
-    detail: "Live observations are current.",
+const seededRegistry = {
+  schema_version: 1,
+  services: {
+    chat: {
+      id: "chat",
+      name: "Local chat engine",
+      kind: "llama",
+      source: "ui",
+      enabled: true,
+      editable: true,
+      capabilities: ["chat"],
+      role: "primary chat",
+      config: {
+        base_url: "http://127.0.0.1:18081/v1",
+        protocol: "openai-compatible",
+        models: [{ model_group: "demo-chat", upstream_model: "demo-chat" }],
+      },
+    },
+    image: {
+      id: "image",
+      name: "Local image engine",
+      kind: "comfy",
+      source: "ui",
+      enabled: false,
+      editable: true,
+      capabilities: ["image", "video"],
+      role: "image",
+      config: { base_url: "http://127.0.0.1:18082" },
+    },
+    imageOnly: {
+      id: "imageOnly",
+      name: "Image-only engine",
+      kind: "comfy",
+      source: "ui",
+      enabled: true,
+      editable: true,
+      capabilities: ["image"],
+      role: "image",
+      config: { base_url: "http://127.0.0.1:18083" },
+    },
+  },
+};
+
+const seededStatus = {
+  current_health: {
+    state: "warn",
+    tone: "warn",
+    label: "One warning",
+    detail: "Disk warning.",
     observation_available: true,
+    signals: [
+      {
+        source: "disk",
+        tone: "warn",
+        reasons: ["Media disk is above the warning threshold"],
+      },
+    ],
     services: [
       {
-        service_id: "gateway",
-        name: "Gateway API",
+        service_id: "chat",
+        name: "Local chat engine",
         configured: true,
         enabled: true,
-        role: "required",
+        role: "primary chat",
+        routable: true,
+        observation: "up",
+        tone: "ok",
+        last_error: null,
+      },
+      {
+        service_id: "image",
+        name: "Local image engine",
+        configured: true,
+        enabled: false,
+        role: "image",
+        routable: null,
+        observation: "disabled",
+        tone: "neutral",
+        last_error: null,
+      },
+      {
+        service_id: "imageOnly",
+        name: "Image-only engine",
+        configured: true,
+        enabled: true,
+        role: "image",
         routable: true,
         observation: "up",
         tone: "ok",
         last_error: null,
       },
     ],
-    ...overrides,
-  };
-}
+  },
+  backends: [{ service_id: "chat", url: "http://127.0.0.1:18081/v1" }],
+  gpus: [{ index: 0, memory_used_mb: 12288, memory_total_mb: 24576 }],
+  budgets: { gpu0: { total_gb: 24, headroom_gb: 4 } },
+  ram_attribution: {
+    total_kb: 64 * 1024 * 1024,
+    available_kb: 24 * 1024 * 1024,
+  },
+  disk: {
+    partitions: [
+      {
+        source: "/dev/nvme0n1p2",
+        target: "/media",
+        size_bytes: 1000,
+        used_bytes: 780,
+        avail_bytes: 220,
+        pct_used: 78,
+      },
+    ],
+    hotspots: [],
+  },
+  thermal: {
+    amdgpu_edge_c: 95,
+    amdgpu_thermal_state: "warn",
+  },
+};
 
 function renderStatus() {
   const client = new QueryClient({
@@ -66,368 +175,205 @@ function renderStatus() {
   );
 }
 
-async function expectPageHasHeadingOne() {
-  const accessibility = await axe(document.body);
-  expect(
-    accessibility.violations.find(
-      (violation) => violation.id === "page-has-heading-one",
-    ),
-  ).toBeUndefined();
-}
-
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
-  statusState.search = "";
-  statusState.push.mockReset();
-  statusState.replace.mockReset();
+  state.status = async () => seededStatus;
+  state.registry = async () => seededRegistry;
+  state.providers = {
+    state: "hidden",
+    providers: [],
+    raw: null,
+    message: "hidden",
+    refetch: vi.fn(),
+  };
+  state.search = "";
 });
 
-describe("admin Status", () => {
-  it("renders a page-level heading that passes axe while observations are loading", async () => {
-    statusState.load = () => new Promise(() => undefined);
+describe("status page", () => {
+  it("renders seeded engine, hardware and host warning data honestly", async () => {
     renderStatus();
-
-    expect(screen.getByText("Checking current gateway health.")).toBeVisible();
     expect(
-      screen.getByRole("heading", { name: "System Status", level: 1 }),
+      await screen.findByRole("heading", { name: "Status", level: 1 }),
     ).toBeVisible();
-    expect(document.querySelectorAll("h1")).toHaveLength(1);
-    await expectPageHasHeadingOne();
-  });
-
-  it("uses the shared health projection as the first-viewport state", async () => {
-    statusState.load = async () => ({ current_health: health() });
-    renderStatus();
-
     expect(
-      await screen.findByText("All configured services are available"),
-    ).toBeVisible();
-    expect(screen.getByText("Observed")).toBeVisible();
-    expect(screen.getByText("Needs attention")).toBeVisible();
-    expect(screen.getByText("No current advisories")).toBeVisible();
-    expect(screen.getByText("Gateway API")).toBeVisible();
-  });
-
-  it("shows honest no-data aggregate metrics when no backend has reported history", async () => {
-    statusState.load = async () => ({ current_health: health() });
-    renderStatus();
-
-    expect(await screen.findByText("Uptime (24h)")).toBeVisible();
-    expect(screen.getByText("Avg latency (24h)")).toBeVisible();
-    expect(screen.getAllByText("No data").length).toBeGreaterThanOrEqual(2);
-    expect(screen.getByText("no 24h availability samples yet")).toBeVisible();
-    expect(screen.getByText("no 24h latency samples yet")).toBeVisible();
-  });
-
-  it("computes real aggregate uptime/latency metrics from reported backend history", async () => {
-    statusState.load = async () => ({
-      current_health: health({
-        services: [
-          health().services[0],
-          {
-            ...health().services[0],
-            service_id: "litellm",
-            name: "LiteLLM",
-          },
-        ],
-      }),
-      backends: [
-        {
-          service_id: "gateway",
-          history: { uptime_pct_24h: 99, avg_latency_ms_24h: 100 },
-        },
-        {
-          service_id: "litellm",
-          history: { uptime_pct_24h: 97, avg_latency_ms_24h: 300 },
-        },
-      ],
-    });
-    renderStatus();
-
-    expect(await screen.findByText("98.0%")).toBeVisible();
-    expect(screen.getByText("200 ms")).toBeVisible();
-    expect(
-      screen.getAllByText("average across observed services").length,
-    ).toBe(2);
-  });
-
-  it("renders a real per-service latency sparkline only with three or more samples", async () => {
-    statusState.load = async () => ({
-      current_health: health(),
-      backends: [
-        {
-          service_id: "gateway",
-          latency_ms: 123,
-          history: {
-            latency_series: [
-              [1, 100],
-              [2, 110],
-              [3, 120],
-            ],
-          },
-        },
-      ],
-    });
-    renderStatus();
-
-    await screen.findByText("Gateway API");
-    expect(
-      screen.getByLabelText("Gateway API latency trend"),
-    ).toBeInTheDocument();
-    expect(document.querySelector(".vf-chart-sparkline")).not.toBeNull();
-  });
-
-  it("omits the per-service sparkline without three real samples", async () => {
-    statusState.load = async () => ({
-      current_health: health(),
-      backends: [
-        {
-          service_id: "gateway",
-          latency_ms: 123,
-          history: { latency_series: [[1, 120]] },
-        },
-      ],
-    });
-    renderStatus();
-
-    await screen.findByText("Gateway API");
-    expect(
-      screen.queryByLabelText("Gateway API latency trend"),
-    ).not.toBeInTheDocument();
-    expect(document.querySelector(".vf-chart-sparkline")).toBeNull();
-  });
-
-  it("does not present unavailable or degraded observations as all clear", async () => {
-    statusState.load = async () => ({
-      current_health: health({
-        state: "unavailable",
-        tone: "neutral",
-        label: "Live status unavailable",
-        detail: "The gateway could not observe services.",
-        observation_available: false,
-        services: [
-          {
-            ...health().services[0],
-            observation: "unavailable",
-            tone: "neutral",
-            routable: null,
-          },
-        ],
-      }),
-    });
-    renderStatus();
-
-    expect(await screen.findByText("Live status unavailable")).toBeVisible();
-    expect(screen.getByText("Unavailable", { exact: true })).toBeVisible();
-    expect(screen.getByText("live status unavailable")).toBeVisible();
-  });
-
-  it("keeps an error page with an axe-valid heading honest and retryable", async () => {
-    let attempts = 0;
-    statusState.load = async () => {
-      attempts += 1;
-      if (attempts === 1) throw new Error("offline");
-      return { current_health: health() };
-    };
-    renderStatus();
-
-    expect(await screen.findByText("Status unavailable")).toBeVisible();
-    expect(
-      screen.getByRole("heading", { name: "System Status", level: 1 }),
-    ).toBeVisible();
-    expect(document.querySelectorAll("h1")).toHaveLength(1);
-    await expectPageHasHeadingOne();
-    await screen.getByRole("button", { name: "Retry" }).click();
-    expect(
-      await screen.findByText("All configured services are available"),
-    ).toBeVisible();
-  });
-
-  it("keeps no-history treatment scalar and does not render a decorative chart", async () => {
-    statusState.load = async () => ({
-      current_health: health(),
-      backends: [
-        {
-          service_id: "gateway",
-          latency_ms: 123,
-          history: { latency_series: [[1, 120]], status_series: [[1, 1]] },
-        },
-      ],
-    });
-    statusState.search = "service=gateway";
-    renderStatus();
-
-    expect(
-      (await screen.findAllByText("Latency: 123 ms")).length,
-    ).toBeGreaterThan(0);
-    expect(screen.getAllByText("No history available").length).toBeGreaterThan(
-      0,
-    );
-    expect(document.querySelector(".vf-chart-sparkline")).toBeNull();
-  });
-
-  it("uses the stable service id for diagnostic and configuration navigation", async () => {
-    statusState.load = async () => ({ current_health: health() });
-    statusState.search = "service=gateway";
-    renderStatus();
-
-    const configurations = await screen.findAllByRole("link", {
-      name: "Open Services configuration",
-    });
-    expect(configurations).not.toHaveLength(0);
-    for (const configuration of configurations) {
-      expect(configuration).toHaveAttribute(
-        "href",
-        "/admin/services?service=gateway",
-      );
-    }
-    expect(
-      screen.getByRole("button", { name: /Gateway API/i }),
-    ).toHaveAttribute("aria-pressed", "true");
-  });
-
-  it("does not emit a Services configuration target for an unregistered service", async () => {
-    statusState.load = async () => ({
-      current_health: health({
-        services: [
-          {
-            ...health().services[0],
-            configured: false,
-            tone: "warn",
-            observation: "degraded",
-          },
-        ],
-      }),
-    });
-    statusState.search = "service=gateway";
-    renderStatus();
-
-    expect(await screen.findByText("Unregistered service")).toBeVisible();
-    expect(
-      screen.queryByRole("link", { name: "Open Services configuration" }),
-    ).toBeNull();
-    expect(screen.getByRole("link", { name: "Inspect" })).toHaveAttribute(
-      "href",
-      "/admin/status?service=gateway",
-    );
-    expect(screen.queryByRole("link", { name: "Services" })).toBeNull();
-  });
-
-  it("selects a service with its stable id rather than its display name", async () => {
-    statusState.load = async () => ({ current_health: health() });
-    renderStatus();
-
-    const service = await screen.findByRole("button", { name: /Gateway API/i });
-    service.click();
-    expect(statusState.push).toHaveBeenCalledWith(
-      "/admin/status?service=gateway",
-    );
-  });
-
-  it("retains known facts and exposes Retry after a refresh failure", async () => {
-    statusState.load = async () => ({ current_health: health() });
-    renderStatus();
-    await screen.findByText("All configured services are available");
-    statusState.load = async () => {
-      throw new Error("offline");
-    };
-
-    screen.getByRole("button", { name: "Refresh" }).click();
-    expect(await screen.findByText("Showing last known status")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Retry" })).toBeVisible();
-    expect(screen.getByText("Gateway API")).toBeVisible();
-  });
-
-  it("renders chart semantics only for three real samples", async () => {
-    statusState.load = async () => ({
-      current_health: health(),
-      backends: [
-        {
-          service_id: "gateway",
-          history: {
-            latency_series: [
-              [1, 100],
-              [2, 110],
-              [3, 120],
-            ],
-            status_series: [
-              [1, 1],
-              [2, 0.5],
-              [3, 1],
-            ],
-          },
-        },
-      ],
-    });
-    statusState.search = "service=gateway";
-    renderStatus();
-
-    const latencyTables = await screen.findAllByRole("table", {
-      name: "Latency observations",
-    });
-    expect(latencyTables).not.toHaveLength(0);
-    expect(latencyTables[0]).toHaveTextContent("100");
-    expect(latencyTables[0]).toHaveTextContent("120");
-    const availabilityTables = screen.getAllByRole("table", {
-      name: "Availability observations",
-    });
-    expect(availabilityTables).not.toHaveLength(0);
-    expect(availabilityTables[0]).toHaveTextContent("0.5");
-  });
-
-  it("counts host advisories as Needs attention", async () => {
-    statusState.load = async () => ({
-      current_health: health({
-        signals: [
-          {
-            source: "Host signal needs attention",
-            tone: "warn",
-            reasons: ["Disk space is low."],
-          },
-        ],
-      }),
-    });
-    renderStatus();
-
-    expect(
-      await screen.findByText("Host signal needs attention"),
-    ).toBeVisible();
-    expect(screen.getByText("Needs attention").parentElement).toHaveTextContent(
-      "1",
-    );
-    expect(screen.getByText("1 current advisory")).toBeVisible();
-  });
-
-  it("exposes exactly one top-level complementary landmark for the context rail", async () => {
-    statusState.load = async () => ({ current_health: health() });
-    renderStatus();
-    await screen.findByText("All configured services are available");
-
-    const asides = document.querySelectorAll("aside");
-    expect(asides).toHaveLength(1);
-    expect(asides[0]).toHaveClass("vf-context-panel");
-    const complementaryLandmarks = screen.getAllByRole("complementary");
-    expect(complementaryLandmarks).toHaveLength(1);
-    expect(
-      complementaryLandmarks[0].parentElement?.closest(
-        "aside, [role='complementary']",
+      await screen.findByText(
+        "disk needs owner action: Media disk is above the warning threshold.",
       ),
-    ).toBeNull();
+    ).toBeVisible();
+    expect(screen.getByText("Chat (Openai Compatible)")).toBeVisible();
+    expect(screen.getByText("Image (Comfy)")).toBeVisible();
+    expect(screen.getAllByText("Loaded:").length).toBeGreaterThanOrEqual(1);
+    expect(
+      screen.getAllByText("Not measured yet").length,
+    ).toBeGreaterThanOrEqual(2);
+    expect(
+      screen.getByText("Budget: 20 GB allocatable from 24 GB total."),
+    ).toBeVisible();
+    expect(screen.getByText("/media")).toBeVisible();
+    expect(screen.getByText("78% used")).toBeVisible();
+    expect(screen.getByText(/amdgpu_edge_c: 95 °C/)).toBeVisible();
+    expect(screen.getByText(/Watch cooling before long jobs/)).toBeVisible();
+    expect(
+      screen.getAllByText(/Media disk is above the warning threshold/).length,
+    ).toBeGreaterThanOrEqual(1);
   });
 
-  it("shows an old generated timestamp without claiming it is current", async () => {
-    const twoYearsAgo = Math.floor(Date.now() / 1000) - 2 * 365 * 24 * 60 * 60;
-    statusState.load = async () => ({
-      current_health: health(),
-      generated_at: twoYearsAgo,
+  it("hides disabled engines until requested", async () => {
+    renderStatus();
+    await screen.findByText("Chat (Openai Compatible)");
+    expect(screen.queryByText("Image & video (Comfy)")).toBeNull();
+    await userEvent.click(screen.getByText("Show disabled"));
+    expect(screen.getByText("Image & video (Comfy)")).toBeVisible();
+  });
+
+  it("preserves query-string service focus even when disabled engines are hidden", async () => {
+    state.search = "service=image";
+    renderStatus();
+    const selected = await screen.findByText("Image & video (Comfy)");
+    expect(selected.closest("article")).toHaveAttribute("aria-current", "true");
+  });
+
+  it("does not paint unmeasured observations green when a tone is contradictory", async () => {
+    state.status = async () => ({
+      ...seededStatus,
+      current_health: {
+        ...seededStatus.current_health,
+        signals: [],
+        services: [
+          {
+            ...seededStatus.current_health.services[0],
+            observation: "unavailable",
+            tone: "ok",
+          },
+        ],
+      },
+    });
+    state.registry = async () => ({
+      ...seededRegistry,
+      services: { chat: seededRegistry.services.chat },
     });
     renderStatus();
+    const row = (await screen.findByText("Chat (Openai Compatible)")).closest(
+      "article",
+    );
+    expect(row).not.toBeNull();
+    expect(
+      within(row as HTMLElement).getAllByText("Not measured yet").length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(within(row as HTMLElement).queryByText("Ready")).toBeNull();
+  });
 
-    expect(await screen.findByText("2y ago")).toBeVisible();
-    expect(screen.getByText("gateway health observation")).toBeVisible();
-    expect(screen.queryByText("Current", { exact: true })).toBeNull();
-    expect(screen.queryByText(/not supplied/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/GENERATED/i)).not.toBeInTheDocument();
+  it("does not call a degraded engine busy or a standby engine starting", async () => {
+    state.status = async () => ({
+      current_health: {
+        ...seededStatus.current_health,
+        signals: [],
+        services: [
+          {
+            ...seededStatus.current_health.services[0],
+            observation: "degraded",
+            tone: "warn",
+          },
+          {
+            ...seededStatus.current_health.services[0],
+            service_id: "standby",
+            name: "Standby",
+            observation: "standby_stopped",
+            tone: "neutral",
+          },
+        ],
+      },
+      backends: [],
+    });
+    state.registry = async () => ({
+      ...seededRegistry,
+      services: {
+        ...seededRegistry.services,
+        standby: {
+          ...seededRegistry.services.chat,
+          id: "standby",
+          name: "Standby",
+        },
+      },
+    });
+    renderStatus();
+    expect(await screen.findByText("Degraded")).toBeVisible();
+    expect(screen.getByText("Standby, stopped")).toBeVisible();
+    expect(screen.queryByText("Busy")).toBeNull();
+    expect(screen.queryByText("Starting")).toBeNull();
+  });
+
+  it("reports enabled provider failures before all-clear engine copy", async () => {
+    state.status = async () => ({
+      ...seededStatus,
+      current_health: { ...seededStatus.current_health, signals: [] },
+    });
+    state.providers = {
+      state: "ready",
+      providers: [
+        {
+          id: "openrouter",
+          name: "OpenRouter",
+          enabled: true,
+          reachable: false,
+          keyState: "set",
+          spendText: "$0.00",
+          tone: "bad",
+        },
+      ],
+      raw: { providers: [] },
+      message: "ready",
+      refetch: vi.fn(),
+    };
+    renderStatus();
+    expect(
+      await screen.findByText(
+        "OpenRouter needs owner action: provider is unreachable.",
+      ),
+    ).toBeVisible();
+    expect(screen.getByText("OpenRouter")).toBeVisible();
+  });
+
+  it("renders empty and error states without green claims", async () => {
+    state.registry = async () => ({ schema_version: 1, services: {} });
+    state.status = async () => ({
+      current_health: {
+        state: "empty",
+        tone: "neutral",
+        label: "No engines",
+        detail: "None",
+        observation_available: false,
+        services: [],
+      },
+    });
+    const { rerender } = renderStatus();
+    expect(
+      await screen.findByText("No engines are configured yet."),
+    ).toBeVisible();
+    cleanup();
+    state.registry = async () => seededRegistry;
+    state.status = async () => {
+      throw new Error("Status probe failed");
+    };
+    renderStatus();
+    expect(
+      await screen.findByText(
+        "Status is unavailable; the engine configuration is shown without live health.",
+      ),
+    ).toBeVisible();
+    expect(screen.getByText("Status probe failed")).toBeVisible();
+    void rerender;
+  });
+
+  it("has no serious accessibility violations in the seeded state", async () => {
+    renderStatus();
+    await screen.findByText("Chat (Openai Compatible)");
+    const accessibility = await axe(document.body);
+    expect(
+      accessibility.violations.filter((v) =>
+        ["serious", "critical"].includes(v.impact ?? ""),
+      ),
+    ).toEqual([]);
   });
 });
