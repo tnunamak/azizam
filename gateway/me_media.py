@@ -813,6 +813,9 @@ def _matches_media_filters(item: Mapping[str, Any], request: Request) -> bool:
     model = request.query_params.get("model")
     if model and item.get("model") != model:
         return False
+    workflow = request.query_params.get("workflow")
+    if workflow and item.get("workflow") != workflow:
+        return False
     search = str(request.query_params.get("q") or request.query_params.get("search") or "").strip().lower()
     if search and search not in str(item.get("prompt") or "").lower():
         return False
