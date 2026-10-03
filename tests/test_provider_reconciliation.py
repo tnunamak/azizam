@@ -204,3 +204,24 @@ class MalformedHeaderChargeTests(ReconciliationExecutionFixture):
         second, second_send = await self._execute()
         assert second.status_code == 402
         second_send.assert_not_awaited()
+
+
+class AliasPriceAdmissionTests(ReconciliationExecutionFixture):
+    async def test_alias_price_override_is_not_replaced_by_upstream_default(self):
+        from unittest.mock import patch
+        self.provider = replace(self.provider,
+            config={'models':[{'id':'basic','upstream_model':'upstream'}]},
+            price={'input_usd_per_million_tokens':'1', 'output_usd_per_million_tokens':'1', 'models': {
+                'upstream': {'output_usd_per_million_tokens':'1'},
+                'openrouter/basic': {'output_usd_per_million_tokens':'100'}}})
+        self.body = {**self.body, 'model':'openrouter/basic', 'max_tokens':100}
+        estimates = []
+        estimate = providers.estimate_request_cost
+        def capture(provider, body, **kwargs):
+            cost = estimate(provider, body, **kwargs)
+            estimates.append(cost)
+            return cost
+        with patch('gateway.providers.estimate_request_cost', side_effect=capture):
+            response, _ = await self._execute()
+        assert response.status_code == 200
+        assert estimates[0].usd >= Decimal('0.01')

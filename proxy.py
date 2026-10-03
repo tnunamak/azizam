@@ -14392,6 +14392,7 @@ _LITELLM_KEY_CLIENT = _LiveLiteLLMKeyClient()
 
 app.include_router(create_provider_admin_router(
     ADMIN_STORE, auth=ADMIN_AUTH,
+    ledger_path=ADMIN_DB_PATH.parent / "provider_spend.db",
     spending_provider=lambda: provider_ledger_spending_snapshot(path=ADMIN_DB_PATH.parent / "provider_spend.db"),
 ))
 

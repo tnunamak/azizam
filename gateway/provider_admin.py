@@ -793,7 +793,10 @@ def _audit_provider_reconciliation(
 ) -> None:
     record_audit = getattr(store, "record_audit", None)
     if not callable(record_audit):
-        return
+        store_path = getattr(store, "path", None)
+        if store_path is None:
+            return
+        record_audit = lambda action, **fields: admin_store.record_audit(action, path=store_path, **fields)
     record_audit(
         "operator.provider_reconciliation.update",
         actor_kind=ctx.actor_kind,

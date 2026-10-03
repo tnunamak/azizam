@@ -114,6 +114,19 @@ class ProviderReconciliationAdminApiTests(unittest.TestCase):
         self.assertEqual(rows["openrouter"]["spend"]["pending_reconciliation_count"], 1)
         self.assertEqual(response.json()["global"]["spend"]["pending_reconciliation_count"], 2)
 
+    def test_owner_reconciliation_is_audited_in_runtime_store_database(self) -> None:
+        from gateway import admin_store
+        self.store.path = Path(self.tmpdir.name) / "admin.db"
+        admin_store.init_db(self.store.path)
+        response = self.client.post(
+            "/admin/api/providers/openrouter/reconciliation/1",
+            headers={"authorization": "Bearer admin"}, json={"actual_usd": "0.03"},
+        )
+        self.assertEqual(response.status_code, 200)
+        events = admin_store.list_audit(path=self.store.path)
+        self.assertEqual(events[0]["action"], "operator.provider_reconciliation.update")
+        self.assertEqual(events[0]["metadata"]["actual_usd"], "0.030000000")
+
     def test_lists_pending_reconciliations_for_provider(self) -> None:
         response = self.client.get(
             "/admin/api/providers/openrouter/reconciliation",

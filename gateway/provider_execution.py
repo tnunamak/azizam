@@ -525,7 +525,10 @@ async def execute_paid_litellm(
             if not _model_declared(provider, model):
                 raise providers.RemoteProviderNotAllowed("Remote model is not declared in the provider model allow-list")
             resolved_upstream_model = _resolved_upstream_model(provider, model)
-            pricing_provider = replace(provider, price=providers.price_for_provider_model(provider, model))
+            pricing_provider = replace(provider, price={
+                key: value for key, value in providers.price_for_provider_model(provider, model).items()
+                if key != "models"
+            })
             decision = evaluate(profile, PolicyRequest(protocol=protocol, intent=intent, model=model))
             if decision.denied:
                 raise providers.RemoteProviderNotAllowed("; ".join(decision.reasons))

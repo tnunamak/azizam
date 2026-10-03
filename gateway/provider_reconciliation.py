@@ -158,9 +158,8 @@ async def reconcile_pending_generations(provider: ProviderRef, *, path) -> None:
     if not isinstance(provider.config.get("generation_stats"), Mapping):
         return
     # Bound metadata traffic per attempt. Remaining charges continue to block caps.
-    for row in providers.list_provider_reconciliations(path=path, provider_id=provider.id)[:2]:
-        if not row.get("generation_id"):
-            continue
+    for row in [row for row in providers.list_provider_reconciliations(path=path, provider_id=provider.id)
+                if row.get("generation_id")][:2]:
         cost = await lookup_generation_cost(provider, row["generation_id"])
         if cost.usd is not None:
             reservation = providers.Reservation(row["id"], row["provider"], row["profile_id"],
