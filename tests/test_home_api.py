@@ -37,7 +37,8 @@ def home_case(tmp_path):
                            client_app=client_app, outsider=outsider, key=key, cred=cred,
                            other_cred=other_cred, calls=[], logged_in=True, owner=True,
                            health={"backends": [{"key": "service", "live_status": "up"}]},
-                           fast=True, health_error=False, inherited_profile=None,
+                           fast=True, health_error=False, inherited_profile=None, prospective_profile=None,
+                           self_service=True, capabilities_override=None, aliases_override=None,
                            registry={"services": {"service": {"enabled": True, "config": {"gateway_lifecycle": True}}}})
     def require_session(request):
         if not case.logged_in:
@@ -51,8 +52,12 @@ def home_case(tmp_path):
             raise AdminAuthError()
         return AdminContext(subject=user["id"], roles=frozenset({"owner" if case.owner else "admin"}))
     def capabilities(identity):
+        if case.capabilities_override is not None:
+            return case.capabilities_override(identity)
         allowed = identity.profile.id != "no-chat"
-        return [Capability(intent="chat.completions", backend="service", model="fast", policy_available=allowed and case.fast),
+        alias_caps = build_alias_capabilities({"chat": {"stable": [{"alias": "fast", "resolves_to": "demo"}]}}) if case.fast else []
+        return [Capability(intent="chat.completions", backend="service", model="demo", policy_available=allowed),
+                *alias_caps,
                 Capability(intent="image.generate", backend="service", model="image", policy_available=False)]
     async def status():
         if case.health_error:
@@ -62,9 +67,10 @@ def home_case(tmp_path):
     app.include_router(create_home_router(store=SimpleNamespace(path=db, get_service_registry=lambda: case.registry),
                                          receipts_path=lambda: receipts, require_session=require_session,
                                          require_action=action, csrf_token=lambda _session: "csrf",
-                                         default_profile_id=lambda _session: None, capabilities=capabilities,
+                                         default_profile_id=lambda _session: case.prospective_profile, capabilities=capabilities,
                                          inherited_profile_id_for_app=lambda _app: case.inherited_profile,
-                                         aliases=lambda: {"chat": {"stable": [{"alias": "fast", "resolves_to": "demo"}]}, "images": {"stable": [{"alias": "image", "resolves_to": "picture"}]}},
+                                         self_service_enabled=lambda: case.self_service,
+                                         aliases=lambda: case.aliases_override or {"chat": {"stable": [{"alias": "fast", "resolves_to": "demo"}]}, "images": {"stable": [{"alias": "image", "resolves_to": "picture"}]}},
                                          public_base_url=lambda _request: "https://gateway.example",
                                          status_provider=status, admin_auth=admin_auth))
     @app.post("/v1/chat/completions")
@@ -74,7 +80,7 @@ def home_case(tmp_path):
         assert not request.headers.get("cookie")
         admin_store.touch_credential_last_used(cred["id"], path=db)
         receipt_store.record({"request_id": "real-test", "app_id": client_app["id"], "status": "succeeded", "intent": "chat.completions"}, path=receipts)
-        return JSONResponse({"choices": [{"message": {"content": "Hi"}}]}, headers={"request-id": "real-test"})
+        return JSONResponse({"choices": [{"message": {"content": "Hi"}}]}, headers={"x-ai-gateway-request-id": "real-test", "request-id": "provider-opaque-id"})
     @app.get("/v1/models")
     async def models(request: Request):
         case.calls.append((request.url.path, dict(request.headers), None))
@@ -96,7 +102,7 @@ def test_home_uses_allowed_capabilities_and_owned_last_five(home_case):
     assert len(data["receipts"]) == 5
     assert {row["request_id"] for row in data["receipts"]} == {f"mine-{i}" for i in range(2, 7)}
     assert [row["id"] for row in data["aliases"]] == ["fast"]
-    assert data["capabilities"][0]["status"] == "ready"
+    assert all(row["status"] == "ready" for row in data["capabilities"])
     assert data["api_base_url"] == "https://gateway.example/v1"
     assert data["creations"] is None
     assert c.key not in response.text and "sha256:" not in response.text
@@ -230,6 +236,7 @@ def test_setup_admin_created_personal_app_counts_when_used(home_case):
 def test_home_and_connection_use_credential_profile_override(home_case):
     c = home_case
     restricted = admin_store.create_profile("no-chat", {"id": "no-chat", "protocols": []}, path=c.db)
+    c.prospective_profile = restricted["id"]
     admin_store.disable_app(c.personal["id"], path=c.db)
     admin_store.revoke_credential(c.cred["id"], path=c.db)
     admin_store.create_credential_hash(subject_kind="app", subject_id=c.client_app["id"], hash=hash_api_key("restricted-key"), prefix="masked", profile_id=restricted["id"], path=c.db)
@@ -244,6 +251,7 @@ def test_home_and_connection_use_live_app_inheritance_policy(home_case):
     c = home_case
     restricted = admin_store.create_profile("no-chat", {"id": "no-chat", "protocols": []}, path=c.db)
     c.inherited_profile = restricted["id"]
+    c.prospective_profile = restricted["id"]
     data = c.http.get("/me/api/home").json()
     assert data["capabilities"] == [] and data["aliases"] == []
     result = c.http.post("/me/api/connection-test", json={"api_key": c.key}, headers=c.headers).json()
@@ -304,3 +312,116 @@ def test_alias_resolves_registry_models_when_catalog_only_has_generic_endpoint()
     fast = next(cap for cap in _resolved_capabilities(identity, lambda _identity: raw, registry) if cap.model == "fast")
     assert fast.policy_available and fast.backend == "capture-engine"
     assert _declared_local_fast(fast, registry)
+
+
+def test_connection_alias_precedence_never_uses_same_named_local_model(home_case):
+    c = home_case
+    views = {"chat": {"stable": [{"alias": "fast", "resolves_to": "paid-model"}]}}
+    c.aliases_override = views
+    c.registry = {"services": {
+        "service": {"enabled": True, "config": {"gateway_lifecycle": True, "models": [{"id": "fast"}]}},
+        "remote": {"enabled": True, "config": {"models": [{"id": "paid-model"}]}}
+    }}
+    c.capabilities_override = lambda _identity: [
+        Capability(intent="chat.completions", backend="service", model="fast"),
+        Capability(intent="chat.completions", backend="remote", model="paid-model"),
+        *build_alias_capabilities(views),
+    ]
+    result = c.http.post("/me/api/connection-test", json={"api_key": c.key}, headers=c.headers).json()
+    assert result["ok"] and result["path"] == "/v1/models"
+    assert [call[0] for call in c.calls] == ["/v1/models"]
+    data = c.http.get("/me/api/home").json()
+    assert not data["aliases"][0]["available"]  # The healthy same-named local model is shadowed.
+
+
+def test_workflow_and_service_aliases_preserve_permissions():
+    identity = RuntimeIdentity(name="Test", key_hash="")
+    views = {
+        "images": {"stable": [{"alias": "image", "resolves_to": "draw"}]},
+        "speech": {"stable": [{"alias": "tts", "resolves_to": "voice-option", "engine": "voice-option", "service": "voice-service"}]},
+    }
+    workflow = Capability(intent="image.generate", backend="image-service", workflow="draw")
+    raw = [workflow, *build_alias_capabilities(views)]
+    registry = {"services": {"image-service": {"enabled": True}, "voice-service": {"enabled": True}}}
+    caps = _resolved_capabilities(identity, lambda _identity: raw, registry)
+    aliases = {cap.model: cap for cap in caps if "alias" in cap.tags}
+    assert aliases["image"].policy_available and aliases["image"].backend == "image-service"
+    assert aliases["tts"].policy_available and aliases["tts"].backend == "voice-service"
+    denied = RuntimeIdentity(name="Denied", key_hash="", profile=load_profile({"id": "deny", "backends": []}))
+    denied_raw = [capability_with_policy_view(cap, denied.profile, request=make_policy_request(protocol="openai.audio", intent=cap.intent, model=cap.model, backend=cap.backend)) for cap in raw]
+    assert not any(cap.policy_available for cap in _resolved_capabilities(denied, lambda _identity: denied_raw, registry) if "alias" in cap.tags)
+
+
+def test_recipe_aliases_are_credential_scoped_and_new_app_uses_default(home_case):
+    c = home_case
+    restricted = admin_store.create_profile("no-chat", {"id": "no-chat", "protocols": []}, path=c.db)
+    c.prospective_profile = restricted["id"]
+    narrow = admin_store.create_credential_hash(subject_kind="app", subject_id=c.client_app["id"], hash=hash_api_key("narrow-key"), prefix="masked", profile_id=restricted["id"], path=c.db)
+    data = c.http.get("/me/api/home").json()
+    assert [alias["id"] for alias in data["aliases"]] == ["fast"]
+    assert [alias["id"] for alias in data["credential_aliases"][c.cred["id"]]] == ["fast"]
+    assert data["credential_aliases"][narrow["id"]] == []
+    assert data["new_app_aliases"] == []
+    assert c.other_cred["id"] not in data["credential_aliases"]
+
+
+def test_capability_union_includes_available_new_app_default(home_case):
+    c = home_case
+    restricted = admin_store.create_profile("no-chat", {"id": "no-chat", "protocols": []}, path=c.db)
+    c.inherited_profile = restricted["id"]
+    data = c.http.get("/me/api/home").json()
+    assert data["credential_aliases"][c.cred["id"]] == []
+    assert [alias["id"] for alias in data["new_app_aliases"]] == ["fast"]
+    assert data["capabilities"] and data["aliases"]
+    c.self_service = False
+    data = c.http.get("/me/api/home").json()
+    assert data["new_app_aliases"] == [] and data["aliases"] == []
+
+
+def test_public_chat_header_returns_own_durable_receipt_not_upstream_id(monkeypatch):
+    import proxy
+    from gateway.policy import DEFAULT_PROFILE
+
+    class Client:
+        async def aclose(self):
+            pass
+
+    class Upstream:
+        status_code = 200
+        headers = {"content-type": "application/json", "x-ai-gateway-request-id": "spoofed-upstream", "request-id": "provider-opaque"}
+        async def aread(self):
+            return b'{"choices":[{"message":{"role":"assistant","content":"Hi"},"finish_reason":"stop"}]}'
+        async def aclose(self):
+            pass
+
+    captured = []
+    async def send(request, **_kwargs):
+        captured.append(request)
+        return Client(), Upstream()
+    async def prepare(_auth_context, **kwargs):
+        return None, kwargs["body_json"]
+
+    identity = RuntimeIdentity(name="Header test", key_hash=hash_api_key("header-test"), profile=DEFAULT_PROFILE, app_id="header-app")
+    monkeypatch.setattr(proxy, "AUTH_ENABLED", True)
+    monkeypatch.setattr(proxy, "runtime_identity_for_app_credential_hash", lambda *_args, **_kwargs: identity)
+    monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: {"services": {
+        "litellm": {"id": "litellm", "kind": "llm-substrate", "enabled": True,
+                    "capabilities": ["llm.execution"], "config": {"base_url": "http://unit-test.invalid", "api_key_env": "HOME_HEADER_MASTER"}}
+    }})
+    monkeypatch.setenv("HOME_HEADER_MASTER", "unit-test-master")
+    monkeypatch.setattr(proxy, "send_llm_execution_request", send)
+    monkeypatch.setattr(proxy, "_prepare_litellm_local_llm_request", prepare)
+    monkeypatch.setitem(proxy.config, "model_aliases", {})
+    client = TestClient(proxy.app)
+    try:
+        response = client.post("/v1/chat/completions", headers={"authorization": "Bearer header-test"},
+                               json={"model": "demo-chat", "messages": [{"role": "user", "content": "Hi"}], "max_tokens": 1})
+    finally:
+        client.close()
+    assert response.status_code == 200, response.text
+    request_id = response.headers["x-ai-gateway-request-id"]
+    assert request_id not in {"spoofed-upstream", "provider-opaque"} and "," not in request_id
+    assert response.headers["request-id"] == "provider-opaque"
+    receipt = receipt_store.get(request_id)
+    assert receipt["status"] == "succeeded" and receipt["app_id"] == "header-app"
+    assert len(captured) == 1

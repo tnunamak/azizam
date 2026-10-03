@@ -121,6 +121,7 @@ function HomeLoading() {
 function Connect({ home }: { home: HomeSnapshot }) {
   const queryClient = useQueryClient();
   const [client, setClient] = useState<Client>(clients[0]);
+  const [selectedCredentialId, setSelectedCredentialId] = useState("new");
   const [reveal, setReveal] = useState<{ secret: string; id: string } | null>(
     null,
   );
@@ -133,14 +134,24 @@ function Connect({ home }: { home: HomeSnapshot }) {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ConnectionResult | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
-  const model = chatAlias(home.aliases);
   const keys = home.apps
-    .flatMap((app) => app.credentials)
+    .flatMap((app) =>
+      app.credentials.map((key) => ({ ...key, appName: app.name })),
+    )
     .filter(
       (key) =>
         key.revoked_at == null &&
         (key.expires_at == null || key.expires_at > Date.now() / 1000),
     );
+  const scopedAliases =
+    selectedCredentialId === "new"
+      ? (home.new_app_aliases ?? [])
+      : (home.credential_aliases?.[selectedCredentialId] ?? []);
+  const model = chatAlias(scopedAliases);
+  const loadingKeyAccess =
+    creating &&
+    selectedCredentialId !== "new" &&
+    !Object.hasOwn(home.credential_aliases ?? {}, selectedCredentialId);
   const canCreate =
     home.apps.some((app) => app.can_mint_keys) || home.apps.length === 0;
 
@@ -150,10 +161,12 @@ function Connect({ home }: { home: HomeSnapshot }) {
     setCreating(true);
     setKeyError(null);
     setTestResult(null);
+    setSelectedCredentialId("new");
     try {
       const app = pendingApp ?? (await accountApi.createApp(client));
       setPendingApp(app);
       const key = await accountApi.mintKey(app.id, client);
+      setSelectedCredentialId(key.id);
       setReveal({ secret: key.api_key, id: key.id });
       setSaved(false);
       setPendingApp(null);
@@ -170,15 +183,13 @@ function Connect({ home }: { home: HomeSnapshot }) {
   }
   async function testConnection() {
     const secret = reveal?.secret || testKey.trim();
-    if (!secret || testing) return;
+    if (!secret || testing || selectedCredentialId === "new") return;
     setTesting(true);
     setTestError(null);
     setTestResult(null);
     setTestKey("");
     try {
-      setTestResult(
-        await homeApi.test(secret, reveal?.secret ? reveal.id : undefined),
-      );
+      setTestResult(await homeApi.test(secret, selectedCredentialId));
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: homeKey }),
         queryClient.invalidateQueries({ queryKey: setupKey }),
@@ -269,6 +280,39 @@ function Connect({ home }: { home: HomeSnapshot }) {
             )}
           </div>
         </div>
+        <div className="mt-6 max-w-lg space-y-2">
+          <label htmlFor="recipe-key" className="text-sm font-medium">
+            Key for these settings
+          </label>
+          <select
+            id="recipe-key"
+            value={selectedCredentialId}
+            disabled={creating || !!reveal || testing}
+            onChange={(event) => {
+              setSelectedCredentialId(event.target.value);
+              setTestResult(null);
+              setTestKey("");
+            }}
+            className="border-input bg-background h-11 w-full rounded-lg border px-3 text-sm"
+          >
+            <option value="new">New app · your default access</option>
+            {selectedCredentialId !== "new" &&
+              !keys.some((key) => key.id === selectedCredentialId) && (
+                <option value={selectedCredentialId}>
+                  New key · loading access
+                </option>
+              )}
+            {keys.map((key) => (
+              <option key={key.id} value={key.id}>
+                {key.appName} · {key.display_name || "Key"}
+              </option>
+            ))}
+          </select>
+          <p className="text-muted-foreground text-xs">
+            Recipes use this key’s access plan. A new app uses your default
+            access, which can differ from your other apps.
+          </p>
+        </div>
       </div>
       <Tabs
         value={client.replaceAll(" ", "-")}
@@ -325,16 +369,23 @@ function Connect({ home }: { home: HomeSnapshot }) {
               <p className="text-muted-foreground mb-5 max-w-3xl text-sm leading-relaxed">
                 {recipe.description}
               </p>
-              {model ? (
-                <CodeBlock language={recipe.language} code={recipe.code} />
+              {loadingKeyAccess ? (
+                <div aria-label="Loading key access" aria-busy="true">
+                  <Skeleton className="h-24 w-full" />
+                </div>
+              ) : model ? (
+                <div className="[&_pre]:overflow-x-visible [&_pre]:break-words [&_pre]:whitespace-pre-wrap">
+                  <CodeBlock language={recipe.language} code={recipe.code} />
+                </div>
               ) : (
                 <div className="bg-muted rounded-lg p-5 text-sm">
                   <p className="font-medium">
-                    No chat model is available to your account yet
+                    No chat model is available to this key yet
                   </p>
                   <p className="text-muted-foreground mt-2">
-                    The gateway owner can connect a model and add it to your
-                    access plan. Your base URL and saved key will stay the same.
+                    Choose a key with chat access, or ask the gateway owner to
+                    add a model to this key’s access plan. Your base URL stays
+                    the same.
                   </p>
                 </div>
               )}
@@ -362,13 +413,19 @@ function Connect({ home }: { home: HomeSnapshot }) {
               disabled={testing}
             />
             <p className="text-muted-foreground text-xs">
-              Used for this test, then cleared. It is not saved in your browser.
+              {selectedCredentialId === "new"
+                ? "Create a key above, or select an existing key to test it."
+                : "Paste the selected key. Used for this test, then cleared; it is not saved in your browser."}
             </p>
           </div>
         )}
         <div className="flex flex-wrap items-center gap-4">
           <Button
-            disabled={testing || !(reveal?.secret || testKey.trim())}
+            disabled={
+              testing ||
+              selectedCredentialId === "new" ||
+              !(reveal?.secret || testKey.trim())
+            }
             onClick={() => void testConnection()}
           >
             {testing ? (
@@ -648,8 +705,7 @@ export default function HomePage() {
     refetch: refetchHome,
     isFetching: homeFetching,
   } = useQuery({ queryKey: homeKey, queryFn: homeApi.home });
-  const isOwner =
-    home?.user && ["owner", "superadmin"].includes(home.user.role);
+  const isOwner = home?.user?.role === "owner";
   const {
     data: setup,
     isPending: setupPending,

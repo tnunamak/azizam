@@ -14230,6 +14230,7 @@ app.include_router(create_home_router(
     csrf_token=_csrf_token_for_oidc_session,
     default_profile_id=_default_profile_id_for_session,
     inherited_profile_id_for_app=_inherited_profile_id_for_app,
+    self_service_enabled=_user_self_service_enabled,
     capabilities=lambda identity: _gateway_capabilities_for_auth_context(AuthContext(identity=identity)),
     aliases=_gateway_aliases_provider,
     public_base_url=lambda request: _public_base_url(request),
@@ -25284,11 +25285,12 @@ async def _forward_current_loaded_openai_request(
                 receipt.metadata, "backend_egress", body,
                 extra={"status_code": resp.status_code},
             )
-            excluded = ("content-length", "transfer-encoding", "content-type")
+            excluded = ("content-length", "transfer-encoding", "content-type", "x-ai-gateway-request-id")
             response_headers = {
                 k: v for k, v in resp.headers.items() if k.lower() not in excluded
             }
             response_headers["X-AI-Gateway-LLM-Execution"] = "current-loaded"
+            response_headers["X-AI-Gateway-Request-Id"] = receipt.request_id
             response_headers["X-AI-Gateway-Backend"] = target.backend
             response_headers["X-AI-Gateway-Resolved-Model"] = target.model
 
@@ -25589,11 +25591,12 @@ async def _forward_litellm_proxy_request(
                 headers={"Retry-After": "10"},
             )
         content_type = resp.headers.get("content-type", "") or "application/json"
-        excluded = ("content-length", "transfer-encoding", "content-type")
+        excluded = ("content-length", "transfer-encoding", "content-type", "x-ai-gateway-request-id")
         response_headers = {
             k: v for k, v in resp.headers.items() if k.lower() not in excluded
         }
         response_headers["X-AI-Gateway-LLM-Execution"] = "litellm"
+        response_headers["X-AI-Gateway-Request-Id"] = receipt.request_id
         _attach_litellm_response_metadata(receipt, resp.headers)
         record_request_shape_stage(
             receipt.metadata,

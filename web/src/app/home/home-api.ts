@@ -38,6 +38,8 @@ export interface HomeSnapshot {
   api_base_url: string;
   capabilities: HomeCapability[];
   aliases: HomeAlias[];
+  credential_aliases: Record<string, HomeAlias[]>;
+  new_app_aliases: HomeAlias[];
   status: { state: AvailabilityStatus; reason: string };
   receipts: HomeReceipt[];
   creations: null;

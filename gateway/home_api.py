@@ -116,9 +116,17 @@ def _resolved_capabilities(identity: RuntimeIdentity, provider,
         if "alias" not in cap.tags or not targets:
             out.append(cap)
             continue
+        # Service-selected aliases already carry the selected service ID from
+        # declarative alias data; their target is an opaque service option ID,
+        # rather than a model name to look up in another catalog.
+        if cap.backend != "gateway" and any(tag.startswith("engine:") for tag in cap.tags):
+            service = ((registry or {}).get("services") or {}).get(cap.backend)
+            out.append(cap if isinstance(service, Mapping) and service.get("enabled", True)
+                       else replace(cap, policy_available=False))
+            continue
         target = targets[0]
         matches = [candidate for candidate in raw if "alias" not in candidate.tags
-                   and candidate.model in {target, f"role:{target}"}
+                   and (candidate.model in {target, f"role:{target}"} or candidate.workflow == target)
                    and candidate.intent == cap.intent]
         # Service discovery often describes an endpoint without enumerating its
         # models. The registry's logical model rows remain routing truth.
@@ -170,10 +178,36 @@ def _declared_local_fast(cap: Capability, registry: Mapping[str, Any]) -> bool:
                 or any(row.get(flag) is True for row in models for flag in local_flags))
 
 
+def _capability_rows(capabilities, health) -> list[dict[str, Any]]:
+    rows = []
+    for cap in sorted(capabilities, key=lambda item: item.sort_key):
+        if not cap.policy_available:
+            continue
+        state, reason = _availability(cap, health)
+        rows.append({**summarize_capability(cap, "client"), "capability": _product_capability(cap.intent),
+                     "status": state, "available": state == "ready", "reason": reason})
+    return rows
+
+
+def _alias_rows(rows, views) -> list[dict[str, Any]]:
+    aliases = []
+    for operation, view in views.items():
+        for alias in view.get("stable", []):
+            matches = [row for row in rows if row.get("model") == alias.get("alias")
+                       and "alias" in row.get("tags", [])
+                       and f"resolves_to:{alias.get('resolves_to')}" in row.get("tags", [])
+                       and row.get("capability") == _product_capability(_OPERATION_INTENTS.get(operation, operation))]
+            if matches:
+                best = next((row for row in matches if row["available"]), matches[0])
+                aliases.append({"id": alias["alias"], "operation": operation,
+                                "available": best["available"], "status": best["status"], "reason": best["reason"]})
+    return aliases
+
+
 def create_home_router(*, store, receipts_path: Callable[[], Path], require_session,
                        require_action, csrf_token, default_profile_id, capabilities,
                        aliases, public_base_url, status_provider, admin_auth,
-                       inherited_profile_id_for_app=None) -> APIRouter:
+                       inherited_profile_id_for_app=None, self_service_enabled=lambda: True) -> APIRouter:
     """Register three small surfaces over the gateway's existing auth and stores."""
     router = APIRouter()
 
@@ -194,7 +228,9 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
             return _error(exc)
         health = await live_health()
         registry = store.get_service_registry()
+        alias_views = aliases()
         allowed: dict[tuple[str, str | None, str | None, str], Capability] = {}
+        credential_aliases: dict[str, list[dict[str, Any]]] = {}
         owned_apps = admin_store.list_apps_for_user(session.subject, path=store.path)
         for app in owned_apps:
             if app.get("disabled_at"):
@@ -205,30 +241,20 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                 identity = _identity(app, credential, app_inherited, store.path)
                 if identity is None:
                     continue
-                for cap in _resolved_capabilities(identity, capabilities, registry):
+                scoped = _resolved_capabilities(identity, capabilities, registry)
+                if credential is not None:
+                    credential_aliases[credential["id"]] = _alias_rows(_capability_rows(scoped, health), alias_views)
+                for cap in scoped:
                     if cap.policy_available:
                         allowed[(cap.intent, cap.model, cap.workflow, cap.backend)] = cap
-        if not owned_apps:
-            identity = _identity({}, None, inherited, store.path)
-            if identity is not None:
-                for cap in _resolved_capabilities(identity, capabilities, registry):
-                    if cap.policy_available:
-                        allowed[(cap.intent, cap.model, cap.workflow, cap.backend)] = cap
-        rows = []
-        for cap in sorted(allowed.values(), key=lambda item: item.sort_key):
-            state, reason = _availability(cap, health)
-            rows.append({**summarize_capability(cap, "client"), "capability": _product_capability(cap.intent),
-                         "status": state, "available": state == "ready", "reason": reason})
-        alias_rows = []
-        for operation, view in aliases().items():
-            for alias in view.get("stable", []):
-                matches = [row for row in rows if row.get("model") == alias.get("alias")
-                           and row.get("capability") == _product_capability(_OPERATION_INTENTS.get(operation, operation))]
-                if not matches:
-                    continue
-                best = next((row for row in matches if row["available"]), matches[0])
-                alias_rows.append({"id": alias["alias"], "operation": operation,
-                                   "available": best["available"], "status": best["status"], "reason": best["reason"]})
+        new_identity = _identity({}, None, inherited, store.path) if self_service_enabled() else None
+        new_caps = _resolved_capabilities(new_identity, capabilities, registry) if new_identity else []
+        new_app_aliases = _alias_rows(_capability_rows(new_caps, health), alias_views)
+        for cap in new_caps:
+            if cap.policy_available:
+                allowed[(cap.intent, cap.model, cap.workflow, cap.backend)] = cap
+        rows = _capability_rows(allowed.values(), health)
+        alias_rows = _alias_rows(rows, alias_views)
         state = next((candidate for candidate in ("ready", "starting", "busy")
                       if any(row["status"] == candidate for row in rows)), "unavailable")
         status_reason = {
@@ -241,7 +267,8 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
         activity = build_user_activity_snapshot(session, limit=5, path=store.path, receipts_path=receipts_path())
         return _json({**account, "csrf_token": csrf_token(session), "public_base_url": base,
                       "api_base_url": f"{base}/v1" if base else "/v1", "capabilities": rows,
-                      "aliases": alias_rows, "status": {"state": state, "reason": status_reason},
+                      "aliases": alias_rows, "credential_aliases": credential_aliases,
+                      "new_app_aliases": new_app_aliases, "status": {"state": state, "reason": status_reason},
                       "receipts": activity["receipts"], "creations": None})
 
     @router.post("/me/api/connection-test", include_in_schema=False)
@@ -274,7 +301,11 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
         except UserPortalError as exc:
             return _error(exc)
         registry = store.get_service_registry()
-        fast_allowed = any(cap.policy_available and cap.model == "fast" and _product_capability(cap.intent) == "chat"
+        configured_fast = next((row for row in (aliases().get("chat") or {}).get("stable", [])
+                                if row.get("alias") == "fast"), {})
+        target_tag = f"resolves_to:{configured_fast.get('resolves_to')}"
+        fast_allowed = any(cap.policy_available and cap.model == "fast" and "alias" in cap.tags
+                           and target_tag in cap.tags and _product_capability(cap.intent) == "chat"
                            and _declared_local_fast(cap, registry)
                            for cap in _resolved_capabilities(identity, capabilities, registry))
         path = "/v1/chat/completions" if fast_allowed else "/v1/models"
@@ -292,7 +323,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                         response = await client.get(path, headers={"authorization": f"Bearer {key}"})
             ok = response.is_success
             reason = ("A one-token local chat request succeeded." if fast_allowed else "Your key can reach the model catalog. Chat was not tested because a permitted local fast model was not confirmed.") if ok else f"The gateway returned HTTP {response.status_code}. Check your key's access and service status."
-            request_id = response.headers.get("request-id") or response.headers.get("x-request-id") or response.headers.get("x-ai-gateway-request-id")
+            request_id = response.headers.get("x-ai-gateway-request-id")
         except (TimeoutError, httpx.HTTPError):
             ok, reason, request_id = False, "The connection test timed out or could not reach the gateway.", None
         return _json({"ok": ok, "latency_ms": round((time.perf_counter() - started) * 1000),
