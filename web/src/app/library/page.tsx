@@ -54,6 +54,7 @@ type DateFilter = "all" | "7d" | "30d" | "90d";
 
 interface MediaAsset {
   asset_id: string;
+  request_id?: string | null;
   kind: MediaKind;
   prompt: string;
   model: string;
@@ -352,7 +353,7 @@ export default function LibraryPage() {
       ),
   });
   return (
-    <main>
+    <div>
       <PageHeader
         title="Library"
         answer="Everything I’ve made."
@@ -549,6 +550,30 @@ export default function LibraryPage() {
                         : `${(selected.generation_ms / 1000).toFixed(1)} s`
                     }
                   />
+                  <Detail
+                    label="Request receipt"
+                    value={
+                      selected.request_id ? (
+                        <a
+                          href={`/r/${encodeURIComponent(selected.request_id)}`}
+                          aria-label={`View receipt ${selected.request_id}`}
+                          className="text-primary focus-visible:ring-ring inline-flex min-h-11 max-w-full min-w-0 items-center gap-1 rounded-md underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:outline-none"
+                        >
+                          <span className="shrink-0">View receipt</span>
+                          <span className="text-muted-foreground truncate font-mono text-xs">
+                            {selected.request_id}
+                          </span>
+                          <ExternalLink
+                            className="size-3 shrink-0"
+                            aria-hidden
+                          />
+                        </a>
+                      ) : (
+                        "Not recorded"
+                      )
+                    }
+                    title={selected.request_id ?? undefined}
+                  />
                   {selected.owner_name ? (
                     <Detail label="Owner" value={selected.owner_name} />
                   ) : null}
@@ -556,7 +581,8 @@ export default function LibraryPage() {
                 <section>
                   <h2 className="mb-2 text-sm font-medium">Prompt</h2>
                   <p className="bg-muted/30 rounded-lg border p-3 text-sm">
-                    {selected.prompt || "Not recorded"}
+                    {selected.prompt ||
+                      "Not recorded. The gateway does not report whether the prompt was omitted by policy or unavailable from the backend."}
                   </p>
                 </section>
                 <section>
@@ -632,7 +658,7 @@ export default function LibraryPage() {
           if (confirming) await deleteMutation.mutateAsync(confirming);
         }}
       />
-    </main>
+    </div>
   );
 }
 
@@ -646,7 +672,7 @@ function Detail({
   title?: string;
 }) {
   return (
-    <dl className="rounded-lg border p-3">
+    <dl className="min-w-0 rounded-lg border p-3">
       <dt className="text-muted-foreground text-xs">{label}</dt>
       <dd className="mt-1 truncate text-sm font-medium" title={title}>
         {value}
