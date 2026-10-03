@@ -44,6 +44,7 @@ class DecisionsError(Exception):
         *,
         param: str | None = None,
         headers: Mapping[str, str] | None = None,
+        loc: Sequence[str | int] | None = None,
     ) -> None:
         super().__init__(message)
         self.status = status
@@ -51,6 +52,7 @@ class DecisionsError(Exception):
         self.message = message
         self.param = param
         self.headers = dict(headers or {})
+        self.loc = tuple(loc) if loc is not None else None
 
 
 class BackendShapeError(Exception):
@@ -166,28 +168,28 @@ def systemone_validation_response(
     param: str | None = None,
     headers: Mapping[str, str] | None = None,
     detail: Sequence[Mapping[str, Any]] | None = None,
+    loc: Sequence[str | int] | None = None,
 ) -> JSONResponse:
     body: JSON
     if detail is not None:
         body = {"detail": [dict(item) for item in detail]}
     else:
-        body = {"detail": [_validation_detail(code, message, param)]}
+        body = {"detail": [_validation_detail(code, message, param, loc=loc)]}
     return JSONResponse(body, status_code=status, headers=dict(headers or {}))
 
 
-def _validation_detail(code: str, message: str, param: str | None) -> JSON:
-    loc: list[str | int] = ["body"]
-    if param:
-        loc.extend(_loc_parts(param))
+def _validation_detail(code: str, message: str, param: str | None, *, loc: Sequence[str | int] | None = None) -> JSON:
+    detail_loc = list(loc) if loc is not None else _loc_from_param(param)
     msg = _validation_message(code, message)
     error_type = "missing" if msg == "Field required" else _validation_type(code)
-    return {"loc": loc, "msg": msg, "type": error_type}
+    return {"loc": detail_loc, "msg": msg, "type": error_type}
 
 
-def _loc_parts(param: str) -> list[str | int]:
-    if param == "body":
-        return []
-    return [int(part) if part.isdigit() else part for part in param.split(".")]
+def _loc_from_param(param: str | None) -> list[str | int]:
+    loc: list[str | int] = ["body"]
+    if param and param != "body":
+        loc.extend(param.split("."))
+    return loc
 
 
 def _validation_type(code: str) -> str:
@@ -279,16 +281,20 @@ def _is_structured_text(value: Any) -> bool:
 def validate_systemone_request(payload: Any) -> JSON:
     body = _ensure_json_object(payload)
     _reject_unknown_fields(body, {"state", "model", "questions"}, "body")
+    if "model" not in body:
+        raise DecisionsError(422, "invalid_model", "Field required", param="model", loc=("body", "model"))
     model = body.get("model")
     if not isinstance(model, str) or not model.strip():
-        raise DecisionsError(422, "invalid_model", "model is required.", param="model")
+        raise DecisionsError(422, "invalid_model", "model must be a non-empty string.", param="model", loc=("body", "model"))
     if "state" not in body:
-        raise DecisionsError(422, "invalid_state", "Field required", param="state")
+        raise DecisionsError(422, "invalid_state", "Field required", param="state", loc=("body", "state"))
     if not isinstance(body["state"], (str, list, dict)):
-        raise DecisionsError(422, "invalid_state", "state must be a string, object, or array.", param="state")
+        raise DecisionsError(422, "invalid_state", "state must be a string, object, or array.", param="state", loc=("body", "state"))
+    if "questions" not in body:
+        raise DecisionsError(422, "invalid_questions", "Field required", param="questions", loc=("body", "questions"))
     questions = body.get("questions")
     if not isinstance(questions, Mapping) or not questions:
-        raise DecisionsError(422, "invalid_questions", "questions must be a non-empty object.", param="questions")
+        raise DecisionsError(422, "invalid_questions", "questions must be a non-empty object.", param="questions", loc=("body", "questions"))
 
     normalized_questions: JSON = {}
     for question_id, raw_question in questions.items():
@@ -304,24 +310,28 @@ def validate_systemone_request(payload: Any) -> JSON:
     }
 
 
+def _question_loc(question_id: str, *parts: str | int) -> tuple[str | int, ...]:
+    return ("body", "questions", question_id, *parts)
+
+
 def _validate_question(question_id: str, question: Mapping[str, Any]) -> JSON:
     _reject_unknown_fields(question, {"type", "instructions", "criteria"}, f"questions.{question_id}")
     qtype = question.get("type")
     param = f"questions.{question_id}"
     if not isinstance(qtype, str) or qtype not in {"noul", "choice", "score"}:
-        raise DecisionsError(422, "invalid_question_type", "question type must be noul, choice, or score.", param=f"{param}.type")
+        raise DecisionsError(422, "invalid_question_type", "question type must be noul, choice, or score.", param=f"{param}.type", loc=_question_loc(question_id, "type"))
 
     if qtype == "noul":
-        criteria = _validate_noul_criteria(question.get("criteria"), param)
+        criteria = _validate_noul_criteria(question.get("criteria"), param, question_id)
         _validate_optional_instructions(question, param)
         if not _has_instruction(question) and not _criteria_has_meaning(criteria):
-            raise DecisionsError(422, "invalid_instructions", "instructions or meaningful criteria is required.", param=f"{param}.instructions")
+            raise DecisionsError(422, "invalid_instructions", "instructions or meaningful criteria is required.", param=f"{param}.instructions", loc=_question_loc(question_id, "instructions"))
         return dict(question)
 
     if qtype == "choice":
         criteria = question.get("criteria")
         if not isinstance(criteria, Mapping):
-            raise DecisionsError(422, "invalid_criteria", "choice criteria must be an object.", param=f"{param}.criteria")
+            raise DecisionsError(422, "invalid_criteria", "choice criteria must be an object.", param=f"{param}.criteria", loc=_question_loc(question_id, "criteria"))
         count = len(criteria)
         if count < 2 or count > MAX_CHOICE_OPTIONS:
             raise DecisionsError(
@@ -329,37 +339,45 @@ def _validate_question(question_id: str, question: Mapping[str, Any]) -> JSON:
                 "invalid_criteria",
                 f"choice criteria must contain 2 to {MAX_CHOICE_OPTIONS} options.",
                 param=f"{param}.criteria",
+                loc=_question_loc(question_id, "criteria"),
             )
         for option, description in criteria.items():
             if not isinstance(option, str) or not option:
-                raise DecisionsError(422, "invalid_criteria", "choice option names must be non-empty strings.", param=f"{param}.criteria")
+                raise DecisionsError(422, "invalid_criteria", "choice option names must be non-empty strings.", param=f"{param}.criteria", loc=_question_loc(question_id, "criteria"))
             if description is not None and not _is_structured_text(description):
-                raise DecisionsError(422, "invalid_criteria", "choice descriptions must be string, object, array, or null.", param=f"{param}.criteria.{option}")
+                raise DecisionsError(422, "invalid_criteria", "choice descriptions must be string, object, array, or null.", param=f"{param}.criteria.{option}", loc=_question_loc(question_id, "criteria", option))
         _validate_optional_instructions(question, param)
         return dict(question)
 
     criteria = question.get("criteria")
     if not isinstance(criteria, list):
-        raise DecisionsError(422, "invalid_criteria", "score criteria must be an array.", param=f"{param}.criteria")
+        raise DecisionsError(422, "invalid_criteria", "score criteria must be an array.", param=f"{param}.criteria", loc=_question_loc(question_id, "criteria"))
     if len(criteria) < MIN_SCORE_LEVELS or len(criteria) > MAX_SCORE_LEVELS:
         raise DecisionsError(
             422,
             "invalid_criteria",
             f"score criteria must contain {MIN_SCORE_LEVELS} to {MAX_SCORE_LEVELS} levels.",
             param=f"{param}.criteria",
+            loc=_question_loc(question_id, "criteria"),
         )
     for index, description in enumerate(criteria):
         if not _is_structured_text(description):
-            raise DecisionsError(422, "invalid_criteria", "score level descriptions must be strings, objects, or arrays.", param=f"{param}.criteria.{index}")
+            raise DecisionsError(422, "invalid_criteria", "score level descriptions must be strings, objects, or arrays.", param=f"{param}.criteria.{index}", loc=_question_loc(question_id, "criteria", index))
     _validate_optional_instructions(question, param)
     if not _has_instruction(question) and not _criteria_has_meaning(criteria):
-        raise DecisionsError(422, "invalid_instructions", "instructions or meaningful criteria is required.", param=f"{param}.instructions")
+        raise DecisionsError(422, "invalid_instructions", "instructions or meaningful criteria is required.", param=f"{param}.instructions", loc=_question_loc(question_id, "instructions"))
     return dict(question)
+
+
+def _param_to_question_loc(param: str) -> tuple[str | int, ...]:
+    if not param.startswith("questions."):
+        return ("body", *param.split("."))
+    return ("body", "questions", param.removeprefix("questions."))
 
 
 def _validate_optional_instructions(question: Mapping[str, Any], param: str) -> None:
     if "instructions" in question and question.get("instructions") is not None and not _is_structured_text(question.get("instructions")):
-        raise DecisionsError(422, "invalid_instructions", "instructions must be a string, object, array, or null when present.", param=f"{param}.instructions")
+        raise DecisionsError(422, "invalid_instructions", "instructions must be a string, object, array, or null when present.", param=f"{param}.instructions", loc=(*_param_to_question_loc(param), "instructions"))
 
 
 def _has_instruction(question: Mapping[str, Any]) -> bool:
@@ -374,16 +392,16 @@ def _criteria_has_meaning(criteria: Any) -> bool:
     return False
 
 
-def _validate_noul_criteria(criteria: Any, param: str) -> Mapping[Any, Any] | None:
+def _validate_noul_criteria(criteria: Any, param: str, question_id: str) -> Mapping[Any, Any] | None:
     if criteria is None:
         return None
     if not isinstance(criteria, Mapping):
-        raise DecisionsError(422, "invalid_criteria", "noul criteria must be an object or null.", param=f"{param}.criteria")
+        raise DecisionsError(422, "invalid_criteria", "noul criteria must be an object or null.", param=f"{param}.criteria", loc=_question_loc(question_id, "criteria"))
     for key in criteria:
         if key not in {"true", "false"}:
-            raise DecisionsError(422, "invalid_criteria", "noul criteria may only contain true and false.", param=f"{param}.criteria")
+            raise DecisionsError(422, "invalid_criteria", "noul criteria may only contain true and false.", param=f"{param}.criteria", loc=_question_loc(question_id, "criteria"))
         if criteria[key] is not None and not _is_structured_text(criteria[key]):
-            raise DecisionsError(422, "invalid_criteria", "noul criteria values must be strings, objects, arrays, or null.", param=f"{param}.criteria.{key}")
+            raise DecisionsError(422, "invalid_criteria", "noul criteria values must be strings, objects, arrays, or null.", param=f"{param}.criteria.{key}", loc=_question_loc(question_id, "criteria", str(key).lower() if isinstance(key, bool) else key))
     return criteria
 
 
@@ -391,7 +409,16 @@ def _reject_unknown_fields(value: Mapping[str, Any], allowed: set[str], param: s
     for key in value:
         if key not in allowed:
             field = key if param == "body" else f"{param}.{key}"
-            raise DecisionsError(422, "unsupported_field", f"{field} is not supported by this facade.", param=field)
+            raise DecisionsError(422, "unsupported_field", f"{field} is not supported by this facade.", param=field, loc=_loc_for_field(param, key))
+
+
+def _loc_for_field(parent_param: str, key: Any) -> tuple[str | int, ...]:
+    if parent_param == "body":
+        return ("body", key)
+    if parent_param.startswith("questions."):
+        question_id = parent_param.removeprefix("questions.")
+        return ("body", "questions", question_id, key)
+    return ("body", *parent_param.split("."), key)
 
 
 def _model_view(model: DecisionModel | Mapping[str, Any]) -> JSON:
@@ -668,6 +695,7 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
                 exc.message,
                 param=exc.param,
                 headers=_request_headers(request_id, exc.headers),
+                loc=exc.loc,
             )
         except Exception:
             await _record_receipt(
@@ -727,6 +755,7 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
                     exc.message,
                     param=exc.param,
                     headers=_request_headers(request_id, exc.headers),
+                    loc=exc.loc,
                 )
             return error_response(
                 exc.status,

@@ -154,3 +154,5 @@ Regression tests added from this evidence:
 - `test_typesafe_noul_accepts_null_instructions_with_meaningful_nullable_criteria`
 - `test_systemone_request_validation_errors_use_typesafe_detail_envelope`
 - `test_pinned_openapi_documents_nullable_noul_fields_and_detail_validation_envelope`
+
+Additional schema reconciliation: an earlier local `api.md` excerpt said Score criteria needed at least two levels, but the live pinned OpenAPI fixture is authoritative for the gateway facade and declares `components.schemas.ScoreQuestion.properties.criteria.minItems == 1`. The facade and tests now follow the pinned OpenAPI for request validation while keeping the local advertised maximum of 10 levels.

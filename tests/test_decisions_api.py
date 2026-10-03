@@ -276,13 +276,60 @@ def test_systemone_request_validation_errors_use_typesafe_detail_envelope(env):
 @pytest.mark.parametrize(
     "patch,param,needle",
     [
-        ({"model": ""}, "model", "Field required"),
+        ({"model": ""}, "model", "model must be a non-empty string"),
         ({"state": 3}, "state", "state must be a string"),
         ({"questions": {}}, "questions", "questions must be a non-empty object"),
         ({"questions": {"q": {"type": "maybe", "instructions": "x"}}}, "questions.q.type", "question type"),
         ({"questions": {"q": {"type": "choice", "instructions": "x", "criteria": {"a": "A"}}}}, "questions.q.criteria", "2 to 255"),
     ],
 )
+
+
+
+def test_validation_detail_loc_preserves_arbitrary_question_and_option_keys(env):
+    body = _fixture("typesafe_systemone_noul.json")["request"]
+    body["questions"] = {
+        "billing.urgent": {"type": "noul", "criteria": {"false": 7, "true": "Urgent"}},
+        "0": {"type": "choice", "criteria": {"one.two": "One", "three": "Three"}},
+    }
+
+    resp = env.client.post("/v1/systemone", json=body, headers=H)
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"][0]["loc"] == ["body", "questions", "billing.urgent", "criteria", "false"]
+
+    body["questions"] = {"0": {"type": "choice", "criteria": {"one.two": 7, "three": "Three"}}}
+    resp = env.client.post("/v1/systemone", json=body, headers=H)
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"][0]["loc"] == ["body", "questions", "0", "criteria", "one.two"]
+
+
+
+def test_unknown_question_field_loc_preserves_dotted_question_id(env):
+    body = _fixture("typesafe_systemone_noul.json")["request"]
+    body["questions"] = {"billing.urgent": {"type": "noul", "instructions": "x", "max_tokens": 1}}
+
+    resp = env.client.post("/v1/systemone", json=body, headers=H)
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"][0]["loc"] == ["body", "questions", "billing.urgent", "max_tokens"]
+
+
+def test_required_field_detail_distinguishes_absent_from_invalid_present_values(env):
+    body = _fixture("typesafe_systemone_noul.json")["request"]
+    del body["model"]
+    resp = env.client.post("/v1/systemone", json=body, headers=H)
+    assert resp.status_code == 422
+    assert resp.json()["detail"][0] == {"loc": ["body", "model"], "msg": "Field required", "type": "missing"}
+
+    body = _fixture("typesafe_systemone_noul.json")["request"]
+    body["model"] = 7
+    resp = env.client.post("/v1/systemone", json=body, headers=H)
+    assert resp.status_code == 422
+    assert resp.json()["detail"][0]["loc"] == ["body", "model"]
+    assert resp.json()["detail"][0]["msg"] != "Field required"
+    assert resp.json()["detail"][0]["type"] != "missing"
 
 
 def test_validation_errors_are_typesafe_shaped_and_do_not_call_backend(env, patch, param, needle):
