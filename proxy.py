@@ -155,11 +155,13 @@ from gateway.admin_runtime import (
     session_admin_role_subject,
 )
 from gateway.api import create_gateway_router
+from gateway.availability import availability_evidence_snapshot, project_capabilities
 from gateway.models_catalog import (
     auth_contexts_from_user_snapshot,
     build_models_catalog,
     create_models_catalog_router,
     registered_model_capabilities,
+    HealthProbeNoResponse,
     probe_service_health,
 )
 from gateway.workflows_catalog import (
@@ -13214,10 +13216,12 @@ def _capability_for_profile(
 
 def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Capability]:
     try:
+        live_registry = ADMIN_STORE.get_service_registry()
         _live_backends: Mapping[str, Any] | None = service_registry.runtime_backends(
-            ADMIN_STORE.get_service_registry()
+            live_registry
         )
     except Exception:  # noqa: BLE001
+        live_registry = {}
         _live_backends = None
     capabilities = list(build_local_capabilities(
         config,
@@ -13232,6 +13236,7 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
         },
         backends=_live_backends,
     ))
+    capabilities.extend(registered_model_capabilities(live_registry))
 
     capabilities.extend(build_alias_capabilities(_gateway_aliases_provider()))
     decision_capabilities = DECISION_RUNTIME.capabilities()
@@ -13278,7 +13283,59 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
 
 
 def _gateway_capabilities_provider(request: Request) -> list[Capability]:
-    return _gateway_capabilities_for_auth_context(_auth_context_from_scope(request))
+    capabilities = _gateway_capabilities_for_auth_context(_auth_context_from_scope(request))
+    try:
+        service_records = ADMIN_STORE.get_service_registry()
+        return project_capabilities(
+            capabilities,
+            service_records=service_records,
+            evidence=_runtime_availability_evidence(service_records),
+        )
+    except Exception:  # noqa: BLE001
+        return capabilities
+
+
+def _cached_status_payload_for_availability() -> Mapping[str, Any]:
+    cache = getattr(status_endpoint, "_CACHE", {})
+    cached = cache.get("data") if isinstance(cache, Mapping) else None
+    ts = cache.get("ts") if isinstance(cache, Mapping) else None
+    ttl = float(getattr(status_endpoint, "_CACHE_TTL_S", 0.0) or 0.0)
+    if not isinstance(cached, Mapping):
+        return {}
+    if not isinstance(ts, (int, float)) or isinstance(ts, bool):
+        return {}
+    if ttl <= 0 or time.monotonic() - float(ts) > ttl:
+        return {}
+    return cached
+
+
+def _runtime_availability_evidence(
+    service_records: Mapping[str, Any],
+    *,
+    status_payload: Mapping[str, Any] | None = None,
+    health_evidence: Mapping[str, Mapping[str, Any]] | None = None,
+) -> dict[str, dict[str, Any]]:
+    return availability_evidence_snapshot(
+        service_records=service_records,
+        status_payload=status_payload if status_payload is not None else _cached_status_payload_for_availability(),
+        health_evidence=health_evidence,
+        receipt_store_path=receipt_store.DB_PATH,
+    )
+
+
+async def _status_payload_with_availability() -> Mapping[str, Any]:
+    payload = await status_endpoint.get_cached_status(config)
+    try:
+        service_records = ADMIN_STORE.get_service_registry()
+        return {
+            **payload,
+            "_availability_evidence": _runtime_availability_evidence(
+                service_records,
+                status_payload=payload,
+            ),
+        }
+    except Exception:  # noqa: BLE001
+        return payload
 
 
 def _user_access_catalog_for_auth_context(auth_context: AuthContext) -> dict[str, Any]:
@@ -14407,7 +14464,7 @@ app.include_router(
         auth=ADMIN_AUTH,
         profile_resolver=ADMIN_STORE.profile_for_id,
         service_probe=probe_backend,
-        status_provider=lambda: status_endpoint.get_cached_status(config),
+        status_provider=_status_payload_with_availability,
         litellm_key_client=_LITELLM_KEY_CLIENT,
         known_model_names_getter=lambda: litellm_known_model_names(
             ADMIN_STORE.get_service_registry()
@@ -14556,7 +14613,7 @@ app.include_router(create_home_router(
     capabilities=lambda identity: _gateway_capabilities_for_auth_context(AuthContext(identity=identity)),
     aliases=_gateway_aliases_provider,
     public_base_url=lambda request: _public_base_url(request),
-    status_provider=lambda: status_endpoint.get_cached_status(config),
+    status_provider=_status_payload_with_availability,
     admin_auth=ADMIN_AUTH,
 ))
 
@@ -14605,7 +14662,7 @@ async def _models_catalog_health_evidence(
         async with httpx.AsyncClient(timeout=0.75) as client:
             response = await client.get(url)
         if response.status_code >= 400:
-            return None
+            raise HealthProbeNoResponse(status_code=response.status_code)
         payload = response.json()
         return payload if isinstance(payload, Mapping) else {}
 
@@ -14642,6 +14699,8 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
         profile_loader=lambda profile_id: DEFAULT_PROFILE if profile_id == "default-local" else ADMIN_STORE.profile_for_id(profile_id),
         context_for_profile=_catalog_auth_context_for_profile,
     )
+    if not auth_contexts:
+        return build_models_catalog(alias_views={}, capabilities=[])
     activity = build_user_activity_snapshot(
         session,
         limit=50,
@@ -14652,10 +14711,8 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
         service_records: Mapping[str, Any] = ADMIN_STORE.get_service_registry()
     except Exception:  # noqa: BLE001
         service_records = {}
-    registered_capabilities = registered_model_capabilities(service_records)
     capability_sets = [
-        [*_gateway_capabilities_for_auth_context(auth_context),
-         *(_capability_for_profile(capability, auth_context) for capability in registered_capabilities)]
+        _gateway_capabilities_for_auth_context(auth_context)
         for auth_context in auth_contexts
     ]
     visible_service_ids = {
@@ -14671,6 +14728,15 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
         )
     except Exception:  # noqa: BLE001
         health_evidence = {}
+    try:
+        status_payload = await status_endpoint.get_cached_status(config)
+    except Exception:  # noqa: BLE001
+        status_payload = _cached_status_payload_for_availability()
+    availability_evidence = _runtime_availability_evidence(
+        service_records,
+        status_payload=status_payload,
+        health_evidence=health_evidence,
+    )
     model_entries = [
         *_stable_alias_model_entries(),
         *_build_workflow_model_entries(),
@@ -14682,7 +14748,7 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
         model_entries=model_entries,
         service_records=service_records,
         recent_receipts=activity.get("receipts") or (),
-        health_evidence=health_evidence,
+        health_evidence=availability_evidence,
         workflow_records=[
             {"id": record.id, "manifest": record.manifest}
             for record in GATEWAY_WORKFLOW_REGISTRY.records()
@@ -26017,6 +26083,13 @@ async def _forward_litellm_proxy_request(
     except AliasPolicyResolutionError as error:
         return _alias_policy_configuration_response(error)
 
+    attribution_target = logical_target
+    if attribution_target is None:
+        try:
+            attribution_target = _resolve_request_target(model_name)
+        except AliasPolicyResolutionError:
+            attribution_target = None
+
     if _profile_target_activation(auth_context) == "existing_only":
         current_loaded_decision = await _current_loaded_model_policy_decision(
             auth_context,
@@ -26058,6 +26131,9 @@ async def _forward_litellm_proxy_request(
         if isinstance(body_for_litellm.get("model"), str)
         else None
     )
+    resolved_service_id = str(getattr(attribution_target, "logical_service_id", "") or runtime.service_id or "")
+    if resolved_service_id:
+        receipt.metadata["service_id"] = resolved_service_id
     receipt.stream = bool(body_for_litellm.get("stream"))
     receipt.effective_output_limit = effective_output_limit(body_for_litellm)
     receipt.metadata["request_shape"] = request_shape_fields(body_for_litellm)

@@ -45,6 +45,17 @@ function row(id: string, intent: string, paid = false) {
   };
 }
 
+function rowWithAvailability(
+  id: string,
+  intent: string,
+  availability: ReturnType<typeof row>["availability"],
+) {
+  return {
+    ...row(id, intent),
+    availability,
+  };
+}
+
 function renderCatalog(aliases: ReturnType<typeof row>[]) {
   vi.stubGlobal(
     "fetch",
@@ -128,6 +139,37 @@ describe("catalog polish", () => {
     expect(
       screen.queryByRole("button", { name: "Copy alias chat" }),
     ).toBeNull();
+  });
+
+  it("keeps unknown and startable idle availability distinct from unavailable", async () => {
+    renderCatalog([
+      rowWithAvailability("unknown-health", "speech.synthesis", {
+        available: true,
+        measured: true,
+        status: "unknown",
+        reason: "No health endpoint is configured.",
+      }),
+      rowWithAvailability("on-demand", "decision.systemone", {
+        available: true,
+        measured: false,
+        status: "idle_startable",
+        reason: "Starts when you send a request.",
+      }),
+      rowWithAvailability("unmeasured", "chat.completions", {
+        available: true,
+        measured: false,
+        status: "ready",
+        reason: "Live availability is not measured yet.",
+      }),
+    ]);
+    expect(await screen.findAllByText("Unknown")).toHaveLength(1);
+    expect(screen.getByText(/No health endpoint is configured/)).toBeVisible();
+    expect(
+      screen.getByText(/Live availability is not measured yet/),
+    ).toBeVisible();
+    expect(screen.getByText("Ready to start")).toBeVisible();
+    expect(screen.getByText(/Starts when you send a request/)).toBeVisible();
+    expect(screen.queryByText("Unavailable")).toBeNull();
   });
 
   it("provides a pressed state without the primary action style", () => {

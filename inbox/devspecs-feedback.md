@@ -107,3 +107,12 @@ UI-polish and provider-reconciliation changes with useful source pointers.
 Direct source review was still needed to confirm that Home uses Gateway check
 and that Providers displays status without editing records. No failure or
 material friction occurred during this orientation pass.
+
+## 2026-10-03 — availability truth lane
+
+`ds tldr` completed. `ds map` produced no output for 73 seconds during
+repository orientation. SIGTERM did not stop it; I stopped that exact process
+with SIGKILL and used direct source inspection. No DevSpecs state was deleted
+or reset. A bounded
+timeout or progress output would help distinguish indexing from a stalled
+command.

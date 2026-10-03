@@ -21,6 +21,7 @@ from fastapi.responses import JSONResponse
 from gateway import admin_store
 from gateway.admin_api import AdminAuthError
 from gateway.alias_policy import service_model_records
+from gateway.availability import availability_evidence_snapshot, project_service
 from gateway.capabilities import Capability, summarize_capability, capability_with_policy_view
 from gateway.policy import DEFAULT_PROFILE
 from gateway.profiles import ProfileLoadError, load_profile
@@ -71,21 +72,9 @@ def _product_capability(intent: str) -> str:
     return intent.split(".", 1)[0]
 
 
-def _availability(capability: Capability, health: Mapping[str, str]) -> tuple[str, str]:
-    live = health.get(capability.backend)
-    if live == "disabled":
-        return "unavailable", "The service is disabled."
-    if capability.lifecycle == "stopped" or capability.health == "unhealthy" or live == "down":
-        return "unavailable", "The service is unavailable."
-    if capability.lifecycle == "warming":
-        return "starting", "The service is starting."
-    if live == "starting":
-        return "starting", "The service is starting."
-    if live == "busy":
-        return "busy", "The service is busy."
-    if live == "up":
-        return "ready", "The service is available."
-    return "unavailable", "Not measured yet. Test the connection to check availability."
+def _availability(capability: Capability, evidence: Mapping[str, Mapping[str, Any]], registry: Mapping[str, Any] | None = None) -> tuple[str, str]:
+    projection = project_service(capability.backend, service_records=registry, evidence=evidence, fallback_capability=capability)
+    return projection.status, projection.reason
 
 
 def _has_success(receipts_path: Path) -> bool:
@@ -203,14 +192,16 @@ def _declared_local_fast(cap: Capability, registry: Mapping[str, Any]) -> bool:
                 or any(row.get(flag) is True for row in models for flag in local_flags))
 
 
-def _capability_rows(capabilities, health) -> list[dict[str, Any]]:
+def _capability_rows(capabilities, evidence, registry=None) -> list[dict[str, Any]]:
     rows = []
     for cap in sorted(capabilities, key=lambda item: item.sort_key):
         if not cap.policy_available:
             continue
-        state, reason = _availability(cap, health)
+        state, reason = _availability(cap, evidence, registry)
+        projection = project_service(cap.backend, service_records=registry, evidence=evidence, fallback_capability=cap)
         rows.append({**summarize_capability(cap, "client"), "capability": _product_capability(cap.intent),
-                     "status": state, "available": state == "ready", "reason": reason})
+                     "status": state, "available": state in {"ready", "idle"}, "reason": reason,
+                     "availability": projection.to_public_dict()})
     return rows
 
 
@@ -236,15 +227,23 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
     """Register three small surfaces over the gateway's existing auth and stores."""
     router = APIRouter()
 
-    async def live_health() -> dict[str, str]:
+    async def live_status_payload() -> dict[str, Any]:
         status = await status_provider()
-        measured = {str(row.get("key") or row.get("name")): str(row.get("live_status") or "unknown")
-                    for row in status.get("backends", []) if isinstance(row, Mapping)}
+        backends = [dict(row) for row in status.get("backends", []) if isinstance(row, Mapping)]
         # Probe responses can exist for disabled services. Their enablement
         # remains authoritative in the registry, even when an endpoint answers.
         services = store.get_service_registry().get("services") or {}
-        return {service_id: measured.get(service_id, "unknown") if service.get("enabled", True) else "disabled"
-                for service_id, service in services.items() if isinstance(service, Mapping)}
+        known = {str(row.get("service_id") or row.get("key") or row.get("name")) for row in backends}
+        for service_id, service in services.items():
+            if not isinstance(service, Mapping) or service_id in known:
+                continue
+            backends.append({"service_id": service_id, "status": "unknown"})
+        for row in backends:
+            service_id = str(row.get("service_id") or row.get("key") or row.get("name") or "")
+            service = services.get(service_id)
+            if isinstance(service, Mapping) and not service.get("enabled", True):
+                row["status"] = "disabled"
+        return {**status, "backends": backends}
 
     @router.get("/me/api/home", include_in_schema=False)
     async def home(request: Request):
@@ -256,8 +255,18 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                 raise UserPortalError("login_required", "Sign in to view Home.", status_code=401)
         except UserPortalError as exc:
             return _error(exc)
-        health = await live_health()
         registry = store.get_service_registry()
+        status_payload = await live_status_payload()
+        injected = status_payload.get("_availability_evidence")
+        availability_evidence = (
+            dict(injected)
+            if isinstance(injected, Mapping)
+            else availability_evidence_snapshot(
+                service_records=registry,
+                status_payload=status_payload,
+                receipt_store_path=receipts_path(),
+            )
+        )
         alias_views = aliases()
         allowed: dict[tuple[str, str | None, str | None, str], Capability] = {}
         credential_aliases: dict[str, list[dict[str, Any]]] = {}
@@ -273,24 +282,26 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                     continue
                 scoped = _resolved_capabilities(identity, capabilities, registry)
                 if credential is not None:
-                    credential_aliases[credential["id"]] = _alias_rows(_capability_rows(scoped, health), alias_views)
+                    credential_aliases[credential["id"]] = _alias_rows(_capability_rows(scoped, availability_evidence, registry), alias_views)
                 for cap in scoped:
                     if cap.policy_available:
                         allowed[(cap.intent, cap.model, cap.workflow, cap.backend)] = cap
         new_identity = _identity({}, None, inherited, store.path) if self_service_enabled() else None
         new_caps = _resolved_capabilities(new_identity, capabilities, registry) if new_identity else []
-        new_app_aliases = _alias_rows(_capability_rows(new_caps, health), alias_views)
+        new_app_aliases = _alias_rows(_capability_rows(new_caps, availability_evidence, registry), alias_views)
         for cap in new_caps:
             if cap.policy_available:
                 allowed[(cap.intent, cap.model, cap.workflow, cap.backend)] = cap
-        rows = _capability_rows(allowed.values(), health)
+        rows = _capability_rows(allowed.values(), availability_evidence, registry)
         alias_rows = _alias_rows(rows, alias_views)
-        state = next((candidate for candidate in ("ready", "starting", "busy")
+        state = next((candidate for candidate in ("ready", "idle", "starting", "busy", "unknown")
                       if any(row["status"] == candidate for row in rows)), "unavailable")
         status_reason = {
             "ready": "Some services are unavailable or not measured yet." if any(not row["available"] for row in rows) else "Your access is ready.",
+            "idle": "Some services are ready to start.",
             "starting": "Your service is starting.",
             "busy": "Your service is busy.",
+            "unknown": "Availability has not been measured yet.",
             "unavailable": "No service has been measured as ready yet.",
         }[state]
         base = (public_base_url(request) or "").rstrip("/")
@@ -368,12 +379,26 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                 raise AdminAuthError("Owner access required.", status_code=403, code="owner_required")
         except AdminAuthError as exc:
             return _error(exc)
-        health = await live_health()
         registry = store.get_service_registry()
+        status_payload = await live_status_payload()
+        injected = status_payload.get("_availability_evidence")
+        availability_evidence = (
+            dict(injected)
+            if isinstance(injected, Mapping)
+            else availability_evidence_snapshot(
+                service_records=registry,
+                status_payload=status_payload,
+                receipt_store_path=receipts_path(),
+            )
+        )
         services = registry.get("services", [])
         if isinstance(services, Mapping):
             services = [{"id": key, **row} for key, row in services.items()]
-        connected = any(service.get("enabled", True) and health.get(str(service.get("id"))) == "up" for service in services)
+        connected = any(
+            service.get("enabled", True)
+            and project_service(str(service.get("id")), service_records=registry, evidence=availability_evidence).status == "ready"
+            for service in services
+        )
         succeeded = _has_success(receipts_path())
         used_apps = {credential.get("app_id") for credential in admin_store.list_credentials(path=store.path)
                      if credential.get("subject_kind") == "app" and credential.get("last_used_at") is not None}

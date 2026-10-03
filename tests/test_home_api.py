@@ -113,7 +113,7 @@ def test_home_uses_allowed_capabilities_and_owned_last_five(home_case):
 def test_home_unknown_health_is_not_green(home_case):
     home_case.health = {"backends": []}
     data = home_case.http.get("/me/api/home").json()
-    assert data["status"]["state"] == "unavailable"
+    assert data["status"]["state"] == "unknown"
     assert not data["aliases"][0]["available"]
     assert "Not measured yet" in data["capabilities"][0]["reason"]
 
@@ -297,11 +297,11 @@ def test_alias_cannot_use_a_forbidden_resolved_backend():
     assert not fast.policy_available
 
 
-def test_declared_healthy_capability_without_measured_service_is_unavailable():
+def test_declared_healthy_capability_without_measured_service_is_unknown():
     from gateway.home_api import _availability
     cap = Capability(intent="image.generate", backend="not-running", health="healthy")
     state, reason = _availability(cap, {})
-    assert state == "unavailable" and "Not measured yet" in reason
+    assert state == "unknown" and "Not measured yet" in reason
 
 
 def test_alias_resolves_registry_models_when_catalog_only_has_generic_endpoint():

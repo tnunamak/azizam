@@ -52,8 +52,12 @@ type AvailabilityState =
   | "ready"
   | "starting"
   | "busy"
+  | "idle"
+  | "idle-startable"
+  | "standby_stopped"
+  | "unknown"
   | "unavailable"
-  | "not measured yet";
+  | "not_measured";
 type CostKind = "free" | "paid" | "unknown";
 type Locality = "local" | "remote" | "unknown";
 
@@ -247,13 +251,27 @@ function timingLabel(row: CatalogRow): string {
 }
 
 function availabilityState(row: CatalogRow): AvailabilityState {
-  if (!row.availability.measured) return "not measured yet";
   if (row.availability.status) {
-    const status = row.availability.status.toLowerCase();
-    if (["ready", "starting", "busy", "unavailable"].includes(status)) {
+    const status = row.availability.status.toLowerCase().replaceAll("_", "-");
+    if (
+      [
+        "ready",
+        "starting",
+        "busy",
+        "idle",
+        "idle-startable",
+        "unknown",
+        "unavailable",
+      ].includes(status)
+    ) {
       return status as AvailabilityState;
     }
+    if (status === "standby-stopped") return "standby_stopped";
+    if (status === "not-measured" || status === "not measured yet") {
+      return "not_measured";
+    }
   }
+  if (!row.availability.measured) return "unknown";
   return row.availability.available ? "ready" : "unavailable";
 }
 
@@ -326,13 +344,6 @@ function Availability({
   showReason?: boolean;
 }) {
   const state = availabilityState(row);
-  if (state === "not measured yet") {
-    return (
-      <p className="text-muted-foreground text-xs leading-5">
-        Availability not checked
-      </p>
-    );
-  }
   return (
     <StatusPill
       status={state}

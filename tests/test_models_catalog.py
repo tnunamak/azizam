@@ -17,6 +17,7 @@ from gateway.models_catalog import (  # noqa: E402
     build_models_catalog,
     create_models_catalog_router,
     registered_model_capabilities,
+    HealthProbeNoResponse,
     probe_service_health,
 )
 
@@ -94,7 +95,7 @@ class ModelsCatalogBuildTests(unittest.TestCase):
         self.assertEqual(fast["timing"]["source"], "receipts")
         self.assertEqual(fast["recent_receipts"][0]["href"], "/r/req_1")
         self.assertFalse(fast["availability"]["available"])
-        self.assertEqual(fast["availability"]["status"], "unavailable")
+        self.assertEqual(fast["availability"]["status"], "unknown")
         self.assertFalse(fast["availability"]["measured"])
         self.assertIn("/v1/chat/completions", fast["use"]["curl"])
 
@@ -363,7 +364,7 @@ class ModelsCatalogBuildTests(unittest.TestCase):
         embed = next(row for row in catalog["models"] if row["id"] == "embed")
         self.assertEqual(embed["timing"], {"typical_seconds": None, "source": None})
         self.assertEqual(embed["availability"]["reason"], "Not measured yet")
-        self.assertEqual(embed["availability"]["status"], "unavailable")
+        self.assertEqual(embed["availability"]["status"], "unknown")
 
     def test_manifest_metadata_supplies_name_description_and_timing(self) -> None:
         catalog = build_models_catalog(
@@ -481,6 +482,23 @@ class ModelsCatalogBuildTests(unittest.TestCase):
         self.assertTrue(evidence["svc"]["available"])
         self.assertEqual(evidence["svc"]["source"], "health")
 
+
+    def test_service_health_probe_preserves_absolute_endpoint_path_against_versioned_base_url(self) -> None:
+        async def run():
+            async def get_json(url: str):
+                self.assertEqual(url, "http://svc/v1/models")
+                return {"data": [{"id": "model"}]}
+
+            return await probe_service_health(
+                {"services": {"svc": {"config": {"base_url": "http://svc/v1", "health_endpoint": "/v1/models"}}}},
+                get_json=get_json,
+            )
+
+        import asyncio
+
+        evidence = asyncio.run(run())
+        self.assertEqual(evidence["svc"]["status"], "unknown")
+
     def test_service_health_probe_does_not_synthesize_endpoint(self) -> None:
         async def run():
             async def get_json(_url: str):
@@ -513,6 +531,22 @@ class ModelsCatalogBuildTests(unittest.TestCase):
         self.assertFalse(evidence["svc"]["available"])
         self.assertEqual(evidence["svc"]["status"], "unavailable")
         self.assertEqual(evidence["svc"]["reason"], "Health endpoint reported unavailable")
+
+    def test_service_health_probe_opaque_success_is_unknown(self) -> None:
+        async def run():
+            async def get_json(_url: str):
+                return {"data": [{"id": "model"}]}
+
+            return await probe_service_health(
+                {"services": {"svc": {"config": {"health_endpoint": "http://svc/v1/models"}}}},
+                get_json=get_json,
+            )
+
+        import asyncio
+
+        evidence = asyncio.run(run())
+        self.assertIsNone(evidence["svc"]["available"])
+        self.assertEqual(evidence["svc"]["status"], "unknown")
 
     def test_public_workflow_model_keeps_manifest_metadata_and_own_receipts(self) -> None:
         catalog = build_models_catalog(
@@ -607,3 +641,38 @@ class ModelsCatalogRouterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ModelsCatalogHealthProbeTests(unittest.TestCase):
+    def test_service_health_probe_404_missing_route_is_unknown_no_response(self) -> None:
+        async def run():
+            async def get_json(_url: str):
+                raise HealthProbeNoResponse(status_code=404)
+
+            return await probe_service_health(
+                {"services": {"svc": {"config": {"health_endpoint": "http://svc/health-not-implemented"}}}},
+                get_json=get_json,
+            )
+
+        import asyncio
+
+        evidence = asyncio.run(run())
+        self.assertIsNone(evidence["svc"]["available"])
+        self.assertEqual(evidence["svc"]["status"], "unknown")
+        self.assertEqual(evidence["svc"]["kind"], "no_response")
+
+    def test_service_health_probe_connection_failure_stays_unavailable(self) -> None:
+        async def run():
+            async def get_json(_url: str):
+                raise OSError("connection refused")
+
+            return await probe_service_health(
+                {"services": {"svc": {"config": {"health_endpoint": "http://svc/health"}}}},
+                get_json=get_json,
+            )
+
+        import asyncio
+
+        evidence = asyncio.run(run())
+        self.assertFalse(evidence["svc"]["available"])
+        self.assertEqual(evidence["svc"]["status"], "unavailable")

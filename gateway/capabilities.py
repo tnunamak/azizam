@@ -34,7 +34,7 @@ the evaluator — that would re-couple discovery to live request context.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from gateway.discovery import WorkflowRecord
 from gateway.policy import ALLOWED, AppProfile, PolicyDecision, PolicyRequest
@@ -126,6 +126,7 @@ class Capability:
     latency_class: str | None = None
     calibrated: bool | None = None
     reason: str | None = None
+    availability: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.execution not in EXECUTION_MODES:
@@ -171,6 +172,8 @@ class Capability:
         """
         if not self.policy_available:
             return False
+        if isinstance(self.availability, Mapping) and isinstance(self.availability.get("available"), bool):
+            return bool(self.availability["available"])
         if self.lifecycle == "stopped":
             return False
         if self.health == "unhealthy":
@@ -230,6 +233,16 @@ def summarize_capability(capability: Capability, audience: str) -> dict[str, Any
         "available": capability.available,
         "caveats": list(capability.caveats),
     }
+    if isinstance(capability.availability, dict):
+        summary["availability"] = dict(capability.availability)
+    else:
+        try:
+            from gateway.availability import project_service
+
+            projection = project_service(capability.backend, fallback_capability=capability)
+            summary["availability"] = projection.to_public_dict()
+        except Exception:
+            pass
     for field_name in ("backend_kind", "cost_class", "engine", "latency_class", "calibrated", "reason"):
         value = getattr(capability, field_name)
         if value is not None:

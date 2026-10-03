@@ -12,6 +12,7 @@ import asyncio
 import json
 import statistics
 import inspect
+import time
 from dataclasses import replace
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
@@ -21,6 +22,7 @@ from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse, Response
 
 from gateway.capabilities import Capability
+from gateway.availability import project_service
 from gateway.local_capabilities import build_local_capabilities
 from gateway.model_presentation import engine_label, model_locality, service_health_endpoint
 from gateway.service_registry import runtime_backend_from_service
@@ -487,6 +489,8 @@ def _base_row(
         "availability": _availability(
             capabilities,
             target=target,
+            service_records=service_records,
+            service_id=service_id,
             health=_health_for_row(health_evidence, service_id=service_id, capabilities=capabilities),
         ),
         "io": _io_summary(capabilities),
@@ -528,31 +532,19 @@ def _availability(
     capabilities: Sequence[Capability],
     *,
     target: str | None,
+    service_records: Mapping[str, Any] | None = None,
+    service_id: str | None = None,
     health: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if health and health.get("available") is True and capabilities and any(cap.available for cap in capabilities):
-        return {
-            "available": True,
-            "status": "ready",
-            "reason": str(health.get("reason") or "Health check passed"),
-            "measured": True,
-            "evidence": dict(health),
-        }
-    if health and health.get("available") is False:
-        return {
-            "available": False,
-            "status": str(health.get("status") or "unavailable"),
-            "reason": str(health.get("reason") or "Health check failed"),
-            "measured": True,
-            "evidence": dict(health),
-        }
-    if capabilities and any(cap.available for cap in capabilities):
-        return {
-            "available": False,
-            "status": "unavailable",
-            "reason": "Not measured yet",
-            "measured": False,
-        }
+    if capabilities and any(cap.policy_available is not False for cap in capabilities):
+        projected_service_id = service_id or _first_backend(capabilities) or ""
+        projection = project_service(
+            projected_service_id,
+            service_records=service_records,
+            evidence={projected_service_id: health} if health else None,
+            fallback_capability=capabilities[0],
+        )
+        return projection.to_public_dict()
     if capabilities:
         reasons = [
             reason
@@ -797,6 +789,12 @@ def _services_mapping(service_records: Mapping[str, Any]) -> dict[str, Mapping[s
     return out
 
 
+class HealthProbeNoResponse(Exception):
+    def __init__(self, *, status_code: int | None = None) -> None:
+        super().__init__(f"health probe returned HTTP {status_code}" if status_code is not None else "health probe did not respond")
+        self.status_code = status_code
+
+
 async def probe_service_health(
     service_records: Mapping[str, Any],
     *,
@@ -817,25 +815,45 @@ async def probe_service_health(
         if not isinstance(service, Mapping):
             return service_id, {
                 "available": None,
+                "status": "unknown",
                 "reason": "Live availability is not measured for this service",
                 "source": None,
+                "observed_at_s": int(time.time()),
             }
         endpoint = _health_endpoint(service)
         if not endpoint:
             return service_id, {
                 "available": None,
+                "status": "unknown",
                 "reason": "Live availability is not measured for this service",
                 "source": None,
+                "observed_at_s": int(time.time()),
             }
+        missing_route = False
         try:
             payload = await get_json(endpoint)
+        except HealthProbeNoResponse as exc:
+            missing_route = exc.status_code in {404, 405}
+            payload = None
         except Exception:  # noqa: BLE001
             payload = None
         if not isinstance(payload, Mapping):
+            if missing_route:
+                return service_id, {
+                    "available": None,
+                    "status": "unknown",
+                    "reason": "Health endpoint did not respond",
+                    "source": "health",
+                    "kind": "no_response",
+                    "observed_at_s": int(time.time()),
+                }
             return service_id, {
                 "available": False,
+                "status": "unavailable",
                 "reason": "Health endpoint did not respond",
                 "source": "health",
+                "kind": "no_response",
+                "observed_at_s": int(time.time()),
             }
         available = _availability_from_health_payload(payload)
         status = _status_from_health_payload(payload)
@@ -850,6 +868,7 @@ async def probe_service_health(
             "status": status,
             "reason": reason,
             "source": "health",
+            "observed_at_s": int(time.time()),
         }
 
     semaphore = asyncio.Semaphore(8)
@@ -887,7 +906,9 @@ def _status_from_health_payload(payload: Mapping[str, Any]) -> str:
         return "busy"
     if _availability_from_health_payload(payload) is True:
         return "ready"
-    return "unavailable"
+    if _availability_from_health_payload(payload) is False:
+        return "unavailable"
+    return "unknown"
 
 
 def auth_contexts_from_user_snapshot(

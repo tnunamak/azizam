@@ -820,8 +820,46 @@ class SystemdDriver:
             pass
 
     async def status(self, svc: Mapping[str, Any]) -> str:
-        ok = await _poll_health(svc, 2.0)
-        return ProcessState.RUNNING if ok else ProcessState.STOPPED
+        dc = self._driver_config(svc)
+        unit = dc.get("unit", "")
+        if not unit:
+            return ProcessState.UNMANAGED
+        cmd = ["systemctl"] + self._scope_flag(dc) + ["is-active", unit]
+        proc = None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=self._SYSTEMCTL_TIMEOUT_S)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.communicate()
+                return ProcessState.UNMANAGED
+            except asyncio.CancelledError:
+                proc.kill()
+                await proc.communicate()
+                raise
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return ProcessState.UNMANAGED
+        state = stdout.decode(errors="ignore").strip().lower()
+        if state == "active":
+            return ProcessState.RUNNING
+        if state == "activating":
+            return ProcessState.STARTING
+        if state == "deactivating":
+            return ProcessState.DRAINING
+        if state == "failed":
+            return ProcessState.FAILED
+        if state == "inactive":
+            return ProcessState.STOPPED
+        if state == "unknown":
+            return ProcessState.UNMANAGED
+        return ProcessState.UNMANAGED
 
     async def health(self, svc: Mapping[str, Any]) -> str:
         dc = self._driver_config(svc)

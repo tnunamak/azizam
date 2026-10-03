@@ -224,9 +224,18 @@ function state(
     }
     if (health.observation === "standby_stopped") {
       return {
-        label: "Unavailable: stopped on standby; starts on demand",
+        label: "Idle",
         tone: "neutral",
       };
+    }
+    if (health.observation === "idle") {
+      return { label: "Ready to start", tone: "neutral" };
+    }
+    if (health.observation === "busy") {
+      return { label: "Busy", tone: observedTone(health.tone, "warn") };
+    }
+    if (health.observation === "starting") {
+      return { label: "Starting", tone: "neutral" };
     }
     if (health.observation === "unavailable") {
       return { label: "Not measured yet", tone: "neutral" };

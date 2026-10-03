@@ -65,6 +65,22 @@ def wait_file(path, timeout=90):
     raise RuntimeError(f"Timed out waiting for {path}")
 
 
+def wait_litellm_ready(base_url, api_key, process, timeout=90):
+    deadline = time.monotonic() + timeout
+    headers = {"X-Litellm-Key": f"Bearer {api_key}"}
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(f"LiteLLM sidecar exited with code {process.returncode}")
+        try:
+            response = httpx.get(f"{base_url}/v1/models", headers=headers, trust_env=False, timeout=5)
+            if response.status_code == 200:
+                return
+        except httpx.TransportError:
+            pass
+        time.sleep(0.5)
+    raise RuntimeError("Timed out waiting for LiteLLM sidecar /v1/models")
+
+
 def stop(process):
     if process.poll() is None:
         os.killpg(process.pid, signal.SIGTERM)
@@ -82,7 +98,7 @@ def snapshot(destination):
     paths = subprocess.check_output(["git", "ls-files", "-z"], cwd=REPO).decode().split("\0")
     for name in paths:
         path = Path(name)
-        if not name or path.parts[0] in {"data", ".git", "web"}:
+        if not name or path.parts[0] in {"data", ".git"}:
             continue
         if path.name.startswith(".env") or path.name == "proxy_config.yml":
             continue
@@ -95,6 +111,64 @@ def snapshot(destination):
     (destination / "data").mkdir()
     (destination / "tests/e2e").mkdir(parents=True, exist_ok=True)
     shutil.copy2(REPO / "tests/e2e/fake_engine.py", destination / "tests/e2e/fake_engine.py")
+
+
+def assert_fresh_setup_entry(client, compose):
+    if not compose:
+        setup = expect(client.get("/setup"), 200)
+        assert '/setup/local-owner' in setup.text, "Fresh install has no owner claim form"
+        print("PASS fresh setup renders the local owner claim form", flush=True)
+        return
+
+    setup = expect(client.get("/setup"), 303)
+    assert setup.headers["location"] == "/ui/setup/", "Fresh setup did not redirect to exported UI"
+    exported = expect(client.get("/ui/setup/"), 200)
+    assert "text/html" in exported.headers.get("content-type", ""), "Exported setup page is not HTML"
+    state = expect(client.get("/setup/api/state"), 200).json()
+    assert state["owner_exists"] is False, "Fresh setup API state already has an owner"
+    assert state["oidc_enabled"] is False, "Fresh first-run config unexpectedly enabled OIDC"
+    assert isinstance(state["can_recover"], bool), "Fresh setup API state has invalid recovery capability"
+    print("PASS exported setup redirect and fresh setup state", flush=True)
+
+
+def assert_catalog_ready_after_chat(client):
+    catalog = expect(client.get("/me/api/models/catalog"), 200).json()
+    row = next((model for model in catalog["models"] if model["id"] == MODEL), None)
+    assert row is not None, "Chat model is missing from the member models catalog"
+    availability = row["availability"]
+    source = availability.get("evidence", {}).get("source")
+    assert availability["available"] is True, (
+        "Chat model is not available after successful chat "
+        f"(state={availability.get('status')}, source={source}, "
+        f"configured={availability.get('configured')}, enabled={availability.get('enabled')})"
+    )
+    assert availability["status"] == "ready", "Chat model is not ready after successful chat"
+    assert availability["measured"] is True, "Chat success has no measured availability evidence"
+    assert source in {"health", "request", "status"}, "Chat model availability evidence has no live source"
+    print(f"PASS member models catalog marks {MODEL} ready after chat via {source}", flush=True)
+
+
+def assert_shared_availability_after_chat(client, key, service_id):
+    home = expect(client.get("/me/api/home"), 200).json()
+    home_rows = [row for row in home["capabilities"] if row.get("model") == MODEL]
+    if not home_rows:
+        home_rows = [row for row in home["capabilities"] if row.get("intent") == "chat.completions" and row.get("model") is None]
+    assert home_rows and all(row["status"] == "ready" for row in home_rows), (
+        "Home disagrees with successful chat evidence: " + json.dumps([
+            {"intent": row.get("intent"), "model": row.get("model"), "status": row.get("status"),
+             "source": row.get("availability", {}).get("evidence", {}).get("source")}
+            for row in home["capabilities"]
+        ])
+    )
+    capabilities = expect(client.get("/gateway/v1/capabilities", headers={"Authorization": f"Bearer {key}"}), 200).json()
+    model_rows = [row for row in capabilities["capabilities"] if row.get("model") == MODEL]
+    if not model_rows:
+        model_rows = [row for row in capabilities["capabilities"] if row.get("intent") == "chat.completions" and row.get("model") is None]
+    assert model_rows and all(row["availability"]["status"] == "ready" for row in model_rows), "Capabilities disagree with successful chat evidence"
+    status = expect(client.get("/admin/api/status"), 200).json()["status"]["current_health"]
+    service = next(row for row in status["services"] if row["service_id"] == service_id)
+    assert service["observation"] == "up" and service["availability"]["status"] == "ready", "Status disagrees with successful chat evidence"
+    print("PASS Home, capabilities, and Status share successful chat evidence despite failed health", flush=True)
 
 
 def run(compose):
@@ -181,8 +255,7 @@ def run(compose):
                                                  trust_env=False, timeout=10, follow_redirects=False))
         wait_ready(client, "/health")
         print("PASS fresh gateway health", flush=True)
-        setup = expect(client.get("/setup"), 200)
-        assert '/setup/local-owner' in setup.text, "Fresh install has no owner claim form"
+        assert_fresh_setup_entry(client, compose)
         password = "Fresh-test-password-" + os.urandom(8).hex()
         expect(client.post("/setup/local-owner", data={"email": "owner@example.test",
             "password": password, "password_confirm": password}), 303)
@@ -215,8 +288,9 @@ def run(compose):
             # Use the same gateway-generated configuration as Compose.
             wait_file(source / "data/litellm.config.yaml")
             substrate_socket.close()
-            launch([str(Path(sys.executable).parent / "litellm"), "--config", "data/litellm.config.yaml",
-                    "--host", "127.0.0.1", "--port", str(substrate_port)])
+            sidecar = launch([str(Path(sys.executable).parent / "litellm"), "--config", "data/litellm.config.yaml",
+                              "--host", "127.0.0.1", "--port", str(substrate_port)])
+            wait_litellm_ready(env["AI_GATEWAY_LITELLM_BASE_URL"], env["AI_GATEWAY_LITELLM_API_KEY"], sidecar)
         deadline = time.monotonic() + 120
         while True:
             models = expect(client.get("/openai/v1/models", headers={"Authorization": f"Bearer {key}"}), 200).json()
@@ -246,6 +320,12 @@ def run(compose):
         if content != ANSWER:
             raise RuntimeError("Chat content did not match the deterministic engine answer")
         print(f"PASS authenticated chat: {ANSWER}", flush=True)
+        registry = expect(client.get("/admin/api/operator/service-registry"), 200)
+        headers["If-Match"] = registry.headers["etag"]
+        expect(client.patch(f"/admin/api/operator/services/{service['id']}", headers=headers,
+            json={"health_endpoint": "/health-not-implemented"}), 200)
+        assert_catalog_ready_after_chat(client)
+        assert_shared_availability_after_chat(client, key, service["id"])
     print("PASS teardown: processes, Compose resources, and temporary state removed", flush=True)
 
 

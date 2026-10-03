@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import hmac
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Iterable, Mapping, Protocol
 
@@ -40,6 +41,7 @@ from gateway.policy import (
     is_default_profile_id,
 )
 from gateway.litellm_substrate import compile_litellm_substrate_config
+from gateway.availability import availability_evidence_snapshot, project_service
 from gateway.backends.litellm_admin import LiteLLMAdminError
 from gateway.profiles import ProfileLoadError, load_profile
 from gateway import admin_catalog, admin_store, extension_packages, service_registry
@@ -452,11 +454,42 @@ def _normalize_status_backends(status_payload: Mapping[str, Any] | None) -> list
     return normalized
 
 
+def _admin_observation_from_projection(
+    projection: Mapping[str, Any],
+    *,
+    role: str,
+    raw_status: str,
+) -> str:
+    status_value = str(projection.get("status") or "")
+    if status_value == "ready":
+        return "up"
+    if status_value == "busy":
+        return "degraded" if raw_status == "degraded" else "busy"
+    if status_value == "starting":
+        return "starting"
+    if status_value == "idle":
+        return "standby_stopped" if role == "standby" else "idle"
+    if status_value == "unavailable":
+        return "down"
+    return "unavailable"
+
+
+def _admin_tone_from_observation(observation: str, *, role: str) -> str:
+    if observation == "up":
+        return "ok"
+    if observation in {"standby_stopped", "idle", "disabled", "unavailable"}:
+        return "neutral"
+    if observation in {"degraded", "busy", "starting"}:
+        return "warn"
+    return "warn" if role in {"optional", "standby"} else "bad"
+
+
 def derive_admin_health_projection(
     registry: Mapping[str, Any],
     status_payload: Mapping[str, Any] | None,
     *,
     observation_available: bool,
+    availability_evidence: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Project configured-service health from configuration and live facts.
 
@@ -476,6 +509,15 @@ def derive_admin_health_projection(
         service_id = backend.get("service_id")
         if service_id:
             observations[service_id] = backend
+    availability_evidence = (
+        availability_evidence
+        if availability_evidence is not None
+        else availability_evidence_snapshot(
+            service_records=registry,
+            status_payload=payload,
+            now_s=int(time.time()),
+        )
+    )
 
     # ``banner`` remains a backwards-compatible aggregate, but it conflates
     # service probes with API-wide facts. Consume only structured producer
@@ -528,27 +570,24 @@ def derive_admin_health_projection(
             routable = True if model_mappings else None
         else:
             routable = None
-        observed = str(
-            (backend or {}).get("live_status") or (backend or {}).get("status") or ""
-        ).lower()
         if not enabled:
             observation = "disabled"
             tone = "neutral"
-        elif not observation_available or not observed:
-            observation = "unavailable"
-            tone = "neutral"
-        elif role == "standby" and observed == "down":
-            observation = "standby_stopped"
-            tone = "neutral"
-        elif observed in {"up", "healthy", "ok"}:
-            observation = "up"
-            tone = "ok"
-        elif observed == "degraded":
-            observation = "degraded"
-            tone = "warn"
         else:
-            observation = "down"
-            tone = "warn" if role == "optional" else "bad"
+            projection = project_service(
+                service_id,
+                service_records=registry,
+                evidence=availability_evidence,
+            )
+            raw_status = str((availability_evidence.get(service_id) or {}).get("status") or "")
+            observation = _admin_observation_from_projection(
+                projection.to_public_dict(),
+                role=role,
+                raw_status=raw_status,
+            )
+            if not observation_available and service_id not in availability_evidence:
+                observation = "unavailable"
+            tone = _admin_tone_from_observation(observation, role=role)
         if rank.get(tone, 0) > rank.get(worst, 0):
             worst = tone
         if tone in {"warn", "bad"}:
@@ -562,6 +601,20 @@ def derive_admin_health_projection(
             "observation": observation,
             "routable": routable,
             "tone": tone,
+            "availability": (
+                project_service(service_id, service_records=registry, evidence=availability_evidence).to_public_dict()
+                if enabled else {
+                    "available": False,
+                    "status": "unavailable",
+                    "reason": "The service is disabled.",
+                    "measured": True,
+                    "enabled": False,
+                    "configured": True,
+                    "up": False,
+                    "idle_startable": False,
+                    "evidence": {"source": "registry", "kind": "disabled"},
+                }
+            ),
             "last_error": (backend or {}).get("last_error") or None,
         })
 
@@ -572,15 +625,13 @@ def derive_admin_health_projection(
         if service_id in configured_service_ids:
             continue
         name = str(backend.get("name") or service_id)
-        observed = str(backend.get("live_status") or backend.get("status") or "").lower()
-        if observed in {"up", "healthy", "ok"}:
-            observation, tone = "up", "ok"
-        elif observed == "degraded":
-            observation, tone = "degraded", "warn"
-        elif observed:
-            observation, tone = "down", "bad"
-        else:
-            observation, tone = "unavailable", "neutral"
+        projection = project_service(service_id, evidence=availability_evidence)
+        observation = _admin_observation_from_projection(
+            projection.to_public_dict(),
+            role="required",
+            raw_status=str((availability_evidence.get(service_id) or {}).get("status") or ""),
+        )
+        tone = _admin_tone_from_observation(observation, role="required")
         if rank.get(tone, 0) > rank.get(worst, 0):
             worst = tone
         if tone in {"warn", "bad"}:
@@ -594,6 +645,7 @@ def derive_admin_health_projection(
             "observation": observation,
             "routable": None,
             "tone": tone,
+            "availability": projection.to_public_dict(),
             "last_error": backend.get("last_error") or None,
         })
 
@@ -651,7 +703,7 @@ def derive_admin_health_projection(
 
     active_rows = [
         row for row in rows
-        if row["configured"] and row["enabled"] and row["observation"] != "standby_stopped"
+        if row["configured"] and row["enabled"] and row["observation"] not in {"standby_stopped", "idle"}
     ]
     if not active_rows:
         return _with_source_signals({
@@ -1709,6 +1761,7 @@ def create_admin_router(
             registry,
             status_snap,
             observation_available=status_available,
+            availability_evidence=status_snap.get("_availability_evidence") if isinstance(status_snap.get("_availability_evidence"), Mapping) else None,
         )
         attention = derive_admin_attention({
             "apps": apps,
@@ -1765,12 +1818,13 @@ def create_admin_router(
             except Exception:  # noqa: BLE001
                 available = False
         registry = store.get_service_registry()
-        projected = dict(payload)
+        projected = {key: value for key, value in dict(payload).items() if not str(key).startswith("_")}
         projected["backends"] = _normalize_status_backends(payload)
         projected["current_health"] = derive_admin_health_projection(
             registry,
             payload,
             observation_available=available,
+            availability_evidence=payload.get("_availability_evidence") if isinstance(payload.get("_availability_evidence"), Mapping) else None,
         )
         return JSONResponse(
             status_code=status.HTTP_200_OK,

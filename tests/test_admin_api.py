@@ -179,7 +179,7 @@ class DeriveAdminAttentionTests(unittest.TestCase):
                         "models": [{"model_group": "public-model", "upstream_model": "upstream-model"}],
                     },
                 },
-                "standby": {"id": "standby", "name": "Standby", "enabled": True, "role": "standby"},
+                "standby": {"id": "standby", "name": "Standby", "enabled": True, "role": "standby", "lifecycle": {"driver": "systemd"}},
                 "disabled": {"id": "disabled", "name": "Disabled", "enabled": False},
             }
         }
@@ -192,7 +192,7 @@ class DeriveAdminAttentionTests(unittest.TestCase):
             registry,
             {"backends": [
                 {"service_id": "required", "live_status": "up"},
-                {"service_id": "standby", "live_status": "down"},
+                {"service_id": "standby", "live_status": "stopped"},
             ]},
             observation_available=True,
         )
@@ -262,16 +262,40 @@ class DeriveAdminAttentionTests(unittest.TestCase):
                 "observation": "degraded",
             },
             {
-                "name": "standby stopped",
+                "name": "standby failure is observed down",
                 "registry": {"services": {"standby": {"role": "standby"}}},
                 "payload": {
                     "system_health": "bad",
                     "backends": [{"key": "standby", "status": "down"}],
                 },
                 "available": True,
+                "state": "warn",
+                "tone": "warn",
+                "observation": "down",
+            },
+            {
+                "name": "lifecycle-backed stopped service is idle",
+                "registry": {
+                    "services": {
+                        "ondemand": {
+                            "config": {"lifecycle": {"driver": "systemd"}},
+                        },
+                    },
+                },
+                "payload": {"backends": [{"key": "ondemand", "status": "stopped"}]},
+                "available": True,
                 "state": "inactive",
                 "tone": "neutral",
-                "observation": "standby_stopped",
+                "observation": "idle",
+            },
+            {
+                "name": "starting stays starting",
+                "registry": {"services": {"starting": {}}},
+                "payload": {"backends": [{"key": "starting", "status": "starting"}]},
+                "available": True,
+                "state": "warn",
+                "tone": "warn",
+                "observation": "starting",
             },
             {
                 "name": "status source unavailable",
@@ -531,7 +555,17 @@ class DeriveAdminAttentionTests(unittest.TestCase):
                     payload,
                     observation_available=True,
                 )
-                self.assertEqual(projection, expected[case_id])
+                for row in projection["services"]:
+                    self.assertIn("availability", row)
+                    self.assertIn(row["availability"]["status"], {"ready", "unavailable"})
+                comparable = {
+                    **projection,
+                    "services": [
+                        {key: value for key, value in row.items() if key != "availability"}
+                        for row in projection["services"]
+                    ],
+                }
+                self.assertEqual(comparable, expected[case_id])
                 self.assertEqual(
                     {row["service_id"] for row in projection["services"]},
                     {row["service_id"] for row in expected[case_id]["services"]},

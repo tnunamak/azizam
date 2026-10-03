@@ -582,7 +582,7 @@ test("engines label degraded and standby states honestly", async ({ page }) => {
     page.getByText("Unavailable: probe reports degraded"),
   ).toBeVisible();
   await expect(
-    page.getByText("Unavailable: stopped on standby; starts on demand"),
+    page.getByText("Idle", { exact: true }),
   ).toBeVisible();
   await expect(page.getByText("Busy")).toHaveCount(0);
   await expect(page.getByText("Starting")).toHaveCount(0);

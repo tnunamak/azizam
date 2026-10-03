@@ -85,7 +85,10 @@ for (const theme of ["light", "dark"] as const) {
       await expect(cards.first().getByTitle("Household chat")).toBeVisible();
       await expect(cards.first().getByText("~151 ms · Measured")).toBeVisible();
       await expect(
-        cards.first().getByText("Availability not checked"),
+        cards.first().getByText("Unknown", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        cards.first().getByText("Live availability is not measured yet"),
       ).toBeVisible();
       await expect(
         cards.nth(1).getByText("Remote", { exact: true }),
@@ -95,7 +98,10 @@ for (const theme of ["light", "dark"] as const) {
       ).toBeVisible();
       await expect(cards.nth(1).getByText("~8.0 s · Typical")).toBeVisible();
       await expect(
-        cards.getByText(/Not measured yet|capture-engine|provider-opaque-id/i),
+        cards.getByText("Not measured yet", { exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        cards.getByText(/capture-engine|provider-opaque-id/i),
       ).toHaveCount(0);
       expect(
         await page.evaluate(
