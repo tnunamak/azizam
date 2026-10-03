@@ -65,6 +65,7 @@ from gateway import (
     audio_media_jobs,
     default_profiles,
     media_jobs,
+    me_media,
     receipt_store,
     resource_admission_http,
     route_registry,
@@ -13424,6 +13425,26 @@ app.include_router(
         asset_url_ttl_s=IMAGE_SIGNED_URL_TTL,
         media_job_store_path=media_jobs.DB_PATH,
         media_job_submitter=_gateway_media_job_submitter,
+    )
+)
+
+app.include_router(
+    me_media.create_me_media_router(
+        session_provider=lambda request: _oidc_session_from_request(request),
+        mutation_validator=lambda request, session: _require_user_action_header(request, session),
+        signed_url_builder=lambda request, asset_id: build_signed_asset_url(request, asset_id),
+        asset_path_resolver=lambda asset_id: asset_cache_path(asset_id),
+        asset_media_type_resolver=lambda asset_id, path: asset_media_type(asset_id, path),
+        asset_deleter=me_media.conservative_asset_deleter(
+            metadata_reader=_read_asset_metadata,
+            asset_path_resolver=lambda asset_id: asset_cache_path(asset_id),
+            metadata_path_resolver=_asset_metadata_path,
+        ),
+        asset_catalog_provider=lambda: me_media.create_asset_catalog_provider(IMAGE_CACHE_DIR)(),
+        asset_metadata_reader=_read_asset_metadata,
+        admin_db_path=lambda: ADMIN_STORE.path,
+        media_jobs_path=lambda: media_jobs.DB_PATH,
+        receipts_path=lambda: receipt_store.DB_PATH,
     )
 )
 
