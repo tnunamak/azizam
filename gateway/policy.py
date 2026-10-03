@@ -13,6 +13,7 @@ This module has no dependencies on live auth, request handlers, or
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from decimal import Decimal
 from typing import Iterable
 
 ALLOWED = "allowed"
@@ -56,6 +57,15 @@ class CapabilitySelector:
 @dataclass(frozen=True)
 class FallbackPolicy:
     cloud_allowed: bool = False
+
+
+@dataclass(frozen=True)
+class RemoteProviderPolicy:
+    providers: frozenset[str] = field(default_factory=frozenset)
+    max_usd_per_request: Decimal | None = None
+    budget_usd_per_day: Decimal | None = None
+    budget_usd_per_month: Decimal | None = None
+    allow_paid_fallback: bool = False
 
 
 @dataclass(frozen=True)
@@ -160,6 +170,7 @@ class AppProfile:
     native_passthrough: NativePassthroughPolicy = field(
         default_factory=NativePassthroughPolicy
     )
+    remote: RemoteProviderPolicy = field(default_factory=RemoteProviderPolicy)
     status_visibility: StatusVisibilityPolicy = field(
         default_factory=StatusVisibilityPolicy
     )
@@ -199,6 +210,8 @@ class PolicyRequest:
     native_passthrough: bool = False
     native_operation: str | None = None
     native_backend: str | None = None
+    remote_provider: str | None = None
+    remote_paid_fallback: bool = False
 
     def __post_init__(self) -> None:
         if self.capability_tags is None:
@@ -342,7 +355,8 @@ def evaluate(profile: AppProfile, request: PolicyRequest) -> PolicyDecision:
     4. Backend allow-list (when configured)
     5. Capability metadata selectors (when configured and supplied)
     6. Cloud fallback
-    7. Native passthrough (enabled + allowed backend + allowed operation)
+    7. Remote paid provider access
+    8. Native passthrough (enabled + allowed backend + allowed operation)
 
     The first denial wins. An allow-list of ``None`` means "no opinion";
     an empty frozenset means "deny all".
@@ -392,6 +406,12 @@ def evaluate(profile: AppProfile, request: PolicyRequest) -> PolicyDecision:
             ["cloud fallback disabled by profile"],
             extra_sources=("policy:local-only",),
         )
+
+    if request.remote_provider is not None:
+        remote_decision = _evaluate_remote(profile, request)
+        if remote_decision.denied:
+            return remote_decision
+        reasons.extend(remote_decision.reasons)
 
     if request.native_passthrough:
         native_decision = _evaluate_native(profile, request)
@@ -465,6 +485,30 @@ def _evaluate_allow_selectors(
         profile,
         reasons,
         extra_sources=("policy:capability-selectors",) if reasons else (),
+    )
+
+
+def _evaluate_remote(profile: AppProfile, request: PolicyRequest) -> PolicyDecision:
+    remote = profile.remote
+    provider = request.remote_provider
+    if provider is None:
+        return _allowed(profile, ())
+    if provider not in remote.providers:
+        return _denied(
+            profile,
+            [f"remote provider {provider!r} not permitted by profile"],
+            extra_sources=("policy:remote-provider",),
+        )
+    if request.remote_paid_fallback and not remote.allow_paid_fallback:
+        return _denied(
+            profile,
+            ["paid fallback disabled by profile"],
+            extra_sources=("policy:remote-provider",),
+        )
+    return _allowed(
+        profile,
+        [f"remote provider {provider!r} permitted"],
+        extra_sources=("policy:remote-provider",),
     )
 
 

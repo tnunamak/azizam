@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import pytest
+
 from gateway.litellm_substrate import (
     compile_litellm_config_from_registry,
     compile_litellm_substrate_config,
     litellm_config_path_from_registry,
     litellm_known_model_names,
+    litellm_provider_key_statuses,
+    litellm_provider_model_lookup,
     write_litellm_config_artifact,
 )
 
@@ -197,7 +201,7 @@ def test_references_external_secrets_without_exposing_secret_values() -> None:
                 "capabilities": ["openai"],
                 "config": {
                     "protocol": "openai",
-                    "base_url": "https://api.openai.com/v1",
+                    "base_url": "http://127.0.0.1:9999/v1",
                     "models": [{"id": "gpt-4.1-mini"}],
                     "metadata": {"api_key": "sk-should-not-leak"},
                 },
@@ -212,6 +216,241 @@ def test_references_external_secrets_without_exposing_secret_values() -> None:
         "os.environ/AI_GATEWAY_DOWNSTREAM_API_KEY"
     )
     assert "metadata" not in compiled
+
+
+def test_remote_openrouter_models_are_provider_prefixed() -> None:
+    compiled = compile_litellm_substrate_config(
+        {
+            "openrouter": {
+                "id": "openrouter",
+                "name": "OpenRouter",
+                "capabilities": ["openai"],
+                "config": {
+                    "provider_id": "openrouter",
+                    "provider_type": "paid-remote",
+                    "protocol": "openai-compatible",
+                    "base_url": "https://openrouter.ai/api/v1",
+                    "api_key_env": "OPENROUTER_API_KEY",
+                    "models": [
+                        {
+                            "id": "anthropic/claude-sonnet-4.5",
+                            "upstream_model": "anthropic/claude-sonnet-4.5",
+                        }
+                    ],
+                },
+            }
+        }
+    )
+
+    entry = compiled["model_list"][0]
+    assert entry["model_name"] == "openrouter/anthropic/claude-sonnet-4.5"
+    assert entry["litellm_params"] == {
+        "model": "openrouter/anthropic/claude-sonnet-4.5",
+        "api_base": "https://openrouter.ai/api/v1",
+        "api_key": "os.environ/OPENROUTER_API_KEY",
+    }
+
+
+def test_remote_openai_and_anthropic_models_use_provider_adapters() -> None:
+    compiled = compile_litellm_substrate_config(
+        {
+            "openai": {
+                "id": "openai",
+                "capabilities": ["openai"],
+                "config": {
+                    "provider_id": "openai",
+                    "provider_type": "paid-remote",
+                    "protocol": "openai",
+                    "api_key_env": "OPENAI_API_KEY",
+                    "models": [{"id": "gpt-4.1-mini"}],
+                },
+            },
+            "anthropic": {
+                "id": "anthropic",
+                "capabilities": ["openai"],
+                "config": {
+                    "provider_id": "anthropic",
+                    "provider_type": "paid-remote",
+                    "protocol": "openai",
+                    "api_key_env": "ANTHROPIC_API_KEY",
+                    "models": [{"id": "claude-sonnet-4.5"}],
+                },
+            },
+        }
+    )
+
+    entries = {entry["model_name"]: entry for entry in compiled["model_list"]}
+    assert entries["openai/gpt-4.1-mini"]["litellm_params"]["model"] == (
+        "openai/gpt-4.1-mini"
+    )
+    assert entries["anthropic/claude-sonnet-4.5"]["litellm_params"]["model"] == (
+        "anthropic/claude-sonnet-4.5"
+    )
+
+
+def test_remote_generic_openai_compatible_models_keep_public_provider_prefix() -> None:
+    compiled = compile_litellm_substrate_config(
+        {
+            "acme": {
+                "id": "acme",
+                "capabilities": ["openai"],
+                "config": {
+                    "provider_id": "acme",
+                    "provider_type": "paid-remote",
+                    "litellm_provider": "openai",
+                    "protocol": "openai-compatible",
+                    "base_url": "https://llm.acme.test/v1",
+                    "api_key_env": "ACME_API_KEY",
+                    "models": [{"id": "chat", "upstream_model": "vendor-chat"}],
+                },
+            }
+        }
+    )
+
+    entry = compiled["model_list"][0]
+    assert entry["model_name"] == "acme/chat"
+    assert entry["litellm_params"]["model"] == "openai/vendor-chat"
+
+
+def test_remote_provider_lookup_exposes_paid_model_facts() -> None:
+    registry = {
+        "services": {
+            "openrouter": {
+                "id": "openrouter",
+                "kind": "provider",
+                "capabilities": ["openai"],
+                "config": {
+                    "provider_id": "openrouter",
+                    "provider_type": "paid-remote",
+                    "protocol": "openai-compatible",
+                    "base_url": "https://openrouter.ai/api/v1",
+                    "api_key_env": "OPENROUTER_API_KEY",
+                    "models": [{"id": "openai/gpt-4.1-mini"}],
+                },
+            }
+        }
+    }
+
+    lookup = litellm_provider_model_lookup(registry)
+
+    assert lookup["openrouter/openai/gpt-4.1-mini"] == {
+        "service_id": "openrouter",
+        "provider_id": "openrouter",
+        "provider_type": "paid-remote",
+        "cost_class": "paid-remote",
+        "remote": True,
+        "api_key_env": "OPENROUTER_API_KEY",
+        "upstream_model": "openai/gpt-4.1-mini",
+    }
+
+
+def test_remote_provider_key_status_reports_only_set_or_missing() -> None:
+    registry = {
+        "services": {
+            "openai": {
+                "id": "openai",
+                "kind": "provider",
+                "capabilities": ["openai"],
+                "config": {
+                    "provider_id": "openai",
+                    "provider_type": "paid-remote",
+                    "protocol": "openai",
+                    "api_key_env": "OPENAI_API_KEY",
+                    "models": [{"id": "gpt-4.1-mini"}],
+                },
+            }
+        }
+    }
+
+    missing = litellm_provider_key_statuses(registry, environ={})
+    present = litellm_provider_key_statuses(
+        registry,
+        environ={"OPENAI_API_KEY": "sk-test-secret"},
+    )
+
+    assert missing["openai"] == {
+        "service_id": "openai",
+        "api_key_env": "OPENAI_API_KEY",
+        "key_status": "missing",
+    }
+    assert present["openai"]["key_status"] == "set"
+    assert "sk-test-secret" not in repr(present)
+
+
+def test_remote_provider_rejects_unprefixed_alias_rows() -> None:
+    with pytest.raises(ValueError, match="provider-prefixed"):
+        compile_litellm_substrate_config(
+            {
+                "openrouter": {
+                    "id": "openrouter",
+                    "kind": "provider",
+                    "capabilities": ["openai"],
+                    "config": {
+                        "provider_id": "openrouter",
+                        "provider_type": "paid-remote",
+                        "protocol": "openai-compatible",
+                        "base_url": "https://openrouter.ai/api/v1",
+                        "api_key_env": "OPENROUTER_API_KEY",
+                        "models": [
+                            {
+                                "id": "base",
+                                "model_group": "openrouter/openai/gpt-4.1-mini",
+                                "upstream_model": "openai/gpt-4.1-mini",
+                            },
+                            {
+                                "id": "paid-alias",
+                                "model_group": "paid-alias",
+                                "upstream_model": "openai/gpt-4.1-mini",
+                                "base_model_id": "base",
+                            },
+                        ],
+                    },
+                }
+            }
+        )
+
+
+def test_remote_provider_rejects_litellm_fallback_config() -> None:
+    with pytest.raises(ValueError, match="fallbacks"):
+        compile_litellm_substrate_config(
+            {
+                "openrouter": {
+                    "id": "openrouter",
+                    "kind": "provider",
+                    "capabilities": ["openai"],
+                    "config": {
+                        "provider_id": "openrouter",
+                        "provider_type": "paid-remote",
+                        "protocol": "openai-compatible",
+                        "base_url": "https://openrouter.ai/api/v1",
+                        "api_key_env": "OPENROUTER_API_KEY",
+                        "router_settings": {"fallbacks": [{"gpt": ["paid"]}]},
+                        "models": [{"id": "openai/gpt-4.1-mini"}],
+                    },
+                }
+            }
+        )
+
+
+def test_remote_compile_rejects_remote_shape_without_provider_kind() -> None:
+    with pytest.raises(ValueError, match="kind 'provider'"):
+        compile_litellm_substrate_config(
+            {
+                "openrouter": {
+                    "id": "openrouter",
+                    "kind": "llm-substrate",
+                    "capabilities": ["openai"],
+                    "config": {
+                        "provider_id": "openrouter",
+                        "provider_type": "paid-remote",
+                        "protocol": "openai-compatible",
+                        "base_url": "https://openrouter.ai/api/v1",
+                        "api_key_env": "OPENROUTER_API_KEY",
+                        "models": [{"id": "openai/gpt-4.1-mini"}],
+                    },
+                }
+            }
+        )
 
 
 def test_compiles_from_registry_and_writes_litellm_config_artifact(tmp_path) -> None:

@@ -315,6 +315,8 @@ from gateway.runtime_auth import (
 )
 from gateway.protocols import anthropic as anthropic_protocol
 from gateway.protocols import ollama as ollama_protocol
+from gateway import provider_execution, providers
+from gateway.provider_admin import create_provider_admin_router, provider_ledger_spending_snapshot
 
 # =============================================================================
 # Configuration
@@ -2914,6 +2916,8 @@ def _alias_engine_available_for(operation: str) -> stable_aliases.EngineAvailabl
             return False
         if not bool_from_config(service.get("enabled"), True):
             return False
+        if service_registry.is_remote_provider_config(service):
+            return True
         if not service.get("host") or not service.get("port"):
             return False
         return True
@@ -13078,6 +13082,24 @@ async def _filter_model_list_for_profile(
 ) -> tuple[list[Any], dict[str, Any]]:
     metadata: dict[str, Any] = {}
     filtered = [item for item in data if isinstance(item, dict)]
+    registry = ADMIN_STORE.get_service_registry()
+    remote_models = provider_execution.litellm_provider_model_lookup(registry)
+    profile = _profile_for_auth_context(auth_context)
+    provider_refs = providers.provider_refs(registry)
+    visible = []
+    for item in filtered:
+        facts = remote_models.get(str(item.get("id") or ""))
+        if facts and facts.get("remote"):
+            provider_id = facts["provider_id"]
+            if provider_id not in profile.remote.providers:
+                continue
+            provider = provider_refs.get(provider_id)
+            ready = bool(provider and provider.configured)
+            item = {**item, "remote": True, "cost_class": "paid-remote", "available": ready}
+            if not ready:
+                item["reason"] = "provider_key_missing"
+        visible.append(item)
+    filtered = visible
 
     allowlist = _profile_model_allowlist(auth_context)
     if allowlist is not None:
@@ -14205,6 +14227,10 @@ class _LiveLiteLLMKeyClient:
 
 _LITELLM_KEY_CLIENT = _LiveLiteLLMKeyClient()
 
+app.include_router(create_provider_admin_router(
+    ADMIN_STORE, auth=ADMIN_AUTH,
+    spending_provider=lambda: provider_ledger_spending_snapshot(path=ADMIN_DB_PATH.parent / "provider_spend.db"),
+))
 
 app.include_router(
     create_admin_router(
@@ -25706,6 +25732,21 @@ async def _forward_litellm_proxy_request(
             code="missing_required_parameter",
         )
 
+    remote_provider = provider_execution.provider_for_model(ADMIN_STORE.get_service_registry(), model_name)
+    if remote_provider is not None:
+        identity = auth_context.identity
+        return await provider_execution.execute_paid_litellm(
+            request, request_path=request_path, body=body_json,
+            provider=remote_provider, profile=_profile_for_auth_context(auth_context),
+            runtime=runtime_config, ledger_path=ADMIN_DB_PATH.parent / "provider_spend.db",
+            admin_db_path=ADMIN_DB_PATH,
+            app_id=identity.app_id if identity else None,
+            app_name=identity.name if identity else None,
+            delegated=bool(delegated_litellm_api_key),
+            paid_fallback=bool(getattr(request.state, "paid_provider_fallback", False)),
+            requested_model=getattr(request.state, "provider_requested_model", None),
+        )
+
     try:
         logical_target = _resolve_request_target(model_name, aliases_only=True)
     except AliasPolicyResolutionError as error:
@@ -26030,6 +26071,47 @@ async def _handle_openai_litellm_request(
     request: Request,
     request_path: str,
 ) -> Response:
+    """Try only fallback targets explicitly listed in the requested alias."""
+    body, parse_error = parse_openai_json_body(await request.body())
+    if parse_error is not None:
+        # The normal handler owns authentication before request validation.
+        return await _handle_openai_litellm_request_once(request, request_path)
+    operation = "embeddings" if request_path == "/v1/embeddings" else "chat"
+    try:
+        alias = resolve_stable_alias(operation, body.get("model"))
+    except stable_aliases.AliasUnavailableError:
+        return await _handle_openai_litellm_request_once(request, request_path)
+    request.state.provider_requested_model = str(body.get("model") or "")
+    request.state.paid_provider_fallback = bool(alias and alias.skipped_engines)
+    response = await _handle_openai_litellm_request_once(request, request_path)
+    if alias is None or not alias.fallbacks:
+        return response
+    engines = ((config.get("model_aliases") or {}).get(operation) or {}).get("engines") or {}
+    for engine_id, service_id in alias.fallbacks:
+        if response.status_code != 429 and response.status_code < 500:
+            break
+        spec = engines.get(engine_id) or {}
+        target = _provider_alias_model(engine_id, service_id, spec)
+        request.state.paid_provider_fallback = True
+        response = await _handle_openai_litellm_request_once(request, request_path, model_override=target)
+    return response
+
+
+def _provider_alias_model(engine_id: str, service_id: str | None, spec: Mapping[str, Any]) -> str:
+    provider = providers.provider_lookup(ADMIN_STORE.get_service_registry(), str(service_id or ""))
+    service = ((ADMIN_STORE.get_service_registry().get("services") or {}).get(service_id) or {})
+    if provider is None or not service_registry.is_remote_provider_config(service.get("config") or {}):
+        return engine_id
+    model = str(spec.get("model") or engine_id)
+    return model if model.startswith(provider.id + "/") else provider.id + "/" + model
+
+
+async def _handle_openai_litellm_request_once(
+    request: Request,
+    request_path: str,
+    *,
+    model_override: str | None = None,
+) -> Response:
     route_auth = authenticate_runtime_or_litellm_request(
         request,
         request_path,
@@ -26054,7 +26136,7 @@ async def _handle_openai_litellm_request(
     # Layer 1/2 aliases (gpt-4o, fast, text-embedding-3-small ...) become the
     # concrete role / model group before policy and LiteLLM see the request.
     try:
-        chat_alias = resolve_stable_alias(
+        chat_alias = None if model_override else resolve_stable_alias(
             "embeddings" if request_path == "/v1/embeddings" else "chat",
             parsed_body.get("model"),
         )
@@ -26062,8 +26144,9 @@ async def _handle_openai_litellm_request(
         return openai_error_response(
             str(exc), status_code=400, param="model", code=exc.code,
         )
-    if chat_alias is not None and chat_alias.target != parsed_body.get("model"):
-        parsed_body = {**parsed_body, "model": chat_alias.target}
+    if model_override or chat_alias is not None:
+        target = model_override or _provider_alias_model(chat_alias.target, chat_alias.service, chat_alias.engine_spec or {})
+        parsed_body = {**parsed_body, "model": target}
         body_peek = json.dumps(parsed_body).encode("utf-8")
 
     requested_embedding_dimensions: int | None = None
@@ -26103,7 +26186,8 @@ async def _handle_openai_litellm_request(
     litellm_runtime = _litellm_runtime_config()
     litellm_body: Mapping[str, Any] = parsed_body
     prepared_local_llm = False
-    if litellm_runtime.enabled:
+    remote_provider = provider_execution.provider_for_model(ADMIN_STORE.get_service_registry(), parsed_body.get("model"))
+    if litellm_runtime.enabled and remote_provider is None:
         litellm_service_response = _service_availability_response(
             litellm_runtime.service_id or "litellm",
             service_label="LiteLLM",

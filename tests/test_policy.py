@@ -19,6 +19,7 @@ from gateway.policy import (  # noqa: E402
     NativePassthroughPolicy,
     PolicyDecision,
     PolicyRequest,
+    RemoteProviderPolicy,
     StatusVisibilityPolicy,
     apply_to_receipt,
     evaluate,
@@ -247,6 +248,46 @@ class TestDefaultLocalProfile(unittest.TestCase):
         )
 
         self.assertEqual(decision.decision, ALLOWED)
+
+
+class TestRemoteProviders(unittest.TestCase):
+    def test_remote_provider_denied_by_default(self) -> None:
+        decision = evaluate(
+            DEFAULT_PROFILE,
+            PolicyRequest(remote_provider="typesafe"),
+        )
+
+        self.assertEqual(decision.decision, DENIED)
+        self.assertIn("policy:remote-provider", decision.sources)
+
+    def test_remote_provider_allowed_when_profile_names_it(self) -> None:
+        profile = DEFAULT_PROFILE.with_overrides(
+            remote=RemoteProviderPolicy(providers=frozenset({"typesafe"}))
+        )
+        decision = evaluate(profile, PolicyRequest(remote_provider="typesafe"))
+
+        self.assertEqual(decision.decision, ALLOWED)
+
+    def test_paid_fallback_requires_separate_permission(self) -> None:
+        profile = DEFAULT_PROFILE.with_overrides(
+            remote=RemoteProviderPolicy(providers=frozenset({"openrouter"}))
+        )
+        denied = evaluate(
+            profile,
+            PolicyRequest(remote_provider="openrouter", remote_paid_fallback=True),
+        )
+        allowed = evaluate(
+            profile.with_overrides(
+                remote=RemoteProviderPolicy(
+                    providers=frozenset({"openrouter"}),
+                    allow_paid_fallback=True,
+                )
+            ),
+            PolicyRequest(remote_provider="openrouter", remote_paid_fallback=True),
+        )
+
+        self.assertEqual(denied.decision, DENIED)
+        self.assertEqual(allowed.decision, ALLOWED)
 
 
 class TestNativePassthrough(unittest.TestCase):

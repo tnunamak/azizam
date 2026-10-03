@@ -376,6 +376,39 @@ add hash-locking (`uv pip compile --generate-hashes`) to the LiteLLM pin.
 - The admin UI and discovery show `configured | missing`, never the value.
   A provider whose key is missing appears in discovery as `available: false`
   with `reason: provider_key_missing`.
+
+### Provider admin JSON surface
+
+The Providers UI reads and writes paid-provider control-plane state through
+`gateway/provider_admin.py`.  Parent registration is:
+
+```python
+from gateway.provider_admin import create_provider_admin_router
+
+app.include_router(create_provider_admin_router(ADMIN_STORE, auth=admin_auth))
+```
+
+The router mounts under `/admin/api/providers` and uses the same admin auth
+contract as `gateway/admin_api.py`.  Provider identity, enablement, model
+metadata and `api_key_env` come from the DB service registry.  Key status is
+reported only as `{state: "set"|"missing", api_key_env: "NAME"}`; the API never
+returns or stores the key value.  Spend caps and allowed access plans live in
+the non-secret `operator_settings.provider_admin` document:
+
+- `GET /admin/api/providers`
+- `GET /admin/api/providers/{provider}`
+- `PUT /admin/api/providers/{provider}/caps`
+- `DELETE /admin/api/providers/{provider}/caps`
+- `PUT /admin/api/providers/{provider}/allowed-plans`
+- `PUT /admin/api/providers/-/global-caps`
+- `DELETE /admin/api/providers/-/global-caps`
+
+Spend-to-date is projected from the shared `provider_spend` ledger table when
+present, or from an injected usage provider in tests.  If the ledger is absent
+or unreadable, the router reports spend as unknown; an empty readable ledger
+reports zero spend.  Execution passes `admin_db_path` to
+`reserve_provider_spend(...)`, and cap enforcement happens in the same
+reservation transaction that writes the ledger row.
 - The forwarder builds the vendor `Authorization` header from the secret ref. It
   never forwards the client's gateway key, and never forwards a client-supplied
   vendor key (no BYOK in v1).
@@ -402,8 +435,10 @@ Profile addition (stored in admin.db as Profile JSON, edited in `/admin`):
 - **Pre-call check:** estimate the cost from the price data and the input
   tokens. For TypeSafe, that is the characters/4 bound × $0.042/M. Reject over
   `max_usd_per_request` with `402`-style `budget_exceeded` before any spend.
-- **Daily budget:** the sum of `cost.usd` in `receipt_store` for the Profile
-  over the last 24 h, checked before the call. One SQLite query on an indexed column.
+- **Daily budget:** the reservation reads the shared `provider_spend` ledger for
+  the Profile over the last 24 h in the same transaction that reserves the
+  estimated spend. The check includes reserved and settled rows, and it ignores
+  released rows.
 - **Receipt fields (new):**
   - `cost {usd, source: provider-reported|litellm|price-table|unknown, provider, cost_class}`
   - `usage {input_tokens, output_tokens}`

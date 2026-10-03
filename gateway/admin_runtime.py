@@ -34,6 +34,10 @@ from gateway.admin_oidc import (
 from gateway.policy import DEFAULT_PROFILE, default_profile_id, is_default_profile_id
 from gateway.profiles import ProfileLoadError, load_profile
 from gateway.litellm_substrate import write_litellm_config_artifact
+from gateway.provider_admin import (
+    provider_admin_setting_from_store,
+    provider_admin_setting_to_store,
+)
 from gateway.runtime_auth import RuntimeIdentity, hash_api_key
 
 APP_KEY_PREFIX = "opk_"
@@ -753,6 +757,14 @@ class AdminSQLiteStore:
                 "capabilities": {},
             }
         return registry
+
+    def get_provider_admin_state(self) -> dict[str, Any]:
+        return provider_admin_setting_from_store(path=self.path)
+
+    def update_provider_admin_state(
+        self, *, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]:
+        return provider_admin_setting_to_store(data, actor=actor, path=self.path)
 
     def write_litellm_config(self, registry: Mapping[str, Any] | None = None) -> Path:
         registry = registry or self.get_service_registry()

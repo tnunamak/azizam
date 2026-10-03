@@ -19,6 +19,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -40,6 +41,8 @@ SERVICE_SOURCES = frozenset({"ui", "provisioned", "builtin", "discovered", "impo
 PROTOCOL_FRONTEND_SOURCES = frozenset({"builtin", "ui", "provisioned", "imported"})
 DATA_OBJECT_SOURCES = frozenset({"builtin", "ui", "provisioned", "discovered", "imported"})
 DEFAULT_CATALOG_DIR = Path(__file__).resolve().parent.parent / "registry"
+REMOTE_PROVIDER_TYPES = frozenset({"remote", "paid-remote", "cloud"})
+ENV_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 _SECRET_HINTS = (
     "api_key",
@@ -613,6 +616,7 @@ def service_from_backend_config(
     provenance: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     safe_config, secret_refs = split_secret_refs(raw)
+    validate_provider_secret_refs(service_id, safe_config, secret_refs)
     source = source if source in SERVICE_SOURCES else "ui"
     name = str(raw.get("name") or service_id)
     capabilities = normalize_string_list(raw.get("capabilities"))
@@ -698,6 +702,7 @@ def normalize_service_record(service_id: str, raw: Mapping[str, Any]) -> dict[st
     secret_refs = raw.get("secret_refs")
     if not isinstance(secret_refs, Mapping):
         secret_refs = {}
+    validate_provider_secret_refs(service_id, config, secret_refs)
     provenance = raw.get("provenance")
     if not isinstance(provenance, Mapping):
         provenance = {}
@@ -730,6 +735,46 @@ def normalize_service_record(service_id: str, raw: Mapping[str, Any]) -> dict[st
     # rows (LiteLLM). Stored editable:false from old seeds is normalized away.
     record["editable"] = not is_litellm_service_record(service_id, record)
     return record
+
+
+def validate_provider_secret_refs(
+    service_id: str,
+    config: Mapping[str, Any],
+    secret_refs: Mapping[str, Any],
+) -> None:
+    """Remote providers must reference env vars; inline key placeholders fail closed."""
+
+    if not is_remote_provider_config(config):
+        return
+    inline_keys = [
+        key
+        for key in secret_refs
+        if is_secret_key(str(key)) and not is_secret_reference_key(str(key))
+    ]
+    if inline_keys:
+        names = ", ".join(sorted(str(key) for key in inline_keys))
+        raise ValueError(
+            f"remote provider {service_id!r} must use env-var secret references; "
+            f"inline secret fields are not allowed: {names}"
+        )
+    if config.get("api_key_env") in (None, ""):
+        raise ValueError(
+            f"remote provider {service_id!r} requires api_key_env"
+        )
+    api_key_env = config.get("api_key_env")
+    if not isinstance(api_key_env, str) or not ENV_VAR_NAME_RE.fullmatch(api_key_env):
+        raise ValueError(
+            f"remote provider {service_id!r} api_key_env must be an environment variable name"
+        )
+
+
+def is_remote_provider_config(config: Mapping[str, Any]) -> bool:
+    provider_type = str(config.get("provider_type") or config.get("cost_class") or "").strip()
+    return (
+        provider_type in REMOTE_PROVIDER_TYPES
+        or bool_from_config(config.get("remote_provider"), False)
+        or bool_from_config(config.get("paid_remote"), False)
+    )
 
 
 def is_litellm_service_record(raw_id: Any, service: Mapping[str, Any]) -> bool:

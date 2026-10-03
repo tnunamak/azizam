@@ -76,6 +76,13 @@ class TestLoadProfileFields(unittest.TestCase):
                     "allowed_operations": ["queue_prompt", "history"],
                     "audit": False,
                 },
+                "remote": {
+                    "providers": ["typesafe", "openrouter"],
+                    "max_usd_per_request": "0.01",
+                    "budget_usd_per_day": "1.00",
+                    "budget_usd_per_month": "10.00",
+                    "allow_paid_fallback": True,
+                },
                 "status_visibility": {"level": "full"},
                 "target_policy": {
                     "visibility": "available",
@@ -113,6 +120,11 @@ class TestLoadProfileFields(unittest.TestCase):
             frozenset({"queue_prompt", "history"}),
         )
         self.assertFalse(profile.native_passthrough.audit)
+        self.assertEqual(profile.remote.providers, frozenset({"typesafe", "openrouter"}))
+        self.assertEqual(str(profile.remote.max_usd_per_request), "0.01")
+        self.assertEqual(str(profile.remote.budget_usd_per_day), "1.00")
+        self.assertEqual(str(profile.remote.budget_usd_per_month), "10.00")
+        self.assertTrue(profile.remote.allow_paid_fallback)
         self.assertEqual(profile.status_visibility.level, "full")
         self.assertEqual(
             profile.target_policy,
@@ -238,6 +250,20 @@ class TestLoadProfileValidation(unittest.TestCase):
             load_profile({"id": "x", "allow": {"resource_tiers": "batch"}})
         with self.assertRaises(ProfileLoadError):
             load_profile({"id": "x", "allow": {"tags": [1]}})
+
+    def test_remote_rejects_unknown_or_malformed_values(self) -> None:
+        with self.assertRaises(ProfileLoadError):
+            load_profile({"id": "x", "remote": {"mystery": True}})
+        with self.assertRaises(ProfileLoadError):
+            load_profile({"id": "x", "remote": {"providers": "typesafe"}})
+        with self.assertRaises(ProfileLoadError):
+            load_profile({"id": "x", "remote": {"max_usd_per_request": -1}})
+        with self.assertRaises(ProfileLoadError):
+            load_profile({"id": "x", "remote": {"max_usd_per_request": "NaN"}})
+        with self.assertRaises(ProfileLoadError):
+            load_profile({"id": "x", "remote": {"budget_usd_per_day": "Infinity"}})
+        with self.assertRaises(ProfileLoadError):
+            load_profile({"id": "x", "remote": {"allow_paid_fallback": "yes"}})
 
 
 class TestLoadProfileFromEntry(unittest.TestCase):

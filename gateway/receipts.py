@@ -37,6 +37,9 @@ CLIENT_VISIBLE_FIELDS = {
     "latency_ms",
     "job_id",
     "stream",
+    "remote",
+    "cost",
+    "usage",
     "effective_output_limit",
     "accepted_at_ms",
     "updated_at_ms",
@@ -179,6 +182,9 @@ class RouteReceipt:
     status: str | None = None
     latency_ms: float | None = None
     stream: bool = False
+    remote: bool = False
+    cost: dict[str, Any] | None = None
+    usage: dict[str, Any] | None = None
     effective_output_limit: int | None = None
     accepted_at_ms: int | None = None
     updated_at_ms: int | None = None
@@ -291,6 +297,9 @@ class RouteReceipt:
             "status": self.status,
             "latency_ms": self.latency_ms,
             "stream": self.stream,
+            "remote": self.remote,
+            "cost": dict(self.cost) if isinstance(self.cost, Mapping) else self.cost,
+            "usage": dict(self.usage) if isinstance(self.usage, Mapping) else self.usage,
             "effective_output_limit": self.effective_output_limit,
             "accepted_at_ms": self.accepted_at_ms,
             "updated_at_ms": self.updated_at_ms,
@@ -304,7 +313,15 @@ class RouteReceipt:
             metadata = data.pop("metadata", None)
             data.update(sanitize_admin_metadata(metadata))
             return data
-        return {name: data[name] for name in CLIENT_VISIBLE_FIELDS if name in data}
+        client_data = {name: data[name] for name in CLIENT_VISIBLE_FIELDS if name in data}
+        cost = client_data.get("cost")
+        if isinstance(cost, Mapping):
+            client_data["cost"] = {
+                name: value
+                for name, value in cost.items()
+                if name in {"usd", "source", "cost_class"}
+            }
+        return client_data
 
 
 class ReceiptLifecycleOwner:

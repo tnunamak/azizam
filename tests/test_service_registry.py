@@ -874,6 +874,40 @@ def test_added_service_without_models_is_inert() -> None:
     assert compiled["model_list"] == []
 
 
+def test_remote_provider_requires_env_key_reference() -> None:
+    with pytest.raises(ValueError, match="requires api_key_env"):
+        service_registry.service_from_backend_config(
+            "openrouter",
+            {
+                "kind": "provider",
+                "provider_id": "openrouter",
+                "provider_type": "paid-remote",
+                "protocol": "openai-compatible",
+                "base_url": "https://openrouter.ai/api/v1",
+                "models": [{"id": "openai/gpt-4.1-mini"}],
+            },
+            source="ui",
+        )
+
+
+def test_remote_provider_rejects_inline_secret_value() -> None:
+    with pytest.raises(ValueError, match="inline secret fields"):
+        service_registry.service_from_backend_config(
+            "openrouter",
+            {
+                "kind": "provider",
+                "provider_id": "openrouter",
+                "provider_type": "paid-remote",
+                "protocol": "openai-compatible",
+                "base_url": "https://openrouter.ai/api/v1",
+                "api_key": "sk-should-not-be-stored",
+                "api_key_env": "OPENROUTER_API_KEY",
+                "models": [{"id": "openai/gpt-4.1-mini"}],
+            },
+            source="ui",
+        )
+
+
 # ---------------------------------------------------------------------------
 # Fresh-install reproducibility: a nested lifecycle block in proxy_config.yml
 # (driver + driver_config) must survive first-boot seeding so the swap path is

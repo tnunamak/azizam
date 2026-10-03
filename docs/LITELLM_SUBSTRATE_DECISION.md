@@ -88,16 +88,19 @@ There are two distinct kinds of key, owned by two distinct planes:
   spend). The gateway does not store them; it forwards a virtual key to the
   substrate as the `X-Litellm-Key` delegated header on execution.
 
-A virtual key currently authorizes eligible LLM-shaped protocol frontends: the
+A virtual key authorizes eligible local LLM-shaped protocol frontends: the
 three OpenAI execution routes above, the gateway's Anthropic Messages frontend,
 and the LiteLLM-filtered Ollama catalog. That path bypasses gateway Profile
 policy for those calls. It does not authorize gateway-owned media, jobs, admin,
 or native passthrough routes; those remain behind gateway App-key auth and their
 own gateway policy.
 
-This bypass is a migration bridge. It must be retired for paid models. Paid
-execution must pass through gateway App-key auth, access-plan checks, spend
-caps, and receipts before LiteLLM executes the request.
+This bypass remains only for local models. Registry-declared paid models reject
+virtual-key callers before execution. Paid calls use gateway App keys, access
+plans, atomic spend reservations, and receipts before LiteLLM executes them.
+See `REMOTE_PROVIDERS.md` for configuration and admin JSON APIs. The gateway
+registry generates the sidecar's model catalog; do not add paid groups or paid
+fallbacks independently in the sidecar.
 
 ### Operating LiteLLM virtual keys
 

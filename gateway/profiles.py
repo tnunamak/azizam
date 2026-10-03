@@ -17,6 +17,7 @@ to :func:`load_profile_from_entry` or :func:`load_profiles_from_entries`.
 
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation
 from typing import Iterable, Mapping
 
 from gateway.policy import (
@@ -32,6 +33,7 @@ from gateway.policy import (
     MediaMetadataPolicy,
     NativePassthroughPolicy,
     ModelAccessPolicy,
+    RemoteProviderPolicy,
     StatusVisibilityPolicy,
     TargetPolicy,
     target_policy_from_model_access,
@@ -55,6 +57,7 @@ _PROFILE_KEYS = {
     "allow",
     "fallback",
     "native_passthrough",
+    "remote",
     "status_visibility",
     "target_policy",
     "model_access",
@@ -84,6 +87,25 @@ def serialize_default_profile() -> dict[str, object]:
             "allowed_backends": sorted(profile.native_passthrough.allowed_backends),
             "allowed_operations": sorted(profile.native_passthrough.allowed_operations),
             "audit": profile.native_passthrough.audit,
+        },
+        "remote": {
+            "providers": sorted(profile.remote.providers),
+            "max_usd_per_request": (
+                str(profile.remote.max_usd_per_request)
+                if profile.remote.max_usd_per_request is not None
+                else None
+            ),
+            "budget_usd_per_day": (
+                str(profile.remote.budget_usd_per_day)
+                if profile.remote.budget_usd_per_day is not None
+                else None
+            ),
+            "budget_usd_per_month": (
+                str(profile.remote.budget_usd_per_month)
+                if profile.remote.budget_usd_per_month is not None
+                else None
+            ),
+            "allow_paid_fallback": profile.remote.allow_paid_fallback,
         },
         "status_visibility": {"level": profile.status_visibility.level},
         "media_metadata": {"default": profile.media_metadata.default},
@@ -211,6 +233,57 @@ def _load_native_passthrough(value: object) -> NativePassthroughPolicy:
     )
 
 
+def _coerce_optional_decimal(value: object, *, where: str) -> Decimal | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise ProfileLoadError(f"{where} must be a number or decimal string")
+    try:
+        amount = Decimal(str(value))
+    except InvalidOperation as exc:
+        raise ProfileLoadError(f"{where} must be a valid decimal amount") from exc
+    if not amount.is_finite():
+        raise ProfileLoadError(f"{where} must be a finite decimal amount")
+    if amount < 0:
+        raise ProfileLoadError(f"{where} must be non-negative")
+    return amount
+
+
+def _load_remote(value: object) -> RemoteProviderPolicy:
+    data = _require_mapping(value, where="remote")
+    if not data:
+        return RemoteProviderPolicy()
+    unknown = set(data.keys()) - {
+        "providers",
+        "max_usd_per_request",
+        "budget_usd_per_day",
+        "budget_usd_per_month",
+        "allow_paid_fallback",
+    }
+    if unknown:
+        raise ProfileLoadError(f"unknown remote keys: {sorted(unknown)}")
+    allow_paid_fallback = data.get("allow_paid_fallback", False)
+    if not isinstance(allow_paid_fallback, bool):
+        raise ProfileLoadError("remote.allow_paid_fallback must be a boolean")
+    return RemoteProviderPolicy(
+        providers=_coerce_str_set(data.get("providers"), where="remote.providers")
+        or frozenset(),
+        max_usd_per_request=_coerce_optional_decimal(
+            data.get("max_usd_per_request"),
+            where="remote.max_usd_per_request",
+        ),
+        budget_usd_per_day=_coerce_optional_decimal(
+            data.get("budget_usd_per_day"),
+            where="remote.budget_usd_per_day",
+        ),
+        budget_usd_per_month=_coerce_optional_decimal(
+            data.get("budget_usd_per_month"),
+            where="remote.budget_usd_per_month",
+        ),
+        allow_paid_fallback=allow_paid_fallback,
+    )
+
+
 def _load_status_visibility(value: object) -> StatusVisibilityPolicy:
     data = _require_mapping(value, where="status_visibility")
     if not data:
@@ -335,6 +408,7 @@ def load_profile(
         native_passthrough=_load_native_passthrough(
             profile_data.get("native_passthrough")
         ),
+        remote=_load_remote(profile_data.get("remote")),
         status_visibility=_load_status_visibility(
             profile_data.get("status_visibility")
         ),
