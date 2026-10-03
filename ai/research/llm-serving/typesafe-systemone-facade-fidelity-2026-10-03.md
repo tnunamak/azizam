@@ -7,7 +7,13 @@ status: draft
 sources: [typesafe-api-live, typesafe-models-live, typesafe-api-snapshot, typesafe-sdk-local-probe]
 ---
 
-## Claims
+## Initial api.md observations
+
+These observations record the earlier documentation read. For request validation,
+the pinned official OpenAPI reconciliation below supersedes the instructions
+requirement and Score minimum stated in this section. Instructions are nullable
+and optional when criteria describe the question; Score has a schema minimum of
+one level and a local maximum of ten.
 
 The TypeSafe System One HTTP endpoint is `POST https://api.typesafe.ai/v1/systemone` with bearer auth and a JSON request containing `state`, `model`, and `questions`. `state` is a string, object, or array. `questions` is a map from caller-chosen ids to typed question objects. The ids return under the same keys and are not part of inference.
 
