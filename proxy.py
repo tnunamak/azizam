@@ -80,6 +80,8 @@ from gateway import video_subject
 from gateway import video_job_records
 from gateway.showcase import build_showcase_router, is_public_showcase_path
 from gateway import realtime_proxy
+from gateway import decisions_api
+from gateway.decision_routing import DecisionRuntime
 from gateway import rerank as rerank_api
 from gateway import stable_aliases
 from gateway import speech_stream
@@ -13154,6 +13156,8 @@ async def _filter_model_list_for_profile(
 
 
 def _protocol_for_intent(intent: str) -> str:
+    if intent == "decision.systemone":
+        return "typesafe.systemone"
     if intent.startswith("image."):
         return "openai.images"
     if intent.startswith("video."):
@@ -13211,6 +13215,7 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
     ))
 
     capabilities.extend(build_alias_capabilities(_gateway_aliases_provider()))
+    capabilities.extend(DECISION_RUNTIME.capabilities())
 
     for record in GATEWAY_WORKFLOW_REGISTRY.records():
         for backend in record.supported_backends:
@@ -13606,6 +13611,53 @@ mcp_server.register_mcp_routes(
         public_base_url=lambda request: _public_base_url(request),
         server_version=str((config.get("proxy") or {}).get("version") or "1"),
         allowed_origins=lambda: [str(o) for o in ((config.get("mcp") or {}).get("allowed_origins") or [])],
+    ),
+)
+
+# System One facades use the existing registry lifecycle and profile evaluator.
+def _decision_authorized(auth: AuthContext, model: str, service: str | None) -> bool:
+    decision = evaluate_and_apply(auth.identity, make_policy_request(
+        protocol="typesafe.systemone", intent="decision.systemone", model=model,
+        backend=service, capability_exposure="default", capability_trust_tier="stable",
+        capability_resource_tier="interactive",
+    ))
+    return not decision.denied
+
+
+async def _decision_ensure_ready(service: str) -> Response | None:
+    return await _ensure_speech_service_ready(service, label="Decision engine")
+
+
+DECISION_RUNTIME = DecisionRuntime(lambda: config, _decision_authorized, _decision_ensure_ready)
+
+
+def _record_decision_receipt(auth: AuthContext, result: decisions_api.DecisionReceipt) -> None:
+    identity = auth.identity
+    receipt = RouteReceipt(
+        protocol=result.protocol, intent=result.intent, path=result.path,
+        request_id=result.request_id, requested_model=result.requested_model,
+        resolved_model=result.resolved_model, backend=result.backend,
+        app_profile=identity.profile.id if identity else None,
+        app_id=identity.app_id if identity else None,
+        api_key_name=identity.name if identity else None,
+    )
+    receipt.latency_ms = result.latency_ms
+    receipt.status = "ok" if result.status_code < 400 else "rejected" if result.status_code < 500 else "error"
+    receipt.fallback_reasons = list(result.fallback_reasons)
+    receipt.metadata["decisions"] = {
+        "question_count": result.question_count, "engine": result.engine,
+        "remote": result.remote, "cost_usd": result.cost_usd,
+    }
+    receipt_store.record(receipt)
+
+
+decisions_api.register_decision_routes(
+    app, decisions_api.DecisionsApiDeps(
+        authenticate=lambda request, path: authenticate_request(request, path),
+        profile_for=_profile_for_auth_context,
+        models_for=DECISION_RUNTIME.models_for,
+        dispatch=DECISION_RUNTIME.dispatch,
+        record_receipt=_record_decision_receipt,
     ),
 )
 
@@ -22857,6 +22909,8 @@ async def list_models(request: Request):
 
     by_id = {item.get("id"): item for item in data if isinstance(item, dict)}
     for alias_entry in _stable_alias_model_entries():
+        if "decisions" in alias_entry["vivid_fish_resolves_to"]:
+            continue  # Decision models use their own policy and runtime metadata below.
         existing = by_id.get(alias_entry["id"])
         if existing is not None:
             existing.update({k: v for k, v in alias_entry.items() if k.startswith("vivid_fish_")})
@@ -22900,6 +22954,12 @@ async def list_models(request: Request):
             desc = str(extra.get("description") or "") if isinstance(extra, Mapping) else ""
         if desc:
             item["description"] = desc
+
+    for decision_model in await asyncio.to_thread(DECISION_RUNTIME.models_for, auth_context):
+        entry = {"id": decision_model.id, "object": "model", "owned_by": "vivid-fish",
+                 "created": 0, "capabilities": decision_model.view()["capabilities"]}
+        if entry["id"] not in {item.get("id") for item in data if isinstance(item, dict)}:
+            data.append(entry)
 
     await _annotate_model_context_windows(data)
 

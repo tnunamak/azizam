@@ -506,6 +506,48 @@ backends:
         unit: rerank-cpu.service
         health_endpoint: /health
         health_timeout_s: 90
+  decisions:
+    name: Local decisions
+    host: 127.0.0.1
+    port: 8023
+    health_endpoint: /health
+    timeout: 120
+    priority: 200
+    role: standby
+    capabilities: [decisions]
+    managed: false
+    default_model: decider-2b-v11
+    placement: cpu
+    residency: on_demand
+    note: "On-demand CPU decision service (about 2.4 GB RAM); configurable CUDA placement with CPU startup fallback."
+    lifecycle:
+      driver: systemd
+      driver_config:
+        scope: user
+        unit: decider.service
+        health_endpoint: /health
+        health_timeout_s: 90
+  decisions-quality:
+    name: Local quality decisions
+    host: 127.0.0.1
+    port: 8025
+    health_endpoint: /health
+    timeout: 120
+    priority: 200
+    role: standby
+    capabilities: [decisions]
+    managed: false
+    default_model: decider-4b-v2.1
+    placement: cpu
+    residency: on_demand
+    note: "Opt-in CPU decision service (about 5 GB RAM); exits after 10 minutes idle."
+    lifecycle:
+      driver: systemd
+      driver_config:
+        scope: user
+        unit: decider-quality.service
+        health_endpoint: /health
+        health_timeout_s: 90
   realtime:
     name: speech-to-speech
     host: 127.0.0.1
@@ -1195,6 +1237,36 @@ model_aliases:
       - {match: "gpt-4o-mini-transcribe*", to: stt-fast}
       - {match: "gpt-4o*transcribe*", to: stt-quality}
       - {match: "*transcribe*", to: stt}
+  decisions:
+    engines:
+      decider-2b:
+        service: decisions
+        model: decider-2b-v11
+        placement: cpu
+        residency: on_demand
+        description: "Local fast decisions"
+        max_state_tokens: 32768
+        context_tokens: 4096
+        max_options: 255
+        max_levels: 10
+        calibrated: true
+      decider-4b:
+        service: decisions-quality
+        model: decider-4b-v2.1
+        placement: cpu
+        residency: on_demand
+        description: "Local quality decisions"
+        max_state_tokens: 32768
+        context_tokens: 4096
+        max_options: 255
+        max_levels: 10
+        calibrated: true
+    stable:
+      decide: [decider-2b]
+      decide-quality: [decider-4b, decider-2b]
+    openai:
+      - {match: "jev-*", to: decide}
+      - {match: "*/*", passthrough: true}
   rerank:
     engines:
       qwen3-reranker-0.6b:

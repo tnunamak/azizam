@@ -1,0 +1,26 @@
+# Install: copy to ~/.config/systemd/user/decider.service, then `systemctl --user daemon-reload`.
+# Do NOT enable it. The gateway starts the default decisions engine on demand.
+[Unit]
+Description=Decision engine (decider-2b v11 Q8_0, placement-configured), port 8023
+After=network.target
+
+[Service]
+Type=simple
+Environment=LLAMA_SERVER=%h/applications/llamacpp-official-b11337-fa-all-quants/bin/llama-server
+Environment="DECIDER_MODEL=/media/windows/AI Models/LLMs/GGUF/decider-2b-v11/decider-2b-v11-Q8_0.gguf"
+Environment=DECIDER_MODEL_ID=decider-2b-v11
+Environment=DECIDER_PLACEMENT=cpu
+Environment=DECIDER_RESIDENCY=on_demand
+Environment=DECIDER_PORT=8023
+Environment=DECIDER_LLAMA_PORT=8024
+Environment=DECIDER_THREADS=8
+Environment=DECIDER_CTX=4096
+Environment=DECIDER_IDLE_EXIT_S=600
+ExecStart=%h/applications/openai-proxy/scripts/decider-idle-exit.sh
+Restart=on-failure
+RestartSec=10
+MemoryMax=6G
+LimitCORE=0
+
+[Install]
+WantedBy=default.target

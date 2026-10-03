@@ -19,6 +19,9 @@ records:
       - images.edit
       - video.generate
     registered_routes:
+      - methods: [POST]
+        canonical: /v1/decisions
+        runtime_policy: {protocol: openai.decisions, intent: decision.systemone}
       - methods: [GET]
         canonical: /v1/models
         alias: /openai/v1/models
@@ -183,6 +186,7 @@ records:
         - /openai/v1/realtime
         - /openai/v1/videos
         - /v1/models
+        - /v1/decisions
         - /v1/chat/completions
         - /v1/completions
         - /v1/embeddings
@@ -206,6 +210,29 @@ records:
         - audio translations are registered but return an OpenAI-shaped unsupported_audio_translation error unless the local STT backend declares translation support
         - images variations route through a configurable edit-capable workflow (images.variations.default_workflow) with a fixed generic prompt, since there is no local model dedicated to variations
         - assistants, files, batches, fine-tuning, and realtime routes are registered but return OpenAI-shaped unsupported_operation errors
+  - id: typesafe
+    name: TypeSafe-compatible decisions
+    protocol: typesafe
+    source: builtin
+    editable: false
+    enabled: true
+    canonical: true
+    routes: [/typesafe/v1]
+    intents: [decision.systemone, models.list]
+    registered_routes:
+      - methods: [POST]
+        canonical: /v1/systemone
+        alias: /typesafe/v1/systemone
+        runtime_policy: {protocol: typesafe.systemone, intent: decision.systemone}
+      - methods: [GET]
+        canonical: /typesafe/v1/models
+        runtime_policy: {protocol: typesafe.models, intent: models.list}
+    public_discovery:
+      canonical_base_path: /typesafe/v1
+      compatibility: "TypeSafe System One; Choice, Score and Noul. Local probabilities; no streaming."
+      streaming: false
+      base_url_recipe: "Set TYPESAFE_BASE_URL to the gateway root plus /typesafe."
+      endpoints: [/typesafe/v1/systemone, /typesafe/v1/models, /v1/systemone]
   - id: anthropic
     name: Anthropic Messages-compatible
     protocol: anthropic

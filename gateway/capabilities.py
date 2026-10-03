@@ -100,6 +100,12 @@ class Capability:
 
     intent: str
     backend: str
+    backend_kind: str | None = None
+    cost_class: str | None = None
+    engine: str | None = None
+    latency_class: str | None = None
+    calibrated: bool | None = None
+    reason: str | None = None
     model: str | None = None
     workflow: str | None = None
     input_modalities: tuple[str, ...] = ()
@@ -224,6 +230,10 @@ def summarize_capability(capability: Capability, audience: str) -> dict[str, Any
         "available": capability.available,
         "caveats": list(capability.caveats),
     }
+    for field_name in ("backend_kind", "cost_class", "engine", "latency_class", "calibrated", "reason"):
+        value = getattr(capability, field_name)
+        if value is not None:
+            summary[field_name] = value
     if capability.model is not None:
         summary["model"] = capability.model
     if capability.workflow is not None:
