@@ -27,9 +27,10 @@ class DecisionRuntime:
     """Resolve, authorize and start configured services; expose observed placement."""
 
     def __init__(self, config: Callable[[], Mapping[str, Any]], authorize: Callable,
-                 ensure_ready: Callable):
+                 ensure_ready: Callable, catalog_authorize: Callable | None = None):
         self.config = config
         self.authorize = authorize
+        self.catalog_authorize = catalog_authorize or authorize
         self.ensure_ready = ensure_ready
         self.observed: dict[str, tuple[float, str | None]] = {}
 
@@ -108,9 +109,9 @@ class DecisionRuntime:
         for name in self.model_names():
             try:
                 resolved = self.resolve(name)
-                if not self.authorize(auth, name, resolved.service):
-                    continue
                 capability = self.capability_for(name)
+                if not self.catalog_authorize(auth, name, resolved.service):
+                    continue
             except DecisionsError:
                 continue
             spec = resolved.engine_spec or {}

@@ -232,6 +232,100 @@ def test_dispatch_and_discovery_share_tag_restrictions(monkeypatch, model):
     ensure.assert_not_called()
 
 
+def test_existing_only_denied_profile_does_not_probe_decision_health(monkeypatch):
+    import proxy
+    from gateway.policy import AppProfile, CapabilitySelector, TargetPolicy
+    from gateway.runtime_auth import RuntimeIdentity
+
+    cfg = config()
+    monkeypatch.setattr(proxy, "config", cfg)
+    monkeypatch.setattr(proxy.DECISION_RUNTIME, "observed", {})
+    auth = proxy.AuthContext(RuntimeIdentity(
+        "restricted",
+        "hash",
+        profile=AppProfile(
+            id="restricted",
+            allow=CapabilitySelector(tags=frozenset({"approved-chat"})),
+            target_policy=TargetPolicy(activation="existing_only"),
+        ),
+    ))
+    def observed(_service, *, fresh=False):
+        if fresh:
+            raise AssertionError("denied profile must not probe engine health")
+        return None
+
+    monkeypatch.setattr(proxy.DECISION_RUNTIME, "observed_engine", observed)
+
+    assert proxy._decision_authorized(auth, "decide", "small") is False
+    assert proxy.DECISION_RUNTIME.models_for(auth, auth.identity.profile) == []
+
+
+def test_existing_only_catalog_uses_cached_engine_without_fresh_probe(monkeypatch):
+    import proxy
+    from gateway.policy import AppProfile, CapabilitySelector, TargetPolicy
+    from gateway.runtime_auth import RuntimeIdentity
+
+    cfg = config()
+    monkeypatch.setattr(proxy, "config", cfg)
+    monkeypatch.setattr(proxy.DECISION_RUNTIME, "observed", {})
+    auth = proxy.AuthContext(RuntimeIdentity(
+        "cpu",
+        "hash",
+        profile=AppProfile(
+            id="cpu",
+            allow=CapabilitySelector(tags=frozenset({"engine:cpu"})),
+            target_policy=TargetPolicy(activation="existing_only"),
+        ),
+    ))
+
+    def observed(_service, *, fresh=False):
+        if fresh:
+            raise AssertionError("catalog must not perform fresh decision health probes")
+        return "cpu"
+
+    monkeypatch.setattr(proxy.DECISION_RUNTIME, "observed_engine", observed)
+
+    models = proxy.DECISION_RUNTIME.models_for(auth, auth.identity.profile)
+
+    assert {model.id for model in models} >= {"decide", "small", "small-v1", "jev-latest"}
+    assert all(model.engine == "cpu" for model in models)
+
+
+def test_existing_only_dispatch_rechecks_policy_after_fresh_engine_tags(monkeypatch):
+    import time
+    import proxy
+    from gateway.policy import AppProfile, CapabilitySelector, TargetPolicy
+    from gateway.runtime_auth import RuntimeIdentity
+
+    cfg = config()
+    monkeypatch.setattr(proxy, "config", cfg)
+    monkeypatch.setattr(proxy.DECISION_RUNTIME, "observed", {})
+    auth = proxy.AuthContext(RuntimeIdentity(
+        "gpu",
+        "hash",
+        profile=AppProfile(
+            id="gpu",
+            allow=CapabilitySelector(tags=frozenset({"engine:gpu"})),
+            target_policy=TargetPolicy(activation="existing_only"),
+        ),
+    ))
+    def observed(service, *, fresh=False):
+        if fresh:
+            proxy.DECISION_RUNTIME.observed[service] = (time.monotonic(), "gpu")
+            return "gpu"
+        cached = proxy.DECISION_RUNTIME.observed.get(service)
+        return cached[1] if cached else None
+
+    monkeypatch.setattr(proxy.DECISION_RUNTIME, "observed_engine", observed)
+    monkeypatch.setattr(proxy.DECISION_RUNTIME, "ensure_ready", AsyncMock(return_value=AssertionError("must not activate")))
+    real = httpx.AsyncClient
+    with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"model": "small-v1", "answers": {"q": {"type": "noul", "noul": .9}}, "usage": {"input_tokens": 1, "output_tokens": 1}}, headers={"x-decision-engine": "gpu"})))):
+        result = asyncio.run(proxy.DECISION_RUNTIME.dispatch(auth, auth.identity.profile, BODY, "r"))
+
+    assert result.status_code == 200
+    assert result.engine == "gpu"
+
+
 def test_dispatch_propagates_remaining_deadline_to_engine():
     rt = runtime()
     real = httpx.AsyncClient

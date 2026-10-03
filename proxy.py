@@ -13618,10 +13618,7 @@ mcp_server.register_mcp_routes(
 )
 
 # System One facades use the existing registry lifecycle and profile evaluator.
-def _decision_authorized(auth: AuthContext, model: str, service: str | None) -> bool:
-    if _profile_target_activation(auth) == "existing_only":
-        if not service or DECISION_RUNTIME.observed_engine(service, fresh=True) is None:
-            return False
+def _decision_catalog_authorized(auth: AuthContext, model: str, service: str | None) -> bool:
     try:
         capability = DECISION_RUNTIME.capability_for(model, service)
     except decisions_api.DecisionsError:
@@ -13629,11 +13626,32 @@ def _decision_authorized(auth: AuthContext, model: str, service: str | None) -> 
     return _capability_for_profile(capability, auth).policy_available is not False
 
 
+def _profile_may_need_decision_engine_probe(auth: AuthContext) -> bool:
+    allowed = getattr(getattr(_profile_for_auth_context(auth), "allow", None), "tags", None)
+    return bool(allowed and ({"engine:gpu", "engine:cpu"} & set(allowed)))
+
+
+def _decision_authorized(auth: AuthContext, model: str, service: str | None) -> bool:
+    allowed = _decision_catalog_authorized(auth, model, service)
+    if _profile_target_activation(auth) != "existing_only":
+        return allowed
+    if not allowed and not _profile_may_need_decision_engine_probe(auth):
+        return False
+    if not service or DECISION_RUNTIME.observed_engine(service, fresh=True) is None:
+        return False
+    return _decision_catalog_authorized(auth, model, service)
+
+
 async def _decision_ensure_ready(service: str) -> Response | None:
     return await _ensure_speech_service_ready(service, label="Decision engine")
 
 
-DECISION_RUNTIME = DecisionRuntime(lambda: config, _decision_authorized, _decision_ensure_ready)
+DECISION_RUNTIME = DecisionRuntime(
+    lambda: config,
+    _decision_authorized,
+    _decision_ensure_ready,
+    catalog_authorize=_decision_catalog_authorized,
+)
 
 
 def _record_decision_receipt(auth: AuthContext, result: decisions_api.DecisionReceipt) -> None:
