@@ -468,13 +468,18 @@ class ProviderAdminApiTests(unittest.TestCase):
                 "INSERT INTO provider_spend VALUES (?, ?, ?, ?, ?, ?)",
                 ("openrouter", "builders", "released", "99.00", None, 1_699_999_900),
             )
+            conn.execute(
+                "INSERT INTO provider_spend VALUES (?, ?, ?, ?, ?, ?)",
+                ("OpenRouter", "builders", "settled", "0.25", "0.25", 1_699_999_950),
+            )
             conn.commit()
 
         snapshot = provider_ledger_spending_snapshot(path=path, now=1_700_000_000)
 
-        self.assertEqual(snapshot["providers"]["openrouter"], {"daily_usd": 1.25, "monthly_usd": 3.25})
+        self.assertEqual(snapshot["providers"]["openrouter"], {"daily_usd": 1.5, "monthly_usd": 3.5})
+        self.assertNotIn("OpenRouter", snapshot["providers"])
         self.assertEqual(snapshot["providers"]["typesafe"], {"daily_usd": 0.0, "monthly_usd": 0.5})
-        self.assertEqual(snapshot["global"], {"daily_usd": 1.25, "monthly_usd": 3.75})
+        self.assertEqual(snapshot["global"], {"daily_usd": 1.5, "monthly_usd": 4.0})
 
     def test_missing_ledger_reports_unknown_spend(self) -> None:
         store = FakeProviderAdminStore()
