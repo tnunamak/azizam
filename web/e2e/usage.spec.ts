@@ -73,9 +73,11 @@ test("usage lists a receipt and opens technical details", async ({ page }) => {
     page.getByRole("columnheader", { name: "Typical time" }),
   ).toHaveCount(0);
   const receipt = page.getByRole("button", {
-    name: /Receipt details for demo-chat/,
+    name: /Receipt details for Chat request/,
   });
   await expect(receipt).toContainText("104 ms");
+  await expect(receipt.locator("p.font-medium")).toHaveText("Chat request");
+  await expect(receipt.locator("code")).toHaveText("demo-chat");
   await receipt.first().click();
   const sheet = page.getByRole("dialog", { name: "Request receipt" });
   await expect(sheet).toBeVisible();
@@ -226,10 +228,12 @@ test("usage reads the real account summary and seeded receipt", async ({
   ).toBe(true);
   await page.goto("/ui/usage/");
   await expect(
-    page.getByRole("button", { name: /Receipt details for demo-chat/ }).first(),
+    page
+      .getByRole("button", { name: /Receipt details for Chat request/ })
+      .first(),
   ).toBeVisible();
   await page
-    .getByRole("button", { name: /Receipt details for demo-chat/ })
+    .getByRole("button", { name: /Receipt details for Chat request/ })
     .first()
     .click();
   await expect(

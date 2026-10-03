@@ -547,7 +547,7 @@ function ReceiptsList({
               <button
                 type="button"
                 key={receipt.requestId}
-                aria-label={`Receipt details for ${receipt.model ?? "unknown model"}`}
+                aria-label={`Receipt details for ${receipt.summary}`}
                 onClick={() => onSelect(receipt)}
                 className="hover:bg-muted/40 focus-visible:outline-ring flex w-full items-center gap-3 py-4 text-left focus-visible:outline-2"
               >
@@ -556,6 +556,11 @@ function ReceiptsList({
                   <p className="truncate text-sm font-medium">
                     {receipt.summary}
                   </p>
+                  {receipt.model && (
+                    <code className="text-muted-foreground mt-1 block truncate text-xs">
+                      {receipt.model}
+                    </code>
+                  )}
                   <p className="text-muted-foreground mt-1 text-xs">
                     {receipt.createdAt ? (
                       <RelativeTime ts={receipt.createdAt} />
@@ -866,7 +871,7 @@ function normalizeReceipt(raw: unknown): UsageReceipt {
     status,
     durationMs,
     costUsd,
-    summary: humanSummary({ capability, model, status, durationMs }),
+    summary: `${capabilityLabels[capability]} request`,
     raw,
   };
 }
@@ -939,23 +944,6 @@ function normalizeCapability(value: unknown): UsageCapability {
   )
     return "chat";
   return "other";
-}
-
-function humanSummary({
-  capability,
-  model,
-  status,
-  durationMs,
-}: {
-  capability: UsageCapability;
-  model: string | null;
-  status: string | null;
-  durationMs: number | null;
-}) {
-  const parts = [capabilityLabels[capability], model ?? "unknown model"];
-  if (status) parts.push(status);
-  if (durationMs != null) parts.push(formatDuration(durationMs));
-  return parts.join(" · ");
 }
 
 function object(value: unknown): Record<string, unknown> {
