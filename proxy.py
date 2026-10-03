@@ -12712,6 +12712,20 @@ def mount_web_ui(target_app: FastAPI, directory: Path = WEB_UI_DIR) -> bool:
     return True
 
 
+@app.middleware("http")
+async def _web_ui_trailing_slash(request: Request, call_next):
+    """Add the trailing slash for `/ui/<page>` with a RELATIVE Location.
+
+    StaticFiles builds an absolute redirect from the request scheme, which is `http`
+    behind a TLS-terminating proxy, so it would send browsers to plain HTTP.
+    """
+    path = request.url.path
+    if path.startswith("/ui/") and not path.endswith("/") and "." not in path.rsplit("/", 1)[-1]:
+        query = f"?{request.url.query}" if request.url.query else ""
+        return RedirectResponse(url=f"{path}/{query}", status_code=308)
+    return await call_next(request)
+
+
 @app.get("/ui", include_in_schema=False)
 async def _web_ui_root_redirect(request: Request):
     """`/ui` (no slash) is what people type; the static mount only matches `/ui/...`."""
