@@ -553,7 +553,10 @@ function Shell({ children }: { children: React.ReactNode }) {
         {publicPage ? (
           <div className="min-h-dvh">
             <header className="flex items-center justify-between px-5 py-4">
-              <Link href="/" className="flex items-center gap-2 font-semibold">
+              <Link
+                href="/"
+                className="flex min-h-11 items-center gap-2 font-semibold"
+              >
                 <Fish className="text-primary size-5" />
                 {PRODUCT_NAME}
               </Link>
@@ -619,7 +622,7 @@ function Shell({ children }: { children: React.ReactNode }) {
               <header className="flex h-16 items-center justify-between border-b px-5 sm:hidden">
                 <Link
                   href="/"
-                  className="flex items-center gap-2 font-semibold"
+                  className="flex min-h-11 items-center gap-2 font-semibold"
                 >
                   <Fish className="text-primary size-5" />
                   {PRODUCT_NAME}

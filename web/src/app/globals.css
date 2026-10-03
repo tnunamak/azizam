@@ -61,7 +61,7 @@
     @apply text-muted-foreground mb-2 hidden px-3 text-xs font-medium lg:block;
   }
   .shell-nav-footer {
-    @apply text-muted-foreground hover:bg-muted flex items-center gap-2 rounded-md px-3 py-2 text-xs;
+    @apply text-muted-foreground hover:bg-muted flex min-h-11 min-w-11 items-center gap-2 rounded-md px-3 py-2 text-xs;
   }
   .shell-content {
     @apply mx-auto w-full max-w-6xl px-5 py-8 sm:px-8 lg:px-12 lg:py-12;

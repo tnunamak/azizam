@@ -230,3 +230,20 @@ test("session failure explains the problem and retry restores the account", asyn
     page.getByRole("link", { name: "Settings", exact: true }),
   ).toBeVisible();
 });
+
+test("phone header navigation has 44px touch targets", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/ui/");
+  await expect(
+    page.getByRole("heading", { name: "Home", exact: true }),
+  ).toBeVisible();
+  const header = page.locator("header").first();
+  for (const target of [
+    header.getByRole("link", { name: "Vivid Fish", exact: true }),
+    header.getByRole("link", { name: /Gateway status:/ }),
+    header.getByRole("button", { name: "Account menu" }),
+  ]) {
+    const box = await target.boundingBox();
+    expect(box?.height).toBeGreaterThanOrEqual(44);
+  }
+});
