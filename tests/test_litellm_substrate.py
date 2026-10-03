@@ -123,6 +123,20 @@ def test_openai_compatible_host_port_and_model_id_compile() -> None:
     assert compiled["model_list"][0]["litellm_params"]["api_key"] == "sk-local"
 
 
+@pytest.mark.parametrize("deployment_flag", [False, True])
+def test_remote_provider_rejects_local_lifecycle_routing(deployment_flag: bool) -> None:
+    config = {
+        "remote_provider": True,
+        "api_key_env": "TEST_PROVIDER_KEY",
+        "models": [{"model_group": "test-model", "gateway_lifecycle": deployment_flag}],
+        "gateway_lifecycle": not deployment_flag,
+    }
+    with pytest.raises(ValueError, match="remote.*lifecycle"):
+        compile_litellm_substrate_config({
+            "remote-test": {"kind": "provider", "capabilities": ["openai"], "config": config},
+        })
+
+
 def test_no_auth_container_engine_gets_sdk_placeholder_key() -> None:
     compiled = compile_litellm_substrate_config({"chat": {"config": {
         "protocol": "openai-compatible", "base_url": "http://engine:18001/v1",

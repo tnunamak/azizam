@@ -361,6 +361,8 @@ def _model_list_entries(
         lifecycle_backed = bool(
             deployment.get("gateway_lifecycle") or config.get("gateway_lifecycle")
         )
+        if lifecycle_backed and is_remote_provider_config(config):
+            raise ValueError("remote providers must not use local gateway lifecycle routing")
         upstream_model = str(deployment["upstream_model"])
         litellm_provider = str(deployment.get("litellm_provider") or "")
         gateway_backend = str(deployment.get("gateway_backend") or service["id"])
