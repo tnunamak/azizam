@@ -1149,6 +1149,9 @@ def service_form_to_raw(form: Mapping[str, Any]) -> dict[str, Any]:
     """
     raw: dict[str, Any] = {}
     raw.update(split_base_url(form.get("base_url")))
+    base_url = str(form.get("base_url") or "").strip().rstrip("/")
+    if base_url and is_remote_provider_config(form):
+        raw["base_url"] = base_url
 
     preset = provider_preset(form.get("preset"))
     if preset:

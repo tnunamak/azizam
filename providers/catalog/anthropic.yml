@@ -4,6 +4,8 @@ logo_key: anthropic
 base_url: https://api.anthropic.com/v1
 protocol: anthropic-messages
 litellm_provider: anthropic
+sdk_pricing:
+  api_base: https://api.anthropic.com
 auth:
   header: x-api-key
   prefix: ""

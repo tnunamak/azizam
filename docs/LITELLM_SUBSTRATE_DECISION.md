@@ -196,6 +196,13 @@ deletion trigger configuration reconciliation; they must not require restarting
 the gateway. See [provider key custody and threat model](REMOTE_PROVIDERS.md)
 for backup requirements and the limits of encryption at rest.
 
+Provider endpoints remain explicit through registry persistence and generated
+`api_base`; missing remote endpoints are configuration errors. Credential
+injection checks the approved scheme, hostname, and effective port. The
+gateway uses provider-owned prices for settlement; packaged SDK vendor prices
+are a fallback only for catalog-declared official APIs whose full endpoint
+matches. A custom endpoint cannot inherit vendor prices by model name.
+
 Do not build another generic provider adapter system in the gateway. LiteLLM is
 the preferred substrate where its adapters fit. Do not delete local lifecycle,
 resource state, media/workflow, receipts, access plans, paid-call admission, or

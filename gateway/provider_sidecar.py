@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from gateway.litellm_substrate import secret_env_name_for_provider
-from gateway.secret_store import get_provider_secret
+from gateway.secret_store import credential_origin_from_url, get_provider_secret
 
 DEFAULT_ADMIN_DB = Path("data/admin.db")
 
@@ -59,6 +59,36 @@ def provider_secret_env_map_from_registry(registry: Mapping[str, Any]) -> dict[s
             )
             env_name = secret_env_name_for_provider(provider_id, secret_id)
             out[env_name] = secret_id
+    return out
+
+
+def provider_secret_origin_map_from_registry(registry: Mapping[str, Any]) -> dict[str, str]:
+    services = registry.get("services") if isinstance(registry, Mapping) else {}
+    if not isinstance(services, Mapping):
+        return {}
+    out: dict[str, str] = {}
+    for raw_service_id, raw_service in services.items():
+        if not isinstance(raw_service, Mapping):
+            continue
+        config = raw_service.get("config") if isinstance(raw_service.get("config"), Mapping) else {}
+        refs = raw_service.get("secret_refs") if isinstance(raw_service.get("secret_refs"), Mapping) else {}
+        secret_id = str(
+            config.get("api_key_secret_id")
+            or refs.get("api_key_secret_id")
+            or refs.get("provider_secret_id")
+            or refs.get("api_key")
+            or ""
+        ).strip()
+        if not secret_id or secret_id == "<external-secret>":
+            continue
+        provider_id = str(config.get("provider_id") or raw_service.get("id") or raw_service_id or "")
+        env_name = secret_env_name_for_provider(provider_id, secret_id)
+        try:
+            origin = credential_origin_from_url(str(config.get("base_url") or ""))
+        except Exception:
+            origin = ""
+        if origin:
+            out[env_name] = origin
     return out
 
 
@@ -107,10 +137,20 @@ def build_sidecar_env(
     """Return a child environment with decrypted provider secrets injected."""
 
     child_env = dict(os.environ if base_env is None else base_env)
-    resolved_map = dict(env_map or provider_secret_env_map_from_db(db_path))
+    registry = _read_service_registry(db_path) or {}
+    resolved_map = dict(env_map or provider_secret_env_map_from_registry(registry))
+    origin_map = provider_secret_origin_map_from_registry(registry)
+    require_origin = env_map is None
     for env_name, secret_id in resolved_map.items():
         try:
-            child_env[str(env_name)] = get_provider_secret(str(secret_id), db_path=db_path)
+            expected_origin = origin_map.get(str(env_name))
+            if require_origin and not expected_origin:
+                raise PermissionError("provider secret has no approved execution origin")
+            child_env[str(env_name)] = get_provider_secret(
+                str(secret_id),
+                db_path=db_path,
+                expected_origin=expected_origin,
+            )
         except Exception as exc:
             child_env.pop(str(env_name), None)
             print(

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
@@ -1206,17 +1206,49 @@ function AddProviderDialog({
   const [dailyCap, setDailyCap] = useState("5");
   const [monthlyCap, setMonthlyCap] = useState("50");
   const [allowedPlans, setAllowedPlans] = useState<string[]>([]);
+  const checkGeneration = useRef(0);
+  const credentialOrigin = useRef(" ");
 
   function resetCheck() {
+    checkGeneration.current += 1;
     setTestResult(null);
     setModels([]);
   }
 
+  function clearCredentialsAndCheck() {
+    setSecret("");
+    setEnvName("");
+    resetCheck();
+  }
+
+  function chooseProvider(provider: CatalogProvider) {
+    setSelected(provider);
+    setBaseUrl(provider.baseUrl === "Not supplied" ? "" : provider.baseUrl);
+    clearCredentialsAndCheck();
+    setStep("credentials");
+  }
+
+  function changeBaseUrl(value: string) {
+    setBaseUrl(value);
+    clearCredentialsAndCheck();
+  }
+
+  useEffect(() => {
+    const origin = `${selected?.id ?? ""} ${baseUrl}`;
+    if (credentialOrigin.current === origin) return;
+    credentialOrigin.current = origin;
+    setSecret("");
+    setEnvName("");
+    resetCheck();
+  }, [baseUrl, selected?.id]);
+
   function closeDialog(nextOpen: boolean) {
     if (!nextOpen) {
       setSecret("");
+      setEnvName("");
       setTestResult(null);
       setModels([]);
+      checkGeneration.current += 1;
       setStep("catalog");
     }
     onOpenChange(nextOpen);
@@ -1234,6 +1266,7 @@ function AddProviderDialog({
   const testConnection = useMutation({
     mutationFn: async () => {
       if (!selected) throw new Error("Choose a provider first.");
+      const generation = checkGeneration.current;
       const raw = await adminFetch<Record<string, unknown>>(
         `/admin/api/providers/-/test`,
         {
@@ -1255,10 +1288,15 @@ function AddProviderDialog({
         message: text(raw.message, "Connection worked."),
         models: Array.isArray(raw.models) ? raw.models.map(mapModel) : [],
       };
-      setTestResult(result);
-      setModels(
-        result.models.map((model) => ({ ...model, enabled: model.priceKnown })),
-      );
+      if (generation === checkGeneration.current) {
+        setTestResult(result);
+        setModels(
+          result.models.map((model) => ({
+            ...model,
+            enabled: model.priceKnown,
+          })),
+        );
+      }
       return result;
     },
   });
@@ -1369,16 +1407,7 @@ function AddProviderDialog({
                 <button
                   key={provider.id}
                   type="button"
-                  onClick={() => {
-                    setSelected(provider);
-                    setBaseUrl(
-                      provider.baseUrl === "Not supplied"
-                        ? ""
-                        : provider.baseUrl,
-                    );
-                    resetCheck();
-                    setStep("credentials");
-                  }}
+                  onClick={() => chooseProvider(provider)}
                   className={cn(
                     "hover:border-primary rounded-xl border p-4 text-left transition",
                     selected?.id === provider.id &&
@@ -1421,10 +1450,7 @@ function AddProviderDialog({
                 <Input
                   aria-label="Provider base URL"
                   value={baseUrl}
-                  onChange={(e) => {
-                    setBaseUrl(e.target.value);
-                    resetCheck();
-                  }}
+                  onChange={(e) => changeBaseUrl(e.target.value)}
                   placeholder={selected.baseUrl}
                 />
               </label>

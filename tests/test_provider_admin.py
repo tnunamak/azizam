@@ -285,17 +285,98 @@ class ProviderAdminApiTests(unittest.TestCase):
         self.assertTrue(provider["key_status"]["api_key_env"].startswith("AI_GATEWAY_PROVIDER_SECRET_"))
         self.assertNotIn("sk-", response.text)
 
+    def test_add_provider_preserves_validated_https_url_for_litellm_api_base(self) -> None:
+        from gateway.litellm_substrate import compile_litellm_config_from_registry
+
+        store = FakeProviderAdminStore()
+        store.registry["services"].pop("openrouter")
+        response = _client(store).post(
+            "/admin/api/providers",
+            headers={"authorization": "Bearer admin"},
+            json={
+                "preset_id": "openrouter",
+                "base_url": "https://provider.test:8443/custom/v1",
+                "expected_generation": 0,
+                "api_key": "sk-test-openrouter",
+                "models": [{"id": "upstream/model", "price": {"input_usd_per_million_tokens": "3", "output_usd_per_million_tokens": "15"}}],
+            },
+        )
+
+        self.assertEqual(response.status_code, 201)
+        config = store.registry["services"]["openrouter"]["config"]
+        self.assertEqual(config["base_url"], "https://provider.test:8443/custom/v1")
+        self.assertEqual(config["credential_origin"], "https://provider.test:8443")
+        compiled = compile_litellm_config_from_registry({"services": {"openrouter": store.registry["services"]["openrouter"]}})
+        self.assertEqual(
+            compiled["model_list"][0]["litellm_params"]["api_base"],
+            "https://provider.test:8443/custom/v1",
+        )
+
+    def test_saved_gateway_check_refuses_stored_key_after_origin_retarget(self) -> None:
+        store = FakeProviderAdminStore()
+        service = store.registry["services"]["openrouter"]
+        service["config"].pop("api_key_env", None)
+        service["config"].update({
+            "api_key_secret_id": "provider:openrouter:api_key",
+            "base_url": "https://evil.test/api/v1",
+            "credential_origin": "https://evil.test:443",
+            "model_listing": {"method": "GET", "path": "/models", "items_path": "data", "id_path": "id"},
+        })
+        secret_store.put_provider_secret(
+            "provider:openrouter:api_key",
+            "sk-origin-bound",
+            db_path=store.path,
+            approved_origin="https://openrouter.ai/api/v1",
+        )
+
+        response = _client(store).post(
+            "/admin/api/providers/openrouter/test",
+            headers={"authorization": "Bearer admin"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "provider_connection_failed")
+        self.assertIn("stored provider key is unavailable", response.json()["error"]["message"].lower())
+
+    def test_saved_gateway_check_refuses_bound_env_key_after_origin_retarget(self) -> None:
+        store = FakeProviderAdminStore()
+        service = store.registry["services"]["openrouter"]
+        service["config"].update({
+            "api_key_env": "OPENROUTER_API_KEY",
+            "base_url": "https://evil.test/api/v1",
+            "credential_origin": "https://openrouter.ai:443",
+            "model_listing": {"method": "GET", "path": "/models", "items_path": "data", "id_path": "id"},
+        })
+
+        async def should_not_probe(_config, _api_key):
+            raise AssertionError("provider probe should not run with a stale env credential origin")
+
+        with patch.dict(os.environ, {"OPENROUTER_API_KEY": "sk-openrouter"}), patch(
+            "gateway.provider_admin.provider_listing.probe_provider",
+            new=AsyncMock(side_effect=should_not_probe),
+        ):
+            response = _client(store).post(
+                "/admin/api/providers/openrouter/test",
+                headers={"authorization": "Bearer admin"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "provider_connection_failed")
+        self.assertIn("approved for a different endpoint", response.json()["error"]["message"])
+
 
 
     def test_saved_gateway_check_does_not_repopulate_stale_success_after_key_rotation(self) -> None:
         store = FakeProviderAdminStore()
         store.registry["services"]["openrouter"]["config"].pop("api_key_env", None)
         store.registry["services"]["openrouter"]["config"]["api_key_secret_id"] = "provider:openrouter:api_key"
+        store.registry["services"]["openrouter"]["config"]["base_url"] = "https://openrouter.ai/api/v1"
         secret_store.put_provider_secret(
             "provider:openrouter:api_key",
             "sk-original-4f2a",
             db_path=store.path,
             now=1234,
+            approved_origin="https://openrouter.ai/api/v1",
         )
         client = _client(store)
         probe_entered = threading.Event()
@@ -342,11 +423,13 @@ class ProviderAdminApiTests(unittest.TestCase):
         store = FakeProviderAdminStore()
         store.registry["services"]["openrouter"]["config"].pop("api_key_env", None)
         store.registry["services"]["openrouter"]["config"]["api_key_secret_id"] = "provider:openrouter:api_key"
+        store.registry["services"]["openrouter"]["config"]["base_url"] = "https://openrouter.ai/api/v1"
         secret_store.put_provider_secret(
             "provider:openrouter:api_key",
             "sk-original-4f2a",
             db_path=store.path,
             now=1234,
+            approved_origin="https://openrouter.ai/api/v1",
         )
         client = _client(store)
         delete_entered = threading.Event()

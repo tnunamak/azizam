@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 from fastapi import status
 
-from gateway import provider_catalog, service_registry
+from gateway import provider_catalog, secret_store, service_registry
 from gateway.litellm_substrate import secret_env_name_for_provider
 from gateway.provider_listing import validate_provider_base_url, ProviderListingError
 
@@ -50,6 +50,7 @@ def provider_service_from_body(body: Mapping[str, Any]) -> dict[str, Any]:
         base_url = validate_provider_base_url(base_url)
     except ProviderListingError as exc:
         raise ProviderConfigurationError(400, "invalid_provider_base_url", exc.args[0]) from None
+    credential_origin = secret_store.credential_origin_from_url(base_url)
     key_mode = str(body.get("key_mode") or "secret").strip()
     if key_mode not in {"env", "secret"}:
         raise ProviderConfigurationError(400, "invalid_provider_key_mode", "Choose a stored key or environment reference.")
@@ -64,6 +65,7 @@ def provider_service_from_body(body: Mapping[str, Any]) -> dict[str, Any]:
         "protocol": "openai-compatible" if preset.protocol == "openai-chat" else preset.protocol,
         "protocols": [preset.protocol],
         "base_url": base_url,
+        "credential_origin": credential_origin,
         "litellm_provider": preset.litellm_provider,
         "auth": dict(preset.auth),
         "auth_test": dict(preset.auth_test),

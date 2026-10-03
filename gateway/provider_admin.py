@@ -218,7 +218,12 @@ def create_provider_admin_router(
                     secret_value = str(body.get("api_key") or "").strip()
                     if not secret_value:
                         raise _RouteError(status.HTTP_400_BAD_REQUEST, "missing_provider_key", "api_key is required when storing the provider key in the gateway")
-                    secret_store.put_provider_secret(secret_id, secret_value, db_path=_admin_db_path(store))
+                    secret_store.put_provider_secret(
+                        secret_id,
+                        secret_value,
+                        db_path=_admin_db_path(store),
+                        approved_origin=_provider_credential_origin(config),
+                    )
                     wrote_secret = True
                 try:
                     state = store.get_provider_admin_state()
@@ -341,14 +346,16 @@ def create_provider_admin_router(
             if not secret_value:
                 raise _RouteError(status.HTTP_400_BAD_REQUEST, "missing_provider_key", "api_key is required")
             with secret_store.provider_mutation_lock(_admin_db_path(store)):
-                _require_provider(store, provider_id)
-                secret_id = _current_provider_secret_id(store, provider_id)
+                _service_id, service = _service_for_provider(store.get_service_registry(), provider_id)
+                config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+                secret_id = str(config.get("api_key_secret_id") or "").strip()
                 if not secret_id:
                     raise _RouteError(status.HTTP_409_CONFLICT, "env_key_provider", "This provider uses an environment-variable key. Switch it to gateway-stored keys before rotating in the UI.")
                 status_row = secret_store.put_provider_secret(
                     secret_id,
                     secret_value,
                     db_path=_admin_db_path(store),
+                    approved_origin=_provider_credential_origin(config),
                 ).to_dict()
                 _clear_provider_connection_state(store, provider_id, actor=ctx)
         except _RouteError as exc:
@@ -409,11 +416,18 @@ def create_provider_admin_router(
             secret_id = str(config.get("api_key_secret_id") or "")
             if secret_id:
                 try:
-                    api_key = secret_store.get_provider_secret(secret_id, db_path=_admin_db_path(store))
+                    api_key = secret_store.get_provider_secret(
+                        secret_id,
+                        db_path=_admin_db_path(store),
+                        expected_origin=_provider_credential_origin(config),
+                    )
                 except Exception:
                     raise provider_listing.ProviderListingError("The stored provider key is unavailable. Enter a replacement key.") from None
             else:
-                api_key = os.environ.get(str(config.get("api_key_env") or ""), "")
+                api_key_env = str(config.get("api_key_env") or "")
+                if api_key_env and not _provider_env_ref_origin_matches(config):
+                    raise provider_listing.ProviderListingError("The provider key is approved for a different endpoint. Re-enter the key for this endpoint before running Gateway check.")
+                api_key = os.environ.get(api_key_env, "")
             result = await provider_listing.probe_provider(config, api_key)
         except provider_listing.ProviderListingError as exc:
             with secret_store.provider_mutation_lock(_admin_db_path(store)):
@@ -894,7 +908,11 @@ def _project_key_status(provider_id: str, config: Mapping[str, Any], db_path: Pa
         try:
             status_row = secret_store.provider_secret_status(secret_id, db_path=db_path).to_dict()
             if status_row.get("state") == "set":
-                secret_store.get_provider_secret(secret_id, db_path=db_path)
+                secret_store.get_provider_secret(
+                    secret_id,
+                    db_path=db_path,
+                    expected_origin=_provider_credential_origin(config),
+                )
         except Exception:
             status_row = {"state": "missing", "suffix": None, "updated_at": None}
         out = _secret_key_status(status_row)
@@ -922,6 +940,21 @@ def _current_provider_secret_id(store: ProviderAdminStore, provider_id: str) -> 
     _service_id, service = _service_for_provider(store.get_service_registry(), provider_id)
     config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
     return str(config.get("api_key_secret_id") or "").strip()
+
+
+def _provider_credential_origin(config: Mapping[str, Any]) -> str:
+    return secret_store.credential_origin_from_url(str(config.get("base_url") or ""))
+
+
+def _provider_env_ref_origin_matches(config: Mapping[str, Any]) -> bool:
+    expected = str(config.get("credential_origin") or "").strip()
+    if not expected:
+        return True
+    try:
+        actual = secret_store.credential_origin_from_url(str(config.get("base_url") or ""))
+    except Exception:
+        return False
+    return actual == expected
 
 
 def _admin_db_path(store: ProviderAdminStore) -> Path:

@@ -171,6 +171,7 @@ class StartScriptGracefulStopTests(unittest.TestCase):
                             "kind": "provider",
                             "config": {
                                 "provider_id": "openrouter",
+                                "base_url": "https://openrouter.ai/api/v1",
                                 "api_key_secret_id": secret_id,
                             },
                             "secret_refs": {"api_key_secret_id": secret_id},
@@ -178,7 +179,7 @@ class StartScriptGracefulStopTests(unittest.TestCase):
                     }
                 },
             )
-            put_provider_secret(secret_id, "sk-one", db_path=db_path, now=1000)
+            put_provider_secret(secret_id, "sk-one", db_path=db_path, now=1000, approved_origin="https://openrouter.ai/api/v1")
 
             bindir = work / "bin"
             litellm = bindir / "litellm"
@@ -207,7 +208,7 @@ class StartScriptGracefulStopTests(unittest.TestCase):
                 second_hash = hashlib.sha256(b"sk-two").hexdigest()
                 _wait_for_log(log, first_hash)
 
-                put_provider_secret(secret_id, "sk-two", db_path=db_path, now=1001)
+                put_provider_secret(secret_id, "sk-two", db_path=db_path, now=1001, approved_origin="https://openrouter.ai/api/v1")
                 _wait_for_log(log, second_hash)
 
                 delete_provider_secret(secret_id, db_path=db_path)

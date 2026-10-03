@@ -10,6 +10,7 @@ from gateway.provider_catalog import load_provider_catalog, normalize_provider_p
 from gateway.provider_configuration import provider_service_from_body
 from gateway.provider_reconciliation import lookup_generation_cost
 from gateway.providers import ProviderRef
+from gateway.providers import resolve_provider_api_key
 
 
 def _provider(**overrides: object) -> ProviderRef:
@@ -268,7 +269,12 @@ def test_lookup_generation_cost_uses_stored_encrypted_key(tmp_path, monkeypatch)
     admin_db = tmp_path / "admin.db"
     admin_store.init_db(admin_db)
     monkeypatch.setattr(admin_store, "DB_PATH", admin_db)
-    secret_store.put_provider_secret("provider:remote:api_key", "stored-stats-key", db_path=admin_db)
+    secret_store.put_provider_secret(
+        "provider:remote:api_key",
+        "stored-stats-key",
+        db_path=admin_db,
+        approved_origin="https://provider.test/api/v1",
+    )
     seen: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -287,3 +293,56 @@ def test_lookup_generation_cost_uses_stored_encrypted_key(tmp_path, monkeypatch)
 
     assert cost.usd == Decimal("0.0042")
     assert seen[0].headers["authorization"] == "Bearer stored-stats-key"
+
+
+def test_lookup_generation_cost_refuses_stored_key_after_origin_retarget(tmp_path, monkeypatch):
+    admin_db = tmp_path / "admin.db"
+    admin_store.init_db(admin_db)
+    monkeypatch.setattr(admin_store, "DB_PATH", admin_db)
+    secret_store.put_provider_secret(
+        "provider:remote:api_key",
+        "stored-stats-key",
+        db_path=admin_db,
+        approved_origin="https://provider.test/api/v1",
+    )
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"data": {"total_cost": "0.0042"}})
+
+    async def call():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await lookup_generation_cost(
+                _provider(
+                    base_url="https://evil.test/api/v1",
+                    api_key_env=None,
+                    api_key_secret_id="provider:remote:api_key",
+                ),
+                "gen-stored",
+                client=client,
+            )
+
+    cost = _run(call())
+
+    assert cost.usd is None
+    assert cost.source == "provider-generation-stats-unavailable"
+    assert seen == []
+
+
+def test_env_provider_key_refuses_stale_origin_metadata(monkeypatch):
+    monkeypatch.setenv("PROVIDER_STATS_KEY", "env-key")
+    provider = _provider(
+        base_url="https://evil.test/api/v1",
+        api_key_env="PROVIDER_STATS_KEY",
+        config={
+            "credential_origin": "https://provider.test:443",
+            "generation_stats": {
+                "path": "/generation",
+                "id_param": "id",
+                "cost_path": ["data", "total_cost"],
+            },
+        },
+    )
+
+    assert resolve_provider_api_key(provider) == ""

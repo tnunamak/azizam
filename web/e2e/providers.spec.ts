@@ -472,6 +472,68 @@ for (const theme of ["light", "dark"] as const) {
   });
 }
 
+type ProviderTestRequest = Record<string, unknown>;
+
+function providerTestResponse(providerId: string) {
+  const label = providerId === "openrouter" ? "OpenRouter" : "Generic OpenAI";
+  return {
+    ok: true,
+    message: `Listed 1 model from ${label}.`,
+    models: [
+      {
+        id: `${providerId}/anthropic/claude-sonnet-4.5`,
+        name: "Claude Sonnet 4.5",
+        upstream_model: "anthropic/claude-sonnet-4.5",
+        price: {
+          input_usd_per_million_tokens: 3,
+          output_usd_per_million_tokens: 15,
+        },
+      },
+    ],
+  };
+}
+
+async function routeProviderCredentialSecurity(
+  page: Page,
+  options: { delayOpenRouterCheck?: () => Promise<void> } = {},
+) {
+  const checks: ProviderTestRequest[] = [];
+  await page.route("**/admin/api/profiles", (route: Route) =>
+    route.fulfill({ json: plans }),
+  );
+  await page.route("**/admin/api/providers**", async (route: Route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/admin/api/providers/-/catalog") {
+      return route.fulfill({ json: catalog });
+    }
+    if (path === "/admin/api/providers/-/test") {
+      const body = route.request().postDataJSON() as ProviderTestRequest;
+      checks.push(body);
+      if (body.provider_id === "openrouter" && options.delayOpenRouterCheck) {
+        await options.delayOpenRouterCheck();
+      }
+      return route.fulfill({
+        json: providerTestResponse(String(body.provider_id)),
+      });
+    }
+    if (path === "/admin/api/providers") {
+      return route.fulfill({ json: { providers: [] } });
+    }
+    return route.continue();
+  });
+  return checks;
+}
+
+async function openAddProvider(page: Page) {
+  await page.goto("/ui/providers/");
+  await page.getByRole("button", { name: "Add provider" }).first().click();
+}
+
+async function chooseCatalogProvider(page: Page, search: string, name: RegExp) {
+  await page.getByLabel("Search providers").fill(search);
+  await page.getByRole("button", { name }).click();
+}
+
 test("providers add OpenRouter and keep paid access gated", async ({
   page,
 }) => {
@@ -525,6 +587,139 @@ test("providers add OpenRouter and keep paid access gated", async ({
   expect(denied).toMatchObject({
     status: 403,
     body: { error: { code: "paid_provider_not_allowed" } },
+  });
+});
+
+test("providers clear pasted key when switching provider before Gateway check", async ({
+  page,
+}) => {
+  const checks = await routeProviderCredentialSecurity(page);
+  await openAddProvider(page);
+  await chooseCatalogProvider(page, "openrouter", /OpenRouter/);
+  await page.getByLabel("Provider API key").fill("sk-provider-a-secret");
+  await page.getByRole("button", { name: "Back" }).click();
+  await chooseCatalogProvider(page, "generic", /Generic OpenAI-compatible/);
+  await expect(page.getByLabel("Provider API key")).toHaveValue("");
+  await expect(
+    page.getByRole("button", { name: "Gateway check" }),
+  ).toBeDisabled();
+
+  await page.getByLabel("Provider API key").fill("sk-provider-b-secret");
+  await page.getByRole("button", { name: "Gateway check" }).click();
+  await expect(
+    page.getByText("Listed 1 model from Generic OpenAI."),
+  ).toBeVisible();
+
+  expect(checks).toHaveLength(1);
+  expect(checks[0]).toMatchObject({
+    provider_id: "generic-openai",
+    key_mode: "secret",
+    api_key: "sk-provider-b-secret",
+  });
+  expect(JSON.stringify(checks[0])).not.toContain("sk-provider-a-secret");
+});
+
+test("providers clear environment reference when switching provider before Gateway check", async ({
+  page,
+}) => {
+  const checks = await routeProviderCredentialSecurity(page);
+  await openAddProvider(page);
+  await chooseCatalogProvider(page, "openrouter", /OpenRouter/);
+  await page.getByRole("button", { name: "Use environment variable" }).click();
+  await page.getByLabel("Environment variable").fill("OPENROUTER_A_KEY");
+  await page.getByRole("button", { name: "Back" }).click();
+  await chooseCatalogProvider(page, "generic", /Generic OpenAI-compatible/);
+  await expect(page.getByLabel("Environment variable")).toHaveValue("");
+  await expect(
+    page.getByRole("button", { name: "Gateway check" }),
+  ).toBeDisabled();
+
+  await page.getByLabel("Environment variable").fill("GENERIC_B_KEY");
+  await page.getByRole("button", { name: "Gateway check" }).click();
+  await expect(
+    page.getByText("Listed 1 model from Generic OpenAI."),
+  ).toBeVisible();
+
+  expect(checks).toHaveLength(1);
+  expect(checks[0]).toMatchObject({
+    provider_id: "generic-openai",
+    key_mode: "env",
+    api_key_env: "GENERIC_B_KEY",
+  });
+  expect(JSON.stringify(checks[0])).not.toContain("OPENROUTER_A_KEY");
+});
+
+test("providers clear credentials when base URL changes before Gateway check", async ({
+  page,
+}) => {
+  const checks = await routeProviderCredentialSecurity(page);
+  await openAddProvider(page);
+  await chooseCatalogProvider(page, "openrouter", /OpenRouter/);
+  await page.getByLabel("Provider API key").fill("sk-before-base-change");
+  await page
+    .getByLabel("Provider base URL")
+    .fill("https://alt-openrouter.example/v1");
+  await expect(page.getByLabel("Provider API key")).toHaveValue("");
+  await expect(
+    page.getByRole("button", { name: "Gateway check" }),
+  ).toBeDisabled();
+
+  await page.getByLabel("Provider API key").fill("sk-after-base-change");
+  await page.getByRole("button", { name: "Gateway check" }).click();
+  await expect(page.getByText("Listed 1 model from OpenRouter.")).toBeVisible();
+
+  expect(checks).toHaveLength(1);
+  expect(checks[0]).toMatchObject({
+    provider_id: "openrouter",
+    api_key: "sk-after-base-change",
+    base_url: "https://alt-openrouter.example/v1",
+  });
+  expect(JSON.stringify(checks[0])).not.toContain("sk-before-base-change");
+});
+
+test("providers ignore stale Gateway check results after provider switch", async ({
+  page,
+}) => {
+  let releaseOpenRouter!: () => void;
+  const openRouterCanFinish = new Promise<void>((resolve) => {
+    releaseOpenRouter = resolve;
+  });
+  const checks = await routeProviderCredentialSecurity(page, {
+    delayOpenRouterCheck: () => openRouterCanFinish,
+  });
+  await openAddProvider(page);
+  await chooseCatalogProvider(page, "openrouter", /OpenRouter/);
+  await page.getByLabel("Provider API key").fill("sk-provider-a-secret");
+  await page.getByRole("button", { name: "Gateway check" }).click();
+  await page.getByRole("button", { name: "Back" }).click();
+  await chooseCatalogProvider(page, "generic", /Generic OpenAI-compatible/);
+  releaseOpenRouter();
+  await page.waitForTimeout(100);
+
+  await expect(
+    page.getByRole("button", { name: "Gateway check" }),
+  ).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Next" })).toBeDisabled();
+  await expect(page.getByText("Listed 1 model from OpenRouter.")).toHaveCount(
+    0,
+  );
+
+  await page.getByLabel("Provider API key").fill("sk-provider-b-secret");
+  await page.getByRole("button", { name: "Gateway check" }).click();
+  await expect(
+    page.getByText("Listed 1 model from Generic OpenAI."),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Next" }).click();
+  await expect(page.getByText("Claude Sonnet 4.5")).toBeVisible();
+
+  expect(checks).toHaveLength(2);
+  expect(checks[0]).toMatchObject({
+    provider_id: "openrouter",
+    api_key: "sk-provider-a-secret",
+  });
+  expect(checks[1]).toMatchObject({
+    provider_id: "generic-openai",
+    api_key: "sk-provider-b-secret",
   });
 });
 

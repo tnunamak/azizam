@@ -40,6 +40,7 @@ class ProviderPreset:
     billing_dimensions: tuple[str, ...]
     auth_test: Mapping[str, str]
     generation_stats: Mapping[str, Any] | None = None
+    sdk_pricing: Mapping[str, str] | None = None
     recommendations: tuple[Mapping[str, str], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -57,6 +58,7 @@ class ProviderPreset:
             "billing_dimensions": list(self.billing_dimensions),
             "auth_test": dict(self.auth_test),
             **({"generation_stats": _copy_generation_stats(self.generation_stats)} if self.generation_stats else {}),
+            **({"sdk_pricing": dict(self.sdk_pricing)} if self.sdk_pricing else {}),
             "recommendations": [dict(row) for row in self.recommendations],
         }
 
@@ -110,6 +112,19 @@ def normalize_provider_preset(raw: Mapping[str, Any], *, source: Path | str = "<
             raise ValueError(f"{source}: auth_test must be a mapping")
         _validate_listing_spec(raw["auth_test"], source)
     generation_stats = _normalize_generation_stats(raw.get("generation_stats"), source)
+    sdk_pricing = raw.get("sdk_pricing")
+    if sdk_pricing is not None:
+        if not isinstance(sdk_pricing, Mapping):
+            raise ValueError(f"{source}: sdk_pricing must be a mapping")
+        from gateway.provider_listing import canonical_provider_base_url
+        try:
+            sdk_base = str(sdk_pricing.get("api_base") or "")
+            canonical_provider_base_url(sdk_base)
+        except ValueError:
+            raise ValueError(f"{source}: invalid sdk_pricing.api_base") from None
+        if urlsplit(sdk_base).scheme != "https" or not str(raw.get("litellm_provider") or "").strip():
+            raise ValueError(f"{source}: SDK pricing requires an official HTTPS API and SDK provider")
+        sdk_pricing = {"api_base": sdk_base}
     if not isinstance(listing.get("prices", {}), Mapping):
         raise ValueError(f"{source}: model_listing.prices must be a mapping")
     for rule in listing.get("prices", {}).values():
@@ -147,6 +162,7 @@ def normalize_provider_preset(raw: Mapping[str, Any], *, source: Path | str = "<
         billing_dimensions=tuple(str(item) for item in raw.get("billing_dimensions") or ()),
         auth_test=dict(raw.get("auth_test") if isinstance(raw.get("auth_test"), Mapping) else {}),
         generation_stats=generation_stats,
+        sdk_pricing=sdk_pricing,
         recommendations=tuple(
             dict(item) for item in raw.get("recommendations") or () if isinstance(item, Mapping)
         ),

@@ -595,7 +595,12 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         admin_db = Path(self.tmp.name) / "admin.db"
         admin_store.init_db(path=admin_db)
         with patch.object(admin_store, "DB_PATH", admin_db):
-            execution.providers.secret_store.put_provider_secret("provider:openai:api_key", "oa-stored-key", db_path=admin_db)
+            execution.providers.secret_store.put_provider_secret(
+                "provider:openai:api_key",
+                "oa-stored-key",
+                db_path=admin_db,
+                approved_origin="https://openai.test/v1",
+            )
         registry = _registry(
             provider_id="openai",
             protocols=("openai-compatible", "decisions"),

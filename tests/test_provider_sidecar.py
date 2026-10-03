@@ -73,10 +73,10 @@ def test_created_provider_service_maps_to_sidecar_env_and_rotates(tmp_path: Path
     )
 
     empty = provider_secret_fingerprint(db_path)
-    put_provider_secret(secret_id, "sk-first", db_path=db_path, now=1000)
+    put_provider_secret(secret_id, "sk-first", db_path=db_path, now=1000, approved_origin=service["config"]["credential_origin"])
     first = provider_secret_fingerprint(db_path)
     first_env = build_sidecar_env(db_path=db_path, base_env={})
-    put_provider_secret(secret_id, "sk-second", db_path=db_path, now=1001)
+    put_provider_secret(secret_id, "sk-second", db_path=db_path, now=1001, approved_origin=service["config"]["credential_origin"])
     second = provider_secret_fingerprint(db_path)
     second_env = build_sidecar_env(db_path=db_path, base_env={})
     delete_provider_secret(secret_id, db_path=db_path)
@@ -87,6 +87,87 @@ def test_created_provider_service_maps_to_sidecar_env_and_rotates(tmp_path: Path
     assert first_env[env_name] == "sk-first"
     assert second_env[env_name] == "sk-second"
     assert env_name not in deleted_env
+
+
+def test_sidecar_refuses_stored_secret_after_provider_origin_retarget(tmp_path: Path) -> None:
+    db_path = tmp_path / "admin.db"
+    service = provider_configuration.provider_service_from_body(
+        {
+            "preset_id": "openrouter",
+            "base_url": "https://evil.test/api/v1",
+            "models": [{"id": "anthropic/claude-3-haiku", "price": {"input_usd_per_million_tokens": "1", "output_usd_per_million_tokens": "2"}}],
+            "api_key": "sk-not-stored-here",
+        }
+    )
+    secret_id = service["config"]["api_key_secret_id"]
+    env_name = provider_configuration.provider_secret_env("openrouter")
+    _write_registry_json(db_path, {"services": {"openrouter": service}})
+    put_provider_secret(
+        secret_id,
+        "sk-openrouter-origin",
+        db_path=db_path,
+        approved_origin="https://openrouter.ai/api/v1",
+    )
+
+    env = build_sidecar_env(db_path=db_path, base_env={env_name: "stale"})
+
+    assert env_name not in env
+
+
+def test_sidecar_uses_actual_base_url_not_stale_credential_origin(tmp_path: Path) -> None:
+    db_path = tmp_path / "admin.db"
+    service = provider_configuration.provider_service_from_body(
+        {
+            "preset_id": "openrouter",
+            "models": [{"id": "anthropic/claude-3-haiku", "price": {"input_usd_per_million_tokens": "1", "output_usd_per_million_tokens": "2"}}],
+            "api_key": "sk-not-stored-here",
+        }
+    )
+    secret_id = service["config"]["api_key_secret_id"]
+    env_name = provider_configuration.provider_secret_env("openrouter")
+    service["config"]["base_url"] = "https://evil.test/api/v1"
+    service["config"]["credential_origin"] = "https://openrouter.ai:443"
+    _write_registry_json(db_path, {"services": {"openrouter": service}})
+    put_provider_secret(
+        secret_id,
+        "sk-openrouter-origin",
+        db_path=db_path,
+        approved_origin="https://openrouter.ai/api/v1",
+    )
+
+    env = build_sidecar_env(db_path=db_path, base_env={env_name: "stale"})
+
+    assert env_name not in env
+
+
+def test_sidecar_omits_registry_secret_when_actual_base_url_missing(tmp_path: Path) -> None:
+    db_path = tmp_path / "admin.db"
+    _write_registry_json(
+        db_path,
+        {
+            "services": {
+                "openrouter": {
+                    "config": {
+                        "provider_id": "openrouter",
+                        "api_key_secret_id": "sec_openrouter",
+                        "credential_origin": "https://openrouter.ai:443",
+                    },
+                    "secret_refs": {"api_key_secret_id": "sec_openrouter"},
+                }
+            }
+        },
+    )
+    put_provider_secret(
+        "sec_openrouter",
+        "sk-live-secret",
+        db_path=db_path,
+        approved_origin="https://openrouter.ai/api/v1",
+    )
+    env_name = secret_env_name_for_provider("openrouter", "sec_openrouter")
+
+    env = build_sidecar_env(db_path=db_path, base_env={env_name: "stale"})
+
+    assert env_name not in env
 
 
 def test_env_map_can_come_from_admin_db_service_registry(tmp_path: Path) -> None:
@@ -129,6 +210,7 @@ def test_run_exec_uses_secret_env_without_putting_secret_in_argv(
                 "openrouter": {
                     "config": {
                         "provider_id": "openrouter",
+                        "base_url": "https://openrouter.ai/api/v1",
                         "api_key_secret_id": "sec_openrouter",
                     },
                     "secret_refs": {"api_key_secret_id": "sec_openrouter"},
@@ -136,7 +218,7 @@ def test_run_exec_uses_secret_env_without_putting_secret_in_argv(
             }
         },
     )
-    put_provider_secret("sec_openrouter", "sk-live-secret", db_path=db_path, now=1000)
+    put_provider_secret("sec_openrouter", "sk-live-secret", db_path=db_path, now=1000, approved_origin="https://openrouter.ai/api/v1")
     captured: dict[str, object] = {}
 
     def fake_execvpe(file: str, args: list[str], env: dict[str, str]) -> None:

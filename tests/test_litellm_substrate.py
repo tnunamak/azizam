@@ -280,6 +280,35 @@ def test_remote_credentials_cannot_disagree_between_adapter_and_sidecar() -> Non
         }})
 
 
+def test_remote_provider_requires_explicit_api_base_to_avoid_vendor_default() -> None:
+    with pytest.raises(ValueError, match="explicit api_base"):
+        compile_litellm_substrate_config({"cloud": {
+            "kind": "provider", "capabilities": ["openai"], "config": {
+                "remote_provider": True,
+                "provider_id": "cloud",
+                "protocol": "openai-compatible",
+                "litellm_provider": "openrouter",
+                "api_key_env": "OPERATOR_PROVIDER_KEY",
+                "models": ["test-model"],
+            },
+        }})
+
+
+def test_remote_env_ref_is_omitted_when_origin_metadata_is_stale() -> None:
+    with pytest.raises(ValueError, match="credential origin"):
+        compile_litellm_substrate_config({"cloud": {
+            "kind": "provider", "capabilities": ["openai"], "config": {
+                "remote_provider": True,
+                "provider_id": "cloud",
+                "protocol": "openai-compatible",
+                "base_url": "https://evil.test/v1",
+                "credential_origin": "https://approved.test:443",
+                "api_key_env": "OPERATOR_PROVIDER_KEY",
+                "models": ["test-model"],
+            },
+        }})
+
+
 def test_remote_openrouter_models_are_provider_prefixed() -> None:
     compiled = compile_litellm_substrate_config(
         {

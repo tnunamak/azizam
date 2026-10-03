@@ -34,6 +34,18 @@ def validate_provider_base_url(value: str) -> str:
     return base
 
 
+def canonical_provider_base_url(value: str) -> str:
+    base = validate_provider_base_url(value)
+    parsed = urlsplit(base)
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").lower()
+    port = parsed.port
+    if port is None:
+        port = 443 if scheme == "https" else 80
+    path = (parsed.path or "").rstrip("/")
+    return f"{scheme}://{host}:{port}{path}"
+
+
 def provider_auth_headers(config: Mapping[str, Any], api_key: str) -> dict[str, str]:
     if not api_key or any(ch in api_key for ch in "\r\n"):
         raise ProviderListingError("Set a valid provider key before running Gateway check.")

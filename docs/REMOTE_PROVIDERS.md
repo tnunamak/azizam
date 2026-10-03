@@ -12,6 +12,8 @@ Open **Providers** and select **Add provider**. Choose a shipped preset or a
 generic compatible endpoint, enter a key or environment-variable name, and
 run **Gateway check**. The check lists models; presets can also declare an
 authentication probe when model listing alone does not verify the key.
+Changing the preset or endpoint clears the pasted key, environment reference,
+and previous check results. Enter the credential again for the new destination.
 Choose models, review their input/output prices, set daily and monthly caps,
 and select the access plans that may use the provider. Missing prices require
 operator input before enabling a paid model.
@@ -47,7 +49,10 @@ fails closed. Both paths support encrypted key references.
 ## Key custody and threat model
 
 The provider secret store encrypts values with AES-256-GCM and a fresh nonce
-for each write. Ciphertext is bound to its secret record identity. A separate
+for each write. Ciphertext is bound to its secret record identity and approved
+endpoint origin (scheme, hostname, and effective port). Dispatch, saved checks,
+and sidecar injection refuse a stored key for a different origin. Re-entering
+the key approves its current destination. A separate
 `provider-secrets.key` file in the directory containing `admin.db` supplies the
 encryption key; its permissions are 0600. APIs return only whether a key is
 set, its last four characters, and its update time. Owners can replace or
@@ -58,6 +63,10 @@ decrypts UI-entered keys into the sidecar's environment immediately before
 starting it. No plaintext provider key is written into YAML or command
 arguments. Environment-variable references remain an alternative and do not
 copy the environment value into the secret store.
+UI-created environment references carry the same origin approval in the
+registry; dispatch, saved checks, and config generation reject a changed
+origin. Legacy environment references without approval metadata remain
+deployment-owned and compatible. Re-create them through the UI to add binding.
 
 This protects a database copy taken without its encryption key. It does not
 protect against an attacker who controls the gateway's operating-system
@@ -109,9 +118,14 @@ The important fields are:
 - `api_key_secret_id`: an encrypted UI key reference. The compiler derives an
   environment name and the launcher supplies its value to the sidecar at runtime.
 - `models`: the provider-qualified public model names the gateway may route.
-- `price`: optional cost table used for pre-call estimates. If a capped request
-  has no bounded cost estimate, the request fails closed before the provider
-  call.
+- `credential_origin`: the approved origin for a UI-created credential.
+- `price`: provider-owned rates used for pre-call estimates and settlement.
+  Generic or custom endpoints with missing model prices are denied even without
+  caps. A capped request also requires a bounded cost estimate.
+
+The validated `base_url` retains its scheme, host, port, and path through
+persistence and generated `api_base`. A remote provider without an explicit
+endpoint fails configuration; the SDK cannot select a default vendor endpoint.
 
 Inline provider keys are rejected by the service registry. Use the Providers
 credential API or an `api_key_env` reference; do not put raw keys in YAML,
@@ -210,9 +224,18 @@ generation returns HTTP 409; refresh before retrying.
 Provider calls reserve spend in `provider_spend` before dispatch.  The ledger
 counts both `reserved` and `settled` rows so concurrent requests cannot exceed
 the available reservation budget by racing each other. Settlement prefers
-provider-reported `usage.cost`; otherwise LiteLLM calculates cost from the
-full typed response and usage, including cache, reasoning, and other billing
-details. Streaming settlement uses LiteLLM's complete assembled response, retaining
+provider-reported `usage.cost`; otherwise it uses the provider record's own
+rates, entered by the owner or imported from that provider's listing. Complete
+text usage and separately priced cache reads are supported. Unpriced or
+unsupported billing dimensions leave the charge unresolved rather than using
+another provider's rates.
+
+SDK pricing is allowed only when the catalog declares `sdk_pricing.api_base`
+for an official vendor API and the actual endpoint matches its normalized
+scheme, hostname, effective port, and full path. A custom URL override loses
+that authority. Provider-owned rates take precedence even on official APIs.
+The shipped OpenAI and Anthropic catalog entries declare their official APIs;
+generic presets do not. Streaming settlement uses LiteLLM's complete assembled response, retaining
 annotations, citations, and other response metadata as well as merged provider
 usage. Missing usage or incomplete assembly leaves cost unknown; a malformed
 or oversized stream cannot settle from a partial response. The client still
@@ -220,7 +243,8 @@ receives the original stream bytes.
 Streaming headers cannot establish final cost before generation completes.
 Unknown usage extensions or missing required SDK price metadata leave cost
 unknown. The SDK catalog must include rates for reported cache reads and
-writes; its packaged offline catalog may be incomplete. An operator can set
+writes; its packaged offline catalog may be incomplete. For a declared official
+API, an operator can set
 `price.cost_model` (or a per-model `price.models` override) to the SDK pricing
 model and add `price.usage_price_requirements` rows containing `usage_path`
 and `price_keys` arrays for additional billed dimensions. These rows validate
@@ -314,6 +338,10 @@ The first UI key save creates `provider-secrets.key` beside the configured
 directory. When moving or restoring the database, place its matching key file
 beside it before using saved credentials. A new key file cannot decrypt
 previously stored values.
+
+The secret schema lazily adds the approved origin. Stored keys from an older
+schema have no origin approval and cannot be dispatched until replaced through
+the credential API. Do not infer an approval from a mutable registry URL.
 
 Alternatively, set provider keys in the gateway service environment, for example:
 

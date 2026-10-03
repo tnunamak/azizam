@@ -918,6 +918,32 @@ def test_added_openai_service_with_model_is_routable() -> None:
     assert entry["litellm_params"]["api_base"] == "http://127.0.0.1:7860/v1"
 
 
+def test_remote_provider_form_preserves_exact_validated_base_url() -> None:
+    raw = service_registry.service_form_to_raw(
+        {
+            "name": "OpenRouter",
+            "remote_provider": True,
+            "provider_type": "paid-remote",
+            "base_url": "https://provider.test:8443/custom/v1",
+            "api_key_secret_id": "provider:openrouter:api_key",
+            "models": [{"id": "provider/model", "upstream_model": "model"}],
+        }
+    )
+
+    assert raw["base_url"] == "https://provider.test:8443/custom/v1"
+    svc = service_registry.service_from_backend_config("openrouter", raw, source="ui")
+    registry = {
+        "schema_version": 1,
+        "services": {"openrouter": svc},
+        "protocol_frontends": {},
+        "workflows": {},
+        "capabilities": {},
+    }
+    from gateway import litellm_substrate
+    compiled = litellm_substrate.compile_litellm_config_from_registry(registry)
+    assert compiled["model_list"][0]["litellm_params"]["api_base"] == "https://provider.test:8443/custom/v1"
+
+
 def test_added_service_without_models_is_inert() -> None:
     # Documents the boundary: no model mapping -> no routable model. (This is
     # the gap the form's Models section fixes; an operator must add a mapping.)

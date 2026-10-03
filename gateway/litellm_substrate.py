@@ -24,6 +24,7 @@ from typing import Any
 import yaml
 
 from gateway.provider_catalog import load_provider_catalog
+from gateway.secret_store import credential_origin_from_url
 from gateway.service_registry import (
     canonical_provider_id,
     is_litellm_service_record,
@@ -395,6 +396,8 @@ def _model_list_entries(
                 }
             )
         else:
+            if is_remote_provider_config(config) and not base_url:
+                raise ValueError("remote provider requires an explicit api_base")
             if base_url:
                 litellm_params["api_base"] = base_url
             if api_key_ref:
@@ -552,6 +555,14 @@ def _service_base_url(config: Mapping[str, Any]) -> str:
 def _api_key_ref(config: Mapping[str, Any], secret_refs: Mapping[str, Any]) -> str:
     env_name = config.get("api_key_env") or config.get("api_key_ref")
     if env_name:
+        expected_origin = str(config.get("credential_origin") or "").strip()
+        if expected_origin:
+            try:
+                actual_origin = credential_origin_from_url(str(config.get("base_url") or ""))
+            except Exception:
+                raise ValueError("provider credential origin cannot be verified") from None
+            if actual_origin != expected_origin:
+                raise ValueError("provider credential origin does not match api_base")
         return f"os.environ/{env_name}"
     secret_id = str(config.get("api_key_secret_id") or "").strip()
     if secret_id:

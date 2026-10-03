@@ -369,6 +369,8 @@ def reserve_provider_spend(
     provider_id = canonical_provider_id(provider.id)
     _enforce_allowed_plan(profile, provider, provider_admin)
     estimate = estimated_cost.usd
+    if estimated_cost.source == "missing-provider-price":
+        raise BudgetExceeded(f"paid provider {provider.id!r} requires known model prices")
     if estimate is None:
         if _has_any_cap(profile, provider, provider_admin):
             raise BudgetExceeded(
@@ -649,16 +651,17 @@ def extract_provider_cost(
             if reported is not None:
                 return Cost(reported, "provider-reported", provider.id, provider.cost_class)
             if allow_usage_pricing:
-                sdk_cost = _litellm_full_usage_cost(
-                    _litellm_cost_model(provider, body),
-                    body,
-                    provider.price.get("usage_price_requirements"),
-                )
+                model = str(body.get("model") or "")
+                if _has_owned_token_prices(provider, model):
+                    owned_cost = _configured_usage_cost(provider, body)
+                    return Cost(owned_cost, "price-table" if owned_cost is not None else "unknown", provider.id, provider.cost_class)
+                sdk_model = _official_sdk_cost_model(provider, body)
+                sdk_cost = _litellm_full_usage_cost(sdk_model, body, provider.price.get("usage_price_requirements")) if sdk_model else None
                 if sdk_cost is not None:
                     return Cost(sdk_cost, "litellm", provider.id, provider.cost_class)
                 return Cost(None, "unknown", provider.id, provider.cost_class)
     header_cost = _decimal_or_none(headers.get("x-litellm-response-cost"))
-    if header_cost is not None and not stream:
+    if header_cost is not None and not stream and not _has_any_owned_token_prices(provider) and _official_sdk_cost_model(provider, body or {}):
         return Cost(header_cost, "litellm", provider.id, provider.cost_class)
     return Cost(None, "unknown", provider.id, provider.cost_class)
 
@@ -676,6 +679,8 @@ def resolve_provider_model(provider: ProviderRef, model: str) -> str:
 
 
 def price_for_provider_model(provider: ProviderRef, model: str) -> Mapping[str, Any]:
+    if not isinstance(provider.price.get("models"), Mapping) or not provider.price["models"]:
+        return provider.price
     resolved = resolve_provider_model(provider, model)
     upstream_price = _price_for_model(provider.price, resolved)
     return _price_for_model(upstream_price, model)
@@ -692,11 +697,18 @@ def estimate_typesafe_cost(provider: ProviderRef, body: Mapping[str, Any]) -> Co
         output_tokens=0,
     )
     if estimated is None:
-        return Cost(None, "unknown", provider.id, provider.cost_class)
+        return Cost(None, "missing-provider-price", provider.id, provider.cost_class)
     return Cost(estimated, "price-table", provider.id, provider.cost_class)
 
 
 def estimate_chat_cost(provider: ProviderRef, body: Mapping[str, Any]) -> Cost:
+    model = str(body.get("model") or "")
+    owns_prices = _has_owned_token_prices(provider, model)
+    price = price_for_provider_model(provider, model)
+    input_rate = _decimal_or_none(price.get("input_usd_per_million_tokens", price.get("input_per_million_usd")))
+    output_rate = _decimal_or_none(price.get("output_usd_per_million_tokens", price.get("output_per_million_usd")))
+    if (owns_prices and (input_rate is None or (output_rate is None and not _looks_like_embeddings_request(body)))) or (not owns_prices and not _official_sdk_cost_model(provider, body)):
+        return Cost(None, "missing-provider-price", provider.id, provider.cost_class)
     if _has_unbounded_media_payload(body):
         return Cost(None, "unknown", provider.id, provider.cost_class)
     input_tokens = _estimate_tokens_from_json(_input_estimation_payload(body))
@@ -714,9 +726,14 @@ def estimate_chat_cost(provider: ProviderRef, body: Mapping[str, Any]) -> Cost:
         input_tokens=input_tokens,
         output_tokens=output_limit * candidates,
     )
+    estimate_source = "price-table"
     if estimated is None:
-        return Cost(None, "unknown", provider.id, provider.cost_class)
-    return Cost(estimated, "price-table", provider.id, provider.cost_class)
+        sdk_model = _official_sdk_cost_model(provider, body) if not _has_owned_token_prices(provider, model) else None
+        estimated = _litellm_full_usage_cost(sdk_model, {"model": sdk_model, "usage": {"prompt_tokens": input_tokens, "completion_tokens": output_limit * candidates}}) if sdk_model else None
+        if estimated is None:
+            return Cost(None, "missing-provider-price", provider.id, provider.cost_class)
+        estimate_source = "litellm"
+    return Cost(estimated, estimate_source, provider.id, provider.cost_class)
 
 
 def estimate_request_cost(
@@ -824,10 +841,19 @@ def resolve_provider_api_key(provider: ProviderRef, *, db_path: Path | None = No
             return secret_store.get_provider_secret(
                 provider.api_key_secret_id,
                 db_path=db_path or admin_store.DB_PATH,
+                expected_origin=secret_store.credential_origin_from_url(provider.base_url),
             )
         except Exception:
             return ""
     if provider.api_key_env:
+        expected_origin = str(provider.config.get("credential_origin") or "").strip()
+        if expected_origin:
+            try:
+                actual_origin = secret_store.credential_origin_from_url(provider.base_url)
+            except Exception:
+                return ""
+            if actual_origin != expected_origin:
+                return ""
         value = os.environ.get(provider.api_key_env, "")
         if value:
             return value
@@ -1175,6 +1201,123 @@ def _cost_from_tokens(
         if output_price is None:
             return None
         total += Decimal(output_tokens) * output_price / Decimal(1_000_000)
+    return _quantize_usd(total)
+
+
+def _has_owned_token_prices(provider: ProviderRef, model: str) -> bool:
+    return _contains_owned_prices(price_for_provider_model(provider, model))
+
+
+def _contains_owned_prices(price: Mapping[str, Any]) -> bool:
+    return any(
+        key.endswith(("_usd_per_million_tokens", "_per_million_usd", "_usd"))
+        or key.startswith("usd_per_")
+        for key in price if isinstance(key, str)
+    )
+
+
+def _has_any_owned_token_prices(provider: ProviderRef) -> bool:
+    models = provider.price.get("models")
+    return _contains_owned_prices(provider.price) or (
+        isinstance(models, Mapping)
+        and any(isinstance(price, Mapping) and _contains_owned_prices(price) for price in models.values())
+    )
+
+
+def _official_sdk_cost_model(provider: ProviderRef, body: Mapping[str, Any]) -> str | None:
+    """Only the catalog can authorize SDK pricing for an exact official API."""
+    from gateway.provider_catalog import load_provider_catalog
+    from gateway.provider_listing import canonical_provider_base_url
+
+    preset_id = provider.config.get("preset_id")
+    if not isinstance(preset_id, str):
+        return None
+    try:
+        preset = load_provider_catalog().get(preset_id)
+        if preset is None or not preset.sdk_pricing:
+            return None
+        if canonical_provider_base_url(provider.base_url) != canonical_provider_base_url(preset.sdk_pricing["api_base"]):
+            return None
+    except (ValueError, OSError):
+        return None
+    model = _litellm_cost_model(provider, body)
+    if not model:
+        return None
+    sdk_provider = preset.litellm_provider
+    if "/" in model:
+        prefix, _, _ = model.partition("/")
+        return model if prefix == sdk_provider else None
+    return f"{sdk_provider}/{model}"
+
+
+def _usage_token_count(usage: Mapping[str, Any], *names: str) -> int | None:
+    values = [usage[name] for name in names if usage.get(name) is not None]
+    counts = [_optional_int(value) for value in values]
+    if not counts or any(value is None for value in counts) or len(set(counts)) != 1:
+        return None
+    return counts[0]
+
+
+def _configured_usage_cost(provider: ProviderRef, body: Mapping[str, Any]) -> Decimal | None:
+    """Price complete text/cache-read usage using this provider's own rates.
+
+    A new or unpriced billing dimension is an unknown bill, never permission
+    to substitute another endpoint's SDK prices.
+    """
+    usage = body.get("usage")
+    if not isinstance(usage, Mapping):
+        return None
+    supported = {"prompt_tokens", "completion_tokens", "input_tokens", "output_tokens", "total_tokens", "cost",
+                 "prompt_tokens_details", "completion_tokens_details", "input_tokens_details", "output_tokens_details",
+                 "cache_read_input_tokens", "cache_creation_input_tokens"}
+    if set(usage) - supported:
+        return None
+    model = str(body.get("model") or "")
+    price = price_for_provider_model(provider, model)
+    input_rate = _decimal_or_none(price.get("input_usd_per_million_tokens", price.get("input_per_million_usd")))
+    output_rate = _decimal_or_none(price.get("output_usd_per_million_tokens", price.get("output_per_million_usd")))
+    inputs = _usage_token_count(usage, "prompt_tokens", "input_tokens")
+    outputs = _usage_token_count(usage, "completion_tokens", "output_tokens")
+    inputs = 0 if inputs is None and input_rate == 0 else inputs
+    outputs = 0 if outputs is None and output_rate == 0 else outputs
+    if inputs is None or outputs is None:
+        return None
+    cached = 0
+    for name, count in (("prompt_tokens_details", inputs), ("input_tokens_details", inputs),
+                        ("completion_tokens_details", outputs), ("output_tokens_details", outputs)):
+        details = usage.get(name)
+        if details is None:
+            continue
+        if not isinstance(details, Mapping):
+            return None
+        for key, value in details.items():
+            if value is None:
+                continue
+            units = _optional_int(value)
+            if units is None or units > count:
+                return None
+            if key == "cached_tokens" and name in {"prompt_tokens_details", "input_tokens_details"}:
+                if cached and units:
+                    return None
+                cached = units
+            elif key == "text_tokens":
+                continue
+            elif key not in {"audio_tokens", "reasoning_tokens", "accepted_prediction_tokens", "rejected_prediction_tokens"} or units:
+                return None
+    separate_cached = _optional_int(usage.get("cache_read_input_tokens", 0))
+    creation = _optional_int(usage.get("cache_creation_input_tokens", 0))
+    if separate_cached is None or creation is None or creation or (cached and separate_cached):
+        return None
+    if "total_tokens" in usage and _optional_int(usage["total_tokens"]) != inputs + outputs + separate_cached:
+        return None
+    total = _cost_from_tokens(provider, model=model, input_tokens=inputs - cached, output_tokens=outputs)
+    if total is None:
+        return None
+    if cached or separate_cached:
+        cache_rate = _decimal_or_none(price.get("cache_read_input_usd_per_million_tokens"))
+        if cache_rate is None:
+            return None
+        total += Decimal(cached + separate_cached) * cache_rate / Decimal(1_000_000)
     return _quantize_usd(total)
 
 

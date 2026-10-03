@@ -4,6 +4,8 @@ logo_key: openai
 base_url: https://api.openai.com/v1
 protocol: openai-chat
 litellm_provider: openai
+sdk_pricing:
+  api_base: https://api.openai.com/v1
 auth:
   header: Authorization
   prefix: Bearer

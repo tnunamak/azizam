@@ -97,3 +97,53 @@ def test_ciphertext_is_authenticated_and_bound_to_record_identity(tmp_path: Path
         conn.execute("UPDATE provider_secrets SET id = ?, ciphertext_b64 = ?", ("provider:first:api_key", base64.b64encode(data).decode()))
     with pytest.raises(InvalidTag):
         get_provider_secret("provider:first:api_key", db_path=db)
+
+
+def test_provider_secret_can_be_bound_to_approved_origin(tmp_path: Path) -> None:
+    db = tmp_path / "admin.db"
+    put_provider_secret(
+        "provider:openrouter:api_key",
+        "synthetic-origin-key",
+        db_path=db,
+        approved_origin="https://OpenRouter.ai/api/v1",
+    )
+
+    assert get_provider_secret(
+        "provider:openrouter:api_key",
+        db_path=db,
+        expected_origin="https://openrouter.ai:443/other-path",
+    ) == "synthetic-origin-key"
+    with pytest.raises(PermissionError):
+        get_provider_secret(
+            "provider:openrouter:api_key",
+            db_path=db,
+            expected_origin="https://evil.test/api/v1",
+        )
+    with pytest.raises(PermissionError):
+        get_provider_secret(
+            "provider:openrouter:api_key",
+            db_path=db,
+            expected_origin="http://openrouter.ai/api/v1",
+        )
+
+
+def test_provider_secret_origin_column_is_authenticated(tmp_path: Path) -> None:
+    db = tmp_path / "admin.db"
+    put_provider_secret(
+        "provider:openrouter:api_key",
+        "synthetic-origin-key",
+        db_path=db,
+        approved_origin="https://openrouter.ai/api/v1",
+    )
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "UPDATE provider_secrets SET approved_origin = ? WHERE id = ?",
+            ("https://evil.test:443", "provider:openrouter:api_key"),
+        )
+
+    with pytest.raises(InvalidTag):
+        get_provider_secret(
+            "provider:openrouter:api_key",
+            db_path=db,
+            expected_origin="https://evil.test/api/v1",
+        )

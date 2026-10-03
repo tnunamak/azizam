@@ -152,6 +152,12 @@ references remain an alternative to UI-entered keys. LiteLLM must
 be pinned, hash-locked, and treated as a replaceable execution dependency. The
 virtual-key bypass is to be retired for paid models.
 
+Credential approval follows the destination origin. Changing a provider or its
+endpoint requires re-entry; stored secrets cannot be sent to another origin.
+Provider-owned rates govern settlement. SDK vendor prices require explicit
+catalog approval and an exact official endpoint match; custom endpoints need
+known prices even when the owner has not set a cap.
+
 The gateway must never fall back from free to paid without an explicit alias,
 access-plan permission, and a receipt.
 
