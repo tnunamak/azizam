@@ -157,6 +157,42 @@ class TtsStreamingTests(RouteCase):
         self.assertEqual((sent["response_format"], "stream_format" in sent), ("wav", False))
         self.assertIn("content-length", resp.headers)
 
+    def _dying_stream(self, *chunks: bytes) -> httpx.Response:
+        """A 200 chunked answer whose body ends with a protocol error, as an engine does when its lazy model load fails."""
+        class Dies(httpx.AsyncByteStream):
+            async def __aiter__(self_inner):
+                for chunk in chunks:
+                    yield chunk
+                raise httpx.RemoteProtocolError("peer closed connection without sending complete message body")
+        return httpx.Response(200, stream=Dies())
+
+    def test_stream_that_dies_before_any_audio_is_a_503_and_falls_back(self) -> None:
+        self.cfg["model_aliases"]["speech"]["engines"]["supertonic"]["native_sample_rate"] = 24000
+        first_port = self.cfg["backends"]["tts-supertonic"]["port"]
+        good = [b"\x01\x00" * 100]
+        seen = self.use_upstream(lambda r: self._dying_stream() if r.url.port == first_port else httpx.Response(200, stream=_Chunks(good)))
+        resp = self._post(response_format="pcm")
+        self.assertEqual((resp.status_code, resp.content), (200, b"".join(good)))
+        self.assertEqual(len(seen), 2)
+        self.assertTrue(resp.headers["x-vivid-fallback"].startswith("supertonic->chatterbox (busy)"))
+
+    def test_stream_that_dies_before_any_audio_is_not_an_empty_200_when_no_engine_is_left(self) -> None:
+        self.cfg["model_aliases"]["speech"]["engines"]["supertonic"]["native_sample_rate"] = 24000
+        self.use_upstream(lambda r: self._dying_stream())
+        resp = self._post(response_format="pcm", model="supertonic")
+        self.assertEqual(resp.status_code, 503)
+        self.assertEqual(resp.json()["error"]["code"], "tts_engine_stream_failed")
+
+    def test_sse_stream_that_dies_before_any_audio_is_a_503(self) -> None:
+        self.use_upstream(lambda r: self._dying_stream())
+        resp = self._post(response_format="pcm", stream_format="sse", model="supertonic")
+        self.assertEqual(resp.status_code, 503)
+
+    def test_engine_with_an_empty_stream_is_a_502_not_an_empty_200(self) -> None:
+        self.use_upstream(lambda r: httpx.Response(200, stream=_Chunks([])))
+        resp = self._post(response_format="pcm", model="supertonic")
+        self.assertEqual((resp.status_code, resp.json()["error"]["code"]), (502, "tts_engine_empty_stream"))
+
     def test_engine_error_status_is_returned_before_any_streaming(self) -> None:
         self.use_upstream(lambda r: httpx.Response(400, json={"error": {"message": "bad voice"}}))
         resp = self._post(response_format="pcm")

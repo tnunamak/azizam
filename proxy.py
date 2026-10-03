@@ -40,7 +40,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 import contextlib
 from contextlib import asynccontextmanager
-from typing import Any, Awaitable, Callable, Iterable, Mapping, Optional, Sequence
+from typing import Any, AsyncIterator, Awaitable, Callable, Iterable, Mapping, Optional, Sequence
 from urllib.parse import parse_qs, parse_qsl, quote, urlencode
 
 import httpx
@@ -4085,9 +4085,35 @@ async def _stream_tts_upstream(
         await client.aclose()
         return _tts_error(f"TTS proxy error: {e}", 502)
 
+    # An engine that loads its model lazily (Supertonic, Chatterbox) sends "200 chunked"
+    # first and fails inside the stream when GPU0 is full, so the status alone cannot be
+    # trusted. Read the first chunk before committing a 200 to the client: a stream that
+    # dies before any audio becomes a 503 and the tier falls back to its next engine.
+    raw_chunks = upstream.aiter_raw()
+    try:
+        first_chunk = await anext(raw_chunks, b"")
+    except (httpx.TransportError, httpx.StreamError) as e:
+        await upstream.aclose()
+        await client.aclose()
+        print(f"[proxy] TTS engine at {url} dropped the stream before any audio: {e!r}", flush=True)
+        return _tts_error("TTS engine failed before sending audio (likely GPU0 memory pressure)", 503, "tts_engine_stream_failed")
+    except Exception:  # noqa: BLE001
+        await upstream.aclose()
+        await client.aclose()
+        raise
+    if not first_chunk:
+        await upstream.aclose()
+        await client.aclose()
+        return _tts_error("TTS engine returned no audio", 502, "tts_engine_empty_stream")
+
+    async def with_first_chunk() -> AsyncIterator[bytes]:
+        yield first_chunk
+        async for chunk in raw_chunks:
+            yield chunk
+
     async def frames():
         try:
-            source = speech_stream.align_samples(upstream.aiter_raw())
+            source = speech_stream.align_samples(with_first_chunk())
             if stream_format == "sse" or speech_stream.needs_transcode(native_rate, response_format):
                 source = speech_stream.transcode_pcm_stream(
                     source, src_rate=native_rate, response_format=response_format
