@@ -124,6 +124,14 @@ provider-reported `usage.cost`; otherwise LiteLLM calculates cost from the
 full typed response and usage, including cache, reasoning, and other billing
 details. Streaming usage fields are merged across events before calculation.
 Streaming headers cannot establish final cost before generation completes.
+Unknown usage extensions or missing required SDK price metadata leave cost
+unknown. The SDK catalog must include rates for reported cache reads and
+writes; its packaged offline catalog may be incomplete. An operator can set
+`price.cost_model` (or a per-model `price.models` override) to the SDK pricing
+model and add `price.usage_price_requirements` rows containing `usage_path`
+and `price_keys` arrays for additional billed dimensions. These rows validate
+catalog completeness; they do not calculate fees. Provider-reported cost
+remains authoritative.
 
 A cap can be exceeded by at most the actual cost of requests already in flight when it was reached.
 

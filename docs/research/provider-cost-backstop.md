@@ -172,3 +172,91 @@ Expected tuple: `(0.060000000000000005, 1.5e-05)`, total `0.060015000000000006`.
 If the same fixture is represented only as `cache_creation_input_tokens=10000` without `prompt_tokens_details.cache_creation_token_details`, pinned LiteLLM prices it at the normal 5-minute cache write rate and returns `0.0375` prompt cost for zero completion. That is not the 1-hour premium path.
 
 This matters for normalized OpenAI-style full usage: OpenAI-style `prompt_tokens` can include cached/cache-write tokens, while Anthropic `input_tokens` semantics can exclude or separately report cache dimensions. The generic gateway usage object should preserve the provider's explicit cache detail fields and duration detail, then feed the exact full-usage shape to the LiteLLM oracle. Do not infer 1-hour cache creation from `cache_creation_input_tokens` alone.
+
+## Appendix: pinned LiteLLM local-catalog underbill with 1-hour cache writes
+
+Date: 2026-10-03 follow-up.
+
+Scope: diagnose why the hermetic cache fixture returned only the completion-token cost when the helper used pinned LiteLLM with `LITELLM_LOCAL_MODEL_COST_MAP=true`.
+
+No network was used for this appendix. Evidence came from the pinned LiteLLM venv and its packaged model metadata at `/home/tnunamak/.tmp/litellm-inspect.vPs9Ez/venv/lib/python3.12/site-packages/litellm`.
+
+### Reproduction
+
+Fixture shape:
+
+```python
+model = "anthropic/claude-sonnet-4-5-20250929"
+usage = {
+    "input_tokens": 10000,
+    "output_tokens": 1,
+    "prompt_tokens": 10000,
+    "completion_tokens": 1,
+    "total_tokens": 10001,
+    "prompt_tokens_details": {
+        "cache_creation_tokens": 10000,
+        "cache_creation_token_details": {
+            "ephemeral_1h_input_tokens": 10000,
+        },
+        "cache_hit_tokens": 0,
+    },
+}
+```
+
+Observed with the pinned venv:
+
+| `LITELLM_LOCAL_MODEL_COST_MAP` | `litellm.get_model_info(...).cache_creation_input_token_cost_above_1hr` | `completion_cost(...)` |
+| --- | ---: | ---: |
+| unset | `6e-06` | `0.060015000000000006` |
+| `false` | `6e-06` | `0.060015000000000006` |
+| `true` | `None` | `0.000015` |
+
+The packaged backup/local metadata for `claude-sonnet-4-5-20250929` contains the normal 5-minute cache write price but lacks the 1-hour cache write price:
+
+```text
+cache_creation_input_token_cost: 3.75e-06
+cache_creation_input_token_cost_above_1hr: None
+cache_read_input_token_cost: 3e-07
+input_cost_per_token: 3e-06
+output_cost_per_token: 1.5e-05
+```
+
+### Root cause
+
+Pinned LiteLLM's calculator is still the right oracle, but it does not fail closed when the active model catalog lacks a price key for a positive usage dimension.
+
+Relevant local source behavior:
+
+- `litellm_core_utils/llm_cost_calc/utils.py:_get_token_base_cost` reads `cache_creation_input_token_cost_above_1hr` from model info.
+- `calculate_cache_writing_cost` multiplies `ephemeral_1h_input_tokens` by that 1-hour rate.
+- With the stale local catalog, the 1-hour rate is missing, and the cache-write portion is effectively dropped instead of raising.
+
+This explains the hermetic result: the output token is still priced (`1 * 0.000015`), but the 10,000 one-hour cache creation tokens are priced at zero.
+
+### Required guard
+
+Do not add manual cache-pricing formulas in gateway code. Keep the SDK oracle, but trust its returned amount only when the active SDK/model catalog is complete for every positive billed usage dimension in the response.
+
+The generic guard should be data/table driven:
+
+```python
+_REQUIRED_PRICE_KEYS_BY_USAGE_PATH = {
+    ("prompt_tokens_details", "cache_creation_token_details", "ephemeral_1h_input_tokens"):
+        ("cache_creation_input_token_cost_above_1hr",),
+    ("prompt_tokens_details", "cache_creation_token_details", "ephemeral_5m_input_tokens"):
+        ("cache_creation_input_token_cost",),
+    ("prompt_tokens_details", "cache_creation_tokens"):
+        ("cache_creation_input_token_cost",),
+    ("prompt_tokens_details", "cache_hit_tokens"):
+        ("cache_read_input_token_cost",),
+}
+```
+
+For each positive usage path, check `litellm.get_model_info(model)` or an operator-provided model price override for the required key. If any required price key is missing or `None`, return unknown cost. The reservation must remain open for manual/provider reconciliation instead of silently settling an underbilled amount.
+
+Expected behavior:
+
+- Fresh/complete SDK catalog: the fixture settles via SDK at `0.060015000`.
+- Stale/incomplete local SDK catalog: the helper returns unknown, leaving the reservation open.
+
+This preserves the “actual provider or SDK oracle only” decision while closing the specific silent-underbill failure mode.
