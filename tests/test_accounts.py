@@ -644,7 +644,7 @@ def test_people_excludes_key_claim_placeholders_and_reports_protected_oidc_users
 def test_oidc_returns_to_the_product_account_page(target):
     import proxy
     assert proxy._safe_admin_return_to(target) == target
-    assert proxy._safe_admin_return_to("//evil.example" + target) == "/admin"
+    assert proxy._safe_admin_return_to("//evil.example" + target) == "/ui/home/"
 
 
 def test_account_connection_closes_and_rolls_back_failed_work(account_db):
@@ -682,3 +682,22 @@ def test_public_signin_options_and_invite_inspection_use_saved_instance_name_liv
             "name": name, "base_url": "https://gateway.example.test", "theme_default": "dark",
         }, path=path)
         assert_public_name(name)
+
+
+@pytest.mark.parametrize("target,expected", [
+    ("/ui/home/", "/ui/home/"),
+    ("/ui/usage/?receipt=abc#details", "/ui/usage/?receipt=abc#details"),
+    ("/admin/services?service=tts", "/ui/engines/?service=tts"),
+    ("/ui/admin/profiles/?plan=family", "/ui/people/?tab=plans&plan=family"),
+    ("/me?tab=keys", "/ui/home/?tab=keys"),
+    ("https://evil.example", "/ui/home/"), ("//evil.example", "/ui/home/"), (None, "/ui/home/"),
+])
+def test_builtin_login_uses_safe_product_return_path(account_db, account_client, fast_password_work, target, expected):
+    from urllib.parse import parse_qs, urlsplit
+    client, _ = account_client
+    user, _, _ = invited_member(account_db)
+    options = client.get("/auth/api/options", params={"return_to": target} if target else {}).json()
+    assert parse_qs(urlsplit(options["oidc_url"]).query)["return_to"] == [expected]
+    response = client.post("/auth/api/login", json={"email": user["email"], "password": PASSWORD, "return_to": target})
+    assert response.status_code == 200
+    assert response.json()["next"] == expected

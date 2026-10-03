@@ -41,6 +41,21 @@ For the operator-facing first-run story this model implies, see
   `GET /admin/api/settings/effective/export` exports the current configuration,
   resolved OIDC provider, registry and runtime overrides. It is for inspection,
   does not restore a gateway, and cannot write bootstrap configuration.
+- **OIDC uses the configured public origin.** When Settings has a public base
+  URL, browser sign-in replaces the OIDC `redirect_uri` origin with that URL
+  and keeps the callback path. For example, a login started on
+  `openai.vivid.fish` with `https://ai.vivid.fish` saved in Settings sends the
+  identity provider `https://ai.vivid.fish/admin/oidc/callback`. Without a
+  public base URL, the configured OIDC `redirect_uri` stays unchanged; the
+  incoming host does not choose it. Register the resulting exact callback URL
+  with the identity provider. A pending login keeps its original callback URL
+  for the token exchange even if Settings changes before it finishes.
+  The session cookie is issued on the callback host, and its configured domain
+  still applies. With the default host-only cookie, the person remains signed
+  in on that callback host. Relative return paths bring them to the requested
+  page there, including its query string. Local accounts use the requested
+  relative page on the host where sign-in started. Invalid return paths fall
+  back to `/ui/home/`.
 - **Full provisioning / as-code reconciliation is deferred.** Default Profiles
   and user-access defaults are seeded into `admin.db` on startup; once seeded,
   the dashboard is authoritative. No YAML "policy file" exists for those

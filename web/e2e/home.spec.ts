@@ -158,7 +158,7 @@ for (const theme of ["light", "dark"] as const) {
             page.getByRole("tab", { name: "Open WebUI", exact: true }),
           ).toBeVisible();
           await expect(
-            page.getByRole("button", { name: "Test connection", exact: true }),
+            page.getByRole("button", { name: "Gateway check", exact: true }),
           ).toBeVisible();
           await expect(page.getByLabel("Loading Home")).toHaveCount(0);
           if (state === "empty") {
@@ -250,6 +250,9 @@ test("all ten client recipes fit a phone and remain accessible", async ({
     "Phone",
   ]) {
     await page.getByRole("tab", { name, exact: true }).click();
+    await expect(
+      page.getByRole("tabpanel").getByText("Untested recipe", { exact: true }),
+    ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: `Connect ${name}`, exact: true }),
     ).toBeVisible();
@@ -566,7 +569,7 @@ test("inline reveal-once key tests a real chat request and produces one owned re
         new URL(response.url()).pathname === "/me/api/connection-test",
     );
     await page
-      .getByRole("button", { name: "Test connection", exact: true })
+      .getByRole("button", { name: "Gateway check", exact: true })
       .click();
     const tested = await testedResponse;
     expect(tested.ok()).toBe(true);
@@ -751,7 +754,7 @@ test("a new inherited key cannot borrow a broader existing app's recipe", async 
         new URL(response.url()).pathname === "/me/api/connection-test",
     );
     await page
-      .getByRole("button", { name: "Test connection", exact: true })
+      .getByRole("button", { name: "Gateway check", exact: true })
       .click();
     const tested = await testedResponse;
     expect(tested.ok()).toBe(true);

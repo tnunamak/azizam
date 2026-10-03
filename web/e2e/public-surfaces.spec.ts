@@ -44,7 +44,7 @@ for (const theme of ["light", "dark"] as const) {
               }),
             );
           } else if (surface === "sign-in") {
-            await page.route("**/auth/api/options", (route) =>
+            await page.route("**/auth/api/options*", (route) =>
               route.fulfill({
                 status: state === "error" ? 503 : 200,
                 json:
@@ -193,7 +193,7 @@ test("built-in sign-in posts JSON and retains its fields after denied credential
   context,
 }) => {
   await context.clearCookies();
-  await page.route("**/auth/api/options", (route) =>
+  await page.route("**/auth/api/options*", (route) =>
     route.fulfill({
       json: {
         built_in: true,
@@ -221,6 +221,7 @@ test("built-in sign-in posts JSON and retains its fields after denied credential
   expect(response.request().postDataJSON()).toEqual({
     email: "unknown@example.test",
     password: "Invalid browser test password",
+    return_to: "/ui/home/",
   });
   await expect(page).toHaveURL(/\/ui\/sign-in\/$/);
   await expect(

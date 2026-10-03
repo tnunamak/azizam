@@ -20,7 +20,7 @@ The gateway is still in active development. The engine registry migration (confi
 
 ## 5-minute quickstart
 
-**Prerequisites:** Python 3.12+. For bare Python, install [`uv`](https://docs.astral.sh/uv/). For chat, you also need an OpenAI-compatible engine already running (for example llama.cpp server on `http://localhost:8080`, vLLM, TabbyAPI, or Ollama's OpenAI-compatible `/v1` endpoint).
+**Prerequisites:** Python 3.12+. For bare Python, install [`uv`](https://docs.astral.sh/uv/) and Node.js 22 to build the product UI. For chat, you also need an OpenAI-compatible engine already running (for example llama.cpp server on `http://localhost:8080`, vLLM, TabbyAPI, or Ollama's OpenAI-compatible `/v1` endpoint).
 
 ### Option A — Docker Compose (recommended)
 
@@ -31,7 +31,7 @@ cd openai-proxy
 docker compose up -d
 ```
 
-The gateway starts on `http://127.0.0.1:5000` and uses `first-run.yml`, a minimal setup config with no bundled engine records. Open `http://127.0.0.1:5000/setup` to claim the first owner account and mint an API key. Then add your engine in `/admin` → Services with:
+The gateway starts on `http://127.0.0.1:5000` and uses `first-run.yml`, a minimal setup config with no bundled engine records. Open `http://127.0.0.1:5000/setup` to claim the first owner account and mint an API key. Then add your engine in the Gateway → Engines page with:
 
 - base URL: the engine's OpenAI-compatible base URL as seen from Docker, such as `http://host.docker.internal:8080/v1` on Docker Desktop or Linux Compose
 - health endpoint: `/v1/models`
@@ -66,6 +66,9 @@ Point any OpenAI-compatible client at `http://localhost:5000/openai/v1` with you
 ```bash
 git clone https://github.com/Vivid-Fish/openai-proxy.git
 cd openai-proxy
+
+npm --prefix web ci
+npm --prefix web run build
 
 AI_GATEWAY_CONFIG_PATH=first-run.yml \
 AI_GATEWAY_REQUIREMENTS_FILE=tests/requirements-hermetic.lock \

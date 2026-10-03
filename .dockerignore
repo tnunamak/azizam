@@ -40,3 +40,12 @@ tests/*
 .vscode/
 .idea/
 *.swp
+
+# Product UI is built in its own stage; never copy local test state.
+web/node_modules/
+web/.next/
+web/out/
+web/test-results/
+web/playwright-report/
+.ui-e2e-state/
+LANE_REPORT.md

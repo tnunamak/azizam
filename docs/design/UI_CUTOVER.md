@@ -1,101 +1,111 @@
-# Canonical UI route cutover plan
+# Product UI cutover
 
-Status: plan only. Home ships under `/ui/home/`. The existing `/ui/` entry
-sends signed-in people there. This lane does not change canonical Python
-routes, authentication handlers, or the static asset mount.
+The browser front door is the single React app under `/ui/`. The gateway
+serves the existing Next.js static export from `web/out`; production does
+not need a Node server. Build with `cd web && npm run build`. Retain
+`basePath: "/ui"`, `assetPrefix: "/ui"`, and `trailingSlash: true`.
 
-## Serve the export without a Node server
+This replaces the earlier plan for a second export mounted at `/`.
+An HTML-accepting request to `/` redirects to `/ui/home/`. Requests without
+`text/html` in Accept retain the previous root response. No catch-all
+static mount is registered at `/`, so protocol routes keep their handlers
+and unknown paths remain 404. A source checkout without `web/out` still
+boots and offers `/setup`; browser redirects do not depend on an export.
+The export must be built and shipped with the release to use product pages.
 
-Today `mount_web_ui` in `proxy.py` mounts `web/out` at `/ui` with
-`StaticFiles(html=True)`. Next builds with `basePath: "/ui"`,
-`assetPrefix: "/ui"`, and `trailingSlash: true`. The resulting page links
-and script paths therefore include `/ui`; moving that directory to `/`
-alone would break navigation.
+## Browser route map
 
-For cutover, build a separate release artifact with an empty `basePath`
-and `assetPrefix`, while retaining `output: "export"` and
-`trailingSlash: true`. Keep the current `/ui` artifact available for
-rollback. Publish the new `_next` assets under `/_next`; use hashed-asset
-caching there and `no-store` on session-sensitive page entry responses.
-All data continues to come from the same-origin JSON APIs. The export
-contains no credentials or person-specific data.
+All compatibility redirects use relative Locations, preserve query strings,
+and bypass absolute HTTP redirects behind TLS termination. Both slash
+variants are supported for the legacy pages listed below. Browser entry
+redirects use `Cache-Control: no-store`.
 
-Register explicit FastAPI GET routes for product pages and serve their
-exported `index.html` files after the applicable session check. Do not
-mount a catch-all static application at `/`: that could swallow API
-routes, receipts, authentication callbacks, or unknown paths. Add explicit
-asset mounts and keep a real 404 for unknown destinations.
-
-## Route map
-
-| Canonical route | Export entry | Authentication |
-| --- | --- | --- |
-| `/` | `home/index.html` | Signed-in person |
-| `/home/` | Redirect to `/` | Signed-in person |
-| `/models/` | `models/index.html` | Signed-in person |
-| `/try/` | `try/index.html` | Signed-in person |
-| `/library/` | `library/index.html` | Signed-in person |
-| `/usage/` | `usage/index.html` | Signed-in person |
-| `/apps/` | `apps/index.html` | Signed-in person |
-| `/status/` | `status/index.html` | Owner or admin |
-| `/engines/` | `engines/index.html` | Owner or admin |
-| `/providers/` | `providers/index.html` | Owner or admin |
-| `/people/` | `people/index.html` | Owner or admin |
-| `/activity/` | `activity/index.html` | Owner or admin |
-| `/settings/` | `settings/index.html` | Owner or admin |
-| `/sign-in/` | `sign-in/index.html` | Public |
-| `/invite/` | `invite/index.html` | Public; invite checked by API |
-| `/setup/` | `setup/index.html` | Public; claim checked by API |
-| `/showcase/` | `showcase/index.html` | Public, read-only |
-
-The HTML entry at `/` serves Home directly; it does not serve the export's
-root redirect page, which would otherwise redirect back to Home. Normalize
-slash variants consistently. Retain query strings on compatibility redirects,
-including receipt filters and authentication return destinations.
-
-## Retire Python rendering in stages
-
-After the replacement pages meet parity, change these browser handlers:
-
-| Existing handler or route | Result after cutover |
+| Legacy entry | Product destination |
 | --- | --- |
-| `root_browser_entrypoint` | Serve the protected Home export |
-| `user_portal` at `/me` | Redirect to `/` |
-| `receipt_deep_link` at `/r/{request_id}` | Redirect to `/usage/?receipt={request_id}` once Usage supports opening that receipt |
-| `status_dashboard_index` and `_render_status_html` | Serve the protected Status export |
-| `admin_dashboard` at `/admin` | Redirect to `/status/` for browser sessions |
-| `/admin/services`, `/admin/status`, `/admin/apps` | Redirect to `/engines/`, `/status/`, `/apps/` |
-| `/admin/users`, `/admin/profiles` | Redirect to `/people/` with the People or Access plans tab selected |
-| `/admin/audit`, `/admin/settings` | Redirect to `/activity/`, `/settings/` |
-| `/services/` | Redirect to `/engines/` |
-| `setup_page` | Serve the Setup export after the account API supports its complete flow |
-| Python showcase renderer | Serve the public Showcase export after content parity |
+| `/` with HTML Accept | `/ui/home/` |
+| `/me` | `/ui/home/` |
+| `/admin`, `/admin/overview`, `/ui/admin`, `/ui/admin/overview` | `/ui/home/` |
+| `/admin/services`, `/ui/admin/services` | `/ui/engines/` |
+| `/admin/status`, `/ui/admin/status` | `/ui/status/` |
+| `/admin/apps`, `/ui/admin/apps` | `/ui/apps/` |
+| `/admin/profiles`, `/ui/admin/profiles` | `/ui/people/?tab=plans` |
+| `/admin/users`, `/ui/admin/users` | `/ui/people/` |
+| `/admin/audit`, `/ui/admin/audit` | `/ui/activity/` |
+| `/admin/settings`, `/ui/admin/settings` | `/ui/settings/` |
+| `/status` with HTML Accept and no Authorization | `/ui/status/` |
+| `/firehose` | `/status/raw` (301) |
 
-Keep `/me/api/*`, `/admin/api/*`, public protocol routes, OIDC callbacks,
-logout, and setup POST handlers intact. Preserve supported bearer-auth
-automation behavior independently of browser redirects. `/docs` and
-`/redoc` already use the local API reference; keep them outside the static
-product route map. Do not delete `gateway/user_render.py`,
-`gateway/admin_render.py`, `gateway/setup_render.py`, or the status renderer
-until the rollback period has ended.
+The Profiles redirect prepends `tab=plans`, followed by the unchanged
+incoming query text. Unknown `/ui/admin/*` pages remain 404 after the owner
+check; they do not become Home. `/admin/*` and `/ui/admin/*` aliases retain
+the existing owner/admin authorization checks. Canonical owner static pages
+(Status, Engines, Providers, People, Activity and Settings) have the same
+server guard. The shared app shell determines the person's visible navigation.
 
-## Release and rollback gates
+## Retained compatibility and technical details
 
-1. Build both artifacts from one committed release. Verify fresh installs
-   without an export still boot and offer owner setup.
-2. Exercise sign-in, owner claim, invite acceptance, key minting, app
-   connection, and receipt deep links against an isolated gateway. Prove
-   member pages never call owner APIs and cannot read another person's data.
-3. Test every canonical route and slash variant, reloads, query strings,
-   signed-out redirects, owner restrictions, and real 404s. Verify public
-   API methods and protocol aliases still route to their existing handlers.
-4. Review loading, empty, and error states at phone and desktop widths in
-   both themes. Check keyboard access, axe results, and phone overflow.
-5. Deploy the artifact and explicit route changes together. If navigation
-   or authentication regresses, restore the prior Python handlers and `/ui`
-   artifact. No database migration is required for route cutover itself.
+Every `/me/api/*`, `/admin/api/*`, and protocol API keeps its route and
+method. Logout, setup POST handlers, OIDC callbacks, `/docs`, and `/redoc`
+remain outside the static route map. Bearer-authenticated `/admin` retains
+its Python admin response for existing automation; it does not redirect.
+The Python portal renderer remains referenced by non-HTML root clients
+and `/r/{request_id}` receipt links. Those links keep their existing receipt
+sheet until Usage supports selecting a receipt from the query string.
 
-Cutover remains blocked on the full replacement surfaces and their account
-flows. A placeholder route does not establish parity. Use the repository's
-safe restart procedure at deployment time; implementation lanes must not
-restart the running gateway.
+`/status/raw` and `/status/raw/` render the Python operator firehose and
+require owner/admin authentication. Status exposes this as “Technical
+details.” Non-browser `/status` and bearer-authenticated `/status` retain
+the previous status renderer. The renderer's owner guard also protects the
+new raw route. The renderer modules remain for these supported paths and
+rollback; the old React `web/src/app/admin/*` surfaces are retired.
+
+## Sign-in return destinations and OIDC hosts
+
+Built-in sign-in and OIDC carry a validated same-origin return path through
+authentication. New-app paths, query strings and receipt destinations are
+retained. Legacy browser aliases are translated to their product destinations.
+External URLs, scheme-relative URLs and malformed paths are rejected. The
+default destination after sign-in is `/ui/home/`.
+
+Settings owns the configured public base URL. When it is set, OIDC uses that
+URL's host and scheme for its configured callback path. Without it, the
+explicit OIDC redirect URI remains authoritative. An OIDC flow started on
+`openai.vivid.fish` can therefore return on `ai.vivid.fish` when Settings
+selects that canonical host. Operators must register
+the resulting exact redirect URI with their identity provider. Local sign-in
+uses same-origin requests and does not move between hosts.
+
+## Release checks and rollback
+
+Docker builds the UI in a pinned Node build stage and copies only the static
+export into the Python image. Bare Python installations must run `npm --prefix
+web ci` and `npm --prefix web run build` before starting the gateway.
+
+Build and ship `web/out` from the same committed release as the Python
+route changes. Test anonymous root → sign-in → Home and owner `/admin` →
+Home with Gateway navigation against an isolated gateway. Exercise browser
+aliases, queries, owner restrictions, receipt links, and missing exports.
+Run `scripts/run-hermetic-pytest.sh -q`, the web checks and Playwright.
+Regenerate `docs/SUPPORT_MATRIX.md` after route changes.
+
+The route cutover itself needs no database migration. At deployment, follow
+`scripts/safe-restart` and `docs/ops/SAFE_RESTART.md`; implementation lanes
+must not restart the running gateway. If navigation or sign-in regresses,
+restore the prior committed Python handlers and matching `/ui` export.
+
+## Audience amendment dependencies
+
+The UI spec's audience amendment keeps Home focused on connecting an app.
+Home labels route verification “Gateway check”; a client recipe without an
+observed client version is labelled “Untested recipe.” Local execution means
+“Local · no provider charge.” Owner claim and the first App key form the
+initial setup milestone; connecting an engine, making a request, copying
+client settings and seeing its receipt form the Home milestone.
+
+The member-scoped Status API and page, Workflows surface, amended navigation
+order and visual identity belong to their product surface lanes. This cutover
+adds no placeholder destinations. The current Status page still reads owner
+APIs, so its server authorization remains owner/admin-only until a member
+surface can display scoped observations. `/status/raw` stays owner/admin-only
+when member Status ships. Ship those surface changes with this cutover to meet
+the amended release bar.

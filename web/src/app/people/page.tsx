@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MoreHorizontal, Plus, Users, Mail, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
@@ -118,6 +118,11 @@ export default function PeoplePage() {
     refetch: plansRefetch,
   } = useQuery({ queryKey: plansKey, queryFn: api.profiles.list });
   const [tab, setTab] = useState("people");
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get("tab");
+    if (requested && ["people", "invites", "plans"].includes(requested))
+      setTab(requested);
+  }, []);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [personPlan, setPersonPlan] = useState<Person | null>(null);
   const [confirmation, setConfirmation] = useState<{

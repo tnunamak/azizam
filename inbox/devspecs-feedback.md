@@ -71,3 +71,8 @@
   deleted and no other indexing processes were terminated.
 - A bounded timeout with the indexing owner's status would make this failure
   easier to diagnose in a worktree shared by concurrent implementation lanes.
+
+## 2026-10-03 — browser cutover lane
+
+- Useful: `ds tldr` and `ds recent` returned workflow guidance and the gateway integration boundaries.
+- Rough edge: three-slice task creation returned no task ID or progress after several minutes. I canceled it; it reported “task index preflight failed before repository mutation” and “Repository files written: no.” No shared index state was changed. Continued from the complete brief and source evidence.

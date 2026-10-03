@@ -160,7 +160,13 @@ function AccountMenu() {
             </a>
           </DropdownMenuItem>
           <DropdownMenuItem asChild>
-            <a href={viewer.authenticated ? "/logout" : "/me/login"}>
+            <a
+              href={
+                viewer.authenticated
+                  ? "/logout"
+                  : `/ui/sign-in/?return_to=${encodeURIComponent(typeof window === "undefined" ? "/ui/home/" : window.location.pathname + window.location.search)}`
+              }
+            >
               <LogOut />
               {viewer.authenticated ? "Sign out" : "Sign in"}
             </a>
@@ -758,14 +764,11 @@ function Shell({ children }: { children: React.ReactNode }) {
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
-  // Retain the old operator surfaces until their replacement lanes land.
-  const legacy = pathname.startsWith("/admin");
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
       <QueryClientProvider client={queryClient}>
-        {legacy ? children : <Shell>{children}</Shell>}
-        {!legacy && <Toaster />}
+        <Shell>{children}</Shell>
+        <Toaster />
       </QueryClientProvider>
     </ThemeProvider>
   );

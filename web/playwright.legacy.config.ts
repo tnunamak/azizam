@@ -12,7 +12,7 @@ export default defineConfig({
   },
   webServer: {
     command: `npm run dev -- --port ${port}`,
-    url: `http://127.0.0.1:${port}/ui/admin/status/p1v-fixture/`,
+    url: `http://127.0.0.1:${port}/ui/design/`,
     reuseExistingServer: false,
     timeout: 120_000,
     gracefulShutdown: { signal: "SIGTERM", timeout: 5_000 },

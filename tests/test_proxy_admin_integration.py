@@ -42,12 +42,8 @@ def assert_authenticated_admin_dashboard(
             proxy, "WEB_UI_MOUNTED", web_ui_mounted
         ):
             dashboard = client.get("/admin", follow_redirects=False)
-            if web_ui_mounted:
-                test_case.assertEqual(dashboard.status_code, 302, dashboard.text)
-                test_case.assertEqual(dashboard.headers["location"], "/ui/admin/")
-            else:
-                test_case.assertEqual(dashboard.status_code, 200, dashboard.text)
-                test_case.assertIn("AI Gateway Admin", dashboard.text)
+            test_case.assertEqual(dashboard.status_code, 302, dashboard.text)
+            test_case.assertEqual(dashboard.headers["location"], "/ui/home/")
 
 
 class ProxyAdminIntegrationTests(unittest.TestCase):
@@ -94,6 +90,39 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
 
     def _auth(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.admin_key}"}
+
+    def test_raw_status_requires_owner_and_accepts_owner_bearer(self) -> None:
+        from dataclasses import replace
+
+        proxy.ADMIN_OIDC_CONFIG = replace(proxy.ADMIN_OIDC_CONFIG, enabled=False)
+        for path in ("/status/raw", "/status/raw/"):
+            with self.subTest(path=path):
+                unauth = self.client.get(path, follow_redirects=False)
+                self.assertEqual(unauth.status_code, 401, unauth.text)
+                self.assertEqual(unauth.json()["error"]["code"], "admin_unauthenticated")
+                owner = self.client.get(path, headers=self._auth(), follow_redirects=False)
+                self.assertEqual(owner.status_code, 200, owner.text)
+                self.assertEqual(owner.headers["content-type"].split(";")[0], "text/html")
+
+    def test_raw_status_rejects_signed_in_member(self) -> None:
+        from dataclasses import replace
+
+        cookie = CookieConfig(secure=False)
+        proxy.ADMIN_OIDC_CONFIG = replace(
+            proxy.ADMIN_OIDC_CONFIG, enabled=False, signing_key=b"s" * 32, cookie=cookie
+        )
+        proxy.ADMIN_AUTH.signing_key = b"s" * 32
+        proxy.ADMIN_AUTH.cookie = cookie
+        member = admin_store.upsert_oidc_user(
+            "https://idp.example", "member", email="member@example.com", path=self.db
+        )
+        session = session_from_claims(
+            {"sub": member["id"], "email": "member@example.com"}, role="none", cookie=cookie
+        )
+        self.client.cookies.set(cookie.name, encode_session_cookie(session, signing_key=b"s" * 32))
+        response = self.client.get("/status/raw", follow_redirects=False)
+        self.assertEqual(response.status_code, 403, response.text)
+        self.assertEqual(response.json()["error"]["code"], "admin_forbidden")
 
     def test_admin_authenticator_uses_configured_oidc_cookie_object(self) -> None:
         self.assertIs(proxy.ADMIN_AUTH.cookie, proxy.ADMIN_OIDC_CONFIG.cookie)
@@ -295,11 +324,10 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertNotIn("Mint runtime key", response.text)
 
     def test_admin_dashboard_requires_admin_auth(self) -> None:
-        # A signed-out BROWSER is sent to sign in, not shown a raw JSON 401. With
-        # OIDC off, local-owner sign-in lives on /setup.
+        # Signed-out browsers retain their destination through the shared sign-in entry.
         response = self.client.get("/admin", follow_redirects=False)
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response.headers["location"], "/setup")
+        self.assertEqual(response.headers["location"], "/login?return_to=%2Fui%2Fhome%2F")
         # An API caller (Bearer token) still gets the JSON 401.
         api = self.client.get("/admin", headers={"Authorization": "Bearer nope"})
         self.assertEqual(api.status_code, 401)
@@ -327,7 +355,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
 
         response = self.client.get("/admin", follow_redirects=False)
         self.assertEqual(response.status_code, 302, response.text)
-        self.assertEqual(response.headers["location"], "/login?return_to=%2Fadmin")
+        self.assertEqual(response.headers["location"], "/login?return_to=%2Fui%2Fhome%2F")
 
     def test_oidc_login_callback_creates_signed_admin_session(self) -> None:
         cfg = OIDCConfig(
@@ -600,7 +628,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
 
         response = self.client.get("/status", follow_redirects=False)
         self.assertEqual(response.status_code, 302, response.text)
-        self.assertEqual(response.headers["location"], "/login?return_to=%2Fstatus")
+        self.assertEqual(response.headers["location"], "/login?return_to=%2Fui%2Fstatus%2F")
 
     def test_v1_status_accepts_admin_key(self) -> None:
         async def fake_status(_config):
@@ -708,7 +736,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             )
         self.assertEqual(callback.status_code, 302, callback.text)
         self.assertIn("custom_admin_session=", callback.headers.get("set-cookie", ""))
-        self.assertEqual(self.client.get("/admin").status_code, 200)
+        assert_authenticated_admin_dashboard(self, self.client)
 
     def test_oidc_return_to_is_limited_to_safe_browser_paths(self) -> None:
         cfg = OIDCConfig(
@@ -736,7 +764,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(login.status_code, 302, login.text)
         state, record = next(iter(proxy.ADMIN_OIDC_STATES.items()))
-        self.assertEqual(record.return_to, "/")
+        self.assertEqual(record.return_to, "/ui/home/")
 
         async def fake_exchange(_code, *, config, pkce):
             return {"id_token": "fake.id.token"}
@@ -761,19 +789,19 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
                 follow_redirects=False,
             )
         self.assertEqual(callback.status_code, 302, callback.text)
-        self.assertEqual(callback.headers["location"], "/")
+        self.assertEqual(callback.headers["location"], "/ui/home/")
 
     def test_legacy_login_routes_redirect_to_single_login_entrypoint(self) -> None:
         self.assertEqual(
             self.client.get("/me/login", follow_redirects=False).headers["location"],
-            "/login?return_to=%2F",
+            "/login?return_to=%2Fui%2Fhome%2F",
         )
         self.assertEqual(
             self.client.get(
                 "/admin/login?return_to=/admin",
                 follow_redirects=False,
             ).headers["location"],
-            "/login?return_to=%2Fadmin",
+            "/login?return_to=%2Fui%2Fhome%2F",
         )
 
     def test_oidc_return_to_allows_user_portal(self) -> None:
@@ -801,7 +829,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(login.status_code, 302, login.text)
         state, record = next(iter(proxy.ADMIN_OIDC_STATES.items()))
-        self.assertEqual(record.return_to, "/")
+        self.assertEqual(record.return_to, "/ui/home/")
 
         async def fake_exchange(_code, *, config, pkce):
             return {"id_token": "fake.id.token"}
@@ -826,7 +854,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
                 follow_redirects=False,
             )
         self.assertEqual(callback.status_code, 302, callback.text)
-        self.assertEqual(callback.headers["location"], "/")
+        self.assertEqual(callback.headers["location"], "/ui/home/")
         # A signed-in NON-admin browser hitting /admin is sent to their home
         # (the portal), not shown a raw JSON 403.
         admin = self.client.get("/admin", follow_redirects=False)
@@ -834,7 +862,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertEqual(admin.headers["location"], "/")
         self.assertEqual(
             self.client.get("/me/login", follow_redirects=False).headers["location"],
-            "/login?return_to=%2F",
+            "/login?return_to=%2Fui%2Fhome%2F",
         )
 
     def test_user_models_catalog_requires_session(self) -> None:
@@ -2212,7 +2240,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
     def test_safe_return_to_still_rejects_external_redirects(self) -> None:
         self.assertEqual(
             proxy._safe_admin_return_to("//evil.example/setup"),
-            "/admin",
+            "/ui/home/",
         )
 
     def test_login_redirects_to_setup_when_oidc_disabled(self) -> None:
@@ -2311,13 +2339,13 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 303, response.text)
         self.assertIn(proxy.ADMIN_AUTH.cookie.name, response.headers.get("set-cookie", ""))
-        self.assertEqual(response.headers["location"], "/ui/admin/")
+        self.assertEqual(response.headers["location"], "/ui/home/")
         self.assertEqual(admin_store.list_users(path=self.db), [])
         # A service-account recovery session landing on /setup is bounced to
         # the admin console, not to a fake user portal.
         bounced = self.client.get("/setup", follow_redirects=False)
         self.assertEqual(bounced.status_code, 303)
-        self.assertEqual(bounced.headers["location"], "/ui/admin/")
+        self.assertEqual(bounced.headers["location"], "/ui/home/")
         # The operator console is still reachable deliberately for recovery.
         console = self.client.get("/setup?operator=1")
         self.assertEqual(console.status_code, 200, console.text)
@@ -2327,11 +2355,11 @@ class SetupRouteIntegrationTests(unittest.TestCase):
     def test_admin_section_aliases_require_auth_and_redirect_signed_in_admin(self) -> None:
         unauth = self.client.get("/admin/services", follow_redirects=False)
         self.assertEqual(unauth.status_code, 302, unauth.text)
-        self.assertEqual(unauth.headers["location"], "/setup")
+        self.assertEqual(unauth.headers["location"], "/login?return_to=%2Fui%2Fengines%2F")
 
         direct_ui = self.client.get("/ui/admin/services/", follow_redirects=False)
         self.assertEqual(direct_ui.status_code, 302, direct_ui.text)
-        self.assertEqual(direct_ui.headers["location"], "/setup")
+        self.assertEqual(direct_ui.headers["location"], "/login?return_to=%2Fui%2Fengines%2F")
 
         admin_key, _, _ = create_admin_service_account_key(
             "section-owner",
@@ -2356,27 +2384,27 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             with self.subTest(section=section):
                 response = self.client.get(f"/admin/{section}", follow_redirects=False)
                 self.assertEqual(response.status_code, 302, response.text)
-                self.assertEqual(response.headers["location"], f"/ui/admin/{section}/")
+                self.assertEqual(response.headers["location"], proxy.admin_destination(f"/admin/{section}"))
         for path, expected in (
             (
                 "/admin/status?service=svc_123&source=attention",
-                "/ui/admin/status/?service=svc_123&source=attention",
+                "/ui/status/?service=svc_123&source=attention",
             ),
             (
                 "/admin/status/?service=svc_123&source=attention",
-                "/ui/admin/status/?service=svc_123&source=attention",
+                "/ui/status/?service=svc_123&source=attention",
             ),
             (
                 "/admin/services?service=tts",
-                "/ui/admin/services/?service=tts",
+                "/ui/engines/?service=tts",
             ),
             (
                 "/admin/apps?app=app_123",
-                "/ui/admin/apps/?app=app_123",
+                "/ui/apps/?app=app_123",
             ),
             (
                 "/admin/audit?event=evt_123",
-                "/ui/admin/audit/?event=evt_123",
+                "/ui/activity/?event=evt_123",
             ),
         ):
             with self.subTest(path=path):
@@ -2651,7 +2679,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(signin.status_code, 303, signin.text)
         # A returning owner lands on the portal, their home — not /setup.
-        self.assertEqual(signin.headers["location"], "/")
+        self.assertEqual(signin.headers["location"], "/ui/home/")
         self.assertIn(
             proxy.ADMIN_AUTH.cookie.name, signin.headers.get("set-cookie", "")
         )

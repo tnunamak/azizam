@@ -1,3 +1,12 @@
+FROM node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c AS web-build
+WORKDIR /app/web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+COPY gateway/product_identity.json /app/gateway/product_identity.json
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN npm run build
+
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -9,6 +18,7 @@ COPY tests/requirements-hermetic.lock tests/requirements-hermetic.lock
 RUN uv pip install --system --no-cache --no-build --require-hashes -r tests/requirements-hermetic.lock
 
 COPY . .
+COPY --from=web-build /app/web/out /app/web/out
 
 # Persistent state lives in /app/data; mount a volume there.
 VOLUME ["/app/data"]

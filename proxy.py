@@ -130,6 +130,8 @@ from gateway.admin_oidc import (
     generate_nonce,
     generate_pkce_pair,
     load_oidc_config,
+    oidc_config_for_public_base,
+    safe_browser_return_to,
     record_state,
     session_from_claims,
     validate_oidc_stored_override,
@@ -12694,11 +12696,15 @@ register_api_reference(app)
 
 WEB_UI_DIR = Path(__file__).resolve().parent / "web" / "out"
 
+from gateway.browser_routes import OWNER_UI_PAGES, accepts_html, admin_destination, with_query
+
 
 @app.middleware("http")
 async def _guard_admin_static_ui(request: Request, call_next):
     path = request.url.path
-    if path == "/ui/admin" or path.startswith("/ui/admin/"):
+    legacy_admin = path == "/ui/admin" or path.startswith("/ui/admin/")
+    owner_page = path.removeprefix("/ui/").split("/", 1)[0] in OWNER_UI_PAGES
+    if legacy_admin or (path.startswith("/ui/") and owner_page):
         try:
             ADMIN_AUTH(request)
         except AdminAuthError as exc:
@@ -12707,6 +12713,11 @@ async def _guard_admin_static_ui(request: Request, call_next):
                 exc,
                 return_to=_path_with_query(request),
             )
+        destination = admin_destination(path, request.url.query) if legacy_admin else None
+        if destination:
+            return RedirectResponse(destination, status_code=302, headers={"cache-control": "no-store"})
+        if legacy_admin:
+            return Response(status_code=404, headers={"cache-control": "no-store"})
     return await call_next(request)
 
 
@@ -12735,6 +12746,8 @@ async def _web_ui_trailing_slash(request: Request, call_next):
     behind a TLS-terminating proxy, so it would send browsers to plain HTTP.
     """
     path = request.url.path
+    if path == "/ui/admin" or path.startswith("/ui/admin/"):
+        return await call_next(request)
     if path.startswith("/ui/") and not path.endswith("/") and "." not in path.rsplit("/", 1)[-1]:
         query = f"?{request.url.query}" if request.url.query else ""
         return RedirectResponse(url=f"{path}/{query}", status_code=308)
@@ -14205,22 +14218,8 @@ def _existing_admin_roles_by_email() -> dict[str, str]:
     return roles_by_email
 
 
-def _safe_admin_return_to(value: str | None, *, default: str = "/admin") -> str:
-    if not value:
-        return default
-    if not value.startswith("/") or value.startswith("//"):
-        return default
-    if value in {"/", "/me"}:
-        return "/"
-    if value in {"/status", "/setup"}:
-        return value
-    if value.startswith("/admin"):
-        return value
-    if value in {"/ui/", "/ui/invite/", "/ui/sign-in/"}:
-        return value
-    if value == "/ui/admin" or value.startswith("/ui/admin/"):
-        return value
-    return default
+def _safe_admin_return_to(value: str | None, *, default: str = "/ui/home/") -> str:
+    return safe_browser_return_to(value, default=default)
 
 
 def _login_url(*, return_to: str) -> str:
@@ -14243,11 +14242,9 @@ def _admin_auth_failure_response(
     # Only genuine API callers presenting a Bearer token get the JSON error.
     is_browser = not request.headers.get("authorization")
     if is_browser and exc.status_code == 401:
-        if _effective_admin_oidc_config().enabled:
-            return RedirectResponse(
-                _login_url(return_to=return_to), status_code=302
-            )
-        return RedirectResponse("/setup", status_code=302)
+        return RedirectResponse(
+            _login_url(return_to=return_to), status_code=302
+        )
     if is_browser and exc.status_code == 403:
         return RedirectResponse("/", status_code=302)
     return Response(
@@ -14529,9 +14526,10 @@ def _render_user_portal_response(request: Request, *, login_return_to: str) -> R
     )
 
 
+@app.get("/me/", include_in_schema=False)
 @app.get("/me", include_in_schema=False)
 async def user_portal(request: Request):
-    return RedirectResponse("/", status_code=302)
+    return RedirectResponse(with_query("/ui/home/", request.url.query), status_code=302, headers={"cache-control": "no-store"})
 
 
 from gateway.home_api import create_home_router
@@ -15573,6 +15571,7 @@ def _admin_identity_mappings() -> list[dict[str, Any]]:
     return rows
 
 
+@app.get("/admin/", include_in_schema=False)
 @app.get("/admin", include_in_schema=False)
 async def admin_dashboard(request: Request):
     try:
@@ -15581,10 +15580,10 @@ async def admin_dashboard(request: Request):
         return _admin_auth_failure_response(
             request,
             exc,
-            return_to="/admin",
+            return_to=_path_with_query(request),
         )
-    if WEB_UI_MOUNTED and not request.headers.get("authorization"):
-        return RedirectResponse("/ui/admin/", status_code=302)
+    if not request.headers.get("authorization"):
+        return RedirectResponse(with_query("/ui/home/", request.url.query), status_code=302, headers={"cache-control": "no-store"})
     snapshot = ADMIN_STORE.dashboard_snapshot(actor)
     try:
         status_payload = await status_endpoint.get_cached_status(config)
@@ -15647,9 +15646,9 @@ async def admin_dashboard(request: Request):
 @app.get("/admin/audit/", include_in_schema=False)
 @app.get("/admin/settings", include_in_schema=False)
 @app.get("/admin/settings/", include_in_schema=False)
+@app.get("/admin/overview", include_in_schema=False)
+@app.get("/admin/overview/", include_in_schema=False)
 async def admin_react_section_redirect(request: Request):
-    section = request.url.path.removeprefix("/admin").strip("/")
-    query = f"?{request.url.query}" if request.url.query else ""
     try:
         ADMIN_AUTH(request)
     except AdminAuthError as exc:
@@ -15658,7 +15657,7 @@ async def admin_react_section_redirect(request: Request):
             exc,
             return_to=_path_with_query(request),
         )
-    return RedirectResponse(f"/ui/admin/{section}/{query}", status_code=302)
+    return RedirectResponse(admin_destination(request.url.path, request.url.query), status_code=302, headers={"cache-control": "no-store"})
 
 
 async def _start_browser_login(request: Request, *, default_return_to: str) -> Response:
@@ -15667,7 +15666,10 @@ async def _start_browser_login(request: Request, *, default_return_to: str) -> R
         # to /setup, where local-owner sign-in or first-run creation lives.
         # API callers keep the explicit machine-readable 501 below.
         if not request.headers.get("authorization"):
-            return RedirectResponse("/setup", status_code=302)
+            if not _owner_or_admin_exists():
+                return RedirectResponse("/setup", status_code=302)
+            target = _safe_admin_return_to(request.query_params.get("return_to"), default=default_return_to)
+            return RedirectResponse(f"/ui/sign-in/?return_to={quote(target, safe='')}", status_code=302)
         return Response(
             content=(
                 "OIDC browser login is not configured on this gateway yet. "
@@ -15680,7 +15682,10 @@ async def _start_browser_login(request: Request, *, default_return_to: str) -> R
             media_type="text/plain; charset=utf-8",
         )
     try:
-        cfg = await _admin_oidc_config_with_discovery()
+        cfg = oidc_config_for_public_base(
+            await _admin_oidc_config_with_discovery(),
+            instance_settings(ADMIN_STORE.path, _instance_presentation_defaults())["base_url"],
+        )
         nonce = generate_nonce()
         pkce = generate_pkce_pair()
         return_to = _safe_admin_return_to(
@@ -15692,6 +15697,7 @@ async def _start_browser_login(request: Request, *, default_return_to: str) -> R
             nonce=nonce,
             pkce_verifier=pkce.verifier,
             return_to=return_to,
+            redirect_uri=cfg.redirect_uri,
         )
         return RedirectResponse(
             authorization_url(cfg, state=state.state, nonce=nonce, pkce=pkce),
@@ -15768,7 +15774,7 @@ def _setup_live_admin_session_target(session) -> str | None:
     if subject_kind == "user" and admin_store.get_user(subject_id, path=ADMIN_STORE.path):
         return "/"
     if subject_kind == "service_account":
-        return "/ui/admin/"
+        return "/ui/home/"
     return None
 
 
@@ -15822,7 +15828,7 @@ def _setup_doctor_items(
             {
                 "label": "Gateway health",
                 "state": "warn",
-                "detail": "Status cache was unavailable; use /status for operator detail.",
+                "detail": "Status cache was unavailable; use /status/raw for operator detail.",
             }
         )
         return items
@@ -16092,7 +16098,7 @@ async def setup_claim_admin_key(request: Request):
         role=role,
         cookie=_browser_admin_cookie_config(),
     )
-    response = RedirectResponse("/ui/admin/", status_code=303)
+    response = RedirectResponse("/ui/home/", status_code=303)
     cookie = _browser_admin_cookie_config()
     response.set_cookie(
         cookie.name,
@@ -16373,7 +16379,7 @@ async def setup_local_login(request: Request):
         email=email,
         role=role,
         signing_key=signing_key,
-        redirect_to="/",
+        redirect_to=_safe_admin_return_to(values.get("return_to") or request.query_params.get("return_to")),
     )
 
 
@@ -16491,14 +16497,14 @@ async def setup_create_first_app(request: Request):
 
 @app.get("/login", include_in_schema=False)
 async def browser_login(request: Request):
-    return await _start_browser_login(request, default_return_to="/")
+    return await _start_browser_login(request, default_return_to="/ui/home/")
 
 
 @app.get("/admin/login", include_in_schema=False)
 async def admin_login_compat(request: Request):
     return_to = _safe_admin_return_to(
         request.query_params.get("return_to"),
-        default="/admin",
+        default="/ui/home/",
     )
     return RedirectResponse(_login_url(return_to=return_to), status_code=302)
 
@@ -16525,6 +16531,8 @@ async def admin_oidc_callback(request: Request):
     try:
         state = consume_state(ADMIN_OIDC_STATES, state_value)
         cfg = await _admin_oidc_config_with_discovery()
+        if state.redirect_uri:
+            cfg = replace(cfg, redirect_uri=state.redirect_uri)
         tokens = await _oidc_exchange_code(
             code,
             config=cfg,
@@ -23126,10 +23134,9 @@ async def v1_status(request: Request):
 # -----------------------------------------------------------------------------
 # Status dashboard
 #
-# The product root is the browser account portal. `/me` remains a legacy
-# browser alias that redirects here; `/me/api/*` stays the user account API.
-# The maximalist server-rendered operator status page lives at `/status`.
-# The old `/firehose` URL is kept as a 301 → `/status` for compatibility.
+# HTML clients enter the product app at `/ui/home/`. The prior root response
+# remains available to API clients. `/me/api/*` stays the user account API.
+# Operator technical details remain owner-guarded at `/status/raw`.
 # The previous Next.js page under status-page/out is no longer served.
 # -----------------------------------------------------------------------------
 
@@ -23143,7 +23150,7 @@ async def _render_status_html(request: Request) -> Response:
             and _effective_admin_oidc_config().enabled
             and not request.headers.get("authorization")
         ):
-            return RedirectResponse(_login_url(return_to="/status"), status_code=302)
+            return RedirectResponse(_login_url(return_to=_path_with_query(request)), status_code=302)
         return Response(
             content=json.dumps({
                 "error": {
@@ -23192,6 +23199,8 @@ async def _render_status_html(request: Request) -> Response:
 
 @app.get("/", include_in_schema=False)
 async def root_browser_entrypoint(request: Request):
+    if accepts_html(request.headers.get("accept", "")):
+        return RedirectResponse(with_query("/ui/home/", request.url.query), status_code=302, headers={"cache-control": "no-store"})
     return _render_user_portal_response(request, login_return_to="/")
 
 
@@ -23207,16 +23216,25 @@ async def receipt_deep_link(request_id: str, request: Request):
 
 
 @app.get("/status", include_in_schema=False)
+@app.get("/status/", include_in_schema=False)
 async def status_dashboard_index(request: Request):
+    if accepts_html(request.headers.get("accept", "")) and not request.headers.get("authorization"):
+        return RedirectResponse(with_query("/ui/status/", request.url.query), status_code=302, headers={"cache-control": "no-store"})
+    return await _render_status_html(request)
+
+
+@app.get("/status/raw/", include_in_schema=False)
+@app.get("/status/raw", include_in_schema=False)
+async def status_dashboard_raw(request: Request):
     return await _render_status_html(request)
 
 
 @app.get("/firehose", include_in_schema=False)
 async def status_dashboard_firehose(request: Request):
-    """Backwards compatibility: redirect old `/firehose` URL to `/status`."""
+    """Backwards compatibility for the operator technical details page."""
     return Response(
         status_code=301,
-        headers={"location": "/status", "cache-control": "no-store"},
+        headers={"location": with_query("/status/raw", request.url.query), "cache-control": "no-store"},
     )
 
 

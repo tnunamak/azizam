@@ -368,10 +368,10 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
         self.assertEqual(response.headers["content-type"].split(";")[0], "text/html")
         self.assertIn("AI Gateway", response.text)
 
-    def test_legacy_firehose_redirects_to_status_dashboard(self) -> None:
+    def test_legacy_firehose_redirects_to_technical_status(self) -> None:
         response = self.client.get("/firehose", follow_redirects=False)
         self.assertEqual(response.status_code, 301, response.text)
-        self.assertEqual(response.headers["location"], "/status")
+        self.assertEqual(response.headers["location"], "/status/raw")
 
     def test_well_known_ai_gateway_is_public(self) -> None:
         response = self.client.get("/.well-known/ai-gateway")
@@ -393,10 +393,10 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
         )
         self.assertIn("/gateway/v1/capabilities", body["links"].values())
 
-    def test_user_portal_alias_redirects_to_root(self) -> None:
+    def test_user_portal_alias_redirects_to_home(self) -> None:
         response = self.client.get("/me", follow_redirects=False)
         self.assertEqual(response.status_code, 302, response.text)
-        self.assertEqual(response.headers["location"], "/")
+        self.assertEqual(response.headers["location"], "/ui/home/")
 
     def test_openai_proxy_alias_matches_discovery_shape(self) -> None:
         response = self.client.get("/.well-known/openai-proxy")

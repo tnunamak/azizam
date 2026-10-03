@@ -770,14 +770,19 @@ export function StatusClient() {
           <div>
             <h1 className="text-3xl font-semibold tracking-tight">Status</h1>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={refreshAll}
-            disabled={statusIsFetching || registryIsFetching}
-          >
-            <RefreshCcw className="size-4" /> Refresh
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" asChild>
+              <a href="/status/raw">Technical details</a>
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={refreshAll}
+              disabled={statusIsFetching || registryIsFetching}
+            >
+              <RefreshCcw className="size-4" /> Refresh
+            </Button>
+          </div>
         </div>
         <p className="text-lg font-medium">{answer}</p>
         {statusData?.generated_at != null && (
