@@ -287,6 +287,12 @@ cap enforcement.
 
 ## Deployment Notes
 
+The first UI key save creates `provider-secrets.key` beside the configured
+`admin.db`, with mode 0600. The gateway account must be able to write that
+directory. When moving or restoring the database, place its matching key file
+beside it before using saved credentials. A new key file cannot decrypt
+previously stored values.
+
 Alternatively, set provider keys in the gateway service environment, for example:
 
 ```bash

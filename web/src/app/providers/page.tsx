@@ -131,6 +131,17 @@ function numberOrNull(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function nonnegativeNumberOrNull(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value >= 0 ? value : null;
+  }
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value.trim());
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+  }
+  return null;
+}
+
 function money(value: number | null | undefined): string {
   return typeof value === "number" && Number.isFinite(value)
     ? `$${value.toFixed(2)}`
@@ -184,8 +195,12 @@ function mapModel(raw: unknown): ProviderModel {
       : {};
   const inPrice = numberOrNull(obj.input_price_per_million);
   const outPrice = numberOrNull(obj.output_price_per_million);
-  const nestedInput = numberOrNull(priceObj.input_usd_per_million_tokens);
-  const nestedOutput = numberOrNull(priceObj.output_usd_per_million_tokens);
+  const nestedInput = nonnegativeNumberOrNull(
+    priceObj.input_usd_per_million_tokens,
+  );
+  const nestedOutput = nonnegativeNumberOrNull(
+    priceObj.output_usd_per_million_tokens,
+  );
   const priceInput = text(
     obj.price_input,
     inPrice == null
@@ -230,7 +245,7 @@ function mapCatalog(raw: unknown): CatalogProvider[] {
       name: text(row.display_name, text(row.name, `Provider ${index + 1}`)),
       logoKey: text(row.logo_key, text(row.id, "cloud")),
       protocol: text(row.protocol, "openai-chat"),
-      baseUrl: text(row.base_url, "Not supplied"),
+      baseUrl: text(row.base_url, ""),
       docsUrl: text(row.docs_url, "") || undefined,
       keyUrl: text(row.key_url, "") || undefined,
       recommendation:

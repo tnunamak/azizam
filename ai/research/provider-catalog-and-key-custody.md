@@ -72,11 +72,13 @@ example rate is sufficient evidence that a particular paid request is bounded.
 
 ## Design reasoning and threat boundary
 
-The variance consists of URLs, headers, response paths, numeric scales, and
-capability facts. Each can be authored as catalog data. Authentication and
-listing require a generic HTTP mechanism; execution uses existing LiteLLM
-protocol adapters or the System One seam. Adding a new vendor should require
-a data row, not another branch in request handling.
+Endpoint URLs, listing headers, response paths, numeric scales, and capability
+facts can be authored as catalog data. Authentication fields are also data,
+but must match the selected protocol adapter's supported scheme. The catalog
+rejects other schemes so a successful listing check cannot imply unsupported
+execution authentication. Listing uses generic HTTP; execution uses existing
+LiteLLM protocol adapters or the System One seam. Adding a compatible vendor
+requires a data row, not another branch in request handling.
 
 AES-GCM protects a database copy without its key file. It cannot protect a
 compromised gateway account that can read both files or inspect process memory.

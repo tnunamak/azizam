@@ -67,6 +67,19 @@ describe("integrated UI coherence", () => {
               key_status: { state: "set", source: "secret_store", suffix: "4f2a" },
               spend: { daily_usd: 1.25, monthly_usd: 1.25, status: "measured" },
               caps: { daily_usd: 10, monthly_usd: 10 },
+              catalog: { base_url: "" },
+              models: [
+                {
+                  model: "openrouter/anthropic/claude-sonnet-4.5",
+                  upstream_model: "anthropic/claude-sonnet-4.5",
+                  name: "Claude Sonnet 4.5",
+                  enabled: true,
+                  price: {
+                    input_usd_per_million_tokens: "3.00",
+                    output_usd_per_million_tokens: "15.00",
+                  },
+                },
+              ],
               secret_ref: "OPENROUTER_API_KEY",
             },
           ],
@@ -80,6 +93,8 @@ describe("integrated UI coherence", () => {
     expect(screen.getByText("Ready")).toBeVisible();
     expect(screen.getByText("Set · ends in 4f2a")).toBeVisible();
     expect(screen.getAllByText("$1.25 of $10.00")).toHaveLength(2);
+    expect(screen.getByRole("cell", { name: "3" })).toBeVisible();
+    expect(screen.getByRole("cell", { name: "15" })).toBeVisible();
     await waitFor(() =>
       expect(screen.queryByText("OPENROUTER_API_KEY")).toBeNull(),
     );
