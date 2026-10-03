@@ -472,7 +472,7 @@ def test_cached_status_payload_for_availability_expires(monkeypatch):
 
     now = proxy.time.monotonic()
     monkeypatch.setattr(proxy.status_endpoint, "_CACHE_TTL_S", 10.0)
-    proxy.status_endpoint._CACHE = {"ts": now - 11.0, "data": {"backends": [{"key": "svc", "status": "up"}]}}
+    monkeypatch.setattr(proxy.status_endpoint, "_CACHE", {"ts": now - 11.0, "data": {"backends": [{"key": "svc", "status": "up"}]}})
     assert proxy._cached_status_payload_for_availability() == {}
 
     proxy.status_endpoint._CACHE = {"ts": now, "data": {"backends": [{"key": "svc", "status": "up"}]}}

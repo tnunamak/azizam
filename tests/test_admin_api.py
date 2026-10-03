@@ -179,7 +179,7 @@ class DeriveAdminAttentionTests(unittest.TestCase):
                         "models": [{"model_group": "public-model", "upstream_model": "upstream-model"}],
                     },
                 },
-                "standby": {"id": "standby", "name": "Standby", "enabled": True, "role": "standby"},
+                "standby": {"id": "standby", "name": "Standby", "enabled": True, "role": "standby", "lifecycle": {"driver": "systemd"}},
                 "disabled": {"id": "disabled", "name": "Disabled", "enabled": False},
             }
         }
@@ -192,7 +192,7 @@ class DeriveAdminAttentionTests(unittest.TestCase):
             registry,
             {"backends": [
                 {"service_id": "required", "live_status": "up"},
-                {"service_id": "standby", "live_status": "down"},
+                {"service_id": "standby", "live_status": "stopped"},
             ]},
             observation_available=True,
         )
