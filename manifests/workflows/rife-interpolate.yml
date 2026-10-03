@@ -12,7 +12,7 @@ description: >-
   executable through the manifest-driven /gateway/v1/workflows/{workflow_id}/run route.
 source: local
 trusted: true
-typical_seconds: 1
+typical_seconds: 4
 inputs:
   source_video:
     type: asset

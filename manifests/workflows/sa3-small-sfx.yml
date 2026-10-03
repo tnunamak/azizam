@@ -9,7 +9,7 @@ description: 'Stable Audio 3 small-sfx text-to-sound-effect, stereo 44.1 kHz FLA
   License: Stable Audio community license.'
 source: local
 trusted: true
-typical_seconds: 3
+typical_seconds: 1
 inputs:
   prompt:
     type: string

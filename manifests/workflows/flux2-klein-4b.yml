@@ -7,7 +7,7 @@ display_name: Flux2 Klein 4B
 description: Portable image generation contract bound to the FLUX.2 Klein 4B txt2img ComfyUI workflow.
 source: local
 trusted: true
-typical_seconds: 23
+typical_seconds: 6
 inputs:
   prompt:
     type: string

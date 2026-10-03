@@ -7,7 +7,7 @@ display_name: TangoFlux
 description: Portable audio.generate contract bound to the TangoFlux text-to-audio ComfyUI workflow.
 source: local
 trusted: true
-typical_seconds: 30
+typical_seconds: 4
 inputs:
   prompt:
     type: string

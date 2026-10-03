@@ -12,7 +12,7 @@ description: >-
   multi-step diffusion upscaler, so this is intentional rather than under-configured.
 source: local
 trusted: true
-typical_seconds: 6
+typical_seconds: 3
 inputs:
   source_image:
     type: asset
