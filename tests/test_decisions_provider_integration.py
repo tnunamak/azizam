@@ -230,7 +230,7 @@ def test_typesafe_prefixed_systemone_routes_to_paid_provider_and_records_owner_r
         assert internal["api_key_name"] == "provider-test"
         projected = receipt.to_dict(audience="client")
         assert projected["remote"] is True
-        assert projected["cost"] == {"usd": "0.002000000", "source": "provider-reported", "cost_class": "paid-remote"}
+        assert projected["cost"] == {"usd": "0.002000000", "source": "provider-reported", "cost_class": "paid-remote", "reconciliation_status": "settled"}
         assert "ts_secret_test_key" not in str(projected)
         assert "backend_secret" not in str(projected)
 
@@ -340,9 +340,9 @@ def test_typesafe_provider_unknown_actual_cost_is_projected_as_unknown_not_zero_
     assert response.status_code == 200, response.text
     assert response.headers["x-gateway-cost-usd"] == "unknown"
     assert "ts_secret_test_key" not in response.text
-    assert _ledger_rows(tmp_path / "provider_spend.db") == [("typesafe", "paid-plan", "reserved", "0.000643000", None)]
+    assert _ledger_rows(tmp_path / "provider_spend.db") == [("typesafe", "paid-plan", "needs_reconciliation", "0.000643000", None)]
     projected = receipts[-1].to_dict(audience="client")
-    assert projected["cost"] == {"usd": None, "source": "unknown", "cost_class": "paid-remote"}
+    assert projected["cost"] == {"usd": None, "source": "unknown", "cost_class": "paid-remote", "reconciliation_status": "needs_reconciliation"}
     assert "ts_secret_test_key" not in str(projected)
 
 
@@ -470,5 +470,5 @@ def test_openai_decisions_forwards_opaque_bytes_when_explicit_capability_configu
     assert receipts
     projected = receipts[-1].to_dict(audience="client")
     assert projected["remote"] is True
-    assert projected["cost"] == {"usd": "0.004000000", "source": "provider-reported", "cost_class": "paid-remote"}
+    assert projected["cost"] == {"usd": "0.004000000", "source": "provider-reported", "cost_class": "paid-remote", "reconciliation_status": "settled"}
     assert "oa_secret_test_key" not in str(projected)
