@@ -75,6 +75,7 @@ class LlamaServerClient(decision_engine.OptionScorer):
             cfg = json.load(f)
         (self.T, self.T_by_type), _ = decider_temperature.from_config(cfg)
         self.tokenizer = TokenizerAdapter(Tokenizer.from_file(os.path.join(folder, "tokenizer.json")))
+        self.vocab_size = self.tokenizer.vocab_size()
         self.letter_ids = [int(x) for x in np.asarray(letter_ids(self.tokenizer))]
         self._lock = threading.Lock()
         self.input_tokens = 0
@@ -108,7 +109,7 @@ class LlamaServerClient(decision_engine.OptionScorer):
             payload = {
                 "prompt": prompt_ids,
                 "n_predict": 1,
-                "n_probs": max(100, min(255, option_count)),
+                "n_probs": self.vocab_size,
                 "logit_bias": [[self.letter_ids[index], 100.0] for index in range(option_count)],
                 "cache_prompt": True,
                 "temperature": 0,
@@ -166,6 +167,9 @@ class TokenizerAdapter:
     def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
         return list(self._tokenizer.encode(text, add_special_tokens=add_special_tokens).ids)
 
+    def vocab_size(self) -> int:
+        return int(self._tokenizer.get_vocab_size(with_added_tokens=True))
+
 
 class Handler(BaseHTTPRequestHandler):
     scorer: decision_engine.OptionScorer
@@ -208,7 +212,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             length = int(self.headers.get("content-length") or "0")
-            body = json.loads(self.rfile.read(length) or b"{}")
+            try:
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except json.JSONDecodeError:
+                raise decision_engine.DecisionInputError("Request body must be valid JSON.", code="invalid_json")
             req = decision_engine.parse_request(body)
             started = time.perf_counter()
             with self.request_lock:

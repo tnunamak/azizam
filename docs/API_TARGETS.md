@@ -34,6 +34,8 @@ Known surface, not worth first-class support yet.
 | P0 | OpenAI Images | B | Familiar app API for image generation/editing while hiding ComfyUI/A1111 workflow details. |
 | P0 | OpenAI Audio | B | Familiar API for TTS/STT while routing to local or cloud voice engines. |
 | P0 | OpenAI Embeddings | B | Common vector/search integration surface. |
+| P1 | TypeSafe System One | A | Choice, Score and Noul at `/v1/systemone` and `/typesafe/v1/systemone`, with official SDK fixtures and offline tests; local aliases and receipts. |
+| P1 | OpenAI Decisions | Deferred/C | `/v1/decisions` is reserved: 501 unless a provider forwarding hook is configured; no local schema translation. |
 | P0 | Anthropic Messages | A/B | Important for Claude-shaped coding agents and tool-use semantics. |
 | P0 | Ollama native API | B/C | Self-hosters treat Ollama as a first-class local protocol, especially for model management. |
 | P1 | Gateway job/assets API | A | Needed for video, music, sound effects, long image jobs, durable polling, cancellation, and assets. |
@@ -54,6 +56,7 @@ The canonical protocol aliases are:
 /openai/v1       OpenAI-compatible API
 /anthropic/v1    Anthropic Messages subset
 /ollama/api      Ollama-compatible subset
+/typesafe/v1     TypeSafe System One and model discovery
 ```
 
 The legacy-compatible convenience routes remain mounted for clients that cannot

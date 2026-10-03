@@ -41,8 +41,10 @@ class DecisionRuntime:
 
     def observed_engine(self, service_id: str, *, fresh: bool = False) -> str | None:
         cached = self.observed.get(service_id)
-        if not fresh and cached is not None and time.monotonic() - cached[0] < 10:
-            return cached[1]
+        # Catalog reads must stay pure: placement is unknown until a request or
+        # an explicit existing-only authorization probe observes the service.
+        if not fresh:
+            return cached[1] if cached is not None and time.monotonic() - cached[0] < 10 else None
         service = self.config().get("backends", {}).get(service_id, {})
         engine = None
         try:

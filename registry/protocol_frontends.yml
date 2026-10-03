@@ -19,13 +19,13 @@ records:
       - images.edit
       - video.generate
     registered_routes:
-      - methods: [POST]
-        canonical: /v1/decisions
-        runtime_policy: {protocol: openai.decisions, intent: decision.systemone}
       - methods: [GET]
         canonical: /v1/models
         alias: /openai/v1/models
         runtime_policy: {protocol: openai.models, intent: models.list}
+      - methods: [POST]
+        canonical: /v1/decisions
+        runtime_policy: {protocol: openai.decisions, intent: decision.systemone}
       - methods: [GET]
         canonical: /v1/voices
         alias: /openai/v1/voices

@@ -54,3 +54,15 @@
 
 - Useful: `ds tldr` and `ds recent` returned workflow guidance and the shell foundation boundary.
 - Rough edge: task creation waited on another index writer without returning a task ID. I canceled it. Retrying with `--no-refresh --index=false` also returned no task output after more than a minute; I terminated that process and continued from the complete lane brief. These flags did not provide a bounded path around the index wait.
+## 2026-10-03 — decision implementation worktree
+
+- `ds tldr` and `ds recent` succeeded. Recent returned source/test/doc groups
+  for five earlier changes and gave useful file pointers.
+- `ds find 'stable aliases capabilities registry lifecycle'` produced no
+  result over several polls. A subsequent sliced `ds task` reported
+  `Task index preflight: waiting for another index update` and did not advance.
+- Stopped only those two task-owned CLI processes after the wait. Continued
+  repository orientation through direct source reads. No DevSpecs state was
+  deleted and no other indexing processes were terminated.
+- A bounded timeout with the indexing owner's status would make this failure
+  easier to diagnose in a worktree shared by concurrent implementation lanes.

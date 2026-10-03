@@ -250,11 +250,34 @@ def test_validation_handles_non_string_type_and_criteria_only_noul(env):
     assert resp.status_code == 200
 
     body = _fixture("typesafe_systemone_noul.json")["request"]
+    body["questions"]["is_urgent"]["instructions"] = 7
+    resp = env.client.post("/v1/systemone", json=body, headers=H)
+    assert resp.status_code == 422
+    assert resp.json()["error"]["param"] == "questions.is_urgent.instructions"
+
+    body = _fixture("typesafe_systemone_noul.json")["request"]
     body["questions"]["is_urgent"]["criteria"]["true"] = 1
     resp = env.client.post("/v1/systemone", json=body, headers=H)
     assert resp.status_code == 422
     assert resp.json()["error"]["param"] == "questions.is_urgent.criteria.true"
 
+
+def test_malformed_json_returns_422_and_records_receipt(env):
+    resp = env.client.post(
+        "/v1/systemone",
+        content=b'{"state":',
+        headers={**H, "content-type": "application/json"},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"] == {
+        "message": "Request body must be valid JSON.",
+        "type": "invalid_request_error",
+        "code": "invalid_json",
+    }
+    assert resp.headers["x-gateway-request-id"].startswith("req_")
+    assert env.fakes.calls == []
+    assert env.fakes.receipts[0][1].status_code == 422
+    assert env.fakes.receipts[0][1].error_code == "invalid_json"
 
 def test_authentication_runs_before_models_and_systemone(env):
     assert env.client.get("/typesafe/v1/models").status_code == 401
@@ -487,9 +510,43 @@ def test_official_typesafe_sdk_works_offline_against_facade(env):
         assert [model.name for model in models.models] == ["decide", "decide-quality"]
         result = client.system_one(
             state="Help! My payouts have been failing for 3 days.",
-            questions={"is_urgent": {"type": "noul", "instructions": "Does this convey urgency?"}},
+            questions={
+                "is_urgent": {"type": "noul", "instructions": "Does this convey urgency?"},
+                "department": {
+                    "type": "choice",
+                    "instructions": "Which team should handle this?",
+                    "criteria": {"billing": "Billing", "support": "Support"},
+                },
+                "severity": {
+                    "type": "score",
+                    "instructions": "Rate severity.",
+                    "criteria": ["low", "medium", "high"],
+                },
+            },
             model="jev-latest",
         )
         assert result.model == "decider-2b-v11"
         assert result.answers["is_urgent"].type == "noul"
         assert 0 <= result.answers["is_urgent"].noul <= 1
+        assert result.answers["department"].type == "choice"
+        assert result.answers["department"].choice == "billing"
+        assert result.answers["severity"].type == "score"
+        assert 0 <= result.answers["severity"].score <= 2
+
+        with pytest.raises(Exception) as excinfo:
+            client.system_one(state=3, questions={"q": {"type": "noul", "instructions": "x"}}, model="jev-latest")
+        assert "422" in str(excinfo.value) or "state" in str(excinfo.value)
+
+        env.fakes.reply = lambda _body: DecisionDispatchResult(
+            body={"error": {"type": "server_error", "message": "busy", "code": "overloaded"}},
+            status_code=529,
+            headers={"retry-after": "5"},
+            backend="decider-cpu",
+        )
+        with pytest.raises(Exception) as excinfo:
+            client.system_one(
+                state="retry later",
+                questions={"q": {"type": "noul", "instructions": "Is retry needed?"}},
+                model="jev-latest",
+            )
+        assert "529" in str(excinfo.value) or "overloaded" in str(excinfo.value)

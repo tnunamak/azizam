@@ -268,7 +268,9 @@ def _validate_question(question_id: str, question: Mapping[str, Any]) -> JSON:
                     raise DecisionsError(422, "invalid_criteria", "noul criteria may only contain true and false.", param=f"{param}.criteria")
                 if not _is_structured_text(criteria[key]):
                     raise DecisionsError(422, "invalid_criteria", "noul criteria values must be strings, objects, or arrays.", param=f"{param}.criteria.{key}")
-        if not _is_structured_text(question.get("instructions")) and not criteria:
+        if "instructions" in question and not _is_structured_text(question.get("instructions")):
+            raise DecisionsError(422, "invalid_instructions", "instructions must be a string, object, or array when present.", param=f"{param}.instructions")
+        if "instructions" not in question and not criteria:
             raise DecisionsError(422, "invalid_instructions", "instructions or non-empty criteria is required.", param=f"{param}.instructions")
         return dict(question)
 
@@ -516,12 +518,12 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
                     request_id=request_id,
                     path=request.url.path,
                     started=started,
-                    status_code=400,
+                    status_code=422,
                     error_code="invalid_json",
                 ),
             )
             return error_response(
-                400,
+                422,
                 "invalid_json",
                 "Request body must be valid JSON.",
                 headers=_request_headers(request_id),

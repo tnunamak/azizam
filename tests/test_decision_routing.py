@@ -186,3 +186,22 @@ def test_exhausted_fallback_retains_attempt_receipt_context():
     assert result.fallback_reasons == ("large:overloaded", "small:overloaded")
     assert result.backend == "small"
     assert result.engine is None and result.resolved_model is None
+
+
+def test_cold_catalog_never_connects_to_configured_engines():
+    rt = DecisionRuntime(lambda: config(), lambda *args: True, AsyncMock())
+    with patch("gateway.decision_routing.httpx.Client", side_effect=AssertionError("catalog must not connect")):
+        assert rt.models_for(None)
+        assert all(model.engine is None for model in rt.models_for(None))
+        assert all(cap.engine is None for cap in rt.capabilities())
+
+
+def test_all_alias_candidates_unavailable_have_retry_hint():
+    cfg = config()
+    for service in cfg["backends"].values():
+        service["enabled"] = False
+    rt = runtime(cfg=cfg)
+    with pytest.raises(DecisionsError) as error:
+        rt.resolve("decide-quality")
+    assert error.value.status == 529
+    assert error.value.headers["retry-after"] == "5"
