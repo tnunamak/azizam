@@ -26,7 +26,7 @@ ModelsResult = Sequence["DecisionModel"] | Sequence[Mapping[str, Any]]
 
 
 MAX_CHOICE_OPTIONS = 255
-MIN_SCORE_LEVELS = 2
+MIN_SCORE_LEVELS = 1
 MAX_SCORE_LEVELS = 10
 DEFAULT_LIMITS = {
     "max_options": MAX_CHOICE_OPTIONS,
@@ -157,6 +157,57 @@ def error_response(
     return JSONResponse({"error": error}, status_code=status, headers=dict(headers or {}))
 
 
+
+def systemone_validation_response(
+    status: int,
+    code: str,
+    message: str,
+    *,
+    param: str | None = None,
+    headers: Mapping[str, str] | None = None,
+    detail: Sequence[Mapping[str, Any]] | None = None,
+) -> JSONResponse:
+    body: JSON
+    if detail is not None:
+        body = {"detail": [dict(item) for item in detail]}
+    else:
+        body = {"detail": [_validation_detail(code, message, param)]}
+    return JSONResponse(body, status_code=status, headers=dict(headers or {}))
+
+
+def _validation_detail(code: str, message: str, param: str | None) -> JSON:
+    loc: list[str | int] = ["body"]
+    if param:
+        loc.extend(_loc_parts(param))
+    msg = _validation_message(code, message)
+    error_type = "missing" if msg == "Field required" else _validation_type(code)
+    return {"loc": loc, "msg": msg, "type": error_type}
+
+
+def _loc_parts(param: str) -> list[str | int]:
+    if param == "body":
+        return []
+    return [int(part) if part.isdigit() else part for part in param.split(".")]
+
+
+def _validation_type(code: str) -> str:
+    if code in {"invalid_json", "invalid_request"}:
+        return "json_invalid" if code == "invalid_json" else "model_attributes_type"
+    if code.startswith("invalid_") or code == "unsupported_field":
+        return "value_error"
+    return code
+
+
+def _validation_message(code: str, message: str) -> str:
+    if code in {"invalid_state", "invalid_model", "invalid_questions"} and "required" in message:
+        return "Field required"
+    return message
+
+
+class NoResponse(Response):
+    async def __call__(self, scope: Mapping[str, Any], receive: Callable[[], Awaitable[Mapping[str, Any]]], send: Callable[[Mapping[str, Any]], Awaitable[None]]) -> None:
+        return None
+
 def _ensure_json_object(value: Any) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise DecisionsError(422, "invalid_request", "Request body must be a JSON object.")
@@ -231,7 +282,9 @@ def validate_systemone_request(payload: Any) -> JSON:
     model = body.get("model")
     if not isinstance(model, str) or not model.strip():
         raise DecisionsError(422, "invalid_model", "model is required.", param="model")
-    if "state" not in body or not isinstance(body["state"], (str, list, dict)):
+    if "state" not in body:
+        raise DecisionsError(422, "invalid_state", "Field required", param="state")
+    if not isinstance(body["state"], (str, list, dict)):
         raise DecisionsError(422, "invalid_state", "state must be a string, object, or array.", param="state")
     questions = body.get("questions")
     if not isinstance(questions, Mapping) or not questions:
@@ -259,23 +312,11 @@ def _validate_question(question_id: str, question: Mapping[str, Any]) -> JSON:
         raise DecisionsError(422, "invalid_question_type", "question type must be noul, choice, or score.", param=f"{param}.type")
 
     if qtype == "noul":
-        criteria = question.get("criteria")
-        if criteria is not None:
-            if not isinstance(criteria, Mapping):
-                raise DecisionsError(422, "invalid_criteria", "noul criteria must be an object.", param=f"{param}.criteria")
-            for key in criteria:
-                if key not in {"true", "false"}:
-                    raise DecisionsError(422, "invalid_criteria", "noul criteria may only contain true and false.", param=f"{param}.criteria")
-                if not _is_structured_text(criteria[key]):
-                    raise DecisionsError(422, "invalid_criteria", "noul criteria values must be strings, objects, or arrays.", param=f"{param}.criteria.{key}")
-        if "instructions" in question and not _is_structured_text(question.get("instructions")):
-            raise DecisionsError(422, "invalid_instructions", "instructions must be a string, object, or array when present.", param=f"{param}.instructions")
-        if "instructions" not in question and not criteria:
-            raise DecisionsError(422, "invalid_instructions", "instructions or non-empty criteria is required.", param=f"{param}.instructions")
+        criteria = _validate_noul_criteria(question.get("criteria"), param)
+        _validate_optional_instructions(question, param)
+        if not _has_instruction(question) and not _criteria_has_meaning(criteria):
+            raise DecisionsError(422, "invalid_instructions", "instructions or meaningful criteria is required.", param=f"{param}.instructions")
         return dict(question)
-
-    if not _is_structured_text(question.get("instructions")):
-        raise DecisionsError(422, "invalid_instructions", "instructions is required.", param=f"{param}.instructions")
 
     if qtype == "choice":
         criteria = question.get("criteria")
@@ -294,6 +335,7 @@ def _validate_question(question_id: str, question: Mapping[str, Any]) -> JSON:
                 raise DecisionsError(422, "invalid_criteria", "choice option names must be non-empty strings.", param=f"{param}.criteria")
             if description is not None and not _is_structured_text(description):
                 raise DecisionsError(422, "invalid_criteria", "choice descriptions must be string, object, array, or null.", param=f"{param}.criteria.{option}")
+        _validate_optional_instructions(question, param)
         return dict(question)
 
     criteria = question.get("criteria")
@@ -309,7 +351,40 @@ def _validate_question(question_id: str, question: Mapping[str, Any]) -> JSON:
     for index, description in enumerate(criteria):
         if not _is_structured_text(description):
             raise DecisionsError(422, "invalid_criteria", "score level descriptions must be strings, objects, or arrays.", param=f"{param}.criteria.{index}")
+    _validate_optional_instructions(question, param)
+    if not _has_instruction(question) and not _criteria_has_meaning(criteria):
+        raise DecisionsError(422, "invalid_instructions", "instructions or meaningful criteria is required.", param=f"{param}.instructions")
     return dict(question)
+
+
+def _validate_optional_instructions(question: Mapping[str, Any], param: str) -> None:
+    if "instructions" in question and question.get("instructions") is not None and not _is_structured_text(question.get("instructions")):
+        raise DecisionsError(422, "invalid_instructions", "instructions must be a string, object, array, or null when present.", param=f"{param}.instructions")
+
+
+def _has_instruction(question: Mapping[str, Any]) -> bool:
+    return "instructions" in question and _is_structured_text(question.get("instructions"))
+
+
+def _criteria_has_meaning(criteria: Any) -> bool:
+    if isinstance(criteria, Mapping):
+        return any(_is_structured_text(value) for value in criteria.values())
+    if isinstance(criteria, list):
+        return any(_is_structured_text(value) for value in criteria)
+    return False
+
+
+def _validate_noul_criteria(criteria: Any, param: str) -> Mapping[Any, Any] | None:
+    if criteria is None:
+        return None
+    if not isinstance(criteria, Mapping):
+        raise DecisionsError(422, "invalid_criteria", "noul criteria must be an object or null.", param=f"{param}.criteria")
+    for key in criteria:
+        if key not in {"true", "false"}:
+            raise DecisionsError(422, "invalid_criteria", "noul criteria may only contain true and false.", param=f"{param}.criteria")
+        if criteria[key] is not None and not _is_structured_text(criteria[key]):
+            raise DecisionsError(422, "invalid_criteria", "noul criteria values must be strings, objects, arrays, or null.", param=f"{param}.criteria.{key}")
+    return criteria
 
 
 def _reject_unknown_fields(value: Mapping[str, Any], allowed: set[str], param: str) -> None:
@@ -338,6 +413,56 @@ async def _call_maybe_async(func: Callable[..., Any], *args: Any) -> Any:
         return await func(*args)
     return await _maybe_await(await asyncio.to_thread(func, *args))
 
+
+
+async def _call_dispatch_with_disconnect(
+    request: Request,
+    deps: DecisionsApiDeps,
+    auth: Any,
+    profile: Any,
+    body: Mapping[str, Any],
+    request_id: str,
+) -> DecisionDispatchResult | None:
+    dispatch_task = asyncio.create_task(_call_maybe_async(deps.dispatch, auth, profile, body, request_id))
+    disconnect_task = asyncio.create_task(_wait_for_disconnect(request))
+    try:
+        done, _pending = await asyncio.wait({dispatch_task, disconnect_task}, return_when=asyncio.FIRST_COMPLETED)
+        if disconnect_task in done and disconnect_task.result():
+            dispatch_task.cancel()
+            try:
+                await dispatch_task
+            except asyncio.CancelledError:
+                pass
+            return None
+        disconnect_task.cancel()
+        try:
+            await disconnect_task
+        except asyncio.CancelledError:
+            pass
+        return await dispatch_task
+    finally:
+        if not dispatch_task.done():
+            dispatch_task.cancel()
+            try:
+                await dispatch_task
+            except asyncio.CancelledError:
+                pass
+        if not disconnect_task.done():
+            disconnect_task.cancel()
+            try:
+                await disconnect_task
+            except asyncio.CancelledError:
+                pass
+
+
+async def _wait_for_disconnect(request: Request) -> bool:
+    receive = request.receive
+    while True:
+        message = await receive()
+        if message.get("type") == "http.disconnect":
+            return True
+        if message.get("type") == "http.request" and message.get("more_body"):
+            continue
 
 def validate_systemone_response(body: Mapping[str, Any], request_body: Mapping[str, Any]) -> None:
     if not isinstance(body.get("model"), str) or not body["model"]:
@@ -436,6 +561,40 @@ def _expect_probabilities(value: Mapping[str, Any], expected_keys: set[str], *, 
         raise BackendShapeError("answer.probabilities values must sum to 1")
 
 
+
+def _systemone_body_for_client(status_code: int, body: Mapping[str, Any]) -> JSON:
+    if status_code != 422:
+        return dict(body)
+    detail = body.get("detail")
+    if _is_validation_detail(detail):
+        return {"detail": list(detail)}
+    error = body.get("error")
+    if isinstance(error, Mapping):
+        return {
+            "detail": [
+                _validation_detail(
+                    str(error.get("code") or "invalid_request"),
+                    str(error.get("message") or "Validation error"),
+                    error.get("param") if isinstance(error.get("param"), str) else None,
+                )
+            ]
+        }
+    return {"detail": [_validation_detail("invalid_request", "Validation error", None)]}
+
+
+def _is_validation_detail(value: Any) -> bool:
+    if not isinstance(value, list):
+        return False
+    for item in value:
+        if not isinstance(item, Mapping):
+            return False
+        loc = item.get("loc")
+        if not isinstance(loc, list) or not isinstance(item.get("msg"), str) or not isinstance(item.get("type"), str):
+            return False
+        if not all((isinstance(part, (str, int)) and not isinstance(part, bool)) for part in loc):
+            return False
+    return True
+
 def _response_headers(request_id: str, result: DecisionDispatchResult) -> dict[str, str]:
     headers = {
         "x-gateway-remote": "1" if result.remote else "0",
@@ -503,7 +662,7 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
                     error_param=exc.param,
                 ),
             )
-            return error_response(
+            return systemone_validation_response(
                 exc.status,
                 exc.code,
                 exc.message,
@@ -522,7 +681,7 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
                     error_code="invalid_json",
                 ),
             )
-            return error_response(
+            return systemone_validation_response(
                 422,
                 "invalid_json",
                 "Request body must be valid JSON.",
@@ -530,7 +689,22 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
             )
 
         try:
-            result = await _call_maybe_async(deps.dispatch, auth, profile, body, request_id)
+            result = await _call_dispatch_with_disconnect(request, deps, auth, profile, body, request_id)
+            if result is None:
+                await _record_receipt(
+                    deps,
+                    auth,
+                    _receipt(
+                        request_id=request_id,
+                        path=request.url.path,
+                        started=started,
+                        requested_model=body.get("model"),
+                        question_count=len(body["questions"]),
+                        status_code=499,
+                        error_code="client_disconnected",
+                    ),
+                )
+                return NoResponse()
         except DecisionsError as exc:
             await _record_receipt(
                 deps,
@@ -546,6 +720,14 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
                     error_param=exc.param,
                 ),
             )
+            if exc.status == 422:
+                return systemone_validation_response(
+                    exc.status,
+                    exc.code,
+                    exc.message,
+                    param=exc.param,
+                    headers=_request_headers(request_id, exc.headers),
+                )
             return error_response(
                 exc.status,
                 exc.code,
@@ -618,7 +800,7 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
             ),
         )
 
-        return JSONResponse(dict(result.body), status_code=result.status_code, headers=_response_headers(request_id, result))
+        return JSONResponse(_systemone_body_for_client(result.status_code, result.body), status_code=result.status_code, headers=_response_headers(request_id, result))
 
     app.add_api_route("/v1/systemone", systemone, methods=["POST"])
     app.add_api_route("/typesafe/v1/systemone", systemone, methods=["POST"])

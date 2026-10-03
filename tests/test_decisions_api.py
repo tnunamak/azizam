@@ -80,11 +80,12 @@ class FakeDeps:
                     "confidence": 0.6,
                 }
             else:
+                selected = min(1, len(question["criteria"]) - 1)
                 answers[question_id] = {
                     "type": "score",
-                    "score": 1.0,
+                    "score": float(selected),
                     "legend": {str(i): value for i, value in enumerate(question["criteria"])},
-                    "probabilities": {str(i): 1.0 if i == 1 else 0.0 for i, _ in enumerate(question["criteria"])},
+                    "probabilities": {str(i): 1.0 if i == selected else 0.0 for i, _ in enumerate(question["criteria"])},
                     "confidence": 0.9,
                 }
         return DecisionDispatchResult(
@@ -117,6 +118,22 @@ def _fixture(name: str) -> dict:
 
 
 H = {"authorization": "Bearer good"}
+
+
+def _assert_detail_error(resp, param: str | None = None, needle: str | None = None) -> dict:
+    payload = resp.json()
+    assert "error" not in payload
+    detail = payload["detail"]
+    assert isinstance(detail, list) and len(detail) == 1
+    item = detail[0]
+    assert isinstance(item["loc"], list)
+    assert isinstance(item["msg"], str) and item["msg"]
+    assert isinstance(item["type"], str) and item["type"]
+    if param is not None:
+        assert item["loc"] == ["body", *[int(part) if part.isdigit() else part for part in param.split(".")]]
+    if needle is not None:
+        assert needle in item["msg"]
+    return item
 
 
 class GatewaySdkTransport:
@@ -259,7 +276,7 @@ def test_systemone_request_validation_errors_use_typesafe_detail_envelope(env):
 @pytest.mark.parametrize(
     "patch,param,needle",
     [
-        ({"model": ""}, "model", "model is required"),
+        ({"model": ""}, "model", "Field required"),
         ({"state": 3}, "state", "state must be a string"),
         ({"questions": {}}, "questions", "questions must be a non-empty object"),
         ({"questions": {"q": {"type": "maybe", "instructions": "x"}}}, "questions.q.type", "question type"),
@@ -273,11 +290,8 @@ def test_validation_errors_are_typesafe_shaped_and_do_not_call_backend(env, patc
     body.update(patch)
     resp = env.client.post("/v1/systemone", json=body, headers=H)
     assert resp.status_code == 422
-    error = resp.json()["error"]
-    assert error["param"] == param
-    assert needle in error["message"]
+    _assert_detail_error(resp, param=param, needle=needle)
     assert env.fakes.calls == []
-    assert env.fakes.receipts[0][1].error_code == error["code"]
     assert env.fakes.receipts[0][1].error_param == param
 
 
@@ -286,13 +300,13 @@ def test_unknown_top_level_and_question_fields_are_rejected(env):
     body["temperature"] = 0
     resp = env.client.post("/v1/systemone", json=body, headers=H)
     assert resp.status_code == 422
-    assert resp.json()["error"]["param"] == "temperature"
+    _assert_detail_error(resp, param="temperature")
 
     body = _fixture("typesafe_systemone_noul.json")["request"]
     body["questions"]["is_urgent"]["max_tokens"] = 1
     resp = env.client.post("/v1/systemone", json=body, headers=H)
     assert resp.status_code == 422
-    assert resp.json()["error"]["param"] == "questions.is_urgent.max_tokens"
+    _assert_detail_error(resp, param="questions.is_urgent.max_tokens")
 
 
 def test_openapi_nullable_instruction_rules_cover_choice_and_score_questions():
@@ -332,6 +346,25 @@ def test_choice_accepts_missing_or_null_instructions_when_criteria_are_descripti
     assert sent["tone"]["instructions"] is None
 
 
+
+def test_choice_accepts_null_instructions_with_null_descriptions_because_option_names_are_meaningful(env):
+    body = _fixture("typesafe_systemone_noul.json")["request"]
+    body["questions"] = {
+        "department": {
+            "type": "choice",
+            "instructions": None,
+            "criteria": {"billing": None, "support": None},
+        }
+    }
+
+    resp = env.client.post("/v1/systemone", json=body, headers=H)
+
+    assert resp.status_code == 200, resp.text
+    sent = env.fakes.calls[0][1]["questions"]["department"]
+    assert sent["instructions"] is None
+    assert sent["criteria"] == {"billing": None, "support": None}
+
+
 def test_score_accepts_null_instructions_with_descriptive_single_level_criteria(env):
     body = _fixture("typesafe_systemone_noul.json")["request"]
     body["questions"] = {
@@ -355,7 +388,7 @@ def test_validation_handles_non_string_type_and_criteria_only_noul(env):
     body["questions"]["is_urgent"]["type"] = ["noul"]
     resp = env.client.post("/v1/systemone", json=body, headers=H)
     assert resp.status_code == 422
-    assert resp.json()["error"]["param"] == "questions.is_urgent.type"
+    _assert_detail_error(resp, param="questions.is_urgent.type")
 
     body = _fixture("typesafe_systemone_noul.json")["request"]
     del body["questions"]["is_urgent"]["instructions"]
@@ -366,13 +399,13 @@ def test_validation_handles_non_string_type_and_criteria_only_noul(env):
     body["questions"]["is_urgent"]["instructions"] = 7
     resp = env.client.post("/v1/systemone", json=body, headers=H)
     assert resp.status_code == 422
-    assert resp.json()["error"]["param"] == "questions.is_urgent.instructions"
+    _assert_detail_error(resp, param="questions.is_urgent.instructions")
 
     body = _fixture("typesafe_systemone_noul.json")["request"]
     body["questions"]["is_urgent"]["criteria"]["true"] = 1
     resp = env.client.post("/v1/systemone", json=body, headers=H)
     assert resp.status_code == 422
-    assert resp.json()["error"]["param"] == "questions.is_urgent.criteria.true"
+    _assert_detail_error(resp, param="questions.is_urgent.criteria.true")
 
 
 def test_malformed_json_returns_422_and_records_receipt(env):
@@ -382,11 +415,7 @@ def test_malformed_json_returns_422_and_records_receipt(env):
         headers={**H, "content-type": "application/json"},
     )
     assert resp.status_code == 422
-    assert resp.json()["error"] == {
-        "message": "Request body must be valid JSON.",
-        "type": "invalid_request_error",
-        "code": "invalid_json",
-    }
+    _assert_detail_error(resp, needle="valid JSON")
     assert resp.headers["x-gateway-request-id"].startswith("req_")
     assert env.fakes.calls == []
     assert env.fakes.receipts[0][1].status_code == 422
@@ -531,11 +560,47 @@ def test_backend_error_statuses_are_relayed_without_response_validation(env, sta
     )
     resp = env.client.post("/v1/systemone", json=_fixture("typesafe_systemone_noul.json")["request"], headers=H)
     assert resp.status_code == status
-    assert resp.json() == body
+    if status == 422:
+        _assert_detail_error(resp, needle="backend says no")
+    else:
+        assert resp.json() == body
     assert resp.headers["x-gateway-request-id"].startswith("req_")
     for key, value in headers.items():
         assert resp.headers[key] == value
     assert env.fakes.receipts[0][1].status_code == status
+
+
+
+def test_backend_422_detail_is_preserved(env):
+    body = {"detail": [{"loc": ["body", "state"], "msg": "backend context too long", "type": "context_length_exceeded"}]}
+    env.fakes.reply = lambda _body: DecisionDispatchResult(
+        body=body,
+        status_code=422,
+        backend="decider-cpu",
+    )
+
+    resp = env.client.post("/v1/systemone", json=_fixture("typesafe_systemone_noul.json")["request"], headers=H)
+
+    assert resp.status_code == 422
+    assert resp.json() == body
+    assert env.fakes.receipts[0][1].status_code == 422
+
+
+
+def test_backend_422_invalid_detail_falls_back_to_valid_detail(env):
+    env.fakes.reply = lambda _body: DecisionDispatchResult(
+        body={"detail": [{"loc": ["body", True], "msg": "bad", "type": "bad"}]},
+        status_code=422,
+        backend="decider-cpu",
+    )
+
+    resp = env.client.post("/v1/systemone", json=_fixture("typesafe_systemone_noul.json")["request"], headers=H)
+
+    assert resp.status_code == 422
+    item = resp.json()["detail"][0]
+    assert item["loc"] == ["body"]
+    assert item["msg"] == "Validation error"
+    assert item["type"] == "model_attributes_type"
 
 
 def test_invalid_backend_response_is_rejected_before_client_response(env):
