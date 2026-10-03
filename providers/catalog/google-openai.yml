@@ -1,0 +1,19 @@
+id: google-openai
+display_name: Google Gemini OpenAI-compatible
+logo_key: google
+base_url: https://generativelanguage.googleapis.com/v1beta/openai
+protocol: openai-chat
+litellm_provider: openai
+auth:
+  header: Authorization
+  prefix: Bearer
+model_listing:
+  method: GET
+  path: /models
+  items_path: data
+  id_path: id
+docs_url: https://ai.google.dev/gemini-api/docs/openai
+key_url: https://aistudio.google.com/apikey
+billing_dimensions:
+  - prompt_tokens
+  - completion_tokens

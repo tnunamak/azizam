@@ -21,7 +21,7 @@ from typing import Any, Mapping
 
 import httpx
 
-from gateway import admin_store
+from gateway import admin_store, secret_store
 from gateway.policy import AppProfile, PolicyRequest, evaluate
 from gateway.service_registry import canonical_provider_id, is_remote_provider_config
 
@@ -129,13 +129,21 @@ class ProviderRef:
     price: Mapping[str, Any]
     config: Mapping[str, Any]
     enabled: bool = True
+    api_key_secret_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "id", canonical_provider_id(self.id))
 
     @property
     def configured(self) -> bool:
-        return bool(self.api_key_env and os.environ.get(self.api_key_env))
+        if self.api_key_secret_id:
+            try:
+                return bool(resolve_provider_api_key(self, db_path=admin_store.DB_PATH))
+            except Exception:
+                return False
+        if self.api_key_env and os.environ.get(self.api_key_env):
+            return True
+        return False
 
 
 @dataclass(frozen=True)
@@ -198,19 +206,23 @@ def provider_lookup(
         or config.get("default_base_url")
         or ""
     ).rstrip("/")
+    resolved_provider_id = canonical_provider_id(config.get("provider_id") or raw.get("id") or provider_id)
+    api_key_env = (
+        str(config["api_key_env"])
+        if isinstance(config.get("api_key_env"), str) and config.get("api_key_env")
+        else None
+    )
+    api_key_secret_id = str(config.get("api_key_secret_id") or "").strip()
     return ProviderRef(
-        id=canonical_provider_id(config.get("provider_id") or raw.get("id") or provider_id),
+        id=resolved_provider_id,
         base_url=base_url,
         protocols=protocols,
-        api_key_env=(
-            str(config["api_key_env"])
-            if isinstance(config.get("api_key_env"), str) and config.get("api_key_env")
-            else None
-        ),
+        api_key_env=api_key_env,
         cost_class=str(config.get("cost_class") or config.get("provider_type") or "paid-remote"),
         price=config.get("price") if isinstance(config.get("price"), Mapping) else {},
         config=config,
         enabled=_bool_from_value(raw.get("enabled"), True),
+        api_key_secret_id=api_key_secret_id or None,
     )
 
 
@@ -741,7 +753,7 @@ async def call_typesafe_systemone(
     request_id: str | None = None,
 ) -> tuple[dict[str, Any], Cost, Usage, Reservation]:
     require_remote_allowed(profile, provider, paid_fallback=paid_fallback)
-    api_key = os.environ.get(provider.api_key_env or "")
+    api_key = resolve_provider_api_key(provider, db_path=admin_db_path)
     if not api_key:
         raise ProviderKeyMissing(f"provider {provider.id!r} key is missing")
     reservation = reserve_provider_spend(
@@ -798,6 +810,22 @@ def _raise_mapped_response_error(response: httpx.Response) -> None:
             "remote provider rate limited the request",
             retry_after=response.headers.get("retry-after"),
         )
+
+
+def resolve_provider_api_key(provider: ProviderRef, *, db_path: Path | None = None) -> str:
+    if provider.api_key_secret_id:
+        try:
+            return secret_store.get_provider_secret(
+                provider.api_key_secret_id,
+                db_path=db_path or admin_store.DB_PATH,
+            )
+        except Exception:
+            return ""
+    if provider.api_key_env:
+        value = os.environ.get(provider.api_key_env, "")
+        if value:
+            return value
+    return ""
     if response.status_code >= 400:
         status_code = response.status_code if response.status_code < 500 else 502
         raise ProviderUpstreamError(

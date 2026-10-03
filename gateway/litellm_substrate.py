@@ -16,12 +16,14 @@ Explicit limitations:
 from __future__ import annotations
 
 import os
+import hashlib
 from pathlib import Path
 from collections.abc import Iterable, Mapping
 from typing import Any
 
 import yaml
 
+from gateway.provider_catalog import load_provider_catalog
 from gateway.service_registry import (
     canonical_provider_id,
     is_litellm_service_record,
@@ -31,7 +33,6 @@ from gateway.service_registry import (
 )
 
 OPENAI_COMPATIBLE_PROTOCOLS = frozenset({"openai", "openai-compatible"})
-REMOTE_LITELLM_PROVIDERS = frozenset({"openai", "anthropic", "openrouter"})
 SECRET_PLACEHOLDER = "<external-secret>"
 DEFAULT_GATEWAY_LIFECYCLE_BASE_URL = "http://127.0.0.1:5000/internal/litellm/local"
 DEFAULT_GATEWAY_CURRENT_BASE_URL = "http://127.0.0.1:5000/internal/litellm/current/v1"
@@ -154,10 +155,14 @@ def litellm_provider_key_statuses(
             continue
         provider_id = _provider_id(service, config)
         env_name = str(config.get("api_key_env") or "")
+        secret_id = str(config.get("api_key_secret_id") or "")
         statuses[provider_id] = {
             "service_id": service["id"],
             "api_key_env": env_name,
-            "key_status": "set" if env_name and bool(environ.get(env_name)) else "missing",
+            "api_key_secret_id": secret_id,
+            "key_status": "set" if (
+                env_name and bool(environ.get(env_name))
+            ) else "unknown" if secret_id else "missing",
         }
     return statuses
 
@@ -259,6 +264,8 @@ def _deployment_records(service: Mapping[str, Any]) -> list[dict[str, Any]]:
         elif isinstance(raw, str):
             item = {"id": raw, "upstream_model": raw}
         else:
+            continue
+        if item.get("enabled") is False:
             continue
 
         upstream_model = str(
@@ -405,6 +412,7 @@ def _model_list_entries(
                         "gateway_provider_id": _provider_id(service, config),
                         "gateway_provider_type": str(config.get("provider_type") or ""),
                         "gateway_api_key_env": str(config.get("api_key_env") or ""),
+                        "gateway_api_key_secret_id": str(config.get("api_key_secret_id") or ""),
                     }
                 )
 
@@ -435,7 +443,7 @@ def _validate_remote_compile_shape(service: Mapping[str, Any], config: Mapping[s
         raise ValueError(
             f"remote LiteLLM service {service.get('id')!r} must be kind 'provider'"
         )
-    if provider in REMOTE_LITELLM_PROVIDERS and not remote_provider:
+    if provider in _remote_litellm_providers() and not remote_provider:
         raise ValueError(
             f"LiteLLM service {service.get('id')!r} looks remote but is not marked as a remote provider"
         )
@@ -478,6 +486,14 @@ def _contains_fallback_config(value: Any) -> bool:
     elif isinstance(value, list):
         return any(_contains_fallback_config(item) for item in value)
     return False
+
+
+def _remote_litellm_providers() -> frozenset[str]:
+    return frozenset(
+        canonical_provider_id(preset.litellm_provider)
+        for preset in load_provider_catalog().values()
+        if preset.litellm_provider
+    )
 
 
 def _provider_id(service: Mapping[str, Any], config: Mapping[str, Any]) -> str:
@@ -537,6 +553,15 @@ def _api_key_ref(config: Mapping[str, Any], secret_refs: Mapping[str, Any]) -> s
     env_name = config.get("api_key_env") or config.get("api_key_ref")
     if env_name:
         return f"os.environ/{env_name}"
+    secret_id = str(config.get("api_key_secret_id") or "").strip()
+    if secret_id:
+        env_name = secret_env_name_for_provider(str(config.get("provider_id") or ""), secret_id)
+        return f"os.environ/{env_name}"
     if secret_refs.get("api_key") == SECRET_PLACEHOLDER:
         return "os.environ/AI_GATEWAY_DOWNSTREAM_API_KEY"
     return ""
+
+
+def secret_env_name_for_provider(provider_id: str, secret_id: str) -> str:
+    digest = hashlib.sha256(f"{canonical_provider_id(provider_id)}\0{secret_id}".encode("utf-8")).hexdigest()[:16]
+    return f"AI_GATEWAY_PROVIDER_SECRET_{digest.upper()}"

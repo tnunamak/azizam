@@ -19,6 +19,7 @@ from gateway.litellm_substrate import (
     litellm_known_model_names,
     litellm_provider_key_statuses,
     litellm_provider_model_lookup,
+    secret_env_name_for_provider,
     write_litellm_config_artifact,
 )
 
@@ -242,6 +243,32 @@ def test_references_external_secrets_without_exposing_secret_values() -> None:
     assert "metadata" not in compiled
 
 
+def test_secret_store_refs_compile_to_deterministic_env_indirection() -> None:
+    compiled = compile_litellm_substrate_config(
+        {
+            "openrouter": {
+                "kind": "provider",
+                "capabilities": ["openai"],
+                "config": {
+                    "remote_provider": True,
+                    "provider_id": "openrouter",
+                    "protocol": "openai-compatible",
+                    "base_url": "https://openrouter.ai/api/v1",
+                    "api_key_secret_id": "provider:openrouter:api_key",
+                    "models": ["anthropic/claude-sonnet"],
+                },
+            }
+        }
+    )
+
+    params = compiled["model_list"][0]["litellm_params"]
+    assert params["api_key"].startswith("os.environ/AI_GATEWAY_PROVIDER_SECRET_")
+    assert "provider:openrouter:api_key" not in repr(params)
+    assert secret_env_name_for_provider("my-provider", "provider:my-provider:api_key") != (
+        secret_env_name_for_provider("my_provider", "provider:my_provider:api_key")
+    )
+
+
 def test_remote_openrouter_models_are_provider_prefixed() -> None:
     compiled = compile_litellm_substrate_config(
         {
@@ -450,6 +477,7 @@ def test_remote_provider_key_status_reports_only_set_or_missing() -> None:
     assert missing["openai"] == {
         "service_id": "openai",
         "api_key_env": "OPENAI_API_KEY",
+        "api_key_secret_id": "",
         "key_status": "missing",
     }
     assert present["openai"]["key_status"] == "set"

@@ -63,6 +63,7 @@ class StartScriptGracefulStopTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp)
             shutil.copy(ROOT / "start.sh", work / "start.sh")
+            shutil.copytree(ROOT / "gateway", work / "gateway")
             (work / "start.sh").chmod(0o755)
             requirements = work / "requirements.txt"
             requirements.write_text("# none\n")

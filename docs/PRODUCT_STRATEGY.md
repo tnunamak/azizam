@@ -81,7 +81,7 @@ queues, and reachability.
 to "Engines", but the existing Services route stays unchanged for compatibility.
 
 **Providers** shows remote providers. It lets the owner enable or disable a
-provider, see whether its key is configured by environment reference, configure
+provider, enter an encrypted write-only key or use an environment reference, configure
 model allow-lists and spend caps, view spend to date, and decide which access
 plans may use it. It must state that requests go remote only when a model or
 alias names a remote provider. The gateway must never fall back from free to
@@ -140,9 +140,15 @@ reduced-motion behavior.
 
 ## Architecture decisions
 
+Integration knowledge is data. Shipped provider catalog files declare endpoints,
+protocols, authentication, model listing, pricing paths, and billing dimensions.
+Operators can extend those files and configure providers through the UI. Code
+dispatches by protocol, never by vendor name.
+
 LiteLLM is the execution substrate for chat-shaped local and remote models. The
 gateway is the one control plane for keys, people, access plans, budgets, spend
-caps, provider-key custody by environment reference, and receipts. LiteLLM must
+caps, encrypted write-only provider-key custody, and receipts. Environment
+references remain an alternative to UI-entered keys. LiteLLM must
 be pinned, hash-locked, and treated as a replaceable execution dependency. The
 virtual-key bypass is to be retired for paid models.
 
@@ -174,8 +180,8 @@ boundary only behind behavior-preservation tests.
 truth, route matrix, LiteLLM decision updates, OSS hygiene, depersonalized
 examples, and dependency pinning.
 
-**W1 engines and providers** covers decisions, provider registry, environment
-variable key references, LiteLLM routing, spend caps, cost receipts, policy, and
+**W1 engines and providers** covers decisions, provider registry, encrypted keys
+and environment references, LiteLLM routing, spend caps, cost receipts, policy, and
 OpenAI `/v1/decisions` passthrough reservation.
 
 **W2 accounts** covers built-in accounts, invites, cross-user isolation, and LLM

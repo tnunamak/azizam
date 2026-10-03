@@ -1,0 +1,25 @@
+id: together
+display_name: Together AI
+logo_key: together
+base_url: https://api.together.ai/v1
+protocol: openai-chat
+litellm_provider: together_ai
+auth:
+  header: Authorization
+  prefix: Bearer
+model_listing:
+  method: GET
+  path: /models
+  items_path: ""
+  id_path: id
+  name_path: display_name
+  pricing_path: pricing
+  prices:
+    input_usd_per_million_tokens: {path: pricing.input, scale: "1"}
+    output_usd_per_million_tokens: {path: pricing.output, scale: "1"}
+    cache_read_input_usd_per_million_tokens: {path: pricing.cached_input, scale: "1"}
+docs_url: https://docs.together.ai
+key_url: https://api.together.xyz/settings/api-keys
+billing_dimensions:
+  - prompt_tokens
+  - completion_tokens

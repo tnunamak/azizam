@@ -144,6 +144,7 @@ def test_provider_admin_reports_missing_env_keys_over_real_tcp(
         payload = response.json()
         assert payload["provider"]["key_status"] == {
             "state": "missing",
+            "source": "env",
             "api_key_env": env_name,
         }
         assert env_name in response.text

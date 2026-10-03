@@ -1,0 +1,19 @@
+id: deepseek
+display_name: DeepSeek
+logo_key: deepseek
+base_url: https://api.deepseek.com/v1
+protocol: openai-chat
+litellm_provider: deepseek
+auth:
+  header: Authorization
+  prefix: Bearer
+model_listing:
+  method: GET
+  path: /models
+  items_path: data
+  id_path: id
+docs_url: https://api-docs.deepseek.com
+key_url: https://platform.deepseek.com/api_keys
+billing_dimensions:
+  - prompt_tokens
+  - completion_tokens

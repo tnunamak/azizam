@@ -2,8 +2,65 @@
 
 Remote providers are paid or externally hosted backends that the gateway can
 reach only when the owner configured them and the caller's access plan permits
-them.  Secrets stay outside the gateway database.  The registry stores only the
-environment variable name that holds each provider key.
+them. Owners can enter a write-only key in Providers or reference an environment
+variable. UI-entered values are encrypted in `admin.db`; the registry carries
+references, never plaintext keys.
+
+## Connect a provider
+
+Open **Providers** and select **Add provider**. Choose a shipped preset or a
+generic compatible endpoint, enter a key or environment-variable name, and
+test the connection. The test lists models; presets can also declare an
+authentication probe when model listing alone does not verify the key.
+Choose models, review their input/output prices, set daily and monthly caps,
+and select the access plans that may use the provider. Missing prices require
+operator input before enabling a paid model.
+
+Saved configuration updates the registry and generated LiteLLM configuration.
+The gateway applies registry changes live. The managed LiteLLM launcher reloads
+its child when the configuration or stored credentials change. Allow the
+configured watcher interval for that reconciliation; saving a record does not
+prove that the upstream provider or execution sidecar is ready.
+
+## Catalog data
+
+`providers/catalog/*.yml` holds provider setup facts: names and logo keys, base
+URLs, protocols, authentication headers, model-list paths and price mappings,
+documentation/key URLs, supported billing dimensions, and recommendations.
+Add a catalog file to extend setup choices. Generic presets let an operator
+connect another compatible service without a vendor-specific code change.
+Catalog files are provisioning data; saved service records remain the runtime
+source of truth. Missing model-list prices mean unknown, not free.
+
+## Key custody and threat model
+
+The provider secret store encrypts values with AES-256-GCM and a fresh nonce
+for each write. Ciphertext is bound to its secret record identity. A separate
+`provider-secrets.key` file in the directory containing `admin.db` supplies the
+encryption key; its permissions are 0600. APIs return only whether a key is
+set, its last four characters, and its update time. Owners can replace or
+delete a key; no API retrieves its value.
+
+Generated LiteLLM YAML contains `os.environ/` references. The managed launcher
+decrypts UI-entered keys into the sidecar's environment immediately before
+starting it. No plaintext provider key is written into YAML or command
+arguments. Environment-variable references remain an alternative and do not
+copy the environment value into the secret store.
+
+This protects a database copy taken without its encryption key. It does not
+protect against an attacker who controls the gateway's operating-system
+account, can read both files, or can inspect gateway/sidecar process memory.
+That account and privileged processes can also inspect the child environment.
+Use HTTPS for browser-to-gateway traffic and provider endpoints, restrict
+filesystem access, and keep request-body logging disabled on credential APIs.
+Owner authentication and CSRF checks protect writes; upstream response bodies
+and authentication headers must not become logs, receipts, or API errors.
+
+Back up the database and encryption key with restricted access. Restoring only
+the database cannot restore stored provider credentials. Losing the key file
+requires entering replacement provider credentials. Rotating a provider key
+replaces that credential, not the encryption key. Deleting a secret removes
+the active record; historical backups may still contain its ciphertext.
 
 ## Service Registry Schema
 
@@ -36,15 +93,17 @@ The important fields are:
 
 - `remote_provider: true`, `paid_remote: true`, or `provider_type` /
   `cost_class` set to `remote`, `paid-remote`, or `cloud`.
-- `api_key_env`: the environment variable name. The actual key value must be in
-  the process environment or deployment secret store.
+- `api_key_env`: the environment variable name used by LiteLLM. For an
+  environment reference, deployment supplies its value. For an encrypted UI
+  key, the gateway supplies it only to the execution process at runtime.
 - `models`: the provider-qualified public model names the gateway may route.
 - `price`: optional cost table used for pre-call estimates. If a capped request
   has no bounded cost estimate, the request fails closed before the provider
   call.
 
-Inline provider keys are rejected by the service registry. Use `api_key_env`;
-do not put raw keys in YAML, `admin.db`, receipts, logs, or tests. Remote or paid
+Inline provider keys are rejected by the service registry. Use the Providers
+credential API or an `api_key_env` reference; do not put raw keys in YAML,
+registry records, receipts, or logs. Remote or paid
 providers cannot enable `native_passthrough`; their calls must use the paid
 admission and accounting path. The native handler also rejects remote records
 before injecting authentication or opening an upstream connection.
@@ -205,7 +264,7 @@ cap enforcement.
 
 ## Deployment Notes
 
-Set provider keys in the gateway service environment, for example:
+Alternatively, set provider keys in the gateway service environment, for example:
 
 ```bash
 OPENROUTER_API_KEY=...

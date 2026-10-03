@@ -9,7 +9,7 @@ from decimal import Decimal
 from contextlib import closing
 from pathlib import Path
 from typing import Any, Mapping
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
@@ -54,6 +54,24 @@ class SqliteProviderAdminStore:
     def list_profiles(self) -> list[dict[str, Any]]:
         return list(self.profiles)
 
+    def get_profile(self, profile_id: str) -> dict[str, Any] | None:
+        for row in self.profiles:
+            if row.get("id") == profile_id or row.get("record_id") == profile_id:
+                return dict(row)
+        return None
+
+    def update_profile(
+        self, *, profile_id: str, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any] | None:
+        for index, row in enumerate(self.profiles):
+            if row.get("id") == profile_id or row.get("record_id") == profile_id:
+                updated = dict(row)
+                updated.update(data)
+                self.profiles[index] = updated
+                self.audit.append({"action": "profile.update", "actor": actor.subject})
+                return updated
+        return None
+
     def get_provider_admin_state(self) -> dict[str, Any]:
         return provider_admin_setting_from_store(path=self.path)
 
@@ -65,6 +83,8 @@ class SqliteProviderAdminStore:
 
 class FakeProviderAdminStore:
     def __init__(self) -> None:
+        self._test_dir = tempfile.TemporaryDirectory()
+        self.path = Path(self._test_dir.name) / "admin.db"
         self.registry = {
             "schema_version": 1,
             "services": {
@@ -141,6 +161,24 @@ class FakeProviderAdminStore:
     def list_profiles(self) -> list[dict[str, Any]]:
         return list(self.profiles)
 
+    def get_profile(self, profile_id: str) -> dict[str, Any] | None:
+        for row in self.profiles:
+            if row.get("id") == profile_id or row.get("record_id") == profile_id:
+                return dict(row)
+        return None
+
+    def update_profile(
+        self, *, profile_id: str, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any] | None:
+        for index, row in enumerate(self.profiles):
+            if row.get("id") == profile_id or row.get("record_id") == profile_id:
+                updated = dict(row)
+                updated.update(data)
+                self.profiles[index] = updated
+                self.audit.append({"action": "profile.update", "actor": actor.subject})
+                return updated
+        return None
+
     def get_provider_admin_state(self) -> dict[str, Any]:
         return self.provider_admin_state
 
@@ -153,6 +191,37 @@ class FakeProviderAdminStore:
             "actor": actor.subject,
         })
         return self.provider_admin_state
+
+    def add_service(
+        self, *, data: Mapping[str, Any], actor: AdminContext, expected_generation: int
+    ) -> dict[str, Any]:
+        raw = dict(data)
+        service_id = str(raw["id"])
+        self.registry.setdefault("services", {})[service_id] = {
+            "id": service_id,
+            "name": raw.get("name") or service_id,
+            "kind": raw.get("kind") or "provider",
+            "enabled": raw.get("enabled", True),
+            "capabilities": raw.get("capabilities") or ["openai"],
+            "config": raw.get("config") or {},
+            "secret_refs": raw.get("secret_refs") or {},
+        }
+        self.audit.append({"action": "operator.service.add", "actor": actor.subject})
+        return {"value": self.registry}
+
+    def update_service(
+        self, service_id: str, *, data: Mapping[str, Any], actor: AdminContext, expected_generation: int
+    ) -> dict[str, Any]:
+        self.registry["services"][service_id] = dict(data)
+        self.audit.append({"action": "operator.service.update", "actor": actor.subject})
+        return {"value": self.registry}
+
+    def remove_service(
+        self, service_id: str, *, actor: AdminContext, expected_generation: int
+    ) -> dict[str, Any]:
+        self.registry["services"].pop(service_id, None)
+        self.audit.append({"action": "operator.service.remove", "actor": actor.subject})
+        return {"value": self.registry}
 
 
 def _client(
@@ -169,6 +238,130 @@ def _client(
 
 
 class ProviderAdminApiTests(unittest.TestCase):
+    def test_catalog_endpoint_lists_presets_without_secrets(self) -> None:
+        store = FakeProviderAdminStore()
+        response = _client(store).get(
+            "/admin/api/providers/-/catalog",
+            headers={"authorization": "Bearer admin"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        ids = {row["id"] for row in response.json()["providers"]}
+        self.assertIn("openrouter", ids)
+        self.assertIn("generic-openai", ids)
+        self.assertNotIn("sk-", response.text)
+
+    def test_add_provider_uses_catalog_data_and_secret_store_ref(self) -> None:
+        store = FakeProviderAdminStore()
+        store.registry["services"].pop("openrouter")
+        client = _client(store)
+        response = client.post(
+            "/admin/api/providers",
+            headers={"authorization": "Bearer admin"},
+            json={
+                "preset_id": "openrouter",
+                "expected_generation": 0,
+                "api_key": "sk-test-openrouter",
+                "models": [{"id": "anthropic/claude-sonnet", "price": {"input_usd_per_million_tokens": "3", "output_usd_per_million_tokens": "15"}}],
+            },
+        )
+
+        self.assertEqual(response.status_code, 201)
+        service = store.registry["services"]["openrouter"]
+        self.assertEqual(service["config"]["api_key_secret_id"], "provider:openrouter:api_key")
+        self.assertEqual(service["config"]["model_listing"]["pricing_path"], "pricing")
+        self.assertEqual(service["config"]["model_policy_schema_version"], 1)
+        self.assertEqual(
+            service["config"]["price"]["models"]["openrouter/anthropic/claude-sonnet"],
+            {"input_usd_per_million_tokens": "3", "output_usd_per_million_tokens": "15"},
+        )
+        provider = response.json()["provider"]
+        self.assertEqual(provider["key_status"]["state"], "set")
+        self.assertTrue(provider["key_status"]["api_key_env"].startswith("AI_GATEWAY_PROVIDER_SECRET_"))
+        self.assertNotIn("sk-", response.text)
+
+    def test_set_rotate_and_delete_provider_key_never_returns_secret_value(self) -> None:
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        db_path = Path(tmpdir.name) / "admin.db"
+        store = FakeProviderAdminStore()
+        store.path = db_path
+        store.registry["services"]["openrouter"]["config"].pop("api_key_env", None)
+        store.registry["services"]["openrouter"]["config"]["api_key_secret_id"] = "provider:openrouter:api_key"
+        client = _client(store)
+
+        first = client.put(
+            "/admin/api/providers/openrouter/key",
+            headers={"authorization": "Bearer admin"},
+            json={"api_key": "sk-test-4f2a"},
+        )
+        second = client.put(
+            "/admin/api/providers/openrouter/key",
+            headers={"authorization": "Bearer admin"},
+            json={"api_key": "sk-test-beef"},
+        )
+        deleted = client.delete(
+            "/admin/api/providers/openrouter/key",
+            headers={"authorization": "Bearer admin"},
+        )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.json()["key_status"]["suffix"], "4f2a")
+        self.assertEqual(second.json()["key_status"]["suffix"], "beef")
+        self.assertEqual(deleted.json()["key_status"]["state"], "missing")
+        self.assertNotIn("sk-test", first.text + second.text + deleted.text)
+
+    def test_provider_test_requires_configured_key_and_reports_model_listing_only(self) -> None:
+        store = FakeProviderAdminStore()
+        client = _client(store)
+        with patch.dict(os.environ, {}, clear=True):
+            missing = client.post(
+                "/admin/api/providers/openrouter/test",
+                headers={"authorization": "Bearer admin"},
+            )
+        self.assertEqual(missing.status_code, 400)
+
+        result = {"ok": True, "reachable": True, "checked_at": 1700000000, "models": []}
+        with patch.dict(os.environ, {"OPENROUTER_API_KEY": "sk-live-secret"}, clear=False), patch("gateway.provider_admin.provider_listing.probe_provider", new=AsyncMock(return_value=result)) as probe:
+            ok = client.post(
+                "/admin/api/providers/openrouter/test",
+                headers={"authorization": "Bearer admin"},
+            )
+        self.assertEqual(ok.status_code, 200)
+        self.assertEqual(ok.json(), result)
+        probe.assert_awaited_once()
+        self.assertNotIn("sk-live-secret", ok.text)
+
+    def test_unsaved_test_models_update_and_remove_contract(self) -> None:
+        store = FakeProviderAdminStore()
+        client = _client(store)
+
+        with patch("gateway.provider_admin.provider_listing.probe_provider", new=AsyncMock(return_value={"ok": True, "models": []})):
+            unsaved = client.post(
+                "/admin/api/providers/-/test",
+                headers={"authorization": "Bearer admin"},
+                json={"preset_id": "openrouter", "api_key": "sk-test-12345"},
+            )
+        models = client.put(
+            "/admin/api/providers/openrouter/models",
+            headers={"authorization": "Bearer admin"},
+            json={"models": [{"id": "anthropic/claude-haiku", "enabled": True, "price": {"input_usd_per_million_tokens": "1", "output_usd_per_million_tokens": "5"}}]},
+        )
+        model_rows = store.registry["services"]["openrouter"]["config"]["models"]
+        removed = client.request(
+            "DELETE",
+            "/admin/api/providers/openrouter",
+            headers={"authorization": "Bearer admin"},
+            json={},
+        )
+
+        self.assertEqual(unsaved.status_code, 200)
+        self.assertEqual(models.status_code, 200)
+        self.assertEqual(model_rows[0]["model_group"], "openrouter/anthropic/claude-haiku")
+        self.assertTrue(model_rows[0]["enabled"])
+        self.assertEqual(removed.status_code, 200)
+        self.assertNotIn("openrouter", store.registry["services"])
+
     def test_caps_reject_non_finite_and_boolean_money(self) -> None:
         store = FakeProviderAdminStore()
         client = _client(store)
@@ -195,6 +388,7 @@ class ProviderAdminApiTests(unittest.TestCase):
         provider = next(p for p in body["providers"] if p["id"] == "openrouter")
         self.assertEqual(provider["key_status"], {
             "state": "set",
+            "source": "env",
             "api_key_env": "OPENROUTER_API_KEY",
         })
         self.assertEqual(
@@ -354,6 +548,8 @@ class ProviderAdminApiTests(unittest.TestCase):
         )
         self.assertEqual(plans.status_code, 200)
         self.assertEqual(plans.json()["provider"]["allowed_plans"], ["builders"])
+        builders = next(row for row in store.profiles if row["id"] == "builders")
+        self.assertEqual(builders["profile"]["remote"]["providers"], ["openrouter"])
 
         cleared = client.delete(
             "/admin/api/providers/openrouter/caps",
@@ -362,12 +558,8 @@ class ProviderAdminApiTests(unittest.TestCase):
         self.assertEqual(cleared.status_code, 200)
         self.assertEqual(cleared.json()["provider"]["caps"], {})
         self.assertEqual(
-            [event["action"] for event in store.audit],
-            [
-                "operator.provider_admin.update",
-                "operator.provider_admin.update",
-                "operator.provider_admin.update",
-            ],
+            [event["action"] for event in store.audit].count("operator.provider_admin.update"),
+            3,
         )
 
     def test_persisting_provider_caps_preserves_absent_allowed_plans_restriction(self) -> None:

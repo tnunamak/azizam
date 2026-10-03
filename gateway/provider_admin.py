@@ -24,9 +24,10 @@ from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
 from gateway import admin_store, service_registry
+from gateway import provider_catalog, provider_configuration, provider_listing, secret_store
 from gateway.admin_api import AdminAuthError, AdminContext
 from gateway import providers as provider_core
-from gateway.litellm_substrate import litellm_provider_model_lookup
+from gateway.litellm_substrate import litellm_provider_model_lookup, secret_env_name_for_provider
 
 PROVIDER_ADMIN_SETTING_KEY = "provider_admin"
 PROVIDER_ADMIN_SCHEMA_VERSION = 1
@@ -40,10 +41,28 @@ class ProviderAdminStore(Protocol):
 
     def list_profiles(self) -> list[dict[str, Any]]: ...
 
+    def get_profile(self, profile_id: str) -> dict[str, Any] | None: ...
+
+    def update_profile(
+        self, *, profile_id: str, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any] | None: ...
+
     def get_provider_admin_state(self) -> dict[str, Any]: ...
 
     def update_provider_admin_state(
         self, *, data: Mapping[str, Any], actor: AdminContext
+    ) -> dict[str, Any]: ...
+
+    def add_service(
+        self, *, data: Mapping[str, Any], actor: AdminContext, expected_generation: int
+    ) -> dict[str, Any]: ...
+
+    def update_service(
+        self, service_id: str, *, data: Mapping[str, Any], actor: AdminContext, expected_generation: int
+    ) -> dict[str, Any]: ...
+
+    def remove_service(
+        self, service_id: str, *, actor: AdminContext, expected_generation: int
     ) -> dict[str, Any]: ...
 
 
@@ -157,6 +176,77 @@ def create_provider_admin_router(
             content=_providers_payload(store, effective_spending_provider),
         )
 
+    @router.get("/-/catalog")
+    def list_catalog(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            catalog = provider_catalog.load_provider_catalog()
+        except ValueError as exc:
+            return _RouteError(500, "provider_catalog_invalid", str(exc)).as_response()
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"providers": [preset.to_dict() for preset in catalog.values()]},
+        )
+
+    @router.post("")
+    async def add_provider(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            body = await _read_json_body(request)
+            service = provider_configuration.provider_service_from_body(body)
+            expected_generation = _expected_registry_generation(store, body)
+            provider_id = service_registry.canonical_provider_id(service["id"])
+            if provider_id in _remote_providers(store):
+                raise _RouteError(status.HTTP_409_CONFLICT, "provider_exists", f"provider {provider_id!r} already exists")
+            create_caps = _normalize_caps(body.get("caps") if isinstance(body.get("caps"), Mapping) else body)
+            create_allowed = (
+                _normalize_allowed_plans(body, _profile_ids(store))
+                if "allowed_plans" in body or "plans" in body
+                else None
+            )
+            config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+            secret_id = str(config.get("api_key_secret_id") or "").strip()
+            wrote_secret = False
+            if secret_id:
+                secret_value = str(body.get("api_key") or "").strip()
+                if not secret_value:
+                    raise _RouteError(status.HTTP_400_BAD_REQUEST, "missing_provider_key", "api_key is required when storing the provider key in the gateway")
+                secret_store.put_provider_secret(secret_id, secret_value, db_path=_admin_db_path(store))
+                wrote_secret = True
+            try:
+                record = store.add_service(data=service, actor=ctx, expected_generation=expected_generation)
+                if create_caps or create_allowed is not None:
+                    state = store.get_provider_admin_state()
+                    provider_state = _provider_state_for_update(state, provider_id)
+                    if create_caps:
+                        provider_state["caps"] = create_caps
+                    if create_allowed is not None:
+                        provider_state["allowed_plans"] = create_allowed
+                    store.update_provider_admin_state(data=state, actor=ctx)
+                    if create_allowed is not None:
+                        _sync_profile_remote_provider_grants(store, provider_id, create_allowed, actor=ctx)
+            except Exception:
+                if wrote_secret:
+                    secret_store.delete_provider_secret(secret_id, db_path=_admin_db_path(store))
+                raise
+            provider = _one_provider_payload(store, effective_spending_provider, provider_id)
+        except _RouteError as exc:
+            return exc.as_response()
+        except admin_store.OperatorSettingsGenerationConflict:
+            return _registry_conflict_response()
+        except provider_configuration.ProviderConfigurationError as exc:
+            return _RouteError(exc.status_code, exc.code, exc.message).as_response()
+        except (ValueError, KeyError) as exc:
+            return _RouteError(status.HTTP_400_BAD_REQUEST, "invalid_provider", str(exc)).as_response()
+        return JSONResponse(
+            status_code=status.HTTP_201_CREATED,
+            content={"provider": provider, "service_registry": record.get("value")},
+        )
+
     @router.get("/{provider_id}")
     def get_provider(request: Request, provider_id: str) -> JSONResponse:
         ctx = _guard(request)
@@ -239,6 +329,169 @@ def create_provider_admin_router(
             content={"reconciliation": row},
         )
 
+    @router.put("/{provider_id}/key")
+    async def set_provider_key(request: Request, provider_id: str) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            _require_provider(store, provider_id)
+            body = await _read_json_body(request)
+            secret_value = str(body.get("api_key") or "").strip()
+            if not secret_value:
+                raise _RouteError(status.HTTP_400_BAD_REQUEST, "missing_provider_key", "api_key is required")
+            secret_id = _current_provider_secret_id(store, provider_id)
+            if not secret_id:
+                raise _RouteError(status.HTTP_409_CONFLICT, "env_key_provider", "This provider uses an environment-variable key. Switch it to gateway-stored keys before rotating in the UI.")
+            status_row = secret_store.put_provider_secret(
+                secret_id,
+                secret_value,
+                db_path=_admin_db_path(store),
+            ).to_dict()
+        except _RouteError as exc:
+            return exc.as_response()
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"key_status": _secret_key_status(status_row)})
+
+    @router.delete("/{provider_id}/key")
+    def delete_provider_key(request: Request, provider_id: str) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            _require_provider(store, provider_id)
+            secret_id = _current_provider_secret_id(store, provider_id)
+            if not secret_id:
+                raise _RouteError(status.HTTP_409_CONFLICT, "env_key_provider", "This provider uses an environment-variable key. Remove the environment reference from provider settings.")
+            status_row = secret_store.delete_provider_secret(secret_id, db_path=_admin_db_path(store)).to_dict()
+        except _RouteError as exc:
+            return exc.as_response()
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"key_status": _secret_key_status(status_row)})
+
+    @router.post("/-/test")
+    async def test_unsaved_provider(request: Request) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            body = await _read_json_body(request)
+            service = provider_configuration.provider_service_from_body(body)
+            config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+            api_key = str(body.get("api_key") or "") if body.get("key_mode") != "env" else os.environ.get(str(config.get("api_key_env") or ""), "")
+            result = await provider_listing.probe_provider(config, api_key)
+        except provider_configuration.ProviderConfigurationError as exc:
+            return _RouteError(exc.status_code, exc.code, exc.message).as_response()
+        except _RouteError as exc:
+            return exc.as_response()
+        except provider_listing.ProviderListingError as exc:
+            return _RouteError(exc.status_code, exc.code, str(exc)).as_response()
+        return JSONResponse(status_code=status.HTTP_200_OK, content=result)
+
+    @router.post("/{provider_id}/test")
+    async def test_provider(request: Request, provider_id: str) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        provider = _one_provider_payload(store, effective_spending_provider, provider_id)
+        if provider is None:
+            return _RouteError(status.HTTP_404_NOT_FOUND, "provider_not_found", f"provider {provider_id!r} was not found").as_response()
+        _, service = _service_for_provider(store.get_service_registry(), provider_id)
+        config = dict(service.get("config") or {})
+        config.setdefault("provider_id", service_registry.canonical_provider_id(provider_id))
+        try:
+            secret_id = str(config.get("api_key_secret_id") or "")
+            if secret_id:
+                try:
+                    api_key = secret_store.get_provider_secret(secret_id, db_path=_admin_db_path(store))
+                except Exception:
+                    raise provider_listing.ProviderListingError("The stored provider key is unavailable. Enter a replacement key.") from None
+            else:
+                api_key = os.environ.get(str(config.get("api_key_env") or ""), "")
+            result = await provider_listing.probe_provider(config, api_key)
+        except provider_listing.ProviderListingError as exc:
+            state = store.get_provider_admin_state()
+            _provider_state_for_update(state, provider_id)["connection"] = {"reachable": False, "checked_at": int(time.time())}
+            store.update_provider_admin_state(data=state, actor=ctx)
+            return _RouteError(exc.status_code, exc.code, str(exc)).as_response()
+        state = store.get_provider_admin_state()
+        _provider_state_for_update(state, provider_id)["connection"] = {"reachable": True, "checked_at": result["checked_at"]}
+        store.update_provider_admin_state(data=state, actor=ctx)
+        return JSONResponse(status_code=status.HTTP_200_OK, content=result)
+
+    @router.put("/{provider_id}/models")
+    async def update_provider_models(request: Request, provider_id: str) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            _require_provider(store, provider_id)
+            body = await _read_json_body(request)
+            registry = store.get_service_registry()
+            service_id, service = _service_for_provider(registry, provider_id)
+            merged = dict(service)
+            config = dict(merged.get("config") if isinstance(merged.get("config"), Mapping) else {})
+            config["models"] = provider_configuration.model_records_from_body(
+                body,
+                service_registry.canonical_provider_id(provider_id),
+            )
+            incoming_price = provider_configuration.price_config_from_body(
+                body,
+                service_registry.canonical_provider_id(provider_id),
+            )
+            merged_price = _merge_provider_price_config(
+                config.get("price") if isinstance(config.get("price"), Mapping) else {},
+                incoming_price,
+            )
+            if merged_price:
+                config["price"] = merged_price
+            provider_configuration._validate_enabled_model_prices(config["models"], merged_price)
+            config["model_policy_schema_version"] = service_registry.MODEL_POLICY_SCHEMA_VERSION
+            merged["config"] = config
+            record = store.update_service(
+                service_id,
+                data=merged,
+                actor=ctx,
+                expected_generation=_expected_registry_generation(store, body),
+            )
+            provider = _one_provider_payload(store, effective_spending_provider, provider_id)
+        except _RouteError as exc:
+            return exc.as_response()
+        except provider_configuration.ProviderConfigurationError as exc:
+            return _RouteError(exc.status_code, exc.code, exc.message).as_response()
+        except admin_store.OperatorSettingsGenerationConflict:
+            return _registry_conflict_response()
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"provider": provider, "service_registry": record.get("value")})
+
+    @router.delete("/{provider_id}")
+    async def remove_provider(request: Request, provider_id: str) -> JSONResponse:
+        ctx = _guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            body = await _read_json_body_or_empty(request)
+            registry = store.get_service_registry()
+            service_id, service = _service_for_provider(registry, provider_id)
+            record = store.remove_service(
+                service_id,
+                actor=ctx,
+                expected_generation=_expected_registry_generation(store, body),
+            )
+            _sync_profile_remote_provider_grants(store, provider_id, [], actor=ctx)
+            state = store.get_provider_admin_state()
+            providers = state.get("providers") if isinstance(state.get("providers"), dict) else {}
+            providers.pop(service_registry.canonical_provider_id(provider_id), None)
+            state["providers"] = providers
+            store.update_provider_admin_state(data=state, actor=ctx)
+            config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+            secret_id = str(config.get("api_key_secret_id") or "").strip()
+            if secret_id:
+                secret_store.delete_provider_secret(secret_id, db_path=_admin_db_path(store))
+        except _RouteError as exc:
+            return exc.as_response()
+        except admin_store.OperatorSettingsGenerationConflict:
+            return _registry_conflict_response()
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"service_registry": record.get("value")})
+
+
     @router.put("/{provider_id}/caps")
     async def set_provider_caps(request: Request, provider_id: str) -> JSONResponse:
         ctx = _guard(request)
@@ -285,6 +538,7 @@ def create_provider_admin_router(
             provider_state = _provider_state_for_update(state, provider_id)
             provider_state["allowed_plans"] = allowed
             store.update_provider_admin_state(data=state, actor=ctx)
+            _sync_profile_remote_provider_grants(store, provider_id, allowed, actor=ctx)
             provider = _one_provider_payload(store, effective_spending_provider, provider_id)
         except _RouteError as exc:
             return exc.as_response()
@@ -402,8 +656,17 @@ def _providers_payload(
     spend_available = usage.get("available", True) is not False
     registry = store.get_service_registry()
     provider_models = _provider_model_summaries(registry)
+    db_path = _admin_db_path(store)
     providers = [
-        _project_provider(provider_id, service, state, usage, spend_available, provider_models)
+        _project_provider(
+            provider_id,
+            service,
+            state,
+            usage,
+            spend_available,
+            provider_models,
+            db_path,
+        )
         for provider_id, service in _remote_providers(store).items()
     ]
     providers.sort(key=lambda row: row["id"])
@@ -440,6 +703,7 @@ def _one_provider_payload(
         usage,
         usage.get("available", True) is not False,
         _provider_model_summaries(store.get_service_registry()),
+        _admin_db_path(store),
     )
 
 
@@ -473,19 +737,17 @@ def _project_provider(
     usage: Mapping[str, Any],
     spend_available: bool,
     provider_models: Mapping[str, list[dict[str, str]]],
+    db_path: Path,
 ) -> dict[str, Any]:
     config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
     provider_state = _provider_state(state, provider_id)
-    api_key_env = str(config.get("api_key_env") or "").strip()
-    key_set = bool(api_key_env and os.environ.get(api_key_env))
-    key_status = {
-        "state": "set" if key_set else "missing",
-        "api_key_env": api_key_env or None,
-    }
+    key_status = _project_key_status(provider_id, config, db_path)
     return {
         "id": provider_id,
         "name": str(service.get("name") or provider_id),
         "enabled": bool(service.get("enabled", True)),
+        "reachable": (provider_state.get("connection") or {}).get("reachable"),
+        "checked_at": (provider_state.get("connection") or {}).get("checked_at"),
         "provider_type": str(config.get("provider_type") or config.get("cost_class") or "remote"),
         "models": list(provider_models.get(provider_id, [])),
         "key_status": key_status,
@@ -505,11 +767,109 @@ def _project_provider(
         "cap_guarantee": _cap_guarantee(),
         "concurrency": _project_concurrency(config),
         "recommendations": _project_recommendations(provider_state, config),
+        "catalog": {
+            "preset_id": str(config.get("preset_id") or ""),
+            "protocol": str(config.get("protocol") or ""),
+            "base_url": str(config.get("base_url") or ""),
+            "docs_url": str(config.get("docs_url") or ""),
+            "key_url": str(config.get("key_url") or ""),
+            "billing_dimensions": list(config.get("billing_dimensions") or []),
+        },
     }
 
 
-def _provider_model_summaries(registry: Mapping[str, Any]) -> dict[str, list[dict[str, str]]]:
-    models: dict[str, list[dict[str, str]]] = {}
+def _project_key_status(provider_id: str, config: Mapping[str, Any], db_path: Path) -> dict[str, Any]:
+    api_key_env = str(config.get("api_key_env") or "").strip()
+    if api_key_env:
+        return {
+            "state": "set" if os.environ.get(api_key_env) else "missing",
+            "source": "env",
+            "api_key_env": api_key_env,
+        }
+    secret_id = str(config.get("api_key_secret_id") or "").strip()
+    if secret_id:
+        try:
+            status_row = secret_store.provider_secret_status(secret_id, db_path=db_path).to_dict()
+        except Exception:
+            status_row = {"state": "missing", "suffix": None, "updated_at": None}
+        out = _secret_key_status(status_row)
+        out["api_key_env"] = secret_env_name_for_provider(provider_id, secret_id)
+        out["api_key_secret_id"] = secret_id
+        return out
+    return {"state": "missing", "source": "none", "api_key_env": None}
+
+
+def _secret_key_status(status_row: Mapping[str, Any]) -> dict[str, Any]:
+    state = str(status_row.get("state") or "missing")
+    out: dict[str, Any] = {"state": state, "source": "secret_store"}
+    if state == "set":
+        out["display"] = f"Set · ends in …{status_row.get('suffix')} · updated"
+        out["suffix"] = status_row.get("suffix")
+        out["updated_at"] = status_row.get("updated_at")
+    return out
+
+
+def _provider_secret_id(provider_id: str) -> str:
+    return provider_configuration.provider_secret_id(provider_id)
+
+
+def _current_provider_secret_id(store: ProviderAdminStore, provider_id: str) -> str:
+    _service_id, service = _service_for_provider(store.get_service_registry(), provider_id)
+    config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+    return str(config.get("api_key_secret_id") or "").strip()
+
+
+def _admin_db_path(store: ProviderAdminStore) -> Path:
+    return Path(getattr(store, "path", admin_store.DB_PATH))
+
+
+def _expected_registry_generation(
+    store: ProviderAdminStore, body: Mapping[str, Any]
+) -> int:
+    requested = provider_configuration.expected_generation(body)
+    if not hasattr(store, "path"):
+        return 0 if requested is None else requested
+    record = admin_store.get_service_registry_with_generation(path=_admin_db_path(store))
+    current = int(record["operator_settings_generation"]) if record is not None else 0
+    if requested is None:
+        return current
+    if requested != current:
+        raise admin_store.OperatorSettingsGenerationConflict(
+            f"service_registry generation changed: expected {requested}, got {current}"
+        )
+    return requested
+
+
+def _registry_conflict_response() -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_409_CONFLICT,
+        content={
+            "error": {
+                "code": "service_registry_conflict",
+                "message": "The service registry changed. Refresh and try again.",
+            }
+        },
+    )
+
+
+def _merge_provider_price_config(
+    existing: Mapping[str, Any], incoming: Mapping[str, Any]
+) -> dict[str, Any]:
+    merged = dict(existing)
+    incoming_models = incoming.get("models") if isinstance(incoming.get("models"), Mapping) else {}
+    if incoming_models:
+        existing_models = dict(merged.get("models") if isinstance(merged.get("models"), Mapping) else {})
+        existing_models.update({str(model): dict(price) for model, price in incoming_models.items() if isinstance(price, Mapping)})
+        merged["models"] = existing_models
+    for key, value in incoming.items():
+        if key == "models":
+            continue
+        merged[key] = value
+    return merged
+
+
+def _provider_model_summaries(registry: Mapping[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    models: dict[str, list[dict[str, Any]]] = {}
     try:
         lookup = litellm_provider_model_lookup(registry)
     except ValueError:
@@ -525,6 +885,32 @@ def _provider_model_summaries(registry: Mapping[str, Any]) -> dict[str, list[dic
         if upstream:
             row["upstream_model"] = upstream
         models.setdefault(provider_id, []).append(row)
+    # Configured disabled models and non-chat protocols must remain editable.
+    for service_id, service in (registry.get("services") or {}).items():
+        if not isinstance(service, Mapping):
+            continue
+        config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+        if not service_registry.is_remote_provider_config(config):
+            continue
+        provider_id = service_registry.canonical_provider_id(config.get("provider_id") or service_id)
+        raw_models = config.get("models")
+        if not isinstance(raw_models, list):
+            continue
+        rows = []
+        prices = (config.get("price") or {}).get("models") or {}
+        for raw in raw_models:
+            if not isinstance(raw, Mapping):
+                continue
+            public = str(raw.get("model_group") or raw.get("id") or raw.get("upstream_model") or "")
+            if not public:
+                continue
+            if not public.startswith(f"{provider_id}/"):
+                public = f"{provider_id}/{public}"
+            row = {"model": public, "upstream_model": str(raw.get("upstream_model") or raw.get("id") or public)}
+            if config.get("preset_id") or "enabled" in raw or public in prices:
+                row.update({"id": public, "name": str(raw.get("name") or public), "enabled": raw.get("enabled", True), "price": prices.get(public, {})})
+            rows.append(row)
+        models[provider_id] = rows
     return models
 
 
@@ -548,6 +934,24 @@ def _provider_state_for_update(state: dict[str, Any], provider_id: str) -> dict[
     return provider_state
 
 
+def _service_for_provider(registry: Mapping[str, Any], provider_id: str) -> tuple[str, Mapping[str, Any]]:
+    normalized_id = service_registry.canonical_provider_id(provider_id)
+    services = registry.get("services") if isinstance(registry, Mapping) else {}
+    if isinstance(services, Mapping):
+        for raw_id, service in services.items():
+            if not isinstance(service, Mapping):
+                continue
+            config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+            candidate = service_registry.canonical_provider_id(config.get("provider_id") or service.get("id") or raw_id)
+            if candidate == normalized_id:
+                return str(raw_id), service
+    raise _RouteError(
+        status.HTTP_404_NOT_FOUND,
+        "provider_not_found",
+        f"provider {provider_id!r} was not found",
+    )
+
+
 def _require_provider(store: ProviderAdminStore, provider_id: str) -> None:
     if service_registry.canonical_provider_id(provider_id) not in _remote_providers(store):
         raise _RouteError(
@@ -559,6 +963,12 @@ def _require_provider(store: ProviderAdminStore, provider_id: str) -> None:
 
 def _normalize_provider_policy(value: Mapping[str, Any]) -> dict[str, Any]:
     policy = {"caps": _normalize_caps(value.get("caps"))}
+    connection = value.get("connection")
+    if isinstance(connection, Mapping) and isinstance(connection.get("reachable"), bool):
+        policy["connection"] = {
+            "reachable": connection["reachable"],
+            "checked_at": connection.get("checked_at"),
+        }
     if "allowed_plans" in value:
         policy["allowed_plans"] = _normalize_string_list(value.get("allowed_plans"))
     if "recommendations" in value:
@@ -725,6 +1135,52 @@ def _normalize_allowed_plans(
     return sorted({profile_aliases[plan] for plan in plans})
 
 
+def _sync_profile_remote_provider_grants(
+    store: ProviderAdminStore,
+    provider_id: str,
+    allowed_policy_ids: list[str],
+    *,
+    actor: AdminContext,
+) -> None:
+    provider = service_registry.canonical_provider_id(provider_id)
+    allowed = set(allowed_policy_ids)
+    for row in store.list_profiles():
+        if not isinstance(row, Mapping):
+            continue
+        record_id = str(row.get("record_id") or row.get("id") or "").strip()
+        policy_id = _profile_policy_id(row)
+        if not record_id or not policy_id:
+            continue
+        current = store.get_profile(record_id) or row
+        profile_doc = dict(current.get("profile") if isinstance(current.get("profile"), Mapping) else {})
+        profile_doc.setdefault("id", policy_id)
+        remote = dict(profile_doc.get("remote") if isinstance(profile_doc.get("remote"), Mapping) else {})
+        providers = set(str(item) for item in remote.get("providers") or [])
+        if policy_id in allowed:
+            providers.add(provider)
+        else:
+            providers.discard(provider)
+        if providers:
+            remote["providers"] = sorted(providers)
+            profile_doc["remote"] = remote
+        elif remote:
+            remote.pop("providers", None)
+            if remote:
+                profile_doc["remote"] = remote
+            else:
+                profile_doc.pop("remote", None)
+        else:
+            profile_doc.pop("remote", None)
+        store.update_profile(profile_id=record_id, data={"profile": profile_doc}, actor=actor)
+
+
+def _profile_policy_id(row: Mapping[str, Any]) -> str:
+    profile = row.get("profile")
+    if isinstance(profile, Mapping) and profile.get("id"):
+        return str(profile["id"])
+    return str(row.get("id") or "").strip()
+
+
 def _normalize_string_list(value: Any) -> list[str]:
     if value is None:
         return []
@@ -880,3 +1336,7 @@ async def _read_json_body(request: Request) -> dict[str, Any]:
             "request body must be a JSON object",
         )
     return payload
+
+
+async def _read_json_body_or_empty(request: Request) -> dict[str, Any]:
+    return await _read_json_body(request)
