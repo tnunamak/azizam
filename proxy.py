@@ -16663,7 +16663,7 @@ def _speech_engine_voices() -> dict[str, Any]:
             "service": spec.get("service"),
             "default_voice": spec.get("default_voice"),
             "voices": [
-                {"voice_id": name, "mapped_to": native, **{
+                {"voice_id": name, "id": name, "name": name.title(), "mapped_to": native, **{
                     k: v for k, v in CANONICAL_TTS_VOICES.get(name, {}).items()
                 }}
                 for name, native in sorted(voice_map.items())
@@ -16697,6 +16697,8 @@ async def list_voices(request: Request):
         meta = _voice_metadata(voice_id, mapped)
         voices.append({
             "voice_id": voice_id,
+            # `id` is what Open WebUI reads ({v['id']: v['name']}); `voice_id` is kept for existing clients.
+            "id": voice_id,
             "name": meta["name"],
             "language": meta["language"],
             "gender": meta["gender"],

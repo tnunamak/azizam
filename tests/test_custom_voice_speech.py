@@ -204,6 +204,14 @@ class VoiceRoutesThroughTheGatewayTests(CustomVoiceRouteCase):
         self.assertEqual([v["id"] for v in listing["data"]], [voice["id"]])
         self.assertEqual((listing["object"], listing["has_more"]), ("list", False))
         self.assertIn("alloy", {v["voice_id"] for v in listing["voices"]})  # the built-in listing is intact
+        # Open WebUI builds {v["id"]: v["name"]} from `voices`; a missing key drops it to a 6-voice default list.
+        for v in listing["voices"]:
+            self.assertEqual(v["id"], v["voice_id"])
+            self.assertTrue(v["name"])
+        for engine in listing["engines"].values():
+            for v in engine["voices"]:
+                self.assertEqual(v["id"], v["voice_id"])
+                self.assertTrue(v["name"])
         self.assertEqual(self.client.delete(f"/v1/audio/voices/{voice['id']}").json()["deleted"], True)
         self.assertEqual(self.speak({"id": voice["id"]}).status_code, 404)
 

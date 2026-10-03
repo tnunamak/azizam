@@ -202,13 +202,23 @@ def test_steps_over_the_model_limit_are_clamped_and_say_so(env):
     ("styles", ["anime"], "styles"),
     ("subseed_strength", 0.3, "variation seeds"),
     ("prompt", "a cat <lora:cute:0.8>", "LoRA"),
-    ("override_settings", {"sd_vae": "vae-ft-mse"}, "VAE"),
     ("override_settings", {"eta_noise_seed_delta": 31337}, "not supported"),
 ])
 def test_output_changing_fields_are_rejected_before_any_core_call(env, field, value, needle):
     resp = env.client.post("/sdapi/v1/txt2img", json={**ST_PAYLOAD, field: value}, headers=H)
     assert resp.status_code == 422 and needle in resp.json()["detail"][0]["msg"]
     assert env.core.calls == []
+
+
+def test_unknown_sd_vae_is_ignored_and_named_like_real_a1111(env):
+    # SillyTavern sends a stale sd_vae; A1111 warns "Couldn't find VAE named ..." and continues.
+    payload = {**ST_PAYLOAD, "override_settings": {"sd_vae": "sdxl.vae.safetensors"}}
+    resp = env.client.post("/sdapi/v1/txt2img", json=payload, headers=H)
+    assert resp.status_code == 200
+    assert "override_settings.sd_vae" in resp.headers["x-gateway-ignored-params"].split(",")
+    for automatic in ("Automatic", "None", ""):
+        resp = env.client.post("/sdapi/v1/txt2img", json={**ST_PAYLOAD, "override_settings": {"sd_vae": automatic}}, headers=H)
+        assert resp.status_code == 200 and "sd_vae" not in resp.headers.get("x-gateway-ignored-params", "")
 
 
 def test_size_outside_the_model_range_is_a_422_not_a_silent_resize(env):

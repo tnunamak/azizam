@@ -19,7 +19,7 @@ Honesty rules (see docs/VENDOR_FACADES.md): a field that changes what the image 
 and that the gateway cannot honour (hires fix, face restoration, ADetailer and other
 scripts, LoRA prompt tags, styles, variation seeds) is rejected with a 422 that names it.
 A tuning knob the chosen model has no use for (negative prompt on a CFG-distilled model,
-sampler, ``clip_skip``) is dropped, and the response lists it in ``x-gateway-ignored-params``.
+sampler, ``clip_skip``, an unknown ``override_settings.sd_vae`` as in real A1111) is dropped, and the response lists it in ``x-gateway-ignored-params``.
 
 Auth: SillyTavern sends ``Authorization: Basic base64(auth)`` from its "Authentication"
 box. The password (or the whole string, when it has no colon) is the gateway API key.
@@ -179,8 +179,10 @@ def _check_unsupported(payload: Mapping[str, Any]) -> None:
             continue
         if key not in _OVERRIDE_NOOPS:
             raise validation_error("override_settings", f"setting {key!r} is not supported")
-        if key == "sd_vae" and value not in (None, "", "Automatic", "None"):
-            raise validation_error("override_settings", "VAE selection is not supported")
+        # An unknown sd_vae is not an error in real A1111: sd_vae.resolve_vae_from_setting prints
+        # "Couldn't find VAE named ...; using None instead" and generation continues. This gateway
+        # lists no selectable VAEs (/sdapi/v1/sd-vae), so every named VAE is unknown here. map_payload
+        # reports it in x-gateway-ignored-params.
 
 
 def _clamp(value: float, spec: Mapping[str, Any]) -> tuple[float, bool]:
@@ -254,6 +256,10 @@ def map_payload(deps: A1111Deps, payload: Mapping[str, Any], title: str) -> tupl
 
     if payload.get("clip_skip") not in (None, 0, 1) or (payload.get("override_settings") or {}).get("CLIP_stop_at_last_layers") not in (None, 0, 1):
         ignored.append("clip_skip")
+
+    vae = (payload.get("override_settings") or {}).get("sd_vae")
+    if vae not in (None, "", "Automatic", "None"):
+        ignored.append("override_settings.sd_vae")
 
     batch, iterations = payload.get("batch_size") or 1, payload.get("n_iter") or 1
     count = int(batch) * int(iterations)
