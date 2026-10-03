@@ -28,6 +28,25 @@ def with_query(destination: str, query: str) -> str:
     return f"{destination}{'&' if '?' in destination else '?'}{query}"
 
 
+def accepts_html(accept: str) -> bool:
+    """Explicit HTML consent; wildcard API clients retain their old response."""
+    for item in accept.lower().split(","):
+        media_type, *parameters = item.split(";")
+        if media_type.strip() != "text/html":
+            continue
+        quality = 1.0
+        for parameter in parameters:
+            name, separator, value = parameter.strip().partition("=")
+            if name == "q" and separator:
+                try:
+                    quality = float(value)
+                except ValueError:
+                    quality = 0.0
+        if 0 < quality <= 1:
+            return True
+    return False
+
+
 def admin_destination(path: str, query: str = "") -> str | None:
     for prefix in ("/ui/admin", "/admin"):
         if path == prefix or path.startswith(prefix + "/"):

@@ -12693,14 +12693,14 @@ register_api_reference(app)
 
 WEB_UI_DIR = Path(__file__).resolve().parent / "web" / "out"
 
-from gateway.browser_routes import OWNER_UI_PAGES, admin_destination, with_query
+from gateway.browser_routes import OWNER_UI_PAGES, accepts_html, admin_destination, with_query
 
 
 @app.middleware("http")
 async def _guard_admin_static_ui(request: Request, call_next):
     path = request.url.path
     legacy_admin = path == "/ui/admin" or path.startswith("/ui/admin/")
-    owner_page = path.removeprefix("/ui/").strip("/") in OWNER_UI_PAGES
+    owner_page = path.removeprefix("/ui/").split("/", 1)[0] in OWNER_UI_PAGES
     if legacy_admin or (path.startswith("/ui/") and owner_page):
         try:
             ADMIN_AUTH(request)
@@ -12713,6 +12713,8 @@ async def _guard_admin_static_ui(request: Request, call_next):
         destination = admin_destination(path, request.url.query) if legacy_admin else None
         if destination:
             return RedirectResponse(destination, status_code=302, headers={"cache-control": "no-store"})
+        if legacy_admin:
+            return Response(status_code=404, headers={"cache-control": "no-store"})
     return await call_next(request)
 
 
@@ -23035,7 +23037,7 @@ async def _render_status_html(request: Request) -> Response:
 
 @app.get("/", include_in_schema=False)
 async def root_browser_entrypoint(request: Request):
-    if "text/html" in request.headers.get("accept", "").lower():
+    if accepts_html(request.headers.get("accept", "")):
         return RedirectResponse(with_query("/ui/home/", request.url.query), status_code=302, headers={"cache-control": "no-store"})
     return _render_user_portal_response(request, login_return_to="/")
 
@@ -23054,7 +23056,7 @@ async def receipt_deep_link(request_id: str, request: Request):
 @app.get("/status", include_in_schema=False)
 @app.get("/status/", include_in_schema=False)
 async def status_dashboard_index(request: Request):
-    if "text/html" in request.headers.get("accept", "").lower() and not request.headers.get("authorization"):
+    if accepts_html(request.headers.get("accept", "")) and not request.headers.get("authorization"):
         return RedirectResponse(with_query("/ui/status/", request.url.query), status_code=302, headers={"cache-control": "no-store"})
     return await _render_status_html(request)
 

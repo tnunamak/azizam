@@ -114,9 +114,18 @@ async function homeRequest<T>(
 }
 
 export const homeApi = {
-  home: () => homeRequest<HomeSnapshot>("/me/api/home"),
-  creations: () =>
-    homeRequest<HomeCreationsResponse>("/me/api/media?limit=5"),
+  home: async (): Promise<
+    HomeSnapshot | { authenticated: false; user?: never }
+  > => {
+    try {
+      return await homeRequest<HomeSnapshot>("/me/api/home");
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401)
+        return { authenticated: false };
+      throw error;
+    }
+  },
+  creations: () => homeRequest<HomeCreationsResponse>("/me/api/media?limit=5"),
   setup: () => adminFetch<SetupProgress>("/admin/api/setup-progress"),
   test: (apiKey: string, credentialId?: string) =>
     homeRequest<ConnectionResult>("/me/api/connection-test", {

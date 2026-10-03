@@ -7,7 +7,7 @@ from fastapi.responses import Response
 from fastapi.testclient import TestClient
 
 import proxy
-from gateway.browser_routes import ADMIN_SECTIONS, admin_destination
+from gateway.browser_routes import ADMIN_SECTIONS, OWNER_UI_PAGES, accepts_html, admin_destination
 
 
 @pytest.mark.parametrize("mounted", [False, True])
@@ -35,7 +35,7 @@ def test_browser_home_entry_preserves_query(path):
     assert response.headers["location"] == "/ui/home/?connect=phone%2Fapp"
 
 
-@pytest.mark.parametrize("accept", ["application/json", "*/*", ""])
+@pytest.mark.parametrize("accept", ["application/json", "*/*", "", "text/html;q=0, application/json", "text/html;q=invalid"])
 def test_api_root_keeps_existing_handler(accept, monkeypatch):
     monkeypatch.setattr(proxy, "_render_user_portal_response", lambda *args, **kwargs: Response("legacy"))
     response = TestClient(proxy.app).get("/", headers={"accept": accept}, follow_redirects=False)
@@ -76,3 +76,34 @@ def test_unknown_legacy_ui_path_stays_404():
     with patch.object(type(proxy.ADMIN_AUTH), "__call__", return_value=SimpleNamespace()):
         response = TestClient(proxy.app).get("/ui/admin/unknown/", follow_redirects=False)
     assert response.status_code == 404
+
+
+@pytest.mark.parametrize("accept,expected", [
+    ("text/html", True), ("text/html; charset=utf-8; q=0.8", True),
+    ("TEXT/HTML;Q=0.2,application/json", True),
+    ("text/html;q=0, */*", False), ("text/html;q=bad", False),
+    ("application/json", False), ("*/*", False),
+])
+def test_html_accept_quality(accept, expected):
+    assert accepts_html(accept) is expected
+
+
+@pytest.mark.parametrize("page", sorted(OWNER_UI_PAGES))
+@pytest.mark.parametrize("entry", ["/", "/index.html"])
+def test_owner_static_entries_require_authorization(page, entry):
+    from gateway.admin_api import AdminAuthError
+    error = AdminAuthError("Owner role required", status_code=403, code="admin_forbidden")
+    with patch.object(type(proxy.ADMIN_AUTH), "__call__", side_effect=error):
+        response = TestClient(proxy.app).get(
+            f"/ui/{page}{entry}", headers={"authorization": "Bearer member"}, follow_redirects=False
+        )
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "admin_forbidden"
+
+
+@pytest.mark.parametrize("path,endpoint", [
+    ("/me/api/session", proxy.user_portal_session),
+    ("/admin/api/drain", proxy.admin_drain_status),
+])
+def test_api_routes_retain_registered_handlers(path, endpoint):
+    assert any(route.path == path and route.endpoint is endpoint for route in proxy.app.routes if hasattr(route, "endpoint"))

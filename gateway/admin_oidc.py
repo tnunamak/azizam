@@ -49,6 +49,8 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping, MutableMapping, Protocol
 from urllib.parse import unquote, urlencode, urlsplit, urlunsplit
 
+from gateway.browser_routes import admin_destination, with_query
+
 __all__ = [
     "AdminRole",
     "AdminSession",
@@ -111,9 +113,15 @@ def safe_browser_return_to(value: str | None, *, default: str = "/ui/home/") -> 
         return default
     if target.netloc or target.scheme:
         return default
-    if target.path in {"/", "/me", "/status", "/status/raw", "/setup", "/admin", "/ui"}:
+    destination = admin_destination(target.path, target.query)
+    if destination:
+        return destination + (f"#{target.fragment}" if target.fragment else "")
+    if target.path in {"/", "/me", "/me/", "/ui", "/status", "/status/"}:
+        destination = "/ui/status/" if target.path.rstrip("/") == "/status" else "/ui/home/"
+        return with_query(destination, target.query) + (f"#{target.fragment}" if target.fragment else "")
+    if target.path in {"/status/raw", "/status/raw/", "/setup", "/setup/"}:
         return value
-    if target.path.startswith(("/ui/", "/admin/")):
+    if target.path.startswith("/ui/") and not target.path.startswith("/ui/admin/"):
         return value
     return default
 

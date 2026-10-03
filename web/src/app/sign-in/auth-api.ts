@@ -32,8 +32,20 @@ export async function authFetch<T>(
     );
   return result;
 }
+export function safeContinuePath(next: string): string {
+  if (
+    !next.startsWith("/") ||
+    next.startsWith("//") ||
+    /[\\\x00-\x1f\x7f]/.test(next)
+  )
+    return "/ui/home/";
+  const url = new URL(next, window.location.origin);
+  if (url.origin !== window.location.origin) return "/ui/home/";
+  return url.pathname.startsWith("/ui/") ||
+    ["/setup", "/setup/", "/status/raw", "/status/raw/"].includes(url.pathname)
+    ? next
+    : "/ui/home/";
+}
 export function continueTo(next: string) {
-  window.location.assign(
-    next.startsWith("/ui/") && !next.startsWith("//") ? next : "/ui/",
-  );
+  window.location.assign(safeContinuePath(next));
 }

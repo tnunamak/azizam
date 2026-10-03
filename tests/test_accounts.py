@@ -684,13 +684,19 @@ def test_public_signin_options_and_invite_inspection_use_saved_instance_name_liv
         assert_public_name(name)
 
 
-@pytest.mark.parametrize("target", ["/ui/home/", "/ui/usage/?receipt=abc#details", "https://evil.example", "//evil.example", None])
-def test_builtin_login_uses_safe_product_return_path(account_db, account_client, fast_password_work, target):
+@pytest.mark.parametrize("target,expected", [
+    ("/ui/home/", "/ui/home/"),
+    ("/ui/usage/?receipt=abc#details", "/ui/usage/?receipt=abc#details"),
+    ("/admin/services?service=tts", "/ui/engines/?service=tts"),
+    ("/ui/admin/profiles/?plan=family", "/ui/people/?tab=plans&plan=family"),
+    ("/me?tab=keys", "/ui/home/?tab=keys"),
+    ("https://evil.example", "/ui/home/"), ("//evil.example", "/ui/home/"), (None, "/ui/home/"),
+])
+def test_builtin_login_uses_safe_product_return_path(account_db, account_client, fast_password_work, target, expected):
     from urllib.parse import parse_qs, urlsplit
     client, _ = account_client
     user, _, _ = invited_member(account_db)
     options = client.get("/auth/api/options", params={"return_to": target} if target else {}).json()
-    expected = target if target and target.startswith("/ui/") else "/ui/home/"
     assert parse_qs(urlsplit(options["oidc_url"]).query)["return_to"] == [expected]
     response = client.post("/auth/api/login", json={"email": user["email"], "password": PASSWORD, "return_to": target})
     assert response.status_code == 200

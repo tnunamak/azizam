@@ -421,6 +421,7 @@ test("people lane sign-in handles denial, retries successfully, and resets passw
     expect(route.request().postDataJSON()).toEqual({
       email: person.email,
       password: "Browser sign in password",
+      return_to: "/ui/home/",
     });
     return route.fulfill({
       status: failed ? 401 : 200,

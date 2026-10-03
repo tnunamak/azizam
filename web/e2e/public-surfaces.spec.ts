@@ -221,6 +221,7 @@ test("built-in sign-in posts JSON and retains its fields after denied credential
   expect(response.request().postDataJSON()).toEqual({
     email: "unknown@example.test",
     password: "Invalid browser test password",
+    return_to: "/ui/home/",
   });
   await expect(page).toHaveURL(/\/ui\/sign-in\/$/);
   await expect(

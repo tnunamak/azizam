@@ -77,6 +77,10 @@ uses same-origin requests and does not move between hosts.
 
 ## Release checks and rollback
 
+Docker builds the UI in a pinned Node build stage and copies only the static
+export into the Python image. Bare Python installations must run `npm --prefix
+web ci` and `npm --prefix web run build` before starting the gateway.
+
 Build and ship `web/out` from the same committed release as the Python
 route changes. Test anonymous root → sign-in → Home and owner `/admin` →
 Home with Gateway navigation against an isolated gateway. Exercise browser

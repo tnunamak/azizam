@@ -14,16 +14,29 @@ from gateway.admin_oidc import (
 
 @pytest.mark.parametrize("target", [
     "/ui/home/", "/ui/models/?capability=chat", "/ui/people/?tab=plans",
-    "/ui/usage/?receipt=abc#details", "/ui/invite/#token=opaque", "/admin/settings?tab=sign-in", "/setup",
+    "/ui/usage/?receipt=abc#details", "/ui/invite/#token=opaque", "/setup", "/status/raw?tab=engines",
 ])
 def test_product_return_paths_keep_queries_and_fragments(target):
     assert safe_browser_return_to(target) == target
+
+
+@pytest.mark.parametrize("target,expected", [
+    ("/?welcome=yes", "/ui/home/?welcome=yes"),
+    ("/me?tab=keys#app", "/ui/home/?tab=keys#app"),
+    ("/status?engine=tts", "/ui/status/?engine=tts"),
+    ("/admin/services?service=tts", "/ui/engines/?service=tts"),
+    ("/ui/admin/profiles/?plan=family#details", "/ui/people/?tab=plans&plan=family#details"),
+    ("/admin/settings?tab=sign-in", "/ui/settings/?tab=sign-in"),
+])
+def test_legacy_return_paths_use_product_destinations(target, expected):
+    assert safe_browser_return_to(target) == expected
 
 
 @pytest.mark.parametrize("target", [
     None, "", "https://evil.example/ui/home/", "//evil.example/ui/home/",
     "/\\evil.example/ui/home/", "/%5cevil.example/ui/home/", "/%2fevil.example/ui/home/",
     "/ui/home/%0d%0aLocation:evil", "/ui/home/\x00", "/administrator", "/v1/models",
+    "/admin/api/services", "/ui/admin/unknown", "/admin/unknown",
 ])
 def test_unsafe_return_paths_fall_back_to_home(target):
     assert safe_browser_return_to(target) == "/ui/home/"
@@ -62,22 +75,30 @@ def browser_gateway(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy.ADMIN_AUTH, "signing_key", config().signing_key)
     monkeypatch.setattr(proxy.ADMIN_AUTH, "cookie", config().cookie)
     proxy.ADMIN_OIDC_STATES.clear()
-    with TestClient(proxy.app, base_url="https://openai.vivid.fish") as client:
+    # Auth handlers need the initialized temporary store, not engine listeners.
+    # Match the route integration fixtures and leave process lifespan to its own tests.
+    client = TestClient(proxy.app, base_url="https://openai.vivid.fish")
+    try:
         yield proxy, client, path
-    proxy.ADMIN_OIDC_STATES.clear()
+    finally:
+        client.close()
+        proxy.ADMIN_OIDC_STATES.clear()
 
 
 @pytest.mark.parametrize("public_origin", ["", "https://ai.vivid.fish"])
-def test_oidc_callback_returns_to_product_page_and_pins_origin(browser_gateway, monkeypatch, public_origin):
+@pytest.mark.parametrize("target,return_page", [
+    ("/ui/usage/?receipt=abc#details", "/ui/usage/?receipt=abc#details"),
+    ("/admin/services?service=tts", "/ui/engines/?service=tts"),
+])
+def test_oidc_callback_returns_to_product_page_and_pins_origin(browser_gateway, monkeypatch, public_origin, target, return_page):
     proxy, client, path = browser_gateway
     admin_store.put_operator_setting("instance_presentation", {"base_url": public_origin}, path=path)
-    target = "/ui/usage/?receipt=abc#details"
     login = client.get("/login", params={"return_to": target}, follow_redirects=False)
     assert login.status_code == 302
     expected = (public_origin or "https://openai.vivid.fish") + "/admin/oidc/callback"
     assert parse_qs(urlsplit(login.headers["location"]).query)["redirect_uri"] == [expected]
     state, record = next(iter(proxy.ADMIN_OIDC_STATES.items()))
-    assert record.return_to == target
+    assert record.return_to == return_page
     # Mid-login Settings edits must not alter the URI used to exchange this code.
     admin_store.put_operator_setting("instance_presentation", {"base_url": "https://changed.example"}, path=path)
 
@@ -95,7 +116,7 @@ def test_oidc_callback_returns_to_product_page_and_pins_origin(browser_gateway, 
     monkeypatch.setattr(proxy, "_oidc_verify_id_token", verify)
     callback = client.get(expected, params={"state": state, "code": "code"}, follow_redirects=False)
     assert callback.status_code == 302, callback.text
-    assert callback.headers["location"] == target
+    assert callback.headers["location"] == return_page
     assert "httponly" in callback.headers["set-cookie"].lower()
 
 
