@@ -41,6 +41,7 @@ class FakeProviderAdminStore:
             "services": {
                 "openrouter": {
                     "id": "openrouter",
+                    "capabilities": ["openai"],
                     "name": "OpenRouter",
                     "enabled": True,
                     "config": {
@@ -58,6 +59,7 @@ class FakeProviderAdminStore:
                 },
                 "openrouter-service": {
                     "id": "openrouter-service",
+                    "capabilities": ["openai"],
                     "name": "OpenRouter Service",
                     "enabled": True,
                     "config": {
@@ -65,8 +67,24 @@ class FakeProviderAdminStore:
                         "provider_type": "chat",
                         "provider_id": "openrouter-canonical",
                         "api_key_env": "OPENROUTER_CANONICAL_API_KEY",
+                        "models": {
+                            "anthropic/claude-haiku": "anthropic/claude-haiku",
+                        },
                     },
                     "secret_refs": {"api_key_env": "OPENROUTER_CANONICAL_API_KEY"},
+                },
+                "typesafe": {
+                    "id": "typesafe",
+                    "capabilities": ["openai"],
+                    "name": "TypeSafe",
+                    "enabled": True,
+                    "config": {
+                        "remote_provider": True,
+                        "provider_type": "chat",
+                        "api_key_env": "TYPESAFE_API_KEY",
+                        "default_model": "system-one",
+                    },
+                    "secret_refs": {"api_key_env": "TYPESAFE_API_KEY"},
                 },
                 "local-tabby": {
                     "id": "local-tabby",
@@ -143,7 +161,7 @@ class ProviderAdminApiTests(unittest.TestCase):
         body = response.json()
         self.assertEqual(
             [p["id"] for p in body["providers"]],
-            ["openrouter", "openrouter-canonical"],
+            ["openrouter", "openrouter-canonical", "typesafe"],
         )
         provider = next(p for p in body["providers"] if p["id"] == "openrouter")
         self.assertEqual(provider["key_status"], {
@@ -162,6 +180,28 @@ class ProviderAdminApiTests(unittest.TestCase):
         self.assertIn({"id": "builders", "record_id": "builders", "name": "Builders"}, body["available_plans"])
         self.assertNotIn("sk-live-secret", response.text)
         self.assertNotIn("TABBY_API_KEY", response.text)
+
+    def test_model_summaries_use_compiler_canonical_provider_prefixed_names(self) -> None:
+        store = FakeProviderAdminStore()
+        response = _client(store, spending=lambda: {"providers": {}, "global": {}}).get(
+            "/admin/api/providers",
+            headers={"authorization": "Bearer admin"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        providers = {row["id"]: row for row in response.json()["providers"]}
+        self.assertEqual(
+            providers["openrouter"]["models"],
+            [{"model": "openrouter/anthropic/claude-sonnet", "upstream_model": "anthropic/claude-sonnet"}],
+        )
+        self.assertEqual(
+            providers["openrouter-canonical"]["models"],
+            [{"model": "openrouter-canonical/anthropic/claude-haiku", "upstream_model": "anthropic/claude-haiku"}],
+        )
+        self.assertEqual(
+            providers["typesafe"]["models"],
+            [{"model": "typesafe/system-one", "upstream_model": "system-one"}],
+        )
 
     def test_missing_env_reports_missing_key_state(self) -> None:
         store = FakeProviderAdminStore()

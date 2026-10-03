@@ -424,6 +424,7 @@ Profile addition (stored in admin.db as Profile JSON, edited in `/admin`):
   "providers": ["typesafe", "openrouter"],
   "max_usd_per_request": 0.01,
   "budget_usd_per_day": 1.00,
+  "budget_usd_per_month": 20.00,
   "allow_paid_fallback": false
 }
 ```
@@ -432,13 +433,17 @@ Profile addition (stored in admin.db as Profile JSON, edited in `/admin`):
   profiles stay local-only.
 - `fallback.cloud_allowed` keeps its meaning (automatic fallback). It is
   separate from explicit selection, and both default to false.
-- **Pre-call check:** estimate the cost from the price data and the input
-  tokens. For TypeSafe, that is the characters/4 bound × $0.042/M. Reject over
+- **Pre-call check:** estimate the cost from operator price data. The current
+  implementation bounds input tokens with serialized UTF-8 bytes plus overhead,
+  and requires an output token limit when output is priced. Unsupported
+  multimodal input or missing price data fails closed when capped. Reject over
   `max_usd_per_request` with `402`-style `budget_exceeded` before any spend.
 - **Daily budget:** the reservation reads the shared `provider_spend` ledger for
   the Profile over the last 24 h in the same transaction that reserves the
   estimated spend. The check includes reserved and settled rows, and it ignores
   released rows.
+- **Monthly budget:** use the current UTC calendar month. Profile budgets count
+  all paid providers; provider caps count all profiles, and global caps count both.
 - **Receipt fields (new):**
   - `cost {usd, source: provider-reported|litellm|price-table|unknown, provider, cost_class}`
   - `usage {input_tokens, output_tokens}`

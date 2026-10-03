@@ -184,7 +184,8 @@ async def execute_paid_litellm(
             except (ValueError, UnicodeError):
                 result = {}
             finish(result if isinstance(result, Mapping) else {})
-            headers["x-gateway-cost-usd"] = str(receipt.cost["usd"] or "unknown")
+            cost_usd = receipt.cost["usd"]
+            headers["x-gateway-cost-usd"] = str(cost_usd) if cost_usd is not None else "unknown"
             owner.report(status="succeeded", reason="completed")
             return Response(content, status_code=response.status_code, media_type=response.headers.get("content-type", "application/json"), headers=headers)
         except httpx.TimeoutException:

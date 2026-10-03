@@ -125,7 +125,11 @@ def test_provider_admin_reports_missing_env_keys_over_real_tcp(
 
     port = _find_18xxx_port()
     server = uvicorn.Server(
-        uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+        # Auto-selecting uvloop changes the process-wide event-loop policy and
+        # interferes with later IsolatedAsyncioTestCase tests in this process.
+        uvicorn.Config(
+            app, host="127.0.0.1", port=port, log_level="warning", loop="asyncio"
+        )
     )
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()

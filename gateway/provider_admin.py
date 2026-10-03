@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse
 from gateway import admin_store, service_registry
 from gateway.admin_api import AdminAuthError, AdminContext
 from gateway import providers as provider_core
+from gateway.litellm_substrate import litellm_provider_model_lookup
 
 PROVIDER_ADMIN_SETTING_KEY = "provider_admin"
 PROVIDER_ADMIN_SCHEMA_VERSION = 1
@@ -325,8 +326,10 @@ def _providers_payload(
     state = normalize_provider_admin_state(store.get_provider_admin_state())
     usage = _usage_snapshot(spending_provider)
     spend_available = usage.get("available", True) is not False
+    registry = store.get_service_registry()
+    provider_models = _provider_model_summaries(registry)
     providers = [
-        _project_provider(provider_id, service, state, usage, spend_available)
+        _project_provider(provider_id, service, state, usage, spend_available, provider_models)
         for provider_id, service in _remote_providers(store).items()
     ]
     providers.sort(key=lambda row: row["id"])
@@ -362,6 +365,7 @@ def _one_provider_payload(
         state,
         usage,
         usage.get("available", True) is not False,
+        _provider_model_summaries(store.get_service_registry()),
     )
 
 
@@ -394,6 +398,7 @@ def _project_provider(
     state: Mapping[str, Any],
     usage: Mapping[str, Any],
     spend_available: bool,
+    provider_models: Mapping[str, list[dict[str, str]]],
 ) -> dict[str, Any]:
     config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
     provider_state = _provider_state(state, provider_id)
@@ -408,7 +413,7 @@ def _project_provider(
         "name": str(service.get("name") or provider_id),
         "enabled": bool(service.get("enabled", True)),
         "provider_type": str(config.get("provider_type") or config.get("cost_class") or "remote"),
-        "models": _safe_model_summaries(config.get("models")),
+        "models": list(provider_models.get(provider_id, [])),
         "key_status": key_status,
         "spend": _normalize_spend(
             (usage.get("providers") or {}).get(provider_id)
@@ -422,20 +427,23 @@ def _project_provider(
     }
 
 
-def _safe_model_summaries(raw_models: Any) -> list[dict[str, str]]:
-    if not isinstance(raw_models, list):
-        return []
-    models: list[dict[str, str]] = []
-    for raw in raw_models:
-        if not isinstance(raw, Mapping):
+def _provider_model_summaries(registry: Mapping[str, Any]) -> dict[str, list[dict[str, str]]]:
+    models: dict[str, list[dict[str, str]]] = {}
+    try:
+        lookup = litellm_provider_model_lookup(registry)
+    except ValueError:
+        return models
+    for public_name, facts in sorted(lookup.items()):
+        if not facts.get("remote"):
             continue
-        public_name = str(raw.get("model_group") or raw.get("id") or "").strip()
-        upstream = str(raw.get("upstream_model") or "").strip()
-        if public_name:
-            row = {"model": public_name}
-            if upstream:
-                row["upstream_model"] = upstream
-            models.append(row)
+        provider_id = service_registry.normalize_id(str(facts.get("provider_id") or ""))
+        if not provider_id:
+            continue
+        row = {"model": str(public_name)}
+        upstream = str(facts.get("upstream_model") or "").strip()
+        if upstream:
+            row["upstream_model"] = upstream
+        models.setdefault(provider_id, []).append(row)
     return models
 
 
