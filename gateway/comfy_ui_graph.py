@@ -81,6 +81,9 @@ def _combo_options(typ: Any, cfg: dict) -> list:
 def _is_widget(typ: Any, cfg: dict) -> bool:
     if cfg.get("forceInput"):
         return False
+    if isinstance(typ, str) and "," in typ:
+        # Multi-type input such as "FLOAT,INT": a widget only when the node names its widget type.
+        return cfg.get("widgetType") in WIDGET_TYPES
     return isinstance(typ, (list, tuple)) or (isinstance(typ, str) and typ in WIDGET_TYPES)
 
 
@@ -141,8 +144,9 @@ def _plan_inputs(entries: list, api_inputs: Mapping, prefix: str, plan: dict) ->
                 conns.append({"name": full, "type": "*", "link_src": raw if linked else None,
                               "shape": None if required else 7, "match": True})
         elif _is_widget(typ, cfg):
-            wtype = "COMBO" if isinstance(typ, (list, tuple)) else typ
-            value = _default_value(typ, cfg) if (linked or full not in api_inputs) else raw
+            wtype = "COMBO" if isinstance(typ, (list, tuple)) else (
+                cfg["widgetType"] if "," in typ else typ)
+            value = _default_value(typ if not isinstance(typ, str) or "," not in typ else wtype, cfg) if (linked or full not in api_inputs) else raw
             widgets.append({"name": full, "type": wtype, "link_src": raw if linked else None,
                             "multiline": bool(cfg.get("multiline"))})
             values.append(value)
@@ -174,6 +178,27 @@ def _graph_id(nodes: Mapping[str, Mapping]) -> str:
     return str(uuid.uuid5(_ID_NAMESPACE, canon))
 
 
+def _frontend_ids(api: Mapping[str, Any]) -> dict[str, int]:
+    """Map API node ids to the integer ids the frontend needs.
+
+    Numeric ids keep their value, so links and titles match the API graph.
+    Catalog templates also use readable ids such as ``s0_text``; those get the
+    next free integers in sorted order, which keeps the result deterministic.
+    """
+    ids: dict[str, int] = {}
+    for key in api:
+        try:
+            ids[key] = int(key)
+        except ValueError:
+            pass
+    taken = set(ids.values())
+    nxt = max(taken, default=0)
+    for key in sorted(k for k in api if k not in ids):
+        nxt += 1
+        ids[key] = nxt
+    return ids
+
+
 def derive_ui_workflow(
     api_graph: Mapping[str, Any],
     object_info_for: Callable[[str], Optional[Mapping]],
@@ -185,13 +210,10 @@ def derive_ui_workflow(
             continue
         if not isinstance(node, Mapping) or "class_type" not in node:
             continue
-        try:
-            int(key)
-        except (TypeError, ValueError):
-            return None
         api[str(key)] = node
     if not api:
         return None
+    uid = _frontend_ids(api)
 
     infos: dict[str, Mapping] = {}
     for key, node in api.items():
@@ -225,7 +247,7 @@ def derive_ui_workflow(
     order: list[str] = []
     remaining = set(api)
     while remaining:
-        ready = sorted((k for k in remaining if preds[k] <= set(order)), key=int)
+        ready = sorted((k for k in remaining if preds[k] <= set(order)), key=uid.__getitem__)
         if not ready:
             return None  # cycle
         for k in ready:
@@ -233,7 +255,7 @@ def derive_ui_workflow(
             order.append(k)
         remaining -= set(ready)
     # `order` is layer-ish; make it a true topological order sorted by (depth, id).
-    order.sort(key=lambda k: (depth[k], int(k)))
+    order.sort(key=lambda k: (depth[k], uid[k]))
     position = {k: i for i, k in enumerate(order)}
 
     # Nodes with empty link lists.
@@ -263,11 +285,14 @@ def derive_ui_workflow(
         n_widgets = len(plan["widgets"])
         extra = 100 if any(w["multiline"] for w in plan["widgets"]) else 0
         height = max(80, 26 * max(len(ins), len(outs)) + 30 + extra)
-        ui = {"id": int(key), "type": node["class_type"], "pos": [0, 0],
+        ui = {"id": uid[key], "type": node["class_type"], "pos": [0, 0],
               "size": [_NODE_WIDTH, height], "flags": {}, "order": position[key], "mode": 0,
               "inputs": ins, "outputs": outs,
               "properties": {"Node name for S&R": node["class_type"]},
               "widgets_values": plan["values"]}
+        if str(uid[key]) != key:
+            ui["properties"]["api_node_id"] = key
+            ui.setdefault("title", key)
         title = (node.get("_meta") or {}).get("title") if isinstance(node.get("_meta"), Mapping) else None
         if title:
             ui["title"] = title
@@ -298,21 +323,58 @@ def derive_ui_workflow(
             lid = len(links) + 1
             fnode = ui_nodes[from_id]
             ltype = fnode["outputs"][from_slot]["type"]
-            links.append([lid, int(from_id), from_slot, int(key), idx, ltype])
+            links.append([lid, uid[from_id], from_slot, uid[key], idx, ltype])
             tnode["inputs"][idx]["link"] = lid
             out = fnode["outputs"][from_slot]
             out["links"] = (out["links"] or []) + [lid]
 
     return {
         "id": _graph_id({k: {"class_type": v["class_type"], "inputs": v.get("inputs"),
-                             "_meta": v.get("_meta")} for k, v in sorted(api.items(), key=lambda kv: int(kv[0]))}),
+                             "_meta": v.get("_meta")} for k, v in sorted(api.items(), key=lambda kv: uid[kv[0]])}),
         "revision": 0,
-        "last_node_id": max(int(k) for k in api),
+        "last_node_id": max(uid.values()),
         "last_link_id": len(links),
-        "nodes": [ui_nodes[k] for k in sorted(api, key=int)],
+        "nodes": [ui_nodes[k] for k in sorted(api, key=uid.__getitem__)],
         "links": links,
         "groups": [],
         "config": {},
         "extra": {},
         "version": 0.4,
     }
+
+
+def validate_ui_workflow(api_graph: Mapping[str, Any], ui: Mapping[str, Any]) -> list[str]:
+    """Compare a derived UI workflow with the API graph it came from.
+
+    Returns human-readable problems; an empty list means every API node, every
+    link and every literal widget value is present in ``ui``. Pure, so tests and
+    the offline audit can share it.
+    """
+    api = {str(k): v for k, v in api_graph.items()
+           if isinstance(v, Mapping) and "class_type" in v and not str(k).startswith("_")}
+    uid = _frontend_ids(api)
+    problems: list[str] = []
+    nodes = {n["id"]: n for n in ui.get("nodes", [])}
+    for key, node in api.items():
+        ui_node = nodes.get(uid[key])
+        if ui_node is None:
+            problems.append(f"node {key} ({node['class_type']}) missing from UI graph")
+            continue
+        if ui_node["type"] != node["class_type"]:
+            problems.append(f"node {key}: type {ui_node['type']} != {node['class_type']}")
+        slot_names = [i["name"] for i in ui_node.get("inputs", [])]
+        values = ui_node.get("widgets_values", [])
+        for name, raw in (node.get("inputs") or {}).items():
+            if name not in slot_names:
+                problems.append(f"node {key} ({node['class_type']}): input {name!r} not in UI graph")
+            elif _is_link(raw):
+                idx = slot_names.index(name)
+                want = [uid[str(raw[0])] if str(raw[0]) in uid else None, raw[1], uid[key], idx]
+                if not any(l[1:5] == want for l in ui.get("links", [])):
+                    problems.append(f"node {key}: link into {name!r} from {raw[0]}:{raw[1]} missing")
+            elif raw not in values:
+                problems.append(f"node {key} ({node['class_type']}): value of {name!r} missing from widgets_values")
+    n_api_links = sum(1 for n in api.values() for v in (n.get("inputs") or {}).values() if _is_link(v))
+    if len(ui.get("links", [])) != n_api_links:
+        problems.append(f"link count {len(ui.get('links', []))} != API link count {n_api_links}")
+    return problems

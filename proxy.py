@@ -5134,6 +5134,10 @@ def _build_comfy_submit_payload(workflow: dict, **extra: Any) -> dict:
     # fallback only: it carries the template's values, and several twins are
     # stale (widget values shifted by control_after_generate).
     ui = _derive_ui_workflow(workflow) or twin
+    if not ui:
+        print("[proxy] WARNING: submitting a ComfyUI prompt without an embedded workflow "
+              "(derivation failed, no UI twin); dragging its output into ComfyUI will not "
+              "reopen the generation", flush=True)
     payload = {"prompt": workflow}
     if ui:
         payload["extra_data"] = {"extra_pnginfo": {"workflow": ui}}
@@ -12389,6 +12393,9 @@ async def lifespan(app: FastAPI):
             flush=True,
         )
     print(f"[proxy] Model compatibility: {'enabled' if MODEL_COMPAT_ENABLED else 'disabled'}", flush=True)
+    # Keep the last good ComfyUI node definitions on disk, so embedding a workflow
+    # in generated media survives a ComfyUI that is restarting at submit time.
+    comfy_object_info.DISK_CACHE_DIR = Path(__file__).resolve().parent / "cache" / "comfy_object_info"
 
     # Replay persisted firehose metrics so per-key counters and the recent-event
     # timeline survive proxy restarts. The window stays bounded at 24h; older
@@ -17257,12 +17264,17 @@ def _apply_edit_mask_as_source_alpha(context: ImageEditMaskContext) -> bytes:
     return _image_to_png_bytes(source)
 
 
-def _image_to_png_bytes(image) -> bytes:
+def _image_to_png_bytes(image, metadata_from: bytes | None = None) -> bytes:
+    """Encode ``image`` as PNG; ``metadata_from`` is a PNG whose text chunks
+    (ComfyUI ``prompt``/``workflow``) must survive the re-encode."""
     import io
 
     output = io.BytesIO()
     image.save(output, format="PNG")
-    return output.getvalue()
+    encoded = output.getvalue()
+    if metadata_from is not None:
+        encoded = media_metadata.copy_png_text(metadata_from, encoded)
+    return encoded
 
 
 def _apply_image_edit_mask_composite(
@@ -17285,7 +17297,7 @@ def _apply_image_edit_mask_composite(
         mask = mask.resize(generated.size, Image.Resampling.LANCZOS)
 
     composited = Image.composite(generated, source, mask)
-    return _image_to_png_bytes(composited)
+    return _image_to_png_bytes(composited, metadata_from=generated_content)
 
 
 def _offset_image_bytes(
@@ -17301,7 +17313,7 @@ def _offset_image_bytes(
     image.load()
     x_offset = int(round(image.width * x_fraction))
     y_offset = int(round(image.height * y_fraction))
-    return _image_to_png_bytes(ImageChops.offset(image, x_offset, y_offset))
+    return _image_to_png_bytes(ImageChops.offset(image, x_offset, y_offset), metadata_from=content)
 
 
 def _make_seam_cross_mask_png(

@@ -40,6 +40,7 @@ __all__ = [
     "media_kind",
     "strip_metadata",
     "embed_png_text",
+    "copy_png_text",
     "png_text_chunks",
     "exif_bytes",
     "embed_media_tags",
@@ -218,6 +219,15 @@ def embed_png_text(content: bytes, entries: Mapping[str, str]) -> bytes:
     if not inserted:
         raise MediaMetadataError("PNG has no IDAT chunk")
     return b"".join(out)
+
+
+def copy_png_text(source: bytes, target: bytes) -> bytes:
+    """Copy the text chunks of PNG ``source`` into PNG ``target``.
+
+    For gateway steps that re-encode a ComfyUI PNG (mask composite, tile offset):
+    Pillow drops ``prompt`` and ``workflow`` on save, so carry them across.
+    """
+    return embed_png_text(target, png_text_chunks(source))
 
 
 # -------------------------------------------------------------------- JPEG
