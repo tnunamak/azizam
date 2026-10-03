@@ -178,3 +178,42 @@ def test_prepare_request_receives_planned_contexts_without_changing_math() -> No
     assert [ctx.index for ctx in scorer.seen] == [0, 1]
     assert scorer.prepared[0][0].state == "shared state"
     assert scorer.prepared[0][1].options == ("no", "yes")
+
+
+def test_parse_accepts_criteria_backed_nullable_instructions_for_choice_score_and_noul() -> None:
+    req = decision_engine.parse_request(
+        {
+            "state": "state",
+            "questions": {
+                "choice_missing": {"type": "choice", "criteria": {"a": "Alpha", "b": "Beta"}},
+                "choice_null": {"type": "choice", "instructions": None, "criteria": {"a": "Alpha", "b": "Beta"}},
+                "score_null": {"type": "score", "instructions": None, "criteria": ["only level"]},
+                "noul_null": {"type": "noul", "instructions": None, "criteria": {"true": "Spam", "false": None}},
+            },
+        }
+    )
+
+    assert [q.key for q in req.questions] == ["choice_missing", "choice_null", "score_null", "noul_null"]
+    assert req.questions[0].options == ("a: Alpha", "b: Beta")
+    assert req.questions[2].legend == ("only level",)
+    assert req.questions[3].options == ("no", "yes: Spam")
+
+
+def test_build_response_uses_generic_question_text_for_nullable_choice_and_score_instructions() -> None:
+    req = decision_engine.parse_request(
+        {
+            "state": "state",
+            "questions": {
+                "route": {"type": "choice", "instructions": None, "criteria": {"left": "Left", "right": "Right"}},
+                "risk": {"type": "score", "criteria": ["only"]},
+            },
+        }
+    )
+    scorer = FakeScorer([{0: -2, 1: 0}, {0: -4, 1: 0}])
+
+    out = decision_engine.build_systemone_response(req, scorer, model="decider-test")
+
+    assert out["answers"]["route"]["choice"] == "right"
+    assert out["answers"]["risk"]["score"] == pytest.approx(0.0)
+    assert scorer.seen[0].question == "Which answer fits the context?"
+    assert "Proposed answer: only" in scorer.seen[1].question

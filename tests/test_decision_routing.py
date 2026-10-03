@@ -206,3 +206,59 @@ def test_all_alias_candidates_unavailable_have_retry_hint():
         rt.resolve("decide-quality")
     assert error.value.status == 529
     assert error.value.headers["retry-after"] == "5"
+
+
+@pytest.mark.parametrize("model", ["decide", "small", "small-v1", "jev-latest"])
+def test_dispatch_and_discovery_share_tag_restrictions(monkeypatch, model):
+    import proxy
+    from gateway.policy import AppProfile, CapabilitySelector
+    from gateway.runtime_auth import RuntimeIdentity
+    cfg = config()
+    monkeypatch.setattr(proxy, "config", cfg)
+    auth = proxy.AuthContext(RuntimeIdentity(
+        "restricted", "hash", profile=AppProfile(
+            id="restricted", allow=CapabilitySelector(tags=frozenset({"approved-chat"})),
+        ),
+    ))
+    cap = proxy.DECISION_RUNTIME.capabilities()[0]
+    assert proxy._capability_for_profile(cap, auth).policy_available is False
+    ensure = AsyncMock(return_value=None)
+    monkeypatch.setattr(proxy.DECISION_RUNTIME, "ensure_ready", ensure)
+    assert proxy._decision_authorized(auth, model, "small") is False
+    assert proxy.DECISION_RUNTIME.models_for(auth, auth.identity.profile) == []
+    with pytest.raises(DecisionsError) as error:
+        asyncio.run(proxy.DECISION_RUNTIME.dispatch(auth, auth.identity.profile, {**BODY, "model": model}, "r"))
+    assert error.value.status == 403
+    ensure.assert_not_called()
+
+
+def test_dispatch_propagates_remaining_deadline_to_engine():
+    rt = runtime()
+    real = httpx.AsyncClient
+    captured = []
+    def handler(request):
+        captured.append(float(request.headers.get("x-decision-deadline-ms", "0")))
+        return httpx.Response(200, json={"model": "small-v1", "answers": {"q": {"type": "noul", "noul": .9}}, "usage": {"input_tokens": 1, "output_tokens": 1}})
+    with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler))):
+        result = asyncio.run(rt.dispatch(None, None, BODY, "r"))
+    assert result.status_code == 200
+    assert 0 < captured[0] <= 15000
+
+
+def test_dispatch_deadline_bounds_total_response_time(monkeypatch):
+    import gateway.decision_routing as routing
+    monkeypatch.setattr(routing, "ROUTING_TIMEOUT_SECONDS", .03, raising=False)
+    rt = runtime()
+    real = httpx.AsyncClient
+    cancelled = []
+    async def handler(request):
+        try:
+            await asyncio.sleep(.12)
+            return httpx.Response(200, json={"model": "small-v1", "answers": {"q": {"type": "noul", "noul": .9}}, "usage": {"input_tokens": 1, "output_tokens": 1}})
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
+    with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler))):
+        result = asyncio.run(rt.dispatch(None, None, BODY, "r"))
+    assert result.status_code == 529
+    assert cancelled == [True]

@@ -123,3 +123,34 @@ For `gateway/decisions_api.py`:
 - The facade should reject unsupported top-level and question fields. The SDK's `extra_body` can add or override top-level fields, and silently accepting those fields would be dishonest.
 - Rejection and backend-error receipts should be written after authentication, with auth passed to the receipt callback so the parent can owner-scope receipt storage.
 - Receipt callback failure must not convert a successful decision response into a 500.
+
+## 2026-10-03 official OpenAPI schema pin for findings 5 and 6
+
+Source verified live before pinning: `https://api.typesafe.ai/openapi.json`.
+
+Fetch command used in the gateway worktree:
+
+```bash
+curl -fsSL https://api.typesafe.ai/openapi.json -o tests/fixtures/typesafe_openapi.json
+```
+
+Hash metadata:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Raw fetched bytes before formatting | `a191f8a7df6bd6fedced8120dd0fd106f88575d1d1c8360d08900a6c7c0360d5` |
+| Pinned pretty-printed fixture `tests/fixtures/typesafe_openapi.json` | `032526ef1c1e00fc5330f66af5ee296c043355e10f1201983193ac6108b82975` |
+
+Relevant schema evidence:
+
+- `components.schemas.NoulQuestion.properties.instructions.anyOf` includes `string`, `object`, `array`, and `null`. Null instructions are therefore part of the wire schema, not an invalid type by themselves.
+- `components.schemas.NoulQuestion.properties.criteria.anyOf` includes `NoulCriteria` and `null`.
+- `components.schemas.NoulCriteria.properties.true.anyOf` and `.false.anyOf` each include `string`, `object`, `array`, and `null`. A request such as `criteria={"true":"Spam","false":null}` is schema-valid.
+- `components.schemas.HTTPValidationError.properties.detail` is an array of `ValidationError` records.
+- `components.schemas.ValidationError.required` is `loc`, `msg`, and `type`. `loc` is an array of strings or integers. This supports a TypeSafe/FastAPI-style envelope such as `{"detail":[{"loc":["body","state"],"msg":"Field required","type":"missing"}]}` for local System One request validation failures.
+
+Regression tests added from this evidence:
+
+- `test_typesafe_noul_accepts_null_instructions_with_meaningful_nullable_criteria`
+- `test_systemone_request_validation_errors_use_typesafe_detail_envelope`
+- `test_pinned_openapi_documents_nullable_noul_fields_and_detail_validation_envelope`

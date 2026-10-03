@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -195,6 +196,66 @@ def test_typesafe_prefixed_systemone_accepts_choice_and_score_fixture(env):
     assert env.fakes.receipts[0][1].engine == "cpu"
 
 
+def test_pinned_openapi_documents_nullable_noul_fields_and_detail_validation_envelope():
+    schema = _fixture("typesafe_openapi.json")
+    schemas = schema["components"]["schemas"]
+
+    noul_question = schemas["NoulQuestion"]
+    assert {variant.get("type") for variant in noul_question["properties"]["instructions"]["anyOf"]} >= {"string", "object", "array", "null"}
+    assert {variant.get("type") for variant in noul_question["properties"]["criteria"]["anyOf"]} >= {"null"}
+
+    noul_criteria = schemas["NoulCriteria"]
+    assert {variant.get("type") for variant in noul_criteria["properties"]["true"]["anyOf"]} >= {"string", "object", "array", "null"}
+    assert {variant.get("type") for variant in noul_criteria["properties"]["false"]["anyOf"]} >= {"string", "object", "array", "null"}
+
+    validation_error = schemas["HTTPValidationError"]
+    assert validation_error["required"] == ["detail"] if "required" in validation_error else True
+    assert validation_error["properties"]["detail"]["type"] == "array"
+    assert schemas["ValidationError"]["required"] == ["loc", "msg", "type"]
+
+
+def test_typesafe_noul_accepts_null_instructions_with_meaningful_nullable_criteria(env):
+    body = _fixture("typesafe_systemone_noul.json")["request"]
+    body["questions"]["is_urgent"] = {
+        "type": "noul",
+        "instructions": None,
+        "criteria": {"true": "The message is unsolicited advertising.", "false": None},
+    }
+
+    resp = env.client.post("/v1/systemone", json=body, headers=H)
+
+    assert resp.status_code == 200, resp.text
+    assert env.fakes.calls[0][1]["questions"]["is_urgent"]["instructions"] is None
+    assert env.fakes.calls[0][1]["questions"]["is_urgent"]["criteria"]["false"] is None
+
+
+def test_systemone_request_validation_errors_use_typesafe_detail_envelope(env):
+    body = _fixture("typesafe_systemone_noul.json")["request"]
+    del body["state"]
+
+    resp = env.client.post("/v1/systemone", json=body, headers=H)
+
+    assert resp.status_code == 422
+    payload = resp.json()
+    assert "error" not in payload
+    assert payload == {
+        "detail": [
+            {
+                "loc": ["body", "state"],
+                "msg": "Field required",
+                "type": "missing",
+            }
+        ]
+    }
+    detail_schema = _fixture("typesafe_openapi.json")["components"]["schemas"]["HTTPValidationError"]["properties"]["detail"]
+    assert detail_schema["type"] == "array"
+    for item in payload["detail"]:
+        assert isinstance(item["loc"], list)
+        assert all(isinstance(part, (str, int)) for part in item["loc"])
+        assert isinstance(item["msg"], str) and item["msg"]
+        assert isinstance(item["type"], str) and item["type"]
+
+
 @pytest.mark.parametrize(
     "patch,param,needle",
     [
@@ -203,13 +264,10 @@ def test_typesafe_prefixed_systemone_accepts_choice_and_score_fixture(env):
         ({"questions": {}}, "questions", "questions must be a non-empty object"),
         ({"questions": {"q": {"type": "maybe", "instructions": "x"}}}, "questions.q.type", "question type"),
         ({"questions": {"q": {"type": "choice", "instructions": "x", "criteria": {"a": "A"}}}}, "questions.q.criteria", "2 to 255"),
-        (
-            {"questions": {"q": {"type": "score", "instructions": "x", "criteria": ["one"]}}},
-            "questions.q.criteria",
-            "2 to 10",
-        ),
     ],
 )
+
+
 def test_validation_errors_are_typesafe_shaped_and_do_not_call_backend(env, patch, param, needle):
     body = _fixture("typesafe_systemone_noul.json")["request"]
     body.update(patch)
@@ -235,6 +293,61 @@ def test_unknown_top_level_and_question_fields_are_rejected(env):
     resp = env.client.post("/v1/systemone", json=body, headers=H)
     assert resp.status_code == 422
     assert resp.json()["error"]["param"] == "questions.is_urgent.max_tokens"
+
+
+def test_openapi_nullable_instruction_rules_cover_choice_and_score_questions():
+    schemas = _fixture("typesafe_openapi.json")["components"]["schemas"]
+
+    choice_question = schemas["ChoiceQuestion"]
+    assert choice_question["required"] == ["criteria", "type"]
+    assert {variant.get("type") for variant in choice_question["properties"]["instructions"]["anyOf"]} >= {"string", "object", "array", "null"}
+    choice_description = choice_question["properties"]["criteria"]["additionalProperties"]
+    assert {variant.get("type") for variant in choice_description["anyOf"]} >= {"string", "object", "array", "null"}
+
+    score_question = schemas["ScoreQuestion"]
+    assert score_question["required"] == ["criteria", "type"]
+    assert {variant.get("type") for variant in score_question["properties"]["instructions"]["anyOf"]} >= {"string", "object", "array", "null"}
+    assert score_question["properties"]["criteria"]["minItems"] == 1
+
+
+def test_choice_accepts_missing_or_null_instructions_when_criteria_are_descriptive(env):
+    body = _fixture("typesafe_systemone_noul.json")["request"]
+    body["questions"] = {
+        "department": {
+            "type": "choice",
+            "criteria": {"billing": "Billing issue", "support": "General support issue"},
+        },
+        "tone": {
+            "type": "choice",
+            "instructions": None,
+            "criteria": {"angry": "Upset or hostile", "calm": "Neutral or polite"},
+        },
+    }
+
+    resp = env.client.post("/v1/systemone", json=body, headers=H)
+
+    assert resp.status_code == 200, resp.text
+    sent = env.fakes.calls[0][1]["questions"]
+    assert "instructions" not in sent["department"]
+    assert sent["tone"]["instructions"] is None
+
+
+def test_score_accepts_null_instructions_with_descriptive_single_level_criteria(env):
+    body = _fixture("typesafe_systemone_noul.json")["request"]
+    body["questions"] = {
+        "severity": {
+            "type": "score",
+            "instructions": None,
+            "criteria": ["Needs immediate attention"],
+        }
+    }
+
+    resp = env.client.post("/v1/systemone", json=body, headers=H)
+
+    assert resp.status_code == 200, resp.text
+    sent = env.fakes.calls[0][1]["questions"]["severity"]
+    assert sent["instructions"] is None
+    assert sent["criteria"] == ["Needs immediate attention"]
 
 
 def test_validation_handles_non_string_type_and_criteria_only_noul(env):
@@ -317,6 +430,82 @@ def test_decisions_error_headers_are_forwarded(env):
     assert resp.status_code == 529
     assert resp.headers["retry-after"] == "5"
     assert env.fakes.receipts[0][1].error_code == "overloaded"
+
+
+def test_systemone_dispatch_is_cancelled_when_client_disconnects_after_body():
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    continued_after_disconnect = asyncio.Event()
+
+    async def dispatch(_auth, _profile, _body, _request_id):
+        started.set()
+        try:
+            await asyncio.sleep(0.2)
+            continued_after_disconnect.set()
+            return DecisionDispatchResult(
+                body={
+                    "model": "decider-2b-v11",
+                    "answers": {"is_urgent": {"type": "noul", "noul": 0.9}},
+                    "usage": {"input_tokens": 1, "output_tokens": 0},
+                },
+                backend="decider-cpu",
+            )
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    fakes = FakeDeps()
+    app = FastAPI()
+    register_decision_routes(
+        app,
+        DecisionsApiDeps(
+            authenticate=fakes.authenticate,
+            profile_for=fakes.profile_for,
+            models_for=fakes.models_for,
+            dispatch=dispatch,
+            record_receipt=fakes.record_receipt,
+        ),
+    )
+    body = json.dumps(_fixture("typesafe_systemone_noul.json")["request"]).encode("utf-8")
+    request_sent = False
+
+    async def receive():
+        nonlocal request_sent
+        if not request_sent:
+            request_sent = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        await started.wait()
+        return {"type": "http.disconnect"}
+
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    async def run_app():
+        scope = {
+            "type": "http",
+            "asgi": {"spec_version": "2.3", "version": "3.0"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/v1/systemone",
+            "raw_path": b"/v1/systemone",
+            "query_string": b"",
+            "headers": [(b"authorization", b"Bearer good"), (b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
+            "client": ("127.0.0.1", 12345),
+            "server": ("gateway.test", 80),
+            "root_path": "",
+        }
+        await app(scope, receive, send)
+
+    asyncio.run(asyncio.wait_for(run_app(), timeout=2))
+
+    assert cancelled.is_set()
+    assert not continued_after_disconnect.is_set()
+    assert fakes.receipts[0][1].status_code == 499
+    assert fakes.receipts[0][1].error_code == "client_disconnected"
+    assert sent == []
 
 
 def test_backend_exception_does_not_leak_details(env):
