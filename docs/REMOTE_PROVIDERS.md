@@ -77,6 +77,23 @@ choose fallback targets, and each paid attempt needs its own permission and
 reservation. Paid attempts use `num_retries: 0`; a single reservation cannot
 authorize multiple potentially billable retries.
 
+Paid execution has a stricter field allowlist tied to the token cost model.
+It filters and normalizes the request before reservation, then estimates the
+exact payload sent to the shared transport. Supported output limits
+(`max_tokens` and `max_completion_tokens`) become one outbound `max_tokens`
+using their maximum. Invalid limits return HTTP 400. `max_output_tokens` is
+unsupported on this paid chat/completion path and returns HTTP 400 with
+`paid_option_unsupported` before reservation or dispatch.
+
+Unmodeled billing options also return `paid_option_unsupported`, including
+search, service tiers, audio/modalities, prediction, storage/background work,
+and unknown fields. This applies even without configured caps. Tools must be
+client-executed function tools; provider-executed tools are unsupported.
+Nested function schemas remain intact. Adding a price-table key alone does
+not enable an option: the estimator must model a conservative bound for that
+dimension before the paid allowlist can admit it. The explicit field-list
+regression requires a pricing decision when supported fields change.
+
 ## Admin API
 
 The Providers UI uses:
@@ -108,9 +125,10 @@ If the ledger is absent or unreadable, the UI reports spend as unknown.  An
 empty readable ledger reports zero spend.
 
 Completion estimates include prompt batches and generated candidates
-(`n` and `best_of`). When output-limit fields conflict, reservation uses the
-maximum positive limit across `max_tokens`, `max_completion_tokens`, and
-`max_output_tokens`, because adapters can select different fields.
+(`n` and `best_of`). For paid chat execution, estimation uses the normalized
+outbound limit described above. The generic estimator takes the maximum of
+all supported limit fields; unsupported fields must first be rejected or
+normalized by the executor.
 Estimation follows the actual request operation, so a
 provider that supports both chat and decisions uses the appropriate price
 estimate for each call. Invalid streaming options fail before reserving spend;
@@ -120,7 +138,9 @@ An absent provider `allowed_plans` restriction preserves the profile's provider
 permission and appears as `null` in admin JSON. An explicit empty list denies
 every plan. Updating only caps keeps
 that distinction. Client receipt serialization omits `cost.provider` for both
-newly created and persisted receipts; admin receipts retain it.
+newly created and persisted receipts; admin receipts retain it. Spend reports
+group historical provider IDs under their canonical lowercase IDs, matching
+cap enforcement.
 
 ## Error Semantics
 

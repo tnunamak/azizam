@@ -292,7 +292,7 @@ def provider_ledger_spending_snapshot(
     global_daily = Decimal("0")
     global_monthly = Decimal("0")
     for provider, created_at, estimated, actual, _status in rows:
-        provider_id = str(provider)
+        provider_id = service_registry.canonical_provider_id(provider)
         amount = _ledger_amount(actual, estimated)
         provider_totals = providers.setdefault(
             provider_id, {"daily_usd": Decimal("0"), "monthly_usd": Decimal("0")}

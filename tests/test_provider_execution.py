@@ -382,6 +382,27 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         send.assert_not_called()
         self.assertFalse(self.ledger.exists())
 
+    async def test_paid_invalid_output_limits_are_rejected_before_dispatch(self) -> None:
+        for field in ("max_tokens", "max_completion_tokens"):
+            for value in (True, 0, -1, "8", 1.5):
+                with self.subTest(field=field, value=value):
+                    self.receipts.clear()
+                    self.body = {
+                        "model": "openrouter/openai/gpt-4.1-mini",
+                        "messages": [{"role": "user", "content": "hi"}],
+                        field: value,
+                    }
+                    send = AsyncMock()
+
+                    response, _ = await self._execute(send=send)
+
+                    self.assertEqual(response.status_code, 400)
+                    body = json.loads((await _body(response)).decode())
+                    self.assertEqual(body["error"]["code"], "invalid_request")
+                    self.assertEqual(body["error"]["param"], field)
+                    send.assert_not_called()
+                    self.assertFalse(self.ledger.exists())
+
     async def test_paid_billing_options_without_pricing_are_rejected_before_dispatch(self) -> None:
         for option in (
             {

@@ -19,6 +19,7 @@ from gateway.backends.llm_execution import (
     ClientDisconnectedBeforeHeaders, LlmExecutionPredispatchError,
     LiteLlmRuntimeConfig, LlmExecutionRequest, RequestDisconnectWatcher,
     litellm_headers, litellm_url, read_llm_response_body,
+    sanitize_litellm_execution_request,
     send_llm_execution_request,
 )
 from gateway.policy import AppProfile, PolicyRequest, evaluate
@@ -53,8 +54,78 @@ def invalid_request_response(message: str, *, param: str | None = None) -> JSONR
     return JSONResponse({"error": error}, status_code=400)
 
 
+def paid_option_unsupported_response(param: str) -> JSONResponse:
+    return JSONResponse(
+        {
+            "error": {
+                "code": "paid_option_unsupported",
+                "message": (
+                    f"{param} is not supported for paid remote providers because "
+                    "the gateway cannot bound its provider cost."
+                ),
+                "param": param,
+            }
+        },
+        status_code=400,
+    )
+
+
+PAID_PRICED_REQUEST_FIELDS = frozenset(
+    {
+        "best_of",
+        "frequency_penalty",
+        "function_call",
+        "functions",
+        "input",
+        "logit_bias",
+        "logprobs",
+        "max_tokens",
+        "messages",
+        "model",
+        "n",
+        "parallel_tool_calls",
+        "presence_penalty",
+        "prompt",
+        "response_format",
+        "seed",
+        "stop",
+        "stream",
+        "stream_options",
+        "suffix",
+        "temperature",
+        "tool_choice",
+        "tools",
+        "top_logprobs",
+        "top_p",
+        "user",
+    }
+)
+
+_PAID_OUTPUT_LIMIT_FIELDS = frozenset(
+    {"max_tokens", "max_completion_tokens", "max_output_tokens"}
+)
+
+_PAID_CALLER_ROUTING_FIELDS = frozenset(
+    {
+        "context_window_fallback_dict",
+        "default_fallbacks",
+        "fallbacks",
+        "litellm_metadata",
+        "metadata",
+        "model_group_retry_policy",
+        "num_retries",
+        "max_retries",
+        "router_settings",
+        "router_settings_override",
+    }
+)
+
+
 def _prepare_paid_litellm_payload(body: Mapping[str, Any], *, stream: bool) -> tuple[dict[str, Any], bytes] | JSONResponse:
-    payload = dict(body)
+    prepared = _paid_priced_outbound_payload(body)
+    if isinstance(prepared, JSONResponse):
+        return prepared
+    payload = prepared
     payload["num_retries"] = 0
     payload["max_retries"] = 0
     if stream:
@@ -74,6 +145,63 @@ def _prepare_paid_litellm_payload(body: Mapping[str, Any], *, stream: bool) -> t
     except (TypeError, ValueError):
         return invalid_request_response("request body is not JSON serializable")
     return payload, payload_bytes
+
+
+def _paid_priced_outbound_payload(body: Mapping[str, Any]) -> dict[str, Any] | JSONResponse:
+    payload: dict[str, Any] = {}
+    output_limits: list[int] = []
+    for key, value in body.items():
+        if key in _PAID_CALLER_ROUTING_FIELDS:
+            continue
+        if key in _PAID_OUTPUT_LIMIT_FIELDS:
+            if key == "max_output_tokens":
+                return paid_option_unsupported_response(key)
+            limit = _positive_int(value)
+            if limit is None:
+                return invalid_request_response(
+                    f"{key} must be a positive integer when provided.",
+                    param=key,
+                )
+            output_limits.append(limit)
+            continue
+        if key not in PAID_PRICED_REQUEST_FIELDS:
+            return paid_option_unsupported_response(key)
+        payload[key] = value
+
+    if output_limits:
+        # Paid chat/completion execution uses one outbound limit field. When a
+        # client sends multiple aliases, reserve and dispatch the conservative
+        # maximum so the estimator and provider see the same bound.
+        payload["max_tokens"] = max(output_limits)
+
+    unsupported_tool = _unsupported_paid_tool(payload.get("tools"))
+    if unsupported_tool is not None:
+        return paid_option_unsupported_response(unsupported_tool)
+
+    # Adding a provider-executed billing dimension here is not enough. The
+    # estimator must first model a safe upper bound for that dimension; until
+    # then paid execution fails closed even if a provider price table names it.
+    return payload
+
+
+def _positive_int(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        return None
+    return value
+
+
+def _unsupported_paid_tool(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        return "tools"
+    for item in value:
+        if not isinstance(item, Mapping):
+            return "tools"
+        tool_type = item.get("type")
+        if tool_type != "function":
+            return "tools"
+    return None
 
 
 def _model_declared(provider: providers.ProviderRef, model: str) -> bool:
@@ -126,8 +254,29 @@ async def execute_paid_litellm(
                 receipt.set_policy_decision("denied", reason="invalid_request", source="gateway:remote-provider")
                 owner.report(status="failed", reason="failed")
                 return prepared
-            payload, payload_bytes = prepared
-            estimate = providers.estimate_request_cost(provider, payload, protocol=protocol, intent=intent)
+            _, payload_bytes = prepared
+            execution = sanitize_litellm_execution_request(
+                LlmExecutionRequest(
+                    method=request.method,
+                    url=litellm_url(base_url=runtime.base_url, path=request_path),
+                    headers=litellm_headers(
+                        {},
+                        api_key=runtime.api_key,
+                        gateway_metadata={"request-id": receipt.request_id},
+                    ),
+                    body=payload_bytes,
+                    read_timeout=120.0,
+                    trusted_num_retries=0,
+                    trusted_max_retries=0,
+                )
+            )
+            try:
+                estimate_payload = json.loads(execution.body or b"{}")
+            except (UnicodeDecodeError, ValueError):
+                return invalid_request_response("request body is not JSON serializable")
+            if not isinstance(estimate_payload, Mapping):
+                return invalid_request_response("request body must be a JSON object")
+            estimate = providers.estimate_request_cost(provider, estimate_payload, protocol=protocol, intent=intent)
             reservation = providers.reserve_provider_spend(
                 profile, provider, estimate, path=ledger_path,
                 admin_db_path=admin_db_path, paid_fallback=paid_fallback,
@@ -142,11 +291,6 @@ async def execute_paid_litellm(
         client = None
         response = None
         watcher = RequestDisconnectWatcher(request.receive)
-        execution = LlmExecutionRequest(
-            method=request.method, url=litellm_url(base_url=runtime.base_url, path=request_path),
-            headers=litellm_headers({}, api_key=runtime.api_key, gateway_metadata={"request-id": receipt.request_id}),
-            body=payload_bytes, read_timeout=120.0, trusted_num_retries=0, trusted_max_retries=0,
-        )
         try:
             client, response = await send_llm_execution_request(execution, disconnect_watcher=watcher)
         except ClientDisconnectedBeforeHeaders:
