@@ -42,7 +42,10 @@ function row(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function renderCatalog(aliases: ReturnType<typeof row>[]) {
+function renderCatalog(
+  aliases: ReturnType<typeof row>[],
+  models: ReturnType<typeof row>[] = [],
+) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async () =>
@@ -50,7 +53,7 @@ function renderCatalog(aliases: ReturnType<typeof row>[]) {
         schema_version: 1,
         object: "models.catalog",
         aliases,
-        models: [],
+        models,
       }),
     ),
   );
@@ -131,4 +134,52 @@ it("provides actions for the initial empty catalog and filtered empty catalog", 
   fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
   expect(search).toHaveValue("");
   expect(screen.getByRole("button", { name: "Copy alias chat" })).toBeVisible();
+});
+
+it("uses human model titles while keeping exact ids as secondary code and detail facts", async () => {
+  const id = "audio.generate.internal-workflow";
+  renderCatalog(
+    [],
+    [
+      row({
+        id,
+        display_name: id,
+        name: id,
+        alias: false,
+        object: "model_catalog.model",
+      }),
+      row({
+        id: "named-id",
+        display_name: "named-id",
+        name: "Household assistant",
+        alias: false,
+        object: "model_catalog.model",
+      }),
+    ],
+  );
+  fireEvent.click(await screen.findByRole("button", { name: /All models/ }));
+  const table = within(screen.getByRole("table"));
+  expect(table.getByText("Chat model")).toBeVisible();
+  expect(table.getByText(id).tagName).toBe("CODE");
+  expect(table.getByText("Household assistant")).toBeVisible();
+  fireEvent.click(table.getByText("Chat model"));
+  const detail = within(screen.getByRole("dialog"));
+  expect(detail.getByRole("heading", { name: "Chat model" })).toBeVisible();
+  expect(detail.getByText(id)).toBeVisible();
+});
+
+it("uses the shared status badge for measured availability", async () => {
+  renderCatalog([
+    row({
+      availability: {
+        measured: true,
+        available: false,
+        status: "busy",
+        reason: "A request is running.",
+      },
+    }),
+  ]);
+  const status = await screen.findByText("Busy");
+  expect(status).toHaveAttribute("data-slot", "badge");
+  expect(screen.getByText("A request is running.")).toBeVisible();
 });

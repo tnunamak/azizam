@@ -16,14 +16,13 @@ from dataclasses import replace
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from typing import Any
-from urllib.parse import urljoin
 
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse, Response
 
 from gateway.capabilities import Capability
 from gateway.local_capabilities import build_local_capabilities
-from gateway.model_presentation import engine_label, model_locality
+from gateway.model_presentation import engine_label, model_locality, service_health_endpoint
 from gateway.service_registry import runtime_backend_from_service
 
 CatalogProvider = Callable[[Request], Mapping[str, Any] | Response | Awaitable[Mapping[str, Any] | Response]]
@@ -864,19 +863,7 @@ async def probe_service_health(
 
 
 def _health_endpoint(service: Mapping[str, Any]) -> str | None:
-    for source in (service, service.get("config") if isinstance(service.get("config"), Mapping) else {}):
-        if not isinstance(source, Mapping):
-            continue
-        endpoint = source.get("health_endpoint")
-        base_url = str(source.get("base_url") or "").rstrip("/")
-        if endpoint:
-            endpoint_text = str(endpoint)
-            if endpoint_text.startswith(("http://", "https://")):
-                return endpoint_text
-            if base_url:
-                return urljoin(f"{base_url}/", endpoint_text.lstrip("/"))
-            return endpoint_text
-    return None
+    return service_health_endpoint(service)
 
 
 def _availability_from_health_payload(payload: Mapping[str, Any]) -> bool | None:

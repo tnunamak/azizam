@@ -45,6 +45,7 @@ import {
   EmptyState,
   ErrorState,
   PageHeader,
+  StatusPill,
 } from "@/components/product";
 
 type AvailabilityState =
@@ -192,15 +193,13 @@ function descriptionFor(row: CatalogRow): string {
 }
 
 function titleFor(row: CatalogRow): string {
-  const name = row.name ?? row.display_name;
-  if (!row.alias || name.toLowerCase() !== row.id.toLowerCase()) return name;
+  const name = [row.name, row.display_name].find(
+    (value) => value && value.toLowerCase() !== row.id.toLowerCase(),
+  );
+  if (name) return name;
+  if (!row.alias) return `${capabilityLabels[primaryCapability(row)]} model`;
   if (row.id === "fast") return "Fast chat";
   return capabilityLabels[primaryCapability(row)];
-}
-
-function availabilityLabel(value: AvailabilityState): string {
-  if (value === "not measured yet") return "Availability not checked";
-  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function costLabel(row: CatalogRow): string {
@@ -319,14 +318,13 @@ function snippetsFor(row: CatalogRow, origin: string) {
   ];
 }
 
-function availabilityClass(state: AvailabilityState) {
-  if (state === "ready") return "bg-success";
-  if (state === "starting") return "bg-info";
-  if (state === "busy") return "bg-warning";
-  return "bg-muted-foreground";
-}
-
-function Availability({ row }: { row: CatalogRow }) {
+function Availability({
+  row,
+  showReason = true,
+}: {
+  row: CatalogRow;
+  showReason?: boolean;
+}) {
   const state = availabilityState(row);
   if (state === "not measured yet") {
     return (
@@ -336,22 +334,10 @@ function Availability({ row }: { row: CatalogRow }) {
     );
   }
   return (
-    <div className="flex min-w-0 items-start gap-2 text-sm">
-      <span
-        aria-hidden="true"
-        className={cn(
-          "mt-1.5 size-2 shrink-0 rounded-full",
-          availabilityClass(state),
-        )}
-      />
-      <p className="text-muted-foreground min-w-0 text-xs leading-5">
-        <span className="text-foreground font-medium">
-          {availabilityLabel(state)}
-        </span>
-        {" · "}
-        {row.availability.reason}
-      </p>
-    </div>
+    <StatusPill
+      status={state}
+      reason={showReason ? row.availability.reason : undefined}
+    />
   );
 }
 
@@ -852,7 +838,12 @@ export default function ModelsClient() {
                             className="h-auto min-h-11 justify-start text-left whitespace-normal"
                             onClick={() => setDetail(row)}
                           >
-                            {row.name ?? row.display_name}
+                            <span className="space-y-1">
+                              <span className="block">{titleFor(row)}</span>
+                              <code className="text-muted-foreground block text-xs font-normal">
+                                {row.id}
+                              </code>
+                            </span>
                           </Button>
                         </TableCell>
                         <TableCell>
@@ -862,7 +853,7 @@ export default function ModelsClient() {
                         <TableCell>{engineLabel(row)}</TableCell>
                         <TableCell>{costLabel(row)}</TableCell>
                         <TableCell>
-                          {availabilityLabel(availabilityState(row))}
+                          <Availability row={row} showReason={false} />
                         </TableCell>
                       </TableRow>
                     ))}

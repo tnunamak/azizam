@@ -28,7 +28,7 @@ const seededSummary = {
       intent: "chat",
       capability: "chat",
       status: "success",
-      latency_ms: 42,
+      latency_ms: 104,
       remote_spend: null,
     },
   ],
@@ -69,13 +69,18 @@ test("usage lists a receipt and opens technical details", async ({ page }) => {
     ),
   ).toBeVisible();
   await expect(page.getByText("demo-chat").first()).toBeVisible();
-  await page
-    .getByRole("button", { name: /Receipt details for demo-chat/ })
-    .first()
-    .click();
+  await expect(
+    page.getByRole("columnheader", { name: "Typical time" }),
+  ).toHaveCount(0);
+  const receipt = page.getByRole("button", {
+    name: /Receipt details for demo-chat/,
+  });
+  await expect(receipt).toContainText("104 ms");
+  await receipt.first().click();
   const sheet = page.getByRole("dialog", { name: "Request receipt" });
   await expect(sheet).toBeVisible();
   await expect(sheet).toContainText("demo-chat");
+  await expect(sheet).toContainText("104 ms");
   await sheet.getByText("Technical details", { exact: true }).click();
   await expect(sheet).toContainText("request_id");
   await expect(sheet).toContainText("requested_model");
@@ -230,4 +235,26 @@ test("usage reads the real account summary and seeded receipt", async ({
   await expect(
     page.getByRole("dialog", { name: "Request receipt" }),
   ).toContainText("succeeded");
+});
+
+test("Usage person filter does not promote an email address to a person name", async ({
+  page,
+}) => {
+  await page.route("**/me/api/usage/summary?**", (route) =>
+    route.fulfill({
+      json: {
+        ...seededSummary,
+        people: [{ id: "person-email", name: "person@example.test" }],
+      },
+    }),
+  );
+  await page.goto("/ui/usage/");
+
+  await page.getByRole("combobox", { name: "Person" }).click();
+  await expect(
+    page.getByRole("option", { name: "Person", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("option", { name: "person@example.test", exact: true }),
+  ).toHaveCount(0);
 });

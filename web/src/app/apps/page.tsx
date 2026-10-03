@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppWindow, MoreHorizontal, Plus, KeyRound } from "lucide-react";
 import { toast } from "sonner";
+import { formatAppName } from "@/lib/format";
 import { accountApi, type AccountApp } from "@/lib/account-api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -112,11 +113,12 @@ function AppsContents() {
     try {
       const app = createdApp ?? (await accountApi.createApp(name.trim()));
       setCreatedApp(app);
+      const appName = formatAppName(app.name, accountData?.user?.email);
       const key = await accountApi.mintKey(
         app.id,
-        client === "Other app" ? app.name : client,
+        client === "Other app" ? appName : client,
       );
-      setReveal({ secret: key.api_key, app: app.name, client, oldIds: [] });
+      setReveal({ secret: key.api_key, app: appName, client, oldIds: [] });
       setSaved(false);
       setCreating(false);
       setCreatedApp(null);
@@ -139,14 +141,15 @@ function AppsContents() {
     setError(null);
     try {
       const ids = action.app.credentials.map((key) => key.id);
+      const appName = formatAppName(action.app.name, accountData?.user?.email);
       if (action.kind === "rotate") {
         const key = await accountApi.mintKey(
           action.app.id,
-          `${action.app.name} replacement`,
+          `${appName} replacement`,
         );
         setReveal({
           secret: key.api_key,
-          app: action.app.name,
+          app: appName,
           client: "Other app",
           oldIds: ids,
         });
@@ -218,6 +221,9 @@ function AppsContents() {
   }
 
   const apps = accountData?.apps ?? [];
+  const actionAppName = action
+    ? formatAppName(action.app.name, accountData?.user?.email)
+    : "";
   return (
     <div className="space-y-8">
       <PageHeader
@@ -273,6 +279,7 @@ function AppsContents() {
       ) : (
         <div className="space-y-3">
           {apps.map((app) => {
+            const appName = formatAppName(app.name, accountData?.user?.email);
             const lastUsed = app.credentials.reduce<number | null>(
               (latest, key) =>
                 key.last_used_at != null &&
@@ -296,7 +303,7 @@ function AppsContents() {
                 </div>
                 <div className="min-w-0 flex-1">
                   <h2 className="text-base font-semibold break-words">
-                    {app.name}
+                    {appName}
                   </h2>
                   <p className="text-muted-foreground mt-1 text-sm">
                     {app.credentials.length}{" "}
@@ -313,7 +320,7 @@ function AppsContents() {
                     <Button
                       variant="ghost"
                       size="icon"
-                      aria-label={`Actions for ${app.name}`}
+                      aria-label={`Actions for ${appName}`}
                     >
                       <MoreHorizontal />
                     </Button>
@@ -325,14 +332,11 @@ function AppsContents() {
                         setBusy(true);
                         setError(null);
                         try {
-                          const key = await accountApi.mintKey(
-                            app.id,
-                            app.name,
-                          );
+                          const key = await accountApi.mintKey(app.id, appName);
                           setSaved(false);
                           setReveal({
                             secret: key.api_key,
-                            app: app.name,
+                            app: appName,
                             client: "Other app",
                             oldIds: [],
                           });
@@ -459,7 +463,7 @@ function AppsContents() {
           <DialogHeader>
             <DialogTitle>
               {action?.kind === "rotate" ? "Rotate" : "Revoke"} keys for{" "}
-              {action?.app.name}?
+              {actionAppName}?
             </DialogTitle>
             <DialogDescription>
               {action?.kind === "rotate"

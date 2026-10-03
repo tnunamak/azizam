@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   Video,
 } from "lucide-react";
+import { formatAppName } from "@/lib/format";
 import { accountApi, type AccountApp } from "@/lib/account-api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -167,7 +168,10 @@ function Connect({ home }: { home: HomeSnapshot }) {
   const [testError, setTestError] = useState<string | null>(null);
   const keys = home.apps
     .flatMap((app) =>
-      app.credentials.map((key) => ({ ...key, appName: app.name })),
+      app.credentials.map((key) => ({
+        ...key,
+        appName: formatAppName(app.name, home.user.email),
+      })),
     )
     .filter(
       (key) =>

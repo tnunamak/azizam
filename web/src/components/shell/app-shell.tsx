@@ -89,7 +89,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { ViewerContext, useViewer, useViewerQuery } from "./session";
-import { formatPersonName } from "@/lib/format";
+import { formatAppName, formatPersonName } from "@/lib/format";
 
 const icons: Record<string, LucideIcon> = {
   Home,
@@ -367,7 +367,10 @@ function CommandPalette({
     queryFn: async () => {
       const r = await fetch("/me/api/session");
       if (!r.ok) throw new Error();
-      return r.json() as Promise<{ apps: Array<{ id: string; name: string }> }>;
+      return r.json() as Promise<{
+        user?: { email?: string };
+        apps: Array<{ id: string; name: string }>;
+      }>;
     },
     enabled: open && viewer.authenticated,
   });
@@ -477,7 +480,7 @@ function CommandPalette({
                     }
                   >
                     <KeyRound />
-                    {app.name}
+                    {formatAppName(app.name, appData.user?.email)}
                   </CommandItem>
                 ))}
               </CommandGroup>
@@ -502,6 +505,12 @@ function CommandPalette({
                 {peopleData.map((person) => (
                   <CommandItem
                     key={person.id}
+                    value={person.id}
+                    keywords={[
+                      person.display_name || "",
+                      person.name || "",
+                      person.email || "",
+                    ]}
                     onSelect={() =>
                       go(`/people?person=${encodeURIComponent(person.id)}`)
                     }
@@ -513,6 +522,7 @@ function CommandPalette({
                     )}
                     {person.email ? (
                       <span className="text-muted-foreground truncate text-xs">
+                        {" "}
                         {person.email}
                       </span>
                     ) : null}

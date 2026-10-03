@@ -14,6 +14,13 @@ export function formatPersonName(
   return display && !display.includes("@") ? display : fallback;
 }
 
+/** Keep the legacy generated app label readable without changing custom names. */
+export function formatAppName(name: string, email?: string | null): string {
+  return email && name === `${email} personal access`
+    ? "Personal access"
+    : name;
+}
+
 /** Gateway APIs use epoch *seconds* (web-api-contract.md). Anything in the
  * 2001–2128 range as seconds is treated as seconds; larger numbers as ms. */
 const EPOCH_SECONDS_MIN = 1_000_000_000;

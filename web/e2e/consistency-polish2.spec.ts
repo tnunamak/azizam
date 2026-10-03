@@ -138,3 +138,64 @@ test("legacy email names remain contact details on People and in search", async 
     person.email,
   );
 });
+
+test("personal access app hides only its exact generated email-based name", async ({
+  page,
+}) => {
+  const email = "owner@example.test";
+  const personalApp = {
+    id: "app-personal",
+    name: `${email} personal access`,
+    kind: "personal",
+    disabled_at: null,
+    created_at: 1_760_000_000,
+    profile: { name: "Default" },
+    can_mint_keys: true,
+    credentials: [],
+  };
+  const customApp = {
+    ...personalApp,
+    id: "app-custom",
+    name: `${email} personal access app`,
+  };
+  await page.route("**/me/api/session", (route) =>
+    route.fulfill({
+      json: {
+        authenticated: true,
+        csrf_token: "test-csrf",
+        user: { id: "owner", email, name: "", role: "owner" },
+        apps: [personalApp, customApp],
+      },
+    }),
+  );
+  await page.route("**/.well-known/ai-gateway", (route) =>
+    route.fulfill({ json: { recipes: {} } }),
+  );
+  await page.route("**/me/api/apps/app-personal/keys", (route) =>
+    route.fulfill({ json: { credential: { api_key: "test-key" } } }),
+  );
+
+  await page.goto("/ui/apps/");
+  const card = page
+    .locator("article")
+    .filter({
+      has: page.getByRole("heading", { name: "Personal access", exact: true }),
+    });
+  await expect(
+    card.getByRole("heading", { name: "Personal access", exact: true }),
+  ).toBeVisible();
+  await expect(card).not.toContainText(email);
+  await expect(
+    page.getByRole("heading", {
+      name: `${email} personal access app`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await card
+    .getByRole("button", { name: "Actions for Personal access" })
+    .click();
+  await page.getByRole("menuitem", { name: "Create another key" }).click();
+  await expect(
+    page.getByRole("dialog", { name: "Connect Personal access" }),
+  ).toBeVisible();
+});

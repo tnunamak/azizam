@@ -324,7 +324,10 @@ test("models filters, snippets, table and detail sheet work", async ({
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: /All models/ }).click();
   await expect(
-    page.getByRole("cell", { name: "provider/image-fast" }),
+    page
+      .getByRole("table")
+      .locator("code")
+      .filter({ hasText: "provider/image-fast" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Details" }).first().click();
   const sheet = page.getByRole("dialog");

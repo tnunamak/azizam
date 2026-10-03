@@ -4,7 +4,7 @@ import pytest
 
 from gateway.capabilities import Capability
 from gateway.models_catalog import build_models_catalog
-from gateway.model_presentation import engine_label, model_locality
+from gateway.model_presentation import engine_label, model_locality, service_health_endpoint
 
 
 @pytest.mark.parametrize("endpoint", ["http://127.0.0.1:18001", "http://[::1]:18001", "http://localhost:18001"])
@@ -49,3 +49,33 @@ def test_catalog_preserves_keyed_substrate_identity_without_claiming_local_cost(
     row = catalog["models"][0]
     assert row["locality"] == "unknown"
     assert row["cost"]["kind"] == "unknown"
+
+
+@pytest.mark.parametrize("connection, expected", [
+    ({"host": "127.0.0.1", "port": 18001, "base_path": "/v1", "health_endpoint": "/health"}, "http://127.0.0.1:18001/health"),
+    ({"host": "::1", "port": 18001, "base_path": "/v1", "health_endpoint": "health"}, "http://[::1]:18001/v1/health"),
+    ({"host": "example.test", "scheme": "https", "health_endpoint": "/health"}, "https://example.test/health"),
+    ({"base_url": "http://example.test/v1", "health_endpoint": "health"}, "http://example.test/v1/health"),
+    ({"health_endpoint": "http://example.test/health"}, "http://example.test/health"),
+    ({"host": "example.test"}, None),
+    ({"health_endpoint": "/health"}, None),
+])
+def test_declared_health_endpoint_resolves_both_registry_connection_shapes(connection, expected):
+    assert service_health_endpoint({"config": connection}) == expected
+
+
+def test_normalized_service_health_is_probed_instead_of_being_reported_down():
+    import asyncio
+    from gateway.models_catalog import probe_service_health
+    from gateway.service_registry import service_form_to_raw
+
+    raw = service_form_to_raw({"name": "Chat engine", "base_url": "http://127.0.0.1:18001/v1", "health_endpoint": "/health"})
+    assert "base_url" not in raw
+
+    async def get_json(url):
+        assert url == "http://127.0.0.1:18001/health"
+        return {"status": "ok"}
+
+    evidence = asyncio.run(probe_service_health({"chat": {"config": raw}}, get_json=get_json))
+    assert evidence["chat"]["available"] is True
+    assert evidence["chat"]["status"] == "ready"

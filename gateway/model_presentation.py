@@ -3,9 +3,35 @@
 from collections.abc import Mapping
 from ipaddress import ip_address
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from gateway.service_registry import is_litellm_service_record, is_remote_provider_config
+
+
+def service_health_endpoint(service: Mapping[str, Any]) -> str | None:
+    """Resolve only a declared health path over either registry connection shape."""
+    config = service.get("config")
+    connection = {**(config if isinstance(config, Mapping) else {}), **service}
+    endpoint = connection.get("health_endpoint")
+    if not endpoint:
+        return None
+    endpoint = str(endpoint)
+    if endpoint.startswith(("http://", "https://")):
+        return endpoint
+    base_url = str(connection.get("base_url") or "").rstrip("/")
+    if not base_url:
+        host = str(connection.get("host") or "").strip()
+        if not host:
+            return None
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        port = connection.get("port")
+        authority = f"{host}:{port}" if port is not None else host
+        scheme = str(connection.get("scheme") or "http")
+        base_path = str(connection.get("base_path") or "").strip("/")
+        base_url = f"{scheme}://{authority}/{base_path}".rstrip("/")
+    # Leading slash means origin-relative; relative paths use the declared base.
+    return urljoin(f"{base_url}/", endpoint)
 
 
 def engine_label(service: Mapping[str, Any], service_id: str | None) -> str | None:

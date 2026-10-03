@@ -7,6 +7,27 @@ import {
 import AxeBuilder from "@axe-core/playwright";
 import type { HomeSnapshot } from "../src/app/home/home-api";
 
+test("the real seeded registry agrees on chat readiness across Home and Models", async ({
+  page,
+  request,
+}) => {
+  const home = await (await request.get("/me/api/home")).json();
+  const catalog = await (await request.get("/me/api/models/catalog")).json();
+  const chat = home.aliases.find(
+    (alias: { id: string }) => alias.id === "fast",
+  );
+  const model = catalog.aliases.find(
+    (alias: { id: string }) => alias.id === "fast",
+  );
+  expect(chat.status).toBe("ready");
+  expect(model.availability.measured).toBe(true);
+  expect(model.availability.available).toBe(true);
+  await page.goto("/ui/models/");
+  await expect(
+    page.getByText("Health endpoint did not respond", { exact: true }),
+  ).toHaveCount(0);
+});
+
 async function fixture(
   page: Page,
   request: APIRequestContext,
