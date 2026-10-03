@@ -44,10 +44,7 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | `POST` | `/api/show` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `ollama_show` |
 | `GET` | `/api/tags` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `ollama_tags` |
 | `GET` | `/api/version` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `ollama_version` |
-| `GET` | `/docs` | supported | Implemented route; requires applicable policy and backend configuration | FastAPI built-in |
-| `HEAD` | `/docs` | supported | Implemented route; requires applicable policy and backend configuration | FastAPI built-in |
-| `GET` | `/docs/oauth2-redirect` | supported | Implemented route; requires applicable policy and backend configuration | FastAPI built-in |
-| `HEAD` | `/docs/oauth2-redirect` | supported | Implemented route; requires applicable policy and backend configuration | FastAPI built-in |
+| `GET` | `/docs` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/api_reference.py](../gateway/api_reference.py) `reference` |
 | `GET` | `/favicon.ico` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `status_favicon` |
 | `GET` | `/firehose` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `status_dashboard_firehose` |
 | `GET` | `/gateway/v1/aliases` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/api.py](../gateway/api.py) `list_aliases` |
@@ -164,8 +161,7 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | `GET` | `/openapi.json` | supported | Implemented route; requires applicable policy and backend configuration | FastAPI built-in |
 | `HEAD` | `/openapi.json` | supported | Implemented route; requires applicable policy and backend configuration | FastAPI built-in |
 | `GET` | `/r/{request_id}` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `receipt_deep_link` |
-| `GET` | `/redoc` | supported | Implemented route; requires applicable policy and backend configuration | FastAPI built-in |
-| `HEAD` | `/redoc` | supported | Implemented route; requires applicable policy and backend configuration | FastAPI built-in |
+| `GET` | `/redoc` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/api_reference.py](../gateway/api_reference.py) `reference` |
 | `POST` | `/rerank` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `rerank_root` |
 | `POST` | `/sdapi/v1/extra-batch-images` | unsupported | 501 after authentication and policy checks | [gateway/a1111_api.py](../gateway/a1111_api.py) `route` |
 | `POST` | `/sdapi/v1/extra-single-image` | unsupported | 501 after authentication and policy checks | [gateway/a1111_api.py](../gateway/a1111_api.py) `route` |
