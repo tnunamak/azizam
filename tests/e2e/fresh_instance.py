@@ -137,7 +137,11 @@ def assert_catalog_ready_after_chat(client):
     assert row is not None, "Chat model is missing from the member models catalog"
     availability = row["availability"]
     source = availability.get("evidence", {}).get("source")
-    assert availability["available"] is True, "Chat model is not available after successful chat"
+    assert availability["available"] is True, (
+        "Chat model is not available after successful chat "
+        f"(state={availability.get('status')}, source={source}, "
+        f"configured={availability.get('configured')}, enabled={availability.get('enabled')})"
+    )
     assert availability["status"] == "ready", "Chat model is not ready after successful chat"
     assert availability["measured"] is True, "Chat success has no measured availability evidence"
     assert source in {"health", "request", "status"}, "Chat model availability evidence has no live source"

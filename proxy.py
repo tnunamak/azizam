@@ -26070,6 +26070,13 @@ async def _forward_litellm_proxy_request(
     except AliasPolicyResolutionError as error:
         return _alias_policy_configuration_response(error)
 
+    attribution_target = logical_target
+    if attribution_target is None:
+        try:
+            attribution_target = _resolve_request_target(model_name)
+        except AliasPolicyResolutionError:
+            attribution_target = None
+
     if _profile_target_activation(auth_context) == "existing_only":
         current_loaded_decision = await _current_loaded_model_policy_decision(
             auth_context,
@@ -26111,7 +26118,7 @@ async def _forward_litellm_proxy_request(
         if isinstance(body_for_litellm.get("model"), str)
         else None
     )
-    resolved_service_id = str(getattr(logical_target, "logical_service_id", "") or runtime.service_id or "")
+    resolved_service_id = str(getattr(attribution_target, "logical_service_id", "") or runtime.service_id or "")
     if resolved_service_id:
         receipt.metadata["service_id"] = resolved_service_id
     receipt.stream = bool(body_for_litellm.get("stream"))

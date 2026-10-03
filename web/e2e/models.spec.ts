@@ -331,7 +331,7 @@ for (const theme of ["light", "dark"] as const) {
       await expect(
         page.getByText("Ready to start", { exact: true }),
       ).toBeVisible();
-      await expect(page.getByText("Unknown", { exact: true })).toHaveCount(1);
+      await expect(page.getByText("Unknown", { exact: true })).toHaveCount(2);
       await expect(
         page.getByText("Starts when you send a request."),
       ).toBeVisible();

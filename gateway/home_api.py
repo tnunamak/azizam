@@ -382,12 +382,26 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                 raise AdminAuthError("Owner access required.", status_code=403, code="owner_required")
         except AdminAuthError as exc:
             return _error(exc)
-        health = await live_health()
         registry = store.get_service_registry()
+        status_payload = await live_status_payload()
+        injected = status_payload.get("_availability_evidence")
+        availability_evidence = (
+            dict(injected)
+            if isinstance(injected, Mapping)
+            else availability_evidence_snapshot(
+                service_records=registry,
+                status_payload=status_payload,
+                receipt_store_path=receipts_path(),
+            )
+        )
         services = registry.get("services", [])
         if isinstance(services, Mapping):
             services = [{"id": key, **row} for key, row in services.items()]
-        connected = any(service.get("enabled", True) and health.get(str(service.get("id"))) == "up" for service in services)
+        connected = any(
+            service.get("enabled", True)
+            and project_service(str(service.get("id")), service_records=registry, evidence=availability_evidence).status == "ready"
+            for service in services
+        )
         succeeded = _has_success(receipts_path())
         used_apps = {credential.get("app_id") for credential in admin_store.list_credentials(path=store.path)
                      if credential.get("subject_kind") == "app" and credential.get("last_used_at") is not None}

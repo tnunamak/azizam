@@ -241,7 +241,9 @@ def _resolve_backend_targets(config: dict) -> list[dict[str, Any]]:
         port = cfg.get("port")
         if port is None:
             continue
-        path = cfg.get("health_endpoint", "/health")
+        path = cfg.get("health_endpoint")
+        if not path:
+            continue
         url = f"http://{host}:{port}{path}"
         name = cfg.get("name") or key
         role = cfg.get("role", "required")

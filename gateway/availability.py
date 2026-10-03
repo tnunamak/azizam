@@ -132,7 +132,7 @@ def project_service(
                 {"source": "capability", "kind": "state"},
             )
     return AvailabilityProjection(
-        service_id, enabled, configured, None, "unknown", "Not measured yet.", False,
+        service_id, enabled, configured, None, "unknown", "Not measured yet", False,
         {"source": None, "kind": "unknown"},
     )
 
@@ -158,8 +158,9 @@ def evidence_from_receipts(
         status = str(receipt.get("status") or "").strip().lower()
         if status not in SUCCESS_RECEIPT_STATUSES and status not in FAILED_RECEIPT_STATUSES:
             continue
+        observed_at_ms = _receipt_timestamp_ms(receipt)
         current = out.get(backend)
-        if current and int(current.get("observed_at_s") or 0) >= int(timestamp or 0):
+        if current and int(current.get("observed_at_ms") or 0) >= int(observed_at_ms or 0):
             continue
         success = status in SUCCESS_RECEIPT_STATUSES
         if not success and not _receipt_proves_backend_failure(receipt):
@@ -170,6 +171,7 @@ def evidence_from_receipts(
             "status": "ready" if success else "unavailable",
             "reason": "Recent request succeeded" if success else "Most recent request failed",
             "observed_at_s": timestamp,
+            "observed_at_ms": observed_at_ms,
             "request_id": receipt.get("request_id"),
             "receipt_status": status,
         }
@@ -312,7 +314,7 @@ def _from_evidence(
     if available is None:
         return AvailabilityProjection(
             service_id, enabled, configured, None, "unknown",
-            str(evidence.get("reason") or "Not measured yet."), False, dict(evidence), idle_startable,
+            str(evidence.get("reason") or "Not measured yet"), False, dict(evidence), idle_startable,
         )
     return None
 
@@ -344,27 +346,37 @@ def _is_configured(service: Mapping[str, Any]) -> bool:
         return False
     if service.get("missing") or config.get("missing"):
         return False
-    if not config and not service:
-        return False
     return True
 
 
 def _is_idle_startable(service: Mapping[str, Any]) -> bool:
     config = service.get("config") if isinstance(service.get("config"), Mapping) else service
-    lifecycle = config.get("lifecycle") if isinstance(config, Mapping) else None
+    lifecycle = service.get("lifecycle")
+    if not isinstance(lifecycle, Mapping) and isinstance(config, Mapping):
+        lifecycle = config.get("lifecycle")
     if isinstance(lifecycle, Mapping):
         driver = str(lifecycle.get("driver") or lifecycle.get("type") or "external").strip().lower()
         if driver and driver != "external":
             return True
+        if lifecycle.get("managed") is True or lifecycle.get("service_name"):
+            return True
     return any(config.get(flag) is True for flag in ("gateway_lifecycle", "local_lifecycle", "lifecycle_backed"))
 
 
-def _receipt_timestamp_s(receipt: Mapping[str, Any]) -> int | None:
-    for key in ("updated_at_ms", "accepted_at_ms", "_stored_at"):
+def _receipt_timestamp_ms(receipt: Mapping[str, Any]) -> int | None:
+    for key in ("updated_at_ms", "accepted_at_ms"):
         value = receipt.get(key)
         if isinstance(value, int) and not isinstance(value, bool):
-            return value // 1000 if key.endswith("_ms") else value
+            return value
+    value = receipt.get("_stored_at")
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value * 1000
     return None
+
+
+def _receipt_timestamp_s(receipt: Mapping[str, Any]) -> int | None:
+    timestamp_ms = _receipt_timestamp_ms(receipt)
+    return timestamp_ms // 1000 if timestamp_ms is not None else None
 
 
 def _receipt_proves_backend_failure(receipt: Mapping[str, Any]) -> bool:
@@ -380,7 +392,8 @@ def _receipt_proves_backend_failure(receipt: Mapping[str, Any]) -> bool:
 
 
 def _evidence_unknown(evidence: Mapping[str, Any]) -> bool:
-    return evidence.get("available") is None or str(evidence.get("status") or "").strip().lower() in {"", "unknown"}
+    status = str(evidence.get("status") or "").strip().lower()
+    return status in {"", "unknown"} and evidence.get("available") is None
 
 
 def _observed_stopped(evidence: Mapping[str, Any]) -> bool:

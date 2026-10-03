@@ -21,6 +21,55 @@ def test_no_health_endpoint_projects_unknown_not_unavailable():
     assert projection.measured is False
 
 
+
+
+def test_disabled_service_projects_unavailable():
+    projection = project_service(
+        "svc",
+        service_records={"services": {"svc": {"enabled": False, "config": {"base_url": "http://svc/v1"}}}},
+    )
+
+    assert projection.status == "unavailable"
+    assert projection.enabled is False
+
+
+def test_missing_service_projects_unconfigured_without_fallback():
+    projection = project_service("missing", service_records={"services": {}})
+
+    assert projection.status == "unavailable"
+    assert projection.configured is False
+
+
+def test_future_request_evidence_is_ignored():
+    now = int(time.time())
+    evidence = evidence_from_receipts([
+        {"request_id": "future", "backend": "svc", "status": "succeeded", "updated_at_ms": (now + 60) * 1000}
+    ], now_s=now)
+
+    assert evidence == {}
+
+
+def test_same_second_terminal_failure_supersedes_success_by_milliseconds():
+    now = int(time.time())
+    evidence = evidence_from_receipts([
+        {"request_id": "success", "backend": "svc", "status": "succeeded", "updated_at_ms": now * 1000 + 100},
+        {"request_id": "failure", "backend": "svc", "status": "failed", "status_code": 503, "updated_at_ms": now * 1000 + 900},
+    ], now_s=now + 1)
+
+    assert evidence["svc"]["request_id"] == "failure"
+    assert evidence["svc"]["available"] is False
+
+
+def test_top_level_lifecycle_declaration_projects_idle_when_stopped():
+    projection = project_service(
+        "svc",
+        service_records={"services": {"svc": {"enabled": True, "lifecycle": {"driver": "systemd"}, "config": {"base_url": "http://svc/v1"}}}},
+        evidence={"svc": {"available": None, "status": "stopped", "source": "status"}},
+    )
+
+    assert projection.status == "idle"
+    assert projection.idle_startable is True
+
 def test_recent_successful_request_marks_service_ready():
     now = int(time.time())
     evidence = evidence_from_receipts([
