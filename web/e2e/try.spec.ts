@@ -12,14 +12,19 @@ async function prepareTryKey(page: import("@playwright/test").Page) {
 async function waitForCatalog(page: import("@playwright/test").Page) {
   await expect(page.getByText("Catalog loaded")).toBeVisible();
   await expect(page.getByLabel("Model", { exact: true })).not.toContainText(
-    "Not in catalog",
+    "Not in the catalog",
   );
 }
 
 test("try creates a session key, runs public chat, and links a receipt", async ({
   page,
 }) => {
+  const catalogResponse = page.waitForResponse((response) =>
+    response.url().includes("/me/api/models/catalog"),
+  );
   await prepareTryKey(page);
+  const catalog = await catalogResponse;
+  expect(catalog.ok(), `catalog HTTP ${catalog.status()}`).toBe(true);
   await waitForCatalog(page);
   const chatResponse = page.waitForResponse(
     (response) =>
@@ -237,6 +242,108 @@ test("try catalog maps exact capability intents to the right tabs", async ({
   await expect(page.getByLabel("Model", { exact: true })).not.toContainText(
     "chat model",
   );
+});
+
+test("try records audio, uploads it, and stops microphone tracks", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const recordingState = { starts: 0, stops: 0, trackStops: 0 };
+    Object.defineProperty(window, "__tryRecordingState", {
+      value: recordingState,
+      configurable: true,
+    });
+
+    const track = {
+      stop: () => {
+        recordingState.trackStops += 1;
+      },
+    };
+    const fakeStream = { getTracks: () => [track] };
+    Object.defineProperty(navigator, "mediaDevices", {
+      value: { getUserMedia: async () => fakeStream },
+      configurable: true,
+    });
+
+    class FakeMediaRecorder {
+      state = "inactive";
+      ondataavailable: ((event: BlobEvent) => void) | null = null;
+      onstop: (() => void) | null = null;
+
+      start() {
+        recordingState.starts += 1;
+        this.state = "recording";
+      }
+
+      stop() {
+        if (this.state !== "recording") {
+          throw new Error("Fake recorder was not recording.");
+        }
+        recordingState.stops += 1;
+        this.state = "inactive";
+        this.ondataavailable?.({
+          data: new Blob(["fake webm audio"], { type: "audio/webm" }),
+        } as BlobEvent);
+        this.onstop?.();
+      }
+    }
+
+    Object.defineProperty(window, "MediaRecorder", {
+      value: FakeMediaRecorder,
+      configurable: true,
+    });
+  });
+
+  await prepareTryKey(page);
+  await waitForCatalog(page);
+  await page.getByRole("tab", { name: "Transcribe" }).click();
+
+  await page.getByRole("button", { name: "Record" }).click();
+  await expect(page.getByRole("button", { name: "Stop" })).toBeEnabled();
+  await page.getByRole("button", { name: "Stop" }).click();
+  await expect(page.getByText("recording.webm", { exact: true })).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window as typeof window & {
+              __tryRecordingState: { trackStops: number };
+            }
+          ).__tryRecordingState.trackStops,
+      ),
+    )
+    .toBe(1);
+
+  let uploadedBody = "";
+  await page.route("**/openai/v1/audio/transcriptions", async (route) => {
+    const requestBody = await route.request().postDataBuffer();
+    expect(requestBody).not.toBeNull();
+    uploadedBody = requestBody!.toString("utf8");
+    await route.fulfill({
+      json: { text: "Recorded text." },
+    });
+  });
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(page.getByText("Recorded text.")).toBeVisible();
+  expect(uploadedBody).toContain('name="file"; filename="recording.webm"');
+  expect(uploadedBody).toContain('name="model"');
+
+  await page.getByRole("button", { name: "Record" }).click();
+  await expect(page.getByRole("button", { name: "Stop" })).toBeEnabled();
+  await page.getByRole("tab", { name: "Chat" }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window as typeof window & {
+              __tryRecordingState: { trackStops: number };
+            }
+          ).__tryRecordingState.trackStops,
+      ),
+    )
+    .toBe(2);
 });
 
 for (const theme of ["light", "dark"] as const) {
