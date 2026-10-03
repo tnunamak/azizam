@@ -249,6 +249,12 @@ for (const theme of ["light", "dark"] as const) {
         page.getByText("Best default for short conversations"),
       ).toBeVisible();
       await expect(page.getByText("Image generation through")).toBeVisible();
+      await expect(
+        page.getByText("Local · no provider charge", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "No provider charge", exact: true }),
+      ).toHaveAttribute("aria-pressed", "true");
       await expect(page.getByText("Ready", { exact: true })).toHaveCount(0);
       await expect(
         page.getByText("Paid · $0.04 per image", { exact: true }),
@@ -305,6 +311,9 @@ test("models filters, snippets, table and detail sheet work", async ({
     page.getByText("Best default for short conversations"),
   ).toHaveCount(0);
   await page.getByRole("button", { name: "Paid" }).click();
+  await expect(
+    page.getByRole("button", { name: "No provider charge", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText("No models match these filters")).toBeVisible();
   await page.getByRole("button", { name: "Paid" }).click();
   await page.getByRole("button", { name: "Use", exact: true }).click();

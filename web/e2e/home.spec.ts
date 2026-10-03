@@ -12,6 +12,15 @@ async function chooseRecipeKey(page: Page, optionName: string | RegExp) {
 }
 
 async function inspectHome(page: Page, name: string) {
+  // Captures represent settled data, including the independent Library query.
+  await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
+  await page.locator("main img").evaluateAll(async (images) => {
+    await Promise.all(
+      images.map((image) =>
+        (image as HTMLImageElement).decode().catch(() => {}),
+      ),
+    );
+  });
   await page.evaluate(() => document.fonts.ready);
   expect(
     await page.evaluate(
@@ -99,6 +108,8 @@ for (const theme of ["light", "dark"] as const) {
                     prompt: "A recorded image from your gateway",
                     model: "image",
                     created_at: Date.now() / 1000 - 60,
+                    download_url:
+                      "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 640 420'%3E%3Crect width='640' height='420' fill='%23e0f2fe'/%3E%3Ccircle cx='300' cy='210' r='110' fill='%230f766e'/%3E%3Cpath d='M365 210l120-80v160z' fill='%2314b8a6'/%3E%3Ccircle cx='265' cy='178' r='16' fill='white'/%3E%3C/svg%3E",
                   },
                 ],
                 next_cursor: null,
@@ -124,6 +135,34 @@ for (const theme of ["light", "dark"] as const) {
           page.getByRole("heading", { name: "Home", exact: true }),
         ).toBeVisible();
         if (state === "seeded") {
+          const instance = await (
+            await request.get("/.well-known/ai-gateway")
+          ).json();
+          await expect(
+            page.getByText(`Welcome to ${instance.service.name}.`, {
+              exact: true,
+            }),
+          ).toBeVisible();
+          if (width === 390) {
+            const greeting = page.getByRole("heading", { name: /^Hello,/ });
+            const layout = await greeting.evaluate((element) => ({
+              width: element.getBoundingClientRect().width,
+              available:
+                element.parentElement!.parentElement!.getBoundingClientRect()
+                  .width,
+              lines:
+                element.getBoundingClientRect().height /
+                parseFloat(getComputedStyle(element).lineHeight),
+            }));
+            expect(
+              layout.width,
+              "The greeting gets the full phone width",
+            ).toBeGreaterThanOrEqual(layout.available - 1);
+            expect(
+              layout.lines,
+              "A seeded email greeting fits within two lines",
+            ).toBeLessThanOrEqual(2.1);
+          }
           const snapshot = await (await request.get("/me/api/home")).json();
           const media = snapshot.capabilities.filter(
             (cap: { capability: string }) =>
@@ -141,6 +180,16 @@ for (const theme of ["light", "dark"] as const) {
             (app: { name: string }) => app.name === "Browser test app",
           );
           expect(seededApp?.credentials.length).toBeGreaterThan(0);
+          const thumbnail = page.locator('a[href="/ui/library/"] img');
+          await expect(thumbnail).toHaveCount(1);
+          await thumbnail.scrollIntoViewIfNeeded();
+          await expect
+            .poll(() =>
+              thumbnail.evaluate(
+                (image) => (image as HTMLImageElement).naturalWidth,
+              ),
+            )
+            .toBeGreaterThan(0);
           await chooseRecipeKey(page, /Browser test app/);
           await expect(page.getByRole("tabpanel").locator("pre")).toContainText(
             "fast",
@@ -255,6 +304,9 @@ test("all ten client recipes fit a phone and remain accessible", async ({
     ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: `Connect ${name}`, exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("tabpanel").getByText("Untested recipe", { exact: true }),
     ).toBeVisible();
     expect(
       await page.evaluate(
@@ -563,7 +615,9 @@ test("inline reveal-once key tests a real chat request and produces one owned re
     const ownedBefore = before.receipts.filter(
       (receipt: { request_id: string }) => receipt.request_id,
     ).length;
-    await page.getByLabel("Key to test", { exact: true }).fill(secret);
+    await page
+      .getByLabel("Key for gateway check", { exact: true })
+      .fill(secret);
     const testedResponse = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname === "/me/api/connection-test",
@@ -624,13 +678,16 @@ test("inline reveal-once key tests a real chat request and produces one owned re
     ]) {
       expect(
         steps.find((step) => step.id === id)?.done,
-        `${id} reflects the real completed action`,
+        `${id} reflects an observed gateway action, not client setup`,
       ).toBe(true);
     }
     expect(steps.find((step) => step.id === "invite_someone")?.optional).toBe(
       true,
     );
     expect(progress.complete).toBe(true);
+    await expect(
+      page.getByText("Client setup: not verified", { exact: true }),
+    ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "What you can use", exact: true }),
     ).toBeVisible();

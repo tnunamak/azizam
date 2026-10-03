@@ -4,7 +4,7 @@ export interface MoneyProps {
   local?: boolean;
 }
 export function Money({ amount, currency = "USD", local = false }: MoneyProps) {
-  if (local) return <span>Free (your hardware)</span>;
+  if (local) return <span>Local · no provider charge</span>;
   if (amount == null || !Number.isFinite(amount))
     return <span className="text-muted-foreground">Not measured yet</span>;
   return (

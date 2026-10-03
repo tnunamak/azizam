@@ -52,9 +52,9 @@ const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 const WEEK = 7 * DAY;
 const MONTH = 30 * DAY;
-const YEAR = 365 * DAY;
 
-/** "2m ago" / "in 3d" / "just now". `nowMs` is injectable for tests and the
+/** "2m ago" / "in 3d" / "just now", or a month and year beyond 30 days.
+ * `nowMs` is injectable for tests and the
  * shared RelativeTime ticker. */
 export function formatRelativeTime(
   ts: TimestampInput,
@@ -64,6 +64,13 @@ export function formatRelativeTime(
   if (!date) return "";
   const diffSeconds = Math.round((nowMs - date.getTime()) / 1000);
   const abs = Math.abs(diffSeconds);
+  if (Math.abs(nowMs - date.getTime()) > MONTH * 1000) {
+    return date.toLocaleDateString("en-US", {
+      month: "short",
+      year: "numeric",
+      timeZone: "UTC",
+    });
+  }
   if (abs < 45) return "just now";
 
   let value: number;
@@ -80,15 +87,9 @@ export function formatRelativeTime(
   } else if (abs < WEEK * 2) {
     value = Math.round(abs / DAY);
     unit = "d";
-  } else if (abs < MONTH * 2) {
+  } else {
     value = Math.round(abs / WEEK);
     unit = "w";
-  } else if (abs < YEAR) {
-    value = Math.round(abs / MONTH);
-    unit = "mo";
-  } else {
-    value = Math.round(abs / YEAR);
-    unit = "y";
   }
   return diffSeconds >= 0 ? `${value}${unit} ago` : `in ${value}${unit}`;
 }

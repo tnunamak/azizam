@@ -16,6 +16,12 @@ export const destinations = [
     group: "You",
   },
   {
+    title: "Apps & keys",
+    href: "/apps",
+    answer: "Which apps can use my account?",
+    group: "You",
+  },
+  {
     title: "Models",
     href: "/models",
     answer: "What can I use, and which one should I pick?",
@@ -37,12 +43,6 @@ export const destinations = [
     title: "Usage",
     href: "/usage",
     answer: "How much am I using, and what does it cost?",
-    group: "You",
-  },
-  {
-    title: "Apps & keys",
-    href: "/apps",
-    answer: "Which apps can use my account?",
     group: "You",
   },
   {

@@ -82,7 +82,7 @@ describe("foundation product contracts", () => {
     expect(screen.getByText("Not measured yet")).toBeVisible();
     expect(screen.getByText("$0.00")).toBeVisible();
     expect(screen.getByText("$0.00004")).toBeVisible();
-    expect(screen.getByText("Free (your hardware)")).toBeVisible();
+    expect(screen.getByText("Local · no provider charge")).toBeVisible();
   });
   it("owns command dialog title and description inside its accessible dialog", () => {
     render(

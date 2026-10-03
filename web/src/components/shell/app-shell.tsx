@@ -36,7 +36,7 @@ import {
   destinations,
   PRODUCT_NAME,
 } from "@/lib/product";
-import { gatewayHealthLabel } from "@/lib/gateway-health";
+import { gatewayHealthLabel, gatewayHealthReason } from "@/lib/gateway-health";
 import { useOwnerAlert } from "./use-owner-alert";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -82,6 +82,11 @@ import { Toaster } from "@/components/ui/sonner";
 import { ErrorState } from "@/components/product/error-state";
 import { PageHeader } from "@/components/product/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { ViewerContext, useViewer, useViewerQuery } from "./session";
 
 const icons: Record<string, LucideIcon> = {
@@ -195,6 +200,18 @@ function HealthLink() {
     refetchInterval: 60000,
   });
   const health = statusData?.current_health;
+  const { data: memberHome } = useQuery({
+    queryKey: ["foundation", "member-health"],
+    queryFn: async () => {
+      const response = await fetch("/me/api/home");
+      if (!response.ok) throw new Error("Model availability is unavailable");
+      return response.json() as Promise<{
+        status?: { state: string; reason: string };
+      }>;
+    },
+    enabled: viewer.authenticated && !viewer.admin,
+    refetchInterval: 60000,
+  });
   // /health reports gateway reachability only; it does not prove engine health.
   const { label, tone } = gatewayHealthLabel({
     admin: viewer.admin,
@@ -203,18 +220,51 @@ function HealthLink() {
     reachable: Boolean(gatewayData),
     reachabilityError: gatewayError,
   });
+  const reason = gatewayHealthReason({
+    admin: viewer.admin,
+    health,
+    statusError,
+    reachable: Boolean(gatewayData),
+    reachabilityError: gatewayError,
+    memberStatus: memberHome?.status,
+  });
+  const memberUnavailable =
+    !gatewayError &&
+    !viewer.admin &&
+    memberHome?.status?.state === "unavailable";
+  const visibleLabel = memberUnavailable ? "Models unavailable" : label;
   return (
-    <Link
-      href={viewer.admin ? "/status" : "/"}
-      className="shell-nav-footer"
-      title={health?.detail || label}
-      aria-label={`Gateway status: ${label}`}
-    >
-      <span
-        className={`size-2 shrink-0 rounded-full ${tone === "ok" ? "bg-success" : tone === "warn" ? "bg-warning" : tone === "bad" ? "bg-danger" : "bg-muted-foreground"}`}
-      />
-      <span className="shell-nav-label">{label}</span>
-    </Link>
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="shell-nav-footer"
+          aria-label={`Gateway status: ${visibleLabel}`}
+          title={reason}
+        >
+          <span
+            aria-hidden="true"
+            className={`size-2 shrink-0 rounded-full ${memberUnavailable ? "bg-warning" : tone === "ok" ? "bg-success" : tone === "warn" ? "bg-warning" : tone === "bad" ? "bg-danger" : "bg-muted-foreground"}`}
+          />
+          <span className="shell-nav-label">{visibleLabel}</span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        side="top"
+        className="max-w-[calc(100vw-2rem)] space-y-3"
+        aria-label="Gateway health"
+      >
+        <p className="font-medium">{visibleLabel}</p>
+        <p className="text-muted-foreground text-sm">{reason}</p>
+        <Button variant="outline" size="sm" asChild>
+          <Link href="/status">
+            View status
+            <ChevronRight aria-hidden="true" />
+          </Link>
+        </Button>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -242,7 +292,11 @@ function Nav({
           </p>
           <div className="flex flex-col gap-1">
             {destinations
-              .filter((d) => d.group === group)
+              .filter(
+                (d) =>
+                  d.group === group ||
+                  (!viewer.admin && group === "You" && d.title === "Status"),
+              )
               .map((item) => {
                 const Icon = icons[item.title];
                 const active =
@@ -396,7 +450,10 @@ function CommandPalette({
             <CommandEmpty>No matches. Try a page or app name.</CommandEmpty>
             <CommandGroup heading="Pages">
               {destinations
-                .filter((d) => d.group === "You" || viewer.admin)
+                .filter(
+                  (d) =>
+                    d.group === "You" || d.title === "Status" || viewer.admin,
+                )
                 .map((d) => {
                   const Icon = icons[d.title];
                   return (
@@ -528,7 +585,9 @@ function Shell({ children }: { children: React.ReactNode }) {
   const currentPath = canonicalDestinationPath(pathname);
   const ownerPage = destinations.some(
     (d) =>
-      d.group === "Gateway" && currentPath === canonicalDestinationPath(d.href),
+      d.group === "Gateway" &&
+      d.title !== "Status" &&
+      currentPath === canonicalDestinationPath(d.href),
   );
   const content = publicPage ? (
     children
@@ -685,7 +744,9 @@ function Shell({ children }: { children: React.ReactNode }) {
               className="bg-background fixed inset-x-0 bottom-0 grid grid-cols-4 border-t pb-[env(safe-area-inset-bottom)] sm:hidden"
             >
               {destinations
-                .filter((d) => ["Home", "Models", "Library"].includes(d.title))
+                .filter((d) =>
+                  ["Home", "Apps & keys", "Status"].includes(d.title),
+                )
                 .map((d) => {
                   const Icon = icons[d.title];
                   return (
@@ -694,8 +755,8 @@ function Shell({ children }: { children: React.ReactNode }) {
                       href={d.href}
                       className="mobile-tab"
                       aria-current={
-                        pathname.replace(/\/$/, "") ===
-                        d.href.replace(/\/$/, "")
+                        canonicalDestinationPath(pathname) ===
+                        canonicalDestinationPath(d.href)
                           ? "page"
                           : undefined
                       }

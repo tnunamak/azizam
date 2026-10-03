@@ -1,6 +1,35 @@
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
+test("requests refresh on focus and keep metadata on one line", async ({
+  page,
+}) => {
+  let loads = 0;
+  await page.route("**/admin/api/activity/requests?*", (route) => {
+    loads += 1;
+    return route.continue();
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/ui/activity/");
+  await page.getByRole("tab", { name: "Requests", exact: true }).click();
+  const row = page.getByRole("button", { name: /Request details:/ }).first();
+  await expect(row).toBeVisible();
+  await expect(
+    page.getByRole("combobox", { name: "Person", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Refresh", exact: true }),
+  ).toHaveCount(0);
+  const meta = row.locator("p").nth(1);
+  expect(
+    await meta.evaluate((element) => element.clientHeight),
+  ).toBeLessThanOrEqual(18);
+  const before = loads;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect.poll(() => loads).toBeGreaterThan(before);
+  await expect(row).toBeVisible();
+});
+
 for (const theme of ["light", "dark"] as const) {
   for (const width of [1440, 390]) {
     for (const state of ["seeded", "empty", "error"] as const) {

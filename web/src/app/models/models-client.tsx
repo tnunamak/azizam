@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { FilterToggle } from "@/components/product/filter-toggle";
 import {
   Popover,
   PopoverContent,
@@ -189,13 +190,22 @@ function descriptionFor(row: CatalogRow): string {
   return `${label} model visible to your access plan.`;
 }
 
+function titleFor(row: CatalogRow): string {
+  const name = row.name ?? row.display_name;
+  if (!row.alias || name.toLowerCase() !== row.id.toLowerCase()) return name;
+  if (row.id === "fast") return "Fast chat";
+  return capabilityLabels[primaryCapability(row)];
+}
+
 function availabilityLabel(value: AvailabilityState): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function costLabel(row: CatalogRow): string {
   if (row.cost.kind === "free")
-    return row.locality === "local" ? "Free (your hardware)" : "Free";
+    return row.locality === "local"
+      ? "Local · no provider charge"
+      : "No provider charge";
   if (row.cost.kind === "paid") {
     return row.cost.price === null
       ? "Paid · Not measured yet"
@@ -308,12 +318,13 @@ function Availability({ row }: { row: CatalogRow }) {
           availabilityClass(state),
         )}
       />
-      <div className="min-w-0">
-        <div className="font-medium">{availabilityLabel(state)}</div>
-        <p className="text-muted-foreground line-clamp-2 text-xs">
-          {row.availability.reason}
-        </p>
-      </div>
+      <p className="text-muted-foreground min-w-0 text-xs leading-5">
+        <span className="text-foreground font-medium">
+          {availabilityLabel(state)}
+        </span>
+        {" · "}
+        {row.availability.reason}
+      </p>
     </div>
   );
 }
@@ -336,9 +347,7 @@ function AliasCard({
       <div className="flex min-w-0 items-start gap-3">
         <CapabilityIcon capability={primaryCapability(row)} />
         <div className="min-w-0 flex-1">
-          <h3 className="truncate font-semibold">
-            {row.name ?? row.display_name}
-          </h3>
+          <h3 className="truncate font-semibold">{titleFor(row)}</h3>
           <p className="text-muted-foreground mt-1 line-clamp-2 text-sm">
             {descriptionFor(row)}
           </p>
@@ -347,6 +356,7 @@ function AliasCard({
       <button
         type="button"
         onClick={copyAlias}
+        aria-label={`Copy alias ${row.id}`}
         className="bg-muted hover:bg-muted/80 focus-visible:ring-ring flex min-h-11 min-w-0 items-center justify-between gap-2 rounded-md px-3 py-2 text-left font-mono text-xs transition outline-none focus-visible:ring-[3px]"
       >
         <span className="truncate">{row.id}</span>
@@ -356,14 +366,34 @@ function AliasCard({
           <Copy aria-hidden="true" className="size-4 shrink-0" />
         )}
       </button>
-      <div className="flex flex-wrap gap-2">
-        <Badge variant="secondary">
-          {localityLabel(row)} · {row.provider ?? "Provider unknown"}
-        </Badge>
-        <Badge variant={row.cost.kind === "paid" ? "outline" : "secondary"}>
-          {costLabel(row)}
-        </Badge>
-        <Badge variant="outline">{timingLabel(row)}</Badge>
+      <div
+        data-slot="model-metadata"
+        className="text-muted-foreground flex min-w-0 flex-wrap items-center gap-1 text-xs"
+      >
+        <span className="shrink-0">
+          {row.locality === "local" && row.cost.kind === "free"
+            ? costLabel(row)
+            : localityLabel(row)}
+        </span>
+        <span
+          className="min-w-20 flex-1 truncate"
+          title={row.provider ?? "Provider unknown"}
+        >
+          <span aria-hidden="true">· </span>
+          {row.provider ?? "Provider unknown"}
+        </span>
+        {!(row.locality === "local" && row.cost.kind === "free") && (
+          <Badge variant="outline" className="max-w-full text-xs">
+            <span className="whitespace-normal">{costLabel(row)}</span>
+          </Badge>
+        )}
+        <span
+          className="inline-flex shrink-0 items-center gap-1"
+          title="Typical time"
+        >
+          <span aria-hidden="true">·</span>
+          <span>{timingLabel(row)}</span>
+        </span>
       </div>
       <Availability row={row} />
       <div className="mt-auto flex flex-wrap gap-2">
@@ -404,7 +434,7 @@ function LoadingCatalog() {
         <Skeleton className="h-11 w-28" />
         <Skeleton className="h-11 w-28" />
       </div>
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {Array.from({ length: 4 }, (_, index) => (
           <Skeleton key={index} className="h-64 rounded-xl" />
         ))}
@@ -442,7 +472,7 @@ function DetailSheet({
         {row && (
           <>
             <SheetHeader className="border-b pr-12">
-              <SheetTitle>{row.name ?? row.display_name}</SheetTitle>
+              <SheetTitle>{titleFor(row)}</SheetTitle>
               <SheetDescription>{descriptionFor(row)}</SheetDescription>
             </SheetHeader>
             <div className="space-y-6 p-4">
@@ -552,32 +582,10 @@ function DetailSheet({
   );
 }
 
-function FilterButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <Button
-      type="button"
-      variant={active ? "default" : "outline"}
-      size="sm"
-      onClick={onClick}
-      aria-pressed={active}
-    >
-      {children}
-    </Button>
-  );
-}
-
 export default function ModelsClient() {
   const [query, setQuery] = useState("");
   const [capability, setCapability] = useState<Capability | "all">("all");
-  const [showFree, setShowFree] = useState(true);
+  const [showNoProviderCharge, setShowNoProviderCharge] = useState(true);
   const [showPaid, setShowPaid] = useState(true);
   const [tableOpen, setTableOpen] = useState(false);
   const [detail, setDetail] = useState<CatalogRow | null>(null);
@@ -603,7 +611,7 @@ export default function ModelsClient() {
     if (capability !== "all" && !hasCapability(row, capability)) {
       return false;
     }
-    if (row.cost.kind === "free" && !showFree) return false;
+    if (row.cost.kind === "free" && !showNoProviderCharge) return false;
     if (row.cost.kind === "paid" && !showPaid) return false;
     return true;
   };
@@ -653,36 +661,40 @@ export default function ModelsClient() {
                   className="pl-9"
                 />
               </label>
-              <div className="flex flex-wrap gap-2">
-                <FilterButton
-                  active={showFree}
-                  onClick={() => setShowFree((value) => !value)}
+              <div
+                role="group"
+                aria-label="Price filters (choose any)"
+                className="flex flex-wrap gap-2"
+              >
+                <FilterToggle
+                  pressed={showNoProviderCharge}
+                  onClick={() => setShowNoProviderCharge((value) => !value)}
                 >
-                  Free
-                </FilterButton>
-                <FilterButton
-                  active={showPaid}
+                  No provider charge
+                </FilterToggle>
+                <FilterToggle
+                  pressed={showPaid}
                   onClick={() => setShowPaid((value) => !value)}
                 >
                   Paid
-                </FilterButton>
+                </FilterToggle>
               </div>
             </div>
             <div className="flex gap-2 overflow-x-auto pb-1">
-              <FilterButton
-                active={capability === "all"}
+              <FilterToggle
+                pressed={capability === "all"}
                 onClick={() => setCapability("all")}
               >
                 All
-              </FilterButton>
+              </FilterToggle>
               {availableCapabilities.map((cap) => (
-                <FilterButton
+                <FilterToggle
                   key={cap}
-                  active={capability === cap}
+                  pressed={capability === cap}
                   onClick={() => setCapability(cap)}
                 >
                   {capabilityLabels[cap]}
-                </FilterButton>
+                </FilterToggle>
               ))}
             </div>
           </section>
@@ -701,27 +713,52 @@ export default function ModelsClient() {
               }
             />
           ) : (
-            groupedAliases.map((group) => (
-              <section key={group.capability} className="space-y-4">
-                <div className="flex items-center gap-3">
-                  <CapabilityIcon capability={group.capability} />
-                  <div>
-                    <h2 className="text-lg font-semibold">
-                      {capabilityLabels[group.capability]}
-                    </h2>
-                    <p className="text-muted-foreground text-sm">
-                      Stable aliases stay the same when the backing model
-                      changes.
-                    </p>
-                  </div>
-                </div>
-                <div className="grid gap-4 lg:grid-cols-2">
-                  {group.rows.map((row) => (
-                    <AliasCard key={row.id} row={row} onDetail={setDetail} />
-                  ))}
-                </div>
-              </section>
-            ))
+            <div className="space-y-4">
+              <p className="text-muted-foreground text-sm">
+                Stable aliases stay the same when the backing model changes.
+              </p>
+              <div
+                aria-label="Available model aliases"
+                className={cn(
+                  "grid gap-6",
+                  aliasRows.length > 1 && "sm:grid-cols-2",
+                  aliasRows.length > 2 && "lg:grid-cols-3",
+                )}
+              >
+                {groupedAliases.map((group) => (
+                  <section
+                    key={group.capability}
+                    className={cn(
+                      "min-w-0 space-y-4",
+                      group.rows.length > 1 && "sm:col-span-2",
+                      group.rows.length > 2 && "lg:col-span-3",
+                    )}
+                  >
+                    <div className="flex items-center gap-3">
+                      <CapabilityIcon capability={group.capability} />
+                      <h2 className="text-lg font-semibold">
+                        {capabilityLabels[group.capability]}
+                      </h2>
+                    </div>
+                    <div
+                      className={cn(
+                        "grid gap-4",
+                        group.rows.length > 1 && "sm:grid-cols-2",
+                        group.rows.length > 2 && "lg:grid-cols-3",
+                      )}
+                    >
+                      {group.rows.map((row) => (
+                        <AliasCard
+                          key={row.id}
+                          row={row}
+                          onDetail={setDetail}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                ))}
+              </div>
+            </div>
           )}
           <section className="space-y-3">
             <button

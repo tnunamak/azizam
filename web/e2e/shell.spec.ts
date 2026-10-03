@@ -1,13 +1,10 @@
 import { test, expect } from "@playwright/test";
 
-const ownerPages = [
-  "Status",
-  "Engines",
-  "Providers",
-  "People",
-  "Activity",
-  "Settings",
-];
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+});
+
+const ownerPages = ["Engines", "Providers", "People", "Activity", "Settings"];
 
 test("command palette navigates and runs three real actions", async ({
   page,
@@ -194,10 +191,12 @@ test("member shell hides owner controls and makes no owner API calls", async ({
   await page.keyboard.press("Escape");
   await page.goto("/ui/status/");
   await expect(
-    page.getByText(
-      "This page is available to gateway owners and admins. Sign in with an owner account to continue.",
-      { exact: true },
-    ),
+    page.getByRole("heading", { name: "Status", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("No models are available to your account yet", {
+      exact: true,
+    }),
   ).toBeVisible();
   expect(ownerCalls).toEqual([]);
 });
@@ -216,8 +215,13 @@ for (const width of [1024, 768]) {
       page.getByRole("menuitem", { name: "Sign out" }),
     ).toBeVisible();
     await page.keyboard.press("Escape");
-    const health = page.getByRole("link", { name: /Gateway status:/ });
+    const health = page.getByRole("button", { name: /Gateway status:/ });
     await health.click();
+    await expect(page.getByLabel("Gateway health")).toBeVisible();
+    await page
+      .getByLabel("Gateway health")
+      .getByRole("link", { name: "View status" })
+      .click();
     await expect(page).toHaveURL(/\/ui\/status\/?$/);
   });
 }
@@ -256,9 +260,15 @@ test("phone header navigation has 44px touch targets", async ({ page }) => {
     page.getByRole("heading", { name: "Home", exact: true }),
   ).toBeVisible();
   const header = page.locator("header").first();
+  const navigation = page.getByRole("navigation", { name: "Phone navigation" });
+  await expect(navigation.getByRole("link")).toHaveText([
+    "Home",
+    "Apps & keys",
+    "Status",
+  ]);
   for (const target of [
     header.getByRole("link", { name: "Vivid Fish", exact: true }),
-    header.getByRole("link", { name: /Gateway status:/ }),
+    header.getByRole("button", { name: /Gateway status:/ }),
     header.getByRole("button", { name: "Account menu" }),
   ]) {
     const box = await target.boundingBox();

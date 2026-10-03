@@ -106,8 +106,10 @@ for (const mode of ["light", "dark"] as const) {
         path: `test-results/screens/library-grid-${mode}-${width}.png`,
         fullPage: true,
       });
-      await page.getByLabel("Kind").click();
-      await page.getByRole("option", { name: "Images" }).click();
+      await page.getByRole("button", { name: "Images", exact: true }).click();
+      await expect(
+        page.getByRole("button", { name: "Images", exact: true }),
+      ).toHaveAttribute("aria-pressed", "true");
       expect(mediaRequests.at(-1)).toContain("kind=image");
       await page.getByLabel("Search prompts").fill("desk");
       await expect.poll(() => mediaRequests.at(-1) ?? "").toContain("q=desk");
@@ -119,6 +121,12 @@ for (const mode of ["light", "dark"] as const) {
         page.getByRole("link", { name: "Download" }),
       ).toHaveAttribute("href", mediaFixture.assets[0].download_url!);
       await auditPage(page);
+      const cards = await page
+        .locator("article")
+        .evaluateAll((items) =>
+          items.map((item) => item.getBoundingClientRect().height),
+        );
+      expect(Math.max(...cards) - Math.min(...cards)).toBeLessThan(2);
       await page.screenshot({
         path: `test-results/screens/library-sheet-${mode}-${width}.png`,
         fullPage: false,
@@ -250,4 +258,67 @@ test("library filters dates and everyone, pages forward and preserves prior item
   await expect(
     page.getByRole("link", { name: "Open in ComfyUI" }),
   ).toBeVisible();
+});
+
+test("library audio plays independently and video uses its recorded poster", async ({
+  page,
+}) => {
+  // A valid one-second WAV verifies the browser player without a live engine.
+  const wav = Buffer.alloc(44 + 16000);
+  wav.write("RIFF", 0);
+  wav.writeUInt32LE(wav.length - 8, 4);
+  wav.write("WAVEfmt ", 8);
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(8000, 24);
+  wav.writeUInt32LE(16000, 28);
+  wav.writeUInt16LE(2, 32);
+  wav.writeUInt16LE(16, 34);
+  wav.write("data", 36);
+  wav.writeUInt32LE(16000, 40);
+  const posterUrl = mediaFixture.assets[0].download_url;
+  const posterRequests: string[] = [];
+  await page.route("**/me/api/media?**", (route) =>
+    route.fulfill({
+      json: {
+        ...mediaFixture,
+        assets: mediaFixture.assets.map((asset) =>
+          asset.kind === "video"
+            ? { ...asset, poster_asset_id: "video-poster" }
+            : asset.kind === "audio"
+              ? { ...asset, download_url: "/test-audio.wav" }
+              : asset,
+        ),
+      },
+    }),
+  );
+  await page.route("**/test-audio.wav", (route) =>
+    route.fulfill({ contentType: "audio/wav", body: wav }),
+  );
+  await page.route("**/me/api/media/video-poster/download*", (route) => {
+    posterRequests.push(route.request().url());
+    return route.fulfill({ json: { download_url: posterUrl } });
+  });
+  await page.goto("/ui/library/");
+  const audio = page.locator("article audio");
+  await expect(audio).toHaveAttribute("controls", "");
+  expect(await audio.evaluate((player) => player.closest("button"))).toBeNull();
+  await audio.click({ position: { x: 20, y: 20 } });
+  await expect
+    .poll(() =>
+      audio.evaluate((player: HTMLAudioElement) => player.currentTime),
+    )
+    .toBeGreaterThan(0);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(
+    page.getByRole("img", { name: mediaFixture.assets[1].prompt }),
+  ).toHaveAttribute("src", posterUrl);
+  await expect(page.locator("article video")).toHaveCount(0);
+  await page.getByLabel("Owner", { exact: true }).click();
+  await page.getByRole("option", { name: "Everyone’s" }).click();
+  await expect
+    .poll(() => posterRequests.at(-1) ?? "")
+    .toContain("scope=everyone");
+  await auditPage(page);
 });

@@ -5,6 +5,7 @@ import NextImage from "next/image";
 import {
   useMutation,
   useInfiniteQuery,
+  useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
 import {
@@ -21,7 +22,8 @@ import {
 import { toast } from "sonner";
 
 import { cn } from "@/lib/cn";
-import { formatAbsoluteUTC, formatRelativeTime } from "@/lib/format";
+import { formatAbsoluteUTC } from "@/lib/format";
+import { RelativeTime } from "@/components/product/relative-time";
 import { PageHeader } from "@/components/product/page-header";
 import { ErrorState } from "@/components/product/error-state";
 import { EmptyState } from "@/components/product/empty-state";
@@ -45,6 +47,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useViewer } from "@/components/shell/session";
+import { FilterToggle } from "@/components/product/filter-toggle";
 
 type MediaKind = "image" | "video" | "audio";
 type DateFilter = "all" | "7d" | "30d" | "90d";
@@ -64,6 +67,7 @@ interface MediaAsset {
   workflow?: string | Record<string, unknown> | null;
   seed?: string | number | null;
   duration_s?: number | null;
+  poster_asset_id?: string | null;
   owner_name?: string | null;
 }
 
@@ -122,32 +126,30 @@ async function mediaRequest<T>(
   return payload as T;
 }
 
-function relative(ts: MediaAsset["created_at"]) {
-  return ts ? formatRelativeTime(ts) : "Not measured yet";
-}
-
 function absolute(ts: MediaAsset["created_at"]) {
   return ts ? formatAbsoluteUTC(ts) : undefined;
-}
-
-function AudioWaveform() {
-  return (
-    <div className="bg-muted/60 text-muted-foreground flex h-28 items-center justify-center gap-2 rounded-lg p-4 text-sm">
-      <AudioLines className="size-5" aria-hidden />
-      Audio preview unavailable
-    </div>
-  );
 }
 
 function Preview({
   asset,
   large = false,
+  everyone = false,
 }: {
   asset: MediaAsset;
   large?: boolean;
+  everyone?: boolean;
 }) {
   const src = asset.download_url ?? null;
   const Icon = kindIcon(asset.kind);
+  const { data: poster } = useQuery({
+    queryKey: ["library", "poster", asset.poster_asset_id, everyone],
+    enabled: asset.kind === "video" && !!asset.poster_asset_id,
+    queryFn: () =>
+      mediaRequest<{ download_url: string }>(
+        `/me/api/media/${encodeURIComponent(asset.poster_asset_id!)}/download${everyone ? "?scope=everyone" : ""}`,
+      ),
+    retry: false,
+  });
   if (asset.kind === "image" && src)
     return (
       <NextImage
@@ -162,17 +164,28 @@ function Preview({
         )}
       />
     );
-  if (asset.kind === "video" && src)
+  if (asset.kind === "video" && src && large)
     return (
       <video
         src={src}
+        poster={poster?.download_url}
         preload="metadata"
         className={cn(
           "h-full w-full",
           large ? "rounded-lg object-contain" : "object-cover",
         )}
-        controls={large}
-        muted={!large}
+        controls
+      />
+    );
+  if (asset.kind === "video" && poster?.download_url)
+    return (
+      <NextImage
+        unoptimized
+        width={asset.width ?? 1024}
+        height={asset.height ?? 768}
+        src={poster.download_url}
+        alt={asset.prompt || "Video poster"}
+        className="h-full w-full object-cover"
       />
     );
   if (asset.kind === "audio")
@@ -184,10 +197,22 @@ function Preview({
         className="w-full"
       />
     ) : (
-      <AudioWaveform />
+      <div className="bg-capability-voice/10 text-capability-voice flex h-full flex-col items-center justify-center gap-3 pb-12">
+        <AudioLines className="size-12" aria-hidden />
+        {!src && (
+          <p className="text-foreground text-sm">Audio preview unavailable</p>
+        )}
+      </div>
     );
   return (
-    <div className="bg-muted/60 text-muted-foreground flex h-full min-h-40 items-center justify-center rounded-lg">
+    <div
+      className={cn(
+        "flex h-full items-center justify-center",
+        asset.kind === "video"
+          ? "bg-capability-video/10 text-capability-video"
+          : "bg-capability-image/10 text-capability-image",
+      )}
+    >
       <Icon className="size-8" aria-hidden />
     </div>
   );
@@ -196,25 +221,23 @@ function Preview({
 function AssetCard({
   asset,
   onOpen,
+  everyone,
 }: {
   asset: MediaAsset;
   onOpen: (asset: MediaAsset) => void;
+  everyone: boolean;
 }) {
   const Icon = kindIcon(asset.kind);
   return (
-    <button
-      type="button"
-      onClick={() => onOpen(asset)}
-      className="group bg-card hover:border-primary/50 focus-visible:ring-ring/50 w-full break-inside-avoid overflow-hidden rounded-xl border text-left shadow-xs transition focus-visible:ring-[3px] focus-visible:outline-none"
-      aria-label={`Open ${asset.prompt || kindLabel(asset.kind)}`}
-    >
-      <div
-        className={cn(
-          "bg-muted relative",
-          asset.kind === "image" ? "aspect-[4/3]" : "aspect-video",
-        )}
-      >
-        <Preview asset={asset} />
+    <article className="group bg-card hover:border-primary/50 relative min-w-0 overflow-hidden rounded-xl border transition">
+      <button
+        type="button"
+        onClick={() => onOpen(asset)}
+        className="focus-visible:ring-ring absolute inset-0 z-10 rounded-xl focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset"
+        aria-label={`Open ${asset.prompt || kindLabel(asset.kind)}`}
+      />
+      <div className="bg-muted relative aspect-[4/3]">
+        <Preview asset={asset} everyone={everyone} />
         <Badge
           variant="secondary"
           className="bg-background/90 absolute top-2 left-2 gap-1 backdrop-blur"
@@ -222,27 +245,34 @@ function AssetCard({
           <Icon className="size-3" />
           {kindLabel(asset.kind)}
         </Badge>
-        {asset.duration_s ? (
+        {asset.duration_s != null && Number.isFinite(asset.duration_s) ? (
           <Badge
             variant="secondary"
-            className="bg-background/90 absolute right-2 bottom-2"
+            className="bg-background/90 absolute top-2 right-2 tabular-nums"
           >
             {Math.round(asset.duration_s)} s
           </Badge>
         ) : null}
+        {asset.kind === "audio" && asset.download_url && (
+          <audio
+            controls
+            preload="none"
+            src={asset.download_url}
+            aria-label={`Play ${asset.prompt || "generated audio"}`}
+            className="absolute bottom-4 left-4 z-20 h-10 w-[calc(100%-2rem)]"
+          />
+        )}
       </div>
       <div className="space-y-2 p-3">
-        <p className="line-clamp-2 text-sm font-medium">
+        <p className="line-clamp-2 min-h-10 text-sm font-medium">
           {asset.prompt || "Untitled generation"}
         </p>
         <div className="text-muted-foreground flex items-center justify-between gap-2 text-xs">
           <span className="truncate">{asset.model || "Unknown model"}</span>
-          <time title={absolute(asset.created_at)}>
-            {relative(asset.created_at)}
-          </time>
+          <RelativeTime ts={asset.created_at} fallback="Time not recorded" />
         </div>
       </div>
-    </button>
+    </article>
   );
 }
 
@@ -328,72 +358,76 @@ export default function LibraryPage() {
         answer="Everything I’ve made."
         description="Browse your images, video and audio with provenance and download actions."
       />
-      <section
-        aria-label="Library filters"
-        className="mb-6 grid gap-3 md:grid-cols-[minmax(12rem,1fr)_repeat(4,max-content)]"
-      >
-        <label className="relative block min-w-0">
-          <span className="sr-only">Search prompts</span>
-          <Search
-            className="text-muted-foreground pointer-events-none absolute top-3.5 left-3 size-4"
-            aria-hidden
-          />
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search prompts"
-            className="pl-9"
-          />
-        </label>
-        <Select value={kind} onValueChange={setKind}>
-          <SelectTrigger aria-label="Kind" className="w-full md:w-36">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All kinds</SelectItem>
-            <SelectItem value="image">Images</SelectItem>
-            <SelectItem value="video">Video</SelectItem>
-            <SelectItem value="audio">Audio</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={model} onValueChange={setModel}>
-          <SelectTrigger aria-label="Model" className="w-full md:w-44">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All models</SelectItem>
-            {models.map((m) => (
-              <SelectItem key={m} value={m}>
-                {m}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select
-          value={date}
-          onValueChange={(value) => setDate(value as DateFilter)}
-        >
-          <SelectTrigger aria-label="Date" className="w-full md:w-36">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Any time</SelectItem>
-            <SelectItem value="7d">Last 7 days</SelectItem>
-            <SelectItem value="30d">Last 30 days</SelectItem>
-            <SelectItem value="90d">Last 90 days</SelectItem>
-          </SelectContent>
-        </Select>
-        {["owner", "superadmin"].includes(viewer.role) ? (
-          <Select value={owner} onValueChange={setOwner}>
-            <SelectTrigger aria-label="Owner" className="w-full md:w-40">
+      <section aria-label="Library filters" className="mb-6 space-y-4">
+        <div role="group" aria-label="Kind" className="flex flex-wrap gap-2">
+          {[
+            { value: "all", label: "All kinds" },
+            { value: "image", label: "Images" },
+            { value: "video", label: "Video" },
+            { value: "audio", label: "Audio" },
+          ].map((filter) => (
+            <FilterToggle
+              key={filter.value}
+              pressed={kind === filter.value}
+              onClick={() => setKind(filter.value)}
+            >
+              {filter.label}
+            </FilterToggle>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="relative block min-w-0 basis-full sm:flex-1 sm:basis-48">
+            <span className="sr-only">Search prompts</span>
+            <Search
+              className="text-muted-foreground pointer-events-none absolute top-3.5 left-3 size-4"
+              aria-hidden
+            />
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search prompts"
+              className="pl-9"
+            />
+          </label>
+          <Select value={model} onValueChange={setModel}>
+            <SelectTrigger aria-label="Model" className="w-full sm:w-44">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="mine">Mine</SelectItem>
-              <SelectItem value="everyone">Everyone’s</SelectItem>
+              <SelectItem value="all">All models</SelectItem>
+              {models.map((m) => (
+                <SelectItem key={m} value={m}>
+                  {m}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
-        ) : null}
+          <Select
+            value={date}
+            onValueChange={(value) => setDate(value as DateFilter)}
+          >
+            <SelectTrigger aria-label="Date" className="w-full sm:w-36">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Any time</SelectItem>
+              <SelectItem value="7d">Last 7 days</SelectItem>
+              <SelectItem value="30d">Last 30 days</SelectItem>
+              <SelectItem value="90d">Last 90 days</SelectItem>
+            </SelectContent>
+          </Select>
+          {["owner", "superadmin"].includes(viewer.role) ? (
+            <Select value={owner} onValueChange={setOwner}>
+              <SelectTrigger aria-label="Owner" className="w-full sm:w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="mine">Mine</SelectItem>
+                <SelectItem value="everyone">Everyone’s</SelectItem>
+              </SelectContent>
+            </Select>
+          ) : null}
+        </div>
       </section>
       {owner === "everyone" ? (
         <p className="border-warning/30 bg-warning/10 text-muted-foreground mb-4 rounded-lg border px-3 py-2 text-sm">
@@ -405,13 +439,10 @@ export default function LibraryPage() {
           role="status"
           aria-label="Loading library"
           aria-busy="true"
-          className="columns-1 gap-4 sm:columns-2 xl:columns-3"
+          className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
         >
           {Array.from({ length: 6 }).map((_, index) => (
-            <Skeleton
-              key={index}
-              className="mb-4 h-64 break-inside-avoid rounded-xl"
-            />
+            <Skeleton key={index} className="h-72 rounded-xl" />
           ))}
         </div>
       ) : null}
@@ -439,11 +470,14 @@ export default function LibraryPage() {
         />
       ) : null}
       {!isLoading && !isError && assets.length > 0 ? (
-        <div className="columns-1 gap-4 sm:columns-2 xl:columns-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {assets.map((asset) => (
-            <div key={asset.asset_id} className="mb-4">
-              <AssetCard asset={asset} onOpen={setSelected} />
-            </div>
+            <AssetCard
+              key={asset.asset_id}
+              asset={asset}
+              onOpen={setSelected}
+              everyone={owner === "everyone"}
+            />
           ))}
         </div>
       ) : null}
@@ -474,7 +508,11 @@ export default function LibraryPage() {
               </SheetHeader>
               <div className="space-y-5 px-4 pb-4">
                 <div className="bg-muted overflow-hidden rounded-lg border">
-                  <Preview asset={selected} large />
+                  <Preview
+                    asset={selected}
+                    large
+                    everyone={owner === "everyone"}
+                  />
                 </div>
                 <div className="grid gap-3 text-sm sm:grid-cols-2">
                   <Detail
@@ -483,7 +521,12 @@ export default function LibraryPage() {
                   />
                   <Detail
                     label="Created"
-                    value={relative(selected.created_at)}
+                    value={
+                      <RelativeTime
+                        ts={selected.created_at}
+                        fallback="Time not recorded"
+                      />
+                    }
                     title={absolute(selected.created_at)}
                   />
                   <Detail
@@ -599,14 +642,14 @@ function Detail({
   title,
 }: {
   label: string;
-  value: unknown;
+  value: React.ReactNode;
   title?: string;
 }) {
   return (
     <dl className="rounded-lg border p-3">
       <dt className="text-muted-foreground text-xs">{label}</dt>
       <dd className="mt-1 truncate text-sm font-medium" title={title}>
-        {String(value)}
+        {value}
       </dd>
     </dl>
   );

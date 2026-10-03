@@ -40,7 +40,13 @@ import {
   RelativeTime,
   CopyField,
 } from "@/components/product";
-import { peopleApi, planSummary, type Person, type Invite } from "./people-api";
+import {
+  peopleApi,
+  planSummary,
+  planCounts,
+  type Person,
+  type Invite,
+} from "./people-api";
 import { PlanEditor, TestAccess } from "./plans";
 
 const peopleKey = ["people", "list"];
@@ -426,11 +432,11 @@ export default function PeoplePage() {
               }
             />
           ) : (
-            <div className="grid gap-4 lg:grid-cols-2">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {plansData.map((plan) => (
                 <article
                   key={plan.id}
-                  className="min-w-0 rounded-xl border p-6"
+                  className="bg-card flex min-w-0 flex-col rounded-xl border p-5"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <h2 className="text-base font-semibold break-words">
@@ -471,12 +477,17 @@ export default function PeoplePage() {
                   <p className="text-muted-foreground mt-2 text-sm leading-6 break-words">
                     {planSummary(plan.profile)}
                   </p>
+                  {planCounts(plan.profile) && (
+                    <p className="text-muted-foreground mt-3 text-xs">
+                      {planCounts(plan.profile)}
+                    </p>
+                  )}
                   {plan.description && (
                     <p className="mt-3 text-sm break-words">
                       {plan.description}
                     </p>
                   )}
-                  <div className="mt-6 flex flex-wrap gap-2">
+                  <div className="mt-auto flex flex-wrap gap-2 pt-6">
                     <Button variant="outline" onClick={() => setEditor(plan)}>
                       Edit plan
                     </Button>

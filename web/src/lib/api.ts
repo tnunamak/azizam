@@ -169,6 +169,13 @@ export interface ProfilePolicyDocument {
     tags?: string[];
   };
   fallback?: { cloud_allowed?: boolean };
+  remote?: {
+    providers?: string[];
+    max_usd_per_request?: string | number | null;
+    budget_usd_per_day?: string | number | null;
+    budget_usd_per_month?: string | number | null;
+    allow_paid_fallback?: boolean;
+  };
   native_passthrough?: {
     enabled?: boolean;
     allowed_backends?: string[];

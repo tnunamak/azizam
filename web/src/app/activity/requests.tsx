@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { ArrowRight, ReceiptText } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -81,7 +81,6 @@ export function Requests() {
     data,
     isPending,
     isError,
-    isFetching,
     isFetchNextPageError,
     isFetchingNextPage,
     hasNextPage,
@@ -89,6 +88,7 @@ export function Requests() {
     refetch,
   } = useInfiniteQuery({
     queryKey: ["activity", "requests", person],
+    refetchOnWindowFocus: "always",
     initialPageParam: undefined as string | undefined,
     queryFn: async ({ pageParam }): Promise<RequestPage> => {
       const params = new URLSearchParams({ limit: "50" });
@@ -102,6 +102,11 @@ export function Requests() {
     },
     getNextPageParam: (page) => page.next_cursor ?? undefined,
   });
+  useEffect(() => {
+    const refresh = () => void refetch();
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [refetch]);
   const rows = data?.pages.flatMap((page) => page.records) ?? [];
   const people = data?.pages[0]?.people ?? [];
   return (
@@ -134,13 +139,6 @@ export function Requests() {
             </SelectContent>
           </Select>
         </div>
-        <Button
-          variant="outline"
-          disabled={isFetching}
-          onClick={() => void refetch()}
-        >
-          Refresh
-        </Button>
         {person && (
           <Button variant="ghost" onClick={() => setPerson("")}>
             Clear filters
@@ -211,15 +209,23 @@ export function Requests() {
                       </span>
                     )}
                   </p>
-                  <p className="text-muted-foreground text-xs break-words">
-                    {row.person_label} · {row.app_label}
-                  </p>
-                  <p className="text-muted-foreground text-xs break-words">
-                    {row.receipt.resolved_model ||
-                      row.receipt.requested_model ||
-                      "Model not recorded"}
-                  </p>
-                  <p className="text-muted-foreground text-xs">
+                  <p className="text-muted-foreground truncate text-xs">
+                    <span title={`${row.person_label} · ${row.app_label}`}>
+                      {row.person_label} · {row.app_label}
+                    </span>
+                    {" · "}
+                    <span
+                      title={
+                        row.receipt.resolved_model ||
+                        row.receipt.requested_model ||
+                        "Model not recorded"
+                      }
+                    >
+                      {row.receipt.resolved_model ||
+                        row.receipt.requested_model ||
+                        "Model not recorded"}
+                    </span>
+                    {" · "}
                     <RelativeTime ts={row.created_at} />
                   </p>
                 </div>

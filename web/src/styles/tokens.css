@@ -1,27 +1,27 @@
 /* UI0: edit this file to change the complete light and dark palette. */
 :root {
   color-scheme: light;
-  --background: #ffffff;
-  --foreground: #18181b;
+  --background: #f6f4ec;
+  --foreground: #202d29;
   --card: #ffffff;
-  --card-foreground: #18181b;
+  --card-foreground: #202d29;
   --popover: #ffffff;
-  --popover-foreground: #18181b;
-  --primary: #087f75;
+  --popover-foreground: #202d29;
+  --primary: #155b50;
   --primary-foreground: #ffffff;
-  --secondary: #f4f4f5;
-  --secondary-foreground: #27272a;
-  --muted: #f4f4f5;
-  --muted-foreground: #65656e;
-  --accent: #e7f5f2;
-  --accent-foreground: #09685f;
+  --secondary: #e9e9de;
+  --secondary-foreground: #202d29;
+  --muted: #eeeee5;
+  --muted-foreground: #58635d;
+  --accent: #e1eee5;
+  --accent-foreground: #155b50;
   --destructive: #b42335;
   --destructive-foreground: #ffffff;
-  --border: #e4e4e7;
-  --input: #d4d4d8;
-  --ring: #087f75;
-  --sidebar: #fafafa;
-  --sidebar-foreground: #52525b;
+  --border: #d8ddd3;
+  --input: #c0c9be;
+  --ring: #155b50;
+  --sidebar: #eeeee5;
+  --sidebar-foreground: #58635d;
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);
   --sidebar-accent: var(--accent);
@@ -51,27 +51,27 @@
 }
 .dark {
   color-scheme: dark;
-  --background: #18181b;
-  --foreground: #fafafa;
-  --card: #202023;
-  --card-foreground: #fafafa;
-  --popover: #27272a;
-  --popover-foreground: #fafafa;
+  --background: #14221e;
+  --foreground: #ecede2;
+  --card: #1c2c26;
+  --card-foreground: #ecede2;
+  --popover: #20332a;
+  --popover-foreground: #ecede2;
   --primary: #69d8c7;
   --primary-foreground: #103b35;
-  --secondary: #27272a;
-  --secondary-foreground: #f4f4f5;
-  --muted: #27272a;
-  --muted-foreground: #a1a1aa;
+  --secondary: #20332a;
+  --secondary-foreground: #ecede2;
+  --muted: #20332a;
+  --muted-foreground: #afbcb2;
   --accent: #243c37;
   --accent-foreground: #8ae3d4;
   --destructive: #ff91a1;
   --destructive-foreground: #38131a;
-  --border: #343438;
-  --input: #52525b;
+  --border: #394b42;
+  --input: #586f62;
   --ring: #69d8c7;
-  --sidebar: #1c1c1f;
-  --sidebar-foreground: #a1a1aa;
+  --sidebar: #172720;
+  --sidebar-foreground: #afbcb2;
   --success: #82d6a0;
   --success-tint: #21382a;
   --warning: #eac77a;
@@ -89,6 +89,7 @@
   --shadow-overlay: 0 12px 40px rgb(0 0 0 / 35%);
 }
 @theme inline {
+  --font-display: "Newsreader", Georgia, serif;
   --font-sans: "Geist", sans-serif;
   --font-mono: "Geist Mono", monospace;
   --color-background: var(--background);

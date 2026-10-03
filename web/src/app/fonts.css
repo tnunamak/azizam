@@ -1,15 +1,25 @@
 /* Bundled by Next from the pinned npm package; every request stays same-origin. */
 @font-face {
-  font-family: 'Geist';
+  font-family: "Newsreader";
   font-style: normal;
   font-display: swap;
-  font-weight: 100 900;
-  src: url('../../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2') format('woff2');
+  font-weight: 200 800;
+  src: url("../../public/fonts/newsreader-latin-wght-normal.woff2")
+    format("woff2");
 }
 @font-face {
-  font-family: 'Geist Mono';
+  font-family: "Geist";
   font-style: normal;
   font-display: swap;
   font-weight: 100 900;
-  src: url('../../node_modules/geist/dist/fonts/geist-mono/GeistMono-Variable.woff2') format('woff2');
+  src: url("../../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2")
+    format("woff2");
+}
+@font-face {
+  font-family: "Geist Mono";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("../../node_modules/geist/dist/fonts/geist-mono/GeistMono-Variable.woff2")
+    format("woff2");
 }

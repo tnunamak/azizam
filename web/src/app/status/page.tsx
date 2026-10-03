@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { StatusClient } from "./status-client";
+import { StatusView } from "./status-view";
 
 function StatusFallback() {
   return (
@@ -15,7 +15,7 @@ function StatusFallback() {
 export default function Page() {
   return (
     <Suspense fallback={<StatusFallback />}>
-      <StatusClient />
+      <StatusView />
     </Suspense>
   );
 }

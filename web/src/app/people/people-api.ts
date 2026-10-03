@@ -66,30 +66,135 @@ export const peopleApi = {
 export function planSummary(policy: ProfilePolicyDocument): string {
   const parts: string[] = [];
   const intents = policy.allow?.intents;
+  const labels: Record<string, string> = {
+    chat: "chat",
+    "chat.*": "chat",
+    "chat.completions": "chat",
+    images: "images",
+    image: "images",
+    "image.*": "images",
+    "image.generate": "image generation",
+    "image.edit": "image editing",
+    video: "video",
+    "video.*": "video",
+    "video.generate": "video generation",
+    voice: "speech",
+    "speech.synthesis": "speech",
+    "audio.generate": "audio generation",
+    transcribe: "transcription",
+    "speech.transcription": "transcription",
+    "speech.transcription.*": "transcription",
+    "speech.translation": "translation",
+    decide: "decisions",
+    decisions: "decisions",
+    "text.decisions": "decisions",
+    "text.systemone": "decisions",
+    embed: "embeddings",
+    "text.embeddings": "embeddings",
+    "text.rerank": "reranking",
+    "*": "all capabilities",
+  };
+  const capabilities = [
+    ...new Set(
+      (intents || []).map(
+        (value) => labels[value] ?? value.replace(/[._-]/g, " "),
+      ),
+    ),
+  ];
+  const capabilitySentence = new Intl.ListFormat("en", {
+    style: "long",
+    type: "conjunction",
+  }).format(capabilities);
   parts.push(
     intents === undefined
       ? "Capabilities follow gateway defaults"
       : intents.length
-        ? intents.map((v) => v.replace(/[_-]/g, " ")).join(", ")
+        ? capabilitySentence.charAt(0).toUpperCase() +
+          capabilitySentence.slice(1)
         : "No capabilities allowed",
   );
   const exposure = policy.allow?.exposure;
-  if (exposure !== undefined)
+  const localOnly = exposure?.length === 1 && exposure[0] === "local";
+  if (exposure === undefined)
+    parts.push("Model locations follow gateway defaults");
+  else if (!exposure.length) parts.push("No model locations allowed");
+  else if (localOnly) parts.push("Local models only");
+  else if (exposure.length === 1 && exposure[0] === "remote")
+    parts.push("Remote models only");
+  else if (
+    exposure.length === 2 &&
+    exposure.includes("local") &&
+    exposure.includes("remote")
+  )
+    parts.push("Local and remote models");
+  else parts.push(`Model locations: ${exposure.join(", ")}`);
+
+  // The policy parser defaults remote.providers to an empty set. Cloud fallback
+  // is a separate permission; it never grants access to a paid provider.
+  const providers = policy.remote?.providers ?? [];
+  if (localOnly || !providers.length) parts.push("No paid providers");
+  else
     parts.push(
-      exposure.length
-        ? `Allowed locations: ${exposure.join(", ")}`
-        : "No locations allowed",
+      `Paid providers: ${new Intl.ListFormat("en", { type: "conjunction" }).format(providers)}`,
     );
-  else parts.push("Local and remote access follow gateway defaults");
-  if (policy.fallback?.cloud_allowed === false)
-    parts.push("Cloud fallback blocked");
-  if (policy.fallback?.cloud_allowed === true)
-    parts.push("Cloud fallback allowed");
+  if (!localOnly)
+    parts.push(
+      policy.fallback?.cloud_allowed
+        ? "Cloud fallback permitted"
+        : "No cloud fallback",
+    );
   if (policy.models !== undefined)
     parts.push(
-      policy.models.length
-        ? `${policy.models.length} selected ${policy.models.length === 1 ? "model" : "models"}`
-        : "No models allowed",
+      policy.models.length ? "Selected models only" : "No models allowed",
     );
-  return parts.join(" · ");
+  if (policy.protocols !== undefined)
+    parts.push(
+      policy.protocols.length
+        ? "Selected app protocols only"
+        : "No app protocols allowed",
+    );
+  if (policy.workflows !== undefined)
+    parts.push(
+      policy.workflows.length
+        ? "Selected workflows only"
+        : "No workflows allowed",
+    );
+  if (policy.backends !== undefined)
+    parts.push(
+      policy.backends.length ? "Selected engines only" : "No engines allowed",
+    );
+  if (
+    [
+      policy.allow?.trust_tiers,
+      policy.allow?.resource_tiers,
+      policy.allow?.tags,
+    ].some((values) => values !== undefined)
+  )
+    parts.push("Additional capability restrictions apply");
+  for (const [value, period] of [
+    [policy.remote?.max_usd_per_request, "per request"],
+    [policy.remote?.budget_usd_per_day, "per day"],
+    [policy.remote?.budget_usd_per_month, "per month"],
+  ] as const) {
+    if (value !== null && value !== undefined)
+      parts.push(`Remote spending limit: $${value} ${period}`);
+  }
+  return `${parts.join(". ")}.`;
+}
+
+export function planCounts(policy: ProfilePolicyDocument): string {
+  return (
+    [
+      [policy.models, "model"],
+      [policy.protocols, "protocol"],
+      [policy.workflows, "workflow"],
+      [policy.backends, "engine"],
+    ] as const
+  )
+    .filter(([values]) => values !== undefined)
+    .map(
+      ([values, label]) =>
+        `${values!.length} selected ${label}${values!.length === 1 ? "" : "s"}`,
+    )
+    .join(" · ");
 }

@@ -1,0 +1,36 @@
+{
+  "title": "Vivid Fish gateway polish review",
+  "url": "http://127.0.0.1:18180/ui/",
+  "start": "/home/",
+  "authScript": "./darshana-auth.mjs",
+  "crawl": {
+    "include": [
+      "^/ui/(home|models|try|library|usage|apps|status|engines|providers|people|activity|settings)/?$"
+    ],
+    "exclude": ["sign-out", "logout", "delete"],
+    "maxPages": 12,
+    "extraRoutes": [
+      "/home/",
+      "/models/",
+      "/try/",
+      "/library/",
+      "/usage/",
+      "/apps/",
+      "/status/",
+      "/engines/",
+      "/providers/",
+      "/people/",
+      "/activity/",
+      "/settings/"
+    ]
+  },
+  "capture": {
+    "themes": ["light", "dark"],
+    "viewports": ["desktop", "mobile"],
+    "delay": 500,
+    "waitFor": "document.fonts.status === 'loaded' && !!document.querySelector('h1') && !document.querySelector('[aria-busy=\"true\"]') && !document.querySelector('[data-slot=\"skeleton\"]') && Array.from(document.images).every(image => image.complete && image.naturalWidth > 0)"
+  },
+  "outputs": ["html", "images"],
+  "outputDir": "/home/tnunamak/.tmp/gw-product/darshana/gw-ui-polish",
+  "authStorage": "../test-results/darshana-config-auth.json"
+}

@@ -572,7 +572,7 @@ function costLabel(value: unknown) {
   if (typeof value !== "object" || value === null)
     return "Cost not measured yet";
   const cost = value as { kind?: unknown; price?: unknown };
-  if (cost.kind === "free") return "Free";
+  if (cost.kind === "free") return "No provider charge";
   if (cost.kind === "paid") {
     return cost.price == null
       ? "Paid · Cost not measured yet"

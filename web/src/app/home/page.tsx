@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { accountApi, type AccountApp } from "@/lib/account-api";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -49,6 +50,7 @@ import {
   type SetupProgress,
 } from "./home-api";
 import { chatAlias, clients, recipeFor, type Client } from "./recipes";
+import { PRODUCT_NAME } from "@/lib/product";
 
 const homeKey = ["account", "home"];
 const setupKey = ["gateway", "setup-progress"];
@@ -102,11 +104,20 @@ const capabilityCopy: Record<
     icon: "voice",
   },
 };
+const capabilityTint: Record<Capability, string> = {
+  chat: "bg-capability-chat/5 border-capability-chat/20",
+  image: "bg-capability-image/5 border-capability-image/20",
+  video: "bg-capability-video/5 border-capability-video/20",
+  voice: "bg-capability-voice/5 border-capability-voice/20",
+  transcribe: "bg-capability-transcribe/5 border-capability-transcribe/20",
+  decide: "bg-capability-decide/5 border-capability-decide/20",
+  embed: "bg-capability-embed/5 border-capability-embed/20",
+};
 const stepLabels: Record<string, string> = {
-  claim_owner: "Claim owner",
   connect_service: "Connect an engine or provider",
-  test_request: "Run a test request",
-  connect_app: "Connect an app",
+  test_request: "Make a real request",
+  copy_settings: "Copy settings into your client",
+  view_receipt: "See the request receipt",
   invite_someone: "Invite someone",
 };
 
@@ -212,7 +223,7 @@ function Connect({ home }: { home: HomeSnapshot }) {
       ]);
     } catch {
       setTestError(
-        "The connection test could not finish. Check your key and try again.",
+        "The gateway check could not finish. Check your key and try again.",
       );
     } finally {
       setTesting(false);
@@ -221,13 +232,15 @@ function Connect({ home }: { home: HomeSnapshot }) {
   return (
     <section
       aria-labelledby="connect-heading"
-      className="border-border rounded-xl border"
+      className="border-primary/20 bg-card overflow-hidden rounded-xl border"
     >
-      <div className="border-border border-b p-5 sm:p-6">
-        <div className="mb-6 flex items-center gap-3">
-          <PlugZap aria-hidden="true" className="text-primary size-5" />
+      <div className="border-border border-b p-6 sm:p-8">
+        <div className="mb-8 flex items-start gap-4">
+          <span className="bg-primary/10 text-primary flex size-11 shrink-0 items-center justify-center rounded-lg">
+            <PlugZap aria-hidden="true" className="size-5" />
+          </span>
           <div>
-            <h2 id="connect-heading" className="text-lg font-semibold">
+            <h2 id="connect-heading" className="text-xl font-semibold">
               Connect an app
             </h2>
             <p className="text-muted-foreground mt-1 text-sm">
@@ -371,14 +384,12 @@ function Connect({ home }: { home: HomeSnapshot }) {
             <TabsContent
               value={name.replaceAll(" ", "-")}
               key={name}
-              className="min-w-0 p-5 sm:p-6"
+              className="min-w-0 p-6 sm:p-8"
             >
               <div className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
-                <div>
+                <div className="flex flex-wrap items-center gap-3">
                   <h3 className="text-base font-semibold">Connect {name}</h3>
-                  <p className="text-muted-foreground mt-1 text-xs">
-                    Untested recipe
-                  </p>
+                  <Badge variant="outline">Untested recipe</Badge>
                 </div>
                 <a
                   className="text-primary inline-flex min-h-11 items-center gap-1 text-sm underline underline-offset-4"
@@ -421,14 +432,14 @@ function Connect({ home }: { home: HomeSnapshot }) {
           );
         })}
       </Tabs>
-      <div className="border-border space-y-4 border-t p-5 sm:p-6">
+      <div className="border-border space-y-4 border-t p-6 sm:p-8">
         {!reveal && (
           <div className="max-w-lg space-y-2">
             <label
               htmlFor="connection-test-key"
               className="text-sm font-medium"
             >
-              Key to test
+              Key for gateway check
             </label>
             <Input
               id="connection-test-key"
@@ -443,7 +454,7 @@ function Connect({ home }: { home: HomeSnapshot }) {
             <p className="text-muted-foreground text-xs">
               {selectedCredentialId === "new"
                 ? "Create a key above, or select an existing key to test it."
-                : "Paste the selected key. Used for this test, then cleared; it is not saved in your browser."}
+                : "Paste the selected key. Used for this check, then cleared; it is not saved in your browser."}
             </p>
           </div>
         )}
@@ -464,7 +475,8 @@ function Connect({ home }: { home: HomeSnapshot }) {
             {testing ? "Checking…" : "Gateway check"}
           </Button>
           <p className="text-muted-foreground text-xs">
-            One gateway request. This does not test the client app.
+            Checks the gateway route with this key. It does not test your client
+            app.
           </p>
         </div>
         {testResult && (
@@ -477,7 +489,7 @@ function Connect({ home }: { home: HomeSnapshot }) {
               ) : (
                 <Circle aria-hidden="true" className="size-4" />
               )}
-              {testResult.ok ? "Connection works" : "Connection failed"}
+              {testResult.ok ? "Gateway check passed" : "Gateway check failed"}
               {testResult.latency_ms != null
                 ? ` · ${Math.round(testResult.latency_ms)} ms`
                 : " · Not measured yet"}
@@ -503,19 +515,55 @@ function Connect({ home }: { home: HomeSnapshot }) {
   );
 }
 
-function SetupChecklist({ progress }: { progress: SetupProgress }) {
-  return (
+function SetupChecklist({
+  progress,
+  home,
+  compact = false,
+}: {
+  progress: SetupProgress;
+  home: HomeSnapshot;
+  compact?: boolean;
+}) {
+  const receipt = home.receipts.find(
+    (item) => item.status === "succeeded" || item.status === "completed",
+  );
+  // Key use (including Gateway check) cannot establish client setup. The API
+  // exposes no exercised client/version evidence, so this milestone stays unknown.
+  const steps = [
+    ...progress.steps.filter(
+      (step) => step.id === "connect_service" || step.id === "test_request",
+    ),
+    {
+      id: "copy_settings",
+      done: false,
+      optional: false,
+      reason:
+        "Copy the recipe settings into your client. Client setup has not been verified.",
+      href: "#connect-heading",
+    },
+    {
+      id: "view_receipt",
+      done: !!receipt,
+      optional: false,
+      reason: receipt
+        ? "A successful request receipt is recorded in your account."
+        : "Your first successful request receipt will appear here.",
+      href: receipt ? `/r/${encodeURIComponent(receipt.request_id)}` : "",
+    },
+    ...progress.steps.filter((step) => step.id === "invite_someone"),
+  ];
+  const content = (
     <section aria-labelledby="setup-heading" className="space-y-4">
       <div>
         <h2 id="setup-heading" className="text-lg font-semibold">
-          Finish setting up
+          {compact ? "Connect your client" : "Finish setting up"}
         </h2>
         <p className="text-muted-foreground mt-1 text-sm">
-          Your gateway is ready when these steps have actually worked.
+          Gateway checks and client setup are separate steps.
         </p>
       </div>
       <ol className="divide-border divide-y">
-        {progress.steps.map((step) => (
+        {steps.map((step) => (
           <li key={step.id} className="flex items-start gap-3 py-4">
             <span
               className={`mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full ${step.done ? "bg-success-tint text-success" : "bg-muted text-muted-foreground"}`}
@@ -526,12 +574,21 @@ function SetupChecklist({ progress }: { progress: SetupProgress }) {
                 <Circle aria-hidden="true" className="size-3" />
               )}
               <span className="sr-only">
-                {step.done ? "Complete" : "Incomplete"}
+                {step.id === "copy_settings"
+                  ? "Not verified"
+                  : step.done
+                    ? "Complete"
+                    : "Incomplete"}
               </span>
             </span>
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium">
                 {stepLabels[step.id] ?? step.id}
+                {step.id === "copy_settings" && (
+                  <span className="text-muted-foreground ml-2 text-xs font-normal">
+                    Not verified
+                  </span>
+                )}
                 {step.optional && (
                   <span className="text-muted-foreground ml-2 text-xs font-normal">
                     Optional
@@ -542,16 +599,20 @@ function SetupChecklist({ progress }: { progress: SetupProgress }) {
                 {step.reason}
               </p>
             </div>
-            {!step.done && step.href && (
+            {(!step.done || step.id === "view_receipt") && step.href && (
               <Button variant="ghost" asChild>
                 <a
                   href={
-                    step.id === "test_request" || step.id === "connect_app"
+                    step.id === "test_request" || step.id === "copy_settings"
                       ? "#connect-heading"
                       : step.href
                   }
                 >
-                  {step.id === "invite_someone" ? "Invite someone" : "Continue"}
+                  {step.id === "invite_someone"
+                    ? "Invite someone"
+                    : step.id === "view_receipt"
+                      ? "View receipt"
+                      : "Continue"}
                   <ArrowUpRight aria-hidden="true" />
                 </a>
               </Button>
@@ -560,6 +621,16 @@ function SetupChecklist({ progress }: { progress: SetupProgress }) {
         ))}
       </ol>
     </section>
+  );
+  return compact ? (
+    <details className="border-border rounded-lg border px-5 py-2">
+      <summary className="min-h-11 cursor-pointer content-center text-sm font-medium">
+        Client setup: not verified
+      </summary>
+      <div className="pt-4 pb-3">{content}</div>
+    </details>
+  ) : (
+    content
   );
 }
 
@@ -591,14 +662,14 @@ function Capabilities({
           description="Your gateway owner can connect a model and give your access plan permission to use it."
         />
       ) : (
-        <div className="mt-4 grid gap-x-8 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {tiles.map((capability) => {
             const copy = capabilityCopy[capability.capability];
             if (!copy) return null;
             return (
               <article
                 key={capability.intent}
-                className={`border-border min-w-0 border-t py-5 ${capability.available ? "" : "text-muted-foreground"}`}
+                className={`min-w-0 rounded-xl border p-5 ${capability.available ? capabilityTint[copy.icon] : "border-border bg-muted/30 text-muted-foreground"}`}
               >
                 <div className="flex items-center gap-3">
                   <CapabilityIcon
@@ -665,9 +736,11 @@ function CreationPreview({ creation }: { creation: HomeCreation }) {
   return (
     <Link
       href="/library/"
-      className="border-border hover:bg-muted focus-visible:ring-ring flex min-w-0 gap-3 rounded-lg border p-3 focus-visible:ring-2"
+      className="border-border bg-card hover:border-primary/40 focus-visible:ring-ring group flex min-w-0 flex-col overflow-hidden rounded-xl border focus-visible:ring-2"
     >
-      <div className="bg-muted flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-md">
+      <div
+        className={`flex aspect-[4/3] w-full items-center justify-center overflow-hidden ${creation.kind === "video" ? "bg-capability-video/10 text-capability-video" : creation.kind === "audio" ? "bg-capability-voice/10 text-capability-voice" : "bg-capability-image/10 text-capability-image"}`}
+      >
         {creation.kind === "image" && creation.download_url ? (
           // Recent uses the Library API's signed thumbnail-capable download URL.
           // eslint-disable-next-line @next/next/no-img-element
@@ -675,13 +748,13 @@ function CreationPreview({ creation }: { creation: HomeCreation }) {
             src={creation.download_url}
             alt=""
             loading="lazy"
-            className="size-full object-cover"
+            className="size-full object-cover transition-transform group-hover:scale-[1.02] motion-reduce:transform-none"
           />
         ) : (
-          <Icon aria-hidden="true" className="text-muted-foreground size-5" />
+          <Icon aria-hidden="true" className="size-8" />
         )}
       </div>
-      <div className="min-w-0">
+      <div className="min-w-0 p-3">
         <p className="text-sm font-medium">{label}</p>
         <p className="text-muted-foreground mt-1 line-clamp-2 text-xs">
           {creation.prompt || creation.model || "No prompt recorded"}
@@ -745,7 +818,7 @@ function Recent({ home }: { home: HomeSnapshot }) {
             className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5"
           >
             {[0, 1, 2, 3, 4].map((item) => (
-              <Skeleton key={item} className="h-24 w-full" />
+              <Skeleton key={item} className="h-48 w-full rounded-xl" />
             ))}
           </div>
         ) : creationsError ? (
@@ -832,6 +905,14 @@ function Recent({ home }: { home: HomeSnapshot }) {
 }
 
 export default function HomePage() {
+  const { data: instance } = useQuery({
+    queryKey: ["foundation", "instance"],
+    queryFn: async () => {
+      const response = await fetch("/.well-known/ai-gateway");
+      if (!response.ok) throw new Error("Instance details are unavailable");
+      return response.json() as Promise<{ service?: { name?: string } }>;
+    },
+  });
   const {
     data: home,
     isPending: homePending,
@@ -878,14 +959,33 @@ export default function HomePage() {
         />
       ) : (
         <>
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <p className="text-base font-medium">
-              Hello, {home.user.name || "there"}.
-            </p>
-            <StatusPill
-              status={home.status.state}
-              reason={home.status.reason}
-            />
+          <div className="border-primary/25 grid min-w-0 grid-cols-1 items-center gap-4 border-b pb-8 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-8">
+            <div className="min-w-0">
+              <h2 className="font-display text-4xl leading-tight font-medium tracking-tight break-words sm:text-5xl">
+                Hello, {home.user.name || "there"}.
+              </h2>
+              <p className="text-muted-foreground mt-3 text-sm break-words sm:text-base">
+                Welcome to {instance?.service?.name || PRODUCT_NAME}.
+              </p>
+              <div className="mt-4">
+                <StatusPill
+                  status={home.status.state}
+                  reason={home.status.reason}
+                />
+              </div>
+            </div>
+            <svg
+              viewBox="0 0 40 32"
+              aria-hidden="true"
+              className="text-primary order-first w-16 shrink-0 sm:order-last sm:w-28"
+            >
+              <path
+                d="M9 16c8-12 19-12 26 0-7 12-18 12-26 0Z"
+                fill="currentColor"
+              />
+              <path d="m9 16-6-7v14Z" fill="currentColor" />
+              <circle cx="28" cy="14" r="2" className="fill-background" />
+            </svg>
           </div>
           <Connect home={home} />
           {isOwner && setupPending ? (
@@ -905,9 +1005,12 @@ export default function HomePage() {
               retrying={setupFetching}
             />
           ) : isOwner && setup && !setup.complete ? (
-            <SetupChecklist progress={setup} />
+            <SetupChecklist progress={setup} home={home} />
           ) : (
             <>
+              {isOwner && setup && (
+                <SetupChecklist progress={setup} home={home} compact />
+              )}
               <Capabilities
                 capabilities={home.capabilities}
                 aliases={home.aliases}
