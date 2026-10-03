@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import os
 import sqlite3
 import sys
 import tempfile
 import unittest
+from decimal import Decimal
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -95,6 +98,7 @@ class ProviderReconciliationAdminApiTests(unittest.TestCase):
         self.ledger_path = Path(self.tmpdir.name) / "provider_spend.db"
         _seed_ledger(self.ledger_path)
         self.store = FakeProviderAdminStore()
+        admin_store.init_db(self.store.path)
         self.client = _client(self.store, self.ledger_path)
 
     def test_member_cannot_reconcile_owner_charges(self) -> None:
@@ -116,9 +120,6 @@ class ProviderReconciliationAdminApiTests(unittest.TestCase):
         self.assertEqual(response.json()["global"]["spend"]["pending_reconciliation_count"], 2)
 
     def test_owner_reconciliation_is_audited_in_runtime_store_database(self) -> None:
-        from gateway import admin_store
-        self.store.path = Path(self.tmpdir.name) / "admin.db"
-        admin_store.init_db(self.store.path)
         response = self.client.post(
             "/admin/api/providers/openrouter/reconciliation/1",
             headers={"authorization": "Bearer admin"}, json={"actual_usd": "0.03"},
@@ -204,7 +205,6 @@ class ProviderReconciliationAdminApiTests(unittest.TestCase):
         self.assertEqual(listed.status_code, 200)
         self.assertEqual(listed.json()["reconciliations"][0]["id"], 1)
 
-        admin_store.init_db(self.store.path)
         settled = self.client.post(
             "/admin/api/providers/openrouter/reconciliation/1",
             headers={"authorization": "Bearer admin"},
@@ -222,7 +222,6 @@ class ProviderReconciliationAdminApiTests(unittest.TestCase):
         self.assertEqual(blocked.json()["error"]["code"], "provider_spend_pending")
         self.assertIn("openrouter", self.store.registry["services"])
 
-        admin_store.init_db(self.store.path)
         settled = self.client.post(
             "/admin/api/providers/openrouter/reconciliation/1",
             headers={"authorization": "Bearer admin"},
@@ -238,28 +237,27 @@ class ProviderReconciliationAdminApiTests(unittest.TestCase):
         self.assertNotIn("openrouter", self.store.registry["services"])
 
     def test_remove_rejects_provider_with_reserved_inflight_charge(self) -> None:
-        with sqlite3.connect(self.ledger_path) as conn:
-            conn.execute(
-                """
-                INSERT INTO provider_spend
-                (provider, profile_id, status, estimated_usd, actual_usd, cost_source,
-                 created_at, settled_at, request_id, generation_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    "openrouter-canonical",
-                    "builders",
-                    "reserved",
-                    "0.050000000",
-                    None,
-                    "pre-dispatch",
-                    1_700_000_040,
-                    None,
-                    "req_reserved",
-                    None,
-                ),
+        from gateway.policy import DEFAULT_PROFILE, RemoteProviderPolicy
+        from gateway.providers import Cost, provider_lookup, reserve_provider_spend
+
+        provider = provider_lookup(self.store.registry, "openrouter-canonical")
+        self.assertIsNotNone(provider)
+        profile = DEFAULT_PROFILE.with_overrides(
+            id="builders",
+            remote=RemoteProviderPolicy(
+                providers=frozenset({"openrouter-canonical"}),
+                max_usd_per_request=None,
+                budget_usd_per_day=None,
+                budget_usd_per_month=None,
+            ),
+        )
+        with patch.dict(os.environ, {"OPENROUTER_CANONICAL_API_KEY": "test-key"}):
+            reserve_provider_spend(
+                profile,
+                provider,
+                Cost(Decimal("0.050000000"), "pre-dispatch", "openrouter-canonical"),
+                path=self.ledger_path,
             )
-            conn.commit()
 
         blocked = self.client.delete(
             "/admin/api/providers/openrouter-canonical",

@@ -161,7 +161,14 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         async def fake_call(provider, _profile, body, **_kwargs):
             seen["provider"] = provider.id
             seen["model"] = body["model"]
-            return {"model": "acme/decider", "answers": {}, "usage": {}}, execution.providers.Cost(None, "unknown", provider.id), execution.providers.Usage(), None
+            reservation = execution.providers.Reservation(
+                123,
+                provider.id,
+                "paid-decisions",
+                Decimal("0"),
+                "test-estimate",
+            )
+            return {"model": "acme/decider", "answers": {}, "usage": {}}, execution.providers.Cost(None, "unknown", provider.id), execution.providers.Usage(), reservation
 
         registry = _registry(provider_id="acme-decisions", models=[{"id": "acme-decisions/decider"}])
         with patch.object(execution.providers, "call_typesafe_systemone", fake_call):
@@ -173,6 +180,8 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.status_code, 200)
         self.assertEqual(result.backend, "acme-decisions")
+        self.assertEqual(result.reservation_id, 123)
+        self.assertEqual(result.reconciliation_status, "needs_reconciliation")
         self.assertEqual(seen, {"provider": "acme-decisions", "model": "acme-decisions/decider"})
 
     def test_catalog_models_filters_disabled_rows_and_prefixes_by_provider_data(self) -> None:
