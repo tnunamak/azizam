@@ -84,6 +84,35 @@ _OPENAI_LITELLM_EXECUTION_BODY_KEYS = frozenset({
     "user",
     "verbosity",
     "web_search_options",
+    # Local-engine sampling and template controls (llama.cpp / OpenAI-compatible servers).
+    # Gateway roles inject chat_template_kwargs (e.g. Qwen enable_thinking=false for
+    # `fast`), and clients such as SillyTavern send llama.cpp samplers. None of these
+    # are LiteLLM router knobs; paid providers apply their own stricter allowlist.
+    "chat_template_kwargs",
+    "top_k",
+    "min_p",
+    "typical_p",
+    "top_n_sigma",
+    "tfs_z",
+    "repeat_penalty",
+    "repetition_penalty",
+    "repeat_last_n",
+    "mirostat",
+    "mirostat_tau",
+    "mirostat_eta",
+    "dry_multiplier",
+    "dry_base",
+    "dry_allowed_length",
+    "dry_penalty_last_n",
+    "dry_sequence_breakers",
+    "xtc_probability",
+    "xtc_threshold",
+    "samplers",
+    "grammar",
+    "json_schema",
+    "n_probs",
+    "cache_prompt",
+    "thinking_budget_tokens",
 })
 
 
