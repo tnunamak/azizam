@@ -206,7 +206,12 @@ function state(
   }
   if (health) {
     if (health.observation === "up") {
-      return { label: "Ready", tone: observedTone(health.tone, "ok") };
+      const healthTone = observedTone(health.tone, "ok");
+      return healthTone === "bad"
+        ? { label: "Unavailable", tone: "bad" }
+        : healthTone === "warn"
+          ? { label: "Ready with warning", tone: "warn" }
+          : { label: "Ready", tone: healthTone };
     }
     if (health.observation === "degraded") {
       return {

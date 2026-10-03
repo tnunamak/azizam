@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse, Response
 
 from gateway.capabilities import Capability
 from gateway.local_capabilities import build_local_capabilities
+from gateway.model_presentation import engine_label, model_locality
 from gateway.service_registry import runtime_backend_from_service
 
 CatalogProvider = Callable[[Request], Mapping[str, Any] | Response | Awaitable[Mapping[str, Any] | Response]]
@@ -439,7 +440,7 @@ def _base_row(
     workflow_metadata: Mapping[str, Mapping[str, Any]],
     service_model_metadata: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, Any]:
-    service = _service_record(service_records, service_id)
+    service = {"id": service_id, **_service_record(service_records, service_id)}
     workflow_id = str((model_entry or {}).get("vivid_fish_workflow_id") or next(
         (cap.workflow for cap in capabilities if cap.workflow), ""
     ))
@@ -480,6 +481,7 @@ def _base_row(
         ),
         "capabilities": _capability_summaries(capabilities),
         "provider": _provider(service, model_mapping or model_entry, service_id),
+        "engine_label": engine_label(service, service_id),
         "locality": _locality(service, model_mapping or model_entry),
         "cost": _cost(service, model_mapping or model_entry),
         "timing": timing or {"typical_seconds": None, "source": None},
@@ -697,13 +699,7 @@ def _provider(service: Mapping[str, Any], model_entry: Mapping[str, Any] | None,
 
 
 def _locality(service: Mapping[str, Any], model_entry: Mapping[str, Any] | None) -> str:
-    for source in (model_entry or {}, service, service.get("config") if isinstance(service.get("config"), Mapping) else {}):
-        if not isinstance(source, Mapping):
-            continue
-        value = str(source.get("locality") or source.get("placement") or "").strip().lower()
-        if value in {"local", "remote"}:
-            return value
-    return "unknown"
+    return model_locality(service, model_entry)
 
 
 def _cost(service: Mapping[str, Any], model_entry: Mapping[str, Any] | None) -> dict[str, Any]:

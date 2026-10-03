@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MoreHorizontal, Plus, Users, Mail, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { api, type Profile } from "@/lib/api";
+import { formatPersonName } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -176,7 +177,7 @@ export default function PeoplePage() {
           <Button
             variant="ghost"
             size="icon"
-            aria-label={`Actions for ${person.name || person.email || "person"}`}
+            aria-label={`Actions for ${formatPersonName(person.name, "person")}`}
           >
             <MoreHorizontal />
           </Button>
@@ -225,7 +226,7 @@ export default function PeoplePage() {
                 onSelect={() =>
                   setConfirmation({
                     title: "Remove person?",
-                    name: person.name || person.email || "person",
+                    name: formatPersonName(person.name, "person"),
                     description:
                       "This permanently removes the account and revokes access to its apps and keys.",
                     run: () => peopleApi.remove(person.id),
@@ -308,7 +309,7 @@ export default function PeoplePage() {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-medium break-words">
-                        {person.name || person.email || "Unnamed person"}
+                        {formatPersonName(person.name, "Unnamed person")}
                       </span>
                       {person.disabled && (
                         <Badge variant="secondary">Disabled</Badge>
@@ -731,7 +732,7 @@ function ChangePlan({
         <DialogHeader>
           <DialogTitle>Change access plan</DialogTitle>
           <DialogDescription>
-            Choose the access for {person.name || person.email || "this person"}
+            Choose the access for {formatPersonName(person.name, "this person")}
             . Changes apply to their apps and keys.
           </DialogDescription>
         </DialogHeader>

@@ -1,0 +1,325 @@
+import {
+  test,
+  expect,
+  type Page,
+  type APIRequestContext,
+} from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
+import type { HomeSnapshot } from "../src/app/home/home-api";
+
+async function fixture(
+  page: Page,
+  request: APIRequestContext,
+  name = "Tim Nunamak",
+) {
+  const home = (await (
+    await request.get("/me/api/home")
+  ).json()) as HomeSnapshot;
+  const user = { ...home.user, name };
+  const aliases: HomeSnapshot["aliases"] = [
+    {
+      id: "fast",
+      operation: "chat",
+      available: true,
+      status: "ready",
+      reason: "Chat is available.",
+    },
+    {
+      id: "image",
+      operation: "images",
+      available: false,
+      status: "unavailable",
+      reason: "The image service is disabled.",
+    },
+    {
+      id: "video",
+      operation: "videos",
+      available: false,
+      status: "unavailable",
+      reason: "The video service is unavailable.",
+    },
+    {
+      id: "tts",
+      operation: "speech",
+      available: true,
+      status: "ready",
+      reason: "Voice is available.",
+    },
+  ];
+  await page.route("**/me/api/home", (route) =>
+    route.fulfill({
+      json: {
+        ...home,
+        user,
+        aliases,
+        // These ready workflows must never replace the capability's stable alias.
+        capabilities: [
+          {
+            capability: "image",
+            intent: "image.analyze",
+            workflow: "image.analyze.face-likeness",
+            available: true,
+            status: "ready",
+            reason: "Available.",
+          },
+          {
+            capability: "video",
+            intent: "video.edit",
+            workflow: "video.edit.bernini-r-remix",
+            available: true,
+            status: "ready",
+            reason: "Available.",
+          },
+        ],
+        new_app_aliases: aliases.filter((alias) => alias.operation === "chat"),
+        apps: [
+          {
+            id: "polish-app",
+            name: "Test client",
+            kind: "personal",
+            created_at: 1,
+            disabled_at: null,
+            can_mint_keys: true,
+            profile: null,
+            credentials: ["chat-key", "image-key"].map((id) => ({
+              id,
+              subject_kind: "app",
+              subject_id: "polish-app",
+              app_id: "polish-app",
+              profile_id: null,
+              prefix: "fixture",
+              display_name: id === "chat-key" ? "Chat access" : "Images only",
+              scopes: [],
+              created_at: 1,
+              expires_at: null,
+              revoked_at: null,
+              last_used_at: null,
+            })),
+          },
+        ],
+        credential_aliases: {
+          "chat-key": aliases.filter((alias) => alias.operation === "chat"),
+          "image-key": aliases.filter((alias) => alias.operation === "images"),
+        },
+        status: {
+          state: "ready",
+          reason: "Some services are unavailable or not measured yet.",
+        },
+        receipts: [],
+      },
+    }),
+  );
+  await page.route("**/admin/api/setup-progress", (route) =>
+    route.fulfill({ json: { complete: true, steps: [] } }),
+  );
+  await page.route("**/me/api/media?limit=5", (route) =>
+    route.fulfill({ json: { assets: [] } }),
+  );
+  return home;
+}
+
+for (const theme of ["light", "dark"] as const) {
+  for (const width of [1440, 390]) {
+    test(`Home content truth: ${theme} at ${width}px`, async ({
+      page,
+      request,
+    }) => {
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+      await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+      await page.addInitScript(
+        (value) => localStorage.setItem("theme", value),
+        theme,
+      );
+      await fixture(page, request);
+      await page.goto("/ui/home/");
+      await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+        "Hello, Tim.",
+      );
+      await expect(
+        page.getByText(
+          "Chat and voice are ready · images and video are unavailable",
+          { exact: true },
+        ),
+      ).toBeVisible();
+      await expect(
+        page.getByText("Some services are unavailable or not measured yet.", {
+          exact: true,
+        }),
+      ).toHaveCount(0);
+      await expect(
+        page.getByText("Here’s how to use your AI.", { exact: true }),
+      ).toHaveCount(0);
+      await expect(page.locator("main article code")).toHaveText([
+        "fast",
+        "image",
+        "video",
+        "tts",
+      ]);
+      await expect(
+        page.getByText("Unavailable right now", { exact: true }),
+      ).toHaveCount(0);
+      await expect(page.locator("main")).not.toContainText("face-likeness");
+      await expect(page.locator("main")).not.toContainText("bernini-r-remix");
+      await expect(page.getByRole("combobox", { name: "App key" })).toHaveCount(
+        1,
+      );
+      await expect(page.getByRole("tabpanel").locator("summary")).toHaveText(
+        "Client setup: not verified",
+      );
+      await expect(page.locator("main > div > details")).toHaveCount(0);
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+      const violations = (
+        await new AxeBuilder({ page }).analyze()
+      ).violations.filter((v) =>
+        ["serious", "critical"].includes(v.impact ?? ""),
+      );
+      expect(violations).toEqual([]);
+      await page.screenshot({
+        path: `test-results/screens/home/polish2-${theme}-${width}.png`,
+        fullPage: true,
+      });
+    });
+  }
+}
+
+test("Home uses a neutral greeting when the API display name is an email", async ({
+  page,
+  request,
+}) => {
+  await fixture(page, request, "tim@example.test");
+  await page.goto("/ui/home/");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+    "Hello, there.",
+  );
+});
+
+test("one selected and pasted app key scopes all recipes and the gateway check", async ({
+  page,
+  request,
+}) => {
+  await fixture(page, request);
+  const checks: unknown[] = [];
+  await page.route("**/me/api/connection-test", (route) => {
+    checks.push(route.request().postDataJSON());
+    return route.fulfill({
+      json: {
+        ok: true,
+        latency_ms: 25,
+        reason: "The selected key reached the gateway.",
+        path: "/v1/models",
+        model: null,
+        request_id: null,
+      },
+    });
+  });
+  await page.goto("/ui/home/");
+  const select = page.getByRole("combobox", { name: "App key" });
+  await select.click();
+  await page
+    .getByRole("option", { name: "Test client · Chat access", exact: true })
+    .click();
+  const paste = page.getByLabel("Paste your key", { exact: true });
+  await expect(paste).toHaveCount(1);
+  await paste.fill("fixture-chat-secret");
+  await expect(page.getByRole("tabpanel").locator("pre")).toContainText("fast");
+  await page.getByRole("tab", { name: "Python", exact: true }).click();
+  await expect(page.getByRole("tabpanel").locator("pre")).toContainText(
+    'model="fast"',
+  );
+  await expect(paste).toHaveValue("fixture-chat-secret");
+  await page
+    .getByRole("button", { name: "Gateway check", exact: true })
+    .click();
+  await expect(
+    page.getByText("Gateway check passed · 25 ms", { exact: true }),
+  ).toBeVisible();
+  expect(checks).toEqual([
+    { api_key: "fixture-chat-secret", credential_id: "chat-key" },
+  ]);
+  await select.click();
+  await page
+    .getByRole("option", { name: "Test client · Images only", exact: true })
+    .click();
+  await expect(paste).toHaveValue("");
+  await expect(page.getByRole("tabpanel").locator("pre")).toHaveCount(0);
+  await expect(
+    page.getByText("No chat model is available to this key yet", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Gateway check", exact: true }),
+  ).toBeDisabled();
+  await paste.fill("fixture-image-secret");
+  await page
+    .getByRole("button", { name: "Gateway check", exact: true })
+    .click();
+  await expect.poll(() => checks.length).toBe(2);
+  expect(checks[1]).toEqual({
+    api_key: "fixture-image-secret",
+    credential_id: "image-key",
+  });
+  expect(
+    await page.evaluate(() =>
+      [...Object.values(localStorage), ...Object.values(sessionStorage)].some(
+        (value) => value.includes("fixture-image-secret"),
+      ),
+    ),
+  ).toBe(false);
+  await page.reload();
+  await expect(page.getByLabel("Paste your key", { exact: true })).toHaveCount(
+    0,
+  );
+});
+
+test("recent work uses human labels with routing IDs kept as receipt detail", async ({
+  page,
+  request,
+}) => {
+  const home = await fixture(page, request);
+  await page.route("**/me/api/home", (route) =>
+    route.fulfill({
+      json: {
+        ...home,
+        receipts: [
+          {
+            request_id: "polish-image-receipt",
+            intent: "image.analyze",
+            requested_model: "image.analyze.face-likeness",
+            status: "succeeded",
+          },
+        ],
+      },
+    }),
+  );
+  await page.route("**/me/api/media?limit=5", (route) =>
+    route.fulfill({
+      json: {
+        assets: [
+          {
+            asset_id: "polish-audio",
+            kind: "audio",
+            model: "audio.generate.ace-step-1.5-2b-base",
+            prompt: null,
+          },
+        ],
+      },
+    }),
+  );
+  await page.goto("/ui/home/");
+  const receipt = page.locator('a[href="/r/polish-image-receipt"]');
+  await expect(receipt.locator("p").first()).toHaveText("Image request");
+  await expect(receipt.locator("code")).toHaveText(
+    "image.analyze.face-likeness",
+  );
+  await expect(
+    page.getByText("Audio created by your gateway", { exact: true }),
+  ).toBeVisible();
+  await expect(page.locator("main")).not.toContainText(
+    "audio.generate.ace-step-1.5-2b-base",
+  );
+});

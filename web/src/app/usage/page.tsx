@@ -590,6 +590,11 @@ function ReceiptsList({
             icon={FileText}
             title="No receipts yet"
             description="Receipts appear here after a gateway app makes a request."
+            action={
+              <Button asChild variant="outline">
+                <a href="/ui/apps/">Connect an app</a>
+              </Button>
+            }
           />
         )}
       </CardContent>

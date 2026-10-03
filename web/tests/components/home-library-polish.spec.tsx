@@ -99,9 +99,11 @@ describe("Home and Library polish", () => {
     );
     const { container } = renderPage(<HomePage />);
     expect(await screen.findByText("Welcome to Family gateway.")).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Home" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Hello, Alex." })).toBeVisible();
-    expect(screen.getByText("Untested recipe")).toBeVisible();
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Hello, Alex." }),
+    ).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Home" })).toBeNull();
+    expect(screen.getByText("Client setup: not verified")).toBeVisible();
     expect(screen.getByRole("button", { name: "Gateway check" })).toBeVisible();
     expect(
       screen.queryByRole("button", { name: "Test connection" }),
@@ -130,6 +132,7 @@ describe("Home and Library polish", () => {
                   request_id: "real-request",
                   status: "succeeded",
                   requested_model: "image",
+                  intent: "image.generate",
                 },
               ],
             });
@@ -174,12 +177,13 @@ describe("Home and Library polish", () => {
     ).toBeVisible();
     expect(await screen.findByText("An ocean")).toBeVisible();
     await userEvent.click(summary);
-    expect(screen.getByText("Copy settings into your client")).toBeVisible();
+    expect(
+      screen.getByText(/Copy these settings into Open WebUI and connect there/),
+    ).toBeVisible();
     expect(screen.queryByText("An app key has been used.")).toBeNull();
-    expect(screen.getByRole("link", { name: "View receipt" })).toHaveAttribute(
-      "href",
-      "/r/real-request",
-    );
+    expect(
+      screen.getByRole("link", { name: /Image request.*Succeeded/ }),
+    ).toHaveAttribute("href", "/r/real-request");
   });
   it("keeps audio controls outside the open action and uses a duration fallback for video", async () => {
     vi.stubGlobal(

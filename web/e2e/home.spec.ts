@@ -7,7 +7,7 @@ const mediaApi = "**/me/api/media?limit=5";
 const setupApi = "**/admin/api/setup-progress";
 
 async function chooseRecipeKey(page: Page, optionName: string | RegExp) {
-  await page.getByRole("combobox", { name: "Key for these settings" }).click();
+  await page.getByRole("combobox", { name: "App key" }).click();
   await page.getByRole("option", { name: optionName }).click();
 }
 
@@ -131,9 +131,11 @@ for (const theme of ["light", "dark"] as const) {
 
         const response = await page.goto(homePath);
         expect(response?.status()).toBe(200);
-        await expect(
-          page.getByRole("heading", { name: "Home", exact: true }),
-        ).toBeVisible();
+        if (state !== "error") {
+          await expect(
+            page.getByRole("heading", { level: 1, name: /^Hello,/ }),
+          ).toBeVisible();
+        }
         if (state === "seeded") {
           const instance = await (
             await request.get("/.well-known/ai-gateway")
@@ -160,7 +162,7 @@ for (const theme of ["light", "dark"] as const) {
             ).toBeGreaterThanOrEqual(layout.available - 1);
             expect(
               layout.lines,
-              "A seeded email greeting fits within two lines",
+              "A seeded greeting fits within two lines",
             ).toBeLessThanOrEqual(2.1);
           }
           const snapshot = await (await request.get("/me/api/home")).json();
@@ -212,7 +214,9 @@ for (const theme of ["light", "dark"] as const) {
           await expect(page.getByLabel("Loading Home")).toHaveCount(0);
           if (state === "empty") {
             await expect(
-              page.getByText(/No models are available to your account yet/),
+              page.getByText(
+                /No capabilities are available to your account yet/,
+              ),
             ).toBeVisible();
             await expect(
               page.getByRole("heading", {
@@ -300,13 +304,17 @@ test("all ten client recipes fit a phone and remain accessible", async ({
   ]) {
     await page.getByRole("tab", { name, exact: true }).click();
     await expect(
-      page.getByRole("tabpanel").getByText("Untested recipe", { exact: true }),
+      page
+        .getByRole("tabpanel")
+        .getByText("Client setup: not verified", { exact: true }),
     ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: `Connect ${name}`, exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByRole("tabpanel").getByText("Untested recipe", { exact: true }),
+      page
+        .getByRole("tabpanel")
+        .getByText("Client setup: not verified", { exact: true }),
     ).toBeVisible();
     expect(
       await page.evaluate(
@@ -576,9 +584,9 @@ test("inline reveal-once key tests a real chat request and produces one owned re
         secret,
       "Minted key is shown once",
     ).toBe(true);
-    await expect(
-      page.getByRole("combobox", { name: "Key for these settings" }),
-    ).toContainText("New key");
+    await expect(page.getByRole("combobox", { name: "App key" })).toContainText(
+      "New key",
+    );
     await expect(page.getByRole("tabpanel").locator("pre")).toContainText(
       "fast",
     );
@@ -615,9 +623,7 @@ test("inline reveal-once key tests a real chat request and produces one owned re
     const ownedBefore = before.receipts.filter(
       (receipt: { request_id: string }) => receipt.request_id,
     ).length;
-    await page
-      .getByLabel("Key for gateway check", { exact: true })
-      .fill(secret);
+    await page.getByLabel("Paste your key", { exact: true }).fill(secret);
     const testedResponse = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname === "/me/api/connection-test",
@@ -765,7 +771,7 @@ test("a new inherited key cannot borrow a broader existing app's recipe", async 
     expect(snapshot.new_app_aliases).toEqual([]);
     await page.goto(homePath);
     const selector = page.getByRole("combobox", {
-      name: "Key for these settings",
+      name: "App key",
     });
     await expect(selector).toContainText("New app");
     await expect(

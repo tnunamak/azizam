@@ -4,7 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { ImageIcon } from "lucide-react";
 import { PageHeader } from "@/components/product/page-header";
 import { ErrorState } from "@/components/product/error-state";
-import { EmptyState } from "@/components/ui/empty-state";
+import { EmptyState } from "@/components/product/empty-state";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -173,10 +174,16 @@ export default function GalleryPage() {
           retrying={isFetching}
         />
       ) : data.examples.length === 0 ? (
-        <EmptyState icon={<ImageIcon aria-hidden="true" className="size-8" />}>
-          No recorded examples yet. The gateway owner can record examples to
-          share them here.
-        </EmptyState>
+        <EmptyState
+          icon={ImageIcon}
+          title="No recorded examples yet"
+          description="Try a request to create media. The gateway owner can then choose examples to share here."
+          action={
+            <Button asChild variant="outline">
+              <a href="/ui/try/">Try a request</a>
+            </Button>
+          }
+        />
       ) : (
         data.sections.map((section) => {
           const examples = data.examples.filter(

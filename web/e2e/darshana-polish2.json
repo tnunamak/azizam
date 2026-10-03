@@ -1,0 +1,51 @@
+{
+  "title": "Vivid Fish gateway UI polish round 2",
+  "url": "http://127.0.0.1:18180/ui/",
+  "start": "/home/",
+  "authScript": "./darshana-auth.mjs",
+  "crawl": {
+    "include": [
+      "^/ui/(home|models|workflows|try|library|usage|apps|status|engines|providers|people|activity|settings|showcase|design)/?$"
+    ],
+    "exclude": [
+      "sign-out",
+      "logout",
+      "delete"
+    ],
+    "maxPages": 15,
+    "extraRoutes": [
+      "/home/",
+      "/models/",
+      "/workflows/",
+      "/try/",
+      "/library/",
+      "/usage/",
+      "/apps/",
+      "/status/",
+      "/engines/",
+      "/providers/",
+      "/people/",
+      "/activity/",
+      "/settings/",
+      "/showcase/",
+      "/design/"
+    ]
+  },
+  "capture": {
+    "themes": [
+      "light",
+      "dark"
+    ],
+    "viewports": [
+      "desktop",
+      "mobile"
+    ],
+    "delay": 1200
+  },
+  "outputs": [
+    "html",
+    "images"
+  ],
+  "outputDir": "/home/tnunamak/.tmp/gw-product/darshana/polish2",
+  "authStorage": "../test-results/darshana-config-auth.json"
+}

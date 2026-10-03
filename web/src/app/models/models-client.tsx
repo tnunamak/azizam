@@ -76,6 +76,7 @@ interface CatalogRow {
   description: string | null;
   capabilities: CatalogCapability[];
   provider: string | null;
+  engine_label?: string | null;
   locality: Locality;
   cost: { kind: CostKind; price: string | number | null };
   timing: {
@@ -198,6 +199,7 @@ function titleFor(row: CatalogRow): string {
 }
 
 function availabilityLabel(value: AvailabilityState): string {
+  if (value === "not measured yet") return "Availability not checked";
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
@@ -208,25 +210,41 @@ function costLabel(row: CatalogRow): string {
       : "No provider charge";
   if (row.cost.kind === "paid") {
     return row.cost.price === null
-      ? "Paid · Not measured yet"
+      ? "Paid · Price not provided"
       : `Paid · ${String(row.cost.price)}`;
   }
-  return "Not measured yet";
+  return "Price not provided";
 }
 
 function localityLabel(row: CatalogRow): string {
   if (row.locality === "local") return "Local";
   if (row.locality === "remote") return "Remote";
-  return "Location not measured yet";
+  return "Placement not configured";
+}
+
+function engineLabel(row: CatalogRow): string {
+  return (
+    row.engine_label ??
+    (row.locality === "remote" ? "Remote provider" : "Configured engine")
+  );
 }
 
 function timingLabel(row: CatalogRow): string {
   const value = row.timing.typical_seconds;
-  if (typeof value !== "number" || !Number.isFinite(value)) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
     return "Not measured yet";
   }
-  if (value < 1) return `~${Math.round(value * 1000)} ms`;
-  return `~${value.toFixed(value >= 10 ? 0 : 1)} s`;
+  const duration =
+    value < 1
+      ? `~${Math.round(value * 1000)} ms`
+      : `~${value.toFixed(value >= 10 ? 0 : 1)} s`;
+  const source =
+    row.timing.source === "receipts"
+      ? "Measured"
+      : row.timing.source === "configured"
+        ? "Typical"
+        : "Source not provided";
+  return `${duration} · ${source}`;
 }
 
 function availabilityState(row: CatalogRow): AvailabilityState {
@@ -248,6 +266,7 @@ function itemMatches(row: CatalogRow, query: string): boolean {
     row.display_name,
     row.description,
     row.provider,
+    row.engine_label,
     ...row.operations,
     ...row.capabilities.map((cap) => cap.label),
     ...Object.values(row.resolves_to),
@@ -309,6 +328,13 @@ function availabilityClass(state: AvailabilityState) {
 
 function Availability({ row }: { row: CatalogRow }) {
   const state = availabilityState(row);
+  if (state === "not measured yet") {
+    return (
+      <p className="text-muted-foreground text-xs leading-5">
+        Availability not checked
+      </p>
+    );
+  }
   return (
     <div className="flex min-w-0 items-start gap-2 text-sm">
       <span
@@ -370,28 +396,24 @@ function AliasCard({
         data-slot="model-metadata"
         className="text-muted-foreground flex min-w-0 flex-wrap items-center gap-1 text-xs"
       >
-        <span className="shrink-0">
-          {row.locality === "local" && row.cost.kind === "free"
-            ? costLabel(row)
-            : localityLabel(row)}
-        </span>
-        <span
-          className="min-w-20 flex-1 truncate"
-          title={row.provider ?? "Provider unknown"}
-        >
+        <span className="shrink-0">{localityLabel(row)}</span>
+        <span className="min-w-20 flex-1 truncate" title={engineLabel(row)}>
           <span aria-hidden="true">· </span>
-          {row.provider ?? "Provider unknown"}
+          {engineLabel(row)}
         </span>
-        {!(row.locality === "local" && row.cost.kind === "free") && (
-          <Badge variant="outline" className="max-w-full text-xs">
-            <span className="whitespace-normal">{costLabel(row)}</span>
-          </Badge>
-        )}
+      </div>
+      <div className="text-muted-foreground flex min-w-0 flex-wrap items-center gap-2 text-xs">
+        <Badge variant="outline" className="max-w-full text-xs">
+          <span className="whitespace-normal">{costLabel(row)}</span>
+        </Badge>
         <span
           className="inline-flex shrink-0 items-center gap-1"
-          title="Typical time"
+          title={
+            row.timing.source === "receipts"
+              ? "Measured time from successful requests"
+              : "Typical time"
+          }
         >
-          <span aria-hidden="true">·</span>
           <span>{timingLabel(row)}</span>
         </span>
       </div>
@@ -488,13 +510,17 @@ function DetailSheet({
                       : "Not reported"
                   }
                 />
-                <Fact
-                  label="Provider"
-                  value={row.provider ?? "Provider unknown"}
-                />
+                <Fact label="Engine or provider" value={engineLabel(row)} />
                 <Fact label="Location" value={localityLabel(row)} />
                 <Fact label="Cost" value={costLabel(row)} />
-                <Fact label="Typical time" value={timingLabel(row)} />
+                <Fact
+                  label={
+                    row.timing.source === "receipts"
+                      ? "Measured time"
+                      : "Typical time"
+                  }
+                  value={timingLabel(row)}
+                />
               </div>
               <div>
                 <h3 className="font-medium">Availability</h3>
@@ -643,6 +669,11 @@ export default function ModelsClient() {
           icon={SlidersHorizontal}
           title="No models are available yet"
           description="Models appear here after an owner connects a local engine or remote provider that your access plan can use."
+          action={
+            <Button asChild>
+              <a href="/ui/home/">Review setup</a>
+            </Button>
+          }
         />
       ) : (
         <>
@@ -710,6 +741,24 @@ export default function ModelsClient() {
                 modelRows.length
                   ? "Expand All models below to use a model directly."
                   : "Clear the search or turn on another price filter."
+              }
+              action={
+                modelRows.length ? (
+                  <Button onClick={() => setTableOpen(true)}>
+                    Show all models
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={() => {
+                      setQuery("");
+                      setCapability("all");
+                      setShowNoProviderCharge(true);
+                      setShowPaid(true);
+                    }}
+                  >
+                    Clear filters
+                  </Button>
+                )
               }
             />
           ) : (
@@ -785,7 +834,7 @@ export default function ModelsClient() {
                     <TableRow>
                       <TableHead>Model</TableHead>
                       <TableHead>Capability</TableHead>
-                      <TableHead>Provider</TableHead>
+                      <TableHead>Engine or provider</TableHead>
                       <TableHead>Cost</TableHead>
                       <TableHead>Status</TableHead>
                     </TableRow>
@@ -810,9 +859,7 @@ export default function ModelsClient() {
                           {row.capabilities[0]?.label ??
                             capabilityLabels[primaryCapability(row)]}
                         </TableCell>
-                        <TableCell>
-                          {row.provider ?? "Provider unknown"}
-                        </TableCell>
+                        <TableCell>{engineLabel(row)}</TableCell>
                         <TableCell>{costLabel(row)}</TableCell>
                         <TableCell>
                           {availabilityLabel(availabilityState(row))}

@@ -17,7 +17,6 @@ import {
 } from "lucide-react";
 import { accountApi, type AccountApp } from "@/lib/account-api";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -34,7 +33,6 @@ import {
   CopyField,
   EmptyState,
   ErrorState,
-  PageHeader,
   RelativeTime,
   SecretReveal,
   StatusPill,
@@ -51,6 +49,12 @@ import {
 } from "./home-api";
 import { chatAlias, clients, recipeFor, type Client } from "./recipes";
 import { PRODUCT_NAME } from "@/lib/product";
+import {
+  capabilitySummary,
+  capabilityTiles,
+  greetingName,
+  requestLabel,
+} from "./presentation";
 
 const homeKey = ["account", "home"];
 const setupKey = ["gateway", "setup-progress"];
@@ -157,7 +161,7 @@ function Connect({ home }: { home: HomeSnapshot }) {
   const createLock = useRef(false);
   const [keyError, setKeyError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const [testKey, setTestKey] = useState("");
+  const [pastedKey, setPastedKey] = useState("");
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<ConnectionResult | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
@@ -189,6 +193,8 @@ function Connect({ home }: { home: HomeSnapshot }) {
     setKeyError(null);
     setTestResult(null);
     setSelectedCredentialId("new");
+    setReveal(null);
+    setPastedKey("");
     try {
       const app = pendingApp ?? (await accountApi.createApp(client));
       setPendingApp(app);
@@ -209,12 +215,11 @@ function Connect({ home }: { home: HomeSnapshot }) {
     }
   }
   async function testConnection() {
-    const secret = reveal?.secret || testKey.trim();
+    const secret = reveal?.secret || pastedKey.trim();
     if (!secret || testing || selectedCredentialId === "new") return;
     setTesting(true);
     setTestError(null);
     setTestResult(null);
-    setTestKey("");
     try {
       setTestResult(await homeApi.test(secret, selectedCredentialId));
       await Promise.all([
@@ -251,6 +256,40 @@ function Connect({ home }: { home: HomeSnapshot }) {
         <div className="grid min-w-0 gap-6 lg:grid-cols-2">
           <CopyField label="Base URL" value={home.api_base_url} />
           <div className="min-w-0 space-y-3">
+            <label htmlFor="app-key" className="text-sm font-medium">
+              App key
+            </label>
+            <Select
+              value={selectedCredentialId}
+              disabled={creating || !!reveal || testing}
+              onValueChange={(value) => {
+                setSelectedCredentialId(value);
+                setTestResult(null);
+                setTestError(null);
+                setPastedKey("");
+                setSaved(false);
+              }}
+            >
+              <SelectTrigger id="app-key" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="new">
+                  New app · your default access
+                </SelectItem>
+                {selectedCredentialId !== "new" &&
+                  !keys.some((key) => key.id === selectedCredentialId) && (
+                    <SelectItem value={selectedCredentialId}>
+                      New key · loading access
+                    </SelectItem>
+                  )}
+                {keys.map((key) => (
+                  <SelectItem key={key.id} value={key.id}>
+                    {key.appName} · {key.display_name || "Key"}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             {reveal ? (
               <SecretReveal
                 key={reveal.id}
@@ -260,90 +299,80 @@ function Connect({ home }: { home: HomeSnapshot }) {
                   setSaved(true);
                 }}
               />
-            ) : (
-              <>
-                <p className="text-sm font-medium">Your key</p>
-                <p className="text-muted-foreground text-sm">
+            ) : selectedCredentialId !== "new" ? (
+              <div className="space-y-2">
+                <label htmlFor="pasted-app-key" className="text-sm font-medium">
+                  Paste your key
+                </label>
+                <Input
+                  id="pasted-app-key"
+                  type="password"
+                  value={pastedKey}
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(event) => {
+                    setPastedKey(event.target.value);
+                    setTestResult(null);
+                    setTestError(null);
+                  }}
+                  placeholder="Paste the selected app key"
+                  disabled={testing}
+                />
+                <p className="text-muted-foreground text-xs">
                   {saved
-                    ? "Key saved. It won’t be shown again."
-                    : keys.length
-                      ? `You have ${keys.length} active ${keys.length === 1 ? "key" : "keys"}. Use your saved key, or create one for this app.`
-                      : "Create a key, then copy it to your app. It appears only once."}
+                    ? "Key saved. Paste it here to check the connection. "
+                    : ""}
+                  Kept only while this page is open; never saved in your
+                  browser.
                 </p>
-                <div className="flex flex-wrap items-center gap-3">
-                  <Button
-                    variant="outline"
-                    disabled={creating || !canCreate}
-                    onClick={() => void createKey()}
-                  >
-                    {creating ? (
-                      <Loader2 className="animate-spin" aria-hidden="true" />
-                    ) : (
-                      <KeyRound aria-hidden="true" />
-                    )}
-                    {creating
-                      ? "Creating key…"
-                      : pendingApp
-                        ? "Retry key creation"
-                        : `Create key for ${client}`}
-                  </Button>
-                  <Link
-                    className="text-primary text-sm underline underline-offset-4"
-                    href="/apps/"
-                  >
-                    Manage keys
-                  </Link>
-                </div>
-                {!canCreate && (
-                  <p className="text-muted-foreground text-sm">
-                    Your access plan does not let you create keys. Ask the
-                    gateway owner for access.
-                  </p>
-                )}
-              </>
+              </div>
+            ) : (
+              <p className="text-muted-foreground text-sm">
+                Create a key, then copy it to your app. It appears only once.
+              </p>
+            )}
+            {!reveal && (
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  variant="outline"
+                  disabled={creating || !canCreate || testing}
+                  onClick={() => void createKey()}
+                >
+                  {creating ? (
+                    <Loader2 className="animate-spin" aria-hidden="true" />
+                  ) : (
+                    <KeyRound aria-hidden="true" />
+                  )}
+                  {creating
+                    ? "Creating key…"
+                    : pendingApp
+                      ? "Retry key creation"
+                      : `Create key for ${client}`}
+                </Button>
+                <Link
+                  className="text-primary text-sm underline underline-offset-4"
+                  href="/apps/"
+                >
+                  Manage keys
+                </Link>
+              </div>
+            )}
+            {!canCreate && (
+              <p className="text-muted-foreground text-sm">
+                Your access plan does not let you create keys. Ask the gateway
+                owner for access.
+              </p>
             )}
             {keyError && (
               <p role="alert" className="text-destructive text-sm">
                 {keyError}
               </p>
             )}
+            <p className="text-muted-foreground text-xs">
+              Every recipe and the gateway check use this app key’s access plan.
+              A new app uses your default access.
+            </p>
           </div>
-        </div>
-        <div className="mt-6 max-w-lg space-y-2">
-          <label htmlFor="recipe-key" className="text-sm font-medium">
-            Key for these settings
-          </label>
-          <Select
-            value={selectedCredentialId}
-            disabled={creating || !!reveal || testing}
-            onValueChange={(value) => {
-              setSelectedCredentialId(value);
-              setTestResult(null);
-              setTestKey("");
-            }}
-          >
-            <SelectTrigger id="recipe-key" className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="new">New app · your default access</SelectItem>
-              {selectedCredentialId !== "new" &&
-                !keys.some((key) => key.id === selectedCredentialId) && (
-                  <SelectItem value={selectedCredentialId}>
-                    New key · loading access
-                  </SelectItem>
-                )}
-              {keys.map((key) => (
-                <SelectItem key={key.id} value={key.id}>
-                  {key.appName} · {key.display_name || "Key"}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <p className="text-muted-foreground text-xs">
-            Recipes use this key’s access plan. A new app uses your default
-            access, which can differ from your other apps.
-          </p>
         </div>
       </div>
       <Tabs
@@ -389,7 +418,16 @@ function Connect({ home }: { home: HomeSnapshot }) {
               <div className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-3">
                   <h3 className="text-base font-semibold">Connect {name}</h3>
-                  <Badge variant="outline">Untested recipe</Badge>
+                  <details className="text-muted-foreground text-xs">
+                    <summary className="min-h-11 cursor-pointer content-center">
+                      Client setup: not verified
+                    </summary>
+                    <p className="max-w-md pb-2 leading-relaxed">
+                      Copy these settings into {name} and connect there. The
+                      gateway check below verifies the route and key; it cannot
+                      verify your client app.
+                    </p>
+                  </details>
                 </div>
                 <a
                   className="text-primary inline-flex min-h-11 items-center gap-1 text-sm underline underline-offset-4"
@@ -433,37 +471,12 @@ function Connect({ home }: { home: HomeSnapshot }) {
         })}
       </Tabs>
       <div className="border-border space-y-4 border-t p-6 sm:p-8">
-        {!reveal && (
-          <div className="max-w-lg space-y-2">
-            <label
-              htmlFor="connection-test-key"
-              className="text-sm font-medium"
-            >
-              Key for gateway check
-            </label>
-            <Input
-              id="connection-test-key"
-              type="password"
-              value={testKey}
-              autoComplete="off"
-              spellCheck={false}
-              onChange={(event) => setTestKey(event.target.value)}
-              placeholder="Paste your saved gateway key"
-              disabled={testing}
-            />
-            <p className="text-muted-foreground text-xs">
-              {selectedCredentialId === "new"
-                ? "Create a key above, or select an existing key to test it."
-                : "Paste the selected key. Used for this check, then cleared; it is not saved in your browser."}
-            </p>
-          </div>
-        )}
         <div className="flex flex-wrap items-center gap-4">
           <Button
             disabled={
               testing ||
               selectedCredentialId === "new" ||
-              !(reveal?.secret || testKey.trim())
+              !(reveal?.secret || pastedKey.trim())
             }
             onClick={() => void testConnection()}
           >
@@ -518,11 +531,9 @@ function Connect({ home }: { home: HomeSnapshot }) {
 function SetupChecklist({
   progress,
   home,
-  compact = false,
 }: {
   progress: SetupProgress;
   home: HomeSnapshot;
-  compact?: boolean;
 }) {
   const receipt = home.receipts.find(
     (item) => item.status === "succeeded" || item.status === "completed",
@@ -556,7 +567,7 @@ function SetupChecklist({
     <section aria-labelledby="setup-heading" className="space-y-4">
       <div>
         <h2 id="setup-heading" className="text-lg font-semibold">
-          {compact ? "Connect your client" : "Finish setting up"}
+          Finish setting up
         </h2>
         <p className="text-muted-foreground mt-1 text-sm">
           Gateway checks and client setup are separate steps.
@@ -622,16 +633,7 @@ function SetupChecklist({
       </ol>
     </section>
   );
-  return compact ? (
-    <details className="border-border rounded-lg border px-5 py-2">
-      <summary className="min-h-11 cursor-pointer content-center text-sm font-medium">
-        Client setup: not verified
-      </summary>
-      <div className="pt-4 pb-3">{content}</div>
-    </details>
-  ) : (
-    content
-  );
+  return content;
 }
 
 function Capabilities({
@@ -641,16 +643,7 @@ function Capabilities({
   capabilities: HomeCapability[];
   aliases: HomeAlias[];
 }) {
-  const stable = new Set(aliases.map((alias) => alias.id));
-  const bestByCapability = new Map<string, HomeCapability>();
-  const score = (row: HomeCapability) =>
-    Number(row.available) * 2 + Number(stable.has(row.model ?? ""));
-  for (const row of capabilities) {
-    const previous = bestByCapability.get(row.capability);
-    if (!previous || score(row) > score(previous))
-      bestByCapability.set(row.capability, row);
-  }
-  const tiles = [...bestByCapability.values()];
+  const tiles = capabilityTiles(capabilities, aliases);
   return (
     <section aria-labelledby="capabilities-heading">
       <h2 id="capabilities-heading" className="text-lg font-semibold">
@@ -660,6 +653,11 @@ function Capabilities({
         <EmptyState
           title="No capabilities are available yet"
           description="Your gateway owner can connect a model and give your access plan permission to use it."
+          action={
+            <Button asChild variant="outline">
+              <Link href="/models/">View models and access</Link>
+            </Button>
+          }
         />
       ) : (
         <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -693,9 +691,7 @@ function Capabilities({
                 </div>
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                   <code className="text-muted-foreground text-xs break-all">
-                    {capability.model ??
-                      capability.workflow ??
-                      "No model assigned"}
+                    {capability.model ?? "No alias assigned"}
                   </code>
                   {capability.available ? (
                     <Button variant="ghost" asChild>
@@ -706,11 +702,7 @@ function Capabilities({
                         <ArrowUpRight aria-hidden="true" />
                       </Link>
                     </Button>
-                  ) : (
-                    <span className="text-muted-foreground text-xs">
-                      Unavailable right now
-                    </span>
-                  )}
+                  ) : null}
                 </div>
               </article>
             );
@@ -757,7 +749,7 @@ function CreationPreview({ creation }: { creation: HomeCreation }) {
       <div className="min-w-0 p-3">
         <p className="text-sm font-medium">{label}</p>
         <p className="text-muted-foreground mt-1 line-clamp-2 text-xs">
-          {creation.prompt || creation.model || "No prompt recorded"}
+          {creation.prompt || `${label} created by your gateway`}
         </p>
         <p className="text-muted-foreground mt-1 text-xs">
           <RelativeTime
@@ -775,6 +767,8 @@ function Recent({ home }: { home: HomeSnapshot }) {
     data: creations,
     isPending: creationsPending,
     isError: creationsError,
+    refetch: refetchCreations,
+    isFetching: creationsFetching,
   } = useQuery({
     queryKey: ["library", "home-recent-creations"],
     queryFn: homeApi.creations,
@@ -822,9 +816,11 @@ function Recent({ home }: { home: HomeSnapshot }) {
             ))}
           </div>
         ) : creationsError ? (
-          <p role="alert" className="text-muted-foreground text-sm">
-            Recent creations could not be loaded.
-          </p>
+          <ErrorState
+            message="Recent creations could not be loaded. Try again."
+            onRetry={() => void refetchCreations()}
+            retrying={creationsFetching}
+          />
         ) : recentCreations.length ? (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             {recentCreations.map((creation) => (
@@ -832,9 +828,15 @@ function Recent({ home }: { home: HomeSnapshot }) {
             ))}
           </div>
         ) : (
-          <p className="text-muted-foreground text-sm">
-            Creations from image, video and audio requests will appear here.
-          </p>
+          <EmptyState
+            title="Your creations start here"
+            description="Images, videos and audio you make through the gateway will appear here."
+            action={
+              <Button variant="outline" asChild>
+                <Link href="/try/">Create something</Link>
+              </Button>
+            }
+          />
         )}
       </section>
       <section aria-labelledby="recent-requests-heading" className="space-y-3">
@@ -863,8 +865,13 @@ function Recent({ home }: { home: HomeSnapshot }) {
                   >
                     <div className="min-w-0">
                       <p className="text-sm font-medium break-words">
-                        {receipt.requested_model ?? receipt.intent ?? "Request"}
+                        {requestLabel(receipt, home.aliases)}
                       </p>
+                      {receipt.requested_model && (
+                        <code className="text-muted-foreground mt-1 block text-xs break-all">
+                          {receipt.requested_model}
+                        </code>
+                      )}
                       <p className="text-muted-foreground mt-1 text-xs">
                         <RelativeTime
                           ts={
@@ -934,7 +941,6 @@ export default function HomePage() {
   });
   return (
     <div className="min-w-0 space-y-8">
-      <PageHeader title="Home" answer="Here’s how to use your AI." />
       {homePending ? (
         <HomeLoading />
       ) : homeError ? (
@@ -961,18 +967,20 @@ export default function HomePage() {
         <>
           <div className="border-primary/25 grid min-w-0 grid-cols-1 items-center gap-4 border-b pb-8 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-8">
             <div className="min-w-0">
-              <h2 className="font-display text-4xl leading-tight font-medium tracking-tight break-words sm:text-5xl">
-                Hello, {home.user.name || "there"}.
-              </h2>
+              <h1 className="font-display text-4xl leading-tight font-medium tracking-tight break-words sm:text-5xl">
+                Hello, {greetingName(home.user)}.
+              </h1>
               <p className="text-muted-foreground mt-3 text-sm break-words sm:text-base">
                 Welcome to {instance?.service?.name || PRODUCT_NAME}.
               </p>
-              <div className="mt-4">
-                <StatusPill
-                  status={home.status.state}
-                  reason={home.status.reason}
-                />
-              </div>
+              <p
+                role="status"
+                className="text-muted-foreground mt-4 text-sm leading-relaxed"
+              >
+                {capabilitySummary(
+                  capabilityTiles(home.capabilities, home.aliases),
+                )}
+              </p>
             </div>
             <svg
               viewBox="0 0 40 32"
@@ -1008,9 +1016,6 @@ export default function HomePage() {
             <SetupChecklist progress={setup} home={home} />
           ) : (
             <>
-              {isOwner && setup && (
-                <SetupChecklist progress={setup} home={home} compact />
-              )}
               <Capabilities
                 capabilities={home.capabilities}
                 aliases={home.aliases}

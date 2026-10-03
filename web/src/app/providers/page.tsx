@@ -64,7 +64,12 @@ export default function ProvidersPage() {
       ) : providers.providers.length === 0 ? (
         <EmptyState
           title="No providers yet"
-          description="Provider controls are available, but no remote providers are configured."
+          description="No remote providers are configured. This page shows status for provider records; review your existing upstream connections under Engines."
+          action={
+            <Button asChild variant="outline">
+              <a href="/ui/engines/">Review connections</a>
+            </Button>
+          }
         />
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
@@ -85,9 +90,7 @@ export default function ProvidersPage() {
                   </p>
                 </div>
                 <StatusPill
-                  status={
-                    provider.tone === "ok" ? "ready" : "unavailable"
-                  }
+                  status={provider.tone === "ok" ? "ready" : "unavailable"}
                   reason={
                     provider.tone === "ok"
                       ? "Provider is reachable."

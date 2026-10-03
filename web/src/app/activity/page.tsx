@@ -241,7 +241,7 @@ export default function ActivityPage() {
                   ? "No changes match these filters"
                   : "No changes yet"
               }
-              description="Changes to apps, keys, access plans and gateway settings appear here."
+              description="Changes to apps, keys and access plans appear here. Create an app to start seeing changes."
               action={
                 category || actor ? (
                   <Button
@@ -253,7 +253,11 @@ export default function ActivityPage() {
                   >
                     Clear filters
                   </Button>
-                ) : undefined
+                ) : (
+                  <Button asChild variant="outline">
+                    <a href="/ui/apps/?action=create-key">Create an app</a>
+                  </Button>
+                )
               }
             />
           ) : (

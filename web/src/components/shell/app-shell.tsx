@@ -89,6 +89,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { ViewerContext, useViewer, useViewerQuery } from "./session";
+import { formatPersonName } from "@/lib/format";
 
 const icons: Record<string, LucideIcon> = {
   Home,
@@ -506,10 +507,15 @@ function CommandPalette({
                     }
                   >
                     <Users />
-                    {person.display_name ||
-                      person.name ||
-                      person.email ||
-                      "Person"}
+                    {formatPersonName(
+                      person.display_name,
+                      formatPersonName(person.name, "Person"),
+                    )}
+                    {person.email ? (
+                      <span className="text-muted-foreground truncate text-xs">
+                        {person.email}
+                      </span>
+                    ) : null}
                   </CommandItem>
                 ))}
               </CommandGroup>

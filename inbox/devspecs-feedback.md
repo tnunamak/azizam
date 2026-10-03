@@ -1,5 +1,11 @@
 # devspecs feedback
 
+## 2026-10-03 — UI polish round 2
+
+- `ds tldr` and `ds recent` returned useful guidance and relevant Home, shell, and polish commits. Two `ds map` runs exited successfully without any map output.
+- `timeout 20s ds task 'Polish gateway UI content and connection truth' --slice 'Home and model truth regressions' --slice 'Verify all pages with isolated screenshots'` waited for another index writer and exited 124. It reported that no repository files were written. Continued from the complete brief and direct source evidence; no shared index state was changed.
+- A successful empty map should say whether evidence is absent or indexing is pending. Task creation should return a recoverable task ID or a bounded writer-wait result.
+
 ## 2026-10-03 — People and built-in accounts lane
 
 - Useful: `ds tldr` explained the slice workflow, and `ds recent` returned recent repository topics.
