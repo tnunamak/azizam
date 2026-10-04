@@ -378,7 +378,13 @@ def test_member_status_contains_only_allowed_capabilities_and_owned_receipts(hom
     assert [row["request_id"] for row in data["receipts"]] == ["mine"]
     assert data["receipts"][0]["href"] == "/ui/usage/?receipt=mine"
     assert isinstance(data["receipts"][0]["created_at"], int)
-    assert all(set(row) == {"capability", "intent", "model", "workflow", "status", "available", "reason", "measured", "observed_at_s"} for row in data["capabilities"])
+    for row in data["capabilities"]:
+        expected_fields = {"capability", "title", "use_name", "intent", "model", "workflow", "status", "available", "reason", "measured"}
+        if row.get("observed_at_s") is not None:
+            expected_fields.add("observed_at_s")
+        assert set(row) == expected_fields
+        assert row["title"] == "Chat"
+        assert row["use_name"] == row["model"]
     for hidden in ("backend", "private", "secret-host", c.outsider["id"], "other", "csrf_token", "credential"):
         assert hidden not in response.text
     c.logged_in = False
@@ -830,7 +836,8 @@ def test_gateway_ui_receipt_still_belongs_to_its_app(home_case):
     response = c.http.post("/me/api/connection-test", json={"api_key": c.key}, headers=c.headers)
     assert response.status_code == 200 and response.json()["ok"]
     own = get_user_receipt(c.session, "real-test", path=c.db, receipts_path=c.receipts)
-    assert own["app_id"] == c.client_app["id"]
+    assert receipt_store.get("real-test", audience="internal", path=c.receipts)["app_id"] == c.client_app["id"]
+    assert own["source"]["app_id"] == c.client_app["id"]
     assert own["source"]["kind"] == "gateway-ui"
     member = AdminSession(subject=c.outsider["owner_user_id"], email="two@example.test", role="admin", issued_at=1, expires_at=4_000_000_000)
     with pytest.raises(UserPortalError) as exc:

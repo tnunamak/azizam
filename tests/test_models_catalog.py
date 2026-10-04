@@ -371,9 +371,9 @@ class ModelsCatalogBuildTests(unittest.TestCase):
         )
 
         self.assertEqual([row["id"] for row in catalog["aliases"]], ["image"])
-        self.assertEqual([row["id"] for row in catalog["models"]], ["poster"])
+        self.assertEqual(catalog["models"], [])
         self.assertEqual(catalog["aliases"][0]["resolves_to"], {"images": "poster"})
-        self.assertEqual(catalog["models"][0]["description"], "Public poster workflow")
+        self.assertEqual(catalog["aliases"][0]["description"], "Public poster workflow")
 
     def test_default_profile_fallback_is_only_for_fresh_or_default_apps(self) -> None:
         contexts = auth_contexts_from_user_snapshot(

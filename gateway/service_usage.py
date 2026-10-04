@@ -13,12 +13,14 @@ from gateway.capabilities import Capability
 
 def relied_on_service_ids(*, registry: Mapping[str, Any],
                          runtime_config: Mapping[str, Any],
-                         capabilities: Iterable[Capability]) -> list[str]:
+                         capabilities: Iterable[Capability],
+                         selected_defaults: Iterable[str] = ()) -> list[str]:
     services = registry.get("services") or {}
     enabled = {str(key) for key, row in services.items()
                if isinstance(row, Mapping) and row.get("enabled", True)}
     used = {cap.backend for cap in capabilities
             if "alias" in cap.tags and cap.backend in enabled}
+    used.update(service_id for service_id in selected_defaults if service_id in enabled)
     routing = runtime_config.get("routing") or {}
     if isinstance(routing, Mapping):
         used.update(str(value) for key, value in routing.items()

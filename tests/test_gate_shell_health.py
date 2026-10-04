@@ -57,7 +57,9 @@ def test_disk_warning_does_not_invent_models_volume(monkeypatch):
     from types import SimpleNamespace
     monkeypatch.setattr(Path, "stat", lambda self: SimpleNamespace(st_dev=1 if str(self) == "/logs" else 2))
     assert _disk_pressure_reason({"target": "/logs", "pct_used": 90},
-                                 {"model_routing": {"model_dir": "/models"}}).startswith("The disk at /logs")
+                                 {"model_routing": {"model_dir": "/models"}}) == (
+        "The disk at /logs is almost full (90%). Free space on this volume so the gateway can continue to save files."
+    )
 
 
 def test_relied_on_route_proves_routability_without_registry_model_mapping():

@@ -34,6 +34,7 @@ export function gatewayHealthReason({
       (service) =>
         service.configured &&
         service.enabled &&
+        service.in_use === true &&
         ["down", "degraded"].includes(service.observation),
     );
   if (failed)

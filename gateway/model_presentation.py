@@ -51,14 +51,51 @@ def declared_health_success(service: Mapping[str, Any], payload: Mapping[str, An
 
 def engine_label(service: Mapping[str, Any], service_id: str | None) -> str | None:
     config = service.get("config")
-    for source in (service, config if isinstance(config, Mapping) else {}):
-        for field in ("display_name", "name"):
-            name = str(source.get(field) or "").strip()
-            if name and name != service_id:
-                if model_locality(service, None) == "local":
-                    name = name.removesuffix(" (provider)").removesuffix(" (Provider)")
-                return name
-    return None
+    config = config if isinstance(config, Mapping) else {}
+    sources = (service, config)
+    name = next((str(source[field]).strip() for source in sources
+                 for field in ("display_name", "name")
+                 if source.get(field) and str(source[field]).strip() != service_id), None)
+    if model_locality(service, None) != "local":
+        return name
+    if name:
+        name = name.removesuffix(" (provider)").removesuffix(" (Provider)")
+    # Capability vocabulary is protocol data, never an engine-name classifier.
+    labels = []
+    vocabulary = {
+        "chat": "Chat", "completions": "Chat", "chat.completions": "Chat",
+        "speech": "Speech", "audio.speech": "Speech", "speech.synthesis": "Speech",
+        "transcriptions": "Transcription", "audio.transcriptions": "Transcription",
+        "speech.transcription": "Transcription", "images": "Image", "image": "Image",
+        "image.generate": "Image", "videos": "video", "video": "video", "video.generate": "video",
+        "embeddings": "Embeddings", "text.embeddings": "Embeddings", "rerank": "Rerank",
+        "decisions": "Decisions", "music": "Music", "sfx": "Sound effects",
+    }
+    capabilities = service.get("capabilities") or config.get("capabilities") or ()
+    if isinstance(capabilities, str):
+        capabilities = (capabilities,)
+    for capability in capabilities:
+        label = vocabulary.get(str(capability))
+        if label and label not in labels:
+            labels.append(label)
+    if not labels:
+        return name
+    label = " & ".join(labels)
+    if label == "video":
+        label = "Video"
+    identity = next((str(source[field]).strip() for source in sources
+                     for field in ("engine_name", "engine")
+                     if isinstance(source.get(field), str) and source[field].strip()), None)
+    if not identity and name:
+        # An explicitly named engine may carry an old capability subtitle.
+        base, separator, subtitle = name.partition(" (")
+        identity = base if separator and any(word in subtitle.lower() for word in
+                    ("image", "video", "speech", "chat", "transcription")) else name
+    if not identity or identity.casefold() == label.casefold():
+        return label
+    if identity.casefold().startswith(label.casefold() + " ("):
+        return identity
+    return f"{label} ({identity})"
 
 
 def model_locality(service: Mapping[str, Any], model: Mapping[str, Any] | None) -> str:

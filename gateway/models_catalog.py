@@ -174,11 +174,6 @@ def build_models_catalog(
 
     aliases = _merge_rows(alias_rows)
     model_rows = _merge_rows(model_rows)
-    alias_targets = {target for row in aliases for target in row["resolves_to"].values()}
-    alias_targets.update(public_id for target in tuple(alias_targets)
-                         for public_id in _public_model_ids_for_workflow(model_entry_by_id, target))
-    # Aliases are the stable caller entry. Keep its concrete identity in details.
-    model_rows = [row for row in model_rows if row["id"] not in alias_targets]
 
     return {
         "schema_version": 1,
@@ -237,9 +232,32 @@ def _rows_for_capabilities(
         model: [cap for cap in caps if "alias" not in cap.tags]
         for model, caps in caps_by_model.items()
     }
+    # A caller alias covers only its serving backend and declared operation.
+    # Retain a concrete row when it exposes any additional capability.
+    covered = set()
+    visible_alias_ids = {row["id"] for row in aliases}
+    for operation, view in alias_views.items():
+        if not isinstance(view, Mapping):
+            continue
+        for raw in view.get("stable") or ():
+            if not isinstance(raw, Mapping) or raw.get("alias") not in visible_alias_ids:
+                continue
+            target = str(raw.get("resolves_to") or "")
+            caps = (_capabilities_for_operation(caps_by_model.get(target, ()), str(operation))
+                    or _capabilities_for_operation(caps_by_model.get(str(raw["alias"]), ()), str(operation)))
+            backend = str(raw.get("service") or _first_backend(caps) or "")
+            for cap in caps:
+                if cap.backend == backend:
+                    covered.add((cap.intent, backend, target))
+    visible_models = {}
+    for model, caps in concrete_by_model.items():
+        if caps and not all(any((cap.intent, cap.backend, target) in covered
+                                for target in (model, cap.model, cap.workflow) if target)
+                            for cap in caps):
+            visible_models[model] = caps
     models = _model_rows(
         model_entries,
-        caps_by_model={model: caps for model, caps in concrete_by_model.items() if caps},
+        caps_by_model=visible_models,
         service_records=service_records,
         receipt_stats=receipt_stats,
         health_evidence=health_evidence,

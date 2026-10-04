@@ -1996,7 +1996,8 @@ def _disk_pressure_reason(part: dict, config: dict) -> str:
     percent = float(part.get("pct_used") or 0)
     return (
         f"{subject} is almost full ({percent:.0f}%). "
-        "Free space so new models and outputs can be saved."
+        + ("Free space so new models and outputs can be saved." if label == "models volume"
+           else "Free space on this volume so the gateway can continue to save files.")
     )
 
 

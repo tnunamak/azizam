@@ -23,3 +23,9 @@ def test_explicit_routes_and_model_mappings_are_reliance_evidence():
 def test_unresolved_alias_and_metadata_do_not_invent_reliance():
     assert relied_on_service_ids(registry={"services": {"unused": {"name": "Default engine"}}},
                                  runtime_config={}, capabilities=[Capability(intent="image.generate", backend="gateway", model="image", tags=("alias",))]) == []
+
+
+def test_selected_protocol_default_is_used_without_alias_or_model_mapping():
+    registry = {"services": {"transcription": {}, "fallback": {}, "disabled": {"enabled": False}}}
+    assert relied_on_service_ids(registry=registry, runtime_config={}, capabilities=[],
+                                 selected_defaults=["transcription", "disabled"]) == ["transcription"]

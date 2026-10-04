@@ -153,3 +153,38 @@ def test_shipped_audio_taxonomy_is_data_in_valid_manifests(filename, taxonomy):
     from gateway.model_presentation import product_capability
     manifest = load_workflow_manifest(Path(__file__).resolve().parents[1] / "manifests/workflows" / filename)
     assert product_capability("audio.generate", manifest) == taxonomy
+
+
+def test_chat_alias_does_not_hide_embeddings_of_same_model():
+    catalog = build_models_catalog(
+        alias_views={"chat": {"stable": [{"alias": "chat", "resolves_to": "multi"}]}},
+        capabilities=[Capability(intent="chat.completions", backend="one", model="multi"),
+                      Capability(intent="text.embeddings", backend="one", model="multi")],
+    )
+    assert catalog["aliases"][0]["id"] == "chat"
+    assert catalog["models"][0]["id"] == "multi"
+    assert {row["intent"] for row in catalog["models"][0]["capabilities"]} == {
+        "chat.completions", "text.embeddings",
+    }
+
+
+def test_alias_does_not_hide_same_model_on_another_backend():
+    catalog = build_models_catalog(
+        alias_views={"chat": {"stable": [{"alias": "chat", "resolves_to": "multi", "service": "one"}]}},
+        capabilities=[Capability(intent="chat.completions", backend="one", model="multi"),
+                      Capability(intent="chat.completions", backend="two", model="multi")],
+    )
+    assert catalog["models"][0]["id"] == "multi"
+
+
+@pytest.mark.parametrize("name, capabilities, engine, expected", [
+    ("Audio & Speech (provider)", ["audio", "speech"], "Chatterbox", "Speech (Chatterbox)"),
+    ("Image (Provider)", ["images", "videos"], "ComfyUI", "Image & video (ComfyUI)"),
+    ("ComfyUI (Image + Video Generation)", ["images", "videos"], None, "Image & video (ComfyUI)"),
+    ("Canary", ["transcriptions"], None, "Transcription (Canary)"),
+    ("llama.cpp", ["chat", "completions"], None, "Chat (llama.cpp)"),
+])
+def test_local_engine_labels_come_from_declared_capabilities(name, capabilities, engine, expected):
+    service = {"name": name, "capabilities": capabilities,
+               "config": {"locality": "local", "engine_name": engine}}
+    assert engine_label(service, "internal") == expected

@@ -24,6 +24,7 @@ describe("gateway health honesty", () => {
         name: "Image engine",
         configured: true,
         enabled: true,
+        in_use: true,
         role: "required",
         routable: false,
         observation: "down",
@@ -34,6 +35,15 @@ describe("gateway health honesty", () => {
     expect(gatewayHealthReason({ ...base, health: current })).toBe(
       "Image engine is unavailable. Check its connection on Status.",
     );
+    current.services[0].in_use = false;
+    expect(gatewayHealthReason({ ...base, health: current })).not.toContain(
+      "Image engine",
+    );
+    current.services[0].in_use = null;
+    expect(gatewayHealthReason({ ...base, health: current })).not.toContain(
+      "Image engine",
+    );
+    current.services[0].in_use = true;
     current.services[0].enabled = false;
     expect(gatewayHealthReason({ ...base, health: current })).not.toContain(
       "Image engine",

@@ -13445,6 +13445,11 @@ async def _status_payload_with_availability() -> Mapping[str, Any]:
                 registry=service_records,
                 runtime_config=config,
                 capabilities=_gateway_capabilities_for_auth_context(NO_AUTH_CONTEXT),
+                selected_defaults=[
+                    selected[0]
+                    for capability in ("audio.speech", "audio.transcriptions", "audio.translations", "embeddings")
+                    if (selected := service_for_capability(capability)) is not None
+                ] + [service_id for service_id in [_highest_priority_chat_backend()] if service_id],
             ),
             "_availability_evidence": _runtime_availability_evidence(
                 service_records,
