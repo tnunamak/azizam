@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import identity from "../../gateway/product_identity.json";
 
 const homePath = "/ui/home/";
 const homeApi = "**/me/api/home";
@@ -147,9 +148,16 @@ for (const theme of ["light", "dark"] as const) {
           const instance = await (
             await request.get("/.well-known/ai-gateway")
           ).json();
-          const welcome = page.getByText(`Welcome to ${instance.service.name}.`, {
-            exact: true,
-          });
+          const subtitle =
+            instance.service.name && instance.service.name !== identity.name
+              ? ` ${instance.service.name}`
+              : "";
+          const welcome = page.getByText(
+            `Welcome to ${identity.name}.${subtitle}`,
+            {
+              exact: true,
+            },
+          );
           if (width === 390) {
             await expect(welcome).toBeHidden();
             const greeting = page.getByRole("heading", { name: /^Hello,/ });
@@ -691,11 +699,7 @@ test("inline reveal-once key tests a real chat request and produces one owned re
       done: boolean;
       optional: boolean;
     }>;
-    for (const id of [
-      "claim_owner",
-      "connect_service",
-      "test_request",
-    ]) {
+    for (const id of ["claim_owner", "connect_service", "test_request"]) {
       expect(
         steps.find((step) => step.id === id)?.done,
         `${id} reflects an observed gateway action, not client setup`,

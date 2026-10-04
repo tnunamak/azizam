@@ -9,7 +9,9 @@ const measured = {
   operations: ["chat"],
   resolves_to: { chat: "internal-chat-model" },
   description: "Everyday chat on your hardware.",
-  capabilities: [{ intent: "chat.completions", label: "Chat" }],
+  capabilities: [
+    { intent: "chat.completions", capability: "chat", label: "Chat" },
+  ],
   provider: "capture-engine",
   engine_label: "Household chat",
   locality: "local",
@@ -33,8 +35,10 @@ const typical = {
   operations: ["image"],
   resolves_to: { image: "internal-image-workflow" },
   description: "Images through your chosen provider.",
-  capabilities: [{ intent: "image.generate", label: "Images" }],
-  provider: "provider-opaque-id",
+  capabilities: [
+    { intent: "image.generate", capability: "image", label: "Images" },
+  ],
+  provider: "Example image provider",
   engine_label: "Example image provider",
   locality: "remote",
   cost: { kind: "paid", price: "$0.04 per image" },
@@ -144,6 +148,10 @@ test("models polish 2 absent telemetry stays honest without exposing service ids
     page
       .getByLabel("Available model aliases")
       .getByText("Not measured yet", { exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Details" }).click();
+  await expect(
+    page.getByRole("dialog").getByText("Not measured yet", { exact: true }),
   ).toBeVisible();
   await expect(
     page.getByText(/capture-engine|Location not measured yet/),

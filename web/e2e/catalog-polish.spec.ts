@@ -139,7 +139,7 @@ for (const width of [390, 1440]) {
     ).toBeVisible();
     await expect(
       cards.first().getByText("Not measured yet", { exact: true }),
-    ).toBeVisible();
+    ).toHaveCount(0);
     await expect(
       cards.first().getByTitle(provider, { exact: true }),
     ).toBeVisible();
@@ -152,6 +152,10 @@ for (const width of [390, 1440]) {
       path: `test-results/screens/polish-paid-${width}.png`,
       fullPage: true,
     });
+    await cards.first().getByRole("button", { name: "Details" }).click();
+    await expect(
+      page.getByRole("dialog").getByText("Not measured yet", { exact: true }),
+    ).toBeVisible();
   });
 }
 

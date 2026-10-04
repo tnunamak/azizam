@@ -307,9 +307,21 @@ test("library audio plays independently and video uses its recorded poster", asy
   });
   await page.goto("/ui/library/");
   const audio = page.locator("article audio");
-  await expect(audio).toHaveAttribute("controls", "");
+  await expect(audio).not.toHaveAttribute("controls", "");
+  await expect(audio).toHaveAttribute("preload", "metadata");
   expect(await audio.evaluate((player) => player.closest("button"))).toBeNull();
-  await audio.click({ position: { x: 20, y: 20 } });
+  const play = page.getByRole("button", {
+    name: `Play ${mediaFixture.assets[2].prompt}`,
+  });
+  const open = page.getByRole("button", {
+    name: `Open ${mediaFixture.assets[2].prompt}`,
+  });
+  expect(
+    await open.evaluate((element) =>
+      Boolean(element.querySelector('button[aria-label^="Play "]')),
+    ),
+  ).toBe(false);
+  await play.click();
   await expect
     .poll(() =>
       audio.evaluate((player: HTMLAudioElement) => player.currentTime),
@@ -320,6 +332,14 @@ test("library audio plays independently and video uses its recorded poster", asy
     page.getByRole("img", { name: mediaFixture.assets[1].prompt }),
   ).toHaveAttribute("src", posterUrl);
   await expect(page.locator("article video")).toHaveCount(0);
+  await open.click();
+  const detail = page.getByRole("dialog");
+  await expect(detail.getByLabel("Generated audio")).toHaveAttribute(
+    "controls",
+    "",
+  );
+  await detail.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(detail).toHaveCount(0);
   await expect
     .poll(() => posterRequests.at(-1) ?? "")
     .toContain("scope=everyone");
