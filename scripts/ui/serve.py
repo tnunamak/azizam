@@ -46,6 +46,8 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
            'AI_GATEWAY_CONFIG_PATH': str(config), 'AI_GATEWAY_GRACEFUL_SHUTDOWN_S': '1',
            'AI_GATEWAY_LITELLM_BASE_URL': f'http://127.0.0.1:{ENGINE_PORT}',
            'XDG_CONFIG_HOME': str(home / '.config'), 'XDG_CACHE_HOME': str(home / '.cache')}
+    if os.environ.get('UI_E2E_ALLOWED_PORTS'):
+        env['UI_E2E_ALLOWED_PORTS'] = os.environ['UI_E2E_ALLOWED_PORTS']
     for name, filename in {
         'AI_GATEWAY_ADMIN_DB': 'admin.db', 'AI_GATEWAY_METRICS_DB': 'metrics.db',
         'AI_GATEWAY_RESPONSES_DB': 'responses.db', 'AI_GATEWAY_RECEIPTS_DB': 'receipts.db',

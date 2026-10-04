@@ -7,6 +7,18 @@ is created. This guard lives only in fixture entrypoints, never production.
 import socket
 import sys
 
+def parse_allowed_ports(raw):
+    if not raw:
+        return set()
+    ports = set()
+    for item in str(raw).split(','):
+        item = item.strip()
+        if not item:
+            continue
+        ports.add(int(item))
+    return ports
+
+
 def check_event(event, args, allowed_ports):
     if event == "socket.getaddrinfo":
         if args[0] != "127.0.0.1" or args[1] not in allowed_ports:
