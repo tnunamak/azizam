@@ -155,3 +155,7 @@ data/showcase/
 # Paid-provider spend ledger (runtime state, beside the admin DB)
 data/provider_spend.db
 data/provider_spend.db-*
+
+# Provider secret store key (0600) and mutation lock: runtime state, never commit
+data/provider-secrets.key
+data/.provider-mutation.lock
