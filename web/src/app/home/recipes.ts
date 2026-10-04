@@ -19,9 +19,8 @@ function shellQuote(value: string): string {
 }
 
 export function chatAlias(aliases: HomeAlias[]): string | null {
-  const chat = aliases.filter(
-    (alias) =>
-      alias.operation === "chat.generate" || alias.operation === "chat",
+  const chat = aliases.filter((alias) =>
+    ["chat.generate", "chat", "chat.completions"].includes(alias.operation),
   );
   return (
     chat.find((alias) => alias.id === "fast" && alias.available)?.id ??
@@ -46,7 +45,7 @@ export function recipeFor(
     case "Open WebUI":
       return {
         description:
-          "Open Settings → Connections → OpenAI. Add a connection, paste these settings, then refresh models.",
+          "Open WebUI v0.11.4: as an administrator, open Settings → Admin → Connections → OpenAI and add a connection. Paste these settings, save, refresh models, and send a message in Open WebUI. Personal/direct connections are separate and must be enabled by its administrator. Open WebUI’s server must reach the gateway: localhost inside a container points to that container. For a gateway on the Docker host, use host.docker.internal where supported; Linux may require a host-gateway mapping or a reachable LAN address. Keep the URL path below. The prior v0.11.4 check used host networking and non-streaming; other versions and network layouts are untested.",
         language: "Settings",
         code: settings,
         docs: "https://docs.openwebui.com/getting-started/quick-start/connect-a-provider/starting-with-openai-compatible",
@@ -118,7 +117,7 @@ export function recipeFor(
     case "Phone":
       return {
         description:
-          "On your phone, open your household’s Open WebUI address in Safari or Chrome and sign in. Its owner adds the connection in Settings → Connections → OpenAI with the settings below. Open WebUI’s server must reach this gateway URL. Add the page to your home screen for quick access.",
+          "On your phone, open your household’s Open WebUI address in Safari or Chrome and sign in. Its administrator adds the connection in Settings → Admin → Connections → OpenAI with the settings below. Open WebUI’s server must reach this gateway URL. Add the page to your home screen for quick access.",
         language: "Settings",
         code: settings,
         docs: "https://docs.openwebui.com/getting-started/quick-start/",

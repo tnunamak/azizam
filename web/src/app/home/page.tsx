@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUpRight,
@@ -49,12 +49,14 @@ import {
   type SetupProgress,
 } from "./home-api";
 import { chatAlias, clients, recipeFor, type Client } from "./recipes";
+import { productApi, type SetupEvent } from "@/lib/product-api";
 import { PRODUCT_NAME } from "@/lib/product";
 import {
   capabilitySummary,
   capabilityTiles,
   greetingName,
   requestLabel,
+  setupSteps,
 } from "./presentation";
 
 const homeKey = ["account", "home"];
@@ -122,6 +124,7 @@ const stepLabels: Record<string, string> = {
   connect_service: "Connect an engine or provider",
   test_request: "Make a real request",
   copy_settings: "Copy settings into your client",
+  connect_app: "Confirm your client works",
   view_receipt: "See the request receipt",
   invite_someone: "Invite someone",
 };
@@ -150,9 +153,21 @@ function HomeLoading() {
   );
 }
 
-function Connect({ home }: { home: HomeSnapshot }) {
+function Connect({
+  home,
+  progress,
+}: {
+  home: HomeSnapshot;
+  progress?: SetupProgress;
+}) {
   const queryClient = useQueryClient();
+  const [savingEvidence, setSavingEvidence] = useState(false);
+  const [evidenceError, setEvidenceError] = useState<string | null>(null);
   const [client, setClient] = useState<Client>(clients[0]);
+  const [instructionsOpen, setInstructionsOpen] = useState(true);
+  useEffect(() => {
+    setInstructionsOpen(window.innerWidth >= 640);
+  }, []);
   const [selectedCredentialId, setSelectedCredentialId] = useState("new");
   const [reveal, setReveal] = useState<{ secret: string; id: string } | null>(
     null,
@@ -190,6 +205,26 @@ function Connect({ home }: { home: HomeSnapshot }) {
   const canCreate =
     home.apps.some((app) => app.can_mint_keys) || home.apps.length === 0;
 
+  async function confirmClient(event: SetupEvent) {
+    const app = home.apps.find((item) =>
+      item.credentials.some((key) => key.id === selectedCredentialId),
+    );
+    if (savingEvidence) return;
+    if (!app) {
+      setEvidenceError("Choose an app key before saving your confirmation.");
+      return;
+    }
+    setSavingEvidence(true);
+    setEvidenceError(null);
+    try {
+      await productApi.recordSetupEvidence({ event, app_id: app.id });
+      await queryClient.invalidateQueries({ queryKey: setupKey });
+    } catch {
+      setEvidenceError("Your confirmation could not be saved. Try again.");
+    } finally {
+      setSavingEvidence(false);
+    }
+  }
   async function createKey() {
     if (createLock.current) return;
     createLock.current = true;
@@ -240,11 +275,12 @@ function Connect({ home }: { home: HomeSnapshot }) {
   }
   return (
     <section
+      id="connect"
       aria-labelledby="connect-heading"
       className="border-primary/20 bg-card overflow-hidden rounded-xl border"
     >
-      <div className="border-border border-b p-6 sm:p-8">
-        <div className="mb-8 flex items-start gap-4">
+      <div className="border-border border-b p-4 sm:p-6">
+        <div className="mb-4 flex items-start gap-3">
           <span className="bg-primary/10 text-primary flex size-11 shrink-0 items-center justify-center rounded-lg">
             <PlugZap aria-hidden="true" className="size-5" />
           </span>
@@ -257,7 +293,7 @@ function Connect({ home }: { home: HomeSnapshot }) {
             </p>
           </div>
         </div>
-        <div className="grid min-w-0 gap-6 lg:grid-cols-2">
+        <div className="grid min-w-0 gap-3 lg:grid-cols-2">
           <CopyField label="Base URL" value={home.api_base_url} />
           <div className="min-w-0 space-y-3">
             <label htmlFor="app-key" className="text-sm font-medium">
@@ -372,109 +408,10 @@ function Connect({ home }: { home: HomeSnapshot }) {
                 {keyError}
               </p>
             )}
-            <p className="text-muted-foreground text-xs">
-              Every recipe and the gateway check use this app key’s access plan.
-              A new app uses your default access.
-            </p>
           </div>
         </div>
       </div>
-      <Tabs
-        value={client.replaceAll(" ", "-")}
-        onValueChange={(value) => {
-          const selected = clients.find(
-            (name) => name.replaceAll(" ", "-") === value,
-          );
-          if (selected) setClient(selected);
-        }}
-        className="min-w-0 gap-0"
-      >
-        <div className="border-border overflow-x-auto border-b px-4 pt-2 sm:px-6">
-          <TabsList
-            variant="line"
-            aria-label="Client recipes"
-            className="gap-3"
-          >
-            {clients.map((name) => (
-              <TabsTrigger
-                value={name.replaceAll(" ", "-")}
-                key={name}
-                className="min-h-11 px-1"
-              >
-                {name}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </div>
-        {clients.map((name) => {
-          const recipe = recipeFor(
-            name,
-            home.api_base_url,
-            home.public_base_url,
-            model ?? "",
-          );
-          return (
-            <TabsContent
-              value={name.replaceAll(" ", "-")}
-              key={name}
-              className="min-w-0 p-6 sm:p-8"
-            >
-              <div className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
-                <div className="flex flex-wrap items-center gap-3">
-                  <h3 className="text-base font-semibold">Connect {name}</h3>
-                  <details className="text-muted-foreground text-xs">
-                    <summary className="min-h-11 cursor-pointer content-center">
-                      Client setup: not verified
-                    </summary>
-                    <p className="max-w-md pb-2 leading-relaxed">
-                      Copy these settings into {name} and connect there. The
-                      gateway check below verifies the route and key; it cannot
-                      verify your client app.
-                    </p>
-                  </details>
-                </div>
-                <a
-                  className="text-primary inline-flex min-h-11 items-center gap-1 text-sm underline underline-offset-4"
-                  href={recipe.docs}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {name} docs
-                  <ArrowUpRight aria-hidden="true" className="size-3.5" />
-                </a>
-              </div>
-              <p className="text-muted-foreground mb-5 max-w-3xl text-sm leading-relaxed">
-                {recipe.description}
-              </p>
-              {loadingKeyAccess ? (
-                <div
-                  role="status"
-                  aria-label="Loading key access"
-                  aria-busy="true"
-                >
-                  <Skeleton className="h-24 w-full" />
-                </div>
-              ) : model ? (
-                <div className="[&_pre]:overflow-x-visible [&_pre]:break-words [&_pre]:whitespace-pre-wrap">
-                  <CodeBlock language={recipe.language} code={recipe.code} />
-                </div>
-              ) : (
-                <div className="bg-muted rounded-lg p-5 text-sm">
-                  <p className="font-medium">
-                    No chat model is available to this key yet
-                  </p>
-                  <p className="text-muted-foreground mt-2">
-                    Choose a key with chat access, or ask the gateway owner to
-                    add a model to this key’s access plan. Your base URL stays
-                    the same.
-                  </p>
-                </div>
-              )}
-            </TabsContent>
-          );
-        })}
-      </Tabs>
-      <div className="border-border space-y-4 border-t p-6 sm:p-8">
+      <div className="border-border space-y-3 px-4 py-3 sm:px-6">
         <div className="flex flex-wrap items-center gap-4">
           <Button
             disabled={
@@ -528,6 +465,178 @@ function Connect({ home }: { home: HomeSnapshot }) {
           </p>
         )}
       </div>
+      <details
+        open={instructionsOpen}
+        onToggle={(event) => setInstructionsOpen(event.currentTarget.open)}
+        className="border-border border-t px-4 sm:px-6"
+      >
+        <summary className="min-h-11 cursor-pointer content-center text-sm font-medium">
+          Client instructions
+        </summary>
+        <p className="text-muted-foreground py-2 text-xs">
+          Every recipe and the gateway check use this app key’s access plan. A
+          new app uses your default access.
+        </p>
+        <Tabs
+          value={client.replaceAll(" ", "-")}
+          onValueChange={(value) => {
+            const selected = clients.find(
+              (name) => name.replaceAll(" ", "-") === value,
+            );
+            if (selected) setClient(selected);
+          }}
+          className="min-w-0 gap-0"
+        >
+          <div className="border-border overflow-x-auto border-b px-4 pt-2 sm:px-6">
+            <TabsList
+              variant="line"
+              aria-label="Client recipes"
+              className="gap-3"
+            >
+              {clients.map((name) => (
+                <TabsTrigger
+                  value={name.replaceAll(" ", "-")}
+                  key={name}
+                  className="min-h-11 px-1"
+                >
+                  {name}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </div>
+          {clients.map((name) => {
+            const recipe = recipeFor(
+              name,
+              home.api_base_url,
+              home.public_base_url,
+              model ?? "",
+            );
+            return (
+              <TabsContent
+                value={name.replaceAll(" ", "-")}
+                key={name}
+                className="min-w-0 py-4"
+              >
+                <div className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <h3 className="text-base font-semibold">Connect {name}</h3>
+                    <span className="text-muted-foreground text-xs">
+                      {name === "Open WebUI"
+                        ? "Tested with Open WebUI v0.11.4 · host network, non-streaming"
+                        : "Untested recipe"}
+                    </span>
+                    <details className="text-muted-foreground text-xs">
+                      <summary className="min-h-11 cursor-pointer content-center">
+                        {progress?.evidence?.external_client_confirmed.recorded
+                          ? "External client: user confirmed"
+                          : "Client setup: not verified"}
+                      </summary>
+                      <p className="max-w-md pb-2 leading-relaxed">
+                        Copy these settings into {name} and connect there. The
+                        gateway check above verifies the route and key; it
+                        cannot verify your client app.
+                      </p>
+                    </details>
+                  </div>
+                  <a
+                    className="text-primary inline-flex min-h-11 items-center gap-1 text-sm underline underline-offset-4"
+                    href={recipe.docs}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {name} docs
+                    <ArrowUpRight aria-hidden="true" className="size-3.5" />
+                  </a>
+                </div>
+                <p className="text-muted-foreground mb-5 max-w-3xl text-sm leading-relaxed">
+                  {recipe.description}
+                </p>
+                {loadingKeyAccess ? (
+                  <div
+                    role="status"
+                    aria-label="Loading key access"
+                    aria-busy="true"
+                  >
+                    <Skeleton className="h-24 w-full" />
+                  </div>
+                ) : model ? (
+                  <div className="[&_pre]:overflow-x-visible [&_pre]:break-words [&_pre]:whitespace-pre-wrap">
+                    <CodeBlock language={recipe.language} code={recipe.code} />
+                  </div>
+                ) : (
+                  <div className="bg-muted rounded-lg p-5 text-sm">
+                    <p className="font-medium">
+                      No chat alias is advertised for this key yet
+                    </p>
+                    <p className="text-muted-foreground mt-2">
+                      Choose another key, or ask the gateway owner to check this
+                      key’s access plan and chat aliases. Models without an
+                      alias may still be available. Your base URL stays the
+                      same.
+                    </p>
+                  </div>
+                )}
+              </TabsContent>
+            );
+          })}
+        </Tabs>
+      </details>
+      {progress && (
+        <div className="border-border space-y-2 border-t p-4 sm:px-6">
+          <p className="text-muted-foreground text-xs">
+            Confirm only what you did in your external client. These are your
+            confirmations, not automated client tests.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              className="min-h-11"
+              disabled={
+                savingEvidence ||
+                creating ||
+                !home.apps.some((app) =>
+                  app.credentials.some(
+                    (key) => key.id === selectedCredentialId,
+                  ),
+                ) ||
+                selectedCredentialId === "new" ||
+                !!progress.evidence?.settings_copied.recorded
+              }
+              onClick={() => void confirmClient("settings_copied")}
+            >
+              I copied the settings
+            </Button>
+            <Button
+              variant="outline"
+              className="min-h-11"
+              disabled={
+                savingEvidence ||
+                creating ||
+                !home.apps.some((app) =>
+                  app.credentials.some(
+                    (key) => key.id === selectedCredentialId,
+                  ),
+                ) ||
+                selectedCredentialId === "new" ||
+                !!progress.evidence?.external_client_confirmed.recorded
+              }
+              onClick={() => void confirmClient("external_client_confirmed")}
+            >
+              My client sent a request
+            </Button>
+          </div>
+          {savingEvidence && (
+            <p role="status" className="text-sm">
+              Saving confirmation…
+            </p>
+          )}
+          {evidenceError && (
+            <p role="alert" className="text-destructive text-sm">
+              {evidenceError}
+            </p>
+          )}
+        </div>
+      )}
     </section>
   );
 }
@@ -539,105 +648,140 @@ function SetupChecklist({
   progress: SetupProgress;
   home: HomeSnapshot;
 }) {
+  const queryClient = useQueryClient();
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const steps = setupSteps(progress);
+  const next = steps.find((step) => !step.optional && !step.done);
   const receipt = home.receipts.find(
     (item) => item.status === "succeeded" || item.status === "completed",
   );
-  // Key use (including Gateway check) cannot establish client setup. The API
-  // exposes no exercised client/version evidence, so this milestone stays unknown.
-  const steps = [
-    ...progress.steps.filter(
-      (step) => step.id === "connect_service" || step.id === "test_request",
-    ),
-    {
-      id: "copy_settings",
-      done: false,
-      optional: false,
-      reason:
-        "Copy the recipe settings into your client. Client setup has not been verified.",
-      href: "#connect-heading",
-    },
-    {
-      id: "view_receipt",
-      done: !!receipt,
-      optional: false,
-      reason: receipt
-        ? "A successful request receipt is recorded in your account."
-        : "Your first successful request receipt will appear here.",
-      href: receipt ? `/r/${encodeURIComponent(receipt.request_id)}` : "",
-    },
-    ...progress.steps.filter((step) => step.id === "invite_someone"),
-  ];
-  const content = (
-    <section aria-labelledby="setup-heading" className="space-y-4">
-      <div>
-        <h2 id="setup-heading" className="text-lg font-semibold">
-          Finish setting up
-        </h2>
-        <p className="text-muted-foreground mt-1 text-sm">
-          Gateway checks and client setup are separate steps.
-        </p>
-      </div>
-      <ol className="divide-border divide-y">
-        {steps.map((step) => (
-          <li key={step.id} className="flex items-start gap-3 py-4">
-            <span
-              className={`mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full ${step.done ? "bg-success-tint text-success" : "bg-muted text-muted-foreground"}`}
+  async function confirmViewed() {
+    if (!receipt || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await productApi.recordSetupEvidence({
+        event: "receipt_viewed",
+        request_id: receipt.request_id,
+      });
+      await queryClient.invalidateQueries({ queryKey: setupKey });
+    } catch {
+      setError("Your receipt confirmation could not be saved. Try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <section
+      aria-labelledby="setup-heading"
+      className="border-primary/20 bg-primary/5 rounded-xl border p-4"
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <h2 id="setup-heading" className="text-sm font-semibold">
+            Finish setting up
+          </h2>
+          <p className="mt-1 text-sm font-medium">
+            Next:{" "}
+            {next
+              ? next.id === "view_receipt" && !receipt
+                ? "Make a request with your app key"
+                : (stepLabels[next.id] ?? next.id)
+              : "Invite someone (optional)"}
+          </p>
+        </div>
+        {next?.href && (
+          <Button className="min-h-11" variant="outline" asChild>
+            <a
+              href={
+                next.id === "view_receipt"
+                  ? receipt
+                    ? `/r/${encodeURIComponent(receipt.request_id)}`
+                    : "#connect"
+                  : next.id === "test_request" ||
+                      next.id === "copy_settings" ||
+                      next.id === "connect_app"
+                    ? "#connect"
+                    : next.href
+              }
             >
-              {step.done ? (
-                <Check aria-hidden="true" className="size-4" />
-              ) : (
-                <Circle aria-hidden="true" className="size-3" />
-              )}
-              <span className="sr-only">
-                {step.id === "copy_settings"
-                  ? "Not verified"
-                  : step.done
-                    ? "Complete"
-                    : "Incomplete"}
+              <span className="sr-only sm:not-sr-only">Continue</span>
+              <ArrowUpRight aria-hidden="true" />
+            </a>
+          </Button>
+        )}
+      </div>
+      <details className="mt-2">
+        <summary className="text-muted-foreground min-h-11 cursor-pointer content-center text-sm">
+          Setup details
+        </summary>
+        <ol className="divide-border divide-y">
+          {steps.map((step) => (
+            <li key={step.id} className="flex items-start gap-3 py-3">
+              <span className="text-muted-foreground mt-1">
+                {step.done ? (
+                  <Check aria-hidden="true" className="text-success size-4" />
+                ) : (
+                  <Circle aria-hidden="true" className="size-4" />
+                )}
+                <span className="sr-only">
+                  {step.done ? "Complete" : "Incomplete"}
+                </span>
               </span>
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium">
-                {stepLabels[step.id] ?? step.id}
-                {step.id === "copy_settings" && (
-                  <span className="text-muted-foreground ml-2 text-xs font-normal">
-                    Not verified
-                  </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium">
+                  {stepLabels[step.id] ?? step.id}
+                  {step.optional && (
+                    <span className="text-muted-foreground ml-2 text-xs">
+                      Optional
+                    </span>
+                  )}
+                </p>
+                <p className="text-muted-foreground mt-1 text-sm">
+                  {step.reason}
+                </p>
+                {step.id === "view_receipt" && receipt && !step.done && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Button variant="ghost" asChild>
+                      <a
+                        href={`/r/${encodeURIComponent(receipt.request_id)}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open receipt
+                        <ArrowUpRight aria-hidden="true" />
+                      </a>
+                    </Button>
+                    <Button
+                      variant="outline"
+                      disabled={saving}
+                      onClick={() => void confirmViewed()}
+                    >
+                      I viewed this receipt
+                    </Button>
+                  </div>
                 )}
-                {step.optional && (
-                  <span className="text-muted-foreground ml-2 text-xs font-normal">
-                    Optional
-                  </span>
+                {step.optional && !step.done && step.href && (
+                  <Button variant="ghost" asChild>
+                    <a href={step.href}>
+                      Invite someone
+                      <ArrowUpRight aria-hidden="true" />
+                    </a>
+                  </Button>
                 )}
-              </p>
-              <p className="text-muted-foreground mt-1 text-sm">
-                {step.reason}
-              </p>
-            </div>
-            {(!step.done || step.id === "view_receipt") && step.href && (
-              <Button variant="ghost" asChild>
-                <a
-                  href={
-                    step.id === "test_request" || step.id === "copy_settings"
-                      ? "#connect-heading"
-                      : step.href
-                  }
-                >
-                  {step.id === "invite_someone"
-                    ? "Invite someone"
-                    : step.id === "view_receipt"
-                      ? "View receipt"
-                      : "Continue"}
-                  <ArrowUpRight aria-hidden="true" />
-                </a>
-              </Button>
-            )}
-          </li>
-        ))}
-      </ol>
+              </div>
+            </li>
+          ))}
+        </ol>
+        {error && (
+          <p role="alert" className="text-destructive text-sm">
+            {error}
+          </p>
+        )}
+      </details>
     </section>
   );
-  return content;
 }
 
 function Capabilities({
@@ -693,6 +837,19 @@ function Capabilities({
                     reason={capability.reason}
                   />
                 </div>
+                {capability.availability && (
+                  <p className="text-muted-foreground mt-2 text-xs">
+                    {capability.availability.evidence.source === "request"
+                      ? "Last request observation: "
+                      : "Health observation: "}
+                    <RelativeTime
+                      ts={
+                        capability.availability.evidence.observed_at_s ?? null
+                      }
+                      fallback="Not measured yet"
+                    />
+                  </p>
+                )}
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                   <code className="text-muted-foreground text-xs break-all">
                     {capability.model ?? "No alias assigned"}
@@ -944,7 +1101,7 @@ export default function HomePage() {
     enabled: !!isOwner,
   });
   return (
-    <div className="min-w-0 space-y-8">
+    <div className="min-w-0 space-y-4 sm:space-y-6">
       {homePending ? (
         <HomeLoading />
       ) : homeError ? (
@@ -969,18 +1126,15 @@ export default function HomePage() {
         />
       ) : (
         <>
-          <div className="border-primary/25 grid min-w-0 grid-cols-1 items-center gap-4 border-b pb-8 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-8">
+          <div className="border-primary/25 flex items-start justify-between gap-3 border-b pb-4">
             <div className="min-w-0">
-              <h1 className="font-display text-4xl leading-tight font-medium tracking-tight break-words sm:text-5xl">
+              <h1 className="font-display text-2xl font-medium tracking-tight break-words sm:text-4xl">
                 Hello, {greetingName(home.user)}.
               </h1>
-              <p className="text-muted-foreground mt-3 text-sm break-words sm:text-base">
+              <p className="text-muted-foreground mt-1 hidden text-xs sm:block">
                 Welcome to {instance?.service?.name || PRODUCT_NAME}.
               </p>
-              <p
-                role="status"
-                className="text-muted-foreground mt-4 text-sm leading-relaxed"
-              >
+              <p role="status" className="text-muted-foreground mt-2 text-sm">
                 {capabilitySummary(
                   capabilityTiles(home.capabilities, home.aliases),
                 )}
@@ -989,7 +1143,7 @@ export default function HomePage() {
             <svg
               viewBox="0 0 40 32"
               aria-hidden="true"
-              className="text-primary order-first w-16 shrink-0 sm:order-last sm:w-28"
+              className="text-primary w-10 shrink-0 sm:w-16"
             >
               <path
                 d="M9 16c8-12 19-12 26 0-7 12-18 12-26 0Z"
@@ -999,7 +1153,6 @@ export default function HomePage() {
               <circle cx="28" cy="14" r="2" className="fill-background" />
             </svg>
           </div>
-          <Connect home={home} />
           {isOwner && setupPending ? (
             <div
               role="status"
@@ -1016,9 +1169,21 @@ export default function HomePage() {
               onRetry={() => void refetchSetup()}
               retrying={setupFetching}
             />
-          ) : isOwner && setup && !setup.complete ? (
+          ) : isOwner &&
+            setup &&
+            (!setup.complete ||
+              setupSteps(setup).some(
+                (step) => !step.optional && !step.done,
+              )) ? (
             <SetupChecklist progress={setup} home={home} />
-          ) : (
+          ) : null}
+          <Connect home={home} progress={isOwner ? setup : undefined} />
+          {!(
+            isOwner &&
+            setup &&
+            (!setup.complete ||
+              setupSteps(setup).some((step) => !step.optional && !step.done))
+          ) && (
             <>
               <Capabilities
                 capabilities={home.capabilities}
