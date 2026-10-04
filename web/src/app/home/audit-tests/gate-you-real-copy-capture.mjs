@@ -11,6 +11,7 @@ const state = path.join(root, ".ui-e2e-state/gate-you-real/runtime");
 const out = "/home/tnunamak/.tmp/gw-product/gate/v3/gw-gate-you";
 const baseUrl = process.env.GATE_YOU_BASE_URL || "http://127.0.0.1:18431";
 const savedPublicUrl = "https://gate-you-copy.example.test";
+const savedApiBaseUrl = `${savedPublicUrl}/v1`;
 const cookiePath = path.join(state, "session-cookies.json");
 
 const pages = [
@@ -80,7 +81,7 @@ async function capturePage(context, role, pageName, pagePath, viewportName, view
       ? await page
           .locator("input")
           .evaluateAll((inputs) =>
-            inputs.map((input) => input.value).find((value) => value === "https://gate-you-copy.example.test") || "",
+            inputs.map((input) => input.value).find((value) => value === "https://gate-you-copy.example.test/v1") || "",
           )
           .catch(() => "")
       : "";
@@ -99,7 +100,7 @@ async function capturePage(context, role, pageName, pagePath, viewportName, view
     serious_axe: seriousAxe.map((violation) => violation.id),
     horizontal_overflow_px: Math.max(0, facts.scrollWidth - facts.clientWidth),
     loading_markers: facts.loading,
-    public_base_input_matches_saved: publicBaseValue === savedPublicUrl,
+    public_base_input_matches_saved: publicBaseValue === savedApiBaseUrl,
   };
 }
 
@@ -135,7 +136,12 @@ async function apiFacts(context, role) {
     home_alias_count: home.ok && Array.isArray(home.json.aliases) ? home.json.aliases.length : 0,
     home_capability_count: home.ok && Array.isArray(home.json.capabilities) ? home.json.capabilities.length : 0,
     models_status: models.status,
-    models_row_count: models.ok ? countRows(models.json) : 0,
+    models_row_count:
+      models.ok && Array.isArray(models.json.aliases) && Array.isArray(models.json.models)
+        ? models.json.aliases.length + models.json.models.length
+        : models.ok
+          ? countRows(models.json)
+          : 0,
     library_status: library.status,
     library_count: mediaItems.length,
     library_prompt_nonempty_count: mediaItems.filter((item) => typeof item.prompt === "string" && item.prompt.trim()).length,
