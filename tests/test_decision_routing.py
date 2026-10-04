@@ -409,6 +409,43 @@ def test_dispatch_deadline_bounds_total_response_time(monkeypatch):
     assert cancelled == [True]
 
 
+@pytest.mark.parametrize("app_key", [False, True])
+def test_configured_timeout_allows_on_demand_start_for_app_and_lan(monkeypatch, app_key):
+    import gateway.decision_routing as routing
+    import gateway.lifecycle_drivers as lifecycle
+    import proxy
+    from gateway.policy import AppProfile
+    from gateway.runtime_auth import RuntimeIdentity
+
+    # Scale seconds down: startup exceeds the default routing deadline, but
+    # fits the operator's explicit service timeout and lifecycle health budget.
+    monkeypatch.setattr(routing, "ROUTING_TIMEOUT_SECONDS", .03)
+    cfg = config()
+    cfg["backends"]["small"].update(timeout=.3, lifecycle={
+        "driver": "systemd", "driver_config": {"health_timeout_s": .2},
+    })
+    monkeypatch.setattr(proxy, "config", cfg)
+    monkeypatch.setattr(proxy, "HEALTH_CHECK_TIMEOUT", .01)
+    monkeypatch.setattr(proxy.DECISION_RUNTIME, "observed", {})
+    monkeypatch.setattr(lifecycle, "_poll_health", AsyncMock(return_value=False))
+    starts = []
+
+    class Driver:
+        async def ensure_ready(self, service, timeout_s):
+            starts.append(timeout_s)
+            await asyncio.sleep(.06)
+            return True
+
+    monkeypatch.setattr(lifecycle, "driver_for_service", lambda *args: Driver())
+    profile = AppProfile(id="local")
+    auth = proxy.AuthContext(RuntimeIdentity("test-app", "hash", profile=profile)) if app_key else proxy.AuthContext()
+    real = httpx.AsyncClient
+    with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"model": "small-v1", "answers": {"q": {"type": "noul", "noul": .9}}, "usage": {"input_tokens": 1, "output_tokens": 0}})))):
+        result = asyncio.run(proxy.DECISION_RUNTIME.dispatch(auth, profile, BODY, "r"))
+    assert result.status_code == 200
+    assert starts == [.2]
+
+
 def test_engine_deadline_response_is_retryable_and_preserves_reason():
     rt = runtime()
     real = httpx.AsyncClient
