@@ -550,6 +550,8 @@ class StateRecord:
     created_at: float
     return_to: str = "/"
     redirect_uri: str = ""
+    browser_cookie_name: str = ""
+    browser_binding_hash: str = ""
 
 
 def record_state(
@@ -559,6 +561,8 @@ def record_state(
     pkce_verifier: str,
     return_to: str = "/",
     redirect_uri: str = "",
+    browser_cookie_name: str = "",
+    browser_binding_hash: str = "",
     state: str | None = None,
     now: float | None = None,
 ) -> StateRecord:
@@ -570,6 +574,8 @@ def record_state(
         created_at=now if now is not None else time.time(),
         return_to=return_to,
         redirect_uri=redirect_uri,
+        browser_cookie_name=browser_cookie_name,
+        browser_binding_hash=browser_binding_hash,
     )
     store[record.state] = record
     return record

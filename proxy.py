@@ -42,7 +42,7 @@ from pathlib import Path
 import contextlib
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Awaitable, Callable, Iterable, Mapping, Optional, Sequence
-from urllib.parse import parse_qs, parse_qsl, quote, urlencode
+from urllib.parse import parse_qs, parse_qsl, quote, urlencode, urlsplit
 
 import httpx
 import yaml
@@ -105,11 +105,13 @@ from gateway.alias_policy import (
 from gateway.admin_api import (
     AdminAuthError,
     AdminContext,
+    _require_admin,
     create_admin_router,
     derive_admin_attention,
 )
 from gateway.admin_catalog import admin_api_surfaces, profile_policy_catalog
 from gateway.settings_api import create_settings_router, instance_settings
+from gateway.lan_auth_policy import DEFAULT_LAN_PLACEHOLDER_KEYS, lan_placeholder_keys
 from gateway.activity_api import create_activity_router
 from gateway.setup_api import build_setup_api_router
 from gateway.config_sources import KNOWN_ENV_SOURCE_NAMES, inventory_config_sources
@@ -121,21 +123,19 @@ from gateway.admin_oidc import (
     StateRecord,
     access_names_from_oidc_claims,
     admin_role_from_oidc_claims,
-    authorization_url,
     bootstrap_admin_role,
-    consume_state,
     csrf_token_for_session,
     decode_session_cookie,
     encode_session_cookie,
-    generate_nonce,
-    generate_pkce_pair,
     load_oidc_config,
     oidc_config_for_public_base,
     safe_browser_return_to,
-    record_state,
     session_from_claims,
     validate_oidc_stored_override,
     validate_id_token_claims,
+)
+from gateway.oidc_browser_flow import (
+    begin_browser_login, callback_host_matches, clear_browser_binding, consume_browser_state,
 )
 from gateway.admin_render import render_admin_dashboard
 from gateway.local_owner import (
@@ -2054,19 +2054,24 @@ def normalize_key_hash(key_hash: str) -> str:
     return runtime_normalize_key_hash(key_hash)
 
 
-def get_client_api_key_from_headers(headers) -> str:
+def get_client_api_key_from_headers(headers, *, ignored_keys: Sequence[str] = ()) -> str:
     """Extract the caller's proxy key from OpenAI-compatible auth headers."""
-    auth_header = headers.get("authorization", "")
-    if auth_header.lower().startswith("bearer "):
-        parts = auth_header.split(None, 1)
-        if len(parts) == 2:
-            return parts[1].strip()
-        return ""
+    auth_headers = headers.getlist("authorization") if ignored_keys and hasattr(headers, "getlist") else [headers.get("authorization", "")]
+    for auth_header in auth_headers:
+        if auth_header.lower().startswith("bearer "):
+            parts = auth_header.split(None, 1)
+            if len(parts) == 2:
+                key = parts[1].strip()
+                if key not in ignored_keys:
+                    return key
+            else:
+                return ""
 
     for header_name in ("x-api-key", "api-key"):
-        api_key = headers.get(header_name, "")
-        if api_key:
-            return api_key.strip()
+        values = headers.getlist(header_name) if ignored_keys and hasattr(headers, "getlist") else [headers.get(header_name, "")]
+        for api_key in values:
+            if api_key and api_key.strip() not in ignored_keys:
+                return api_key.strip()
 
     return ""
 
@@ -2098,9 +2103,9 @@ _OLLAMA_DISCOVERY_PUBLIC_PATHS = frozenset({
 
 
 # ---------------------------------------------------------------------------
-# Optional frictionless-auth features (all OFF by default; see proxy_config.yml
-# auth: block). With every default left off, behavior is identical to before:
-# header Bearer/x-api-key required on every non-public route.
+# Optional frictionless-auth features (see proxy_config.yml auth: block).
+# Missing settings default off; the shipped config enables LAN access.
+# With bypasses off, non-public routes require a Bearer/x-api-key credential.
 #
 # 1. LAN/localhost bypass  — clients in lan_bypass_cidrs skip the key entirely.
 # 2. ?api_key= query param — for clients that cannot set an auth header.
@@ -2110,7 +2115,8 @@ _OLLAMA_DISCOVERY_PUBLIC_PATHS = frozenset({
 # consult X-Forwarded-For when the operator has named their reverse proxy in
 # trusted_proxies (rightmost-first walk — the leftmost XFF entry is attacker-
 # controlled). Cloudflare's CF-Connecting-IP is honored only when the peer is a
-# verified Cloudflare IP. This makes LAN bypass safe behind any proxy (or none).
+# verified Cloudflare IP. Trusted peers need valid client forwarding metadata;
+# unresolved clients cannot inherit the proxy's LAN access.
 # ---------------------------------------------------------------------------
 
 LAN_BYPASS_ENABLED = bool_from_config(
@@ -2142,6 +2148,8 @@ def _parse_cidrs(raw) -> list:
 
 LAN_BYPASS_CIDRS = _parse_cidrs(auth_cfg.get("lan_bypass_cidrs"))
 TRUSTED_PROXIES = _parse_cidrs(auth_cfg.get("trusted_proxies"))
+_setup_cidrs_config = os.environ.get("OPENAI_PROXY_SETUP_ALLOWED_CIDRS", auth_cfg.get("setup_allowed_cidrs"))
+SETUP_ALLOWED_CIDRS = None if _setup_cidrs_config is None else _parse_cidrs(_setup_cidrs_config)
 PATH_TOKENS = dict(auth_cfg.get("path_tokens") or {})
 
 # Cloudflare edge IP ranges, populated at startup when CLOUDFLARE_MODE is on.
@@ -2231,24 +2239,36 @@ def resolve_real_client_ip(request: Request):
 
     # Cloudflare: only when the peer is verified Cloudflare infra (fail closed).
     if CLOUDFLARE_MODE and _CF_IP_NETWORKS and _ip_in_any(peer, _CF_IP_NETWORKS):
-        cf = request.headers.get("cf-connecting-ip", "").strip()
-        if cf:
-            try:
-                return _normalize_ip(cf)
-            except ValueError:
-                return peer
+        cf_headers = request.headers.getlist("cf-connecting-ip")
+        if len(cf_headers) != 1:
+            return None
+        cf = cf_headers[0].strip()
+        if not cf:
+            return None
+        try:
+            return _normalize_ip(cf)
+        except ValueError:
+            return None
 
     # X-Forwarded-For, only if the immediate peer is a trusted proxy.
     if TRUSTED_PROXIES and _ip_in_any(peer, TRUSTED_PROXIES):
-        xff = request.headers.get("x-forwarded-for", "")
-        if xff:
-            for candidate in reversed([p.strip() for p in xff.split(",") if p.strip()]):
-                try:
-                    cand = _normalize_ip(candidate)
-                except ValueError:
-                    continue
-                if not _ip_in_any(cand, TRUSTED_PROXIES):
-                    return cand  # first non-proxy IP from the right = real client
+        forwarded = request.headers.getlist("x-forwarded-for")
+        if len(forwarded) != 1:
+            return None
+        xff = forwarded[0]
+        candidates = [p.strip() for p in xff.split(",")]
+        if not candidates or any(not candidate for candidate in candidates):
+            return None
+        parsed = []
+        for candidate in candidates:
+            try:
+                parsed.append(_normalize_ip(candidate))
+            except ValueError:
+                return None
+        for cand in reversed(parsed):
+            if not _ip_in_any(cand, TRUSTED_PROXIES):
+                return cand  # first non-proxy IP from the right = real client
+        return None
 
     return peer
 
@@ -2258,6 +2278,16 @@ def _client_is_lan(request: Request) -> bool:
         return False
     addr = resolve_real_client_ip(request)
     return addr is not None and _ip_in_any(addr, LAN_BYPASS_CIDRS)
+
+
+def _client_may_claim_first_owner(request: Request) -> bool:
+    addr = resolve_real_client_ip(request)
+    if addr is None:
+        return False
+    if addr.is_loopback:
+        return True
+    allowed = LAN_BYPASS_CIDRS if SETUP_ALLOWED_CIDRS is None else SETUP_ALLOWED_CIDRS
+    return bool(allowed and _ip_in_any(addr, allowed))
 
 
 def _path_token_from_request(request_path: str) -> str | None:
@@ -2292,11 +2322,16 @@ def _identity_for(name: str, marker: str):
 
 def _resolve_client_api_key(request: Request) -> str:
     """Header Bearer/x-api-key, then optional ?api_key= fallback."""
-    key = get_client_api_key_from_headers(request.headers)
+    ignored = lan_placeholder_keys(ADMIN_STORE.path) if _client_is_lan(request) else ()
+    key = get_client_api_key_from_headers(request.headers, ignored_keys=ignored)
     if key:
         return key
     if ALLOW_QUERY_PARAM_KEY:
-        return (request.query_params.get("api_key") or "").strip()
+        values = request.query_params.getlist("api_key") if ignored else [request.query_params.get("api_key") or ""]
+        for value in values:
+            key = value.strip()
+            if key and key not in ignored:
+                return key
     return ""
 
 
@@ -2345,46 +2380,54 @@ def auth_error(message: str, status_code: int = 401) -> Response:
 def authenticate_request(request: Request, request_path: str) -> AuthContext | Response:
     """Authenticate a client-facing proxy key when auth is configured.
 
-    Decision order: public path -> LAN bypass -> path-prefix token ->
-    header/query API key -> 401. All bypass mechanisms are opt-in and OFF by
-    default, so with stock config this is identical to plain Bearer auth.
+    Decision order: public path -> explicit API key -> LAN bypass ->
+    path-prefix token -> 401. Missing bypass settings default off; the
+    shipped config opts into shared anonymous LAN access.
     """
     if not AUTH_ENABLED or is_public_path(request_path):
         return NO_AUTH_CONTEXT
 
-    # 1. Trusted LAN/localhost client (opt-in via auth.lan_bypass_*).
+    # 1. Header Bearer / x-api-key, then optional ?api_key= query fallback.
+    # Configured LAN placeholders are absent during credential resolution.
+    # Every other supplied key retains its identity and revocation checks.
+    api_key = _resolve_client_api_key(request)
+    if api_key:
+        key_hash = hash_api_key(api_key)
+        identity = runtime_identity_for_app_credential_hash(
+            key_hash,
+            inherited_profile_id_for_app=_inherited_profile_id_for_app,
+            path=ADMIN_STORE.path,
+        )
+        if not identity:
+            return auth_error("Invalid API key.")
+
+        return AuthContext(identity=identity)
+
+    # 2. Trusted LAN/localhost client (opt-in via auth.lan_bypass_*).
     if _client_is_lan(request):
         return AuthContext(identity=_identity_for("lan-bypass", "lan"))
 
-    # 2. Per-device path-prefix token (opt-in via auth.path_tokens).
+    # 3. Per-device path-prefix token (opt-in via auth.path_tokens).
     token = _path_token_from_request(request_path)
     if token is not None:
         return AuthContext(identity=_identity_for(str(PATH_TOKENS[token]), "path-token"))
 
-    # 3. Header Bearer / x-api-key, then optional ?api_key= query fallback.
-    api_key = _resolve_client_api_key(request)
-    if not api_key:
-        return auth_error("Missing API key.")
+    return auth_error("Missing API key.")
 
-    key_hash = hash_api_key(api_key)
-    identity = runtime_identity_for_app_credential_hash(
-        key_hash,
-        inherited_profile_id_for_app=_inherited_profile_id_for_app,
-        path=ADMIN_STORE.path,
+
+def _is_delegatable_litellm_key(api_key: str) -> bool:
+    """Only unknown, non-placeholder sk- credentials belong to the delegate."""
+    return (
+        api_key.startswith("sk-")
+        and api_key not in DEFAULT_LAN_PLACEHOLDER_KEYS
+        and api_key not in lan_placeholder_keys(ADMIN_STORE.path)
+        and admin_store.find_credential_by_hash(hash_api_key(api_key), path=ADMIN_STORE.path) is None
     )
-    if not identity:
-        return auth_error("Invalid API key.")
-
-    return AuthContext(identity=identity)
-
-
-def _looks_like_litellm_virtual_key(api_key: str) -> bool:
-    return api_key.startswith("sk-")
 
 
 def _request_uses_litellm_virtual_key(request: Request) -> bool:
     api_key = _resolve_client_api_key(request)
-    return bool(api_key and _looks_like_litellm_virtual_key(api_key))
+    return bool(api_key and _is_delegatable_litellm_key(api_key))
 
 
 def authenticate_runtime_or_litellm_request(
@@ -2399,7 +2442,10 @@ def authenticate_runtime_or_litellm_request(
 
     if allow_litellm_delegation and AUTH_ENABLED:
         api_key = _resolve_client_api_key(request)
-        if api_key and _looks_like_litellm_virtual_key(api_key):
+        # Public placeholders never become delegated credentials, including
+        # sk-local when the operator removes it from LAN exemptions.
+        # A denial for a known gateway credential is also authoritative.
+        if api_key and _is_delegatable_litellm_key(api_key):
             return RuntimeRouteAuth(
                 auth_context=NO_AUTH_CONTEXT,
                 delegated_litellm_api_key=api_key,
@@ -15868,23 +15914,18 @@ async def _start_browser_login(request: Request, *, default_return_to: str) -> R
             await _admin_oidc_config_with_discovery(),
             instance_settings(ADMIN_STORE.path, _instance_presentation_defaults())["base_url"],
         )
-        nonce = generate_nonce()
-        pkce = generate_pkce_pair()
         return_to = _safe_admin_return_to(
             request.query_params.get("return_to"),
             default=default_return_to,
         )
-        state = record_state(
-            ADMIN_OIDC_STATES,
-            nonce=nonce,
-            pkce_verifier=pkce.verifier,
-            return_to=return_to,
-            redirect_uri=cfg.redirect_uri,
-        )
-        return RedirectResponse(
-            authorization_url(cfg, state=state.state, nonce=nonce, pkce=pkce),
-            status_code=302,
-        )
+        callback = urlsplit(cfg.redirect_uri)
+        # ASGI sees HTTP behind TLS ingress; only compare the host and port.
+        if not callback_host_matches(request, cfg.redirect_uri):
+            return RedirectResponse(
+                f"{callback.scheme}://{callback.netloc}/login?return_to={quote(return_to, safe='')}",
+                status_code=302, headers={"cache-control": "no-store"},
+            )
+        return begin_browser_login(cfg, ADMIN_OIDC_STATES, return_to=return_to)
     except Exception as e:  # noqa: BLE001
         return Response(
             content=f"OIDC login failed to start: {str(e)[:200]}",
@@ -16359,6 +16400,55 @@ def _issue_browser_admin_session(
     return response
 
 
+def _origin_header_allowed_for_request(request: Request) -> bool:
+    # A same-origin attacker hostname can rebind to a private address. Setup
+    # accepts literal host addresses, localhost, or the configured public host.
+    public_base = instance_settings(ADMIN_STORE.path, _instance_presentation_defaults()).get("base_url")
+    try:
+        public = urlsplit(public_base) if public_base else None
+        host = request.url.hostname
+    except ValueError:
+        return False
+    try:
+        literal_host = _normalize_ip(host) if host and host != "localhost" else None
+    except ValueError:
+        literal_host = None
+    allowed_host = host == "localhost" or literal_host is not None or bool(
+        public and public.scheme in {"http", "https"} and host == public.hostname
+    )
+    if not allowed_host:
+        return False
+    supplied = request.headers.get("origin") or request.headers.get("referer")
+    if not supplied:
+        return True
+    try:
+        parsed = urlsplit(supplied)
+    except ValueError:
+        return False
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return False
+
+    # The socket can be HTTP behind a TLS terminator. Cookie security is
+    # configured separately; forwarding headers do not widen this host set.
+    allowed = {f"{scheme}://{request.url.netloc}" for scheme in ("http", "https")}
+
+    # Saved presentation data can name the public origin; forwarded Host
+    # headers must not expand the origins allowed to submit a setup form.
+    if public_base:
+        try:
+            public = urlsplit(public_base)
+        except ValueError:
+            public = None
+        if public and public.scheme in {"http", "https"} and public.netloc:
+            public_origin = f"{public.scheme}://{public.netloc}"
+            allowed.add(public_origin)
+            for scheme in ("http", "https"):
+                allowed.add(f"{scheme}://{public.netloc}")
+
+    supplied_origin = f"{parsed.scheme}://{parsed.netloc}"
+    return supplied_origin in allowed
+
+
 @app.post("/setup/local-owner", include_in_schema=False)
 async def setup_create_local_owner(request: Request):
     """Create the first local owner account from the browser.
@@ -16382,6 +16472,21 @@ async def setup_create_local_owner(request: Request):
         # First-run is over. Redirect through /setup so the operator sees the
         # signed-in landing card and can sign in if needed.
         return RedirectResponse("/setup", status_code=303)
+    if not _client_may_claim_first_owner(request):
+        return await _setup_page_response(
+            request,
+            create_error=(
+                "Create the first owner from the gateway host or a configured "
+                "LAN client."
+            ),
+            status_code=403,
+        )
+    if not _origin_header_allowed_for_request(request):
+        return await _setup_page_response(
+            request,
+            create_error="Use the setup page on this gateway to create the owner.",
+            status_code=403,
+        )
 
     values = await _setup_form_values(request)
     email = _normalize_local_email(values.get("email", ""))
@@ -16420,35 +16525,17 @@ async def setup_create_local_owner(request: Request):
             status_code=400,
         )
 
-    user = admin_store.upsert_oidc_user(
-        _LOCAL_OWNER_ISSUER,
-        email,
+    user = admin_store.claim_first_local_owner(
+        issuer=_LOCAL_OWNER_ISSUER,
+        subject=email,
         email=email,
         display_name=email,
-        path=ADMIN_STORE.path,
-    )
-    admin_store.set_local_password_verifier(
-        str(user["id"]),
-        verifier,
-        path=ADMIN_STORE.path,
-    )
-    admin_store.assign_admin_role(
-        role="owner",
-        subject_kind="user",
-        subject_id=str(user["id"]),
+        verifier=verifier,
         granted_by="setup-local-owner",
         path=ADMIN_STORE.path,
     )
-    admin_store.record_audit(
-        "setup.local_owner_create",
-        actor_kind="user",
-        actor_id=str(user["id"]),
-        actor_label=str(user.get("display_name") or user.get("email") or user["id"]),
-        target_kind="user",
-        target_id=str(user["id"]),
-        metadata={"email": email, "via": "setup_page"},
-        path=ADMIN_STORE.path,
-    )
+    if user is None:
+        return RedirectResponse("/setup", status_code=303)
     # Parity with OIDC login: give the new owner a personal App up front so the
     # portal can hand them a working key without a separate "create App" step.
     _ensure_personal_app_for_owner(user, role="owner")
@@ -16696,22 +16783,19 @@ async def admin_oidc_callback(request: Request):
     if not _effective_admin_oidc_config().enabled:
         return Response(status_code=404)
     error = request.query_params.get("error")
-    if error:
-        return Response(
-            content=f"OIDC provider returned error: {error}",
-            status_code=400,
-            media_type="text/plain; charset=utf-8",
-        )
     code = request.query_params.get("code")
     state_value = request.query_params.get("state")
-    if not code or not state_value:
+    if not state_value or not (code or error):
         return Response(
             content="OIDC callback missing code or state",
             status_code=400,
             media_type="text/plain; charset=utf-8",
         )
+    state = None
     try:
-        state = consume_state(ADMIN_OIDC_STATES, state_value)
+        state = consume_browser_state(request, ADMIN_OIDC_STATES, state_value)
+        if error:
+            raise ValueError("identity provider declined sign-in")
         cfg = await _admin_oidc_config_with_discovery()
         if state.redirect_uri:
             cfg = replace(cfg, redirect_uri=state.redirect_uri)
@@ -16738,7 +16822,7 @@ async def admin_oidc_callback(request: Request):
         accounts.record_oidc_verification(str(user["id"]), claims.get("email_verified") is True, path=ADMIN_STORE.path)
         account_state = accounts.access(str(user["id"]), path=ADMIN_STORE.path)
         if account_state and (account_state["disabled_at"] is not None or account_state["removed_at"] is not None):
-            return JSONResponse({"error": {"code": "account_disabled", "message": "This account is disabled."}}, status_code=403)
+            return clear_browser_binding(JSONResponse({"error": {"code": "account_disabled", "message": "This account is disabled."}}, status_code=403), state)
         oidc_access_names = access_names_from_oidc_claims(
             claims,
             client_id=cfg.client_id,
@@ -16813,13 +16897,14 @@ async def admin_oidc_callback(request: Request):
             path=cfg.cookie.path,
             domain=cfg.cookie.domain,
         )
-        return response
+        return clear_browser_binding(response, state)
     except (SessionError, IDTokenClaimsError, ValueError, httpx.HTTPError) as e:
-        return Response(
+        response = Response(
             content=f"OIDC callback failed: {str(e)[:200]}",
             status_code=400,
             media_type="text/plain; charset=utf-8",
         )
+        return clear_browser_binding(response, state) if state else response
 
 
 @app.post("/admin/logout", include_in_schema=False)
@@ -16847,15 +16932,9 @@ async def admin_config_reload(request: Request):
     Note: the LiteLLM subprocess still requires a separate restart to pick up
     its config-file changes.
     """
-    try:
-        ADMIN_AUTH(request)
-    except AdminAuthError as exc:
-        return Response(
-            content=json.dumps({"error": {"code": exc.code, "message": exc.message}}),
-            status_code=exc.status_code,
-            media_type="application/json",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    ctx = _require_admin(ADMIN_AUTH, request)
+    if isinstance(ctx, JSONResponse):
+        return ctx
     try:
         updates = reload_runtime_config()
         return JSONResponse(
@@ -17643,10 +17722,14 @@ def _realtime_policy_denial(auth_context: AuthContext) -> Response | None:
 
 async def _handle_realtime(websocket: WebSocket) -> None:
     offered = [p.strip() for p in websocket.headers.get("sec-websocket-protocol", "").split(",") if p.strip()]
-    subprotocol_key = realtime_proxy.key_from_subprotocols(offered)
+    ignored = lan_placeholder_keys(ADMIN_STORE.path) if _client_is_lan(websocket) else ()
+    placeholder_protocols = {f"{realtime_proxy.KEY_SUBPROTOCOL_PREFIX}{key}" for key in ignored}
+    subprotocol_key = realtime_proxy.key_from_subprotocols([p for p in offered if p not in placeholder_protocols])
     caller: HTTPConnection = websocket
-    if subprotocol_key and not get_client_api_key_from_headers(websocket.headers):
-        caller = HTTPConnection({**websocket.scope, "headers": [*websocket.scope["headers"], (b"authorization", f"Bearer {subprotocol_key}".encode())]})
+    if subprotocol_key and not get_client_api_key_from_headers(websocket.headers, ignored_keys=ignored):
+        headers = [(name, value) for name, value in websocket.scope["headers"] if name.lower() != b"authorization"]
+        headers.append((b"authorization", f"Bearer {subprotocol_key}".encode()))
+        caller = HTTPConnection({**websocket.scope, "headers": headers})
     auth_context = authenticate_request(caller, "/v1/realtime")
     if isinstance(auth_context, Response):
         return await _deny_realtime(websocket, auth_context)
@@ -23528,6 +23611,19 @@ def _api_key_name(auth_context) -> Optional[str]:
         return None
 
 
+def _protocol_loopback_source_headers(request: Request) -> dict[str, str]:
+    """Carry the selected credential through adapters as one Bearer header."""
+    headers = {
+        key: value
+        for key, value in request.headers.items()
+        if key.lower() not in {"authorization", "x-api-key", "api-key"}
+    }
+    api_key = _resolve_client_api_key(request)
+    if api_key:
+        headers["authorization"] = f"Bearer {api_key}"
+    return headers
+
+
 async def _forward_chat_completions(
     request: Request,
     auth_context,
@@ -23549,7 +23645,7 @@ async def _forward_chat_completions(
     # only needs to bound the in-process round-trip (loopback is localhost
     # and proxy code is non-blocking). Match UPSTREAM_READ_TIMEOUT so this
     # never trips before the inner timeout does.
-    source_headers = dict(request.headers)
+    source_headers = _protocol_loopback_source_headers(request)
     parent_request_id = getattr(
         getattr(request, "state", None), "route_receipt_parent_request_id", ""
     )
@@ -23600,7 +23696,7 @@ async def _forward_embeddings(
         body=embeddings_body,
         internal_forward_header=_INTERNAL_PROTOCOL_FORWARD_HEADER,
         internal_forward_secret=_INTERNAL_PROTOCOL_FORWARD_SECRET,
-        source_headers=request.headers,
+        source_headers=_protocol_loopback_source_headers(request),
         read_timeout=EMBEDDINGS_TIMEOUT,
     )
     client = httpx.AsyncClient(timeout=loopback_request.timeout)
@@ -27839,5 +27935,6 @@ if __name__ == "__main__":
         port=PROXY_PORT,
         log_level="warning",
         access_log=False,
+        proxy_headers=False,
         timeout_graceful_shutdown=graceful_s if graceful_s > 0 else None,
     )

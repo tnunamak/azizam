@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store
+from gateway import admin_store, lan_auth_policy
 from gateway.admin_api import AdminAuth, AdminContext, _require_admin
 
 INSTANCE_SETTING_KEY = "instance_presentation"
@@ -73,6 +73,13 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
     def instance_response() -> JSONResponse:
         return JSONResponse({"instance": instance(), "source": "admin.db", "apply_mode": "live"}, headers={"Cache-Control": "no-store"})
 
+    def lan_placeholder_keys_response() -> JSONResponse:
+        return JSONResponse({
+            "lan_placeholder_keys": lan_auth_policy.lan_placeholder_keys(admin_path),
+            "source": "admin.db",
+            "apply_mode": "live",
+        }, headers={"Cache-Control": "no-store"})
+
     @router.get("/instance")
     def get_instance(request: Request):
         ctx = guard(request)
@@ -127,6 +134,45 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
         ctx = guard(request)
         return ctx if isinstance(ctx, JSONResponse) else defaults_response()
 
+    @router.get("/lan-placeholder-keys")
+    def get_lan_placeholder_keys(request: Request):
+        ctx = guard(request)
+        return ctx if isinstance(ctx, JSONResponse) else lan_placeholder_keys_response()
+
+    @router.put("/lan-placeholder-keys")
+    async def put_lan_placeholder_keys(request: Request):
+        ctx = guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            body = await request.json()
+            if not isinstance(body, dict) or set(body) != {lan_auth_policy.LAN_PLACEHOLDER_KEYS_SETTING_KEY}:
+                raise lan_auth_policy.LanPlaceholderKeysError("supply lan_placeholder_keys")
+            values = lan_auth_policy.validate_lan_placeholder_keys(
+                body[lan_auth_policy.LAN_PLACEHOLDER_KEYS_SETTING_KEY]
+            )
+        except (TypeError, ValueError):
+            return JSONResponse({
+                "error": {
+                    "code": "invalid_lan_placeholder_keys",
+                    "message": "Supply a list of 0-64 placeholder key strings.",
+                }
+            }, status_code=400)
+        admin_store.put_operator_setting_with_audit(
+            lan_auth_policy.LAN_PLACEHOLDER_KEYS_SETTING_KEY,
+            {lan_auth_policy.LAN_PLACEHOLDER_KEYS_SETTING_KEY: values},
+            updated_by=ctx.subject,
+            audit_action="operator.lan_placeholder_keys.update",
+            audit_actor_kind=ctx.actor_kind,
+            audit_actor_id=ctx.audit_actor_id,
+            audit_actor_label=ctx.actor_label,
+            audit_target_kind="operator_setting",
+            audit_target_id=lan_auth_policy.LAN_PLACEHOLDER_KEYS_SETTING_KEY,
+            audit_metadata={"count": len(values)},
+            path=admin_path,
+        )
+        return lan_placeholder_keys_response()
+
     @router.put("/defaults")
     async def put_defaults(request: Request):
         ctx = guard(request)
@@ -149,6 +195,9 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
         snapshot["instance"] = instance()
         snapshot["operator_overrides"] = dict(overrides_provider() if overrides_provider else {})
         snapshot["runtime_profile_mappings"] = admin_store.list_runtime_profile_mappings(path=admin_path)
+        snapshot["auth_policy"] = {
+            "lan_placeholder_keys": lan_auth_policy.lan_placeholder_keys(admin_path),
+        }
         return {"config": redact_config(snapshot), "read_only": True, "redacted": True,
                 "export_url": "/admin/api/settings/effective/export"}
 

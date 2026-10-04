@@ -4,6 +4,11 @@
   2026-10-03 - real TypeSafe/OpenRouter receipts, encrypted-key product setup,
   owner-plan caps, LAN credential precedence, versioned-price settlement and
   sub-cent spend display defects; exact measurements and source limits.
+- [Public exposure and reverse-proxy trust](public-exposure-trust-boundaries.md) -
+  2026-10-03 - pinned Uvicorn client-address rewriting, Traefik forwarding
+  settings, fail-closed proxy resolution, explicit LAN credentials, public
+  probe limits, OIDC browser binding guidance and verified session swapping,
+  and rejected pre-auth body-parsing hypothesis.
 
 - [Provider catalog and key custody](provider-catalog-and-key-custody.md) -
   2026-10-03 - primary provider model-listing shapes, price units, authentication

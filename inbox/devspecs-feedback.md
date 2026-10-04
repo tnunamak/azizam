@@ -126,3 +126,14 @@ command.
   also returned no task output. Both task processes were terminated explicitly;
   shared index state was left intact. The complete brief and source inspection
   remained the working contract.
+
+## 2026-10-03 — exposure review index wait
+
+In an isolated gateway worktree, `ds recent` completed and found useful
+provider/account changes. A focused `ds find 'authentication LAN trusted proxies
+security'` produced no result for more than three minutes. A following
+three-slice `ds task` waited for another index update. Both commands were
+stopped after several minutes without usable task output. Repository grep
+and direct file reads let the security review continue. Print the index-lock
+owner and age, and let read-only lookup use the last completed index while
+another refresh runs.

@@ -1,7 +1,7 @@
 services:
   gateway:
     build: .
-    command: ["python3", "-m", "uvicorn", "proxy:app", "--host", "0.0.0.0", "--port", "5000", "--log-level", "warning"]
+    command: ["python3", "-m", "uvicorn", "proxy:app", "--host", "0.0.0.0", "--port", "5000", "--log-level", "warning", "--no-proxy-headers"]
     ports:
       - "127.0.0.1:${OPENAI_PROXY_PORT:-5000}:5000"
     env_file:
@@ -9,6 +9,9 @@ services:
         required: false
     environment:
       AI_GATEWAY_CONFIG_PATH: /app/first-run.yml
+      # The loopback-published port reaches the container from this exact host
+      # bridge address. This permits setup, not anonymous runtime access.
+      OPENAI_PROXY_SETUP_ALLOWED_CIDRS: ${AI_GATEWAY_DOCKER_GATEWAY:-172.30.251.1}/32
       AI_GATEWAY_LITELLM_BASE_URL: ${AI_GATEWAY_LITELLM_BASE_URL:-http://litellm:4000}
       AI_GATEWAY_LITELLM_API_KEY: ${AI_GATEWAY_LITELLM_API_KEY:-sk-local-litellm}
     extra_hosts:
@@ -50,3 +53,11 @@ services:
 
 volumes:
   gateway-data:
+
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${AI_GATEWAY_DOCKER_SUBNET:-172.30.251.0/24}
+          gateway: ${AI_GATEWAY_DOCKER_GATEWAY:-172.30.251.1}

@@ -41,6 +41,14 @@ For the operator-facing first-run story this model implies, see
   `GET /admin/api/settings/effective/export` exports the current configuration,
   resolved OIDC provider, registry and runtime overrides. It is for inspection,
   does not restore a gateway, and cannot write bootstrap configuration.
+- **LAN placeholder keys are dashboard-owned runtime policy.** The
+  `lan_placeholder_keys` list lives in `admin.db` and is editable through
+  owner-only `GET/PUT /admin/api/settings/lan-placeholder-keys`. Its defaults
+  support clients that require a dummy key field; entries count as absent
+  only for resolved clients allowed by enabled LAN bypass. Edits are audited
+  and apply live; an empty list disables exemptions. Proxy trust and LAN
+  network eligibility remain bootstrap-owned. Real gateway key prefixes
+  cannot be configured as placeholders.
 - **OIDC uses the configured public origin.** When Settings has a public base
   URL, browser sign-in replaces the OIDC `redirect_uri` origin with that URL
   and keeps the callback path. For example, a login started on
@@ -50,6 +58,11 @@ For the operator-facing first-run story this model implies, see
   incoming host does not choose it. Register the resulting exact callback URL
   with the identity provider. A pending login keeps its original callback URL
   for the token exchange even if Settings changes before it finishes.
+  Sign-in first redirects to the callback host when started through an alias,
+  then sets a separate host-only cookie for that pending login. The callback
+  requires that browser cookie before exchanging the authorization code.
+  Cookies for parallel sign-in tabs remain independent and expire after ten
+  minutes. TLS proxies do not need to rewrite the ASGI request scheme.
   The session cookie is issued on the callback host, and its configured domain
   still applies. With the default host-only cookie, the person remains signed
   in on that callback host. Relative return paths bring them to the requested
@@ -127,7 +140,7 @@ pins the mapping; if you change one side you must change the other.
 | `resource admission` | dashboard   | caps, throttles, reserved tokens                | nothing                                          |
 | `workflow manifests` | provisioned | nothing                                         | the manifest files themselves                    |
 | `model compatibility`| bootstrap   | nothing                                         | the compatibility table file                     |
-| `auth/admin`         | dashboard   | instance presentation, OIDC provider settings, admin user list, roles, Profiles, Apps, App keys, user access defaults, identity/Profile mappings | explicit session keys, trust roots, optional OIDC bootstrap fallback |
+| `auth/admin`         | dashboard   | instance presentation, OIDC provider settings, LAN placeholder key policy, admin user list, roles, Profiles, Apps, App keys, user access defaults, identity/Profile mappings | explicit session keys, trust roots, optional OIDC bootstrap fallback |
 
 Implications:
 

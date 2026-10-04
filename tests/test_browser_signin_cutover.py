@@ -74,10 +74,19 @@ def browser_gateway(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, "ADMIN_OIDC_CONFIG", config())
     monkeypatch.setattr(proxy.ADMIN_AUTH, "signing_key", config().signing_key)
     monkeypatch.setattr(proxy.ADMIN_AUTH, "cookie", config().cookie)
+    admin_store.put_operator_setting(
+        "instance_presentation",
+        {"base_url": "https://openai.vivid.fish"},
+        path=path,
+    )
     proxy.ADMIN_OIDC_STATES.clear()
     # Auth handlers need the initialized temporary store, not engine listeners.
     # Match the route integration fixtures and leave process lifespan to its own tests.
-    client = TestClient(proxy.app, base_url="https://openai.vivid.fish")
+    client = TestClient(
+        proxy.app,
+        base_url="https://openai.vivid.fish",
+        client=("127.0.0.1", 50000),
+    )
     try:
         yield proxy, client, path
     finally:
@@ -95,6 +104,9 @@ def test_oidc_callback_returns_to_product_page_and_pins_origin(browser_gateway, 
     admin_store.put_operator_setting("instance_presentation", {"base_url": public_origin}, path=path)
     login = client.get("/login", params={"return_to": target}, follow_redirects=False)
     assert login.status_code == 302
+    if "redirect_uri=" not in login.headers["location"]:
+        login = client.get(login.headers["location"], follow_redirects=False)
+        assert login.status_code == 302
     expected = (public_origin or "https://openai.vivid.fish") + "/admin/oidc/callback"
     assert parse_qs(urlsplit(login.headers["location"]).query)["redirect_uri"] == [expected]
     state, record = next(iter(proxy.ADMIN_OIDC_STATES.items()))
