@@ -346,6 +346,15 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(body["model"], "default-fast")
         self.assertEqual(body["temperature"], 0.2)
 
+    def test_shadowed_role_backend_does_not_override_public_vision_alias(self):
+        roles = {"vision": {"backend": "metadata-only"}}
+        with patch.object(proxy, "ROLES", roles):
+            body = self._chat_body_seen(
+                "/v1/chat/completions",
+                {"model": "vision", "messages": [{"role": "user", "content": "hi"}]},
+            )
+        self.assertEqual(body["model"], "default")
+
     def test_chat_concrete_and_unknown_names_are_untouched(self):
         for name in ("coder", "my-litellm-model"):
             body = self._chat_body_seen(

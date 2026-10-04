@@ -17,7 +17,7 @@ def test_explicit_routes_and_model_mappings_are_reliance_evidence():
                               "off-model": {"config": {"models": [{"id": "unused", "enabled": False}]}}}}
     config = {"routing": {"default_backend": "default", "check_interval": 30},
               "roles": {"coder": {"backend": "role"}, "disabled": {"backend": "off-model", "enabled": False}}}
-    assert relied_on_service_ids(registry=registry, runtime_config=config, capabilities=[]) == ["default", "mapped", "role"]
+    assert relied_on_service_ids(registry=registry, runtime_config=config, capabilities=[]) == ["default", "mapped"]
 
 
 def test_unresolved_alias_and_metadata_do_not_invent_reliance():
@@ -86,6 +86,7 @@ def test_status_producer_includes_selected_execution_dependency(monkeypatch):
 
     registry = {"services": {
         "router-selected": {"kind": "llm-substrate", "config": {"base_url": "http://router.test"}},
+        "fallback-route": {"config": {"protocol": "openai", "base_url": "http://engine.test", "model_id": "actual-model"}},
         "unused": {},
     }}
     async def status_payload(config):
@@ -101,4 +102,28 @@ def test_status_producer_includes_selected_execution_dependency(monkeypatch):
     monkeypatch.setattr(proxy, "_highest_priority_chat_backend", lambda: None)
     monkeypatch.setattr(proxy, "config", {})
     payload = asyncio.run(proxy._status_payload_with_availability())
-    assert payload["_relied_on_service_ids"] == ["router-selected"]
+    assert payload["_relied_on_service_ids"] == ["fallback-route", "router-selected"]
+
+
+def test_metadata_only_roles_and_models_do_not_invent_executable_routes():
+    registry = {"services": {"metadata-only": {}, "selected": {}}}
+    runtime = {"roles": {"vision": {"backend": "metadata-only"}},
+               "models": [{"id": "another", "backend": "metadata-only"}],
+               "model_aliases": {"chat": {"stable": {"vision": "default"}}}}
+    caps = [Capability(intent="chat.completions", backend="selected", model="vision", tags=("alias",))]
+    assert relied_on_service_ids(registry=registry, runtime_config=runtime,
+                                 capabilities=caps) == ["selected"]
+
+
+def test_registered_single_model_fallback_is_real_route_despite_shadowed_role():
+    from gateway.litellm_substrate import litellm_provider_model_lookup
+    registry = {"services": {
+        "fallback-route": {"config": {"protocol": "openai", "base_url": "http://fixture.test/v1",
+                                      "model_id": "native-model"}},
+        "metadata-only": {},
+    }}
+    deployed = litellm_provider_model_lookup(registry)
+    assert deployed["native-model"]["service_id"] == "fallback-route"
+    runtime = {"roles": {"vision": {"backend": "metadata-only"}}}
+    assert relied_on_service_ids(registry=registry, runtime_config=runtime, capabilities=[],
+                                 selected_defaults=[row["service_id"] for row in deployed.values()]) == ["fallback-route"]

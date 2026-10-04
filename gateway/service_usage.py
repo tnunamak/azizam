@@ -30,14 +30,9 @@ def relied_on_service_ids(*, registry: Mapping[str, Any],
     if isinstance(routing, Mapping):
         used.update(str(value) for key, value in routing.items()
                     if key.endswith("_backend") and isinstance(value, str) and value in enabled)
-    # Named roles and explicit service model mappings are caller-selectable
-    # routes even when no convenience alias points at them.
-    for section in ("roles", "models"):
-        records = runtime_config.get(section) or {}
-        rows = records.values() if isinstance(records, Mapping) else records if isinstance(records, list) else ()
-        for row in rows:
-            if isinstance(row, Mapping) and row.get("enabled", True) and row.get("backend") in enabled:
-                used.add(str(row["backend"]))
+    # Runtime roles/models are catalog metadata, not dispatch targets. Real
+    # registered deployments arrive through selected_defaults from the same
+    # registry projection used by execution, including single-model fallbacks.
     for service_id in enabled:
         service = services[service_id]
         config = service.get("config") or {}
