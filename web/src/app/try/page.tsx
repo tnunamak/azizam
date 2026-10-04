@@ -768,6 +768,7 @@ export default function TryPage() {
   const mounted = useRef(true);
   const activeTabRef = useRef<TryTab>("chat");
   const explicitModelTabs = useRef<Set<TryTab>>(new Set());
+  const initializedWorkflowId = useRef<string | null>(null);
   const chunks = useRef<Blob[]>([]);
   const requestForm = useRef<HTMLFormElement | null>(null);
   const [running, setRunning] = useState<TryTab | null>(null);
@@ -837,7 +838,12 @@ export default function TryPage() {
   }, [requestedCapabilityKey, requestedWorkflow]);
 
   useEffect(() => {
-    if (!selectedWorkflow) return;
+    if (!selectedWorkflow) {
+      initializedWorkflowId.current = null;
+      return;
+    }
+    if (initializedWorkflowId.current === selectedWorkflow.id) return;
+    initializedWorkflowId.current = selectedWorkflow.id;
     const body = workflowExampleBody(selectedWorkflow);
     const inputs = workflowDefaults(
       selectedWorkflow.inputs,

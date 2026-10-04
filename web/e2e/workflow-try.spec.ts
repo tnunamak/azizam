@@ -373,6 +373,11 @@ async function openTechnicalDetails(page: Page) {
   await expect(page.getByText("Copy as", { exact: true })).toBeVisible();
 }
 
+async function openCopyAs(page: Page) {
+  await page.locator("summary").filter({ hasText: "Copy as" }).click();
+  await expect(page.locator("pre").filter({ hasText: "curl" })).toBeVisible();
+}
+
 async function fillGuidedImageInputs(page: Page) {
   await textbox(page, "prompt", true).fill("A red poster.");
   await combobox(page, "style", true).click();
@@ -453,8 +458,8 @@ test("workflow deep link edits guided JSON fields and preserves advanced extras"
   ).toBeVisible();
   await expect(page.getByAltText("Generated result")).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "receipt_json_workflow" }),
-  ).toHaveAttribute("href", "/r/receipt_json_workflow");
+    page.locator('a[href="/r/receipt_json_workflow"]'),
+  ).toBeVisible();
   await expectTechnicalCollapsed(page);
   await openTechnicalDetails(page);
   expect(postedBody).toEqual({
@@ -526,6 +531,7 @@ test("workflow multipart guided fields include file, numeric edits, and preserve
   await expectTechnicalCollapsed(page);
   await openTechnicalDetails(page);
   await expect(page.getByText("Copy as", { exact: true })).toBeVisible();
+  await openCopyAs(page);
   await expect(
     page.getByText("/gateway/v1/workflows/remix/run", { exact: false }),
   ).toBeVisible();
@@ -755,9 +761,7 @@ test("workflow denied receipt does not create a link, while verified receipt lin
     route.fulfill({ json: { request_id: "receipt_from_asset" } }),
   );
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(
-    page.getByRole("link", { name: "receipt_from_asset" }),
-  ).toHaveAttribute("href", "/r/receipt_from_asset");
+  await expect(page.locator('a[href="/r/receipt_from_asset"]')).toBeVisible();
 
   await page.unroute("**/v1/images/generations");
   await page.route("**/v1/images/generations", (route) =>
@@ -772,7 +776,7 @@ test("workflow denied receipt does not create a link, while verified receipt lin
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Not available for this session")).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "receipt denied/value" }),
+    page.locator('a[href="/r/receipt%20denied%2Fvalue"]'),
   ).toHaveCount(0);
 
   await page.unroute("**/v1/images/generations");
@@ -787,7 +791,7 @@ test("workflow denied receipt does not create a link, while verified receipt lin
   );
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(
-    page.getByRole("link", { name: "receipt verified/value" }),
+    page.locator('a[href="/r/receipt%20verified%2Fvalue"]'),
   ).toHaveAttribute("href", "/r/receipt%20verified%2Fvalue");
 });
 
