@@ -96,8 +96,8 @@ describe("catalog polish", () => {
     expect(screen.getByText("Paid · $0.04 per image")).toBeVisible();
     expect(screen.getByText("Local · no provider charge")).toBeVisible();
     expect(screen.queryByText(/Free/)).toBeNull();
-    expect(screen.getAllByText("Not measured yet")).toHaveLength(2);
-    expect(screen.getAllByTitle("Typical time")).toHaveLength(2);
+    expect(screen.queryByText("Not measured yet")).toBeNull();
+    expect(screen.queryByTitle("Typical time")).toBeNull();
     expect(screen.getAllByText(/Two requests are ahead of yours/)).toHaveLength(
       2,
     );

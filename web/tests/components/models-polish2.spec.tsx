@@ -23,7 +23,9 @@ function row(overrides: Record<string, unknown> = {}) {
     operations: ["chat"],
     resolves_to: { chat: "internal-model" },
     description: "Chat through your configured model.",
-    capabilities: [{ intent: "chat.completions", label: "Chat" }],
+    capabilities: [
+      { intent: "chat.completions", capability: "chat", label: "Chat" },
+    ],
     provider: "capture-engine",
     engine_label: "Household chat",
     locality: "local",
@@ -110,8 +112,12 @@ it("keeps absent timing honest and does not expose service ids as engine names",
     }),
   ]);
   await screen.findByRole("button", { name: "Copy alias chat" });
-  expect(screen.getByText("Not measured yet")).toBeVisible();
+  expect(screen.queryByText("Not measured yet")).toBeNull();
   expect(screen.getByTitle("Configured engine")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Details" }));
+  expect(
+    within(screen.getByRole("dialog")).getByText("Not measured yet"),
+  ).toBeVisible();
   expect(screen.queryByText(/capture-engine/)).toBeNull();
   expect(screen.queryByText(/Location not measured yet/)).toBeNull();
 });
@@ -119,8 +125,15 @@ it("keeps absent timing honest and does not expose service ids as engine names",
 it("does not display invalid negative duration as a measured speed", async () => {
   renderCatalog([row({ timing: { typical_seconds: -1, source: "receipts" } })]);
   await screen.findByRole("button", { name: "Copy alias chat" });
-  expect(screen.getByText("Not measured yet")).toBeVisible();
+  expect(screen.queryByText("Not measured yet")).toBeNull();
+  expect(
+    screen.queryByTitle("Measured time from successful requests"),
+  ).toBeNull();
   expect(screen.queryByText(/-1000 ms/)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Details" }));
+  expect(
+    within(screen.getByRole("dialog")).getByText("Not measured yet"),
+  ).toBeVisible();
 });
 
 it("provides actions for the initial empty catalog and filtered empty catalog", async () => {

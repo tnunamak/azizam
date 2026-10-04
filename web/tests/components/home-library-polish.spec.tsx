@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import HomePage from "@/app/home/page";
 import LibraryPage from "@/app/library/page";
 import { ViewerContext } from "@/components/shell/session";
+import { PRODUCT_NAME } from "@/lib/product";
 
 function renderPage(page: React.ReactElement, owner = false) {
   const client = new QueryClient({
@@ -29,6 +30,7 @@ function renderPage(page: React.ReactElement, owner = false) {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 const home = {
   authenticated: true,
@@ -98,7 +100,9 @@ describe("Home and Library polish", () => {
       }),
     );
     const { container } = renderPage(<HomePage />);
-    expect(await screen.findByText("Welcome to Family gateway.")).toBeVisible();
+    expect(
+      await screen.findByText(`Welcome to ${PRODUCT_NAME}. Family gateway`),
+    ).toBeVisible();
     expect(
       screen.getByRole("heading", { level: 1, name: "Hello, Alex." }),
     ).toBeVisible();
@@ -236,12 +240,22 @@ describe("Home and Library polish", () => {
     const { container } = renderPage(<LibraryPage />);
     await screen.findByRole("button", { name: "Open Ocean sounds" });
     const audio = container.querySelector("audio");
-    expect(audio).toHaveAttribute("controls");
+    expect(audio).not.toHaveAttribute("controls");
+    expect(audio).toHaveAttribute("preload", "metadata");
+    const play = screen.getByRole("button", { name: "Play Ocean sounds" });
+    expect(
+      screen.getByRole("button", { name: "Open Ocean sounds" }).contains(play),
+    ).toBe(false);
     expect(audio).toHaveAttribute("src", "/signed/audio1");
     expect(audio?.closest("button")).toBeNull();
     expect(container.querySelector("video")).toBeNull();
-    expect(screen.getByText("6 s")).toBeVisible();
-    await userEvent.click(audio!);
+    expect(screen.getByText("0:06")).toBeVisible();
+    expect(screen.getByText("0:12")).toBeVisible();
+    const playAudio = vi
+      .spyOn(HTMLMediaElement.prototype, "play")
+      .mockResolvedValue();
+    await userEvent.click(play);
+    expect(playAudio).toHaveBeenCalledOnce();
     expect(screen.queryByRole("dialog")).toBeNull();
     await userEvent.click(
       screen.getByRole("button", { name: "Open Ocean sounds" }),
