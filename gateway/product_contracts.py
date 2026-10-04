@@ -7,6 +7,7 @@ from typing import Literal
 from typing_extensions import NotRequired, TypedDict
 
 AvailabilityStatus = Literal["ready", "idle", "starting", "busy", "unknown", "unavailable"]
+CapabilityIconKey = Literal["chat", "image", "video", "music", "sfx", "speech", "transcribe", "decide", "embed", "rerank"]
 SetupEvent = Literal["settings_copied", "external_client_confirmed", "receipt_viewed"]
 
 
@@ -42,6 +43,12 @@ class CatalogAvailability(TypedDict):
 
 
 class CapabilitySummary(TypedDict):
+    capability_title: NotRequired[str]
+    icon_key: NotRequired[CapabilityIconKey]
+    recommended_model: NotRequired[str]
+    use_names: NotRequired[list[str]]
+    summary: NotRequired[str]
+    secondary_profile: NotRequired[bool]
     title: NotRequired[str]
     capability: NotRequired[str]
     use_name: NotRequired[str]
@@ -170,6 +177,12 @@ class SetupEvidenceResponse(TypedDict):
 
 
 class MemberStatusCapability(TypedDict):
+    capability_title: NotRequired[str]
+    icon_key: NotRequired[CapabilityIconKey]
+    recommended_model: NotRequired[str]
+    use_names: NotRequired[list[str]]
+    summary: NotRequired[str]
+    secondary_profile: NotRequired[bool]
     title: NotRequired[str]
     use_name: NotRequired[str]
     capability: str
@@ -200,6 +213,7 @@ class MemberStatus(TypedDict):
 
 
 class CatalogCapability(TypedDict):
+    icon_key: NotRequired[CapabilityIconKey]
     capability: NotRequired[str]
     intent: str
     label: str
@@ -246,6 +260,12 @@ class CatalogSummary(TypedDict, total=False):
 
 
 class CatalogRow(TypedDict):
+    capability_title: NotRequired[str]
+    icon_key: NotRequired[CapabilityIconKey]
+    recommended_model: NotRequired[str]
+    use_names: NotRequired[list[str]]
+    title: NotRequired[str]
+    secondary_profile: NotRequired[bool]
     id: str
     object: Literal["model_catalog.alias", "model_catalog.model"]
     display_name: str

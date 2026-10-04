@@ -9,6 +9,16 @@ import {
   Copy,
   Search,
   SlidersHorizontal,
+  AudioLines,
+  GitBranch,
+  Image,
+  Layers,
+  ListFilter,
+  MessageSquare,
+  Mic,
+  Music2,
+  Video,
+  Waves,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { productApi, type CatalogRow } from "@/lib/product-api";
@@ -38,10 +48,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  CapabilityIcon,
-  type Capability,
-} from "@/components/product/capability-icon";
 import {
   CodeBlock,
   EmptyState,
@@ -75,9 +81,7 @@ type ProductCapability =
   | "rerank"
   | "audio";
 
-type CatalogCapabilityEntry = CatalogRow["capabilities"][number] & {
-  capability?: ProductCapability;
-};
+type CatalogCapabilityEntry = CatalogRow["capabilities"][number];
 
 const productCapabilityOrder: ProductCapability[] = [
   "chat",
@@ -107,41 +111,37 @@ const capabilityLabels: Record<ProductCapability, string> = {
   rerank: "Rerank",
 };
 
-const iconCapability: Record<ProductCapability, Capability> = {
-  chat: "chat",
-  image: "image",
-  video: "video",
-  music: "voice",
-  sfx: "voice",
-  speech: "voice",
-  audio: "voice",
-  transcribe: "transcribe",
-  decide: "decide",
-  embed: "embed",
-  rerank: "embed",
+// The server owns taxonomy and labels; this map only selects a glyph.
+const capabilityGlyphs = {
+  chat: MessageSquare,
+  image: Image,
+  video: Video,
+  music: Music2,
+  sfx: Waves,
+  speech: AudioLines,
+  transcribe: Mic,
+  decide: GitBranch,
+  embed: Layers,
+  rerank: ListFilter,
 };
 
-function capabilityFromIntent(intent: string | undefined): ProductCapability {
-  if (!intent) return "chat";
-  if (intent.startsWith("image.")) return "image";
-  if (intent.startsWith("video.")) return "video";
-  if (intent === "speech.synthesis") return "speech";
-  if (intent === "audio.generate") return "audio";
-  if (intent.startsWith("speech.transcription")) return "transcribe";
-  if (intent === "text.embeddings") return "embed";
-  if (intent.includes("rerank")) return "rerank";
-  if (intent.includes("decision") || intent.includes("systemone")) {
-    return "decide";
-  }
-  return "chat";
+function CatalogIcon({ row }: { row: CatalogRow }) {
+  const key =
+    row.icon_key ?? row.capabilities[0]?.icon_key ?? primaryCapability(row);
+  const Icon = capabilityGlyphs[key as keyof typeof capabilityGlyphs] ?? Layers;
+  return (
+    <span
+      role="img"
+      aria-label={primaryCapabilityLabel(row)}
+      className="bg-muted text-muted-foreground inline-flex size-8 shrink-0 items-center justify-center rounded-md"
+    >
+      <Icon aria-hidden="true" className="size-4" />
+    </span>
+  );
 }
 
 function entryCapability(entry: CatalogCapabilityEntry): ProductCapability {
-  return entry.capability ?? capabilityFromIntent(entry.intent);
-}
-
-function contractHasPresentation(row: CatalogRow): boolean {
-  return row.capabilities.some((entry) => "capability" in entry);
+  return (entry.capability as ProductCapability | undefined) ?? "chat";
 }
 
 function primaryCapability(row: CatalogRow): ProductCapability {
@@ -151,7 +151,11 @@ function primaryCapability(row: CatalogRow): ProductCapability {
 
 function primaryCapabilityLabel(row: CatalogRow): string {
   const entry = row.capabilities[0] as CatalogCapabilityEntry | undefined;
-  return entry?.label ?? capabilityLabels[primaryCapability(row)];
+  return (
+    row.capability_title ??
+    entry?.label ??
+    capabilityLabels[primaryCapability(row)]
+  );
 }
 
 function hasCapability(
@@ -164,50 +168,11 @@ function hasCapability(
 }
 
 function descriptionFor(row: CatalogRow): string {
-  if (row.description && !isGenericDescription(row)) {
-    return row.description;
-  }
-  if (row.alias) {
-    const aliasDescription = aliasDescriptionFor(row);
-    if (aliasDescription) return aliasDescription;
-  }
-  const label =
-    row.capabilities[0]?.label ?? capabilityLabels[primaryCapability(row)];
-  return `${label} model visible to your access plan.`;
-}
-
-function isGenericDescription(row: CatalogRow): boolean {
-  const text = row.description?.trim().toLowerCase();
-  if (!text) return true;
-  if (/^chat model visible to your access plan\.?$/.test(text)) return true;
-  const engine = row.engine_label?.trim().toLowerCase();
-  return Boolean(engine && text === engine);
-}
-
-function aliasDescriptionFor(row: CatalogRow): string | null {
-  if (!row.alias) return null;
-  const id = row.id.toLowerCase();
-  if (id === "default" || id === "chat") {
-    return "General chat alias for longer answers and reasoning-capable models.";
-  }
-  if (id === "fast") {
-    return "Fast chat alias for lower-latency replies.";
-  }
-  if (id === "coder" || id === "code") {
-    return "Coding alias for coding agents and technical work.";
-  }
-  return null;
+  return row.description ?? "";
 }
 
 function titleFor(row: CatalogRow): string {
-  const name = [row.display_name, row.name].find(
-    (value) => value && value.toLowerCase() !== row.id.toLowerCase(),
-  );
-  if (name) return name;
-  if (!row.alias) return `${capabilityLabels[primaryCapability(row)]} model`;
-  if (row.id === "fast") return "Fast chat";
-  if (row.id === "coder" || row.id === "code") return "Coding chat";
-  return capabilityLabels[primaryCapability(row)];
+  return row.title ?? row.display_name;
 }
 
 function hasNoProviderCharge(row: CatalogRow): boolean {
@@ -239,9 +204,9 @@ function engineLabel(row: CatalogRow): string {
 }
 
 function summaryEngineLabel(row: CatalogRow): string {
-  if (row.locality === "local")
-    return contractHasPresentation(row) ? engineLabel(row) : "Local engine";
-  if (row.locality === "remote") return row.provider ?? "Remote provider";
+  if (row.locality === "local") return engineLabel(row);
+  if (row.locality === "remote")
+    return row.engine_label ?? row.provider ?? "Remote provider";
   return "Configured service";
 }
 
@@ -431,6 +396,8 @@ function itemMatches(row: CatalogRow, query: string): boolean {
     row.name,
     row.display_name,
     row.description,
+    ...(row.use_names ?? []),
+    row.recommended_model,
     row.provider,
     row.engine_label,
     ...row.operations,
@@ -521,7 +488,7 @@ function AliasCard({
   return (
     <article className="bg-card text-card-foreground flex min-w-0 flex-col gap-5 rounded-xl border p-5">
       <div className="flex min-w-0 items-start gap-3">
-        <CapabilityIcon capability={iconCapability[primaryCapability(row)]} />
+        <CatalogIcon row={row} />
         <div className="min-w-0 flex-1">
           <h3 className="truncate font-semibold">{titleFor(row)}</h3>
           <p className="text-muted-foreground mt-1 line-clamp-2 text-sm">
@@ -639,20 +606,13 @@ function Fact({ label, value }: { label: string; value: string }) {
 
 function DetailSheet({
   row,
-  aliases,
   onOpenChange,
   viewerAdmin,
 }: {
   row: CatalogRow | null;
-  aliases: CatalogRow[];
   onOpenChange: (open: boolean) => void;
   viewerAdmin: boolean;
 }) {
-  const aliasesPointingHere = row
-    ? aliases.filter((alias) =>
-        Object.values(alias.resolves_to).includes(row.id),
-      )
-    : [];
   const action = row ? availabilityAction(row, viewerAdmin) : null;
   return (
     <Sheet open={!!row} onOpenChange={onOpenChange}>
@@ -702,23 +662,17 @@ function DetailSheet({
                 </div>
               </div>
               <div>
-                <h3 className="font-medium">Aliases that point here</h3>
-                {row.alias ? (
-                  <p className="text-muted-foreground mt-2 text-sm">
-                    This row is a stable alias.
-                  </p>
-                ) : aliasesPointingHere.length ? (
+                <h3 className="font-medium">Names you can use</h3>
+                {row.use_names?.length ? (
                   <div className="mt-3 flex flex-wrap gap-2">
-                    {aliasesPointingHere.map((alias) => (
-                      <Badge key={alias.id} variant="secondary">
-                        {alias.id}
+                    {row.use_names.map((name) => (
+                      <Badge key={name} variant="secondary">
+                        {name}
                       </Badge>
                     ))}
                   </div>
                 ) : (
-                  <p className="text-muted-foreground mt-2 text-sm">
-                    No stable aliases currently point to this model.
-                  </p>
+                  <p className="text-muted-foreground mt-2 text-sm">{row.id}</p>
                 )}
               </div>
               <div>
@@ -790,6 +744,7 @@ export default function ModelsClient() {
   const [showNoProviderCharge, setShowNoProviderCharge] = useState(true);
   const [showPaid, setShowPaid] = useState(true);
   const [tableOpen, setTableOpen] = useState(false);
+  const [moreChatOpen, setMoreChatOpen] = useState(false);
   const [detail, setDetail] = useState<CatalogRow | null>(null);
   const {
     data: catalogData,
@@ -819,11 +774,17 @@ export default function ModelsClient() {
     return true;
   };
   const aliasRows = (catalogData?.aliases ?? []).filter(passesFilters);
-  const modelRows = (catalogData?.models ?? []).filter(passesFilters);
+  const modelRows = (catalogData?.models ?? []).filter(
+    (row) => passesFilters(row) && !row.secondary_profile,
+  );
+  const secondaryChatRows = allRows.filter(
+    (row) => passesFilters(row) && row.secondary_profile,
+  );
+  const primaryAliasRows = aliasRows.filter((row) => !row.secondary_profile);
   const groupedAliases = productCapabilityOrder
     .map((cap) => ({
       capability: cap,
-      rows: aliasRows.filter((row) => primaryCapability(row) === cap),
+      rows: primaryAliasRows.filter((row) => primaryCapability(row) === cap),
     }))
     .filter((group) => group.rows.length > 0);
 
@@ -901,12 +862,15 @@ export default function ModelsClient() {
                   pressed={capability === cap}
                   onClick={() => setCapability(cap)}
                 >
-                  {capabilityLabels[cap]}
+                  {allRows
+                    .flatMap((row) => row.capabilities)
+                    .find((entry) => entryCapability(entry) === cap)?.label ??
+                    capabilityLabels[cap]}
                 </FilterToggle>
               ))}
             </div>
           </section>
-          {groupedAliases.length === 0 ? (
+          {groupedAliases.length === 0 && secondaryChatRows.length === 0 ? (
             <EmptyState
               icon={Search}
               title={
@@ -948,8 +912,8 @@ export default function ModelsClient() {
                 aria-label="Available model aliases"
                 className={cn(
                   "grid gap-6",
-                  aliasRows.length > 1 && "sm:grid-cols-2",
-                  aliasRows.length > 2 && "lg:grid-cols-3",
+                  primaryAliasRows.length > 1 && "sm:grid-cols-2",
+                  primaryAliasRows.length > 2 && "lg:grid-cols-3",
                 )}
               >
                 {groupedAliases.map((group) => (
@@ -962,11 +926,9 @@ export default function ModelsClient() {
                     )}
                   >
                     <div className="flex items-center gap-3">
-                      <CapabilityIcon
-                        capability={iconCapability[group.capability]}
-                      />
+                      <CatalogIcon row={group.rows[0]} />
                       <h2 className="text-lg font-semibold">
-                        {capabilityLabels[group.capability]}
+                        {primaryCapabilityLabel(group.rows[0])}
                       </h2>
                     </div>
                     <div
@@ -989,6 +951,56 @@ export default function ModelsClient() {
                 ))}
               </div>
             </div>
+          )}
+          {secondaryChatRows.length > 0 && (
+            <section className="space-y-3">
+              <Button
+                variant="outline"
+                className="w-full justify-between"
+                aria-expanded={moreChatOpen || Boolean(query.trim())}
+                aria-controls="more-chat-profiles"
+                onClick={() => setMoreChatOpen((value) => !value)}
+              >
+                <span>More chat profiles · {secondaryChatRows.length}</span>
+                <ChevronDown
+                  aria-hidden="true"
+                  className={cn(
+                    "size-4 transition",
+                    (moreChatOpen || Boolean(query.trim())) && "rotate-180",
+                  )}
+                />
+              </Button>
+              {(moreChatOpen || Boolean(query.trim())) && (
+                <div
+                  id="more-chat-profiles"
+                  className="divide-y rounded-lg border px-4"
+                >
+                  {secondaryChatRows.map((row) => (
+                    <div
+                      key={row.id}
+                      className="flex min-w-0 flex-wrap items-center gap-3 py-4"
+                    >
+                      <div className="min-w-0 flex-1 basis-48">
+                        <h3 className="font-medium">{titleFor(row)}</h3>
+                        <p className="text-muted-foreground mt-1 text-sm">
+                          {descriptionFor(row)}
+                        </p>
+                      </div>
+                      <code className="max-w-full text-xs break-all">
+                        {row.id}
+                      </code>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setDetail(row)}
+                      >
+                        Details
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
           )}
           <section className="space-y-3">
             <button
@@ -1069,7 +1081,6 @@ export default function ModelsClient() {
       )}
       <DetailSheet
         row={detail}
-        aliases={catalogData?.aliases ?? []}
         onOpenChange={(open) => !open && setDetail(null)}
         viewerAdmin={viewer.admin}
       />

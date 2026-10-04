@@ -285,3 +285,108 @@ test("loading finishes with observed models", async ({ page }) => {
   release();
   await expect(page.getByText("Ready", { exact: true })).toBeVisible();
 });
+
+for (const theme of ["light", "dark"]) {
+  for (const width of [1440, 390]) {
+    test(`presentation contract ${theme} ${width}`, async ({ page }) => {
+      const profiles = [
+        row("default", "ready", {
+          title: "Default",
+          description: "Thinks through questions before answering.",
+          icon_key: "chat",
+          capability_title: "Chat",
+          engine_label: "Chat (llama.cpp)",
+          use_names: ["default", "chat-model"],
+        }),
+        row("fast", "ready", {
+          title: "Fast",
+          description: "Direct answers with thinking disabled.",
+          icon_key: "chat",
+          capability_title: "Chat",
+        }),
+        row("coder", "ready", {
+          title: "Coder",
+          description: "Coding profile for technical work.",
+          icon_key: "chat",
+          capability_title: "Chat",
+        }),
+        row("coder-q5", "ready", {
+          title: "Coder Q5",
+          description: "Coding profile with Q5 weights.",
+          secondary_profile: true,
+        }),
+        row("rp", "ready", {
+          alias: false,
+          object: "model_catalog.model",
+          title: "Roleplay",
+          description: "Chat profile for roleplay.",
+          secondary_profile: true,
+        }),
+        row("music", "ready", {
+          title: "Music",
+          icon_key: "music",
+          capability_title: "Music",
+          description: "Generate music from a prompt.",
+          use_names: ["music", "song", "music-workflow"],
+          capabilities: [
+            {
+              intent: "audio.generate",
+              capability: "music",
+              icon_key: "music",
+              label: "Music",
+              input_modalities: ["text"],
+              output_modalities: ["audio"],
+              available: true,
+              streaming: false,
+            },
+          ],
+        }),
+      ];
+      await prepare(page, theme, width, {
+        ...seeded,
+        aliases: profiles.filter((profile) => profile.alias),
+        models: profiles.filter((profile) => !profile.alias),
+        counts: {
+          aliases: profiles.filter((profile) => profile.alias).length,
+          models: profiles.filter((profile) => !profile.alias).length,
+          capabilities: profiles.length,
+        },
+      });
+      const cards = page
+        .getByLabel("Available model aliases")
+        .locator("article");
+      await expect(cards).toHaveCount(4);
+      for (const title of ["Default", "Fast", "Coder", "Music"]) {
+        await expect(
+          cards.getByRole("heading", { name: title, exact: true }),
+        ).toBeVisible();
+      }
+      await expect(cards.first().getByText("Chat (llama.cpp)")).toBeVisible();
+      await expect(
+        page.getByRole("heading", { name: "Coder Q5", exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        cards.getByRole("img", { name: "Music", exact: true }).locator("svg"),
+      ).toHaveClass(/lucide-music-2/);
+      await verify(page, `presentation-${theme}-${width}`);
+      await page.getByRole("button", { name: /More chat profiles/ }).click();
+      await expect(
+        page.getByRole("heading", { name: "Coder Q5", exact: true }),
+      ).toBeVisible();
+      await expect(page.getByText("Chat profile for roleplay.")).toBeVisible();
+      await verify(page, `more-profiles-${theme}-${width}`);
+      await page.getByRole("textbox", { name: "Search models" }).fill("song");
+      await expect(cards).toHaveCount(1);
+      await cards.getByRole("button", { name: "Details" }).click();
+      await expect(
+        page.getByRole("dialog").getByText("Names you can use"),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("dialog").getByText("song", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("dialog").getByText("music-workflow", { exact: true }),
+      ).toBeVisible();
+    });
+  }
+}

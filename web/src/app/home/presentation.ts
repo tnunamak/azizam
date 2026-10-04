@@ -61,6 +61,8 @@ export function capabilityTiles(
   capabilities: HomeCapability[],
   aliases: HomeAlias[],
 ): HomeCapability[] {
+  // Current gateways supply one recommended row per capability.
+  if (capabilities.some((row) => row.icon_key)) return capabilities;
   if (capabilities.some((row) => row.title)) {
     const order = [
       "chat",

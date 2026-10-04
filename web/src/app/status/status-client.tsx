@@ -44,6 +44,7 @@ type EngineView = {
   backend?: LiveBackend;
   name: string;
   label: string;
+  group: string;
   role: string;
   state: string;
   tone: Tone;
@@ -122,38 +123,6 @@ function observationLabel(service?: CurrentHealthService): string {
   return service.observation.replace(/_/g, " ");
 }
 
-function capabilityHumanName(service: Service): string {
-  const capabilities = new Set(
-    service.capabilities.map((capability) => capability.toLowerCase()),
-  );
-  let label: string;
-  if (capabilities.has("image") && capabilities.has("video")) {
-    label = "Image & video";
-  } else if (capabilities.has("image") || capabilities.has("images")) {
-    label = "Image";
-  } else if (capabilities.has("video")) {
-    label = "Video";
-  } else {
-    const labels: Record<string, string> = {
-      chat: "Chat",
-      completions: "Chat",
-      speech: "Speech",
-      tts: "Speech",
-      transcription: "Transcription",
-      stt: "Transcription",
-      embeddings: "Embeddings",
-      rerank: "Rerank",
-    };
-    const capability =
-      service.capabilities.find((cap) => labels[cap.toLowerCase()]) ??
-      service.capabilities[0];
-    label = capability
-      ? (labels[capability.toLowerCase()] ?? titleize(capability))
-      : "Engine";
-  }
-  return label;
-}
-
 function endpoint(service: Service, backend?: LiveBackend): string {
   const raw =
     service.config.base_url ||
@@ -184,7 +153,14 @@ function serviceModels(service: Service): string[] {
 function enginesFrom(
   registry: ServiceRegistry | undefined,
   status: StatusPayload | undefined,
+  presentationStatus: StatusPayload | undefined,
 ): EngineView[] {
+  const presentation = new Map(
+    (presentationStatus?.current_health?.services ?? []).map((item) => [
+      item.service_id,
+      item,
+    ]),
+  );
   const health = new Map(
     (status?.current_health?.services ?? []).map((item) => [
       item.service_id,
@@ -200,6 +176,7 @@ function enginesFrom(
   return Object.values(registry?.services ?? {})
     .map((service) => {
       const h = health.get(service.id);
+      const display = presentation.get(service.id);
       const backend = backends.get(service.id);
       const backendExtras = backend as
         | (LiveBackend & { queue?: unknown; queue_depth?: unknown })
@@ -208,8 +185,10 @@ function enginesFrom(
         service,
         health: h,
         backend,
-        name: service.name || capabilityHumanName(service),
-        label: capabilityHumanName(service),
+        name: display?.engine_label || service.name || "Engine",
+        label:
+          display?.capability_labels?.join(", ") || "Capabilities unavailable",
+        group: display?.capability_title || "Engines",
         role: service.role || h?.role || titleize(service.kind || "engine"),
         state: !service.enabled
           ? "Disabled"
@@ -388,37 +367,13 @@ function EngineRow({
         <StatusBadge tone={engine.tone} label={engine.state} />
       </td>
       <td className="hidden py-3 pr-3 align-top text-sm break-words sm:table-cell">
-        {engine.models.join(", ") || engine.label}
+        {engine.label}
       </td>
       <td className="hidden py-3 align-top text-sm break-words md:table-cell">
         {engine.lastError ?? "—"}
       </td>
     </tr>
   );
-}
-
-function engineCapability(service: Service): string {
-  const labels: Record<string, string> = {
-    chat: "Chat",
-    completions: "Chat",
-    image: "Images & video",
-    images: "Images & video",
-    video: "Images & video",
-    speech: "Speech",
-    tts: "Speech",
-    audio: "Audio",
-    music: "Music",
-    sfx: "Sound effects",
-    transcribe: "Transcription",
-    transcription: "Transcription",
-    stt: "Transcription",
-    decide: "Decisions",
-    decision: "Decisions",
-    embed: "Embeddings",
-    embeddings: "Embeddings",
-    rerank: "Rerank",
-  };
-  return labels[service.capabilities[0]?.toLowerCase()] ?? "Other engines";
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -494,7 +449,9 @@ function currentDisk(
       if (!record) return [];
       return [
         {
-          name: String(record.target ?? record.source ?? "partition"),
+          name: String(
+            record.display_name ?? record.target ?? record.source ?? "Disk",
+          ),
           pct: asNumber(record.pct_used),
         },
       ];
@@ -697,8 +654,8 @@ export function StatusClient() {
       ? undefined
       : statusData;
   const engines = useMemo(
-    () => enginesFrom(registryData, observedStatus),
-    [registryData, observedStatus],
+    () => enginesFrom(registryData, observedStatus, statusData),
+    [registryData, observedStatus, statusData],
   );
   const visibleEngines = engines.filter(
     (engine) =>
@@ -729,9 +686,9 @@ export function StatusClient() {
     (signal) => signal.source === "api",
   );
   const hostWarning = apiSignal?.reasons[0]
-    ? `The gateway needs attention: ${apiSignal.reasons[0]}.`
+    ? apiSignal.reasons[0]
     : firstHostWarning
-      ? `${firstHostWarning.source} needs owner action: ${firstHostWarning.reason}.`
+      ? firstHostWarning.reason
       : null;
   const answer = registryIsError
     ? "Engine configuration is unavailable; retry to check the configured engines."
@@ -818,11 +775,7 @@ export function StatusClient() {
         ) : visibleEngines.length ? (
           <div className="space-y-6">
             {Array.from(
-              new Set(
-                visibleEngines.map((engine) =>
-                  engineCapability(engine.service),
-                ),
-              ),
+              new Set(visibleEngines.map((engine) => engine.group)),
             ).map((group) => (
               <div key={group}>
                 <h3 className="text-muted-foreground mb-2 text-sm font-medium">
@@ -848,9 +801,7 @@ export function StatusClient() {
                   </thead>
                   <tbody>
                     {visibleEngines
-                      .filter(
-                        (engine) => engineCapability(engine.service) === group,
-                      )
+                      .filter((engine) => engine.group === group)
                       .map((engine) => (
                         <EngineRow
                           key={engine.service.id}

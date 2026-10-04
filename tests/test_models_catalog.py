@@ -174,7 +174,7 @@ class ModelsCatalogBuildTests(unittest.TestCase):
         self.assertEqual(fast["id"], "fast")
         self.assertEqual(fast["resolves_to"], {"chat": "default-fast"})
         self.assertEqual(fast["capabilities"][0]["intent"], "chat.completions")
-        self.assertEqual(fast["description"], "Low latency chat model")
+        self.assertEqual(fast["description"], "Low latency chat model.")
         self.assertEqual(fast["cost"], {"kind": "free", "price": None})
         self.assertEqual(fast["timing"]["typical_seconds"], 2.0)
         self.assertEqual(fast["timing"]["source"], "receipts")
@@ -373,7 +373,7 @@ class ModelsCatalogBuildTests(unittest.TestCase):
         self.assertEqual([row["id"] for row in catalog["aliases"]], ["image"])
         self.assertEqual(catalog["models"], [])
         self.assertEqual(catalog["aliases"][0]["resolves_to"], {"images": "poster"})
-        self.assertEqual(catalog["aliases"][0]["description"], "Public poster workflow")
+        self.assertEqual(catalog["aliases"][0]["description"], "Public poster workflow.")
 
     def test_default_profile_fallback_is_only_for_fresh_or_default_apps(self) -> None:
         contexts = auth_contexts_from_user_snapshot(
@@ -477,7 +477,7 @@ class ModelsCatalogBuildTests(unittest.TestCase):
 
         row = next(row for row in catalog["models"] if row["id"] == "image.poster")
         self.assertEqual(row["name"], "Poster image")
-        self.assertEqual(row["description"], "A poster workflow")
+        self.assertEqual(row["description"], "A poster workflow.")
         self.assertEqual(row["timing"], {"typical_seconds": 12, "source": "configured"})
 
     def test_ui_source_is_not_provider_and_cost_stays_unknown_without_locality(self) -> None:
@@ -645,7 +645,7 @@ class ModelsCatalogBuildTests(unittest.TestCase):
         )
         row = next(row for row in catalog["models"] if row["id"] == "poster")
         self.assertEqual(row["name"], "Poster image")
-        self.assertEqual(row["description"], "Create a poster")
+        self.assertEqual(row["description"], "Create a poster.")
         self.assertEqual(row["timing"]["typical_seconds"], 12)
         self.assertEqual(row["recent_receipts"][0]["request_id"], "own-image")
 

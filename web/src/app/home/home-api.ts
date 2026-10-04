@@ -24,6 +24,11 @@ export type HomeCapability = Pick<
   availability?: SharedHomeCapability["availability"];
   title?: string;
   use_name?: string;
+  capability_title?: string;
+  icon_key?: string;
+  recommended_model?: string;
+  use_names?: string[];
+  summary?: string;
 };
 export type HomeSnapshot = SharedHomeSnapshot & {
   user: NonNullable<SharedHomeSnapshot["user"]>;

@@ -56,13 +56,17 @@ const currentStatus = {
       {
         source: "disk",
         tone: "warn",
-        reasons: ["Media disk is above the warning threshold"],
+        reasons: ["Media disk (/media) is above the warning threshold."],
       },
     ],
     services: [
       {
         service_id: "chat",
         name: "Local chat engine",
+        engine_label: "Local chat engine",
+        capability_title: "Chat",
+        capability_labels: ["Chat"],
+        icon_key: "chat",
         configured: true,
         enabled: true,
         role: "primary chat",
@@ -74,6 +78,10 @@ const currentStatus = {
       {
         service_id: "image",
         name: "Local image engine",
+        engine_label: "Local image engine",
+        capability_title: "Images",
+        capability_labels: ["Images", "Video"],
+        icon_key: "image",
         configured: true,
         enabled: false,
         role: "image",
@@ -85,6 +93,10 @@ const currentStatus = {
       {
         service_id: "imageOnly",
         name: "Image-only engine",
+        engine_label: "Image-only engine",
+        capability_title: "Images",
+        capability_labels: ["Images"],
+        icon_key: "image",
         configured: true,
         enabled: true,
         role: "image",
@@ -110,6 +122,7 @@ const currentStatus = {
       {
         source: "/dev/nvme0n1p2",
         target: "/media",
+        display_name: "Disk (/media)",
         size_bytes: 1000,
         used_bytes: 930,
         avail_bytes: 70,
@@ -228,10 +241,12 @@ for (const theme of ["light", "dark"] as const) {
         const main = page.locator("main");
         if (state === "seeded") {
           await expect(
-            main.getByText(
-              "disk needs owner action: Media disk is above the warning threshold.",
-              { exact: true },
-            ),
+            main
+              .locator("header")
+              .getByText(
+                "Media disk (/media) is above the warning threshold.",
+                { exact: true },
+              ),
           ).toBeVisible();
           await expect(
             main.getByRole("button", {
@@ -256,7 +271,9 @@ for (const theme of ["light", "dark"] as const) {
             main.getByRole("heading", { name: "OpenRouter", exact: true }),
           ).toBeVisible();
           await expect(main.getByLabel("GPU 0 budget line")).toBeVisible();
-          await expect(main.getByText("/media", { exact: true })).toBeVisible();
+          await expect(
+            main.getByText("Disk (/media)", { exact: true }),
+          ).toBeVisible();
           await expect(
             main.getByText("93% used", { exact: true }),
           ).toBeVisible();

@@ -3,6 +3,8 @@
 
 export type AvailabilityStatus = "ready" | "idle" | "starting" | "busy" | "unknown" | "unavailable";
 
+export type CapabilityIconKey = "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank";
+
 export type SetupEvent = "settings_copied" | "external_client_confirmed" | "receipt_viewed";
 
 export interface AvailabilityEvidence {
@@ -37,6 +39,12 @@ export interface CatalogAvailability {
 }
 
 export interface CapabilitySummary {
+  capability_title?: string;
+  icon_key?: "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank";
+  recommended_model?: string;
+  use_names?: Array<string>;
+  summary?: string;
+  secondary_profile?: boolean;
   title?: string;
   capability?: string;
   use_name?: string;
@@ -70,6 +78,12 @@ export interface CapabilitiesResponse {
 }
 
 export interface HomeCapability {
+  capability_title?: string;
+  icon_key?: "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank";
+  recommended_model?: string;
+  use_names?: Array<string>;
+  summary?: string;
+  secondary_profile?: boolean;
   title?: string;
   capability: string;
   use_name?: string;
@@ -187,6 +201,12 @@ export interface SetupEvidenceResponse {
 }
 
 export interface MemberStatusCapability {
+  capability_title?: string;
+  icon_key?: "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank";
+  recommended_model?: string;
+  use_names?: Array<string>;
+  summary?: string;
+  secondary_profile?: boolean;
   title?: string;
   use_name?: string;
   capability: string;
@@ -217,6 +237,7 @@ export interface MemberStatus {
 }
 
 export interface CatalogCapability {
+  icon_key?: "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank";
   capability?: string;
   intent: string;
   label: string;
@@ -263,6 +284,12 @@ export interface CatalogSummary {
 }
 
 export interface CatalogRow {
+  capability_title?: string;
+  icon_key?: "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank";
+  recommended_model?: string;
+  use_names?: Array<string>;
+  title?: string;
+  secondary_profile?: boolean;
   id: string;
   object: "model_catalog.alias" | "model_catalog.model";
   display_name: string;

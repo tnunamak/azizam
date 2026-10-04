@@ -93,6 +93,12 @@ for (const theme of ["light", "dark"] as const) {
                       : [
                           {
                             capability: "image",
+                            capability_title: "Images",
+                            icon_key: "image",
+                            title: "Flux",
+                            recommended_model: "Flux",
+                            use_names: ["image", "flux"],
+                            summary: "Generate images with Flux.",
                             intent: "image.generate",
                             model: "image-model",
                             workflow: null,
@@ -115,7 +121,7 @@ for (const theme of ["light", "dark"] as const) {
                             href: "/ui/usage/?receipt=member-status-receipt",
                           },
                         ],
-                  help: "Ask the owner if an allowed capability is unavailable.",
+                  help: "",
                 },
               }),
         );

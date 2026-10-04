@@ -379,11 +379,12 @@ def test_member_status_contains_only_allowed_capabilities_and_owned_receipts(hom
     assert data["receipts"][0]["href"] == "/ui/usage/?receipt=mine"
     assert isinstance(data["receipts"][0]["created_at"], int)
     for row in data["capabilities"]:
-        expected_fields = {"capability", "title", "use_name", "intent", "model", "workflow", "status", "available", "reason", "measured"}
+        expected_fields = {"capability", "capability_title", "icon_key", "title", "recommended_model", "use_names", "summary", "use_name", "intent", "model", "workflow", "status", "available", "reason", "measured"}
         if row.get("observed_at_s") is not None:
             expected_fields.add("observed_at_s")
         assert set(row) == expected_fields
-        assert row["title"] == "Chat"
+        assert row["capability_title"] == "Chat"
+        assert row["title"] == "Fast"
         assert row["use_name"] == row["model"]
     for hidden in ("backend", "private", "secret-host", c.outsider["id"], "other", "csrf_token", "credential"):
         assert hidden not in response.text
@@ -850,7 +851,9 @@ def test_member_status_uses_friendly_audio_taxonomy_and_omits_unknown_time(home_
     c.capabilities_override = lambda _identity: [Capability(intent="audio.generate", backend="service", model="sfx-alias", title="Small sound model", capability="sfx")]
     payload = c.http.get("/me/api/status").json()
     row = payload["capabilities"][0]
-    assert row["title"] == "Sound effects (Small sound model)"
+    assert row["title"] == "Small sound model"
+    assert row["capability_title"] == "Sound effects"
+    assert row["icon_key"] == "sfx"
     assert row["capability"] == "sfx"
     assert row["use_name"] == "sfx-alias"
     assert row.get("observed_at_s") is not None or "observed_at_s" not in row
@@ -860,11 +863,11 @@ def test_member_status_uses_friendly_audio_taxonomy_and_omits_unknown_time(home_
 def test_member_ready_summary_and_help_are_consistent(home_case):
     c = home_case
     ready = c.http.get("/me/api/status").json()
-    assert ready["status"] == {"state": "ready", "reason": "Your access is ready."}
+    assert ready["status"] == {"state": "ready", "reason": "Everything you can use is ready."}
     assert ready["help"] == ""
     c.capabilities_override = lambda _identity: [Capability(intent="chat.completions", backend="service", model="ready"),
                                                 Capability(intent="image.generate", backend="missing", model="unknown")]
     partial = c.http.get("/me/api/status").json()
-    assert partial["status"]["state"] == "ready"
-    assert partial["status"]["reason"].startswith("Some capabilities are ready.")
-    assert partial["help"]
+    assert partial["status"]["state"] == "unknown"
+    assert partial["status"]["reason"].startswith("Images are not measured yet:")
+    assert partial["help"] == ""

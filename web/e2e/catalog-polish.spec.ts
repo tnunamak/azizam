@@ -2,18 +2,23 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
 const aliases = [
-  ["fast", "chat.completions", "Chat"],
-  ["image", "image.generate", "Images"],
-  ["speech", "speech.synthesis", "Speech"],
-].map(([id, intent, label]) => ({
+  ["fast", "chat.completions", "Chat", "chat", "Fast"],
+  ["image", "image.generate", "Images", "image", "Images"],
+  ["speech", "speech.synthesis", "Speech", "speech", "Speech"],
+].map(([id, intent, label, capability, title]) => ({
   id,
   object: "model_catalog.alias",
-  display_name: id,
+  display_name: title,
+  title,
+  capability_title: label,
+  icon_key: capability,
+  use_names: [id],
+  secondary_profile: false,
   alias: true,
   operations: [],
   resolves_to: {},
   description: `${label} through a configured model.`,
-  capabilities: [{ intent, label }],
+  capabilities: [{ intent, label, capability, icon_key: capability }],
   provider: "Local engine",
   engine_label: "Local engine",
   locality: "local",
@@ -53,7 +58,9 @@ test("polished model grouping fills width before and after filtering", async ({
   const chatAliases = ["fast", "default", "balanced"].map((id) => ({
     ...aliases[0],
     id,
-    display_name: id,
+    display_name: id[0].toUpperCase() + id.slice(1),
+    title: id[0].toUpperCase() + id.slice(1),
+    use_names: [id],
     use: { model: id },
   }));
   await page.route("**/me/api/models/catalog", (route) =>
@@ -67,7 +74,9 @@ test("polished model grouping fills width before and after filtering", async ({
     }),
   );
   await page.goto("/ui/models/");
-  await expect(page.getByRole("heading", { name: "Fast chat" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Fast", exact: true }),
+  ).toBeVisible();
   const cards = page.locator('[aria-label="Available model aliases"] article');
   await verifyGrid(page, cards, 1440, 3);
   await page.getByRole("textbox", { name: "Search models" }).fill("fast");
@@ -86,7 +95,9 @@ for (const width of [390, 1440]) {
     const paid = ["image", "portrait", "illustration"].map((id) => ({
       ...aliases[1],
       id,
-      display_name: id,
+      display_name: id[0].toUpperCase() + id.slice(1),
+      title: id[0].toUpperCase() + id.slice(1),
+      use_names: [id],
       provider,
       engine_label: provider,
       locality: "remote",
@@ -231,7 +242,7 @@ for (const theme of ["light", "dark"] as const) {
         );
         await page.goto("/ui/models/");
         await expect(
-          page.getByRole("heading", { name: "Fast chat" }),
+          page.getByRole("heading", { name: "Fast", exact: true }),
         ).toBeVisible();
         const cards = page.locator(
           '[aria-label="Available model aliases"] article',

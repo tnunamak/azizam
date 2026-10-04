@@ -4,13 +4,21 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { useViewer } from "@/components/shell/session";
 import { Button } from "@/components/ui/button";
-import { CopyButton } from "@/components/ui/copy-button";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  CapabilityIcon,
-  type Capability,
-} from "@/components/product/capability-icon";
+  AudioLines,
+  GitBranch,
+  Image,
+  Layers,
+  ListFilter,
+  MessageSquare,
+  Mic,
+  Music2,
+  Video,
+  Waves,
+  CircleHelp,
+} from "lucide-react";
 import {
   ErrorState,
   PageHeader,
@@ -18,90 +26,98 @@ import {
   EmptyState,
 } from "@/components/product";
 import { ApiError } from "@/lib/api";
-import {
-  productApi,
-  type MemberStatusCapability,
-  type MemberStatus as MemberStatusData,
-} from "@/lib/product-api";
+import { productApi, type MemberStatusCapability } from "@/lib/product-api";
 import { StatusClient } from "./status-client";
 
-const capabilityNames: Record<string, string> = {
-  chat: "Chat",
-  image: "Images",
-  video: "Video",
-  audio: "Speech",
-  voice: "Speech",
-  transcribe: "Transcription",
-  decide: "Decisions",
-  embed: "Embeddings",
+const capabilityIcons = {
+  chat: {
+    icon: MessageSquare,
+    color: "text-capability-chat bg-capability-chat/10",
+  },
+  image: { icon: Image, color: "text-capability-image bg-capability-image/10" },
+  video: { icon: Video, color: "text-capability-video bg-capability-video/10" },
+  music: {
+    icon: Music2,
+    color: "text-capability-voice bg-capability-voice/10",
+  },
+  sfx: { icon: Waves, color: "text-capability-voice bg-capability-voice/10" },
+  speech: {
+    icon: AudioLines,
+    color: "text-capability-voice bg-capability-voice/10",
+  },
+  transcribe: {
+    icon: Mic,
+    color: "text-capability-transcribe bg-capability-transcribe/10",
+  },
+  decide: {
+    icon: GitBranch,
+    color: "text-capability-decide bg-capability-decide/10",
+  },
+  embed: {
+    icon: Layers,
+    color: "text-capability-embed bg-capability-embed/10",
+  },
+  rerank: {
+    icon: ListFilter,
+    color: "text-capability-embed bg-capability-embed/10",
+  },
 };
-function iconCapability(capability: string): Capability {
-  const value = capability === "audio" ? "voice" : capability;
-  return [
-    "chat",
-    "image",
-    "video",
-    "voice",
-    "transcribe",
-    "decide",
-    "embed",
-  ].includes(value)
-    ? (value as Capability)
-    : "chat";
-}
 
 function MemberCapability({
   capability,
 }: {
   capability: MemberStatusCapability;
 }) {
+  const { icon: Icon, color } = capabilityIcons[
+    capability.icon_key as keyof typeof capabilityIcons
+  ] ?? {
+    icon: CircleHelp,
+    color: "text-muted-foreground bg-muted",
+  };
   return (
     <li className="flex min-w-0 items-start gap-3 border-b py-5 last:border-0">
-      <CapabilityIcon capability={iconCapability(capability.capability)} />
-      <div className="min-w-0 space-y-2 break-words">
+      <span
+        role="img"
+        aria-label={capability.capability_title ?? "Capability"}
+        data-icon-key={capability.icon_key}
+        className={`inline-flex size-8 shrink-0 items-center justify-center rounded-md ${color}`}
+      >
+        <Icon aria-hidden="true" className="size-4" />
+      </span>
+      <div className="min-w-0 flex-1 space-y-2 break-words">
         <h3 className="font-medium">
-          {capabilityNames[capability.capability] ?? capability.capability}
+          {capability.capability_title ?? "Capability"}
         </h3>
-        {(capability.model || capability.workflow) && (
-          <p className="text-sm break-all">
-            {capability.model ?? capability.workflow}
-          </p>
-        )}
-        <p className="text-muted-foreground text-xs break-all">
-          {capability.intent}
+        <p className="text-muted-foreground text-sm">
+          {capability.recommended_model ??
+            capability.title ??
+            "Model details unavailable"}
         </p>
         <StatusPill status={capability.status} reason={capability.reason} />
-        <p className="text-muted-foreground text-xs">
-          {capability.measured ? (
-            <>
-              Observed{" "}
-              <RelativeTime
-                ts={capability.observed_at_s}
-                fallback="at an unknown time"
-              />
-            </>
-          ) : (
-            "Not measured yet"
-          )}
-        </p>
+        {capability.measured && capability.observed_at_s != null && (
+          <p className="text-muted-foreground text-xs">
+            Observed <RelativeTime ts={capability.observed_at_s} />
+          </p>
+        )}
+        <details className="text-sm">
+          <summary className="focus-visible:outline-ring text-muted-foreground flex min-h-11 cursor-pointer items-center focus-visible:outline focus-visible:outline-2">
+            Names you can use
+          </summary>
+          <div className="text-muted-foreground space-y-2 pb-2">
+            <p className="break-all">
+              {capability.use_names?.join(", ") ||
+                capability.use_name ||
+                "Names unavailable"}
+            </p>
+            <p>{capability.summary}</p>
+            {!capability.measured && (
+              <p className="text-xs">Not measured yet</p>
+            )}
+          </div>
+        </details>
       </div>
     </li>
   );
-}
-
-function ownerSummary(data: MemberStatusData): string {
-  return [
-    "Please help me check my gateway access.",
-    data.status.reason,
-    ...data.capabilities.map(
-      (item) =>
-        `${capabilityNames[item.capability] ?? item.capability}${item.model || item.workflow ? ` (${item.model ?? item.workflow})` : ""} [${item.intent}]: ${item.status}. ${item.reason}`,
-    ),
-    ...data.receipts.map(
-      (item) =>
-        `Request ${item.request_id}: ${item.status ?? "Unknown result"}.`,
-    ),
-  ].join("\n");
 }
 
 export function MemberStatus() {
@@ -177,23 +193,6 @@ export function MemberStatus() {
                 <a href="#recent-status-heading">View recent requests</a>
               </Button>
             </div>
-            <details className="rounded-lg border p-4">
-              <summary className="focus-visible:outline-ring flex min-h-11 cursor-pointer items-center font-medium focus-visible:outline focus-visible:outline-2">
-                Ask the owner
-              </summary>
-              <div className="space-y-3 pt-3">
-                <p className="text-muted-foreground text-sm">
-                  {data.help} Send the owner this status summary and the request
-                  ID from a failing receipt. Do not send your API key.
-                </p>
-                <pre className="bg-muted rounded-md p-3 text-xs break-all whitespace-pre-wrap">
-                  {ownerSummary(data)}
-                </pre>
-                <CopyButton value={ownerSummary(data)} className="min-h-11">
-                  Copy status summary
-                </CopyButton>
-              </div>
-            </details>
           </section>
           <section aria-labelledby="capability-status-heading">
             <h2
@@ -206,7 +205,7 @@ export function MemberStatus() {
               <ul className="grid gap-x-8 sm:grid-cols-2">
                 {data.capabilities.map((capability) => (
                   <MemberCapability
-                    key={`${capability.capability}-${capability.intent}-${capability.model}-${capability.workflow}`}
+                    key={capability.capability}
                     capability={capability}
                   />
                 ))}

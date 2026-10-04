@@ -23,6 +23,12 @@ const snapshot: Snapshot = {
   capabilities: [
     {
       capability: "image",
+      capability_title: "Images",
+      icon_key: "image",
+      title: "Flux",
+      recommended_model: "Flux",
+      use_names: ["image", "flux-dev"],
+      summary: "Generate images with Flux.",
       intent: "image.generate",
       model: "image-model",
       workflow: null,
@@ -60,25 +66,80 @@ afterEach(() => {
 });
 
 describe("member Status diagnosis", () => {
-  it("keeps unknown health distinct from a failed scoped receipt and copies a useful handoff", async () => {
+  it("shows server presentation and keeps raw names and unknown metrics in details", async () => {
     vi.spyOn(productApi, "status").mockResolvedValue(snapshot);
     const user = userEvent.setup();
-    vi.spyOn(navigator.clipboard, "writeText");
     mount();
-    expect(await screen.findByText("Not measured yet")).toBeVisible();
+    expect(
+      await screen.findByRole("heading", { name: "Images" }),
+    ).toBeVisible();
+    expect(screen.getByText("Flux", { exact: true })).toBeVisible();
+    expect(
+      screen.queryByText("image-model", { exact: true }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Ask the owner", { exact: true }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Not measured yet")).not.toBeVisible();
     expect(
       screen.getByRole("link", { name: "View receipt my-failed-request" }),
     ).toHaveAttribute("href", snapshot.receipts[0].href);
-    await user.click(screen.getByText("Ask the owner", { exact: true }));
-    await user.click(
-      screen.getByRole("button", { name: "Copy status summary" }),
-    );
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-      expect.stringContaining("Request my-failed-request: failed."),
-    );
+    await user.click(screen.getByText("Names you can use", { exact: true }));
+    expect(screen.getByText("image, flux-dev", { exact: true })).toBeVisible();
+    expect(screen.getByText("Not measured yet")).toBeVisible();
     expect(
       screen.queryByText(/GPU|VRAM|Raw probe data/),
     ).not.toBeInTheDocument();
+  });
+  it("uses the music and sound effects icons from the contract and the honest aggregate state", async () => {
+    vi.spyOn(productApi, "status").mockResolvedValue({
+      ...snapshot,
+      status: {
+        state: "unavailable",
+        reason: "Images are unavailable: the engine is offline.",
+      },
+      capabilities: [
+        {
+          ...snapshot.capabilities[0],
+          capability: "music",
+          capability_title: "Music",
+          icon_key: "music",
+          recommended_model: "ACE-Step XL Turbo",
+          status: "ready",
+          measured: true,
+          available: true,
+        },
+        {
+          ...snapshot.capabilities[0],
+          capability: "sfx",
+          capability_title: "Sound effects",
+          icon_key: "sfx",
+          recommended_model: "Stable Audio",
+          status: "ready",
+          measured: true,
+          available: true,
+        },
+      ],
+    });
+    mount();
+    expect(await screen.findByRole("img", { name: "Music" })).toHaveAttribute(
+      "data-icon-key",
+      "music",
+    );
+    expect(screen.getByRole("img", { name: "Sound effects" })).toHaveAttribute(
+      "data-icon-key",
+      "sfx",
+    );
+    expect(
+      screen.getByRole("img", { name: "Music" }).querySelector("svg"),
+    ).toHaveClass("lucide-music-2");
+    expect(
+      screen.getByRole("img", { name: "Sound effects" }).querySelector("svg"),
+    ).toHaveClass("lucide-waves");
+    expect(
+      screen.getByText("Images are unavailable: the engine is offline."),
+    ).toBeVisible();
+    expect(screen.getByText("Unavailable", { exact: true })).toBeVisible();
   });
   it("teaches an account with no capabilities or receipts how to get access", async () => {
     vi.spyOn(productApi, "status").mockResolvedValue({
@@ -91,6 +152,34 @@ describe("member Status diagnosis", () => {
       await screen.findByText("No models are available to your account yet"),
     ).toBeVisible();
     expect(screen.getByText(/No receipts for your account yet/)).toBeVisible();
+  });
+  it("shows neutral presentation when an older snapshot has no presentation fields", async () => {
+    vi.spyOn(productApi, "status").mockResolvedValue({
+      ...snapshot,
+      capabilities: [
+        {
+          capability: "music",
+          intent: "audio.generate",
+          model: "raw-workflow",
+          workflow: null,
+          status: "unknown",
+          available: false,
+          measured: false,
+          reason: "Availability has not been measured.",
+        },
+      ],
+    });
+    mount();
+    expect(
+      await screen.findByRole("heading", { name: "Capability" }),
+    ).toBeVisible();
+    expect(screen.getByText("Model details unavailable")).toBeVisible();
+    expect(
+      screen.queryByText("raw-workflow", { exact: true }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("img", { name: "Capability" }).querySelector("svg"),
+    ).toHaveClass("lucide-circle-question-mark");
   });
   it("offers sign-in after a 401 without retrying an expired session", async () => {
     const status = vi

@@ -23,8 +23,9 @@ from gateway import admin_store
 from gateway.admin_api import AdminAuthError
 from gateway.alias_policy import service_model_records
 from gateway.availability import availability_evidence_snapshot, project_service, project_capabilities
-from gateway.capabilities import Capability, summarize_capability, capability_with_policy_view, caller_visible_capabilities
-from gateway.model_presentation import product_capability, capability_presentation
+from gateway.capabilities import Capability, summarize_capability, capability_with_policy_view
+from gateway.model_presentation import (product_capability, capability_presentation,
+                                        group_product_capabilities, product_status_summary)
 from gateway.policy import DEFAULT_PROFILE
 from gateway.request_source import gateway_ui_request
 from gateway.profiles import ProfileLoadError, load_profile
@@ -220,8 +221,7 @@ def _declared_local_fast(cap: Capability, registry: Mapping[str, Any]) -> bool:
 
 def _capability_rows(capabilities, evidence, registry=None, alias_views=None) -> list[dict[str, Any]]:
     rows = []
-    visible = caller_visible_capabilities(project_capabilities(
-        capabilities, service_records=registry, evidence=evidence))
+    visible = project_capabilities(capabilities, service_records=registry, evidence=evidence)
     for cap in visible:
         if not cap.policy_available:
             continue
@@ -324,22 +324,14 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                 allowed[(cap.intent, cap.model, cap.workflow, cap.backend)] = cap
         rows = _capability_rows(allowed.values(), availability_evidence, registry, alias_views)
         alias_rows = _alias_rows(rows, alias_views)
-        state = next((candidate for candidate in ("ready", "idle", "starting", "busy", "unknown")
-                      if any(row["status"] == candidate for row in rows)), "unavailable")
-        status_reason = {
-            "ready": "Some capabilities are ready. Others are unavailable or have not been measured yet." if any(not row["available"] for row in rows) else "Your access is ready.",
-            "idle": "Some services are ready to start.",
-            "starting": "Your service is starting.",
-            "busy": "Your service is busy.",
-            "unknown": "Availability has not been measured yet.",
-            "unavailable": "No service has been measured as ready yet.",
-        }[state]
+        rows = group_product_capabilities(rows)
+        summary = product_status_summary(rows)
         base = (public_base_url(request) or "").rstrip("/")
         activity = build_user_activity_snapshot(session, limit=5, path=store.path, receipts_path=receipts_path())
         return _json({**account, "csrf_token": csrf_token(session), "public_base_url": base,
                       "api_base_url": f"{base}/v1" if base else "/v1", "capabilities": rows,
                       "aliases": alias_rows, "credential_aliases": credential_aliases,
-                      "new_app_aliases": new_app_aliases, "status": {"state": state, "reason": status_reason},
+                      "new_app_aliases": new_app_aliases, "status": summary,
                       "receipts": activity["receipts"], "creations": None})
 
     @router.get("/me/api/status", include_in_schema=False)
@@ -358,7 +350,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
         for row in snapshot["capabilities"]:
             availability = row.get("availability") or {}
             evidence = availability.get("evidence") or {}
-            rows.append({**{key: row.get(key) for key in ("capability", "title", "intent", "model", "workflow", "status", "available")},
+            rows.append({**{key: row.get(key) for key in ("capability", "capability_title", "icon_key", "title", "recommended_model", "use_names", "summary", "intent", "model", "workflow", "status", "available")},
                          "reason": reasons.get(row["status"], reasons["unavailable"]),
                          "measured": bool(availability.get("measured")),
                          **({"use_name": row["use_name"]} if row.get("use_name") else {}),
@@ -369,7 +361,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                     for row in snapshot["receipts"]]
         return _json({"scope": "member", "status": snapshot["status"], "capabilities": rows,
                       "receipts": receipts,
-                      "help": "Ask the owner if an allowed capability is unavailable." if any(not row["available"] for row in rows) else ""})
+                      "help": ""})
 
     @router.post("/admin/api/setup-evidence", include_in_schema=False)
     async def setup_evidence(request: Request):

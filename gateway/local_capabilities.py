@@ -142,6 +142,9 @@ def build_alias_capabilities(alias_views: Mapping[str, Any]) -> list[Capability]
                     output_modalities=outputs,
                     execution=execution,
                     tags=tuple(tags),
+                    title=row.get("title") or row.get("display_name"),
+                    description=row.get("description"),
+                    capability=row.get("capability"),
                 )
             )
     return out
@@ -176,6 +179,8 @@ def _build_llm_capabilities(
                 intent=INTENT_CHAT,
                 backend=backend,
                 model=f"role:{role_name}",
+                title=spec.get("title") or spec.get("display_name"),
+                description=spec.get("description"),
                 input_modalities=modalities,
                 output_modalities=("text",),
                 execution="sync",

@@ -1992,7 +1992,7 @@ def _disk_pressure_reason(part: dict, config: dict) -> str:
                 label = "models volume"
         except OSError:
             pass
-    subject = f"The {label}" if label else f"The disk at {target}"
+    subject = f"The {label}" if label else ("System disk (/)" if target == "/" else f"Disk ({target})")
     percent = float(part.get("pct_used") or 0)
     return (
         f"{subject} is almost full ({percent:.0f}%). "
@@ -2029,6 +2029,7 @@ def _disk_partitions() -> list[dict]:
         out_rows.append({
             "source": parts[0],
             "target": parts[5],
+            "display_name": "System disk (/)" if parts[5] == "/" else f"Disk ({parts[5]})",
             "size_bytes": size,
             "used_bytes": used,
             "avail_bytes": avail,

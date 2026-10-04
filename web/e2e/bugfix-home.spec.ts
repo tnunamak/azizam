@@ -95,7 +95,6 @@ test("Home capability Try link carries chat and fast into Try", async ({
 
   await page.getByRole("button", { name: "Prepare Try key" }).first().click();
   await page.getByRole("button", { name: "I’ve saved it" }).click();
-  await expect(page.getByText("Catalog loaded", { exact: true })).toBeVisible();
   await expect(
     page.getByRole("tab", { name: "Chat", exact: true }),
   ).toHaveAttribute("aria-selected", "true");

@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { api, type ServiceRegistry } from "@/lib/api";
+import { api, type ServiceRegistry, type StatusPayload } from "@/lib/api";
 import { StatusClient } from "./status-client";
 
 vi.mock("next/navigation", () => ({
@@ -51,30 +51,36 @@ const registry: ServiceRegistry = {
     },
   },
 };
-function mount() {
+function mount(status?: StatusPayload) {
   vi.spyOn(api.services, "registry").mockResolvedValue(registry);
-  vi.spyOn(api, "status").mockResolvedValue({
-    current_health: {
-      state: "ok",
-      tone: "ok",
-      label: "Ready",
-      detail: "Ready",
-      observation_available: true,
-      services: [
-        {
-          service_id: "chat",
-          name: "Local chat",
-          configured: true,
-          enabled: true,
-          role: "primary",
-          routable: true,
-          observation: "up",
-          tone: "ok",
-          last_error: null,
-        },
-      ],
+  vi.spyOn(api, "status").mockResolvedValue(
+    status ?? {
+      current_health: {
+        state: "ok",
+        tone: "ok",
+        label: "Ready",
+        detail: "Ready",
+        observation_available: true,
+        services: [
+          {
+            service_id: "chat",
+            name: "Local chat",
+            engine_label: "Local chat",
+            capability_title: "Chat",
+            capability_labels: ["Chat"],
+            icon_key: "chat",
+            configured: true,
+            enabled: true,
+            role: "primary",
+            routable: true,
+            observation: "up",
+            tone: "ok",
+            last_error: null,
+          },
+        ],
+      },
     },
-  });
+  );
   render(
     <QueryClientProvider
       client={
@@ -99,7 +105,7 @@ it("shows compact grouped engine rows and moves configuration and unknown metric
   expect(
     screen.queryByRole("button", { name: "Image engine" }),
   ).not.toBeInTheDocument();
-  expect(screen.getByText("fast")).toBeVisible();
+  expect(screen.queryByText("fast")).not.toBeInTheDocument();
   await user.click(engine);
   const sheet = screen.getByRole("dialog", { name: "Local chat" });
   expect(within(sheet).getByText("Queue")).toBeVisible();
@@ -118,4 +124,99 @@ it("reveals disabled engines only on request", async () => {
   await user.click(screen.getByRole("switch"));
   expect(screen.getByRole("button", { name: "Image engine" })).toBeVisible();
   expect(screen.getByText("Disabled")).toBeVisible();
+});
+it("uses server engine names and transcription taxonomy and preserves an exact disk warning sentence", async () => {
+  mount({
+    disk: {
+      partitions: [
+        { target: "/", display_name: "System disk (/)", pct_used: 96 },
+      ],
+    },
+    current_health: {
+      state: "warn",
+      tone: "warn",
+      label: "Needs attention",
+      detail: "System disk (/) is almost full (96%). Remove unused files.",
+      observation_available: true,
+      signals: [
+        {
+          source: "host",
+          tone: "warn",
+          reasons: [
+            "System disk (/) is almost full (96%). Remove unused files.",
+          ],
+        },
+      ],
+      services: [
+        {
+          service_id: "chat",
+          name: "registry description",
+          engine_label: "Canary (transcription)",
+          capability_title: "Transcription",
+          capability_labels: ["Transcription"],
+          icon_key: "transcribe",
+          enabled: true,
+          configured: true,
+          role: "primary",
+          routable: true,
+          last_error: null,
+          observation: "up",
+          tone: "ok",
+        },
+      ],
+    },
+  });
+  expect(
+    await screen.findByRole("button", { name: "Canary (transcription)" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("table", { name: /Transcription engine status/ }),
+  ).toBeVisible();
+  expect(screen.getByRole("cell", { name: "Transcription" })).toBeVisible();
+  expect(screen.getByText("System disk (/)", { exact: true })).toBeVisible();
+  expect(
+    within(
+      screen
+        .getByRole("heading", { name: "Status", level: 1 })
+        .closest("header")!,
+    ).getByText("System disk (/) is almost full (96%). Remove unused files.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(
+    screen.queryByText(/host needs owner action|files\.\./),
+  ).not.toBeInTheDocument();
+});
+it("retains server labels when live observation is unavailable without showing ready", async () => {
+  mount({
+    current_health: {
+      state: "unknown",
+      tone: "neutral",
+      label: "Unknown",
+      detail: "Availability has not been measured.",
+      observation_available: false,
+      services: [
+        {
+          service_id: "chat",
+          name: "raw-id",
+          engine_label: "Canary (transcription)",
+          capability_title: "Transcription",
+          capability_labels: ["Transcription"],
+          icon_key: "transcribe",
+          enabled: true,
+          configured: true,
+          role: "primary",
+          routable: true,
+          last_error: null,
+          observation: "up",
+          tone: "ok",
+        },
+      ],
+    },
+  });
+  expect(
+    await screen.findByRole("button", { name: "Canary (transcription)" }),
+  ).toBeVisible();
+  expect(screen.queryByText("Ready", { exact: true })).not.toBeInTheDocument();
+  expect(screen.getByText("Unknown", { exact: true })).toBeVisible();
 });

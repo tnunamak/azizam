@@ -85,12 +85,16 @@ def test_declared_taxonomy_and_friendly_title_do_not_guess_engine_names():
     from gateway.model_presentation import capability_presentation
     cap = Capability(intent="audio.generate", backend="test", workflow="internal.workflow",
                      title="Configured instrument", capability="music")
-    assert capability_presentation(cap) == {
-        "title": "Music (Configured instrument)", "capability": "music", "use_name": "internal.workflow",
-    }
+    presentation = capability_presentation(cap)
+    assert presentation["title"] == "Configured instrument"
+    assert presentation["capability_title"] == "Music"
+    assert presentation["capability"] == "music"
+    assert presentation["icon_key"] == "music"
+    assert presentation["use_names"] == ["internal.workflow"]
     unspecified = Capability(intent="audio.generate", backend="test", model="music-looking-name")
     assert capability_presentation(unspecified)["capability"] == "audio"
-    assert capability_presentation(unspecified)["title"] == "Audio"
+    assert capability_presentation(unspecified)["capability_title"] == "Audio"
+    assert capability_presentation(unspecified)["icon_key"] == "sfx"
 
 
 def test_alias_hides_only_its_same_backend_and_intent_target():
@@ -115,7 +119,7 @@ def test_catalog_summary_omits_unknown_metrics_but_preserves_details():
     row = catalog["models"][0]
     assert row["summary"] == {"cost_label": "Local · no provider charge"}
     assert row["timing"] == {"typical_seconds": None, "source": None}
-    assert row["description"] is None
+    assert row["description"] == "A separate chat profile named demo."
 
 
 def test_workflow_alias_catalog_is_one_caller_entry_with_metadata():
@@ -126,7 +130,7 @@ def test_workflow_alias_catalog_is_one_caller_entry_with_metadata():
     )
     assert catalog["models"] == []
     row = catalog["aliases"][0]
-    assert row["display_name"] == "Music (My music)"
+    assert row["display_name"] == "My music"
     assert row["capabilities"][0]["capability"] == "music"
     assert row["resolves_to"] == {"audio_generate": "internal.workflow"}
 
@@ -138,7 +142,7 @@ def test_declared_workflow_metadata_survives_alias_target_resolution():
     alias = Capability(intent="audio.generate", backend="test", model="music", tags=("alias", "resolves_to:actual"))
     projected = resolve_capability_targets([alias, target])
     summary = summarize_capability(next(cap for cap in projected if cap.model == "music"), "client")
-    assert summary["title"] == "Music (Instrument)"
+    assert summary["title"] == "Instrument"
     assert summary["capability"] == "music"
     assert summary["use_name"] == "music"
 
@@ -189,11 +193,11 @@ def test_alias_does_not_hide_same_model_on_another_backend():
 
 
 @pytest.mark.parametrize("name, capabilities, engine, expected", [
-    ("Audio & Speech (provider)", ["audio", "speech"], "Chatterbox", "Speech (Chatterbox)"),
-    ("Image (Provider)", ["images", "videos"], "ComfyUI", "Image & video (ComfyUI)"),
-    ("ComfyUI (Image + Video Generation)", ["images", "videos"], None, "Image & video (ComfyUI)"),
-    ("Canary", ["transcriptions"], None, "Transcription (Canary)"),
-    ("llama.cpp", ["chat", "completions"], None, "Chat (llama.cpp)"),
+    ("Audio & Speech (provider)", ["audio", "speech"], "Chatterbox", "Chatterbox (speech)"),
+    ("Image (Provider)", ["images", "videos"], "ComfyUI", "ComfyUI (images & video)"),
+    ("ComfyUI (Image + Video Generation)", ["images", "videos"], None, "ComfyUI (images & video)"),
+    ("Canary", ["transcriptions"], None, "Canary (transcription)"),
+    ("llama.cpp", ["chat", "completions"], None, "llama.cpp (chat)"),
 ])
 def test_local_engine_labels_come_from_declared_capabilities(name, capabilities, engine, expected):
     service = {"name": name, "capabilities": capabilities,
@@ -213,7 +217,7 @@ def test_public_workflow_ids_and_manifest_ids_share_one_friendly_alias_entry():
     visible = caller_visible_capabilities(resolve_capability_targets(canonical))
     assert len(visible) == 1
     row = summarize_capability(visible[0], "client")
-    assert row["title"] == "Music (Configured instrument)"
+    assert row["title"] == "Configured instrument"
     assert row["use_name"] == "music"
     assert visible[0].resolved_workflow == "audio.generate.instrument"
 
@@ -256,7 +260,7 @@ def test_role_target_alias_has_one_caller_entry_without_hiding_other_shapes():
     assert other_backend in rows and other_intent in rows
     caller = summarize_capability(next(cap for cap in rows if cap.model == "coder"), "client")
     assert caller["use_name"] == "coder"
-    assert caller["title"] == "Chat (Coding profile)"
+    assert caller["title"] == "Coder"
 
 
 def test_unrelated_role_ids_and_unresolved_aliases_remain_visible():
@@ -275,7 +279,7 @@ def test_catalog_logical_role_alias_dedupes_only_covered_chat_role():
     )
     assert catalog["models"] == []
     assert catalog["aliases"][0]["id"] == "coder"
-    assert catalog["aliases"][0]["display_name"] == "Chat (Coding profile)"
+    assert catalog["aliases"][0]["display_name"] == "Coder"
 
 
 def test_alias_resolution_carries_target_limits_and_preserves_alias_override():
@@ -298,7 +302,7 @@ def test_permitted_registered_public_role_hides_internal_spelling_only_same_shap
     other_intent = Capability(intent="text.embeddings", backend="one", model="role:coder-q5")
     rows = caller_visible_capabilities([public, internal, other_backend, other_intent])
     assert rows == sorted([public, other_backend, other_intent], key=lambda cap: cap.sort_key)
-    assert summarize_capability(public, "client")["title"] == "Chat (Coding profile)"
+    assert summarize_capability(public, "client")["title"] == "Coder Q5"
     denied = Capability(intent=public.intent, backend=public.backend, model=public.model, policy_available=False)
     assert internal in caller_visible_capabilities([denied, internal])
 
@@ -308,7 +312,7 @@ def test_catalog_direct_public_role_pair_hides_only_fully_covered_internal_row()
     internal = Capability(intent="chat.completions", backend="one", model="role:coder-q5")
     catalog = build_models_catalog(capabilities=[public, internal])
     assert [row["id"] for row in catalog["models"]] == ["coder-q5"]
-    assert catalog["models"][0]["display_name"] == "Chat (Coding profile)"
+    assert catalog["models"][0]["display_name"] == "Coder Q5"
     extra = Capability(intent="text.embeddings", backend="one", model="role:coder-q5")
     catalog = build_models_catalog(capabilities=[public, internal, extra])
     assert {row["id"] for row in catalog["models"]} == {"coder-q5", "role:coder-q5"}
@@ -333,3 +337,111 @@ def test_technical_summary_dedupes_exact_entries_and_keeps_alias_target_details(
     # Product suppression stays backend-scoped even though exact identity
     # preference chooses the best observed target from the remaining entries.
     assert {cap.model for cap in caller_visible_capabilities([alias, unknown, ready])} == {"fast", "actual"}
+
+
+@pytest.mark.parametrize("kind", ["chat", "image", "video", "music", "sfx", "speech", "transcribe", "decide", "embed", "rerank"])
+def test_presentation_taxonomy_has_distinct_icon_keys(kind):
+    from gateway.model_presentation import capability_presentation
+    row = capability_presentation(Capability(intent="audio.generate", backend="one", capability=kind))
+    assert row["icon_key"] == kind
+    assert row["capability"] == kind
+    assert row["summary"].endswith(".")
+
+
+def test_media_synonyms_and_target_share_one_catalog_card():
+    catalog = build_models_catalog(
+        capabilities=[Capability(intent="audio.generate", backend="one", model="instrument", title="Configured instrument", capability="music")],
+        alias_views={"audio_generate": {"stable": [
+            {"alias": "music", "resolves_to": "instrument"},
+            {"alias": "song", "resolves_to": "instrument"},
+        ]}},
+    )
+    assert catalog["models"] == []
+    assert len(catalog["aliases"]) == 1
+    row = catalog["aliases"][0]
+    assert set(row["use_names"]) == {"music", "song", "instrument"}
+    assert row["icon_key"] == "music"
+    assert row["recommended_model"] == "Configured instrument"
+
+
+def test_distinct_chat_profiles_keep_alias_titles_and_metadata_summary():
+    catalog = build_models_catalog(
+        capabilities=[Capability(intent="chat.completions", backend="one", model="actual", title="Declared model")],
+        alias_views={"chat": {"stable": [
+            {"alias": "default", "resolves_to": "actual", "description": "Thinks before it answers."},
+            {"alias": "fast", "resolves_to": "actual", "description": "Answers without thinking."},
+            {"alias": "coder-q5", "resolves_to": "actual", "description": "Coding with the configured Q5 model."},
+        ]}},
+    )
+    rows = {row["id"]: row for row in catalog["aliases"]}
+    assert rows["default"]["title"] == "Default"
+    assert rows["fast"]["title"] == "Fast"
+    assert rows["default"]["recommended_model"] == "Declared model"
+    assert rows["coder-q5"]["description"] == "Coding with the configured Q5 model."
+    assert rows["coder-q5"]["secondary_profile"]
+    assert not rows["default"]["secondary_profile"]
+
+
+def test_product_status_recommends_ready_model_once_per_taxonomy():
+    from gateway.model_presentation import capability_presentation, group_product_capabilities, product_status_summary
+    rows = []
+    for name, state in [("music", "unavailable"), ("song", "ready"), ("instrument", "ready")]:
+        row = capability_presentation(Capability(intent="audio.generate", backend="one", model=name, capability="music"))
+        rows.append({**row, "status": state, "available": state == "ready"})
+    grouped = group_product_capabilities(rows)
+    assert len(grouped) == 1
+    assert grouped[0]["available"]
+    assert set(grouped[0]["use_names"]) == {"music", "song", "instrument"}
+    assert product_status_summary(grouped) == {"state": "ready", "reason": "Everything you can use is ready."}
+
+
+def test_partial_summary_names_unavailable_capability_and_safe_reason():
+    from gateway.model_presentation import product_status_summary
+    rows = [{"capability": "chat", "capability_title": "Chat", "status": "ready", "available": True},
+            {"capability": "image", "capability_title": "Images", "status": "unavailable", "available": False,
+             "reason": "secret backend diagnostic", "availability": {"evidence": {"kind": "disabled"}}}]
+    assert product_status_summary(rows) == {
+        "state": "unavailable", "reason": "Images are unavailable: the service is disabled."}
+    assert "secret" not in product_status_summary(rows)["reason"]
+    assert product_status_summary([])["state"] == "unavailable"
+
+
+def test_owner_transcription_uses_same_taxonomy_even_without_live_observation():
+    from gateway.admin_api import derive_admin_health_projection
+    health = derive_admin_health_projection(
+        {"services": {"canary-stt": {"name": "Canary", "capabilities": ["transcriptions"],
+                                   "description": "Internal deployment note"}}},
+        {}, observation_available=False,
+    )
+    row = health["services"][0]
+    assert row["engine_label"] == "Canary (transcription)"
+    assert row["capability_labels"] == ["Transcription"]
+    assert row["icon_key"] == "transcribe"
+    assert "Internal" not in row["name"]
+
+
+@pytest.mark.parametrize("name,capabilities,expected", [
+    ("Local llama.cpp server (official; Bee rollback available)", ["openai", "chat", "completions"], "llama.cpp (chat)"),
+    ("canary-stt", ["audio", "transcriptions"], "Canary (transcription)"),
+    ("chatterbox-tts", ["audio", "speech"], "Chatterbox (speech)"),
+])
+def test_legacy_seed_names_keep_identity_and_drop_deployment_notes(name, capabilities, expected):
+    assert engine_label({"name": name, "capabilities": capabilities}, "internal") == expected
+
+
+def test_remote_concrete_model_id_preserves_provider_spelling_without_authored_title():
+    catalog = build_models_catalog(
+        capabilities=[Capability(intent="chat.completions", backend="cloud", model="gpt-4.1-nano")],
+        service_records={"cloud": {"name": "Provider", "config": {"locality": "remote"}}},
+    )
+    assert catalog["models"][0]["title"] == "gpt-4.1-nano"
+    assert catalog["models"][0]["display_name"] == "gpt-4.1-nano"
+
+
+def test_alias_keeps_target_model_specific_description():
+    catalog = build_models_catalog(
+        capabilities=[Capability(intent="chat.completions", backend="one", model="actual")],
+        alias_views={"chat": {"stable": [{"alias": "coder-q5", "resolves_to": "actual"}]}},
+        service_records={"one": {"config": {"models": [{"id": "actual", "upstream_model": "Configured weights", "context_window": 4096}]}}},
+    )
+    assert catalog["aliases"][0]["description"] == "Uses Configured weights, supports a context of 4096 tokens."

@@ -171,12 +171,12 @@ describe("models catalog contract distinctions", () => {
     ).toBeNull();
   });
 
-  it("uses alias fallback when backend copy is generic", async () => {
+  it("renders the description from the presentation contract", async () => {
     renderModels(
       catalog([
         row({
           id: "chat",
-          description: "Chat model visible to your access plan.",
+          description: "Thinks through questions before answering.",
         }),
       ]),
     );
@@ -185,9 +185,7 @@ describe("models catalog contract distinctions", () => {
     const card = within(copy.closest("article")!);
 
     expect(
-      card.getByText(
-        "General chat alias for longer answers and reasoning-capable models.",
-      ),
+      card.getByText("Thinks through questions before answering."),
     ).toBeVisible();
   });
 
@@ -212,26 +210,21 @@ describe("models catalog contract distinctions", () => {
     ).toBeNull();
   });
 
-  it("filters descriptions that duplicate the engine label and hides local engine labels from summaries", async () => {
+  it("renders the human engine label independently of profile description", async () => {
     renderModels(
       catalog([
         row({
-          description: "Local llama.cpp server (official; Bee rollback alias)",
-          engine_label: "Local llama.cpp server (official; Bee rollback alias)",
+          title: "Default",
+          description: "Thinks through questions before answering.",
+          engine_label: "Chat (llama.cpp)",
         }),
       ]),
     );
-
     const copy = await screen.findByRole("button", { name: "Copy alias chat" });
     const card = within(copy.closest("article")!);
-
-    expect(card.getByText("Local engine")).toBeVisible();
-    expect(
-      card.getByText(
-        "General chat alias for longer answers and reasoning-capable models.",
-      ),
-    ).toBeVisible();
-    expect(card.queryByText(/llama\.cpp/i)).toBeNull();
+    expect(card.getByRole("heading", { name: "Default" })).toBeVisible();
+    expect(card.getByText("Chat (llama.cpp)")).toBeVisible();
+    expect(card.queryByText(/rollback|official/i)).toBeNull();
   });
 
   it("keeps provider provenance for remote summaries", async () => {
@@ -239,8 +232,8 @@ describe("models catalog contract distinctions", () => {
       catalog([
         row({
           locality: "remote",
-          provider: "OpenRouter",
-          engine_label: "Remote provider",
+          provider: "provider-internal-id",
+          engine_label: "OpenRouter",
         }),
       ]),
     );
@@ -299,16 +292,19 @@ describe("models catalog contract distinctions", () => {
     expect(screen.getByText("Speech (Chatterbox)")).toBeVisible();
   });
 
-  it("falls back audio.generate legacy intent to audio instead of speech", async () => {
+  it("uses the server audio taxonomy instead of the operation intent", async () => {
     renderModels(
       catalog([
         row({
           id: "legacy-audio",
+          icon_key: "sfx",
+          capability_title: "Audio",
           display_name: "Legacy audio",
           name: "legacy-audio",
           capabilities: [
             {
               intent: "audio.generate",
+              capability: "audio",
               label: "Audio",
               input_modalities: ["text"],
               output_modalities: ["audio"],
@@ -324,7 +320,7 @@ describe("models catalog contract distinctions", () => {
     expect(screen.queryByRole("heading", { name: "Speech" })).toBeNull();
   });
 
-  it("maps rerank capability into the embed icon family and table label", async () => {
+  it("renders the server rerank capability label", async () => {
     renderModels(
       catalog(
         [],
@@ -419,19 +415,190 @@ describe("models catalog contract distinctions", () => {
     expect(screen.getByText("Local · no provider charge")).toBeVisible();
   });
 
-  it("uses a coding title for coder aliases without a friendly name", async () => {
+  it("uses the friendly alias title from the server", async () => {
     renderModels(
       catalog([
         row({
           id: "coder",
-          display_name: "coder",
+          title: "Coder",
+          display_name: "Chat",
           name: "coder",
           description: "Chat model visible to your access plan.",
         }),
       ]),
     );
 
-    expect(await screen.findByText("Coding chat")).toBeVisible();
+    expect(await screen.findByText("Coder")).toBeVisible();
+  });
+
+  it("keeps primary profile cards distinct and secondary profiles collapsed until opened", async () => {
+    renderModels(
+      catalog([
+        row({
+          id: "default",
+          title: "Default",
+          description: "Reasoning profile for considered answers.",
+        }),
+        row({
+          id: "fast",
+          title: "Fast",
+          description: "Direct answers with thinking disabled.",
+        }),
+        row({
+          id: "coder",
+          title: "Coder",
+          description: "Coding profile for technical work.",
+        }),
+        row({
+          id: "coder-q5",
+          title: "Coder Q5",
+          secondary_profile: true,
+          description: "Coding profile with Q5 weights.",
+        }),
+        row({
+          id: "rp",
+          title: "Roleplay",
+          secondary_profile: true,
+          description: "Chat profile for roleplay.",
+        }),
+      ]),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Default" }),
+    ).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Fast" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Coder" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Coder Q5" })).toBeNull();
+    const more = screen.getByRole("button", { name: /More chat profiles/ });
+    expect(more).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(more);
+    expect(screen.getByRole("heading", { name: "Coder Q5" })).toBeVisible();
+    expect(screen.getByText("Coding profile with Q5 weights.")).toBeVisible();
+    expect(screen.getByText("Chat profile for roleplay.")).toBeVisible();
+    expect(
+      screen.queryByText("Chat model visible to your access plan."),
+    ).toBeNull();
+  });
+
+  it("puts direct secondary model profiles under More chat profiles instead of All models", async () => {
+    renderModels(
+      catalog(
+        [],
+        [
+          row({
+            id: "coder-q8",
+            alias: false,
+            object: "model_catalog.model",
+            title: "Coder Q8",
+            secondary_profile: true,
+            description: "Coding profile with Q8 weights.",
+          }),
+        ],
+      ),
+    );
+    const more = await screen.findByRole("button", {
+      name: /More chat profiles/,
+    });
+    expect(
+      screen.queryByText("No stable aliases match these filters"),
+    ).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Coder Q8" })).toBeNull();
+    expect(screen.getByText("0 shown")).toBeVisible();
+    fireEvent.click(more);
+    expect(screen.getByRole("heading", { name: "Coder Q8" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    expect(
+      within(screen.getByRole("dialog")).getByRole("heading", {
+        name: "Coder Q8",
+      }),
+    ).toBeVisible();
+  });
+
+  it("finds collapsed profiles and alternative use names through search", async () => {
+    renderModels(
+      catalog([
+        row({
+          id: "coder-q8",
+          title: "Coder Q8",
+          secondary_profile: true,
+          description: "Coding profile with Q8 weights.",
+          use_names: ["coder-q8", "coding-heavy"],
+        }),
+      ]),
+    );
+    await screen.findByRole("button", { name: /More chat profiles/ });
+    fireEvent.change(screen.getByRole("textbox", { name: "Search models" }), {
+      target: { value: "coding-heavy" },
+    });
+    expect(screen.getByRole("heading", { name: "Coder Q8" })).toBeVisible();
+    expect(screen.queryByText("No models match these filters")).toBeNull();
+  });
+
+  it("uses music and sound-effect icons from server metadata and lists usable names in details", async () => {
+    renderModels(
+      catalog([
+        row({
+          id: "music",
+          title: "Music",
+          icon_key: "music",
+          capability_title: "Music",
+          use_names: ["music", "song", "ace-step"],
+          capabilities: [
+            {
+              capability: "music",
+              intent: "audio.generate",
+              label: "Music",
+              input_modalities: ["text"],
+              output_modalities: ["audio"],
+              streaming: false,
+              available: true,
+            },
+          ],
+        }),
+        row({
+          id: "sfx",
+          title: "Sound effects",
+          icon_key: "sfx",
+          capability_title: "Sound effects",
+          capabilities: [
+            {
+              capability: "sfx",
+              intent: "audio.generate",
+              label: "Sound effects",
+              input_modalities: ["text"],
+              output_modalities: ["audio"],
+              streaming: false,
+              available: true,
+            },
+          ],
+        }),
+      ]),
+    );
+    const music = within(
+      (await screen.findByRole("button", { name: "Copy alias music" })).closest(
+        "article",
+      )!,
+    );
+    const sfx = within(
+      screen
+        .getByRole("button", { name: "Copy alias sfx" })
+        .closest("article")!,
+    );
+    expect(
+      music
+        .getByRole("img", { name: "Music" })
+        .querySelector(".lucide-music-2"),
+    ).not.toBeNull();
+    expect(
+      sfx
+        .getByRole("img", { name: "Sound effects" })
+        .querySelector(".lucide-waves"),
+    ).not.toBeNull();
+    fireEvent.click(music.getByRole("button", { name: "Details" }));
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getByText("Names you can use")).toBeVisible();
+    expect(dialog.getByText("song")).toBeVisible();
+    expect(dialog.getByText("ace-step")).toBeVisible();
   });
 
   it("treats only explicit configured false as catalog-only and gives owners an engine action", async () => {

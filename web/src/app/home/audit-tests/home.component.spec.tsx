@@ -151,6 +151,67 @@ beforeAll(() => {
 });
 
 describe("Home audit component behavior", () => {
+  it("uses server capability names, model recommendations, icons and summary", async () => {
+    const serverHome = {
+      ...home,
+      status: { state: "ready", reason: "Everything you can use is ready." },
+      capabilities: [
+        {
+          capability: "music",
+          capability_title: "Music",
+          icon_key: "music",
+          title: "ACE-Step XL Turbo",
+          recommended_model: "ACE-Step XL Turbo",
+          description: "Create music from a prompt.",
+          model: "music",
+          use_name: "song",
+          use_names: ["music", "song"],
+          available: true,
+          status: "ready",
+          reason: "Ready.",
+        },
+        {
+          capability: "sfx",
+          capability_title: "Sound effects",
+          icon_key: "sfx",
+          title: "Sound generator",
+          recommended_model: "Sound generator",
+          description: "Create sound effects from a prompt.",
+          model: "sfx",
+          use_name: "sfx",
+          available: true,
+          status: "ready",
+          reason: "Ready.",
+        },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const route = String(input);
+        if (route === "/me/api/home") return Response.json(serverHome);
+        if (route === "/me/api/media?limit=5")
+          return Response.json({ assets: [] });
+        if (route === "/admin/api/setup-progress")
+          return Response.json({
+            ...progress(),
+            complete: true,
+            dismissed: true,
+          });
+        return Response.json({});
+      }),
+    );
+    renderHome();
+    expect(
+      await screen.findByText("Everything you can use is ready."),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(screen.getByText("ACE-Step XL Turbo")).toBeVisible(),
+    );
+    expect(screen.getByRole("img", { name: "Music" })).toBeVisible();
+    expect(screen.getByRole("img", { name: "Sound effects" })).toBeVisible();
+    expect(screen.getByText("song")).toBeVisible();
+  });
   it("lets the owner dismiss setup and shows capabilities after the saved dismissal", async () => {
     let dismissed = false;
     vi.stubGlobal(

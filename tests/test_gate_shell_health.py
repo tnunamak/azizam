@@ -58,7 +58,7 @@ def test_disk_warning_does_not_invent_models_volume(monkeypatch):
     monkeypatch.setattr(Path, "stat", lambda self: SimpleNamespace(st_dev=1 if str(self) == "/logs" else 2))
     assert _disk_pressure_reason({"target": "/logs", "pct_used": 90},
                                  {"model_routing": {"model_dir": "/models"}}) == (
-        "The disk at /logs is almost full (90%). Free space on this volume so the gateway can continue to save files."
+        "Disk (/logs) is almost full (90%). Free space on this volume so the gateway can continue to save files."
     )
 
 
@@ -81,4 +81,4 @@ def test_missing_model_path_keeps_disk_location(monkeypatch):
         raise OSError("missing path")
     monkeypatch.setattr(Path, "stat", missing)
     assert _disk_pressure_reason({"target": "/", "pct_used": 96},
-                                 {"model_routing": {"model_dir": "/missing"}}).startswith("The disk at /")
+                                 {"model_routing": {"model_dir": "/missing"}}).startswith("System disk (/)")

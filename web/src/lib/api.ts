@@ -579,6 +579,10 @@ export interface StatusPayload {
 }
 
 export interface CurrentHealthService {
+  engine_label?: string;
+  capability_title?: string;
+  capability_labels?: string[];
+  icon_key?: import("./product-api-types").CapabilityIconKey;
   in_use?: boolean | null;
   usage_label?: string | null;
   service_id: string;

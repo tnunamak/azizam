@@ -20,11 +20,18 @@ function row(id: string, intent: string, paid = false) {
     id,
     object: "model_catalog.alias",
     display_name: id,
+    title: id === "fast" ? "Fast" : intent === "image.generate" ? "Images" : id,
     alias: true,
     operations: [],
     resolves_to: {},
     description: "A configured model.",
-    capabilities: [{ intent, label: intent }],
+    capabilities: [
+      {
+        intent,
+        label: intent,
+        capability: intent.split(".")[0] === "image" ? "image" : "chat",
+      },
+    ],
     provider: paid ? "Example provider" : "Local engine",
     locality: paid ? "remote" : "local",
     cost: {
@@ -85,7 +92,7 @@ describe("catalog polish", () => {
       row("image", "image.generate", true),
     ]);
     expect(
-      await screen.findByRole("heading", { name: "Fast chat" }),
+      await screen.findByRole("heading", { name: "Fast" }),
     ).toBeVisible();
     expect(
       screen.getByRole("heading", { name: "Images", level: 3 }),

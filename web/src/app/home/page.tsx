@@ -14,6 +14,9 @@ import {
   PlugZap,
   ShieldCheck,
   Video,
+  Music2,
+  Waves,
+  ListFilter,
 } from "lucide-react";
 import { formatAppName } from "@/lib/format";
 import { accountApi, type AccountApp } from "@/lib/account-api";
@@ -52,7 +55,6 @@ import { chatAlias, clients, recipeFor, type Client } from "./recipes";
 import { productApi, type SetupEvent } from "@/lib/product-api";
 import { PRODUCT_NAME } from "@/lib/product";
 import {
-  capabilitySummary,
   capabilityTiles,
   greetingName,
   needsSetup,
@@ -136,6 +138,30 @@ const capabilityTint: Record<Capability, string> = {
   decide: "bg-capability-decide/5 border-capability-decide/20",
   embed: "bg-capability-embed/5 border-capability-embed/20",
 };
+
+function HomeCapabilityIcon({ row }: { row: HomeCapability }) {
+  const key = row.icon_key ?? row.capability;
+  const special = { music: Music2, sfx: Waves, rerank: ListFilter };
+  const Icon = special[key as keyof typeof special];
+  if (Icon)
+    return (
+      <span
+        role="img"
+        aria-label={row.capability_title ?? key}
+        className={`inline-flex size-8 shrink-0 items-center justify-center rounded-md [&>svg]:size-4 ${row.available ? "text-capability-voice bg-capability-voice/10" : "bg-muted text-muted-foreground"}`}
+      >
+        <Icon aria-hidden="true" />
+      </span>
+    );
+  return (
+    <CapabilityIcon
+      capability={
+        key === "speech" ? "voice" : (capabilityCopy[key]?.icon ?? "chat")
+      }
+      className={row.available ? undefined : "bg-muted text-muted-foreground"}
+    />
+  );
+}
 const stepLabels: Record<string, string> = {
   connect_service: "Connect an engine or provider",
   test_request: "Make a real request",
@@ -856,19 +882,17 @@ function Capabilities({
                 className={`min-w-0 rounded-xl border p-5 ${capability.available ? capabilityTint[copy.icon] : "border-border bg-muted/30 text-muted-foreground"}`}
               >
                 <div className="flex items-center gap-3">
-                  <CapabilityIcon
-                    capability={copy.icon}
-                    className={
-                      capability.available
-                        ? undefined
-                        : "bg-muted text-muted-foreground"
-                    }
-                  />
-                  <h3 className="text-base font-semibold">{copy.label}</h3>
+                  <HomeCapabilityIcon row={capability} />
+                  <h3 className="text-base font-semibold">
+                    {capability.capability_title ?? copy.label}
+                  </h3>
                 </div>
                 <p className="text-muted-foreground mt-3 text-sm">
-                  {copy.description}
+                  {capability.summary ?? copy.description}
                 </p>
+                {capability.recommended_model && (
+                  <p className="mt-2 text-sm">{capability.recommended_model}</p>
+                )}
                 <div className="mt-3">
                   <StatusPill
                     status={capability.status}
@@ -890,7 +914,9 @@ function Capabilities({
                 )}
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                   <code className="text-muted-foreground text-xs break-all">
-                    {capability.model ?? "No alias assigned"}
+                    {capability.use_name ??
+                      capability.model ??
+                      "No alias assigned"}
                   </code>
                   {capability.available ? (
                     <Button variant="ghost" asChild>
@@ -1190,9 +1216,7 @@ export default function HomePage() {
                   : ""}
               </p>
               <p role="status" className="text-muted-foreground mt-2 text-sm">
-                {capabilitySummary(
-                  capabilityTiles(home.capabilities, home.aliases),
-                )}
+                {home.status.reason}
               </p>
             </div>
             <svg

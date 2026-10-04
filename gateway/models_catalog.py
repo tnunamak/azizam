@@ -25,7 +25,7 @@ from gateway.capabilities import Capability
 from gateway.availability import project_service
 from gateway.local_capabilities import build_local_capabilities
 from gateway.model_presentation import (CAPABILITY_LABELS, capability_presentation, product_capability,
-    declared_health_success, engine_label, model_locality, service_health_endpoint)
+    declared_health_success, engine_label, model_locality, service_health_endpoint, CAPABILITY_ICON_KEYS)
 from gateway.provider_model_catalog import (
     remote_provider_model_capabilities,
     remote_provider_model_metadata,
@@ -172,7 +172,7 @@ def build_models_catalog(
         model_rows.extend(models)
         allowed_count += count
 
-    aliases = _merge_rows(alias_rows)
+    aliases = _dedupe_alias_targets(_merge_rows(alias_rows))
     model_rows = _merge_rows(model_rows)
 
     return {
@@ -278,6 +278,23 @@ def _rows_for_capabilities(
     return aliases, models, len(allowed_caps)
 
 
+def _dedupe_alias_targets(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Synonymous media names share a card; chat profiles remain choices."""
+    merged = {}
+    for row in rows:
+        key = (row["id"],) if row.get("capability_title") == "Chat" else (
+            row.get("_serving_backend"), tuple(sorted(row["resolves_to"].items())),
+            tuple(cap["intent"] for cap in row["capabilities"]))
+        if key not in merged:
+            merged[key] = row
+        else:
+            current = merged[key]
+            current["use_names"] = list(dict.fromkeys([*current["use_names"], *row["use_names"]]))
+    for row in merged.values():
+        row.pop("_serving_backend", None)
+    return list(merged.values())
+
+
 def _merge_rows(rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     merged: dict[tuple[str, str], dict[str, Any]] = {}
     for row in rows:
@@ -372,12 +389,16 @@ def _alias_rows(
                 workflow_metadata=workflow_metadata,
                 service_model_metadata=service_model_metadata,
             )
-            presentation = capability_presentation(caps[0], {"capability": operation_row["capabilities"][0]["capability"], **raw})
-            if any(raw.get(key) for key in ("title", "display_name", "name")):
-                operation_row["display_name"] = presentation["title"]
-                operation_row["name"] = presentation["title"]
+            operation_row["_serving_backend"] = str(raw.get("service") or _first_backend(caps) or "")
+            presentation = capability_presentation(caps[0], {
+                "capability": operation_row["capabilities"][0]["capability"], **raw})
+            operation_row.update({key: presentation[key] for key in
+                                 ("title", "capability_title", "icon_key", "secondary_profile")})
+            operation_row["display_name"] = presentation["title"]
+            operation_row["name"] = presentation["title"]
             if raw.get("description"):
-                operation_row["description"] = str(raw["description"])
+                operation_row["description"] = presentation["summary"]
+            operation_row["use_names"] = list(dict.fromkeys([alias, *operation_row["use_names"]]))
             row = by_alias.setdefault(alias, operation_row)
             if row is not operation_row:
                 row["capabilities"] = _merge_capability_summaries(row.get("capabilities") or [], operation_row.get("capabilities") or [])
@@ -507,8 +528,14 @@ def _base_row(
         or (_recent_from_receipt_stats(receipt_stats.get(target)) if target else [])
         or _recent_from_receipt_stats(receipt_stats.get(workflow_id))
     )
-    presentation = capability_presentation(capabilities[0], manifest or model_mapping or model_entry) if capabilities else {}
     locality = _locality(service, model_mapping or model_entry)
+    presentation_metadata = {**(model_entry or {}), **model_mapping, **manifest, "locality": locality}
+    if is_alias:
+        presentation_metadata["alias"] = row_id
+        if capabilities and product_capability(capabilities[0], presentation_metadata) == "chat":
+            for field in ("title", "display_name", "name"):
+                presentation_metadata.pop(field, None)
+    presentation = capability_presentation(capabilities[0], presentation_metadata) if capabilities else {}
     cost = _cost(service, model_mapping or model_entry)
     summary = {}
     if timing is not None:
@@ -523,18 +550,13 @@ def _base_row(
         "id": row_id,
         "object": "model_catalog.alias" if is_alias else "model_catalog.model",
         "display_name": presentation.get("title", display_name),
+        **{key: presentation[key] for key in ("title", "capability_title", "icon_key", "recommended_model", "secondary_profile") if key in presentation},
+        "use_names": list(dict.fromkeys([row_id, *([target] if target and not target.startswith("role:") else [])])),
         "alias": is_alias,
         "operations": [],
         "resolves_to": {},
-        "description": _description(manifest, model_mapping, model_entry) or next((cap.description for cap in capabilities if cap.description), None),
-        "name": str(
-            manifest.get("name")
-            or manifest.get("display_name")
-            or model_mapping.get("name")
-            or model_mapping.get("display_name")
-            or presentation.get("title")
-            or display_name
-        ),
+        "description": presentation.get("summary"),
+        "name": presentation.get("title", display_name),
         "capabilities": _capability_summaries(capabilities, manifest),
         "provider": _provider(service, model_mapping or model_entry, service_id),
         "engine_label": engine_label(service, service_id),
@@ -564,6 +586,7 @@ def _capability_summaries(capabilities: Sequence[Capability], metadata: Mapping[
                 "intent": cap.intent,
                 "label": CAPABILITY_LABELS.get(product_capability(cap, metadata), "AI"),
                 "capability": product_capability(cap, metadata),
+                "icon_key": CAPABILITY_ICON_KEYS.get(product_capability(cap, metadata), "chat"),
                 "input_modalities": list(cap.input_modalities),
                 "output_modalities": list(cap.output_modalities),
                 "streaming": cap.streaming,

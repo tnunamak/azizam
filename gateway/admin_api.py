@@ -42,7 +42,7 @@ from gateway.policy import (
 )
 from gateway.litellm_substrate import compile_litellm_substrate_config
 from gateway.availability import availability_evidence_snapshot, project_service
-from gateway.model_presentation import engine_label
+from gateway.model_presentation import service_presentation
 from gateway.backends.litellm_admin import LiteLLMAdminError
 from gateway.profiles import ProfileLoadError, load_profile
 from gateway import admin_catalog, admin_store, extension_packages, service_registry
@@ -556,7 +556,8 @@ def derive_admin_health_projection(
             continue
         service_id = str(raw_service.get("id") or raw_id)
         configured_service_ids.add(service_id)
-        name = engine_label(raw_service, service_id) or str(raw_service.get("name") or service_id)
+        presentation = service_presentation(raw_service, service_id)
+        name = presentation["engine_label"]
         enabled = bool(raw_service.get("enabled", True))
         in_use = service_id in relied_on_ids if relied_on_ids is not None else None
         role = str(raw_service.get("role") or "required")
@@ -603,6 +604,7 @@ def derive_admin_health_projection(
         rows.append({
             "service_id": service_id,
             "name": name,
+            **presentation,
             "configured": True,
             "enabled": enabled,
             "role": role,
@@ -649,6 +651,7 @@ def derive_admin_health_projection(
         rows.append({
             "service_id": service_id,
             "name": name,
+            **service_presentation(backend, service_id),
             "configured": False,
             "enabled": False,
             "role": "unregistered",

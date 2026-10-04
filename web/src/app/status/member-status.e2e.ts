@@ -3,7 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
-const screenshotRoot = "/home/tnunamak/.tmp/gw-product/ui-review/gw-fix-status";
+const screenshotRoot = "/home/tnunamak/.tmp/gw-product/gate/v5/fixtures";
 
 type MemberStatusState =
   | "ready"
@@ -84,6 +84,15 @@ async function installStatusSnapshot(
         ? []
         : allStates.map((availability, index) => ({
             capability: capabilityKinds[availability],
+            capability_title: capabilityNames[availability],
+            icon_key:
+              availability === "busy"
+                ? "speech"
+                : capabilityKinds[availability],
+            title: `${capabilityNames[availability]} test model`,
+            recommended_model: `${capabilityNames[availability]} test model`,
+            use_names: [`${availability}-alias`, `${availability}-model`],
+            summary: `Use ${capabilityNames[availability].toLowerCase()} with your account.`,
             intent: `${capabilityKinds[availability]}.test`,
             model: `${availability}-model`,
             workflow: null,
@@ -101,11 +110,11 @@ async function installStatusSnapshot(
           state:
             state === "empty"
               ? "unavailable"
-              : ("ready" satisfies MemberStatusState),
+              : ("unavailable" satisfies MemberStatusState),
           reason:
             state === "empty"
               ? "No service has been measured as ready yet."
-              : "Your access is ready.",
+              : "Embeddings are unavailable: the engine is offline.",
         },
         capabilities,
         receipts:
@@ -221,14 +230,28 @@ for (const theme of ["light", "dark"] as const) {
           await expect(
             page.getByRole("link", { name: "View receipt failed-request" }),
           ).toHaveAttribute("href", "/ui/usage/?receipt=failed-request");
-          await expect(page.getByText("Not measured yet")).toBeVisible();
-          await page.getByText("Ask the owner", { exact: true }).click();
+          await expect(page.getByText("Not measured yet")).toBeHidden();
           await expect(
-            page.getByRole("button", { name: "Copy status summary" }),
-          ).toBeVisible();
+            page.getByText("Ask the owner", { exact: true }),
+          ).toHaveCount(0);
           await expect(
-            page.getByText(/Request failed-request: failed\./),
+            page.getByText(
+              "Embeddings are unavailable: the engine is offline.",
+              { exact: true },
+            ),
           ).toBeVisible();
+          const unknown = page.locator("li").filter({
+            has: page.getByRole("heading", {
+              name: "Transcription",
+              exact: true,
+            }),
+          });
+          await unknown.getByText("Names you can use", { exact: true }).click();
+          await expect(
+            unknown.getByText("unknown-alias, unknown-model", { exact: true }),
+          ).toBeVisible();
+          await expect(unknown.getByText("Not measured yet")).toBeVisible();
+          await unknown.getByText("Names you can use", { exact: true }).click();
         } else if (state === "empty") {
           await expect(
             page.getByText("No models are available to your account yet", {

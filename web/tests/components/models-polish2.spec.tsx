@@ -158,6 +158,7 @@ it("uses human model titles while keeping exact ids as secondary code and detail
       row({
         id,
         display_name: id,
+        title: "Chat model",
         name: id,
         alias: false,
         object: "model_catalog.model",
@@ -166,6 +167,7 @@ it("uses human model titles while keeping exact ids as secondary code and detail
         id: "named-id",
         display_name: "named-id",
         name: "Household assistant",
+        title: "Household assistant",
         alias: false,
         object: "model_catalog.model",
       }),
