@@ -321,12 +321,11 @@ def build_user_activity_snapshot(
     path: Path = admin_store.DB_PATH,
     receipts_path: Path = receipt_store.DB_PATH,
 ) -> dict[str, Any]:
-    """Return the signed-in user's own recent API-call receipts.
+    """Return recent API-call receipts for the signed-in Home page.
 
-    Scoped server-side to the user's owned Apps (``app_id`` allow-list). An
-    unauthenticated session, or a user who owns no Apps, yields an empty feed
-    — never a fall-through to everyone's receipts. The ``client`` audience is
-    used so no admin-only fields (policy internals, key names, metadata) leak.
+    Members are scoped server-side to their owned Apps. Owners see the
+    instance-level feed by default, including service apps and no-key local
+    network receipts.
     """
     if session is None:
         return {"authenticated": False, "receipts": []}
@@ -341,10 +340,17 @@ def build_user_activity_snapshot(
 
     safe_limit = max(1, min(int(limit or USER_ACTIVITY_DEFAULT_LIMIT), USER_ACTIVITY_MAX_LIMIT))
     owned = _owned_app_ids(str(user["id"]), path=path)
+    owner_roles = {
+        str(role.get("role") or "")
+        for role in admin_store.list_admin_roles(
+            subject_kind="user", subject_id=str(user["id"]), path=path
+        )
+    }
+    owner = bool(owner_roles & {"owner", "superadmin"})
     receipts = receipt_store.recent(
         limit=safe_limit,
         audience="client",
-        app_ids=owned,
+        app_ids=None if owner else owned,
         path=receipts_path,
     )
     return {
@@ -353,6 +359,7 @@ def build_user_activity_snapshot(
         # attributable calls yet (or none in the retention window).
         "receipts": receipts,
         "scoped_app_count": len(owned),
+        "scope": "instance" if owner else "me",
     }
 
 
@@ -363,13 +370,11 @@ def get_user_receipt(
     path: Path = admin_store.DB_PATH,
     receipts_path: Path = receipt_store.DB_PATH,
 ) -> dict[str, Any]:
-    """Return one receipt IF it belongs to the signed-in user, else 404.
+    """Return one client-safe receipt visible to the signed-in user.
 
-    Loads the receipt at the ``internal`` audience only to read its ``app_id``
-    for the ownership check, then returns the ``client``-filtered shape. A
-    receipt the caller doesn't own — or one with no owning App — is reported as
-    not found (404), never 403, so the existence of other users' receipts is
-    not disclosed.
+    Owners can open the same instance-scoped receipts shown on Home and each
+    access is audited. Members stay limited to their own Apps; receipts for
+    other Apps or no App are reported as not found so existence is not disclosed.
     """
     if session is None:
         raise UserPortalError(
@@ -386,9 +391,15 @@ def get_user_receipt(
     if owner_check is None:
         raise not_found
     receipt_app_id = owner_check.get("app_id")
-    if not receipt_app_id or receipt_app_id not in set(
-        _owned_app_ids(str(user["id"]), path=path)
-    ):
+    owned_app_ids = set(_owned_app_ids(str(user["id"]), path=path))
+    owner_roles = {
+        str(role.get("role") or "")
+        for role in admin_store.list_admin_roles(
+            subject_kind="user", subject_id=str(user["id"]), path=path
+        )
+    }
+    owner = bool(owner_roles & {"owner", "superadmin"})
+    if not owner and (not receipt_app_id or receipt_app_id not in owned_app_ids):
         raise not_found
 
     detail = receipt_store.get(
@@ -396,6 +407,17 @@ def get_user_receipt(
     )
     if detail is None:
         raise not_found
+    if owner:
+        admin_store.record_audit(
+            "receipt.detail.instance",
+            actor_kind="user",
+            actor_id=str(user["id"]),
+            actor_label=str(user.get("email") or user.get("display_name") or user["id"]),
+            target_kind="receipt",
+            target_id=request_id,
+            metadata={"scope": "instance", "app_id": receipt_app_id},
+            path=path,
+        )
     return detail
 
 

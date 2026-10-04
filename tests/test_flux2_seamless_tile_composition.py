@@ -23,6 +23,7 @@ from gateway.discovery import WorkflowRegistry  # noqa: E402
 from gateway.extension_catalog import summarize_extensions  # noqa: E402
 from gateway.image_extensions import WORKFLOW_EXTENSION_NAMESPACE as NS  # noqa: E402
 from gateway.manifests import bind_backend_request, load_workflow_manifest  # noqa: E402
+from gateway import media_jobs  # noqa: E402
 
 
 MANIFEST_PATH = ROOT / "manifests/workflows/flux2-klein-4b-seamless-tile.yml"
@@ -332,36 +333,43 @@ class TestFlux2SeamlessTileRoute(unittest.IsolatedAsyncioTestCase):
 
         _FakeAsyncClient.uploads = 0
         _FakeAsyncClient.upload_files = []
-        with tempfile.TemporaryDirectory() as cache_dir, patch.object(
-            proxy,
-            "IMAGE_CACHE_DIR",
-            Path(cache_dir),
-        ), patch.object(
-            proxy,
-            "_image_url_signing_secret",
-            b"test-secret",
-        ), patch.object(
-            proxy,
-            "COMFY_ENABLED",
-            True,
-        ), patch.object(
-            proxy,
-            "configured_downstream_headers",
-            lambda _auth_context, _service: {},
-        ), patch.object(
-            proxy.httpx,
-            "AsyncClient",
-            _FakeAsyncClient,
-        ), patch.object(
-            proxy,
-            "_comfy_run_round",
-            fake_run_round,
-        ):
-            response = await proxy.proxy_comfy_request(
-                _JsonRequest(body),  # type: ignore[arg-type]
-                proxy.NO_AUTH_CONTEXT,
-                receipt=receipt,
-            )
+        with tempfile.TemporaryDirectory() as cache_dir:
+            media_db = Path(cache_dir) / "media_jobs.db"
+            media_jobs.init_db(media_db)
+            with patch.object(
+                proxy,
+                "IMAGE_CACHE_DIR",
+                Path(cache_dir),
+            ), patch.object(
+                media_jobs,
+                "DB_PATH",
+                media_db,
+            ), patch.object(
+                proxy,
+                "_image_url_signing_secret",
+                b"test-secret",
+            ), patch.object(
+                proxy,
+                "COMFY_ENABLED",
+                True,
+            ), patch.object(
+                proxy,
+                "configured_downstream_headers",
+                lambda _auth_context, _service: {},
+            ), patch.object(
+                proxy.httpx,
+                "AsyncClient",
+                _FakeAsyncClient,
+            ), patch.object(
+                proxy,
+                "_comfy_run_round",
+                fake_run_round,
+            ):
+                response = await proxy.proxy_comfy_request(
+                    _JsonRequest(body),  # type: ignore[arg-type]
+                    proxy.NO_AUTH_CONTEXT,
+                    receipt=receipt,
+                )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["X-Image-Seamless-Tile-Strategy"], "offset-inpaint")

@@ -11,6 +11,13 @@ async function chooseRecipeKey(page: Page, optionName: string | RegExp) {
   await page.getByRole("option", { name: optionName }).click();
 }
 
+async function openClientInstructionsOnPhone(page: Page, width: number) {
+  if (width !== 390) return;
+  if ((await page.getByRole("tabpanel").count()) === 0) {
+    await page.getByText("Client instructions", { exact: true }).click();
+  }
+}
+
 async function inspectHome(page: Page, name: string) {
   // Captures represent settled data, including the independent Library query.
   await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
@@ -140,30 +147,29 @@ for (const theme of ["light", "dark"] as const) {
           const instance = await (
             await request.get("/.well-known/ai-gateway")
           ).json();
-          await expect(
-            page.getByText(`Welcome to ${instance.service.name}.`, {
-              exact: true,
-            }),
-          ).toBeVisible();
+          const welcome = page.getByText(`Welcome to ${instance.service.name}.`, {
+            exact: true,
+          });
           if (width === 390) {
+            await expect(welcome).toBeHidden();
             const greeting = page.getByRole("heading", { name: /^Hello,/ });
             const layout = await greeting.evaluate((element) => ({
               width: element.getBoundingClientRect().width,
-              available:
-                element.parentElement!.parentElement!.getBoundingClientRect()
-                  .width,
+              available: element.parentElement!.getBoundingClientRect().width,
               lines:
                 element.getBoundingClientRect().height /
                 parseFloat(getComputedStyle(element).lineHeight),
             }));
             expect(
               layout.width,
-              "The greeting gets the full phone width",
+              "The greeting gets the full text column width",
             ).toBeGreaterThanOrEqual(layout.available - 1);
             expect(
               layout.lines,
               "A seeded greeting fits within two lines",
             ).toBeLessThanOrEqual(2.1);
+          } else {
+            await expect(welcome).toBeVisible();
           }
           const snapshot = await (await request.get("/me/api/home")).json();
           const media = snapshot.capabilities.filter(
@@ -192,6 +198,7 @@ for (const theme of ["light", "dark"] as const) {
               ),
             )
             .toBeGreaterThan(0);
+          await openClientInstructionsOnPhone(page, width);
           await chooseRecipeKey(page, /Browser test app/);
           await expect(page.getByRole("tabpanel").locator("pre")).toContainText(
             "fast",
@@ -205,6 +212,7 @@ for (const theme of ["light", "dark"] as const) {
             page.getByRole("button", { name: "Try again", exact: true }),
           ).toBeVisible();
         } else {
+          await openClientInstructionsOnPhone(page, width);
           await expect(
             page.getByRole("tab", { name: "Open WebUI", exact: true }),
           ).toBeVisible();
@@ -259,6 +267,7 @@ for (const theme of ["light", "dark"] as const) {
           await page
             .getByRole("button", { name: "Try again", exact: true })
             .click();
+          await openClientInstructionsOnPhone(page, width);
           await expect(
             page.getByRole("tab", { name: "Open WebUI", exact: true }),
           ).toBeVisible();
@@ -291,6 +300,7 @@ test("all ten client recipes fit a phone and remain accessible", async ({
     (app: { name: string }) => app.name === "Browser test app",
   );
   expect(seededApp?.credentials.length).toBeGreaterThan(0);
+  await openClientInstructionsOnPhone(page, 390);
   await chooseRecipeKey(page, /Browser test app/);
   await expect(page.getByRole("tabpanel").locator("pre")).toContainText("fast");
   for (const name of [
@@ -505,6 +515,7 @@ for (const theme of ["light", "dark"] as const) {
       await expect(
         page.getByRole("heading", { name: "Recent", exact: true }),
       ).toHaveCount(0);
+      await page.getByText("Setup details", { exact: true }).click();
       await expect(page.getByText("Optional", { exact: true })).toBeVisible();
       await expect(
         page.getByRole("link", { name: /Invite someone/ }),
@@ -779,7 +790,7 @@ test("a new inherited key cannot borrow a broader existing app's recipe", async 
     });
     await expect(selector).toContainText("New app");
     await expect(
-      page.getByText("No chat model is available to this key yet", {
+      page.getByText("No chat alias is advertised for this key yet", {
         exact: true,
       }),
     ).toBeVisible();
@@ -802,7 +813,7 @@ test("a new inherited key cannot borrow a broader existing app's recipe", async 
     const { credential } = await minted.json();
     await expect(selector).toContainText("New key");
     await expect(
-      page.getByText("No chat model is available to this key yet", {
+      page.getByText("No chat alias is advertised for this key yet", {
         exact: true,
       }),
     ).toBeVisible();
@@ -838,7 +849,7 @@ test("a new inherited key cannot borrow a broader existing app's recipe", async 
       .getByRole("button", { name: "I’ve saved it", exact: true })
       .click();
     await expect(
-      page.getByText("No chat model is available to this key yet", {
+      page.getByText("No chat alias is advertised for this key yet", {
         exact: true,
       }),
     ).toBeVisible();

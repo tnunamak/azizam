@@ -141,7 +141,9 @@ test("models polish 2 absent telemetry stays honest without exposing service ids
   ]);
   await expect(page.getByTitle("Configured engine")).toBeVisible();
   await expect(
-    page.getByText("Not measured yet", { exact: true }),
+    page
+      .getByLabel("Available model aliases")
+      .getByText("Not measured yet", { exact: true }),
   ).toBeVisible();
   await expect(
     page.getByText(/capture-engine|Location not measured yet/),

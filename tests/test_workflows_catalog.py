@@ -510,6 +510,56 @@ class WorkflowsCatalogTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["workflows"][0]["recent_jobs"], [])
 
+    def test_proxy_route_owner_instance_scope_includes_service_and_local_jobs(self) -> None:
+        import proxy
+
+        with tempfile.TemporaryDirectory() as raw:
+            jobs_db = Path(raw) / "media_jobs.db"
+            media_jobs.init_db(jobs_db)
+            media_jobs.create(
+                media_jobs.MediaJob(
+                    request_id="service",
+                    intent="image.generate",
+                    workflow="image.generate.simple",
+                    app_id="service-app",
+                    status=media_jobs.STATUS_SUCCEEDED,
+                    assets=[{"asset_id": "img_service"}],
+                ),
+                path=jobs_db,
+            )
+            media_jobs.create(
+                media_jobs.MediaJob(
+                    request_id="local",
+                    intent="image.generate",
+                    workflow="image.generate.simple",
+                    status=media_jobs.STATUS_SUCCEEDED,
+                    assets=[{"asset_id": "img_local"}],
+                ),
+                path=jobs_db,
+            )
+
+            with patch.object(proxy, "_oidc_session_from_request", return_value=object()), \
+                 patch.object(proxy, "_default_profile_id_for_session", return_value="default-local"), \
+                 patch.object(proxy, "build_user_portal_snapshot", return_value={"authenticated": True, "apps": []}), \
+                 patch.object(proxy, "auth_contexts_from_user_snapshot", return_value=[object()]), \
+                 patch.object(proxy, "_gateway_capabilities_for_auth_context", return_value=[
+                     Capability(intent="image.generate", backend="comfyui", workflow="image.generate.simple")
+                 ]), \
+                 patch.object(proxy, "build_user_activity_snapshot", return_value={"receipts": [], "scope": "instance"}), \
+                 patch.object(proxy.media_jobs, "DB_PATH", jobs_db), \
+                 patch.object(proxy, "_gateway_aliases_provider", return_value={}), \
+                 patch.object(proxy, "_capabilities_availability_evidence", new=AsyncMock(return_value={})), \
+                 patch.object(proxy, "_public_base_url", return_value="http://testserver"), \
+                 patch.object(proxy, "GATEWAY_WORKFLOW_REGISTRY", _registry()):
+                app = FastAPI()
+                app.include_router(create_workflows_catalog_router(proxy._user_workflows_catalog_payload))
+                response = TestClient(app).get("/me/api/workflows")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        recent_jobs = response.json()["workflows"][0]["recent_jobs"]
+        self.assertEqual(len(recent_jobs), 2)
+        self.assertTrue(all(job["status"] == media_jobs.STATUS_SUCCEEDED for job in recent_jobs))
+
     def test_proxy_payload_does_not_swallow_media_job_scope_errors(self) -> None:
         import proxy
 

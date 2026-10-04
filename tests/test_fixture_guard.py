@@ -5,7 +5,17 @@ import sys
 from types import SimpleNamespace
 import pytest
 
-from scripts.ui.fixture_guard import check_event
+from scripts.ui.fixture_guard import check_event, install, parse_allowed_ports
+
+
+def test_parse_declared_fixture_ports():
+    assert parse_allowed_ports("18690, 18691,,18692") == {18690, 18691, 18692}
+
+
+@pytest.mark.parametrize("raw", ["15000", "18690,5000", "18999,19000"])
+def test_install_rejects_declared_ports_outside_fixture_range(raw):
+    with pytest.raises(ValueError, match="18000–18999"):
+        install({18080, *parse_allowed_ports(raw)})
 
 
 @pytest.mark.parametrize("address", [("127.0.0.1", 5051), ("127.0.0.1", 5092),

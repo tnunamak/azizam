@@ -4224,14 +4224,14 @@ async def _stream_tts_upstream(
     )
 
 
-async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Response:
+async def proxy_tts_request(request: Request, auth_context: AuthContext, *, receipt: RouteReceipt | None = None) -> Response:
     """Forward a TTS request; a tier falls back to its next engine when the first cannot serve it.
 
     Fallback rules are those of STT (``_speech_fallback_reason``): start failure, connection refused,
     503 and a 5xx that names an allocation failure. An engine id by name has no fallbacks. The
     fallback engine applies its own voice map, so the voice can differ; ``x-vivid-fallback`` says so.
     """
-    response = await _proxy_tts_once(request, auth_context)
+    response = await _proxy_tts_once(request, auth_context, receipt=receipt)
     fallbacks = await _tts_tier_fallbacks(request)
     notes: list[str] = []
     engine_id, _ = fallbacks.pop(0) if fallbacks else (None, None)
@@ -4242,7 +4242,7 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext) -> Resp
         note = f"{engine_id}->{next_engine} ({reason})"
         notes.append(note)
         print(f"[proxy] TTS fallback {note}", flush=True)
-        response = await _proxy_tts_once(request, auth_context, model_override=next_engine)
+        response = await _proxy_tts_once(request, auth_context, model_override=next_engine, receipt=receipt)
         engine_id = next_engine
     return _with_fallback_header(response, notes)
 
@@ -4269,7 +4269,7 @@ async def _tts_tier_fallbacks(request: Request) -> list[tuple[str, str | None]]:
     return [(resolution.engine, resolution.service), *usable]
 
 
-async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_override: str | None = None) -> Response:
+async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_override: str | None = None, receipt: RouteReceipt | None = None) -> Response:
     """Forward TTS request to one TTS engine."""
     if not TTS_ENABLED:
         return openai_error_response(
@@ -4288,13 +4288,14 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
 
     # Map voice in request body
     requested_response_format = "wav"
+    body_json = None
     stream_format: str | None = None
     stream_mode: str | None = None  # "audio" | "sse" | None (buffered)
     native_rate = speech_stream.OPENAI_PCM_RATE
     try:
         body_json = json.loads(body)
         # Gateway-level control; engines never see the extensions envelope.
-        _begin_media_delivery(auth_context)
+        _begin_media_delivery(auth_context, receipt)
         if isinstance(body_json, dict) and "extensions" in body_json:
             metadata_error = _note_media_metadata_body(body_json)
             if metadata_error is not None:
@@ -4385,6 +4386,9 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
         _engine_service = (config.get("backends") or {}).get(tts_service_id) or {}
         _tts_host = f"http://{_engine_service.get('host')}:{_engine_service.get('port')}"
     url = f"{_tts_host}/v1/audio/speech"
+    if receipt is not None:
+        receipt.backend = tts_service_id
+        receipt.resolved_model = body_json.get("model") if isinstance(body_json, dict) else None
 
     if stream_mode:
         return await _stream_tts_upstream(
@@ -4429,6 +4433,9 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
                     )
             elif 200 <= resp.status_code < 300:
                 content_type = TTS_RESPONSE_MEDIA_TYPES.get(requested_response_format, content_type)
+            if 200 <= resp.status_code < 300 and receipt is not None and stream_format != "sse":
+                from gateway import media_ingestion
+                await asyncio.to_thread(media_ingestion.store_audio_response, content, content_type, receipt, store_asset=store_asset_bytes)
             if 200 <= resp.status_code < 300 and stream_format == "sse":
                 # Engine cannot stream: still answer in the SSE shape, as one delta.
                 async def one_delta():
@@ -6687,7 +6694,7 @@ def store_image_bytes(content: bytes, *, owner_key_hash: str | None = None, suff
 
 _ASSET_SUFFIXES_BY_KIND = {
     "img": (".png", ".jpg", ".jpeg", ".webp", ".gif"),
-    "aud": (".wav", ".mp3", ".flac", ".ogg", ".m4a"),
+    "aud": (".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac"),
     "vid": (".mp4", ".webm", ".mov", ".mkv"),
 }
 
@@ -6702,6 +6709,7 @@ _ASSET_MEDIA_TYPES = {
     ".flac": "audio/flac",
     ".ogg": "audio/ogg",
     ".m4a": "audio/mp4",
+    ".aac": "audio/aac",
     ".mp4": "video/mp4",
     ".webm": "video/webm",
     ".mov": "video/quicktime",
@@ -7234,6 +7242,9 @@ def _build_image_response_payload(
             delivered = media_delivery.deliver_bytes(encoded, suffix, mode)
             item["b64_json"] = base64.b64encode(delivered).decode("utf-8")
         data.append(item)
+    if delivery is not None and delivery.receipt is not None:
+        from gateway import media_ingestion
+        media_ingestion.index_receipt_assets(delivery.receipt, data)
     headers = {"content-type": "application/json"}
     headers.update(warning_headers)
     payload: dict[str, Any] = {
@@ -10316,6 +10327,9 @@ async def _submit_video_graph(
                         **(record_extra or {}),
                         # Owner scoping for GET/list/DELETE/content -- mirrors
                         # _asset_owner_key's existing image/audio asset model.
+                        "app_profile": (_profile_for_auth_context(auth_context).id if _profile_for_auth_context(auth_context) else None),
+                        "app_id": auth_context.identity.app_id if auth_context.identity else None,
+                        "api_key_name": auth_context.identity.name if auth_context.identity else None,
                         "owner_key_hash": _asset_owner_key(auth_context),
                         "deleted_at": None,
                     }
@@ -11529,6 +11543,7 @@ async def proxy_comfy_video_content(
     auth_context: AuthContext,
     *,
     metadata_mode: str = provenance.METADATA_FULL,
+    index_library: bool = True,
 ) -> Response:
     """GET /v1/videos/{video_id}/content — return mp4 bytes.
 
@@ -11633,14 +11648,32 @@ async def proxy_comfy_video_content(
             video_bytes = view_resp.content
             record = _video_job_records.get(prompt_id) or {}
             try:
+                stored_video_bytes = await asyncio.to_thread(
+                    media_delivery.attach_provenance, video_bytes, ext, record.get("provenance")
+                )
+                if index_library:
+                    asset_id = await asyncio.to_thread(
+                        store_asset_bytes,
+                        stored_video_bytes,
+                        kind="vid",
+                        suffix=ext,
+                        owner_key_hash=record.get("owner_key_hash") if isinstance(record.get("owner_key_hash"), str) else None,
+                    )
+                    from gateway import media_ingestion
+                    await asyncio.to_thread(
+                        media_ingestion.index_video_delivery,
+                        video_id=video_id,
+                        asset_id=asset_id,
+                        filename=file_info["filename"],
+                        media_type=content_type,
+                        record=record,
+                    )
                 if metadata_mode == provenance.METADATA_NONE:
                     video_bytes = await asyncio.to_thread(
-                        media_delivery.deliver_bytes, video_bytes, ext, metadata_mode
+                        media_delivery.deliver_bytes, stored_video_bytes, ext, metadata_mode
                     )
                 else:
-                    video_bytes = await asyncio.to_thread(
-                        media_delivery.attach_provenance, video_bytes, ext, record.get("provenance")
-                    )
+                    video_bytes = stored_video_bytes
             except media_metadata.MediaMetadataError as exc:
                 print(f"[proxy] video metadata rewrite failed: {exc}", flush=True)
                 return Response(
@@ -14881,7 +14914,9 @@ async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
         receipts_path=receipt_store.DB_PATH,
     )
     scope = {
-        "app_ids": [
+        "app_ids": None
+        if activity.get("scope") == "instance"
+        else [
             str(app["id"])
             for app in user_snapshot.get("apps") or []
             if isinstance(app, Mapping) and app.get("id")
@@ -14889,7 +14924,7 @@ async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
     }
     jobs = media_jobs.recent(
         limit=50,
-        audience="client",
+        audience="internal",
         path=media_jobs.DB_PATH,
         **scope,
     )
@@ -17533,7 +17568,14 @@ async def audio_speech(request: Request):
     policy_response = _enforce_runtime_route_policy(auth_context, "/v1/audio/speech")
     if policy_response is not None:
         return policy_response
-    return await proxy_tts_request(request, auth_context)
+    from gateway import media_ingestion
+    receipt = await media_ingestion.start_receipt(request, auth_context, intent="speech.synthesis", profile=_profile_for_auth_context(auth_context))
+    try:
+        response = await proxy_tts_request(request, auth_context, receipt=receipt)
+    except BaseException:
+        media_ingestion.finish_receipt(receipt, status_code=500)
+        raise
+    return media_ingestion.finish_response(receipt, response)
 
 
 @app.post("/openai/v1/audio/transcriptions", openapi_extra=AUDIO_TRANSCRIPTIONS_OPENAPI)
@@ -19848,6 +19890,7 @@ async def _run_image_media_job(job_id: str) -> None:
         max_attempts = max(1, IMAGE_MEDIA_JOB_MAX_ATTEMPTS)
         for attempt in range(1, max_attempts + 1):
             receipt = start_image_route_receipt("/v1/images/generations", auth_context)
+            receipt.job_id = job_id
             try:
                 media_jobs.append_event(
                     job_id,
@@ -20882,7 +20925,7 @@ async def _run_video_media_job(job_id: str) -> None:
             if status_value != "succeeded":
                 continue
 
-            content_response = await proxy_comfy_video_content(video_id, auth_context)
+            content_response = await proxy_comfy_video_content(video_id, auth_context, index_library=False)
             content_status = int(getattr(content_response, "status_code", 0) or 0)
             if not 200 <= content_status < 300:
                 message, _code = _image_response_error(content_response)
@@ -21673,14 +21716,11 @@ def _signed_asset_content_response(
             status_code=502,
             media_type="application/json",
         )
-    return Response(
-        content=data,
-        status_code=200,
+    return media_delivery.ranged_delivery_response(
+        request,
+        data,
         media_type=asset_media_type(asset_id, cache_path),
-        headers={
-            "content-length": str(len(data)),
-            "cache-control": "private, max-age=3600",
-        },
+        cache_control="private, max-age=3600",
     )
 
 
@@ -22196,7 +22236,7 @@ def _extract_audio_output(job: dict):
     return None
 
 
-async def proxy_audio_generate(request: Request, auth_context, *, store_full: bool = False):
+async def proxy_audio_generate(request: Request, auth_context, *, store_full: bool = False, receipt: RouteReceipt | None = None):
     """POST /v1/audio/generate — submit audio generation via ComfyUI.
 
     ``store_full`` is for the media-job executor, which stores the bytes: they
@@ -22227,7 +22267,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
     if unknown_top_level:
         name, reason = next(iter(unknown_top_level.items()))
         return _audio_extension_error_response(reason, param=name)
-    _begin_media_delivery(auth_context)
+    _begin_media_delivery(auth_context, receipt)
     metadata_error = _note_media_metadata_body(body)
     if metadata_error is not None:
         return metadata_error
@@ -22477,6 +22517,12 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
                                     _peak_normalize_audio, audio_bytes, content_type, float(peak_db)
                                 )
                             audio_suffix = Path(file_info["filename"]).suffix or ".wav"
+                            if receipt is not None and not store_full:
+                                from gateway import media_ingestion
+                                receipt.requested_model = str(model)
+                                receipt.resolved_model = workflow_name
+                                receipt.resolved_workflow = f"audio.generate.{workflow_name}"
+                                await asyncio.to_thread(media_ingestion.store_audio_response, audio_bytes, content_type, receipt, store_asset=store_asset_bytes)
                             try:
                                 if not store_full and media_delivery.current_mode() == provenance.METADATA_NONE:
                                     audio_bytes = await asyncio.to_thread(
@@ -22567,7 +22613,14 @@ async def audio_generate(request: Request):
     policy_response = _enforce_runtime_route_policy(auth_context, "/v1/audio/generate")
     if policy_response is not None:
         return policy_response
-    return await proxy_audio_generate(request, auth_context)
+    from gateway import media_ingestion
+    receipt = await media_ingestion.start_receipt(request, auth_context, intent="audio.generate", profile=_profile_for_auth_context(auth_context))
+    try:
+        response = await proxy_audio_generate(request, auth_context, receipt=receipt)
+    except BaseException:
+        media_ingestion.finish_receipt(receipt, status_code=500)
+        raise
+    return media_ingestion.finish_response(receipt, response)
 
 
 @app.get("/openai/v1/audio/models", openapi_extra=AUDIO_MODELS_OPENAPI)
@@ -27881,6 +27934,8 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
 # response (including every SSE chunk) is sent, and short-circuits a drain 503
 # before auth or routing work. See gateway/drain.py.
 app.add_middleware(InflightMiddleware, state=DRAIN_STATE)
+from gateway.request_source import RequestSourceMiddleware
+app.add_middleware(RequestSourceMiddleware)
 
 
 # =============================================================================

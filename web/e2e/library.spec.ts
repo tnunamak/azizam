@@ -195,6 +195,8 @@ test("library delete confirms before mutation", async ({ page }) => {
     return route.fulfill({ json: { ok: true } });
   });
   await page.goto("/ui/library/");
+  await page.getByLabel("Owner", { exact: true }).click();
+  await page.getByRole("option", { name: "Mine", exact: true }).click();
   await page.getByRole("button", { name: /A clean product render/ }).click();
   await page.getByRole("button", { name: "Delete" }).click();
   await expect(
@@ -246,6 +248,9 @@ test("library filters dates and everyone, pages forward and preserves prior item
   await page.getByLabel("Date", { exact: true }).click();
   await page.getByRole("option", { name: "Last 7 days" }).click();
   await expect.poll(() => requests.at(-1) ?? "").toContain("start=");
+  await page.getByLabel("Owner", { exact: true }).click();
+  await page.getByRole("option", { name: "Mine", exact: true }).click();
+  await expect.poll(() => requests.at(-1) ?? "").toContain("scope=me");
   await page.getByLabel("Owner", { exact: true }).click();
   await page.getByRole("option", { name: "Everyone’s" }).click();
   await expect.poll(() => requests.at(-1) ?? "").toContain("scope=everyone");
@@ -315,10 +320,21 @@ test("library audio plays independently and video uses its recorded poster", asy
     page.getByRole("img", { name: mediaFixture.assets[1].prompt }),
   ).toHaveAttribute("src", posterUrl);
   await expect(page.locator("article video")).toHaveCount(0);
-  await page.getByLabel("Owner", { exact: true }).click();
-  await page.getByRole("option", { name: "Everyone’s" }).click();
   await expect
     .poll(() => posterRequests.at(-1) ?? "")
     .toContain("scope=everyone");
+  await page.getByLabel("Owner", { exact: true }).click();
+  await page.getByRole("option", { name: "Mine", exact: true }).click();
+  await expect.poll(() => posterRequests.at(-1) ?? "").toContain("scope=me");
+  await page.getByLabel("Owner", { exact: true }).click();
+  await page.getByRole("option", { name: "Everyone’s" }).click();
+  await expect(page.getByLabel("Owner", { exact: true })).toContainText(
+    "Everyone’s",
+  );
+  // The instance poster is already cached from the default owner view.
+  expect(posterRequests.some((url) => url.includes("scope=everyone"))).toBe(
+    true,
+  );
+  await expect(page.locator('[role="listbox"]')).toHaveCount(0);
   await auditPage(page);
 });

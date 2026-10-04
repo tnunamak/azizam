@@ -73,6 +73,18 @@ for (const theme of ["light", "dark"] as const) {
           ),
           "Page must fit the viewport",
         ).toBe(true);
+        if (name === "status") {
+          const refresh = page.getByRole("button", {
+            name: "Refresh",
+            exact: true,
+          });
+          await expect(refresh).toBeEnabled();
+          await expect
+            .poll(() =>
+              refresh.evaluate((element) => getComputedStyle(element).opacity),
+            )
+            .toBe("1");
+        }
         await page.screenshot({
           path: `test-results/screens/${name}-${theme}-${width}.png`,
           fullPage: true,

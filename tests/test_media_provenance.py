@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from gateway import comfy_object_info, media_delivery, media_metadata, provenance  # noqa: E402
+from gateway import comfy_object_info, media_delivery, media_jobs, media_metadata, provenance, receipt_store  # noqa: E402
 
 _REAL_OBJECT_INFO_LOOKUP = comfy_object_info.lookup  # tests/conftest.py stubs the module attribute
 from gateway.extensions import validate_extension_inputs  # noqa: E402
@@ -40,6 +40,28 @@ FFMPEG = shutil.which("ffmpeg") is not None
 PROMPT_JSON = json.dumps({"3": {"class_type": "KSampler", "inputs": {"seed": 7}}})
 WORKFLOW_JSON = json.dumps({"nodes": [{"id": 3, "type": "KSampler"}], "version": 0.4})
 SECRET_KEY = "sk-live-0123456789abcdefSECRET"
+
+
+def _patch_route_stores(case: unittest.TestCase, root: Path) -> None:
+    media_db = root / "media_jobs.db"
+    receipts_db = root / "receipts.db"
+    cache_dir = root / "asset-cache"
+    media_jobs.init_db(media_db)
+    receipt_store.init_db(receipts_db)
+    for target, value in (
+        (media_jobs, media_db),
+        (receipt_store, receipts_db),
+    ):
+        patcher = patch.object(target, "DB_PATH", value)
+        patcher.start()
+        case.addCleanup(patcher.stop)
+    for name, value in (
+        ("IMAGE_CACHE_DIR", cache_dir),
+        ("_image_url_signing_secret", b"test-secret"),
+    ):
+        patcher = patch.object(proxy, name, value)
+        patcher.start()
+        case.addCleanup(patcher.stop)
 
 
 def comfy_png(color=(10, 20, 30, 255), size=(8, 6)) -> bytes:
@@ -177,6 +199,27 @@ class ControlParsingTests(unittest.TestCase):
         self.assertEqual(media_delivery.current_mode(), "none")
         with self.assertRaises(provenance.MetadataModeError):
             media_delivery.note_query([("metadata", "x")])
+
+    def test_ranged_delivery_response_supports_browser_audio_seek(self) -> None:
+        content = b"0123456789abcdef"
+        request = SimpleNamespace(headers={"range": "bytes=4-9"})
+        response = media_delivery.ranged_delivery_response(
+            request,  # type: ignore[arg-type]
+            content,
+            media_type="audio/wav",
+        )
+        self.assertEqual(response.status_code, 206)
+        self.assertEqual(response.headers["accept-ranges"], "bytes")
+        self.assertEqual(response.headers["content-range"], "bytes 4-9/16")
+        self.assertEqual(response.body, b"456789")
+
+        bad = media_delivery.ranged_delivery_response(
+            SimpleNamespace(headers={"range": "bytes=99-100"}),  # type: ignore[arg-type]
+            content,
+            media_type="audio/wav",
+        )
+        self.assertEqual(bad.status_code, 416)
+        self.assertEqual(bad.headers["content-range"], "bytes */16")
 
 
 class ProvenanceRecordTests(unittest.TestCase):
@@ -387,9 +430,8 @@ class ImageRouteTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
+        _patch_route_stores(self, Path(self.tmp.name))
         for target, value in (
-            ("IMAGE_CACHE_DIR", Path(self.tmp.name)),
-            ("_image_url_signing_secret", b"test-secret"),
             ("COMFY_ENABLED", True),
         ):
             patcher = patch.object(proxy, target, value)
@@ -526,6 +568,9 @@ class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
     async def _fetch(self, *, query: str, record_mode: str | None, auth) -> bytes:
         if not FFMPEG:
             self.skipTest("ffmpeg is required")
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        _patch_route_stores(self, Path(tmp.name))
         raw = AvDeliveryTests()._make(".mp4", audio=False)
         prompt_id = "pid-1"
         record = {
@@ -603,6 +648,7 @@ class SpeechRouteTests(unittest.TestCase):
 
         workdir = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, workdir, True)
+        _patch_route_stores(self, workdir)
         wav = workdir / "t.wav"
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=duration=0.3",
                         "-metadata", "comment=engine-generated-note", "-metadata", "software=engine-1.0", str(wav)], check=True)
@@ -673,6 +719,7 @@ class AudioGenerateRouteTests(unittest.TestCase):
 
         self.workdir = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.workdir, True)
+        _patch_route_stores(self, self.workdir)
         graph = self.workdir / "fx.json"
         graph.write_text(json.dumps({"_meta": {"prompt_node": "1", "seed_node": "1"},
                                      "1": {"class_type": "TextNode", "inputs": {"text": "", "seed": 0}}}))

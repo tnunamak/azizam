@@ -320,6 +320,23 @@ class TestReceiptStore(unittest.TestCase):
         rows = receipt_store.recent(limit=10, app_ids=["app_alice"], path=self.db)
         self.assertEqual([r["request_id"] for r in rows], [owned.request_id])
 
+    def test_recent_owner_scope_can_include_null_app_id_with_source_label(self) -> None:
+        local = _make_receipt(app_id=None, api_key_name=None)
+        owned = _make_receipt(app_id="app_alice", api_key_name="Alice app")
+        receipt_store.record(local, created_at=1, path=self.db)
+        receipt_store.record(owned, created_at=2, path=self.db)
+
+        member_rows = receipt_store.recent(limit=10, app_ids=["app_alice"], path=self.db)
+        self.assertEqual([row["request_id"] for row in member_rows], [owned.request_id])
+
+        owner_rows = receipt_store.recent(
+            limit=10, app_ids=["app_alice"], include_null_app_id=True, path=self.db
+        )
+        self.assertEqual([row["request_id"] for row in owner_rows], [owned.request_id, local.request_id])
+        self.assertEqual(owner_rows[1]["source"]["kind"], "local-network")
+        self.assertEqual(owner_rows[1]["source"]["label"], "Local network · no key")
+        self.assertEqual(owner_rows[0]["source"]["kind"], "app")
+
     def test_recent_empty_app_ids_returns_no_rows_never_leaks(self) -> None:
         # A caller who owns no Apps gets an empty feed — it must NOT fall through
         # to an unfiltered query that would return everyone's receipts.

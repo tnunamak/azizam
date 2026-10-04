@@ -221,7 +221,8 @@ class VideoMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 media_type="application/json",
             )
 
-        async def fake_content(_video_id, _auth_context):
+        async def fake_content(_video_id, _auth_context, *, index_library=True):
+            self.assertFalse(index_library)
             return Response(
                 content=b"video bytes",
                 status_code=200,

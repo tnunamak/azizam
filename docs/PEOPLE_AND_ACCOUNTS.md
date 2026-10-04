@@ -83,12 +83,45 @@ remain accessible before assets exist. Store ownership filters run before
 list limits, and get/events/cancel/content check the same ownership rule.
 Client and admin views do not expose owner key hashes.
 
+Owner Library, request and usage views are instance views by default. They
+include personal Apps, service Apps and local-network requests that arrived
+without an API key. These no-key records are labeled `Local network · no key`;
+when the request path records a client hint, the UI can show that hint as
+supporting source detail. Historical receipt rows with `app_id = NULL` are
+interpreted the same way at read time. This is non-destructive; no receipt
+backfill is required.
+
+Members do not inherit owner instance scope. Their Home, Usage and Library
+views remain limited to their own Apps and key-attributed assets. A member
+cannot filter to `local-network` or another App source. A member never sees
+service-app receipts or no-key local-network receipts unless a future
+explicit sharing feature grants that access.
+
+Owner source filters use stable source IDs:
+
+| Source ID | Meaning |
+| --- | --- |
+| `all` or omitted | All instance receipts visible to the owner |
+| `local-network` | No-key local-network receipts (`app_id = NULL`) |
+| `app:<app_id>` | Receipts for one App, including service Apps |
+
+Library uses the same source IDs. Job-backed assets take their source from the
+job receipt, or the job's trusted App/key identity if the receipt is absent.
+Cache-only assets first use embedded provenance `request_id` to
+find a receipt; if no receipt exists, their internal owner key hashes are
+matched to historical App credentials, including revoked credentials, to
+recover the App label. If neither path can recover a source, owner views show
+the asset as `Local network · no key`.
+The hashes are never returned by the API.
+
 **Upgrade behavior:** historical records without trusted App/key attribution
-are excluded from scoped lists and return 404 on scoped detail access.
-Old client-supplied parent receipt IDs, labels and asset references cannot
-establish who submitted a job. They are not used to manufacture ownership.
-Already-issued complete signed asset URLs retain their existing capability
-semantics and expiry. Explicit auth-disabled gateways retain unscoped access.
+are excluded from member-scoped lists and return 404 on scoped member detail
+access. Owner instance views label historical `NULL` App receipts as
+local-network/no-key source records. Old client-supplied parent receipt IDs,
+labels and asset references cannot establish which member submitted a job.
+They are not used to manufacture member ownership. Already-issued complete
+signed asset URLs retain their existing capability semantics and expiry.
+Explicit auth-disabled gateways retain unscoped access.
 
 ## Deployment and limits
 

@@ -105,6 +105,13 @@ export interface StatusSummary {
   reason: string;
 }
 
+export interface HomeReceiptSource {
+  label: string;
+  kind?: string | null;
+  app_id?: string | null;
+  client_hint?: string | null;
+}
+
 export interface HomeReceipt {
   request_id: string;
   intent?: string | null;
@@ -115,6 +122,8 @@ export interface HomeReceipt {
   latency_ms?: number | null;
   _stored_at?: number | null;
   accepted_at_ms?: number | null;
+  source_label?: string | null;
+  source?: HomeReceiptSource;
 }
 
 export interface HomeProjection {

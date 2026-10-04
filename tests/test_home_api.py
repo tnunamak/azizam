@@ -16,7 +16,7 @@ from gateway.local_capabilities import build_alias_capabilities
 from gateway.profiles import load_profile
 from gateway.product_contracts import HomeCapability, HomeProjection, MemberStatus, SetupEvidenceResponse, SetupProgress
 from gateway.runtime_auth import RuntimeIdentity, hash_api_key, make_policy_request
-from gateway.user_runtime import UserPortalError, create_user_app
+from gateway.user_runtime import UserPortalError, create_user_app, get_user_receipt
 from pydantic import TypeAdapter
 
 
@@ -113,6 +113,49 @@ def test_home_uses_allowed_capabilities_and_owned_last_five(home_case):
     assert c.key not in response.text and "sha256:" not in response.text
     assert admin_store.get_credential(c.cred["id"], path=c.db)["last_used_at"] is None
     assert response.headers["cache-control"] == "no-store"
+
+
+def test_home_owner_recent_defaults_to_instance_activity(home_case):
+    c = home_case
+    admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=c.user["id"], path=c.db)
+    service_account = admin_store.ensure_service_account("svc_daisy", path=c.db)
+    service = admin_store.create_app("Daisy", kind="service", owner_service_account_id=service_account["id"], path=c.db)
+    receipt_store.record({"request_id": "mine", "app_id": c.client_app["id"], "status": "succeeded"}, created_at=10, path=c.receipts)
+    receipt_store.record({"request_id": "service", "app_id": service["id"], "api_key_name": "Daisy", "status": "succeeded"}, created_at=11, path=c.receipts)
+    receipt_store.record({"request_id": "local", "app_id": None, "status": "succeeded"}, created_at=12, path=c.receipts)
+
+    data = c.http.get("/me/api/home").json()
+    projected = TypeAdapter(HomeProjection).validate_python(data)
+    assert [row["request_id"] for row in projected["receipts"]] == ["local", "service", "mine"]
+    local = projected["receipts"][0]
+    service_row = projected["receipts"][1]
+    assert local["source"]["kind"] == "local-network"
+    assert local["source_label"] == "Local network · no key"
+    assert service_row["source"]["app_id"] == service["id"]
+    assert service_row["source_label"] == "Daisy"
+    assert service_row["source"]["label"] == "Daisy"
+
+
+def test_owner_can_open_instance_receipt_details_and_member_cannot(home_case):
+    c = home_case
+    admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=c.user["id"], path=c.db)
+    service_account = admin_store.ensure_service_account("svc_daisy", path=c.db)
+    service = admin_store.create_app("Daisy", kind="service", owner_service_account_id=service_account["id"], path=c.db)
+    receipt_store.record({"request_id": "service", "app_id": service["id"], "status": "succeeded"}, created_at=11, path=c.receipts)
+    receipt_store.record({"request_id": "local", "app_id": None, "status": "succeeded"}, created_at=12, path=c.receipts)
+
+    assert get_user_receipt(c.session, "local", path=c.db, receipts_path=c.receipts)["source"]["kind"] == "local-network"
+    assert get_user_receipt(c.session, "service", path=c.db, receipts_path=c.receipts)["source"]["app_id"] == service["id"]
+    audit_rows = admin_store.list_audit(action_prefix="receipt.detail.instance", path=c.db)
+    assert {row["target_id"] for row in audit_rows} == {"service", "local"}
+
+    member_session = AdminSession(subject=c.outsider["owner_user_id"], email="two@example.test", role="admin", issued_at=1, expires_at=4_000_000_000)
+    with pytest.raises(UserPortalError) as local_error:
+        get_user_receipt(member_session, "local", path=c.db, receipts_path=c.receipts)
+    assert local_error.value.status_code == 404
+    with pytest.raises(UserPortalError) as service_error:
+        get_user_receipt(member_session, "service", path=c.db, receipts_path=c.receipts)
+    assert service_error.value.status_code == 404
 
 
 def test_home_unknown_health_is_not_green(home_case):
@@ -278,6 +321,32 @@ def test_setup_receipt_acknowledgement_requires_owned_receipt(home_case):
     evidence = c.http.get("/admin/api/setup-progress").json()["evidence"]
     assert evidence["receipt_viewed"]["recorded"]
     assert not evidence["external_client_confirmed"]["recorded"]
+
+
+def test_setup_receipt_acknowledgement_follows_db_owner_visible_receipts(home_case):
+    c = home_case
+    admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=c.user["id"], path=c.db)
+    service_account = admin_store.ensure_service_account("svc_setup_daisy", path=c.db)
+    service = admin_store.create_app("Daisy", kind="service", owner_service_account_id=service_account["id"], path=c.db)
+    receipt_store.record({"request_id": "service", "app_id": service["id"], "status": "succeeded"}, path=c.receipts)
+    receipt_store.record({"request_id": "local", "app_id": None, "status": "succeeded"}, path=c.receipts)
+    receipt_store.record({"request_id": "foreign", "app_id": c.outsider["id"], "status": "succeeded"}, path=c.receipts)
+
+    assert c.http.post("/admin/api/setup-evidence", json={"event": "settings_copied", "app_id": c.outsider["id"]}, headers=c.headers).status_code == 404
+    assert c.http.post("/admin/api/setup-evidence", json={"event": "external_client_confirmed", "app_id": c.outsider["id"]}, headers=c.headers).status_code == 404
+    assert c.http.post("/admin/api/setup-evidence", json={"event": "receipt_viewed", "request_id": "missing"}, headers=c.headers).status_code == 404
+    c.owner = False
+    assert c.http.post("/admin/api/setup-evidence", json={"event": "receipt_viewed", "request_id": "local"}, headers=c.headers).status_code == 403
+    c.owner = True
+
+    for request_id in ("local", "service", "foreign"):
+        response = c.http.post("/admin/api/setup-evidence", json={"event": "receipt_viewed", "request_id": request_id}, headers=c.headers)
+        assert response.status_code == 200, response.text
+    evidence = c.http.get("/admin/api/setup-progress").json()["evidence"]
+    assert evidence["receipt_viewed"]["recorded"]
+    assert not evidence["external_client_confirmed"]["recorded"]
+    audit_rows = admin_store.list_audit(action_prefix="receipt.detail.instance", path=c.db)
+    assert {row["target_id"] for row in audit_rows} >= {"local", "service", "foreign"}
 
 
 def test_setup_actual_invitation_completes_optional_step(home_case):

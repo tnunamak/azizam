@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -19,6 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from gateway import media_jobs, receipt_store  # noqa: E402
 from gateway.transforms import (  # noqa: E402
     CANONICAL_TTS_VOICES,
     DEFAULT_TTS_VOICE,
@@ -76,6 +78,13 @@ class CanonicalVoiceMappingTests(unittest.TestCase):
 
 class VoiceRouteTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.receipts_db = root / "receipts.db"
+        self.media_jobs_db = root / "media_jobs.db"
+        receipt_store.init_db(self.receipts_db)
+        media_jobs.init_db(self.media_jobs_db)
         self.client = TestClient(proxy.app)
         _FakeTTSAsyncClient.requests = []
         self.patches = [
@@ -84,6 +93,8 @@ class VoiceRouteTests(unittest.TestCase):
             patch.object(proxy, "_current_loaded_model_policy_decision", return_value=None),
             patch.object(proxy.httpx, "AsyncClient", _FakeTTSAsyncClient),
             patch.object(proxy, "_ensure_speech_service_ready", AsyncMock(return_value=None)),
+            patch.object(receipt_store, "DB_PATH", self.receipts_db),
+            patch.object(media_jobs, "DB_PATH", self.media_jobs_db),
         ]
         for p in self.patches:
             p.start()

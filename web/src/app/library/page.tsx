@@ -70,12 +70,16 @@ interface MediaAsset {
   duration_s?: number | null;
   poster_asset_id?: string | null;
   owner_name?: string | null;
+  source?: { id?: string; kind: string; label: string };
+  available?: boolean;
+  unavailable_reason?: string | null;
 }
 
 interface MediaResponse {
   assets: MediaAsset[];
   next_cursor?: string | null;
   models?: string[];
+  sources?: { id: string; label: string }[];
 }
 
 function isMediaKind(value: string): value is MediaKind {
@@ -98,6 +102,7 @@ function buildMediaPath(filters: {
   date: DateFilter;
   search: string;
   owner: string;
+  source: string;
 }) {
   const params = new URLSearchParams({ limit: "40" });
   if (isMediaKind(filters.kind)) params.set("kind", filters.kind);
@@ -111,6 +116,8 @@ function buildMediaPath(filters: {
   }
   if (filters.search.trim()) params.set("q", filters.search.trim());
   if (filters.owner === "everyone") params.set("scope", "everyone");
+  if (filters.owner === "mine") params.set("scope", "me");
+  if (filters.source !== "all") params.set("source", filters.source);
   return `/me/api/media?${params.toString()}`;
 }
 
@@ -147,10 +154,16 @@ function Preview({
     enabled: asset.kind === "video" && !!asset.poster_asset_id,
     queryFn: () =>
       mediaRequest<{ download_url: string }>(
-        `/me/api/media/${encodeURIComponent(asset.poster_asset_id!)}/download${everyone ? "?scope=everyone" : ""}`,
+        `/me/api/media/${encodeURIComponent(asset.poster_asset_id!)}/download?scope=${everyone ? "everyone" : "me"}`,
       ),
     retry: false,
   });
+  if (asset.available === false)
+    return (
+      <div className="bg-muted text-muted-foreground flex h-full min-h-32 items-center justify-center p-4 text-center text-sm">
+        {asset.unavailable_reason || "The media file is missing or expired."}
+      </div>
+    );
   if (asset.kind === "image" && src)
     return (
       <NextImage
@@ -272,6 +285,14 @@ function AssetCard({
           <span className="truncate">{asset.model || "Unknown model"}</span>
           <RelativeTime ts={asset.created_at} fallback="Time not recorded" />
         </div>
+        {asset.source && (
+          <p
+            className="text-muted-foreground truncate text-xs"
+            title={asset.source.label}
+          >
+            {asset.source.label}
+          </p>
+        )}
       </div>
     </article>
   );
@@ -284,10 +305,13 @@ export default function LibraryPage() {
   const [model, setModel] = useState("all");
   const [date, setDate] = useState<DateFilter>("all");
   const [search, setSearch] = useState("");
-  const [owner, setOwner] = useState("mine");
+  const [owner, setOwner] = useState("default");
+  const [source, setSource] = useState("all");
   const [selected, setSelected] = useState<MediaAsset | null>(null);
   const [confirming, setConfirming] = useState<MediaAsset | null>(null);
-  const filters = { kind, model, date, search, owner };
+  const instanceView =
+    ["owner", "superadmin"].includes(viewer.role) && owner !== "mine";
+  const filters = { kind, model, date, search, owner, source };
   const mediaPath = buildMediaPath(filters);
   const {
     data,
@@ -356,7 +380,11 @@ export default function LibraryPage() {
     <div>
       <PageHeader
         title="Library"
-        answer="Everything I’ve made."
+        answer={
+          instanceView
+            ? "Everything made through your gateway."
+            : "Everything I’ve made."
+        }
         description="Browse your images, video and audio with provenance and download actions."
       />
       <section aria-label="Library filters" className="mb-6 space-y-4">
@@ -418,7 +446,13 @@ export default function LibraryPage() {
             </SelectContent>
           </Select>
           {["owner", "superadmin"].includes(viewer.role) ? (
-            <Select value={owner} onValueChange={setOwner}>
+            <Select
+              value={owner === "default" ? "everyone" : owner}
+              onValueChange={(value) => {
+                setOwner(value);
+                setSource("all");
+              }}
+            >
               <SelectTrigger aria-label="Owner" className="w-full sm:w-40">
                 <SelectValue />
               </SelectTrigger>
@@ -428,11 +462,27 @@ export default function LibraryPage() {
               </SelectContent>
             </Select>
           ) : null}
+          {instanceView ? (
+            <Select value={source} onValueChange={setSource}>
+              <SelectTrigger aria-label="Source" className="w-full sm:w-52">
+                <SelectValue placeholder="All sources" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All sources</SelectItem>
+                {(data?.pages[0]?.sources ?? []).map((item) => (
+                  <SelectItem key={item.id} value={item.id}>
+                    {item.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : null}
         </div>
       </section>
-      {owner === "everyone" ? (
+      {instanceView ? (
         <p className="border-warning/30 bg-warning/10 text-muted-foreground mb-4 rounded-lg border px-3 py-2 text-sm">
-          Showing everyone’s media. Access through this owner view is audited.
+          Showing media from all people, service apps and the local network.
+          Access through this owner view is audited.
         </p>
       ) : null}
       {isLoading ? (
@@ -477,7 +527,7 @@ export default function LibraryPage() {
               key={asset.asset_id}
               asset={asset}
               onOpen={setSelected}
-              everyone={owner === "everyone"}
+              everyone={instanceView}
             />
           ))}
         </div>
@@ -509,11 +559,7 @@ export default function LibraryPage() {
               </SheetHeader>
               <div className="space-y-5 px-4 pb-4">
                 <div className="bg-muted overflow-hidden rounded-lg border">
-                  <Preview
-                    asset={selected}
-                    large
-                    everyone={owner === "everyone"}
-                  />
+                  <Preview asset={selected} large everyone={instanceView} />
                 </div>
                 <div className="grid gap-3 text-sm sm:grid-cols-2">
                   <Detail
@@ -577,6 +623,9 @@ export default function LibraryPage() {
                   {selected.owner_name ? (
                     <Detail label="Owner" value={selected.owner_name} />
                   ) : null}
+                  {selected.source ? (
+                    <Detail label="Source" value={selected.source.label} />
+                  ) : null}
                 </div>
                 <section>
                   <h2 className="mb-2 text-sm font-medium">Prompt</h2>
@@ -596,18 +645,20 @@ export default function LibraryPage() {
                   </pre>
                 </section>
                 <div className="flex flex-wrap gap-2">
-                  <Button asChild variant="outline">
-                    <a
-                      href={
-                        selected.download_url ??
-                        `/me/api/media/${encodeURIComponent(selected.asset_id)}/download`
-                      }
-                      download
-                    >
-                      <Download />
-                      Download
-                    </a>
-                  </Button>
+                  {selected.available !== false && (
+                    <Button asChild variant="outline">
+                      <a
+                        href={
+                          selected.download_url ??
+                          `/me/api/media/${encodeURIComponent(selected.asset_id)}/download`
+                        }
+                        download
+                      >
+                        <Download />
+                        Download
+                      </a>
+                    </Button>
+                  )}
                   <Button
                     variant="outline"
                     disabled={!selected.prompt}
@@ -633,7 +684,7 @@ export default function LibraryPage() {
                       </a>
                     </Button>
                   ) : null}
-                  {owner === "mine" ? (
+                  {!instanceView ? (
                     <Button
                       variant="outline"
                       onClick={() => setConfirming(selected)}

@@ -18,8 +18,8 @@ let originalSubstrates: Record<string, unknown> = {};
 let registryHeaders: Record<string, string>;
 
 test.beforeAll(async ({ baseURL }) => {
-  // Reserve a port in the authorized throwaway range. Other lanes may already
-  // be using baseURL + 2, so do not assume adjacent ports are available.
+  // Reserve a port in the explicit fixture-only throwaway range. Other lanes may
+  // already be using adjacent gateway ports, so do not assume baseURL + 2.
   for (let candidate = 18690; candidate <= 18710; candidate++) {
     const reservation = createServer();
     const available = await new Promise<boolean>((resolve) => {

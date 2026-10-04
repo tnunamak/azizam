@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -16,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from gateway import media_jobs, receipt_store  # noqa: E402
 from gateway import stable_aliases as sa  # noqa: E402
 from gateway.local_capabilities import build_alias_capabilities  # noqa: E402
 
@@ -285,10 +287,28 @@ class ShippedConfigTests(unittest.TestCase):
         self.assertEqual(tts.backend, "tts")
 
 
+def _media_store_patches(case):
+    case.tmp = tempfile.TemporaryDirectory()
+    case.addCleanup(case.tmp.cleanup)
+    root = Path(case.tmp.name)
+    receipts_db = root / "receipts.db"
+    media_jobs_db = root / "media_jobs.db"
+    cache_dir = root / "cache"
+    receipt_store.init_db(receipts_db)
+    media_jobs.init_db(media_jobs_db)
+    return [
+        patch.object(receipt_store, "DB_PATH", receipts_db),
+        patch.object(media_jobs, "DB_PATH", media_jobs_db),
+        patch.object(proxy, "IMAGE_CACHE_DIR", cache_dir),
+        patch.object(proxy, "_image_url_signing_secret", b"test-secret"),
+    ]
+
+
 class RouteTests(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(proxy.app)
         self.patches = [
+            *_media_store_patches(self),
             patch.object(proxy, "AUTH_ENABLED", False),
             patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
             patch.object(proxy, "_current_loaded_model_policy_decision", return_value=None),
@@ -440,6 +460,7 @@ class SpeechEngineRoutingTests(unittest.TestCase):
             "name": "supertonic", "host": "127.0.0.1", "port": 8010, "capabilities": ["audio", "speech"],
         }
         self.patches = [
+            *_media_store_patches(self),
             patch.object(proxy, "AUTH_ENABLED", False),
             patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
             patch.object(proxy, "config", cfg),
