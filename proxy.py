@@ -13202,8 +13202,8 @@ def _capability_for_profile(
     if "alias" in capability.tags and capability.backend == "gateway":
         return replace(capability, policy_available=False)
     remote_provider_id = None
-    if "remote" in capability.tags:
-        provider = provider_lookup(ADMIN_STORE.get_service_registry(), capability.backend)
+    provider = provider_lookup(ADMIN_STORE.get_service_registry(), capability.backend)
+    if "remote" in capability.tags or (provider is not None and service_registry.is_remote_provider_config(provider.config)):
         if provider is None:
             return replace(capability, policy_available=False, policy_reasons=("Provider configuration is unavailable.",))
         remote_provider_id = provider.id

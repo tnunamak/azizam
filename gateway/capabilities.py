@@ -290,6 +290,7 @@ def summarize_capabilities(
 def resolve_capability_targets(capabilities: Iterable[Capability], service_records: Mapping[str, Any] | None = None) -> list[Capability]:
     """Bind aliases to a unique declared target without inventing routing truth."""
     from gateway.alias_policy import service_model_records
+    from gateway.service_registry import is_remote_provider_config
 
     raw = list(capabilities)
     alias_names = {(cap.intent, cap.model) for cap in raw if "alias" in cap.tags}
@@ -309,6 +310,8 @@ def resolve_capability_targets(capabilities: Iterable[Capability], service_recor
             if not isinstance(service, Mapping) or not service.get("enabled", True):
                 continue
             config = service.get("config") or {}
+            if is_remote_provider_config(config):
+                continue  # Remote aliases need a concrete capability of this intent.
             if any(row.get("enabled") is not False and target in {row.get("id"), row.get("model_group")}
                    for row in service_model_records(config)):
                 matches.append(replace(cap, backend=str(service_id)))

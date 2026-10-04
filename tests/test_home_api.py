@@ -1,5 +1,6 @@
 """Home's policy, owner privacy, setup truth, and single-dispatch contract."""
 from types import SimpleNamespace
+from dataclasses import replace
 
 import pytest
 from fastapi import FastAPI, Request
@@ -567,7 +568,8 @@ def test_generic_endpoint_requires_unshadowed_permitted_registry_model():
 
 
 @pytest.mark.parametrize("restriction", ["no_remote_grant", "disallowed_provider_plan", "allowed_canonical_grant"])
-def test_home_and_member_status_preserve_upstream_remote_alias_permission(home_case, monkeypatch, restriction):
+@pytest.mark.parametrize("remote_tags", [True, False])
+def test_home_and_member_status_preserve_upstream_remote_alias_permission(home_case, monkeypatch, restriction, remote_tags):
     import proxy
     from gateway.capabilities import resolve_capability_targets
     from gateway.models_catalog import registered_model_capabilities
@@ -593,6 +595,8 @@ def test_home_and_member_status_preserve_upstream_remote_alias_permission(home_c
         projected = [proxy._capability_for_profile(cap, proxy.AuthContext(identity=identity))
                      for cap in resolve_capability_targets(raw, c.registry)]
         assert all(cap.policy_available == (restriction == "allowed_canonical_grant") for cap in projected)
+        if not remote_tags:
+            projected = [replace(cap, tags=tuple(tag for tag in cap.tags if tag != "remote")) for cap in projected]
         return projected
     c.capabilities_override = upstream_projection
     for path in ("/me/api/home", "/me/api/status"):

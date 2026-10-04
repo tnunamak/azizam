@@ -27,6 +27,7 @@ from gateway.capabilities import Capability, summarize_capability, capability_wi
 from gateway.policy import DEFAULT_PROFILE
 from gateway.profiles import ProfileLoadError, load_profile
 from gateway.runtime_auth import RuntimeIdentity, hash_api_key, make_policy_request
+from gateway.service_registry import is_remote_provider_config
 from gateway.user_runtime import (
     UserPortalError, build_user_activity_snapshot, build_user_portal_snapshot,
     get_user_app_credential, get_user_receipt,
@@ -118,7 +119,9 @@ def _resolved_capabilities(identity: RuntimeIdentity, provider,
         concrete = concrete or cap
         resolved = replace(cap, backend=concrete.backend, health=concrete.health,
                            lifecycle=concrete.lifecycle)
-        if "remote" in cap.tags or "remote" in concrete.tags:
+        service = ((registry or {}).get("services") or {}).get(concrete.backend) or {}
+        config = service.get("config") or {}
+        if "remote" in cap.tags or "remote" in concrete.tags or is_remote_provider_config(config):
             # Remote verdicts include canonical provider grants and admin plan
             # restrictions. The local binding check cannot reproduce those.
             upstream = concrete if cap.backend == "gateway" or not concrete.policy_available else cap
@@ -161,6 +164,8 @@ def _resolved_capabilities(identity: RuntimeIdentity, provider,
                 if not isinstance(service, Mapping) or not service.get("enabled", True):
                     continue
                 config = service.get("config") or {}
+                if is_remote_provider_config(config):
+                    continue  # Remote targets require an upstream policy projection.
                 if not any(row.get("enabled") is not False and target in {row.get("id"), row.get("model_group")}
                            for row in service_model_records(config)):
                     continue
