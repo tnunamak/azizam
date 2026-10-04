@@ -950,7 +950,7 @@ export default function ModelsClient() {
                           </Badge>
                         )}
                       </div>
-                      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,28rem)]">
+                      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,28rem)]">
                         <AliasCard
                           row={primary}
                           onDetail={setDetail}
