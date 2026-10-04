@@ -23,7 +23,7 @@ test("member Status offers sign-in when its account snapshot expires", async ({
       },
     }),
   );
-  await page.route("**/me/api/home", (route) =>
+  await page.route("**/me/api/status", (route) =>
     route.fulfill({
       status: 401,
       json: { error: { code: "unauthorized", message: "Session expired" } },
@@ -71,7 +71,7 @@ for (const theme of ["light", "dark"] as const) {
           }),
         );
         let failed = state === "error";
-        await page.route("**/me/api/home", (route) =>
+        await page.route("**/me/api/status", (route) =>
           failed
             ? route.fulfill({
                 status: 503,
@@ -79,10 +79,13 @@ for (const theme of ["light", "dark"] as const) {
               })
             : route.fulfill({
                 json: {
-                  authenticated: true,
+                  scope: "member",
                   status: {
                     state: "unavailable",
-                    reason: "Images are unavailable right now.",
+                    reason:
+                      state === "empty"
+                        ? "No service has been measured as ready yet."
+                        : "Images are unavailable right now.",
                   },
                   capabilities:
                     state === "empty"
@@ -91,11 +94,28 @@ for (const theme of ["light", "dark"] as const) {
                           {
                             capability: "image",
                             intent: "image.generate",
+                            model: "image-model",
+                            workflow: null,
                             available: false,
                             status: "unavailable",
                             reason: "The image model is unavailable right now.",
+                            measured: true,
+                            observed_at_s: 1790870400,
                           },
                         ],
+                  receipts:
+                    state === "empty"
+                      ? []
+                      : [
+                          {
+                            request_id: "member-status-receipt",
+                            status: "failed",
+                            intent: "image.generate",
+                            created_at: 1790870400,
+                            href: "/ui/usage/?receipt=member-status-receipt",
+                          },
+                        ],
+                  help: "Ask the owner if an allowed capability is unavailable.",
                 },
               }),
         );
