@@ -2,7 +2,7 @@
 
 These are real pages from the current static UI export, served by a throwaway gateway. The existing browser-test seed creates an example owner, service, access plan, App key and successful request through HTTP APIs. The engine returns a deterministic test answer. No operator database, provider key or live service is used.
 
-The screenshots use light mode, a 1440 × 1000 viewport and a device scale of 1. Each WebP is under 300 KB. Home shows app connection settings, Models shows the current catalog, and People shows the example owner. Missing health and monthly usage measurements remain visible; no response or telemetry is fabricated for the capture.
+The screenshots use light mode, a 1440 × 1000 viewport and a device scale of 1. Each WebP is under 300 KB. Home shows app connection settings, Models shows the current catalog with the test engine's measured response time and health, and People shows the example owner. Unmeasured gateway health and monthly usage remain visible; no response or telemetry is fabricated for the capture.
 
 The same capture run also writes Home, Models, Workflows, Try, Providers, Library, Status and People in both light and dark mode to `web/test-results/product/`. These product-site images use a 1440 × 960 viewport and the same seeded gateway. Library is empty because the seed creates no media; Providers has no configured paid provider. Try shows its initial request panel. No browser API responses are replaced for these captures.
 
@@ -17,6 +17,6 @@ The capture checks each page's HTTP status, settled loading state, heading, hori
 
 ## Tour
 
-![Model catalog with an explicitly unavailable health measurement](models-light-1440.webp)
+![Model catalog with the isolated test engine's measured availability and response time](models-light-1440.webp)
 
 ![People page with an example owner and unmeasured monthly usage](people-light-1440.webp)
