@@ -90,6 +90,13 @@ class StatusSummary(TypedDict):
     reason: str
 
 
+class HomeReceiptSource(TypedDict):
+    label: str
+    kind: NotRequired[str | None]
+    app_id: NotRequired[str | None]
+    client_hint: NotRequired[str | None]
+
+
 class HomeReceipt(TypedDict):
     request_id: str
     intent: NotRequired[str | None]
@@ -100,6 +107,8 @@ class HomeReceipt(TypedDict):
     latency_ms: NotRequired[float | None]
     _stored_at: NotRequired[float | None]
     accepted_at_ms: NotRequired[float | None]
+    source_label: NotRequired[str | None]
+    source: NotRequired[HomeReceiptSource]
 
 
 class HomeProjection(TypedDict):

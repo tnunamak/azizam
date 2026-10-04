@@ -38,11 +38,13 @@ type RequestRecord = {
   person_label: string;
   app_label: string;
   created_at: number;
+  source?: { label: string; kind: string };
 };
 type RequestPage = {
   records: RequestRecord[];
   next_cursor: string | null;
   people: { id: string; label: string }[];
+  sources?: { id: string; label: string }[];
 };
 
 function requestSummary(receipt: Receipt) {
@@ -76,6 +78,7 @@ function duration(ms?: number | null) {
 
 export function Requests() {
   const [person, setPerson] = useState("");
+  const [source, setSource] = useState("all");
   const [record, setRecord] = useState<RequestRecord | null>(null);
   const {
     data,
@@ -87,12 +90,13 @@ export function Requests() {
     fetchNextPage,
     refetch,
   } = useInfiniteQuery({
-    queryKey: ["activity", "requests", person],
+    queryKey: ["activity", "requests", person, source],
     refetchOnWindowFocus: "always",
     initialPageParam: undefined as string | undefined,
     queryFn: async ({ pageParam }): Promise<RequestPage> => {
       const params = new URLSearchParams({ limit: "50" });
       if (person) params.set("person_id", person);
+      if (source !== "all") params.set("source", source);
       if (pageParam) params.set("before", pageParam);
       const response = await fetch(`/admin/api/activity/requests?${params}`, {
         credentials: "same-origin",
@@ -139,8 +143,32 @@ export function Requests() {
             </SelectContent>
           </Select>
         </div>
-        {person && (
-          <Button variant="ghost" onClick={() => setPerson("")}>
+        <div className="min-w-0 space-y-2">
+          <label htmlFor="request-source" className="block text-sm font-medium">
+            Source
+          </label>
+          <Select value={source} onValueChange={setSource}>
+            <SelectTrigger id="request-source" className="w-[210px] max-w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All sources</SelectItem>
+              {(data?.pages[0]?.sources ?? []).map((item) => (
+                <SelectItem key={item.id} value={item.id}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        {(person || source !== "all") && (
+          <Button
+            variant="ghost"
+            onClick={() => {
+              setPerson("");
+              setSource("all");
+            }}
+          >
             Clear filters
           </Button>
         )}
@@ -163,11 +191,21 @@ export function Requests() {
       ) : rows.length === 0 ? (
         <EmptyState
           icon={ReceiptText}
-          title={person ? "No requests from this person" : "No requests yet"}
-          description="When someone uses a connected app, their request receipt appears here."
+          title={
+            person || source !== "all"
+              ? "No matching requests"
+              : "No requests yet"
+          }
+          description="Requests from apps and trusted-network clients appear here."
           action={
-            person ? (
-              <Button variant="outline" onClick={() => setPerson("")}>
+            person || source !== "all" ? (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setPerson("");
+                  setSource("all");
+                }}
+              >
                 Clear filters
               </Button>
             ) : (
@@ -211,7 +249,8 @@ export function Requests() {
                   </p>
                   <p className="text-muted-foreground truncate text-xs">
                     <span title={`${row.person_label} · ${row.app_label}`}>
-                      {row.person_label} · {row.app_label}
+                      {row.source?.label ??
+                        `${row.person_label} · ${row.app_label}`}
                     </span>
                     {" · "}
                     <span
@@ -295,6 +334,7 @@ export function Requests() {
                   {[
                     ["Person", record.person_label],
                     ["App", record.app_label],
+                    ["Source", record.source?.label ?? record.app_label],
                     [
                       "Model",
                       record.receipt.resolved_model ||

@@ -63,6 +63,7 @@ _IMMUTABLE_ACCEPTED_FIELDS = frozenset(
         "request_id", "protocol", "path", "intent", "app_profile", "app_id",
         "api_key_name", "requested_model", "stream",
         "effective_output_limit", "accepted_at_ms", "parent_request_id", "visibility", "owner_key_hash",
+        "source_kind", "source_label", "client_hint",
     }
 )
 
@@ -317,7 +318,29 @@ def finalize(
 def _filter_for_audience(data: Mapping[str, Any], audience: str) -> dict[str, Any]:
     if audience not in _AUDIENCES:
         raise ValueError(f"audience must be one of {_AUDIENCES}")
-    return serialize_receipt_for_audience(data, audience)
+    return serialize_receipt_for_audience(_with_source(data), audience)
+
+
+def _with_source(data: Mapping[str, Any]) -> dict[str, Any]:
+    out = dict(data)
+    app_id = out.get("app_id")
+    source_kind = out.get("source_kind")
+    if isinstance(app_id, str) and app_id:
+        out["source_kind"] = str(source_kind or "app")
+        if not out.get("source_label"):
+            out["source_label"] = out.get("api_key_name") or "App"
+    elif not source_kind:
+        out["source_kind"] = "local-network"
+        if not out.get("source_label"):
+            out["source_label"] = "Local network · no key"
+    label = out.get("source_label")
+    out["source"] = {
+        "kind": str(out.get("source_kind") or "unknown"),
+        "label": str(label or "Unknown source"),
+        "app_id": app_id if isinstance(app_id, str) and app_id else None,
+        "client_hint": out.get("client_hint") if isinstance(out.get("client_hint"), str) else None,
+    }
+    return out
 
 
 def _project_incomplete(
@@ -413,6 +436,7 @@ def recent(
     app_profile: str | None = None,
     app_ids: list[str] | None = None,
     owner_key_hashes: list[str] | None = None,
+    include_null_app_id: bool = False,
     since_s: int | None = None,
     outer_only: bool = True,
     now_ms: int | None = None,
@@ -421,20 +445,20 @@ def recent(
 ) -> list[dict[str, Any]]:
     """Return up to ``limit`` most-recent receipts, newest first.
 
-    Optional filters: ``app_profile`` (exact match), ``app_ids`` (owner-scope:
+    Optional filters: ``app_profile`` (exact match), ``app_ids`` (member-scope:
     return only receipts whose ``app_id`` is in this allow-list), and
     ``since_s`` (only receipts written within the last N seconds).
 
-    ``app_ids`` is a *positive* membership filter — it can only ever narrow the
-    result to the given ids, never widen it. An empty list returns no rows
-    (the caller owns nothing), and because ``app_id IN (...)`` never matches
-    NULL, receipts with no owning App (unauthenticated, legacy keys) are
-    excluded. This is the privacy boundary for the user-facing activity feed:
-    pass the signed-in user's owned app_ids and they can see only their own.
+    ``app_ids`` is a positive membership filter. An empty list returns no rows
+    unless ``include_null_app_id`` is set for an owner-only instance feed.
+    Scoped member views must leave ``include_null_app_id`` false so NULL-app
+    receipts are never attributed to a person.
     """
     if limit <= 0:
         return []
-    if (app_ids is not None or owner_key_hashes is not None) and not app_ids and not owner_key_hashes:
+    if (
+        app_ids is not None or owner_key_hashes is not None
+    ) and not app_ids and not owner_key_hashes and not include_null_app_id:
         # The caller explicitly owns no Apps — never fall through to an
         # unfiltered query (that would leak everyone's receipts).
         return []
@@ -451,6 +475,8 @@ def recent(
         if owner_key_hashes:
             ownership.append(f"json_extract(receipt_json, '$.owner_key_hash') IN ({','.join('?' for _ in owner_key_hashes)})")
             params.extend(owner_key_hashes)
+        if include_null_app_id:
+            ownership.append("app_id IS NULL")
         clauses.append("(" + " OR ".join(ownership) + ")")
     if since_s is not None:
         clauses.append("created_at >= ?")

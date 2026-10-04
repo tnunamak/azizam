@@ -55,7 +55,7 @@ _CAPABILITY_BY_INTENT_PREFIX = {
 
 _ASSET_SUFFIXES_BY_KIND = {
     "img": (".png", ".jpg", ".jpeg", ".webp", ".gif"),
-    "aud": (".wav", ".mp3", ".flac", ".ogg", ".m4a"),
+    "aud": (".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac"),
     "vid": (".mp4", ".webm", ".mov", ".mkv"),
 }
 
@@ -222,6 +222,8 @@ def create_me_media_router(
             )
             if item is None:
                 raise _ApiError("asset_not_found", "Asset not found for this account", 404)
+            if item.get("available") is False:
+                raise _ApiError("asset_unavailable", "Asset file is missing or expired", 404)
             mode = request.query_params.get("metadata", "none")
             if mode not in {"none", "full"}:
                 raise _ApiError("invalid_metadata", "Metadata must be full or none", 400)
@@ -265,6 +267,7 @@ class _MediaScope:
     person_id: str | None = None
     user_ids: list[str] | None = None
     audit_everyone: bool = False
+    owner_default: bool = False
 
 
 def _actor_from_request(
@@ -375,18 +378,25 @@ def _owned_app_ids(user_id: str, path: Path) -> list[str]:
 
 
 def _media_scope(request: Request, actor: _Actor, admin_db_path: Path) -> _MediaScope:
-    scope = str(request.query_params.get("scope") or request.query_params.get("owner") or "me")
-    if scope == "everyone":
-        if not actor.owner:
-            raise _ApiError("owner_required", "Only owners can view everyone's media", 403)
-        return _MediaScope(app_ids=None, user_ids=None, audit_everyone=True)
+    raw_scope = request.query_params.get("scope") or request.query_params.get("owner")
     person = request.query_params.get("person")
     if person:
         if not actor.owner:
             raise _ApiError("owner_required", "Only owners can filter by person", 403)
         if person == "all":
             return _MediaScope(app_ids=None, person_id="all", user_ids=None, audit_everyone=True)
+        if person == "self":
+            return _MediaScope(app_ids=_owned_app_ids(actor.user_id, admin_db_path), person_id=actor.user_id, user_ids=[actor.user_id])
+        if person == "local-network":
+            return _MediaScope(app_ids=None, person_id="local-network", user_ids=None, audit_everyone=True)
         return _MediaScope(app_ids=_owned_app_ids(person, admin_db_path), person_id=person, user_ids=[person])
+    if raw_scope is None and actor.owner:
+        return _MediaScope(app_ids=None, user_ids=None, audit_everyone=True, owner_default=True)
+    scope = str(raw_scope or "me")
+    if scope == "everyone":
+        if not actor.owner:
+            raise _ApiError("owner_required", "Only owners can view everyone's media", 403)
+        return _MediaScope(app_ids=None, user_ids=None, audit_everyone=True)
     return _MediaScope(app_ids=_owned_app_ids(actor.user_id, admin_db_path), user_ids=[actor.user_id])
 
 
@@ -405,6 +415,8 @@ def _list_media(
 ) -> dict[str, Any]:
     limit = _bounded_int(request.query_params.get("limit"), MEDIA_DEFAULT_LIMIT, MEDIA_MAX_LIMIT)
     cursor = _decode_cursor(request.query_params.get("cursor"))
+    sources = _media_sources(scope, admin_db_path)
+    source_filter = "local-network" if request.query_params.get("person") == "local-network" else _media_source_filter(request, scope)
     all_items = _media_items(
         request=request,
         scope=scope,
@@ -418,6 +430,8 @@ def _list_media(
         receipts_path=receipts_path,
     )
     filtered = [_item for _item in all_items if _matches_media_filters(_item, request)]
+    if source_filter is not None:
+        filtered = [_item for _item in filtered if _source_id(_item.get("source")) == source_filter]
     if cursor:
         filtered = [
             item for item in filtered
@@ -433,6 +447,9 @@ def _list_media(
         "schema_version": 1,
         "authenticated": True,
         "scope": "everyone" if scope.app_ids is None else "me",
+        "default_scope": "owner_instance" if scope.owner_default else "explicit",
+        "source": source_filter,
+        "sources": sources,
         "assets": page,
         "next_cursor": next_cursor,
         "has_more": next_cursor is not None,
@@ -508,8 +525,6 @@ def _media_items(
             seen.add(asset_id)
             kind = _asset_kind(asset_id, asset)
             path = asset_path_resolver(asset_id)
-            if path is None or not path.is_file():
-                continue
             embedded = _embedded_provenance(path)
             media_type = str(asset.get("media_type") or asset_media_type_resolver(asset_id, path))
             created_at = _asset_created_at(path, job, receipt, embedded)
@@ -539,6 +554,7 @@ def _media_items(
                 "job_id": job.get("job_id"),
                 "request_id": job.get("request_id"),
                 "status": job.get("status"),
+                "available": bool(path is not None and path.is_file()),
                 "prompt": prompt,
                 "model": model,
                 "workflow": workflow,
@@ -547,10 +563,12 @@ def _media_items(
                 "height": _first_present(asset.get("height"), _nested(job, "metadata", "height"), _nested(embedded, "parameters", "height")),
                 "duration_s": _first_present(asset.get("duration_s"), asset.get("duration"), _nested(job, "metadata", "duration_s"), _nested(embedded, "parameters", "duration_s")),
                 "poster_asset_id": asset.get("poster_asset_id"),
-                "download_url": signed_url_builder(request, asset_id, "none"),
-                "workflow_download_url": signed_url_builder(request, asset_id, "full") if embedded.get("workflow_available") else None,
+                "download_url": signed_url_builder(request, asset_id, "none") if path is not None and path.is_file() else None,
+                "workflow_download_url": signed_url_builder(request, asset_id, "full") if path is not None and path.is_file() and embedded.get("workflow_available") else None,
                 "generation_ms": receipt.get("latency_ms") if receipt else None,
                 "provenance": _provenance(asset, job, receipt, embedded, created_at=created_at),
+                "source": _source_projection(receipt, admin_db_path, metadata=job, visible_app_ids=scope.app_ids),
+                "unavailable_reason": None if path is not None and path.is_file() else "Asset file is missing or expired.",
             })
     if asset_catalog_provider is not None and asset_metadata_reader is not None:
         credential_hashes = _credential_hashes_for_scope(scope, admin_db_path)
@@ -566,6 +584,9 @@ def _media_items(
             if path is None or not path.exists():
                 continue
             embedded = _embedded_provenance(path)
+            receipt = _receipt_for_embedded_cache_asset(embedded, receipts_path)
+            if not _receipt_in_scope(receipt, scope) and receipt is not None:
+                continue
             kind = _asset_kind(asset_id, metadata)
             created_at = _asset_created_at(path, {}, None, embedded)
             seen.add(asset_id)
@@ -578,7 +599,7 @@ def _media_items(
                 "created_at": created_at,
                 "updated_at": int(metadata.get("updated_at") or path.stat().st_mtime),
                 "job_id": None,
-                "request_id": embedded.get("request_id"),
+                "request_id": (receipt or embedded).get("request_id"),
                 "status": "available",
                 "prompt": _string_first(_nested(embedded, "parameters", "prompt"), embedded.get("prompt")),
                 "model": _string_first(embedded.get("resolved_model"), embedded.get("requested_model")),
@@ -601,11 +622,12 @@ def _media_items(
                         "height": _nested(embedded, "parameters", "height"),
                     },
                     "created_at": created_at,
-                    "request_id": embedded.get("request_id"),
+                    "request_id": (receipt or embedded).get("request_id"),
                     "job_id": None,
                     "source": "asset_cache",
                     "complete": bool(embedded),
                 },
+                "source": _source_projection(receipt, admin_db_path, metadata=metadata, embedded=embedded, visible_app_ids=scope.app_ids),
             })
     return sorted(out, key=lambda item: (int(item.get("created_at") or 0), str(item.get("asset_id") or "")), reverse=True)
 
@@ -617,6 +639,13 @@ def _receipts_by_request_id(request_ids: Iterable[str], *, path: Path) -> dict[s
         if receipt is not None:
             out[request_id] = receipt
     return out
+
+
+def _receipt_for_embedded_cache_asset(embedded: Mapping[str, Any], receipts_path: Path) -> Mapping[str, Any] | None:
+    request_id = embedded.get("request_id")
+    if not isinstance(request_id, str) or not request_id:
+        return None
+    return receipt_store.get(request_id, audience="internal", path=receipts_path)
 
 
 def _credential_hashes_for_scope(scope: _MediaScope, path: Path) -> set[str] | None:
@@ -631,6 +660,19 @@ def _credential_hashes_for_scope(scope: _MediaScope, path: Path) -> set[str] | N
             if isinstance(key_hash, str) and key_hash:
                 hashes.add(key_hash)
     return hashes
+
+
+def _credential_app_by_hash(path: Path) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for credential in admin_store.list_credentials(path=path):
+        key_hash = credential.get("hash")
+        app_id = credential.get("app_id")
+        if not isinstance(key_hash, str) or not key_hash or not isinstance(app_id, str) or not app_id:
+            continue
+        app = admin_store.get_app(app_id, path=path)
+        if app is not None:
+            out[key_hash] = app
+    return out
 
 
 def _deleted_asset_ids(scope: _MediaScope, path: Path) -> set[str]:
@@ -652,9 +694,11 @@ def _deleted_asset_ids(scope: _MediaScope, path: Path) -> set[str]:
     return deleted
 
 
-def _embedded_provenance(path: Path) -> dict[str, Any]:
+def _embedded_provenance(path: Path | None) -> dict[str, Any]:
     # Images use PNG text or EXIF. Audio/video use the existing container-tag
     # contract. Limit byte reads; large files can still be downloaded normally.
+    if path is None or not path.is_file():
+        return {}
     try:
         if path.suffix.lower() == ".png":
             if path.stat().st_size > 32 * 1024 * 1024:
@@ -704,6 +748,154 @@ def _receipt_in_scope(receipt: Mapping[str, Any] | None, scope: _MediaScope) -> 
     if receipt is None:
         return False
     return str(receipt.get("app_id") or "") in set(scope.app_ids)
+
+
+def _source_projection(
+    receipt: Mapping[str, Any] | None,
+    admin_db_path: Path,
+    *,
+    metadata: Mapping[str, Any] | None = None,
+    embedded: Mapping[str, Any] | None = None,
+    visible_app_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    app_id = str((receipt or {}).get("app_id") or "")
+    if app_id:
+        app = admin_store.get_app(app_id, path=admin_db_path)
+        if app is not None:
+            return {
+                "kind": "app",
+                "app_id": app_id,
+                "label": str(app.get("name") or app_id),
+                "profile": (receipt or {}).get("app_profile"),
+                "client_hint": _client_hint(receipt),
+            }
+        return {"kind": "app", "app_id": app_id, "label": "Unknown app", "profile": (receipt or {}).get("app_profile"), "client_hint": _client_hint(receipt)}
+    profile = str((receipt or {}).get("app_profile") or "")
+    if receipt is None:
+        trusted_app_id = str((metadata or {}).get("app_id") or "")
+        if trusted_app_id and (visible_app_ids is None or trusted_app_id in set(visible_app_ids)):
+            app = admin_store.get_app(trusted_app_id, path=admin_db_path)
+            if app is not None:
+                return {
+                    "kind": "app",
+                    "app_id": trusted_app_id,
+                    "label": str(app.get("name") or trusted_app_id),
+                    "profile": None,
+                    "client_hint": None,
+                    "recovered_from": "media_job",
+                }
+        app = _app_from_asset_owner_hashes(metadata, admin_db_path, visible_app_ids=visible_app_ids)
+        if app is not None:
+            recovered_app_id = str(app.get("id") or "")
+            return {
+                "kind": "app",
+                "app_id": recovered_app_id,
+                "label": str(app.get("name") or recovered_app_id or "App"),
+                "profile": None,
+                "client_hint": None,
+                "recovered_from": "asset_owner_key",
+            }
+        return {
+            "kind": "local-network",
+            "label": "Local network · no key",
+            "profile": profile,
+            "client_hint": None,
+        }
+    hint = _client_hint(receipt)
+    base_label = str((receipt or {}).get("source_label") or "Local network · no key")
+    return {
+        "kind": "local-network",
+        "label": f"{base_label} · {hint}" if hint and hint not in base_label else base_label,
+        "profile": profile or None,
+        "client_hint": hint,
+    }
+
+
+def _app_from_asset_owner_hashes(
+    metadata: Mapping[str, Any] | None,
+    admin_db_path: Path,
+    *,
+    visible_app_ids: list[str] | None,
+) -> Mapping[str, Any] | None:
+    raw_owners = list((metadata or {}).get("owner_key_hashes") or [])
+    single_owner = (metadata or {}).get("owner_key_hash")
+    if isinstance(single_owner, str):
+        raw_owners.append(single_owner)
+    owners = [str(value) for value in raw_owners if isinstance(value, str)]
+    if not owners:
+        return None
+    visible = set(visible_app_ids) if visible_app_ids is not None else None
+    by_hash = _credential_app_by_hash(admin_db_path)
+    for owner_hash in owners:
+        app = by_hash.get(owner_hash)
+        if app is not None and (visible is None or str(app.get("id") or "") in visible):
+            return app
+    return None
+
+
+def _source_id(source: Any) -> str | None:
+    if not isinstance(source, Mapping):
+        return None
+    kind = source.get("kind")
+    if kind == "app":
+        app_id = source.get("app_id")
+        return f"app:{app_id}" if isinstance(app_id, str) and app_id else None
+    if kind == "local-network":
+        return "local-network"
+    return None
+
+
+def _media_sources(scope: _MediaScope, admin_db_path: Path) -> list[dict[str, Any]]:
+    app_ids = set(scope.app_ids) if scope.app_ids is not None else None
+    sources = [{"id": "local-network", "kind": "local-network", "label": "Local network · no key"}] if app_ids is None else []
+    for app in admin_store.list_apps(path=admin_db_path):
+        app_id = str(app.get("id") or "")
+        if not app_id or (app_ids is not None and app_id not in app_ids):
+            continue
+        sources.append({
+            "id": f"app:{app_id}",
+            "kind": "app",
+            "label": str(app.get("name") or "App"),
+            "app_id": app_id,
+            "owner_user_id": app.get("owner_user_id"),
+            "owner_service_account_id": app.get("owner_service_account_id"),
+        })
+    return sources
+
+
+def _media_source_filter(request: Request, scope: _MediaScope) -> str | None:
+    source = request.query_params.get("source")
+    if source in (None, "", "all"):
+        return None
+    if source == "local-network":
+        if scope.app_ids is not None:
+            raise _ApiError("source_not_allowed", "This source is not available for this account", 403)
+        return source
+    if source.startswith("app:"):
+        app_id = source.removeprefix("app:")
+        if scope.app_ids is not None and app_id not in set(scope.app_ids):
+            raise _ApiError("source_not_allowed", "This source is not available for this account", 403)
+        return source
+    raise _ApiError("invalid_source", "Source filter must be local-network, app:<id>, or all", 400)
+
+
+def _client_hint(receipt: Mapping[str, Any] | None) -> str | None:
+    for value in (
+        (receipt or {}).get("client_hint"),
+        _nested(receipt, "metadata", "client_hint"),
+        _nested(receipt, "metadata", "user_agent_hint"),
+        _nested(receipt, "metadata", "user_agent"),
+        (receipt or {}).get("api_key_name"),
+    ):
+        if isinstance(value, str) and value.strip():
+            lower = value.lower()
+            if "sillytavern" in lower:
+                return "SillyTavern"
+            if "open webui" in lower or "open-webui" in lower:
+                return "Open WebUI"
+            if "daisy" in lower or "raspberry" in lower or " pi" in lower:
+                return "Daisy/pi"
+    return None
 
 
 def _iter_job_assets(job: Mapping[str, Any]) -> Iterable[Mapping[str, Any]]:
@@ -837,7 +1029,10 @@ def _usage_summary(
 ) -> dict[str, Any]:
     if request.query_params.get("period", "month") != "month":
         raise _ApiError("unsupported_period", "Only period=month is supported", 400)
-    app_ids, scope_label = _usage_app_scope(request, actor, admin_db_path)
+    app_ids, scope_label, scoped_users = _usage_app_scope(request, actor, admin_db_path)
+    source_filter = "local-network" if request.query_params.get("person") == "local-network" else _source_filter(request)
+    _reject_forbidden_source_filter(source_filter, app_ids)
+    sources = _usage_sources(admin_db_path, app_ids=None if actor.owner else app_ids)
     now = datetime.now(timezone.utc)
     start = int(now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
     clauses = ["created_at >= ?", "parent_request_id IS NULL"]
@@ -845,6 +1040,10 @@ def _usage_summary(
     if app_ids is not None:
         clauses.append("app_id IN (" + ",".join("?" for _ in app_ids) + ")" if app_ids else "0")
         params.extend(app_ids)
+    if source_filter:
+        source_clause, source_params = _source_filter_sql(source_filter)
+        clauses.append(source_clause)
+        params.extend(source_params)
     # Aggregate every retained row in the period, rather than a recent-feed cap.
     with sqlite3.connect(str(receipts_path)) as conn:
         rows = conn.execute(
@@ -856,6 +1055,7 @@ def _usage_summary(
         value = json.loads(raw)
         if isinstance(value, dict):
             value["_stored_at"] = stored_at
+            _annotate_receipt_source(value, sources)
             receipts.append(value)
     by_day: dict[str, dict[str, Any]] = {}
     by_model: dict[str, dict[str, Any]] = {}
@@ -877,15 +1077,26 @@ def _usage_summary(
             measured += 1
             spend += cost
             row["remote_spend"] = (row["remote_spend"] or 0) + cost
-    scoped_users = None if app_ids is None else [request.query_params.get("person") or actor.user_id]
     media_scope = _MediaScope(app_ids=app_ids, user_ids=scoped_users)
     hashes = _credential_hashes_for_scope(media_scope, admin_db_path)
     made: set[str] = set()
     receipt_ids = {str(r["request_id"]) for r in receipts}
     for job in media_jobs.recent(limit=media_jobs.count(path=media_jobs_path), audience="internal",
                                  status=media_jobs.STATUS_SUCCEEDED, path=media_jobs_path):
-        if str(job.get("request_id")) in receipt_ids:
-            made.update(str(a.get("asset_id") or a.get("id")) for a in _iter_job_assets(job))
+        request_id = str(job.get("request_id") or "")
+        job_receipt = next((r for r in receipts if str(r.get("request_id")) == request_id), None)
+        if job_receipt is None and request_id:
+            job_receipt = receipt_store.get(request_id, audience="internal", path=receipts_path)
+            if job_receipt is not None:
+                _annotate_receipt_source(job_receipt, sources)
+        if job_receipt is not None:
+            if _receipt_in_scope(job_receipt, media_scope) and _source_matches_filter(job_receipt.get("source"), source_filter):
+                made.update(str(a.get("asset_id") or a.get("id")) for a in _iter_job_assets(job))
+            continue
+        if app_ids is None and int(job.get("created_at") or 0) >= start:
+            source = _source_projection(None, admin_db_path, metadata=job, visible_app_ids=app_ids)
+            if _source_matches_filter(source, source_filter):
+                made.update(str(a.get("asset_id") or a.get("id")) for a in _iter_job_assets(job))
     if asset_catalog_provider and asset_metadata_reader:
         for asset_id in asset_catalog_provider():
             metadata = asset_metadata_reader(asset_id)
@@ -895,7 +1106,14 @@ def _usage_summary(
             path = asset_path_resolver(asset_id)
             if path is not None and path.exists():
                 embedded = _embedded_provenance(path)
-                if _asset_created_at(path, {}, None, embedded) >= start:
+                receipt = _receipt_for_embedded_cache_asset(embedded, receipts_path)
+                if receipt is not None and not _receipt_in_scope(receipt, media_scope):
+                    continue
+                source = _source_projection(receipt, admin_db_path, metadata=metadata, embedded=embedded, visible_app_ids=app_ids)
+                if (
+                    _asset_created_at(path, {}, receipt, embedded) >= start
+                    and _source_matches_filter(source, source_filter)
+                ):
                     made.add(asset_id)
     receipt_list = []
     for internal in receipts[:USAGE_RECEIPT_LIMIT]:
@@ -903,12 +1121,18 @@ def _usage_summary(
         if visible:
             visible["remote_spend"] = _receipt_cost(internal)
             visible["capability"] = _capability(internal)
+            visible["source"] = internal.get("source")
+            if isinstance(internal.get("source"), Mapping):
+                visible["source_label"] = internal["source"].get("label")
+            else:
+                visible["source_label"] = internal.get("source_label")
             receipt_list.append(visible)
     if scope_label == "everyone":
         _audit_everyone(actor, "usage.summary.everyone", admin_db_path)
     coverage_start = max(start, int(time.time()) - receipt_store.RETAIN_S)
     return {
         "schema_version": 1, "period": "month", "scope": scope_label,
+        "source": source_filter, "sources": sources,
         "requests": len(receipts), "media_count": len(made),
         "remote_spend": round(spend, 6), "remote_spend_available": measured > 0,
         "remote_spend_source": "receipt costs" if measured else "not_available",
@@ -921,20 +1145,106 @@ def _usage_summary(
         "by_day": [by_day[day] for day in sorted(by_day)],
         "by_model": sorted(by_model.values(), key=lambda row: (-row["requests"], row["model"])),
         "receipts": receipt_list,
-        "people": [{"id": u["id"], "name": u.get("display_name") or u.get("email") or "Person"}
-                   for u in admin_store.list_users(path=admin_db_path)] if actor.owner else [],
+        "people": _usage_people(actor, admin_db_path) if actor.owner else [],
     }
 
 
-def _usage_app_scope(request: Request, actor: _Actor, admin_db_path: Path) -> tuple[list[str] | None, str]:
+def _usage_app_scope(request: Request, actor: _Actor, admin_db_path: Path) -> tuple[list[str] | None, str, list[str] | None]:
     person = request.query_params.get("person")
     if not person:
-        return _owned_app_ids(actor.user_id, admin_db_path), "me"
+        if actor.owner:
+            return None, "everyone", None
+        return _owned_app_ids(actor.user_id, admin_db_path), "me", [actor.user_id]
     if not actor.owner:
         raise _ApiError("owner_required", "Only owners can filter usage by person", 403)
     if person == "all":
-        return None, "everyone"
-    return _owned_app_ids(person, admin_db_path), "person"
+        return None, "everyone", None
+    if person in {"self", actor.user_id}:
+        return _owned_app_ids(actor.user_id, admin_db_path), "me", [actor.user_id]
+    if person == "local-network":
+        return None, "everyone", None
+    return _owned_app_ids(person, admin_db_path), "person", [person]
+
+
+def _usage_people(actor: _Actor, admin_db_path: Path) -> list[dict[str, str]]:
+    people = [
+        {"id": "all", "label": "Everyone"},
+        {"id": "self", "label": "Your apps"},
+        {"id": "local-network", "label": "Local network · no key"},
+    ]
+    for user in admin_store.list_users(path=admin_db_path):
+        user_id = str(user["id"])
+        if user_id == actor.user_id:
+            continue
+        people.append({
+            "id": user_id,
+            "label": str(user.get("display_name") or user.get("email") or "Person"),
+        })
+    return people
+
+
+def _usage_sources(admin_db_path: Path, *, app_ids: list[str] | None) -> list[dict[str, Any]]:
+    sources = [{"id": "local-network", "label": "Local network · no key", "kind": "local-network"}] if app_ids is None else []
+    allowed = set(app_ids) if app_ids is not None else None
+    for app in admin_store.list_apps(path=admin_db_path):
+        app_id = str(app.get("id") or "")
+        if app_id and (allowed is None or app_id in allowed):
+            sources.append({
+                "id": f"app:{app_id}",
+                "label": str(app.get("name") or "App"),
+                "kind": "app",
+                "app_id": app_id,
+                "owner_user_id": app.get("owner_user_id"),
+                "owner_service_account_id": app.get("owner_service_account_id"),
+            })
+    return sources
+
+
+def _source_filter(request: Request) -> str | None:
+    source = request.query_params.get("source")
+    if source in (None, "", "all"):
+        return None
+    if source == "local-network" or source.startswith("app:"):
+        return source
+    raise _ApiError("invalid_source", "Source filter must be local-network, app:<id>, or all", 400)
+
+
+def _source_filter_sql(source: str) -> tuple[str, list[Any]]:
+    if source == "local-network":
+        return "app_id IS NULL", []
+    return "app_id = ?", [source.removeprefix("app:")]
+
+
+def _reject_forbidden_source_filter(source: str | None, app_ids: list[str] | None) -> None:
+    if source is None or app_ids is None:
+        return
+    if source == "local-network":
+        raise _ApiError("source_not_allowed", "This source is not available for this account", 403)
+    if source.startswith("app:") and source.removeprefix("app:") not in set(app_ids):
+        raise _ApiError("source_not_allowed", "This source is not available for this account", 403)
+
+
+def _source_matches_filter(source: Any, source_filter: str | None) -> bool:
+    return source_filter is None or _source_id(source) == source_filter
+
+
+def _annotate_receipt_source(receipt: dict[str, Any], sources: list[Mapping[str, Any]]) -> None:
+    app_id = receipt.get("app_id")
+    if isinstance(app_id, str) and app_id:
+        source = next((item for item in sources if item.get("id") == f"app:{app_id}"), None)
+        label = source.get("label") if isinstance(source, Mapping) else None
+        receipt["source"] = {"kind": "app", "label": str(label or receipt.get("api_key_name") or "App"), "app_id": app_id}
+        receipt.setdefault("source_kind", "app")
+        receipt.setdefault("source_label", receipt["source"]["label"])
+        return
+    receipt.setdefault("source_kind", "local-network")
+    receipt.setdefault("source_label", "Local network · no key")
+    receipt["source"] = {
+        "kind": "local-network",
+        "label": str(receipt.get("source_label") or "Local network · no key"),
+        "app_id": None,
+        "client_hint": receipt.get("client_hint") if isinstance(receipt.get("client_hint"), str) else None,
+    }
 
 
 def _receipt_cost(receipt: Mapping[str, Any]) -> float | None:

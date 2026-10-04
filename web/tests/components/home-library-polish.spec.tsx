@@ -273,20 +273,16 @@ describe("Home and Library polish", () => {
         container.querySelector('img[src="/signed/poster1"]'),
       ).toBeInTheDocument(),
     );
-    expect(requests).toContain("/me/api/media/poster1/download");
+    expect(requests).toContain("/me/api/media/poster1/download?scope=everyone");
     screen.getByRole("combobox", { name: "Owner" }).focus();
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
       configurable: true,
       value: () => {},
     });
     await userEvent.keyboard("{Enter}");
-    await userEvent.click(
-      await screen.findByRole("option", { name: "Everyone’s" }),
-    );
+    await userEvent.click(await screen.findByRole("option", { name: "Mine" }));
     await waitFor(() =>
-      expect(requests).toContain(
-        "/me/api/media/poster1/download?scope=everyone",
-      ),
+      expect(requests).toContain("/me/api/media/poster1/download?scope=me"),
     );
   });
   it("does not invent an unknown duration and preserves kind filter requests", async () => {

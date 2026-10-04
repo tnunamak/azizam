@@ -85,6 +85,7 @@ interface UsageReceipt {
   durationMs: number | null;
   costUsd: number | null;
   summary: string;
+  sourceLabel: string | null;
   raw: unknown;
 }
 
@@ -102,6 +103,7 @@ interface UsageSummary {
   byModel: UsageModel[];
   receipts: UsageReceipt[];
   people: UsagePerson[];
+  sources: UsagePerson[];
   retentionDays: number;
   coverageStart: string | null;
   coverageNote: string | null;
@@ -153,11 +155,16 @@ const chartColors: Record<UsageCapability, string> = {
 
 export default function UsagePage() {
   const viewer = useViewer();
-  const [person, setPerson] = useState("self");
+  const [person, setPerson] = useState("default");
+  const [source, setSource] = useState("all");
+  const owner = ["owner", "superadmin"].includes(viewer.role);
+  const effectivePerson =
+    person === "default" ? (owner ? "all" : "self") : person;
   const [selected, setSelected] = useState<UsageReceipt | null>(null);
   const { data, isPending, isFetching, isError, refetch } = useQuery({
-    queryKey: ["usage", "summary", person],
-    queryFn: () => fetchUsageSummary(person),
+    queryKey: ["usage", "summary", effectivePerson, source, owner],
+    queryFn: () =>
+      fetchUsageSummary(owner ? effectivePerson : "default", source),
     retry: false,
   });
   const hasUsage = Boolean(
@@ -170,13 +177,46 @@ export default function UsagePage() {
         title="Usage"
         answer="How much am I using, and what does it cost?"
         actions={
-          ["owner", "superadmin"].includes(viewer.role) ? (
-            <PersonFilter
-              value={person}
-              people={data?.people ?? []}
-              disabled={isPending}
-              onChange={setPerson}
-            />
+          owner ? (
+            <div className="flex flex-wrap items-end gap-3">
+              <PersonFilter
+                value={effectivePerson}
+                people={data?.people ?? []}
+                disabled={isPending}
+                onChange={(value) => {
+                  setPerson(value);
+                  setSource("all");
+                }}
+              />
+              <div className="space-y-2">
+                <label
+                  htmlFor="usage-source"
+                  className="text-muted-foreground block text-xs"
+                >
+                  Source
+                </label>
+                <Select
+                  value={source}
+                  onValueChange={setSource}
+                  disabled={isPending}
+                >
+                  <SelectTrigger
+                    id="usage-source"
+                    className="w-[210px] max-w-full"
+                  >
+                    <SelectValue placeholder="All sources" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All sources</SelectItem>
+                    {(data?.sources ?? []).map((item) => (
+                      <SelectItem key={item.id} value={item.id}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
           ) : undefined
         }
       />
@@ -202,6 +242,12 @@ export default function UsagePage() {
       ) : (
         <>
           <SummaryRow summary={data} />
+          {owner && effectivePerson === "all" ? (
+            <p className="text-muted-foreground text-sm">
+              Showing requests from all people, service apps and the local
+              network.
+            </p>
+          ) : null}
           <p className="text-muted-foreground text-sm">
             Receipts are retained for {data.retentionDays} days
             {data.coverageStart
@@ -255,9 +301,11 @@ function PersonFilter({
           <SelectValue placeholder="Your usage" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="self">Your usage</SelectItem>
-          <SelectItem value="all">Everyone</SelectItem>
-          {people.map((item) => (
+          {[
+            { id: "all", label: "Everyone" },
+            { id: "self", label: "Your apps" },
+            ...people.filter((item) => !["all", "self"].includes(item.id)),
+          ].map((item) => (
             <SelectItem key={item.id} value={item.id}>
               {item.label}
             </SelectItem>
@@ -561,6 +609,11 @@ function ReceiptsList({
                       {receipt.model}
                     </code>
                   )}
+                  {receipt.sourceLabel ? (
+                    <p className="text-muted-foreground mt-1 text-xs">
+                      {receipt.sourceLabel}
+                    </p>
+                  ) : null}
                   <p className="text-muted-foreground mt-1 text-xs">
                     {receipt.createdAt ? (
                       <RelativeTime ts={receipt.createdAt} />
@@ -647,6 +700,9 @@ function ReceiptSheet({
                   }
                 />
                 <Detail label="Request ID" value={receipt.requestId} wide />
+                {receipt.sourceLabel ? (
+                  <Detail label="Source" value={receipt.sourceLabel} wide />
+                ) : null}
               </dl>
               <details>
                 <summary className="cursor-pointer text-sm font-medium">
@@ -776,9 +832,13 @@ function UsageSkeleton() {
   );
 }
 
-async function fetchUsageSummary(person: string): Promise<UsageSummary> {
+async function fetchUsageSummary(
+  person: string,
+  source: string,
+): Promise<UsageSummary> {
   const params = new URLSearchParams({ period: "month" });
-  if (person !== "self") params.set("person", person);
+  if (person !== "default") params.set("person", person);
+  if (source !== "all") params.set("source", source);
   const response = await fetch(`/me/api/usage/summary?${params}`, {
     credentials: "same-origin",
     cache: "no-store",
@@ -818,6 +878,12 @@ function normalizeSummary(raw: unknown): UsageSummary {
     byDay,
     byModel,
     receipts,
+    sources: array(data.sources)
+      .map((item) => {
+        const row = object(item);
+        return { id: string(row.id, ""), label: string(row.label, "Source") };
+      })
+      .filter((item) => item.id),
     people: array(data.people)
       .map((item) => {
         const person = object(item);
@@ -872,6 +938,7 @@ function normalizeReceipt(raw: unknown): UsageReceipt {
     durationMs,
     costUsd,
     summary: `${capabilityLabels[capability]} request`,
+    sourceLabel: nullableString(object(data.source).label ?? data.source_label),
     raw,
   };
 }

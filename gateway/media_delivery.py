@@ -21,6 +21,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from fastapi import Request
+from fastapi.responses import Response
+
 from gateway import media_metadata, provenance
 
 # Scratch space for ffmpeg rewrites. Disk-backed on purpose: /tmp is RAM here.
@@ -179,3 +182,69 @@ def deliver_bytes(
     return media_metadata.strip_metadata(
         content, suffix, workdir=workdir or DEFAULT_WORKDIR
     )
+
+
+def ranged_delivery_response(
+    request: Request,
+    content: bytes,
+    *,
+    media_type: str,
+    cache_control: str = "private, max-age=3600",
+) -> Response:
+    """Return bytes with HTTP Range support for browser media players.
+
+    The caller passes already-prepared delivery bytes. This keeps metadata
+    stripping and access checks outside the byte-range concern.
+    """
+    size = len(content)
+    headers = {
+        "accept-ranges": "bytes",
+        "cache-control": cache_control,
+    }
+    range_header = request.headers.get("range")
+    if not range_header:
+        headers["content-length"] = str(size)
+        return Response(content=content, status_code=200, media_type=media_type, headers=headers)
+
+    parsed = _parse_single_byte_range(range_header, size)
+    if parsed is None:
+        return Response(
+            status_code=416,
+            media_type=media_type,
+            headers={**headers, "content-range": f"bytes */{size}"},
+        )
+    start, end = parsed
+    body = content[start : end + 1]
+    return Response(
+        content=body,
+        status_code=206,
+        media_type=media_type,
+        headers={
+            **headers,
+            "content-length": str(len(body)),
+            "content-range": f"bytes {start}-{end}/{size}",
+        },
+    )
+
+
+def _parse_single_byte_range(value: str, size: int) -> tuple[int, int] | None:
+    if size <= 0 or not value.startswith("bytes=") or "," in value:
+        return None
+    raw_start, sep, raw_end = value[6:].partition("-")
+    if sep != "-":
+        return None
+    try:
+        if raw_start == "":
+            suffix = int(raw_end)
+            if suffix <= 0:
+                return None
+            start = max(0, size - suffix)
+            end = size - 1
+        else:
+            start = int(raw_start)
+            end = int(raw_end) if raw_end else size - 1
+    except ValueError:
+        return None
+    if start < 0 or end < start or start >= size:
+        return None
+    return start, min(end, size - 1)

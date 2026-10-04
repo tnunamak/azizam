@@ -943,7 +943,9 @@ function Recent({ home }: { home: HomeSnapshot }) {
             Recent
           </h2>
           <p className="text-muted-foreground mt-1 text-sm">
-            Your latest creations and requests.
+            {["owner", "superadmin"].includes(home.user.role)
+              ? "The gateway’s latest creations and requests."
+              : "Your latest creations and requests."}
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
@@ -1033,6 +1035,11 @@ function Recent({ home }: { home: HomeSnapshot }) {
                           {receipt.requested_model}
                         </code>
                       )}
+                      {receipt.source?.label || receipt.source_label ? (
+                        <p className="text-muted-foreground mt-1 text-xs">
+                          {receipt.source?.label ?? receipt.source_label}
+                        </p>
+                      ) : null}
                       <p className="text-muted-foreground mt-1 text-xs">
                         <RelativeTime
                           ts={

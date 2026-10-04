@@ -195,6 +195,8 @@ test("library delete confirms before mutation", async ({ page }) => {
     return route.fulfill({ json: { ok: true } });
   });
   await page.goto("/ui/library/");
+  await page.getByLabel("Owner", { exact: true }).click();
+  await page.getByRole("option", { name: "Mine", exact: true }).click();
   await page.getByRole("button", { name: /A clean product render/ }).click();
   await page.getByRole("button", { name: "Delete" }).click();
   await expect(

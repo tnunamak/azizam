@@ -14,6 +14,7 @@ const python =
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 export default defineConfig({
   testDir: "./e2e",
+  testIgnore: "**/live-data-*.spec.ts",
   globalSetup: "./e2e/global-setup.ts",
   outputDir: "./test-results/artifacts",
   workers: 1,

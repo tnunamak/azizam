@@ -41,6 +41,10 @@ CLIENT_VISIBLE_FIELDS = {
     "remote",
     "cost",
     "usage",
+    "source",
+    "source_kind",
+    "source_label",
+    "client_hint",
     "effective_output_limit",
     "accepted_at_ms",
     "updated_at_ms",
@@ -205,6 +209,9 @@ class RouteReceipt:
     # legacy config keys, or provider-native passthrough without identity).
     app_id: str | None = None
     api_key_name: str | None = None
+    source_kind: str | None = None
+    source_label: str | None = None
+    client_hint: str | None = None
     requested_model: str | None = None
     resolved_model: str | None = None
     requested_workflow: str | None = None
@@ -236,6 +243,25 @@ class RouteReceipt:
     metadata: dict[str, Any] = field(default_factory=dict)
     _started_at: float = field(default_factory=perf_counter, repr=False)
     owner_key_hash: str | None = None
+
+    def __post_init__(self) -> None:
+        from gateway.request_source import current_client_hint
+
+        if self.source_kind is not None:
+            return
+        if self.parent_request_id:
+            self.source_kind = "internal"
+            self.source_label = "Gateway internal request"
+            return
+        self.client_hint = self.client_hint or current_client_hint()
+        if self.app_id:
+            self.source_kind = "app"
+            self.source_label = self.api_key_name or "App"
+        else:
+            self.source_kind = "local-network"
+            self.source_label = "Local network · no key"
+        if self.client_hint:
+            self.source_label += f" · {self.client_hint}"
 
     def accept_input(self, name: str) -> None:
         if name not in self.accepted_inputs:
@@ -308,6 +334,13 @@ class RouteReceipt:
         self.updated_at_ms = int(now_ms if now_ms is not None else time() * 1000)
 
     def to_dict(self, audience: str = "internal") -> dict[str, Any]:
+        # Some facades attach their resolved App after constructing the receipt.
+        # Derive its source from that final identity before persisting it.
+        if self.app_id and self.source_kind == "local-network":
+            self.source_kind = "app"
+            self.source_label = self.api_key_name or "App"
+            if self.client_hint:
+                self.source_label += f" · {self.client_hint}"
         data = {
             "request_id": self.request_id,
             "protocol": self.protocol,
@@ -315,6 +348,9 @@ class RouteReceipt:
             "intent": self.intent,
             "app_profile": self.app_profile,
             "app_id": self.app_id,
+            "source_kind": self.source_kind,
+            "source_label": self.source_label,
+            "client_hint": self.client_hint,
             "owner_key_hash": self.owner_key_hash,
             "api_key_name": self.api_key_name,
             "requested_model": self.requested_model,

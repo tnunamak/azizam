@@ -178,6 +178,27 @@ class ControlParsingTests(unittest.TestCase):
         with self.assertRaises(provenance.MetadataModeError):
             media_delivery.note_query([("metadata", "x")])
 
+    def test_ranged_delivery_response_supports_browser_audio_seek(self) -> None:
+        content = b"0123456789abcdef"
+        request = SimpleNamespace(headers={"range": "bytes=4-9"})
+        response = media_delivery.ranged_delivery_response(
+            request,  # type: ignore[arg-type]
+            content,
+            media_type="audio/wav",
+        )
+        self.assertEqual(response.status_code, 206)
+        self.assertEqual(response.headers["accept-ranges"], "bytes")
+        self.assertEqual(response.headers["content-range"], "bytes 4-9/16")
+        self.assertEqual(response.body, b"456789")
+
+        bad = media_delivery.ranged_delivery_response(
+            SimpleNamespace(headers={"range": "bytes=99-100"}),  # type: ignore[arg-type]
+            content,
+            media_type="audio/wav",
+        )
+        self.assertEqual(bad.status_code, 416)
+        self.assertEqual(bad.headers["content-range"], "bytes */16")
+
 
 class ProvenanceRecordTests(unittest.TestCase):
     def test_record_fields_from_receipt(self) -> None:
