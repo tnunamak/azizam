@@ -236,7 +236,12 @@ for an official vendor API and the actual endpoint matches its normalized
 scheme, hostname, effective port, and full path. A custom URL override loses
 that authority. Provider-owned rates take precedence even on official APIs.
 The shipped OpenAI and Anthropic catalog entries declare their official APIs;
-generic presets do not. Streaming settlement uses LiteLLM's complete assembled response, retaining
+generic presets do not. Anthropic SDK pricing is approved for the full API base
+`https://api.anthropic.com`; an Anthropic provider configured with the preset
+listing URL `https://api.anthropic.com/v1` must use provider-owned rates and
+does not automatically fall back to SDK pricing.
+
+Streaming settlement uses LiteLLM's complete assembled response, retaining
 annotations, citations, and other response metadata as well as merged provider
 usage. Missing usage or incomplete assembly leaves cost unknown; a malformed
 or oversized stream cannot settle from a partial response. The client still

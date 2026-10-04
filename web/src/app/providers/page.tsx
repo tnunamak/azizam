@@ -482,10 +482,13 @@ function mapGlobal(raw: unknown): GlobalProviderState {
     globalObj.caps && typeof globalObj.caps === "object"
       ? (globalObj.caps as Record<string, unknown>)
       : {};
+  const spendStatus = text(spendObj.status, "known");
   return {
-    spendToday: numberOrNull(spendObj.daily_usd),
-    spendMonth: numberOrNull(spendObj.monthly_usd),
-    spendStatus: text(spendObj.status, "known"),
+    spendToday:
+      spendStatus === "unknown" ? null : numberOrNull(spendObj.daily_usd),
+    spendMonth:
+      spendStatus === "unknown" ? null : numberOrNull(spendObj.monthly_usd),
+    spendStatus,
     pendingReconciliationCount: pendingCountFromSpend(spendObj),
     needsReconciliation: needsReconciliationFromSpend(spendObj),
     capDaily: numberOrNull(capsObj.daily_usd),

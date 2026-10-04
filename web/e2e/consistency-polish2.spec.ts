@@ -8,6 +8,9 @@ test("Providers presents the current API shape without inventing readiness or na
   await page.route("**/admin/api/providers", (route) =>
     route.fulfill({
       json: {
+        global: {
+          spend: { status: "unknown", monthly_usd: 888 },
+        },
         providers: [
           {
             id: "internal-provider-record",
@@ -68,10 +71,15 @@ test("Providers presents the current API shape without inventing readiness or na
         missing.getByText("Unavailable", { exact: true }),
       ).toBeVisible();
       await expect(missing.getByText("Missing key", { exact: true })).toBeVisible();
-      await expect(
-        missing.getByText("Not measured yet", { exact: true }),
-      ).toBeVisible();
+      const unknownSpend = missing.getByText("Not measured yet", {
+        exact: true,
+      });
+      await expect(unknownSpend).toHaveCount(2);
+      await expect(unknownSpend.nth(0)).toBeVisible();
+      await expect(unknownSpend.nth(1)).toBeVisible();
       await expect(missing).not.toContainText("999");
+      await expect(page.getByText("Remote spend this month")).toBeVisible();
+      await expect(page.locator("body")).not.toContainText("888");
       expect(
         await page.evaluate(
           () => document.documentElement.scrollWidth <= innerWidth,
