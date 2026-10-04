@@ -26,11 +26,15 @@ test("signed audio plays and seeks through the gateway delivery route", async ({
   await page.goto("/ui/library/");
   await page.getByRole("button", { name: "Audio", exact: true }).click();
   const audio = page.locator("article audio").first();
-  await expect(audio).toBeVisible();
-  await audio.evaluate(async (element: HTMLAudioElement) => {
+  await expect(audio).toBeAttached();
+  await expect(audio).toHaveAttribute("preload", "metadata");
+  const player = audio.locator("..");
+  const play = player.getByRole("button", { name: /^Play / });
+  await expect(play).toBeVisible();
+  await audio.evaluate((element: HTMLAudioElement) => {
     element.muted = true;
-    await element.play();
   });
+  await play.click();
   await expect
     .poll(() =>
       audio.evaluate((element: HTMLAudioElement) => element.currentTime),
@@ -39,8 +43,9 @@ test("signed audio plays and seeks through the gateway delivery route", async ({
   await expect
     .poll(() => audio.evaluate((element: HTMLAudioElement) => element.duration))
     .toBeGreaterThan(2.5);
+  await player.getByRole("button", { name: /^Pause / }).click();
+  await expect(player.getByRole("button", { name: /^Play / })).toBeVisible();
   await audio.evaluate((element: HTMLAudioElement) => {
-    element.pause();
     element.currentTime = 1.8;
   });
   await expect
@@ -48,9 +53,7 @@ test("signed audio plays and seeks through the gateway delivery route", async ({
       audio.evaluate((element: HTMLAudioElement) => element.currentTime),
     )
     .toBeGreaterThan(1.7);
-  await audio.evaluate(async (element: HTMLAudioElement) => {
-    await element.play();
-  });
+  await player.getByRole("button", { name: /^Play / }).click();
   await expect
     .poll(() =>
       audio.evaluate((element: HTMLAudioElement) => element.currentTime),
