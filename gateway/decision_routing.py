@@ -167,23 +167,15 @@ class DecisionRuntime:
                 attempts.fallbacks.append(f"{attempts.backend}:deadline_exceeded")
             return self._unavailable_result(attempts)
 
-    def _dispatch_timeout_seconds(self, resolved: Any) -> float:
-        timeout = ROUTING_TIMEOUT_SECONDS
-        for _engine_id, service_id in (
-            [(resolved.engine, resolved.service)] + list(resolved.fallbacks)
-        ):
-            service = self.config().get("backends", {}).get(service_id, {})
-            timeout = max(timeout, _positive_float(service.get("timeout")))
-            lifecycle = service.get("lifecycle")
-            if not isinstance(lifecycle, Mapping):
-                continue
-            driver_config = lifecycle.get("driver_config")
-            if isinstance(driver_config, Mapping):
-                timeout = max(
-                    timeout,
-                    _positive_float(driver_config.get("health_timeout_s")),
-                )
-        return timeout
+    def _dispatch_timeout_seconds(self, resolved: AliasResolution) -> float:
+        service = self.config().get("backends", {}).get(resolved.service, {})
+        timeout = _positive_float(service.get("timeout"))
+        if timeout:
+            return timeout
+        lifecycle = service.get("lifecycle")
+        driver_config = lifecycle.get("driver_config") if isinstance(lifecycle, Mapping) else None
+        startup_timeout = _positive_float(driver_config.get("health_timeout_s")) if isinstance(driver_config, Mapping) else 0
+        return max(ROUTING_TIMEOUT_SECONDS, startup_timeout)
 
     async def _dispatch_before_deadline(self, auth: Any, _profile: Any,
                                         body: Mapping[str, Any], deadline: float,

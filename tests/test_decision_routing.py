@@ -507,6 +507,18 @@ def test_configured_decision_timeout_still_bounds_startup(monkeypatch, timeout):
     assert cancelled == ["large"]
 
 
+def test_explicit_timeout_bounds_lifecycle_and_fallback_budget(monkeypatch):
+    import gateway.decision_routing as routing
+    monkeypatch.setattr(routing, "ROUTING_TIMEOUT_SECONDS", .3)
+    cfg = config()
+    cfg["backends"]["large"].update(timeout=.03, lifecycle={
+        "driver": "systemd", "driver_config": {"health_timeout_s": .2},
+    })
+    cfg["backends"]["small"]["timeout"] = .4
+    rt = runtime(cfg=cfg)
+    assert rt._dispatch_timeout_seconds(rt.resolve("decide-quality")) == .03
+
+
 def test_engine_deadline_response_is_retryable_and_preserves_reason():
     rt = runtime()
     real = httpx.AsyncClient
