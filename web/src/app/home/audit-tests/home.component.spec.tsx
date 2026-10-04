@@ -162,7 +162,7 @@ describe("Home audit component behavior", () => {
           icon_key: "music",
           title: "ACE-Step XL Turbo",
           recommended_model: "ACE-Step XL Turbo",
-          description: "Create music from a prompt.",
+          summary: "Create music from a prompt.",
           model: "music",
           use_name: "song",
           use_names: ["music", "song"],
@@ -176,7 +176,7 @@ describe("Home audit component behavior", () => {
           icon_key: "sfx",
           title: "Sound generator",
           recommended_model: "Sound generator",
-          description: "Create sound effects from a prompt.",
+          summary: "Create sound effects from a prompt.",
           model: "sfx",
           use_name: "sfx",
           available: true,
@@ -211,6 +211,10 @@ describe("Home audit component behavior", () => {
     expect(screen.getByRole("img", { name: "Music" })).toBeVisible();
     expect(screen.getByRole("img", { name: "Sound effects" })).toBeVisible();
     expect(screen.getByText("song")).toBeVisible();
+    expect(screen.getByText("Create music from a prompt.")).toBeVisible();
+    expect(
+      screen.getByText("Create sound effects from a prompt."),
+    ).toBeVisible();
   });
   it("lets the owner dismiss setup and shows capabilities after the saved dismissal", async () => {
     let dismissed = false;

@@ -295,7 +295,7 @@ for (const theme of ["light", "dark"]) {
           description: "Thinks through questions before answering.",
           icon_key: "chat",
           capability_title: "Chat",
-          engine_label: "Chat (llama.cpp)",
+          engine_label: "llama.cpp (chat)",
           use_names: ["default", "chat-model"],
         }),
         row("fast", "ready", {
@@ -361,7 +361,7 @@ for (const theme of ["light", "dark"]) {
           cards.getByRole("heading", { name: title, exact: true }),
         ).toBeVisible();
       }
-      await expect(cards.first().getByText("Chat (llama.cpp)")).toBeVisible();
+      await expect(cards.first().getByText("llama.cpp (chat)")).toBeVisible();
       await expect(
         page.getByRole("heading", { name: "Coder Q5", exact: true }),
       ).toHaveCount(0);

@@ -137,3 +137,13 @@ stopped after several minutes without usable task output. Repository grep
 and direct file reads let the security review continue. Print the index-lock
 owner and age, and let read-only lookup use the last completed index while
 another refresh runs.
+
+## 2026-10-04 — shared capability presentation lane
+
+`ds tldr` and `ds recent` gave useful workflow guidance and recent repository
+context. `ds recent --limit 3` failed because the command does not accept that
+flag; the unfiltered command worked. A three-slice `ds task` returned no task
+ID or progress for about nine minutes. I stopped that exact process with
+SIGTERM and continued from the complete brief and source evidence. No shared
+index state was reset. Task creation needs bounded waiting and progress output
+so an implementation lane can tell whether the index is working or stalled.

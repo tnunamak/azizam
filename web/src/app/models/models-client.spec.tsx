@@ -216,14 +216,14 @@ describe("models catalog contract distinctions", () => {
         row({
           title: "Default",
           description: "Thinks through questions before answering.",
-          engine_label: "Chat (llama.cpp)",
+          engine_label: "llama.cpp (chat)",
         }),
       ]),
     );
     const copy = await screen.findByRole("button", { name: "Copy alias chat" });
     const card = within(copy.closest("article")!);
     expect(card.getByRole("heading", { name: "Default" })).toBeVisible();
-    expect(card.getByText("Chat (llama.cpp)")).toBeVisible();
+    expect(card.getByText("llama.cpp (chat)")).toBeVisible();
     expect(card.queryByText(/rollback|official/i)).toBeNull();
   });
 
@@ -270,7 +270,7 @@ describe("models catalog contract distinctions", () => {
           display_name: "Chatterbox speech",
           name: "chatterbox",
           description: "Read text aloud.",
-          engine_label: "Speech (Chatterbox)",
+          engine_label: "Chatterbox (speech)",
           capabilities: [
             {
               capability: "speech",
@@ -289,7 +289,7 @@ describe("models catalog contract distinctions", () => {
     expect(await screen.findByRole("heading", { name: "Music" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Speech" })).toBeVisible();
     expect(screen.getByText("Music (ACE-Step XL Turbo)")).toBeVisible();
-    expect(screen.getByText("Speech (Chatterbox)")).toBeVisible();
+    expect(screen.getByText("Chatterbox (speech)")).toBeVisible();
   });
 
   it("uses the server audio taxonomy instead of the operation intent", async () => {

@@ -73,25 +73,54 @@ async function fixture(
         ...home,
         user,
         aliases,
-        // These ready workflows must never replace the capability's stable alias.
-        capabilities: [
-          {
-            capability: "image",
-            intent: "image.analyze",
-            workflow: "image.analyze.face-likeness",
-            available: true,
-            status: "ready",
-            reason: "Available.",
-          },
-          {
-            capability: "video",
-            intent: "video.edit",
-            workflow: "video.edit.bernini-r-remix",
-            available: true,
-            status: "ready",
-            reason: "Available.",
-          },
-        ],
+        // The server chooses one recommendation per permitted capability.
+        capabilities: aliases.map((alias) => {
+          const presentation = {
+            chat: {
+              capability: "chat",
+              capability_title: "Chat",
+              icon_key: "chat",
+              recommended_model: "Demo Chat",
+              intent: "chat.completions",
+              summary: "Talk with Demo Chat.",
+            },
+            images: {
+              capability: "image",
+              capability_title: "Images",
+              icon_key: "image",
+              recommended_model: "Flux",
+              intent: "image.generate",
+              summary: "Generate images with Flux.",
+            },
+            videos: {
+              capability: "video",
+              capability_title: "Video",
+              icon_key: "video",
+              recommended_model: "LTX Video",
+              intent: "video.generate",
+              summary: "Generate video with LTX Video.",
+            },
+            speech: {
+              capability: "speech",
+              capability_title: "Speech",
+              icon_key: "speech",
+              recommended_model: "Speech model",
+              intent: "speech.synthesize",
+              summary: "Turn text into spoken audio.",
+            },
+          }[alias.operation as "chat" | "images" | "videos" | "speech"];
+          return {
+            ...presentation,
+            title: presentation.recommended_model,
+            model: alias.id,
+            workflow: null,
+            use_name: alias.id,
+            use_names: [alias.id],
+            available: alias.available,
+            status: alias.status,
+            reason: alias.reason,
+          };
+        }),
         new_app_aliases: aliases.filter((alias) => alias.operation === "chat"),
         apps: [
           {
@@ -123,8 +152,9 @@ async function fixture(
           "image-key": aliases.filter((alias) => alias.operation === "images"),
         },
         status: {
-          state: "ready",
-          reason: "Some services are unavailable or not measured yet.",
+          state: "unavailable",
+          reason:
+            "Images are unavailable: the service is disabled, with 1 other capability affected.",
         },
         receipts: [],
       },
@@ -158,7 +188,7 @@ for (const theme of ["light", "dark"] as const) {
       );
       await expect(
         page.getByText(
-          "Chat and voice are ready · images and video are unavailable",
+          "Images are unavailable: the service is disabled, with 1 other capability affected.",
           { exact: true },
         ),
       ).toBeVisible();

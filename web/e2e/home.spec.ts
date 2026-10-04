@@ -93,7 +93,7 @@ for (const theme of ["light", "dark"] as const) {
                 creations: null,
                 status: {
                   state: "unavailable",
-                  reason: "No models are available to your account yet.",
+                  reason: "No capabilities are available to your account yet.",
                 },
               },
             });
