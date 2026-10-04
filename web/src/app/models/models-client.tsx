@@ -108,10 +108,39 @@ function hasCapability(row: CatalogRow, capability: Capability): boolean {
 }
 
 function descriptionFor(row: CatalogRow): string {
-  if (row.description) return row.description;
+  if (row.description && !isGenericDescription(row)) {
+    return row.description;
+  }
+  if (row.alias) {
+    const aliasDescription = aliasDescriptionFor(row);
+    if (aliasDescription) return aliasDescription;
+  }
   const label =
     row.capabilities[0]?.label ?? capabilityLabels[primaryCapability(row)];
   return `${label} model visible to your access plan.`;
+}
+
+function isGenericDescription(row: CatalogRow): boolean {
+  const text = row.description?.trim().toLowerCase();
+  if (!text) return true;
+  if (/^chat model visible to your access plan\.?$/.test(text)) return true;
+  const engine = row.engine_label?.trim().toLowerCase();
+  return Boolean(engine && text === engine);
+}
+
+function aliasDescriptionFor(row: CatalogRow): string | null {
+  if (!row.alias) return null;
+  const id = row.id.toLowerCase();
+  if (id === "default" || id === "chat") {
+    return "General chat alias for longer answers and reasoning-capable models.";
+  }
+  if (id === "fast") {
+    return "Fast chat alias for lower-latency replies.";
+  }
+  if (id === "coder" || id === "code") {
+    return "Coding alias for coding agents and technical work.";
+  }
+  return null;
 }
 
 function titleFor(row: CatalogRow): string {
@@ -121,6 +150,7 @@ function titleFor(row: CatalogRow): string {
   if (name) return name;
   if (!row.alias) return `${capabilityLabels[primaryCapability(row)]} model`;
   if (row.id === "fast") return "Fast chat";
+  if (row.id === "coder" || row.id === "code") return "Coding chat";
   return capabilityLabels[primaryCapability(row)];
 }
 
@@ -150,6 +180,12 @@ function engineLabel(row: CatalogRow): string {
   );
 }
 
+function summaryEngineLabel(row: CatalogRow): string {
+  if (row.locality === "local") return "Local engine";
+  if (row.locality === "remote") return row.provider ?? "Remote provider";
+  return "Configured service";
+}
+
 function timingLabel(row: CatalogRow): string {
   const value = row.timing.typical_seconds;
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
@@ -166,6 +202,14 @@ function timingLabel(row: CatalogRow): string {
         ? "Typical"
         : "Source not provided";
   return `${duration} · ${source}`;
+}
+
+function timingSummaryLabel(row: CatalogRow): string | null {
+  const value = row.timing.typical_seconds;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return null;
+  }
+  return timingLabel(row);
 }
 
 function readString(value: unknown): string | null {
@@ -409,6 +453,7 @@ function AliasCard({
 }) {
   const [copied, setCopied] = useState(false);
   const action = availabilityAction(row, viewerAdmin);
+  const timingSummary = timingSummaryLabel(row);
   async function copyAlias() {
     await navigator.clipboard.writeText(row.id);
     setCopied(true);
@@ -443,29 +488,32 @@ function AliasCard({
         className="text-muted-foreground flex min-w-0 flex-wrap items-center gap-1 text-xs"
       >
         <span className="shrink-0">{localityLabel(row)}</span>
-        <span className="min-w-20 flex-1 truncate" title={engineLabel(row)}>
+        <span
+          className="min-w-20 flex-1 truncate"
+          title={summaryEngineLabel(row)}
+        >
           <span aria-hidden="true">· </span>
-          {engineLabel(row)}
+          {summaryEngineLabel(row)}
         </span>
       </div>
       <div className="text-muted-foreground flex min-w-0 flex-wrap items-center gap-2 text-xs">
         <Badge variant="outline" className="max-w-full text-xs">
           <span className="whitespace-normal">{costLabel(row)}</span>
         </Badge>
-        <span
-          className="inline-flex shrink-0 items-center gap-1"
-          title={
-            row.timing.source === "receipts"
-              ? "Measured time from successful requests"
-              : "Typical time"
-          }
-        >
-          <span>{timingLabel(row)}</span>
-        </span>
+        {timingSummary && (
+          <span
+            className="inline-flex shrink-0 items-center gap-1"
+            title={
+              row.timing.source === "receipts"
+                ? "Measured time from successful requests"
+                : "Typical time"
+            }
+          >
+            <span>{timingSummary}</span>
+          </span>
+        )}
       </div>
       <Availability row={row} />
-      <AvailabilityFacts row={row} />
-      <ObservedAt row={row} />
       <div className="mt-auto flex flex-wrap gap-2">
         {action ? (
           <Button size="sm" asChild>
@@ -937,14 +985,10 @@ export default function ModelsClient() {
                           {row.capabilities[0]?.label ??
                             capabilityLabels[primaryCapability(row)]}
                         </TableCell>
-                        <TableCell>{engineLabel(row)}</TableCell>
+                        <TableCell>{summaryEngineLabel(row)}</TableCell>
                         <TableCell>{costLabel(row)}</TableCell>
                         <TableCell>
                           <Availability row={row} showReason={false} />
-                          <div className="mt-2 space-y-2">
-                            <AvailabilityFacts row={row} />
-                            <ObservedAt row={row} />
-                          </div>
                         </TableCell>
                         <TableCell>
                           <TableUseCell

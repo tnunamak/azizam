@@ -112,6 +112,7 @@ async function prepare(
   width: number,
   payload: ModelsCatalog,
   status = 200,
+  role = "owner",
 ) {
   await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
   await page.emulateMedia({
@@ -125,7 +126,26 @@ async function prepare(
   await page.route("**/me/api/models/catalog", (route) =>
     route.fulfill({ status, json: payload }),
   );
+  await routeSession(page, role);
   await page.goto("/ui/models/");
+}
+
+async function routeSession(page: Page, role = "owner") {
+  await page.route("**/me/api/session", (route) =>
+    route.fulfill({
+      json: {
+        authenticated: true,
+        user: {
+          id: role,
+          name: role === "member" ? "Member" : "Owner",
+          email: `${role}@example.test`,
+          role,
+        },
+        apps: [],
+        csrf_token: "fixture",
+      },
+    }),
+  );
 }
 async function verify(page: Page, name: string) {
   expect(
@@ -159,20 +179,15 @@ for (const theme of ["light", "dark"])
         2,
       );
       await expect(
-        page
-          .locator("article")
-          .getByText("Not measured yet", { exact: true })
-          .first(),
-      ).toBeVisible();
+        page.locator("article").getByText("Not measured yet", { exact: true }),
+      ).toHaveCount(0);
       await expect(
         page.getByText("Price not provided", { exact: true }).first(),
       ).toBeVisible();
       await verify(page, `states-${theme}-${width}`);
       await page.getByRole("button", { name: /All models/ }).click();
       const table = page.getByRole("table");
-      await expect(
-        table.getByText("Configured", { exact: true }),
-      ).toBeVisible();
+      await expect(table.getByText("Unavailable").first()).toBeVisible();
       await expect(
         table.getByRole("link", { name: "Check status" }),
       ).toHaveAttribute("href", "/ui/status/");
@@ -232,22 +247,7 @@ for (const theme of ["light", "dark"])
 test("member recovery keeps owner controls out of the catalog", async ({
   page,
 }) => {
-  await page.route("**/me/api/session", (route) =>
-    route.fulfill({
-      json: {
-        authenticated: true,
-        user: {
-          id: "member",
-          name: "Member",
-          email: "member@example.test",
-          role: "member",
-        },
-        apps: [],
-        csrf_token: "fixture",
-      },
-    }),
-  );
-  await prepare(page, "light", 390, seeded);
+  await prepare(page, "light", 390, seeded, 200, "member");
   const card = page.locator("article").filter({
     has: page.getByRole("button", {
       name: "Copy alias catalog-only",
@@ -272,6 +272,7 @@ test("loading finishes with observed models", async ({ page }) => {
     await pending;
     await route.fulfill({ json: seeded });
   });
+  await routeSession(page);
   await page.goto("/ui/models/");
   await expect(
     page.getByRole("status", { name: "Loading models" }),

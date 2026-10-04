@@ -350,7 +350,7 @@ function SummaryRow({ summary }: { summary: UsageSummary }) {
       />
       <Card className="border-0! bg-transparent! shadow-none! md:col-span-3">
         <CardHeader>
-          <CardTitle>Capability sparklines</CardTitle>
+          <CardTitle>By capability</CardTitle>
           <CardDescription>Requests by capability this month</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

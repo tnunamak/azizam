@@ -62,7 +62,7 @@ for (const mode of ["light", "dark"] as const) {
       await page.goto("/ui/library/");
 
       await expect(page.getByRole("main")).toHaveCount(1);
-      await page.getByRole("button", { name: "Open Image" }).click();
+      await page.getByRole("button", { name: "Open Image generation" }).click();
       await expect(
         page.getByRole("link", { name: `View receipt ${requestId}` }),
       ).toHaveAttribute("href", `/r/${encodeURIComponent(requestId)}`);

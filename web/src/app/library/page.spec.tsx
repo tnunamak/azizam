@@ -1,6 +1,12 @@
 /* eslint-disable @next/next/no-img-element */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import LibraryPage from "./page";
@@ -49,6 +55,18 @@ const assetWithoutReceipt = {
   prompt: "A saved image with no request receipt",
 };
 
+const audioAsset = {
+  asset_id: "asset_audio_1",
+  request_id: "req_audio_123",
+  kind: "audio",
+  prompt:
+    "A warm synth loop with brushed percussion and a soft rising melody for a loading screen",
+  model: "audio.generate.test-model",
+  created_at: 1_760_000_000,
+  download_url: "data:audio/wav;base64,UklGRg==",
+  duration_s: 125,
+};
+
 function renderLibrary() {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -84,7 +102,9 @@ describe("LibraryPage batch J provenance", () => {
   test("links the request receipt and explains absent prompt provenance honestly", async () => {
     renderLibrary();
 
-    (await screen.findByRole("button", { name: "Open Image" })).click();
+    (
+      await screen.findByRole("button", { name: "Open Image generation" })
+    ).click();
 
     await waitFor(() =>
       expect(
@@ -108,7 +128,9 @@ describe("LibraryPage batch J provenance", () => {
     );
     renderLibrary();
 
-    (await screen.findByRole("button", { name: "Open Image" })).click();
+    (
+      await screen.findByRole("button", { name: "Open Image generation" })
+    ).click();
 
     await waitFor(() =>
       expect(
@@ -147,8 +169,136 @@ describe("LibraryPage batch J provenance", () => {
     renderLibrary();
 
     await waitFor(() => {
-      expect(screen.queryByRole("status", { name: "Loading library" })).toBeNull();
+      expect(
+        screen.queryByRole("status", { name: "Loading library" }),
+      ).toBeNull();
     });
     expect(document.querySelectorAll("main")).toHaveLength(0);
+  });
+
+  test("uses the prompt as the card title and keeps the model as secondary text", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      Response.json({
+        assets: [audioAsset],
+        models: ["audio.generate.test-model"],
+        next_cursor: null,
+      }),
+    );
+    renderLibrary();
+
+    expect(await screen.findByText(audioAsset.prompt)).toBeVisible();
+    expect(screen.getByText("audio.generate.test-model")).toBeVisible();
+    expect(screen.queryByText("Untitled generation")).not.toBeInTheDocument();
+  });
+
+  test("falls back to a kind-specific title when the prompt is not recorded", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      Response.json({
+        assets: [{ ...audioAsset, prompt: "" }],
+        models: ["audio.generate.test-model"],
+        next_cursor: null,
+      }),
+    );
+    renderLibrary();
+
+    expect(
+      await screen.findByRole("button", { name: "Open Audio generation" }),
+    ).toBeVisible();
+    expect(screen.getByText("Audio generation")).toBeVisible();
+    expect(screen.getByText("audio.generate.test-model")).toBeVisible();
+  });
+
+  test("falls back when the API returns a null prompt", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      Response.json({
+        assets: [{ ...audioAsset, prompt: null }],
+        models: ["audio.generate.test-model"],
+        next_cursor: null,
+      }),
+    );
+    renderLibrary();
+
+    expect(
+      await screen.findByRole("button", { name: "Open Audio generation" }),
+    ).toBeVisible();
+    expect(screen.getByText("Audio generation")).toBeVisible();
+  });
+
+  test("renders an accessible mini audio player with measured duration and retryable playback errors", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      Response.json({
+        assets: [audioAsset],
+        models: ["audio.generate.test-model"],
+        next_cursor: null,
+      }),
+    );
+    const play = vi
+      .spyOn(HTMLMediaElement.prototype, "play")
+      .mockRejectedValueOnce(new Error("blocked"));
+    renderLibrary();
+
+    const playButton = await screen.findByRole("button", {
+      name: `Play ${audioAsset.prompt}`,
+    });
+    expect(screen.getByText("2:05")).toBeVisible();
+    expect(
+      screen.queryByLabelText(`Play ${audioAsset.prompt}`, {
+        selector: "audio",
+      }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(playButton);
+
+    await waitFor(() => expect(play).toHaveBeenCalled());
+    expect(
+      await screen.findByText("Playback blocked. Try again."),
+    ).toBeVisible();
+    expect(playButton).toBeEnabled();
+  });
+
+  test("reports actual media load errors honestly", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      Response.json({
+        assets: [audioAsset],
+        models: ["audio.generate.test-model"],
+        next_cursor: null,
+      }),
+    );
+    renderLibrary();
+
+    await screen.findByRole("button", {
+      name: `Play ${audioAsset.prompt}`,
+    });
+    const media = document.querySelector("article audio");
+    expect(media).toBeTruthy();
+
+    fireEvent.error(media!);
+
+    expect(await screen.findByText("Audio unavailable")).toBeVisible();
+  });
+
+  test("keeps mini audio player state in sync with media play and pause events", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      Response.json({
+        assets: [audioAsset],
+        models: ["audio.generate.test-model"],
+        next_cursor: null,
+      }),
+    );
+    renderLibrary();
+
+    const audio = await screen.findByRole("button", {
+      name: `Play ${audioAsset.prompt}`,
+    });
+    const media = document.querySelector("article audio");
+    expect(media).toBeTruthy();
+
+    fireEvent.play(media!);
+    expect(
+      screen.getByRole("button", { name: `Pause ${audioAsset.prompt}` }),
+    ).toBeVisible();
+
+    fireEvent.pause(media!);
+    expect(audio).toBeVisible();
   });
 });

@@ -1139,7 +1139,11 @@ export default function HomePage() {
                 Hello, {greetingName(home.user)}.
               </h1>
               <p className="text-muted-foreground mt-1 hidden text-xs sm:block">
-                Welcome to {instance?.service?.name || PRODUCT_NAME}.
+                Welcome to {PRODUCT_NAME}.
+                {instance?.service?.name &&
+                instance.service.name !== PRODUCT_NAME
+                  ? ` ${instance.service.name}`
+                  : ""}
               </p>
               <p role="status" className="text-muted-foreground mt-2 text-sm">
                 {capabilitySummary(

@@ -134,20 +134,136 @@ afterEach(() => {
 });
 
 describe("models catalog contract distinctions", () => {
-  it("uses the shared product API client and labels allowed configured observed rows", async () => {
+  it("uses product alias fallback and one availability line for allowed configured observed rows", async () => {
     renderModels(catalog([row()]));
 
     const copy = await screen.findByRole("button", { name: "Copy alias chat" });
     const card = within(copy.closest("article")!);
 
     expect(productApi.models).toHaveBeenCalledOnce();
-    expect(card.getByText("Allowed by your access")).toBeVisible();
-    expect(card.getByText("Configured")).toBeVisible();
-    expect(card.getByText("Observed from request")).toBeVisible();
-    expect(card.getByText("Observed:")).toBeVisible();
-    expect(card.getByTitle("2027-01-15 08:00:00 UTC")).toBeVisible();
-    expect(card.getByText("Enabled")).toBeVisible();
+    expect(card.getByText("Chat through your configured model.")).toBeVisible();
+    expect(card.getByText("Ready")).toBeVisible();
+    expect(card.getByText("Recent request succeeded.")).toBeVisible();
+    expect(card.queryByText("Allowed by your access")).toBeNull();
+    expect(card.queryByText("Observed:")).toBeNull();
+    expect(card.queryByText("Not measured yet")).toBeNull();
     expect(card.getByRole("button", { name: "Use" })).toBeVisible();
+  });
+
+  it("uses authored row descriptions before alias fallback", async () => {
+    renderModels(
+      catalog([
+        row({
+          id: "fast",
+          description: "Use this when you want short replies.",
+        }),
+      ]),
+    );
+
+    const copy = await screen.findByRole("button", { name: "Copy alias fast" });
+    const card = within(copy.closest("article")!);
+
+    expect(
+      card.getByText("Use this when you want short replies."),
+    ).toBeVisible();
+    expect(
+      card.queryByText("Fast chat alias for lower-latency replies."),
+    ).toBeNull();
+  });
+
+  it("uses alias fallback when backend copy is generic", async () => {
+    renderModels(
+      catalog([
+        row({
+          id: "chat",
+          description: "Chat model visible to your access plan.",
+        }),
+      ]),
+    );
+
+    const copy = await screen.findByRole("button", { name: "Copy alias chat" });
+    const card = within(copy.closest("article")!);
+
+    expect(
+      card.getByText(
+        "General chat alias for longer answers and reasoning-capable models.",
+      ),
+    ).toBeVisible();
+  });
+
+  it("uses authored row descriptions even when they contain backend words", async () => {
+    renderModels(
+      catalog([
+        row({
+          id: "fast",
+          description: "Local server tuned for short replies.",
+        }),
+      ]),
+    );
+
+    const copy = await screen.findByRole("button", { name: "Copy alias fast" });
+    const card = within(copy.closest("article")!);
+
+    expect(
+      card.getByText("Local server tuned for short replies."),
+    ).toBeVisible();
+    expect(
+      card.queryByText("Fast chat alias for lower-latency replies."),
+    ).toBeNull();
+  });
+
+  it("filters descriptions that duplicate the engine label and hides local engine labels from summaries", async () => {
+    renderModels(
+      catalog([
+        row({
+          description: "Local llama.cpp server (official; Bee rollback alias)",
+          engine_label: "Local llama.cpp server (official; Bee rollback alias)",
+        }),
+      ]),
+    );
+
+    const copy = await screen.findByRole("button", { name: "Copy alias chat" });
+    const card = within(copy.closest("article")!);
+
+    expect(card.getByText("Local engine")).toBeVisible();
+    expect(
+      card.getByText(
+        "General chat alias for longer answers and reasoning-capable models.",
+      ),
+    ).toBeVisible();
+    expect(card.queryByText(/llama\.cpp/i)).toBeNull();
+  });
+
+  it("keeps provider provenance for remote summaries", async () => {
+    renderModels(
+      catalog([
+        row({
+          locality: "remote",
+          provider: "OpenRouter",
+          engine_label: "Remote provider",
+        }),
+      ]),
+    );
+
+    const copy = await screen.findByRole("button", { name: "Copy alias chat" });
+    const card = within(copy.closest("article")!);
+
+    expect(card.getByText("OpenRouter")).toBeVisible();
+  });
+
+  it("uses a coding title for coder aliases without a friendly name", async () => {
+    renderModels(
+      catalog([
+        row({
+          id: "coder",
+          display_name: "coder",
+          name: "coder",
+          description: "Chat model visible to your access plan.",
+        }),
+      ]),
+    );
+
+    expect(await screen.findByText("Coding chat")).toBeVisible();
   });
 
   it("treats only explicit configured false as catalog-only and gives owners an engine action", async () => {
@@ -177,8 +293,9 @@ describe("models catalog contract distinctions", () => {
       name: "Connect an engine",
     });
     expect(action).toHaveAttribute("href", "/ui/engines/");
-    expect(screen.getByText("Catalog only")).toBeVisible();
-    expect(screen.getByText("From configuration")).toBeVisible();
+    expect(screen.getByText("Unavailable")).toBeVisible();
+    expect(screen.getByText("The service is not configured.")).toBeVisible();
+    expect(screen.queryByText("Catalog only")).toBeNull();
     expect(screen.queryByRole("button", { name: "Use" })).toBeNull();
   });
 
@@ -259,9 +376,9 @@ describe("models catalog contract distinctions", () => {
 
     const action = await screen.findByRole("link", { name: "Check status" });
     expect(action).toHaveAttribute("href", "/ui/status/");
-    expect(screen.getByText("Configuration not reported")).toBeVisible();
-    expect(screen.getByText("Not observed yet")).toBeVisible();
-    expect(screen.getByText("Observation time not reported")).toBeVisible();
+    expect(screen.getByText("Unknown")).toBeVisible();
+    expect(screen.queryByText("Configuration not reported")).toBeNull();
+    expect(screen.queryByText("Observation time not reported")).toBeNull();
     expect(screen.queryByText("Catalog only")).toBeNull();
   });
 
@@ -300,11 +417,10 @@ describe("models catalog contract distinctions", () => {
     fireEvent.click(await screen.findByRole("button", { name: /All models/ }));
     const table = within(screen.getByRole("table"));
 
-    expect(table.getByText("Configured")).toBeVisible();
-    expect(table.getByText("From configuration")).toBeVisible();
-    expect(table.getByText("Disabled")).toBeVisible();
-    expect(table.getByText("Observed:")).toBeVisible();
-    expect(table.getByTitle("2023-11-14 22:13:20 UTC")).toBeVisible();
+    expect(table.getByText("Unavailable")).toBeVisible();
+    expect(table.queryByText("From configuration")).toBeNull();
+    expect(table.queryByText("Disabled")).toBeNull();
+    expect(table.queryByText("Observed:")).toBeNull();
     expect(
       table.getByRole("link", { name: "Review provider" }),
     ).toHaveAttribute("href", "/ui/providers/");

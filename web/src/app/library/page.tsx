@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import NextImage from "next/image";
 import {
   useMutation,
@@ -15,6 +15,8 @@ import {
   Download,
   ExternalLink,
   ImageIcon,
+  Pause,
+  Play,
   Search,
   Trash2,
   Video,
@@ -56,7 +58,7 @@ interface MediaAsset {
   asset_id: string;
   request_id?: string | null;
   kind: MediaKind;
-  prompt: string;
+  prompt: string | null;
   model: string;
   created_at: number | string | null;
   download_url?: string | null;
@@ -94,6 +96,22 @@ function kindIcon(kind: MediaKind) {
 
 function kindLabel(kind: MediaKind) {
   return kind[0].toUpperCase() + kind.slice(1);
+}
+
+function assetTitle(asset: MediaAsset) {
+  const prompt = typeof asset.prompt === "string" ? asset.prompt.trim() : "";
+  if (prompt) return prompt;
+  return `${kindLabel(asset.kind)} generation`;
+}
+
+function formatDuration(seconds: number | null | undefined) {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) {
+    return "Duration not measured yet";
+  }
+  const rounded = Math.round(seconds);
+  const minutes = Math.floor(rounded / 60);
+  const remainingSeconds = rounded % 60;
+  return `${minutes}:${remainingSeconds.toString().padStart(2, "0")}`;
 }
 
 function buildMediaPath(filters: {
@@ -138,6 +156,98 @@ function absolute(ts: MediaAsset["created_at"]) {
   return ts ? formatAbsoluteUTC(ts) : undefined;
 }
 
+function MiniAudioPlayer({
+  src,
+  title,
+  duration,
+}: {
+  src: string;
+  title: string;
+  duration?: number | null;
+}) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [measuredDuration, setMeasuredDuration] = useState<number | null>(
+    duration ?? null,
+  );
+  const [error, setError] = useState<"media" | "playback" | null>(null);
+
+  const label = isPlaying ? `Pause ${title}` : `Play ${title}`;
+  const durationLabel =
+    error === "media"
+      ? "Audio unavailable"
+      : error === "playback"
+        ? "Playback blocked. Try again."
+        : formatDuration(measuredDuration);
+
+  return (
+    <div
+      className="bg-background/95 absolute right-3 bottom-3 left-3 z-20 flex min-h-12 items-center gap-3 rounded-lg border p-2 shadow-sm backdrop-blur"
+      onClick={(event) => event.stopPropagation()}
+    >
+      <audio
+        ref={audioRef}
+        src={src}
+        preload="metadata"
+        onLoadedMetadata={(event) => {
+          setError(null);
+          setMeasuredDuration(event.currentTarget.duration);
+        }}
+        onPlay={() => {
+          setError(null);
+          setIsPlaying(true);
+        }}
+        onPause={() => setIsPlaying(false)}
+        onEnded={() => setIsPlaying(false)}
+        onError={() => {
+          setIsPlaying(false);
+          setError("media");
+        }}
+      />
+      <Button
+        type="button"
+        size="icon"
+        variant="secondary"
+        className="size-11"
+        aria-label={label}
+        onClick={async () => {
+          const audio = audioRef.current;
+          if (!audio) return;
+          if (isPlaying) {
+            audio.pause();
+            setIsPlaying(false);
+            return;
+          }
+          if (error === "media") {
+            audio.load();
+          }
+          try {
+            await audio.play();
+            setError(null);
+            setIsPlaying(true);
+          } catch {
+            setIsPlaying(false);
+            setError("playback");
+          }
+        }}
+      >
+        {isPlaying ? <Pause aria-hidden /> : <Play aria-hidden />}
+      </Button>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs font-medium">Audio preview</p>
+        <p
+          className={cn(
+            "text-muted-foreground text-xs",
+            error === "media" && "text-destructive",
+          )}
+        >
+          {durationLabel}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function Preview({
   asset,
   large = false,
@@ -171,7 +281,7 @@ function Preview({
         width={asset.width ?? 1024}
         height={asset.height ?? 768}
         src={src}
-        alt={asset.prompt || "Generated image"}
+        alt={assetTitle(asset)}
         className={cn(
           "h-full w-full",
           large ? "rounded-lg object-contain" : "object-cover",
@@ -198,7 +308,7 @@ function Preview({
         width={asset.width ?? 1024}
         height={asset.height ?? 768}
         src={poster.download_url}
-        alt={asset.prompt || "Video poster"}
+        alt={assetTitle(asset)}
         className="h-full w-full object-cover"
       />
     );
@@ -248,7 +358,7 @@ function AssetCard({
         type="button"
         onClick={() => onOpen(asset)}
         className="focus-visible:ring-ring absolute inset-0 z-10 rounded-xl focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset"
-        aria-label={`Open ${asset.prompt || kindLabel(asset.kind)}`}
+        aria-label={`Open ${assetTitle(asset)}`}
       />
       <div className="bg-muted relative aspect-[4/3]">
         <Preview asset={asset} everyone={everyone} />
@@ -259,27 +369,28 @@ function AssetCard({
           <Icon className="size-3" />
           {kindLabel(asset.kind)}
         </Badge>
-        {asset.duration_s != null && Number.isFinite(asset.duration_s) ? (
+        {asset.kind !== "audio" &&
+        asset.duration_s != null &&
+        Number.isFinite(asset.duration_s) ? (
           <Badge
             variant="secondary"
             className="bg-background/90 absolute top-2 right-2 tabular-nums"
           >
-            {Math.round(asset.duration_s)} s
+            {formatDuration(asset.duration_s)}
           </Badge>
         ) : null}
         {asset.kind === "audio" && asset.download_url && (
-          <audio
-            controls
-            preload="none"
+          <MiniAudioPlayer
+            key={asset.download_url}
             src={asset.download_url}
-            aria-label={`Play ${asset.prompt || "generated audio"}`}
-            className="absolute bottom-4 left-4 z-20 h-10 w-[calc(100%-2rem)]"
+            title={assetTitle(asset)}
+            duration={asset.duration_s}
           />
         )}
       </div>
       <div className="space-y-2 p-3">
         <p className="line-clamp-2 min-h-10 text-sm font-medium">
-          {asset.prompt || "Untitled generation"}
+          {assetTitle(asset)}
         </p>
         <div className="text-muted-foreground flex items-center justify-between gap-2 text-xs">
           <span className="truncate">{asset.model || "Unknown model"}</span>
@@ -551,7 +662,7 @@ export default function LibraryPage() {
           {selected ? (
             <>
               <SheetHeader>
-                <SheetTitle>{selected.prompt || "Generated media"}</SheetTitle>
+                <SheetTitle>{assetTitle(selected)}</SheetTitle>
                 <SheetDescription>
                   {kindLabel(selected.kind)} made with{" "}
                   {selected.model || "an unknown model"}
