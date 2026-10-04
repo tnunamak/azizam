@@ -143,9 +143,10 @@ class ModelsCatalogBuildTests(unittest.TestCase):
             "container-loader": {
                 "enabled": True,
                 "capabilities": ["chat"],
+                "lifecycle": {"driver": "systemd"},
                 "config": {
                     "model_file_scope": "backend",
-                    "models": [{"model_group": "container-chat", "model_path": missing}],
+                    "models": [{"model_group": "container-chat", "model_path": missing, "activation_model": missing, "activation_mmproj": missing}],
                 },
             }
         }}

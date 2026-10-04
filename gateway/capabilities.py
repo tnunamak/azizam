@@ -284,6 +284,8 @@ def summarize_capabilities(
     _check_audience(audience)
     ordered = sorted(capabilities, key=lambda c: c.sort_key)
     if audience == "client":
+        ordered = [cap for cap in ordered
+                   if ((cap.availability or {}).get("evidence") or {}).get("kind") != "missing_model_file"]
         ordered = _deduplicate_visible_entries(ordered)
     return {
         "schema_version": 1,

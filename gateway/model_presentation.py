@@ -297,8 +297,8 @@ def _is_technical_description(value: str) -> bool:
         r"\b(?:port|host|localhost|127\.0\.0\.1)\b",
         r"\b(?:gguf|safetensors|checkpoint)\b",
         r"\bcontext (?:of|window|length)\b",
-        r"\bvia\s+(?:local\s+)?(?:llama\.cpp|llama-cpp|vllm|ollama|backend|engine|server)\b",
-        r"\b(?:served by|served via|running on)\b.*\b(?:llama\.cpp|llama-cpp|vllm|ollama|backend|engine|server)\b",
+        r"\bvia\s+(?:local|remote|backend|engine|server)\b",
+        r"\b(?:served by|served via|running on)\b",
         r"[/\\][\w.-]+",
     )
     lowered = value.casefold()

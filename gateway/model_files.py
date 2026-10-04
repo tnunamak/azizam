@@ -14,6 +14,7 @@ GATEWAY_MODEL_FILE_FIELDS = (
     "model_path",
     "path",
     "vivid_fish_model_path",
+    "mmproj",
 )
 
 # Activation identifiers may be logical backend ids for externally managed
@@ -90,10 +91,11 @@ def _model_file_paths(
     service: Mapping[str, Any] | None,
     seen: frozenset[str] = frozenset(),
 ) -> tuple[Path, ...]:
+    if _backend_file_scope(model, service):
+        return ()
     paths: list[Path] = []
-    if not _backend_file_scope(model, service):
-        for field in GATEWAY_MODEL_FILE_FIELDS:
-            paths.extend(_paths_from_value(model.get(field)))
+    for field in GATEWAY_MODEL_FILE_FIELDS:
+        paths.extend(_paths_from_value(model.get(field)))
 
     if _gateway_file_scope(model, service):
         for field in ACTIVATION_FILE_FIELDS:
@@ -102,9 +104,8 @@ def _model_file_paths(
         for field in ACTIVATION_FILE_FIELDS:
             paths.extend(path for path in _paths_from_value(model.get(field)) if path.is_absolute())
 
-    if not _backend_file_scope(model, service):
-        for field in DECLARED_REQUIRED_FILE_FIELDS:
-            paths.extend(_paths_from_value(model.get(field)))
+    for field in DECLARED_REQUIRED_FILE_FIELDS:
+        paths.extend(_paths_from_value(model.get(field)))
 
     base_id = model.get("base_model_id")
     if isinstance(base_id, str) and base_id and base_id not in seen:

@@ -410,9 +410,7 @@ class ProviderRoutingTests(unittest.TestCase):
                 pass
 
         client = _CapturingClient()
-        original_async_client = llm_execution_module.httpx.AsyncClient
-        llm_execution_module.httpx.AsyncClient = lambda **kwargs: client
-        try:
+        with patch.object(llm_execution_module.httpx, "AsyncClient", lambda **kwargs: client):
             response = asyncio.run(
                 proxy._forward_litellm_proxy_request(
                     request,
@@ -422,8 +420,6 @@ class ProviderRoutingTests(unittest.TestCase):
                     runtime_config=self.runtime,
                 )
             )
-        finally:
-            llm_execution_module.httpx.AsyncClient = original_async_client
 
         self.assertEqual(response.status_code, 200)
         outbound = json.loads(client.content.decode())
@@ -456,10 +452,10 @@ class ProviderRoutingTests(unittest.TestCase):
                 pass
 
         client = _CapturingClient()
-        original_async_client = llm_execution_module.httpx.AsyncClient
-        llm_execution_module.httpx.AsyncClient = lambda **kwargs: client
-        proxy.receipt_store.begin.reset_mock()
-        try:
+        receipts = []
+        with patch.object(llm_execution_module.httpx, "AsyncClient", lambda **kwargs: client), \
+             patch.object(proxy.receipt_store, "begin", side_effect=lambda receipt: receipts.append(receipt)), \
+             patch.object(proxy.receipt_store, "finalize", return_value=True):
             response = asyncio.run(
                 proxy._forward_litellm_proxy_request(
                     request,
@@ -469,12 +465,10 @@ class ProviderRoutingTests(unittest.TestCase):
                     runtime_config=self.runtime,
                 )
             )
-        finally:
-            llm_execution_module.httpx.AsyncClient = original_async_client
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["x-gateway-fallback"], "free->paid (http_503)")
-        receipt = proxy.receipt_store.begin.call_args.args[0]
+        receipt = receipts[0]
         self.assertEqual(receipt.requested_model, "assistant")
         self.assertEqual(receipt.resolved_model, "paid-chat")
         self.assertIn("free->paid (http_503)", receipt.fallback_reasons)

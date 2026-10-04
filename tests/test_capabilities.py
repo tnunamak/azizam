@@ -21,6 +21,8 @@ from gateway.capabilities import (  # noqa: E402
     summarize_capability,
     unavailable_capability,
 )
+
+
 from gateway.discovery import WorkflowRegistry  # noqa: E402
 from gateway.policy import (  # noqa: E402
     ALLOWED,
@@ -551,6 +553,16 @@ class ResourceEstimateTests(unittest.TestCase):
             },
         )
 
+
+def test_missing_installed_files_are_hidden_from_client_discovery_but_explained_to_owner():
+    cap = Capability(intent="chat.completions", backend="local", model="missing", availability={
+        "available": False, "status": "unavailable", "reason": "Model file is not installed.",
+        "evidence": {"kind": "missing_model_file"},
+    })
+    assert summarize_capabilities([cap], "client")["capabilities"] == []
+    owner = summarize_capabilities([cap], "admin")["capabilities"][0]
+    assert not owner["available"]
+    assert owner["availability"]["reason"] == "Model file is not installed."
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

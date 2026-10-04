@@ -143,7 +143,7 @@ service:
 
 Model-file availability is a generic registry projection, not an engine adapter. The gateway checks only files that the registry declares as gateway-host files:
 
-- `model_path`, `path`, and `vivid_fish_model_path` are legacy gateway-host file fields by default.
+- `model_path`, `path`, `vivid_fish_model_path`, and the companion `mmproj` are legacy gateway-host file fields by default.
 - `activation_model` and `activation_mmproj` are checked only when the value is absolute and the service uses a currently host-managed lifecycle driver (`systemd` or `command`), or when `model_file_scope: gateway` is declared on the model, service, or service config.
 - `required_model_files` and `required_files` declare additional gateway-host dependencies, such as companion projector files. These requirements inherit through `base_model_id`.
 - `model_file_scope: backend` (also `remote`, `container`, or `external`) means the path belongs to the backend's filesystem or naming scope, so the gateway must not classify it by calling `Path.is_file()` on the gateway host.
