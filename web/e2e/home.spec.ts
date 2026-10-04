@@ -715,10 +715,10 @@ test("inline reveal-once key tests a real chat request and produces one owned re
     ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "What you can use", exact: true }),
-    ).toHaveCount(0);
+    ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Finish setting up", exact: true }),
-    ).toBeVisible();
+    ).toHaveCount(0);
     await page
       .getByRole("link", { name: "View request receipt", exact: true })
       .click();
