@@ -2,7 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import type { CurrentHealth, CurrentHealthService } from "../../src/lib/api";
 import { deriveServicesHealthSummary } from "../../src/lib/services-health-summary";
-import producerHealth from "../fixtures/gateway/current-health-routing-unknown.json";
+import producerHealthFixture from "../fixtures/gateway/current-health-routing-unknown.json";
+
+// Python tests compare this fixture to the real producer. JSON imports widen
+// icon keys to string, so restore the response type at this checked boundary.
+const producerHealth = producerHealthFixture as {
+  routingUnknown: CurrentHealth;
+  badWithRoutingUnknown: CurrentHealth;
+};
 
 function service(
   overrides: Partial<CurrentHealthService>,
