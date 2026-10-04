@@ -55,6 +55,7 @@ import {
   capabilitySummary,
   capabilityTiles,
   greetingName,
+  needsSetup,
   requestLabel,
   setupSteps,
 } from "./presentation";
@@ -83,6 +84,21 @@ const capabilityCopy: Record<
   voice: {
     label: "Voice",
     description: "Read your text aloud.",
+    icon: "voice",
+  },
+  speech: {
+    label: "Speech",
+    description: "Read your text aloud.",
+    icon: "voice",
+  },
+  music: {
+    label: "Music",
+    description: "Create music from a prompt.",
+    icon: "voice",
+  },
+  sfx: {
+    label: "Sound effects",
+    description: "Create sounds for your projects.",
     icon: "voice",
   },
   transcribe: {
@@ -672,6 +688,19 @@ function SetupChecklist({
       setSaving(false);
     }
   }
+  async function dismiss() {
+    if (saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await homeApi.dismissSetup();
+      await queryClient.invalidateQueries({ queryKey: setupKey });
+    } catch {
+      setError("Setup could not be dismissed. Try again.");
+    } finally {
+      setSaving(false);
+    }
+  }
   return (
     <section
       aria-labelledby="setup-heading"
@@ -712,6 +741,15 @@ function SetupChecklist({
           </Button>
         )}
       </div>
+      {typeof progress.dismissed === "boolean" && (
+        <Button
+          variant="ghost"
+          disabled={saving}
+          onClick={() => void dismiss()}
+        >
+          Dismiss setup
+        </Button>
+      )}
       <details className="mt-2">
         <summary className="text-muted-foreground min-h-11 cursor-pointer content-center text-sm">
           Setup details
@@ -774,12 +812,12 @@ function SetupChecklist({
             </li>
           ))}
         </ol>
-        {error && (
-          <p role="alert" className="text-destructive text-sm">
-            {error}
-          </p>
-        )}
       </details>
+      {error && (
+        <p role="alert" className="text-destructive text-sm">
+          {error}
+        </p>
+      )}
     </section>
   );
 }
@@ -814,7 +852,7 @@ function Capabilities({
             if (!copy) return null;
             return (
               <article
-                key={capability.intent}
+                key={capability.capability}
                 className={`min-w-0 rounded-xl border p-5 ${capability.available ? capabilityTint[copy.icon] : "border-border bg-muted/30 text-muted-foreground"}`}
               >
                 <div className="flex items-center gap-3">
@@ -837,7 +875,7 @@ function Capabilities({
                     reason={capability.reason}
                   />
                 </div>
-                {capability.availability && (
+                {capability.availability?.evidence.observed_at_s != null && (
                   <p className="text-muted-foreground mt-2 text-xs">
                     {capability.availability.evidence.source === "request"
                       ? "Last request observation: "
@@ -857,9 +895,15 @@ function Capabilities({
                   {capability.available ? (
                     <Button variant="ghost" asChild>
                       <Link
-                        href={`/try/?capability=${encodeURIComponent(capability.capability)}${capability.model ? `&model=${encodeURIComponent(capability.model)}` : ""}`}
+                        href={
+                          capability.capability === "rerank"
+                            ? "/models/"
+                            : `/try/?capability=${encodeURIComponent(["music", "sfx"].includes(capability.capability) ? "audio" : capability.capability)}${capability.workflow ? `&workflow=${encodeURIComponent(capability.workflow)}` : capability.model ? `&model=${encodeURIComponent(capability.model)}` : ""}`
+                        }
                       >
-                        Try
+                        {capability.capability === "rerank"
+                          ? "View models"
+                          : "Try"}
                         <ArrowUpRight aria-hidden="true" />
                       </Link>
                     </Button>
@@ -1180,21 +1224,11 @@ export default function HomePage() {
               onRetry={() => void refetchSetup()}
               retrying={setupFetching}
             />
-          ) : isOwner &&
-            setup &&
-            (!setup.complete ||
-              setupSteps(setup).some(
-                (step) => !step.optional && !step.done,
-              )) ? (
+          ) : isOwner && setup && needsSetup(setup) ? (
             <SetupChecklist progress={setup} home={home} />
           ) : null}
           <Connect home={home} progress={isOwner ? setup : undefined} />
-          {!(
-            isOwner &&
-            setup &&
-            (!setup.complete ||
-              setupSteps(setup).some((step) => !step.optional && !step.done))
-          ) && (
+          {!(isOwner && setup && needsSetup(setup)) && (
             <>
               <Capabilities
                 capabilities={home.capabilities}

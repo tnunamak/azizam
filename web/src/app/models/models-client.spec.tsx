@@ -251,6 +251,174 @@ describe("models catalog contract distinctions", () => {
     expect(card.getByText("OpenRouter")).toBeVisible();
   });
 
+  it("groups explicit music and speech capabilities separately with server labels", async () => {
+    renderModels(
+      catalog([
+        row({
+          id: "music",
+          display_name: "ACE-Step music",
+          name: "ace-step-xl",
+          description: "Generate music from a prompt.",
+          engine_label: "Music (ACE-Step XL Turbo)",
+          capabilities: [
+            {
+              capability: "music",
+              intent: "audio.generate",
+              label: "Music",
+              input_modalities: ["text"],
+              output_modalities: ["audio"],
+              streaming: false,
+              available: true,
+            } as CatalogRow["capabilities"][number],
+          ],
+        }),
+        row({
+          id: "speech",
+          display_name: "Chatterbox speech",
+          name: "chatterbox",
+          description: "Read text aloud.",
+          engine_label: "Speech (Chatterbox)",
+          capabilities: [
+            {
+              capability: "speech",
+              intent: "speech.synthesis",
+              label: "Speech",
+              input_modalities: ["text"],
+              output_modalities: ["audio"],
+              streaming: false,
+              available: true,
+            } as CatalogRow["capabilities"][number],
+          ],
+        }),
+      ]),
+    );
+
+    expect(await screen.findByRole("heading", { name: "Music" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Speech" })).toBeVisible();
+    expect(screen.getByText("Music (ACE-Step XL Turbo)")).toBeVisible();
+    expect(screen.getByText("Speech (Chatterbox)")).toBeVisible();
+  });
+
+  it("falls back audio.generate legacy intent to audio instead of speech", async () => {
+    renderModels(
+      catalog([
+        row({
+          id: "legacy-audio",
+          display_name: "Legacy audio",
+          name: "legacy-audio",
+          capabilities: [
+            {
+              intent: "audio.generate",
+              label: "Audio",
+              input_modalities: ["text"],
+              output_modalities: ["audio"],
+              streaming: false,
+              available: true,
+            },
+          ],
+        }),
+      ]),
+    );
+
+    expect(await screen.findByRole("heading", { name: "Audio" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Speech" })).toBeNull();
+  });
+
+  it("maps rerank capability into the embed icon family and table label", async () => {
+    renderModels(
+      catalog(
+        [],
+        [
+          row({
+            id: "rerank-model",
+            alias: false,
+            object: "model_catalog.model",
+            display_name: "Reranker",
+            name: "reranker",
+            capabilities: [
+              {
+                capability: "rerank",
+                intent: "text.rerank",
+                label: "Rerank",
+                input_modalities: ["text"],
+                output_modalities: ["text"],
+                streaming: false,
+                available: true,
+              } as CatalogRow["capabilities"][number],
+            ],
+          }),
+        ],
+      ),
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: /All models/ }));
+    const table = within(screen.getByRole("table"));
+
+    expect(table.getByText("Rerank")).toBeVisible();
+  });
+
+  it("shows local no-provider-charge cost even when backend cost is unknown", async () => {
+    renderModels(
+      catalog([
+        row({
+          cost: { kind: "unknown", price: null },
+          locality: "local",
+        }),
+      ]),
+    );
+
+    expect(await screen.findByText("Local · no provider charge")).toBeVisible();
+    expect(screen.queryByText("Price not provided")).toBeNull();
+  });
+
+  it("filters local unknown-cost rows with the no-provider-charge toggle", async () => {
+    renderModels(
+      catalog([
+        row({
+          id: "local-unknown-cost",
+          cost: { kind: "unknown", price: null },
+          locality: "local",
+        }),
+      ]),
+    );
+
+    expect(
+      await screen.findByRole("button", {
+        name: "Copy alias local-unknown-cost",
+      }),
+    ).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "No provider charge" }));
+
+    expect(
+      screen.queryByRole("button", { name: "Copy alias local-unknown-cost" }),
+    ).toBeNull();
+    expect(screen.getByText("No models match these filters")).toBeVisible();
+  });
+
+  it("keeps local rows when paid filter is off even if backend cost is inconsistent", async () => {
+    renderModels(
+      catalog([
+        row({
+          id: "local-paid-cost",
+          cost: { kind: "paid", price: "$9" },
+          locality: "local",
+        }),
+      ]),
+    );
+
+    expect(
+      await screen.findByRole("button", { name: "Copy alias local-paid-cost" }),
+    ).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Paid" }));
+
+    expect(
+      screen.getByRole("button", { name: "Copy alias local-paid-cost" }),
+    ).toBeVisible();
+    expect(screen.getByText("Local · no provider charge")).toBeVisible();
+  });
+
   it("uses a coding title for coder aliases without a friendly name", async () => {
     renderModels(
       catalog([

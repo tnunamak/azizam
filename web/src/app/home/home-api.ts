@@ -4,9 +4,16 @@ import {
   productApi,
   type HomeCapability as SharedHomeCapability,
   type HomeSnapshot as SharedHomeSnapshot,
+  type SetupProgress as SharedSetupProgress,
 } from "@/lib/product-api";
 
-export type { HomeAlias, HomeReceipt, SetupProgress } from "@/lib/product-api";
+export type { HomeAlias, HomeReceipt } from "@/lib/product-api";
+export type SetupProgress = SharedSetupProgress & {
+  dismissed?: boolean;
+  evidence: SharedSetupProgress["evidence"] & {
+    observed_external_client?: { recorded: boolean; source: string };
+  };
+};
 // A display tile may omit a routing name; the wire contract stays generated.
 export type HomeCapability = Pick<
   SharedHomeCapability,
@@ -15,6 +22,8 @@ export type HomeCapability = Pick<
   model?: string | null;
   workflow?: string | null;
   availability?: SharedHomeCapability["availability"];
+  title?: string;
+  use_name?: string;
 };
 export type HomeSnapshot = SharedHomeSnapshot & {
   user: NonNullable<SharedHomeSnapshot["user"]>;
@@ -92,6 +101,8 @@ export const homeApi = {
   },
   creations: () => homeRequest<HomeCreationsResponse>("/me/api/media?limit=5"),
   setup: productApi.setup,
+  dismissSetup: () =>
+    homeRequest<{ dismissed: boolean }>("/admin/api/setup-dismiss", {}),
   test: (apiKey: string, credentialId?: string) =>
     homeRequest<ConnectionResult>("/me/api/connection-test", {
       api_key: apiKey,

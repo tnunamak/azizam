@@ -31,6 +31,8 @@ PRIVATE = STATE / "runtime"
 OUT = Path("/home/tnunamak/.tmp/gw-product/gate/v3/gw-gate-you")
 GATEWAY_PORT = int(os.environ.get("GATE_YOU_GATEWAY_PORT", "18431"))
 SIDECAR_PORT = int(os.environ.get("GATE_YOU_SIDECAR_PORT", "18432"))
+if not (18000 <= GATEWAY_PORT <= 18999 and 18000 <= SIDECAR_PORT <= 18999) or GATEWAY_PORT == SIDECAR_PORT:
+    raise SystemExit("use two distinct throwaway ports between 18000 and 18999")
 SAVED_PUBLIC_URL = "https://gate-you-copy.example.test"
 PASSWORD = "Gate You copy member password 2026"
 
@@ -106,8 +108,8 @@ def _member_user(db: Path) -> dict[str, str]:
              AND r.revoked_at IS NULL
              AND r.role IN ('owner','admin','superadmin')
             WHERE r.id IS NULL
-              AND (a.removed_at IS NULL OR a.removed_at IS NULL)
-              AND (a.disabled_at IS NULL OR a.disabled_at IS NULL)
+              AND a.removed_at IS NULL
+              AND a.disabled_at IS NULL
               AND u.email IS NOT NULL
               AND u.email != ''
               AND u.issuer='local'

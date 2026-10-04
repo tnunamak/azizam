@@ -62,48 +62,104 @@ type AvailabilityState =
   | "unavailable"
   | "not_measured";
 
-const capabilityOrder: Capability[] = [
+type ProductCapability =
+  | "music"
+  | "sfx"
+  | "speech"
+  | "transcribe"
+  | "chat"
+  | "image"
+  | "video"
+  | "decide"
+  | "embed"
+  | "rerank"
+  | "audio";
+
+type CatalogCapabilityEntry = CatalogRow["capabilities"][number] & {
+  capability?: ProductCapability;
+};
+
+const productCapabilityOrder: ProductCapability[] = [
   "chat",
   "image",
   "video",
-  "voice",
+  "music",
+  "sfx",
+  "speech",
+  "audio",
   "transcribe",
   "decide",
   "embed",
+  "rerank",
 ];
 
-const capabilityLabels: Record<Capability, string> = {
+const capabilityLabels: Record<ProductCapability, string> = {
   chat: "Chat",
   image: "Images",
   video: "Video",
-  voice: "Speech",
+  music: "Music",
+  sfx: "Sound effects",
+  speech: "Speech",
+  audio: "Audio",
   transcribe: "Transcribe",
   decide: "Decide",
   embed: "Embed",
+  rerank: "Rerank",
 };
 
-function capabilityFromIntent(intent: string | undefined): Capability {
+const iconCapability: Record<ProductCapability, Capability> = {
+  chat: "chat",
+  image: "image",
+  video: "video",
+  music: "voice",
+  sfx: "voice",
+  speech: "voice",
+  audio: "voice",
+  transcribe: "transcribe",
+  decide: "decide",
+  embed: "embed",
+  rerank: "embed",
+};
+
+function capabilityFromIntent(intent: string | undefined): ProductCapability {
   if (!intent) return "chat";
   if (intent.startsWith("image.")) return "image";
   if (intent.startsWith("video.")) return "video";
-  if (intent === "speech.synthesis" || intent === "audio.generate") {
-    return "voice";
-  }
+  if (intent === "speech.synthesis") return "speech";
+  if (intent === "audio.generate") return "audio";
   if (intent.startsWith("speech.transcription")) return "transcribe";
   if (intent === "text.embeddings") return "embed";
+  if (intent.includes("rerank")) return "rerank";
   if (intent.includes("decision") || intent.includes("systemone")) {
     return "decide";
   }
   return "chat";
 }
 
-function primaryCapability(row: CatalogRow): Capability {
-  return capabilityFromIntent(row.capabilities[0]?.intent);
+function entryCapability(entry: CatalogCapabilityEntry): ProductCapability {
+  return entry.capability ?? capabilityFromIntent(entry.intent);
 }
 
-function hasCapability(row: CatalogRow, capability: Capability): boolean {
+function contractHasPresentation(row: CatalogRow): boolean {
+  return row.capabilities.some((entry) => "capability" in entry);
+}
+
+function primaryCapability(row: CatalogRow): ProductCapability {
+  const entry = row.capabilities[0] as CatalogCapabilityEntry | undefined;
+  return entry ? entryCapability(entry) : "chat";
+}
+
+function primaryCapabilityLabel(row: CatalogRow): string {
+  const entry = row.capabilities[0] as CatalogCapabilityEntry | undefined;
+  return entry?.label ?? capabilityLabels[primaryCapability(row)];
+}
+
+function hasCapability(
+  row: CatalogRow,
+  capability: ProductCapability,
+): boolean {
   return row.capabilities.some(
-    (entry) => capabilityFromIntent(entry.intent) === capability,
+    (entry) => entryCapability(entry as CatalogCapabilityEntry) === capability,
   );
 }
 
@@ -144,7 +200,7 @@ function aliasDescriptionFor(row: CatalogRow): string | null {
 }
 
 function titleFor(row: CatalogRow): string {
-  const name = [row.name, row.display_name].find(
+  const name = [row.display_name, row.name].find(
     (value) => value && value.toLowerCase() !== row.id.toLowerCase(),
   );
   if (name) return name;
@@ -154,11 +210,13 @@ function titleFor(row: CatalogRow): string {
   return capabilityLabels[primaryCapability(row)];
 }
 
+function hasNoProviderCharge(row: CatalogRow): boolean {
+  return row.locality === "local" || row.cost.kind === "free";
+}
+
 function costLabel(row: CatalogRow): string {
-  if (row.cost.kind === "free")
-    return row.locality === "local"
-      ? "Local · no provider charge"
-      : "No provider charge";
+  if (row.locality === "local") return "Local · no provider charge";
+  if (hasNoProviderCharge(row)) return "No provider charge";
   if (row.cost.kind === "paid") {
     return row.cost.price === null
       ? "Paid · Price not provided"
@@ -181,7 +239,8 @@ function engineLabel(row: CatalogRow): string {
 }
 
 function summaryEngineLabel(row: CatalogRow): string {
-  if (row.locality === "local") return "Local engine";
+  if (row.locality === "local")
+    return contractHasPresentation(row) ? engineLabel(row) : "Local engine";
   if (row.locality === "remote") return row.provider ?? "Remote provider";
   return "Configured service";
 }
@@ -462,7 +521,7 @@ function AliasCard({
   return (
     <article className="bg-card text-card-foreground flex min-w-0 flex-col gap-5 rounded-xl border p-5">
       <div className="flex min-w-0 items-start gap-3">
-        <CapabilityIcon capability={primaryCapability(row)} />
+        <CapabilityIcon capability={iconCapability[primaryCapability(row)]} />
         <div className="min-w-0 flex-1">
           <h3 className="truncate font-semibold">{titleFor(row)}</h3>
           <p className="text-muted-foreground mt-1 line-clamp-2 text-sm">
@@ -725,7 +784,9 @@ function DetailSheet({
 export default function ModelsClient() {
   const viewer = useViewer();
   const [query, setQuery] = useState("");
-  const [capability, setCapability] = useState<Capability | "all">("all");
+  const [capability, setCapability] = useState<ProductCapability | "all">(
+    "all",
+  );
   const [showNoProviderCharge, setShowNoProviderCharge] = useState(true);
   const [showPaid, setShowPaid] = useState(true);
   const [tableOpen, setTableOpen] = useState(false);
@@ -744,7 +805,7 @@ export default function ModelsClient() {
     () => [...(catalogData?.aliases ?? []), ...(catalogData?.models ?? [])],
     [catalogData],
   );
-  const availableCapabilities = capabilityOrder.filter((cap) =>
+  const availableCapabilities = productCapabilityOrder.filter((cap) =>
     allRows.some((row) => hasCapability(row, cap)),
   );
   const passesFilters = (row: CatalogRow) => {
@@ -752,13 +813,14 @@ export default function ModelsClient() {
     if (capability !== "all" && !hasCapability(row, capability)) {
       return false;
     }
-    if (row.cost.kind === "free" && !showNoProviderCharge) return false;
-    if (row.cost.kind === "paid" && !showPaid) return false;
+    if (hasNoProviderCharge(row) && !showNoProviderCharge) return false;
+    if (!hasNoProviderCharge(row) && row.cost.kind === "paid" && !showPaid)
+      return false;
     return true;
   };
   const aliasRows = (catalogData?.aliases ?? []).filter(passesFilters);
   const modelRows = (catalogData?.models ?? []).filter(passesFilters);
-  const groupedAliases = capabilityOrder
+  const groupedAliases = productCapabilityOrder
     .map((cap) => ({
       capability: cap,
       rows: aliasRows.filter((row) => primaryCapability(row) === cap),
@@ -900,7 +962,9 @@ export default function ModelsClient() {
                     )}
                   >
                     <div className="flex items-center gap-3">
-                      <CapabilityIcon capability={group.capability} />
+                      <CapabilityIcon
+                        capability={iconCapability[group.capability]}
+                      />
                       <h2 className="text-lg font-semibold">
                         {capabilityLabels[group.capability]}
                       </h2>
@@ -981,10 +1045,7 @@ export default function ModelsClient() {
                             </span>
                           </Button>
                         </TableCell>
-                        <TableCell>
-                          {row.capabilities[0]?.label ??
-                            capabilityLabels[primaryCapability(row)]}
-                        </TableCell>
+                        <TableCell>{primaryCapabilityLabel(row)}</TableCell>
                         <TableCell>{summaryEngineLabel(row)}</TableCell>
                         <TableCell>{costLabel(row)}</TableCell>
                         <TableCell>

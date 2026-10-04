@@ -151,6 +151,50 @@ beforeAll(() => {
 });
 
 describe("Home audit component behavior", () => {
+  it("lets the owner dismiss setup and shows capabilities after the saved dismissal", async () => {
+    let dismissed = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/.well-known/ai-gateway")
+          return Response.json({ service: { name: "Family gateway" } });
+        if (path === "/me/api/home") return Response.json(home);
+        if (path === "/me/api/media?limit=5")
+          return Response.json({ assets: [] });
+        if (path === "/me/api/session")
+          return Response.json({ authenticated: true, csrf_token: "csrf" });
+        if (path === "/admin/api/setup-progress")
+          return Response.json({ ...progress(), dismissed });
+        if (path === "/admin/api/setup-dismiss") {
+          expect(init?.method).toBe("POST");
+          expect(new Headers(init?.headers).get("x-ai-gateway-csrf")).toBe(
+            "csrf",
+          );
+          expect(
+            new Headers(init?.headers).get("x-ai-gateway-user-action"),
+          ).toBe("1");
+          dismissed = true;
+          return Response.json({ dismissed: true });
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+    renderHome();
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Dismiss setup" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("heading", { name: "Finish setting up" }),
+      ).toBeNull(),
+    );
+    expect(
+      screen.getByRole("heading", { name: "What you can use" }),
+    ).toBeVisible();
+    expect(dismissed).toBe(true);
+  });
+
   it("keeps setup evidence explicit and posts only when confirmation buttons are clicked", async () => {
     const evidencePosts: unknown[] = [];
     vi.stubGlobal(

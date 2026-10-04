@@ -61,6 +61,33 @@ export function capabilityTiles(
   capabilities: HomeCapability[],
   aliases: HomeAlias[],
 ): HomeCapability[] {
+  if (capabilities.some((row) => row.title)) {
+    const order = [
+      "chat",
+      "image",
+      "video",
+      "music",
+      "sfx",
+      "speech",
+      "voice",
+      "audio",
+      "transcribe",
+      "decide",
+      "embed",
+      "rerank",
+    ];
+    const kinds = [
+      ...new Set(capabilities.map((row) => row.capability)),
+    ].toSorted((a, b) => order.indexOf(a) - order.indexOf(b));
+    return kinds.map((kind) => {
+      const rows = capabilities.filter((row) => row.capability === kind);
+      const rank = (row: HomeCapability) =>
+        (row.available ? 0 : 100) +
+        (aliases.some((alias) => alias.id === row.model) ? 0 : 10);
+      const row = rows.toSorted((a, b) => rank(a) - rank(b))[0];
+      return { ...row, model: row.use_name ?? row.model };
+    });
+  }
   return Object.entries(operations).flatMap<HomeCapability>(
     ([capability, intents]) => {
       const candidates = aliases.filter((alias) =>
@@ -114,6 +141,9 @@ export function capabilitySummary(tiles: HomeCapability[]): string {
     image: "images",
     video: "video",
     voice: "voice",
+    speech: "speech",
+    music: "music",
+    sfx: "sound effects",
     transcribe: "transcription",
     decide: "decisions",
     embed: "embeddings",
@@ -125,7 +155,7 @@ export function capabilitySummary(tiles: HomeCapability[]): string {
   ).flatMap((status) => {
     const matching = tiles
       .filter((tile) => tile.status === status)
-      .map((tile) => names[tile.capability]);
+      .map((tile) => names[tile.capability] ?? tile.capability);
     if (!matching.length) return [];
     const plural =
       matching.length > 1 ||
@@ -191,6 +221,7 @@ export function requestLabel(
 export function setupSteps(progress: SetupProgress) {
   const steps = progress.steps.filter((step) => step.id !== "claim_owner");
   if (!progress.evidence) return steps;
+  if (progress.evidence.observed_external_client?.recorded) return steps;
   const copied = {
     id: "copy_settings",
     done: progress.evidence.settings_copied.recorded,
@@ -227,4 +258,12 @@ export function setupSteps(progress: SetupProgress) {
     viewed,
     ...steps.filter((step) => step.id === "invite_someone"),
   ];
+}
+
+export function needsSetup(progress: SetupProgress): boolean {
+  return (
+    !progress.dismissed &&
+    (!progress.complete ||
+      setupSteps(progress).some((step) => !step.optional && !step.done))
+  );
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   capabilitySummary,
   capabilityTiles,
+  needsSetup,
   setupSteps,
 } from "../presentation";
 import type { HomeAlias, HomeCapability, SetupProgress } from "../home-api";
@@ -43,6 +44,42 @@ function progress(overrides: Partial<SetupProgress> = {}): SetupProgress {
 }
 
 describe("Home audit presentation contract", () => {
+  it("uses observed external traffic to finish setup and respects dismissal", () => {
+    const established = progress({ complete: true });
+    established.evidence.observed_external_client = {
+      recorded: true,
+      source: "receipt",
+    };
+    expect(
+      setupSteps(established).some((step) => step.id === "copy_settings"),
+    ).toBe(false);
+    expect(needsSetup(established)).toBe(false);
+    expect(needsSetup(progress({ dismissed: true }))).toBe(false);
+    expect(needsSetup(progress())).toBe(true);
+  });
+
+  it("keeps server music, sound effects and speech taxonomy distinct", () => {
+    const rows = ["music", "sfx", "speech"].map(
+      (kind): HomeCapability => ({
+        capability: kind,
+        title: kind,
+        use_name: kind,
+        intent: kind === "speech" ? "speech.synthesis" : "audio.generate",
+        available: true,
+        status: "ready",
+        reason: "Ready.",
+      }),
+    );
+    expect(capabilityTiles(rows, []).map((row) => row.capability)).toEqual([
+      "music",
+      "sfx",
+      "speech",
+    ]);
+    expect(capabilitySummary(capabilityTiles(rows, []))).toContain(
+      "sound effects",
+    );
+  });
+
   it("keeps gateway requests separate from external client setup evidence", () => {
     const steps = setupSteps(progress());
     expect(steps.find((step) => step.id === "connect_app")?.done).toBe(false);
