@@ -259,3 +259,35 @@ test("library missing asset deep link keeps a retryable target", async ({
   ).toBeVisible();
   await expect(page).toHaveURL(/asset=asset_recovered/);
 });
+
+for (const width of [1440, 390] as const) {
+  test(`library missing media refresh is clickable ${width}`, async ({
+    page,
+  }) => {
+    await setViewportAndTheme(page, "light", width);
+    let requests = 0;
+    await page.route("**/me/api/media?**", (route) => {
+      requests += 1;
+      return route.fulfill({
+        json: {
+          assets: [{ ...asset, available: false }],
+          models: ["image"],
+          next_cursor: null,
+        },
+      });
+    });
+    await page.goto("/ui/library/");
+    await expect(
+      page.getByRole("button", { name: "Refresh library" }),
+    ).toBeVisible();
+    await page.screenshot({
+      path: `${REVIEW_DIR}/library-missing-media-light-${width}.png`,
+    });
+    const refreshed = page.waitForEvent("load");
+    await page.getByRole("button", { name: "Refresh library" }).click();
+    await refreshed;
+    await expect.poll(() => requests).toBeGreaterThan(1);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page).not.toHaveURL(/asset=/);
+  });
+}

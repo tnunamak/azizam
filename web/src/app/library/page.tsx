@@ -322,6 +322,7 @@ function Preview({
           type="button"
           variant="outline"
           size="sm"
+          className="relative z-20"
           onClick={(event) => {
             event.stopPropagation();
             window.location.reload();
