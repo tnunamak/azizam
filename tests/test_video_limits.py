@@ -89,7 +89,11 @@ class VideoLimitsDiscoveryTests(unittest.TestCase):
         self.assertEqual(long["segment_seconds"], 8)
         self.assertEqual(by_workflow["video.generate.minimax-h3-long"]["limits"]["segment_seconds"], 10)
         self.assertNotIn("video-ltx-2.5-long", by_workflow)
-        self.assertEqual(sum(row.get("workflow") == "video.generate.ltx-2.5-long" for row in rows), 1)
+        matching = [row for row in rows if row.get("workflow") == "video.generate.ltx-2.5-long"]
+        self.assertTrue(matching)
+        for row in matching:
+            self.assertEqual(row["limits"]["max_total_seconds"], 33)
+            self.assertEqual(row["limits"]["segment_seconds"], 8)
         # A model that cannot chain publishes no cap.
         self.assertNotIn("max_total_seconds", by_workflow["video.generate.wan-2.2-ti2v-5b-q8"]["limits"])
 
