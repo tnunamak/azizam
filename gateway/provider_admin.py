@@ -1452,6 +1452,7 @@ def _update_reconciled_receipt_cost(row: Mapping[str, Any]) -> None:
             "reservation_id": row.get("id"),
             "reconciliation_status": "settled",
         },
+        path=receipt_store.DB_PATH,
     )
 
 
