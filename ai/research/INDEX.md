@@ -1,5 +1,10 @@
 # Research Index
 
+- [Public exposure and reverse-proxy trust](public-exposure-trust-boundaries.md) -
+  2026-10-03 - pinned Uvicorn client-address rewriting, Traefik forwarding
+  settings, fail-closed proxy resolution, explicit LAN credentials, public
+  probe limits and rejected pre-auth body-parsing hypothesis.
+
 - [Provider catalog and key custody](provider-catalog-and-key-custody.md) -
   2026-10-03 - primary provider model-listing shapes, price units, authentication
   probes, AES-GCM custody, source failures, and sidecar environment trade-offs.

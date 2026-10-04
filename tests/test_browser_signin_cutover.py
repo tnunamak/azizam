@@ -74,10 +74,19 @@ def browser_gateway(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, "ADMIN_OIDC_CONFIG", config())
     monkeypatch.setattr(proxy.ADMIN_AUTH, "signing_key", config().signing_key)
     monkeypatch.setattr(proxy.ADMIN_AUTH, "cookie", config().cookie)
+    admin_store.put_operator_setting(
+        "instance_presentation",
+        {"base_url": "https://openai.vivid.fish"},
+        path=path,
+    )
     proxy.ADMIN_OIDC_STATES.clear()
     # Auth handlers need the initialized temporary store, not engine listeners.
     # Match the route integration fixtures and leave process lifespan to its own tests.
-    client = TestClient(proxy.app, base_url="https://openai.vivid.fish")
+    client = TestClient(
+        proxy.app,
+        base_url="https://openai.vivid.fish",
+        client=("127.0.0.1", 50000),
+    )
     try:
         yield proxy, client, path
     finally:

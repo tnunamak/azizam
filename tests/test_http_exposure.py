@@ -2,8 +2,7 @@
 from __future__ import annotations
 
 import pytest
-from starlette.testclient import TestClient
-from starlette.websockets import WebSocketDisconnect
+from starlette.testclient import TestClient, WebSocketDenialResponse
 
 import proxy
 
@@ -50,10 +49,10 @@ def test_public_protocols_require_auth_before_execution(public_client, method, p
 
 
 def test_public_realtime_cannot_open_session(public_client):
-    with pytest.raises(WebSocketDisconnect) as error:
+    with pytest.raises(WebSocketDenialResponse) as error:
         with public_client.websocket_connect("/v1/realtime"):
             pytest.fail("Unauthenticated realtime connection accepted")
-    assert error.value.code == 1008
+    assert error.value.status_code == 401
 
 
 @pytest.mark.parametrize("path", ["/v1/images", "/v1/assets"])
@@ -70,8 +69,9 @@ def test_public_activity_has_no_member_records(public_client):
     assert not response.json().get("receipts")
 
 
-@pytest.mark.parametrize("path", ["/status/raw", "/ui/settings/"])
-def test_owner_pages_redirect_anonymous_browsers_to_login(public_client, path):
+@pytest.mark.parametrize("path,status", [("/status/raw", 401), ("/ui/settings/", 302)])
+def test_owner_pages_refuse_anonymous_browsers(public_client, path, status):
     response = public_client.get(path, follow_redirects=False)
-    assert response.status_code == 302
-    assert response.headers["location"].startswith("/login?")
+    assert response.status_code == status
+    if status == 302:
+        assert response.headers["location"].startswith("/login?")

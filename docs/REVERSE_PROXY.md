@@ -6,6 +6,10 @@ Caddy, Traefik, HAProxy) sits in front.
 
 ## Health Checks
 
+For client-address trust, first-owner claiming and the family-access checklist,
+read [Public exposure](ops/PUBLIC_EXPOSURE.md). The gateway applies forwarding
+trust itself; custom Uvicorn launch commands must use `--no-proxy-headers`.
+
 Use `HEAD /` or `HEAD /admin` for reverse-proxy health checks. Both return
 `200` with no body. The dedicated `GET /health` endpoint returns a JSON
 body with auth and credential status and is also suitable for upcheck polling.

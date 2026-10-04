@@ -118,6 +118,23 @@ def test_trusted_proxy_ipv4_mapped_xff_is_normalized(monkeypatch):
     assert proxy._client_is_lan(request) is True
 
 
+def test_trusted_proxy_duplicate_forwarded_headers_fail_closed(monkeypatch):
+    _set_trust(monkeypatch)
+    request = _request("192.168.1.4", {"x-forwarded-for": "192.168.1.20"})
+    request.scope["headers"].append((b"x-forwarded-for", b"203.0.113.10"))
+    assert proxy.resolve_real_client_ip(request) is None
+    assert proxy._client_is_lan(request) is False
+
+
+def test_cloudflare_duplicate_client_headers_fail_closed(monkeypatch):
+    _set_trust(monkeypatch)
+    monkeypatch.setattr(proxy, "CLOUDFLARE_MODE", True)
+    monkeypatch.setattr(proxy, "_CF_IP_NETWORKS", [ipaddress.ip_network("203.0.113.0/24")])
+    request = _request("203.0.113.10", {"cf-connecting-ip": "192.168.1.20"})
+    request.scope["headers"].append((b"cf-connecting-ip", b"203.0.113.11"))
+    assert proxy.resolve_real_client_ip(request) is None
+
+
 def test_cloudflare_range_fetch_failure_keeps_direct_peer_behavior(monkeypatch):
     _set_trust(monkeypatch)
     monkeypatch.setattr(proxy, "CLOUDFLARE_MODE", True)

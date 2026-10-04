@@ -61,6 +61,7 @@ def probe(host: str, ip: str, path: str, *, method="GET", headers=None, body=Non
         "remote_ip": fields[1] if len(fields) > 1 else "",
         "body_bytes": fields[2] if len(fields) > 2 else "",
         "content_type": fields[3] if len(fields) > 3 else "",
+        "transport_error": result.stderr.strip()[:300] if result.returncode else None,
     }
 
 

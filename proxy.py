@@ -42,7 +42,7 @@ from pathlib import Path
 import contextlib
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Awaitable, Callable, Iterable, Mapping, Optional, Sequence
-from urllib.parse import parse_qs, parse_qsl, quote, urlencode
+from urllib.parse import parse_qs, parse_qsl, quote, urlencode, urlsplit
 
 import httpx
 import yaml
@@ -105,6 +105,7 @@ from gateway.alias_policy import (
 from gateway.admin_api import (
     AdminAuthError,
     AdminContext,
+    _require_admin,
     create_admin_router,
     derive_admin_attention,
 )
@@ -2142,6 +2143,8 @@ def _parse_cidrs(raw) -> list:
 
 LAN_BYPASS_CIDRS = _parse_cidrs(auth_cfg.get("lan_bypass_cidrs"))
 TRUSTED_PROXIES = _parse_cidrs(auth_cfg.get("trusted_proxies"))
+_setup_cidrs_config = os.environ.get("OPENAI_PROXY_SETUP_ALLOWED_CIDRS", auth_cfg.get("setup_allowed_cidrs"))
+SETUP_ALLOWED_CIDRS = None if _setup_cidrs_config is None else _parse_cidrs(_setup_cidrs_config)
 PATH_TOKENS = dict(auth_cfg.get("path_tokens") or {})
 
 # Cloudflare edge IP ranges, populated at startup when CLOUDFLARE_MODE is on.
@@ -2231,7 +2234,10 @@ def resolve_real_client_ip(request: Request):
 
     # Cloudflare: only when the peer is verified Cloudflare infra (fail closed).
     if CLOUDFLARE_MODE and _CF_IP_NETWORKS and _ip_in_any(peer, _CF_IP_NETWORKS):
-        cf = request.headers.get("cf-connecting-ip", "").strip()
+        cf_headers = request.headers.getlist("cf-connecting-ip")
+        if len(cf_headers) != 1:
+            return None
+        cf = cf_headers[0].strip()
         if not cf:
             return None
         try:
@@ -2241,7 +2247,10 @@ def resolve_real_client_ip(request: Request):
 
     # X-Forwarded-For, only if the immediate peer is a trusted proxy.
     if TRUSTED_PROXIES and _ip_in_any(peer, TRUSTED_PROXIES):
-        xff = request.headers.get("x-forwarded-for", "")
+        forwarded = request.headers.getlist("x-forwarded-for")
+        if len(forwarded) != 1:
+            return None
+        xff = forwarded[0]
         candidates = [p.strip() for p in xff.split(",")]
         if not candidates or any(not candidate for candidate in candidates):
             return None
@@ -2264,6 +2273,16 @@ def _client_is_lan(request: Request) -> bool:
         return False
     addr = resolve_real_client_ip(request)
     return addr is not None and _ip_in_any(addr, LAN_BYPASS_CIDRS)
+
+
+def _client_may_claim_first_owner(request: Request) -> bool:
+    addr = resolve_real_client_ip(request)
+    if addr is None:
+        return False
+    if addr.is_loopback:
+        return True
+    allowed = LAN_BYPASS_CIDRS if SETUP_ALLOWED_CIDRS is None else SETUP_ALLOWED_CIDRS
+    return bool(allowed and _ip_in_any(addr, allowed))
 
 
 def _path_token_from_request(request_path: str) -> str | None:
@@ -16367,6 +16386,55 @@ def _issue_browser_admin_session(
     return response
 
 
+def _origin_header_allowed_for_request(request: Request) -> bool:
+    # A same-origin attacker hostname can rebind to a private address. Setup
+    # accepts literal host addresses, localhost, or the configured public host.
+    public_base = instance_settings(ADMIN_STORE.path, _instance_presentation_defaults()).get("base_url")
+    try:
+        public = urlsplit(public_base) if public_base else None
+        host = request.url.hostname
+    except ValueError:
+        return False
+    try:
+        literal_host = _normalize_ip(host) if host and host != "localhost" else None
+    except ValueError:
+        literal_host = None
+    allowed_host = host == "localhost" or literal_host is not None or bool(
+        public and public.scheme in {"http", "https"} and host == public.hostname
+    )
+    if not allowed_host:
+        return False
+    supplied = request.headers.get("origin") or request.headers.get("referer")
+    if not supplied:
+        return True
+    try:
+        parsed = urlsplit(supplied)
+    except ValueError:
+        return False
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return False
+
+    # The socket can be HTTP behind a TLS terminator. Cookie security is
+    # configured separately; forwarding headers do not widen this host set.
+    allowed = {f"{scheme}://{request.url.netloc}" for scheme in ("http", "https")}
+
+    # Saved presentation data can name the public origin; forwarded Host
+    # headers must not expand the origins allowed to submit a setup form.
+    if public_base:
+        try:
+            public = urlsplit(public_base)
+        except ValueError:
+            public = None
+        if public and public.scheme in {"http", "https"} and public.netloc:
+            public_origin = f"{public.scheme}://{public.netloc}"
+            allowed.add(public_origin)
+            for scheme in ("http", "https"):
+                allowed.add(f"{scheme}://{public.netloc}")
+
+    supplied_origin = f"{parsed.scheme}://{parsed.netloc}"
+    return supplied_origin in allowed
+
+
 @app.post("/setup/local-owner", include_in_schema=False)
 async def setup_create_local_owner(request: Request):
     """Create the first local owner account from the browser.
@@ -16390,6 +16458,21 @@ async def setup_create_local_owner(request: Request):
         # First-run is over. Redirect through /setup so the operator sees the
         # signed-in landing card and can sign in if needed.
         return RedirectResponse("/setup", status_code=303)
+    if not _client_may_claim_first_owner(request):
+        return await _setup_page_response(
+            request,
+            create_error=(
+                "Create the first owner from the gateway host or a configured "
+                "LAN client."
+            ),
+            status_code=403,
+        )
+    if not _origin_header_allowed_for_request(request):
+        return await _setup_page_response(
+            request,
+            create_error="Use the setup page on this gateway to create the owner.",
+            status_code=403,
+        )
 
     values = await _setup_form_values(request)
     email = _normalize_local_email(values.get("email", ""))
@@ -16428,35 +16511,17 @@ async def setup_create_local_owner(request: Request):
             status_code=400,
         )
 
-    user = admin_store.upsert_oidc_user(
-        _LOCAL_OWNER_ISSUER,
-        email,
+    user = admin_store.claim_first_local_owner(
+        issuer=_LOCAL_OWNER_ISSUER,
+        subject=email,
         email=email,
         display_name=email,
-        path=ADMIN_STORE.path,
-    )
-    admin_store.set_local_password_verifier(
-        str(user["id"]),
-        verifier,
-        path=ADMIN_STORE.path,
-    )
-    admin_store.assign_admin_role(
-        role="owner",
-        subject_kind="user",
-        subject_id=str(user["id"]),
+        verifier=verifier,
         granted_by="setup-local-owner",
         path=ADMIN_STORE.path,
     )
-    admin_store.record_audit(
-        "setup.local_owner_create",
-        actor_kind="user",
-        actor_id=str(user["id"]),
-        actor_label=str(user.get("display_name") or user.get("email") or user["id"]),
-        target_kind="user",
-        target_id=str(user["id"]),
-        metadata={"email": email, "via": "setup_page"},
-        path=ADMIN_STORE.path,
-    )
+    if user is None:
+        return RedirectResponse("/setup", status_code=303)
     # Parity with OIDC login: give the new owner a personal App up front so the
     # portal can hand them a working key without a separate "create App" step.
     _ensure_personal_app_for_owner(user, role="owner")
@@ -16855,15 +16920,9 @@ async def admin_config_reload(request: Request):
     Note: the LiteLLM subprocess still requires a separate restart to pick up
     its config-file changes.
     """
-    try:
-        ADMIN_AUTH(request)
-    except AdminAuthError as exc:
-        return Response(
-            content=json.dumps({"error": {"code": exc.code, "message": exc.message}}),
-            status_code=exc.status_code,
-            media_type="application/json",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    ctx = _require_admin(ADMIN_AUTH, request)
+    if isinstance(ctx, JSONResponse):
+        return ctx
     try:
         updates = reload_runtime_config()
         return JSONResponse(
