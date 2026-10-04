@@ -91,6 +91,31 @@ class StatusSummary(TypedDict):
     reason: str
 
 
+class HomeReceipt(TypedDict):
+    request_id: str
+    intent: NotRequired[str | None]
+    path: NotRequired[str | None]
+    requested_model: NotRequired[str | None]
+    status: NotRequired[str | None]
+    elapsed_ms: NotRequired[float | None]
+    latency_ms: NotRequired[float | None]
+    _stored_at: NotRequired[float | None]
+    accepted_at_ms: NotRequired[float | None]
+
+
+class HomeProjection(TypedDict):
+    csrf_token: str
+    public_base_url: str
+    api_base_url: str
+    capabilities: list[HomeCapability]
+    aliases: list[HomeAlias]
+    credential_aliases: dict[str, list[HomeAlias]]
+    new_app_aliases: list[HomeAlias]
+    status: StatusSummary
+    receipts: list[HomeReceipt]
+    creations: None
+
+
 class SetupObservation(TypedDict):
     recorded: bool
     source: str

@@ -1,7 +1,8 @@
-import { accountApi } from "./account-api";
+import { accountApi, type AccountSnapshot } from "./account-api";
 import { ApiError, adminFetch } from "./api";
 import type {
   MemberStatus,
+  HomeProjection,
   ModelsCatalog,
   SetupEvidenceRequest,
   SetupEvidenceResponse,
@@ -9,6 +10,7 @@ import type {
 } from "./product-api-types";
 
 export type * from "./product-api-types";
+export type HomeSnapshot = AccountSnapshot & HomeProjection;
 
 async function memberGet<T>(path: string): Promise<T> {
   const response = await fetch(path, { credentials: "same-origin" });
@@ -24,6 +26,7 @@ async function memberGet<T>(path: string): Promise<T> {
 }
 
 export const productApi = {
+  home: () => memberGet<HomeSnapshot>("/me/api/home"),
   status: () => memberGet<MemberStatus>("/me/api/status"),
   models: () => memberGet<ModelsCatalog>("/me/api/models/catalog"),
   setup: () => adminFetch<SetupProgress>("/admin/api/setup-progress"),

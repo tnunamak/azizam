@@ -173,9 +173,10 @@ def run():
             env={"PATH": os.defpath, "AI_GATEWAY_API_KEY": key}, capture_output=True, text=True, check=True)
         print(report.stdout, end="", flush=True)
         from pydantic import TypeAdapter
-        from gateway.product_contracts import CapabilitiesResponse, MemberStatus, ModelsCatalog, SetupProgress
+        from gateway.product_contracts import CapabilitiesResponse, HomeProjection, MemberStatus, ModelsCatalog, SetupProgress
         TypeAdapter(CapabilitiesResponse).validate_python(payload)
         TypeAdapter(ModelsCatalog).validate_python(expect(client.get("/me/api/models/catalog")).json())
+        TypeAdapter(HomeProjection).validate_python(expect(client.get("/me/api/home")).json())
         member_status = expect(client.get("/me/api/status")).json()
         TypeAdapter(MemberStatus).validate_python(member_status)
         assert not any(field in json.dumps(member_status) for field in ("127.0.0.1", "fixture-chat", "service_name", "vram"))

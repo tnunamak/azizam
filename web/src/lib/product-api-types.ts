@@ -106,6 +106,31 @@ export interface StatusSummary {
   reason: string;
 }
 
+export interface HomeReceipt {
+  request_id: string;
+  intent?: string | null;
+  path?: string | null;
+  requested_model?: string | null;
+  status?: string | null;
+  elapsed_ms?: number | null;
+  latency_ms?: number | null;
+  _stored_at?: number | null;
+  accepted_at_ms?: number | null;
+}
+
+export interface HomeProjection {
+  csrf_token: string;
+  public_base_url: string;
+  api_base_url: string;
+  capabilities: Array<HomeCapability>;
+  aliases: Array<HomeAlias>;
+  credential_aliases: Record<string, Array<HomeAlias>>;
+  new_app_aliases: Array<HomeAlias>;
+  status: StatusSummary;
+  receipts: Array<HomeReceipt>;
+  creations: null;
+}
+
 export interface SetupObservation {
   recorded: boolean;
   source: string;

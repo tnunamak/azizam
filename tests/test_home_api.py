@@ -13,7 +13,7 @@ from gateway.capabilities import Capability, capability_with_policy_view
 from gateway.home_api import create_home_router, _resolved_capabilities, _declared_local_fast
 from gateway.local_capabilities import build_alias_capabilities
 from gateway.profiles import load_profile
-from gateway.product_contracts import HomeCapability, MemberStatus, SetupEvidenceResponse, SetupProgress
+from gateway.product_contracts import HomeCapability, HomeProjection, MemberStatus, SetupEvidenceResponse, SetupProgress
 from gateway.runtime_auth import RuntimeIdentity, hash_api_key, make_policy_request
 from gateway.user_runtime import UserPortalError, create_user_app
 from pydantic import TypeAdapter
@@ -108,6 +108,7 @@ def test_home_uses_allowed_capabilities_and_owned_last_five(home_case):
     assert data["api_base_url"] == "https://gateway.example/v1"
     assert data["creations"] is None
     TypeAdapter(list[HomeCapability]).validate_python(data["capabilities"])
+    TypeAdapter(HomeProjection).validate_python(data)
     assert c.key not in response.text and "sha256:" not in response.text
     assert admin_store.get_credential(c.cred["id"], path=c.db)["last_used_at"] is None
     assert response.headers["cache-control"] == "no-store"
