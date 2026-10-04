@@ -96,6 +96,7 @@ function mount(status?: StatusPayload) {
 it("shows compact grouped engine rows and moves configuration and unknown metrics into a sheet", async () => {
   const user = userEvent.setup();
   mount();
+  await user.click(await screen.findByText("1 engine ready · Show"));
   const engine = await screen.findByRole("button", { name: "Local chat" });
   expect(
     screen.getByRole("table", { name: /Chat engine status/ }),
@@ -120,12 +121,14 @@ it("shows compact grouped engine rows and moves configuration and unknown metric
 it("reveals disabled engines only on request", async () => {
   const user = userEvent.setup();
   mount();
+  await user.click(await screen.findByText("1 engine ready · Show"));
   await screen.findByRole("button", { name: "Local chat" });
   await user.click(screen.getByRole("switch"));
   expect(screen.getByRole("button", { name: "Image engine" })).toBeVisible();
   expect(screen.getByText("Disabled")).toBeVisible();
 });
 it("uses server engine names and transcription taxonomy and preserves an exact disk warning sentence", async () => {
+  const user = userEvent.setup();
   mount({
     disk: {
       partitions: [
@@ -166,6 +169,7 @@ it("uses server engine names and transcription taxonomy and preserves an exact d
       ],
     },
   });
+  await user.click(await screen.findByText("1 engine ready · Show"));
   expect(
     await screen.findByRole("button", { name: "Canary (transcription)" }),
   ).toBeVisible();
@@ -219,4 +223,51 @@ it("retains server labels when live observation is unavailable without showing r
   ).toBeVisible();
   expect(screen.queryByText("Ready", { exact: true })).not.toBeInTheDocument();
   expect(screen.getByText("Unknown", { exact: true })).toBeVisible();
+});
+
+it("summarizes connection failures without putting raw transport text in the answer", async () => {
+  mount({
+    current_health: {
+      state: "bad",
+      tone: "bad",
+      label: "Needs attention",
+      detail: "Chat is unavailable.",
+      observation_available: true,
+      services: [
+        {
+          service_id: "chat",
+          name: "Local chat",
+          engine_label: "Local chat",
+          capability_title: "Chat",
+          capability_labels: ["Chat"],
+          icon_key: "chat",
+          configured: true,
+          enabled: true,
+          role: "primary",
+          routable: true,
+          observation: "down",
+          tone: "bad",
+          last_error: "Connection refused",
+        },
+      ],
+    },
+  });
+  expect(
+    await screen.findAllByText(
+      "Chat is not accepting connections. Check the engine address or start the engine.",
+    ),
+  ).toHaveLength(3);
+  const header = screen
+    .getByRole("heading", { name: "Status", level: 1 })
+    .closest("header")!;
+  expect(
+    within(header).queryByText("Connection refused", { exact: true }),
+  ).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Local chat" }));
+  expect(
+    within(screen.getByRole("dialog", { name: "Local chat" })).getByText(
+      "Connection refused",
+      { exact: true },
+    ),
+  ).toBeVisible();
 });

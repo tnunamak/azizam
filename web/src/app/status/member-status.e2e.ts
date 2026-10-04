@@ -246,6 +246,7 @@ for (const theme of ["light", "dark"] as const) {
               exact: true,
             }),
           });
+          await unknown.locator("details").locator("summary").click();
           await unknown.getByText("Names you can use", { exact: true }).click();
           await expect(
             unknown.getByText("unknown-alias, unknown-model", { exact: true }),
@@ -409,7 +410,7 @@ test("accepted member can fetch real scoped Status and keep the Status URL", asy
     await expect(
       chatRow.getByText(chat.recommended_model, { exact: true }),
     ).toBeVisible();
-    await chatRow.getByText("Names you can use", { exact: true }).click();
+    await chatRow.locator("details").locator("summary").click();
     await expect(chatRow.locator("details")).toContainText("demo-chat");
     await expect(
       memberPage.getByRole("link", { name: "Try a request" }),

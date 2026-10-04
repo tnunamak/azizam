@@ -125,7 +125,7 @@ export function WorkflowInputs({
   return (
     <div className="rounded-lg border">
       <div className="border-b p-3">
-        <h3 className="text-sm font-medium">Typed inputs</h3>
+        <h3 className="text-sm font-medium">Inputs</h3>
         <p className="text-muted-foreground mt-1 text-xs">
           Guided controls update the same JSON sent with the request.
         </p>

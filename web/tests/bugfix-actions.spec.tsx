@@ -53,9 +53,7 @@ describe("bugfix actions", () => {
         if (url.endsWith("/showcase/static/sections.json")) {
           return new Response(
             JSON.stringify({
-              sections: [
-                { id: "chat", title: "Chat", source: "aliases:chat" },
-              ],
+              sections: [{ id: "chat", title: "Chat", source: "aliases:chat" }],
             }),
             { status: 200, headers: { "content-type": "application/json" } },
           );
@@ -124,8 +122,12 @@ describe("bugfix actions", () => {
     accountMocks.deleteApp.mockResolvedValue({});
 
     renderWithQuery(<AppsPage />);
-    expect(await screen.findByRole("heading", { name: "Old app" })).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Actions for Old app" }));
+    expect(
+      await screen.findByRole("heading", { name: "Old app" }),
+    ).toBeVisible();
+    await user.click(
+      screen.getByRole("button", { name: "Actions for Old app" }),
+    );
     await user.click(screen.getByRole("menuitem", { name: "Remove app" }));
     await user.click(screen.getByRole("button", { name: "Remove app" }));
 
@@ -135,7 +137,7 @@ describe("bugfix actions", () => {
     expect(await screen.findByText("Connect your first app")).toBeVisible();
   });
 
-  it("shows the provider Gateway check error returned by the API", async () => {
+  it("shows the provider connection check error returned by the API", async () => {
     const user = userEvent.setup();
     vi.stubGlobal(
       "fetch",
@@ -204,11 +206,18 @@ describe("bugfix actions", () => {
     );
 
     renderWithQuery(<ProvidersPage />);
-    await user.click(await screen.findByRole("button", { name: "Add provider" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Add provider" }),
+    );
     await user.type(screen.getByLabelText("Search providers"), "anthropic");
     await user.click(screen.getByRole("button", { name: /Anthropic/ }));
-    await user.type(screen.getByLabelText("Provider API key"), "sk-ant-invalid");
-    await user.click(screen.getByRole("button", { name: "Gateway check" }));
+    await user.type(
+      screen.getByLabelText("Provider API key"),
+      "sk-ant-invalid",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Check provider connection" }),
+    );
 
     expect(
       await screen.findByText(

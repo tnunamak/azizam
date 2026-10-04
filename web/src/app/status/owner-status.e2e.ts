@@ -249,35 +249,35 @@ for (const theme of ["light", "dark"] as const) {
               ),
           ).toBeVisible();
           await expect(
-            main.getByRole("button", {
-              name: "Image-only engine",
-              exact: true,
-            }),
+            main.getByText("2 engines ready · Show", { exact: true }),
+          ).toBeVisible();
+          await page
+            .getByText("2 engines ready · Show", { exact: true })
+            .click();
+          await expect(
+            main.getByRole("row", { name: /Image-only engine/ }),
           ).toBeVisible();
           await expect(
-            main.getByRole("button", {
-              name: "Local image engine",
-              exact: true,
-            }),
+            main.getByRole("row", { name: /Local image engine/ }),
           ).toHaveCount(0);
           await page.getByText("Show disabled", { exact: true }).click();
           await expect(
-            main.getByRole("button", {
-              name: "Local image engine",
-              exact: true,
-            }),
+            main.getByRole("row", { name: /Local image engine/ }),
           ).toBeVisible();
           await expect(
             main.getByRole("heading", { name: "OpenRouter", exact: true }),
           ).toBeVisible();
-          await expect(main.getByLabel("GPU 0 budget line")).toBeVisible();
           await expect(
             main.getByText("Disk (/media)", { exact: true }),
           ).toBeVisible();
           await expect(
             main.getByText("93% used", { exact: true }),
           ).toBeVisible();
-          await expect(main.getByText(/amdgpu_edge_c: 95 °C/)).toBeVisible();
+          await expect(
+            main.getByText(
+              "GPU temperature: 95 °C. Watch cooling before long jobs.",
+            ),
+          ).toBeVisible();
           await page.getByText("Raw probe data", { exact: true }).click();
           await expect(main.locator("pre").last()).toContainText(
             '"memory_used_mb": 12288',
@@ -292,7 +292,7 @@ for (const theme of ["light", "dark"] as const) {
           ).toBeVisible();
         } else {
           await expect(
-            main.getByText("Status probe failed", { exact: true }),
+            main.getByRole("alert").filter({ hasText: "Status probe failed" }),
           ).toBeVisible();
           await expect(main.getByText("Ready", { exact: true })).toHaveCount(0);
         }
@@ -373,7 +373,10 @@ test("failed refresh removes stale green engine observations", async ({
   );
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(
-    page.locator("main").getByText("Refresh failed", { exact: true }),
+    page
+      .locator("main")
+      .getByRole("alert")
+      .filter({ hasText: "Refresh failed" }),
   ).toBeVisible();
   await expect(
     page.locator("main").getByText("Ready", { exact: true }),

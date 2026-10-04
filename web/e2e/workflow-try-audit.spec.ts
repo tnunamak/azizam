@@ -70,13 +70,11 @@ async function routeCatalogs(page: Page, workflows = workflowCatalog) {
 async function prepareWorkflowTry(page: Page, workflows = workflowCatalog) {
   await routeCatalogs(page, workflows);
   await page.goto("/ui/try/?workflow=image.generate.poster");
-  await page.getByRole("button", { name: "Prepare Try key" }).first().click();
-  await expect(page.getByText("Try app key", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "I’ve saved it" }).click();
-  await expect(page.getByText("Session key ready")).toBeVisible();
   await expect(
     page.getByText(
-      workflows.workflows.length ? "Catalog loaded" : "No catalog rows yet",
+      workflows.workflows.length
+        ? "Run creates a Try key for your access plan."
+        : "No models are listed for your key",
     ),
   ).toBeVisible();
 }

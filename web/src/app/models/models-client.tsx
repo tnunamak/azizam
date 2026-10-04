@@ -22,17 +22,13 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { productApi, type CatalogRow } from "@/lib/product-api";
+import { preferredTerms } from "@/lib/terms";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useViewer } from "@/components/shell/session";
 import { FilterToggle } from "@/components/product/filter-toggle";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import {
   Sheet,
   SheetContent,
@@ -105,10 +101,10 @@ const capabilityLabels: Record<ProductCapability, string> = {
   sfx: "Sound effects",
   speech: "Speech",
   audio: "Audio",
-  transcribe: "Transcribe",
-  decide: "Decide",
-  embed: "Embed",
-  rerank: "Rerank",
+  transcribe: "Transcription",
+  decide: "Decisions",
+  embed: "Embeddings",
+  rerank: "Reranking",
 };
 
 // The server owns taxonomy and labels; this map only selects a glyph.
@@ -141,7 +137,16 @@ function CatalogIcon({ row }: { row: CatalogRow }) {
 }
 
 function entryCapability(entry: CatalogCapabilityEntry): ProductCapability {
-  return (entry.capability as ProductCapability | undefined) ?? "chat";
+  if (entry.capability) return entry.capability as ProductCapability;
+  // Legacy catalog entries retain their protocol intent without presentation metadata.
+  const intent = entry.intent;
+  if (/^(chat\.|text\.completions|responses\.)/.test(intent)) return "chat";
+  if (/^(speech\.trans|audio\.trans)/.test(intent)) return "transcribe";
+  if (/^(speech\.|audio\.speech)/.test(intent)) return "speech";
+  if (/^(decision|systemone)/.test(intent)) return "decide";
+  if (intent === "text.embeddings") return "embed";
+  if (intent === "text.rerank") return "rerank";
+  return intent.split(".")[0] as ProductCapability;
 }
 
 function primaryCapability(row: CatalogRow): ProductCapability {
@@ -180,7 +185,7 @@ function hasNoProviderCharge(row: CatalogRow): boolean {
 }
 
 function costLabel(row: CatalogRow): string {
-  if (row.locality === "local") return "Local · no provider charge";
+  if (row.locality === "local") return "No provider charge";
   if (hasNoProviderCharge(row)) return "No provider charge";
   if (row.cost.kind === "paid") {
     return row.cost.price === null
@@ -226,14 +231,6 @@ function timingLabel(row: CatalogRow): string {
         ? "Typical"
         : "Source not provided";
   return `${duration} · ${source}`;
-}
-
-function timingSummaryLabel(row: CatalogRow): string | null {
-  const value = row.timing.typical_seconds;
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-    return null;
-  }
-  return timingLabel(row);
 }
 
 function readString(value: unknown): string | null {
@@ -356,36 +353,30 @@ function ObservedAt({ row }: { row: CatalogRow }) {
   );
 }
 
-function TableUseCell({
-  row,
-  viewerAdmin,
-  onDetail,
-}: {
-  row: CatalogRow;
-  viewerAdmin: boolean;
-  onDetail: (row: CatalogRow) => void;
-}) {
-  const action = availabilityAction(row, viewerAdmin);
-  if (action) {
-    return (
-      <Button size="sm" asChild>
-        <a href={action.href} onClick={(event) => event.stopPropagation()}>
-          {action.label}
-        </a>
-      </Button>
-    );
+function CopyModelName({ row }: { row: CatalogRow }) {
+  const [copied, setCopied] = useState(false);
+  async function copyName() {
+    await navigator.clipboard.writeText(row.id);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
   }
   return (
-    <Button
-      variant="outline"
-      size="sm"
+    <button
+      type="button"
       onClick={(event) => {
         event.stopPropagation();
-        onDetail(row);
+        void copyName();
       }}
+      aria-label={`Copy model name ${row.id}`}
+      className="bg-muted hover:bg-muted/80 focus-visible:ring-ring flex min-h-11 max-w-full min-w-0 items-center justify-between gap-2 rounded-md px-3 py-2 text-left font-mono text-xs transition outline-none focus-visible:ring-[3px]"
     >
-      Details
-    </Button>
+      <code className="truncate">{row.id}</code>
+      {copied ? (
+        <Check aria-label="Model name copied" className="size-4 shrink-0" />
+      ) : (
+        <Copy aria-hidden="true" className="size-4 shrink-0" />
+      )}
+    </button>
   );
 }
 
@@ -464,117 +455,126 @@ function Availability({
     <StatusPill
       status={state}
       reason={showReason ? row.availability.reason : undefined}
+      summary={!showReason}
     />
   );
 }
 
-function AliasCard({
+function AliasOptionRow({
   row,
   onDetail,
-  viewerAdmin,
 }: {
   row: CatalogRow;
   onDetail: (row: CatalogRow) => void;
-  viewerAdmin: boolean;
 }) {
-  const [copied, setCopied] = useState(false);
-  const action = availabilityAction(row, viewerAdmin);
-  const timingSummary = timingSummaryLabel(row);
-  async function copyAlias() {
-    await navigator.clipboard.writeText(row.id);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
-  }
   return (
-    <article className="bg-card text-card-foreground flex min-w-0 flex-col gap-5 rounded-xl border p-5">
-      <div className="flex min-w-0 items-start gap-3">
-        <CatalogIcon row={row} />
-        <div className="min-w-0 flex-1">
-          <h3 className="truncate font-semibold">{titleFor(row)}</h3>
-          <p className="text-muted-foreground mt-1 line-clamp-2 text-sm">
-            {descriptionFor(row)}
-          </p>
+    <article
+      className="hover:bg-muted/40 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 sm:flex-nowrap sm:pl-14"
+      onClick={() => onDetail(row)}
+    >
+      <div className="min-w-0 flex-1 basis-40">
+        <h3 className="truncate text-sm font-medium">{titleFor(row)}</h3>
+        <p className="text-muted-foreground truncate text-xs">
+          {descriptionFor(row)}
+        </p>
+      </div>
+      <CopyModelName row={row} />
+      {availabilityState(row) !== "ready" && (
+        <Availability row={row} showReason={false} />
+      )}
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={(event) => {
+          event.stopPropagation();
+          onDetail(row);
+        }}
+      >
+        <span className="sr-only">Details</span>
+        <ChevronRight aria-hidden="true" />
+      </Button>
+    </article>
+  );
+}
+
+function CapabilityRow({
+  rows,
+  onDetail,
+  searching,
+}: {
+  rows: CatalogRow[];
+  onDetail: (row: CatalogRow) => void;
+  searching: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  // An unmarked catalog has a neutral first option, never an inferred recommendation.
+  const primary = rows.find((row) => row.recommended) ?? rows[0];
+  const alternatives = rows.filter((row) => row !== primary);
+  const open = expanded || searching;
+  const alternativesId = `model-alternatives-${primaryCapability(primary)}`;
+  return (
+    <section className="min-w-0 border-b last:border-b-0">
+      <article
+        className="hover:bg-muted/40 grid min-h-16 grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 px-3 py-2 xl:grid-cols-[2rem_8rem_minmax(0,1fr)_9rem_7rem_5rem_2.75rem] xl:px-4"
+        onClick={() => onDetail(primary)}
+      >
+        <CatalogIcon row={primary} />
+        <h2 className="text-sm font-semibold">
+          {primaryCapabilityLabel(primary)}
+        </h2>
+        <h3 className="col-start-2 row-start-2 min-w-0 truncate text-sm xl:col-start-auto xl:row-start-auto">
+          {titleFor(primary)}
+        </h3>
+        <div className="col-start-2 row-start-3 min-w-0 xl:col-start-auto xl:row-start-auto">
+          <CopyModelName row={primary} />
         </div>
-      </div>
-      <button
-        type="button"
-        onClick={copyAlias}
-        aria-label={`Copy alias ${row.id}`}
-        className="bg-muted hover:bg-muted/80 focus-visible:ring-ring flex min-h-11 min-w-0 items-center justify-between gap-2 rounded-md px-3 py-2 text-left font-mono text-xs transition outline-none focus-visible:ring-[3px]"
-      >
-        <span className="truncate">{row.id}</span>
-        {copied ? (
-          <Check aria-label="Alias copied" className="size-4 shrink-0" />
-        ) : (
-          <Copy aria-hidden="true" className="size-4 shrink-0" />
-        )}
-      </button>
-      <div
-        data-slot="model-metadata"
-        className="text-muted-foreground flex min-w-0 flex-wrap items-center gap-1 text-xs"
-      >
-        <span className="shrink-0">{localityLabel(row)}</span>
-        <span
-          className="min-w-20 flex-1 truncate"
-          title={summaryEngineLabel(row)}
-        >
-          <span aria-hidden="true">· </span>
-          {summaryEngineLabel(row)}
-        </span>
-      </div>
-      <div className="text-muted-foreground flex min-w-0 flex-wrap items-center gap-2 text-xs">
-        <Badge variant="outline" className="max-w-full text-xs">
-          <span className="whitespace-normal">{costLabel(row)}</span>
-        </Badge>
-        {timingSummary && (
-          <span
-            className="inline-flex shrink-0 items-center gap-1"
-            title={
-              row.timing.source === "receipts"
-                ? "Measured time from successful requests"
-                : "Typical time"
-            }
-          >
-            <span>{timingSummary}</span>
-          </span>
-        )}
-      </div>
-      <Availability row={row} />
-      <div className="mt-auto flex flex-wrap gap-2">
-        {action ? (
-          <Button size="sm" asChild>
-            <a href={action.href}>{action.label}</a>
-          </Button>
-        ) : (
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button size="sm">Use</Button>
-            </PopoverTrigger>
-            <PopoverContent
-              align="start"
-              className="w-[min(92vw,560px)] p-0"
-              aria-label={`Use ${row.id}`}
+        <div className="col-start-3 row-start-2 xl:col-start-auto xl:row-start-auto">
+          {availabilityState(primary) !== "ready" && (
+            <Availability row={primary} showReason={false} />
+          )}
+        </div>
+        <div className="col-start-3 row-start-3 xl:col-start-auto xl:row-start-auto">
+          {alternatives.length > 0 && (
+            <button
+              type="button"
+              aria-label={`${alternatives.length} more ${primaryCapabilityLabel(primary)} models`}
+              aria-expanded={open}
+              aria-controls={alternativesId}
+              className="text-muted-foreground hover:text-foreground focus-visible:ring-ring inline-flex min-h-11 items-center gap-1 rounded px-2 text-xs whitespace-nowrap outline-none focus-visible:ring-[3px]"
+              onClick={(event) => {
+                event.stopPropagation();
+                setExpanded((value) => !value);
+              }}
             >
-              <div className="border-b p-4">
-                <h4 className="font-medium">Use {row.id}</h4>
-                <p className="text-muted-foreground mt-1 text-sm">
-                  Copy the alias or a starter request.
-                </p>
-              </div>
-              <div className="p-4">
-                <CodeBlock
-                  snippets={snippetsFor(row, window.location.origin)}
-                />
-              </div>
-            </PopoverContent>
-          </Popover>
-        )}
-        <Button variant="outline" size="sm" onClick={() => onDetail(row)}>
-          Details
+              {alternatives.length} more
+              <ChevronDown
+                aria-hidden="true"
+                className={cn("size-3 transition", open && "rotate-180")}
+              />
+            </button>
+          )}
+        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="col-start-3 row-start-1 xl:col-start-auto xl:row-start-auto"
+          onClick={(event) => {
+            event.stopPropagation();
+            onDetail(primary);
+          }}
+        >
+          <span className="sr-only">Details</span>
           <ChevronRight aria-hidden="true" />
         </Button>
-      </div>
-    </article>
+      </article>
+      {open && alternatives.length > 0 && (
+        <div id={alternativesId} className="bg-muted/20 divide-y border-t">
+          {alternatives.map((row) => (
+            <AliasOptionRow key={row.id} row={row} onDetail={onDetail} />
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -625,7 +625,10 @@ function DetailSheet({
             </SheetHeader>
             <div className="space-y-6 p-4">
               <div className="grid gap-3 text-sm sm:grid-cols-2">
-                <Fact label={row.alias ? "Alias" : "Model"} value={row.id} />
+                <Fact
+                  label={row.alias ? "Model name" : "Exact model"}
+                  value={row.id}
+                />
                 <Fact
                   label="Resolves to"
                   value={
@@ -661,7 +664,7 @@ function DetailSheet({
                   <AvailabilityFacts row={row} />
                   <ObservedAt row={row} />
                   {action && (
-                    <Button size="sm" asChild>
+                    <Button variant="outline" size="sm" asChild>
                       <a href={action.href}>{action.label}</a>
                     </Button>
                   )}
@@ -697,7 +700,7 @@ function DetailSheet({
               </div>
               <div>
                 <h3 className="font-medium">Example request</h3>
-                <div className="mt-3">
+                <div className="mt-3 [&_pre]:break-all [&_pre]:whitespace-pre-wrap">
                   <CodeBlock
                     snippets={snippetsFor(row, window.location.origin)}
                   />
@@ -750,7 +753,6 @@ export default function ModelsClient() {
   const [showNoProviderCharge, setShowNoProviderCharge] = useState(true);
   const [showPaid, setShowPaid] = useState(true);
   const [tableOpen, setTableOpen] = useState(false);
-  const [moreChatOpen, setMoreChatOpen] = useState(false);
   const [detail, setDetail] = useState<CatalogRow | null>(null);
   const {
     data: catalogData,
@@ -766,8 +768,11 @@ export default function ModelsClient() {
     () => [...(catalogData?.aliases ?? []), ...(catalogData?.models ?? [])],
     [catalogData],
   );
+  const sectionRows = allRows.filter(
+    (row) => row.alias || row.secondary_profile,
+  );
   const availableCapabilities = productCapabilityOrder.filter((cap) =>
-    allRows.some((row) => hasCapability(row, cap)),
+    sectionRows.some((row) => primaryCapability(row) === cap),
   );
   const passesFilters = (row: CatalogRow) => {
     if (!itemMatches(row, query)) return false;
@@ -779,27 +784,19 @@ export default function ModelsClient() {
       return false;
     return true;
   };
-  const aliasRows = (catalogData?.aliases ?? []).filter(passesFilters);
-  const modelRows = (catalogData?.models ?? []).filter(
-    (row) => passesFilters(row) && !row.secondary_profile,
-  );
-  const secondaryChatRows = allRows.filter(
-    (row) => passesFilters(row) && row.secondary_profile,
-  );
-  const primaryAliasRows = aliasRows.filter((row) => !row.secondary_profile);
+  const modelRows = (catalogData?.models ?? []).filter(passesFilters);
   const groupedAliases = productCapabilityOrder
     .map((cap) => ({
       capability: cap,
-      rows: primaryAliasRows.filter((row) => primaryCapability(row) === cap),
+      rows: sectionRows.filter(
+        (row) => passesFilters(row) && primaryCapability(row) === cap,
+      ),
     }))
     .filter((group) => group.rows.length > 0);
 
   return (
-    <div className="space-y-8">
-      <PageHeader
-        title="Models"
-        answer="What can I use, and which one should I pick?"
-      />
+    <div className="space-y-4">
+      <PageHeader title="Models" answer="Pick a model name." />
       {catalogPending ? (
         <LoadingCatalog />
       ) : catalogError ? (
@@ -812,9 +809,9 @@ export default function ModelsClient() {
         <EmptyState
           icon={SlidersHorizontal}
           title="No models are available yet"
-          description="Models appear here after an owner connects a local engine or remote provider that your access plan can use."
+          description="Ask the owner to connect models your access plan allows."
           action={
-            <Button asChild>
+            <Button variant="outline" asChild>
               <a href="/ui/home/">Review setup</a>
             </Button>
           }
@@ -832,31 +829,14 @@ export default function ModelsClient() {
                 <Input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search models, aliases or providers"
+                  placeholder={`Search ${preferredTerms.requestSelector.toLowerCase()}s or providers`}
                   className="pl-9"
                 />
               </label>
-              <div
-                role="group"
-                aria-label="Price filters (choose any)"
-                className="flex flex-wrap gap-2"
-              >
-                <FilterToggle
-                  pressed={showNoProviderCharge}
-                  onClick={() => setShowNoProviderCharge((value) => !value)}
-                >
-                  No provider charge
-                </FilterToggle>
-                <FilterToggle
-                  pressed={showPaid}
-                  onClick={() => setShowPaid((value) => !value)}
-                >
-                  Paid
-                </FilterToggle>
-              </div>
             </div>
-            <div className="flex gap-2 overflow-x-auto pb-1">
+            <div className="flex flex-wrap items-center gap-2 pb-1">
               <FilterToggle
+                className="px-3 text-xs [&>svg]:hidden"
                 pressed={capability === "all"}
                 onClick={() => setCapability("all")}
               >
@@ -865,6 +845,7 @@ export default function ModelsClient() {
               {availableCapabilities.map((cap) => (
                 <FilterToggle
                   key={cap}
+                  className="px-3 text-xs [&>svg]:hidden"
                   pressed={capability === cap}
                   onClick={() => setCapability(cap)}
                 >
@@ -874,28 +855,51 @@ export default function ModelsClient() {
                     capabilityLabels[cap]}
                 </FilterToggle>
               ))}
+              <div
+                role="group"
+                aria-label="Price filters (choose any)"
+                className="ml-auto flex shrink-0 gap-1 border-l pl-3"
+              >
+                <button
+                  type="button"
+                  aria-pressed={showNoProviderCharge}
+                  onClick={() => setShowNoProviderCharge((value) => !value)}
+                  className="text-muted-foreground hover:bg-muted focus-visible:ring-ring aria-pressed:text-foreground min-h-11 rounded-md px-3 text-xs underline-offset-4 transition outline-none focus-visible:ring-[3px] aria-pressed:underline"
+                >
+                  No provider charge
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={showPaid}
+                  onClick={() => setShowPaid((value) => !value)}
+                  className="text-muted-foreground hover:bg-muted focus-visible:ring-ring aria-pressed:text-foreground min-h-11 rounded-md px-3 text-xs underline-offset-4 transition outline-none focus-visible:ring-[3px] aria-pressed:underline"
+                >
+                  Paid
+                </button>
+              </div>
             </div>
           </section>
-          {groupedAliases.length === 0 && secondaryChatRows.length === 0 ? (
+          {groupedAliases.length === 0 ? (
             <EmptyState
               icon={Search}
               title={
                 modelRows.length
-                  ? "No stable aliases match these filters"
+                  ? "No recommended names match these filters"
                   : "No models match these filters"
               }
               description={
                 modelRows.length
-                  ? "Expand All models below to use a model directly."
+                  ? "Show all models to use an exact model directly."
                   : "Clear the search or turn on another price filter."
               }
               action={
                 modelRows.length ? (
-                  <Button onClick={() => setTableOpen(true)}>
+                  <Button variant="outline" onClick={() => setTableOpen(true)}>
                     Show all models
                   </Button>
                 ) : (
                   <Button
+                    variant="outline"
                     onClick={() => {
                       setQuery("");
                       setCapability("all");
@@ -909,104 +913,19 @@ export default function ModelsClient() {
               }
             />
           ) : (
-            <div className="space-y-4">
-              <p className="text-muted-foreground text-sm">
-                Stable aliases stay the same when the backing model changes.
-                This catalog is scoped to models your access plan allows.
-              </p>
-              <div
-                aria-label="Available model aliases"
-                className={cn(
-                  "grid gap-6",
-                  primaryAliasRows.length > 1 && "sm:grid-cols-2",
-                  primaryAliasRows.length > 2 && "lg:grid-cols-3",
-                )}
-              >
-                {groupedAliases.map((group) => (
-                  <section
-                    key={group.capability}
-                    className={cn(
-                      "min-w-0 space-y-4",
-                      group.rows.length > 1 && "sm:col-span-2",
-                      group.rows.length > 2 && "lg:col-span-3",
-                    )}
-                  >
-                    <div className="flex items-center gap-3">
-                      <CatalogIcon row={group.rows[0]} />
-                      <h2 className="text-lg font-semibold">
-                        {primaryCapabilityLabel(group.rows[0])}
-                      </h2>
-                    </div>
-                    <div
-                      className={cn(
-                        "grid gap-4",
-                        group.rows.length > 1 && "sm:grid-cols-2",
-                        group.rows.length > 2 && "lg:grid-cols-3",
-                      )}
-                    >
-                      {group.rows.map((row) => (
-                        <AliasCard
-                          key={row.id}
-                          row={row}
-                          onDetail={setDetail}
-                          viewerAdmin={viewer.admin}
-                        />
-                      ))}
-                    </div>
-                  </section>
-                ))}
-              </div>
-            </div>
-          )}
-          {secondaryChatRows.length > 0 && (
-            <section className="space-y-3">
-              <Button
-                variant="outline"
-                className="w-full justify-between"
-                aria-expanded={moreChatOpen || Boolean(query.trim())}
-                aria-controls="more-chat-profiles"
-                onClick={() => setMoreChatOpen((value) => !value)}
-              >
-                <span>More chat profiles · {secondaryChatRows.length}</span>
-                <ChevronDown
-                  aria-hidden="true"
-                  className={cn(
-                    "size-4 transition",
-                    (moreChatOpen || Boolean(query.trim())) && "rotate-180",
-                  )}
+            <div
+              aria-label="Available model aliases"
+              className="bg-card overflow-hidden rounded-lg border"
+            >
+              {groupedAliases.map((group) => (
+                <CapabilityRow
+                  key={group.capability}
+                  rows={group.rows}
+                  onDetail={setDetail}
+                  searching={Boolean(query.trim())}
                 />
-              </Button>
-              {(moreChatOpen || Boolean(query.trim())) && (
-                <div
-                  id="more-chat-profiles"
-                  className="divide-y rounded-lg border px-4"
-                >
-                  {secondaryChatRows.map((row) => (
-                    <div
-                      key={row.id}
-                      className="flex min-w-0 flex-wrap items-center gap-3 py-4"
-                    >
-                      <div className="min-w-0 flex-1 basis-48">
-                        <h3 className="font-medium">{titleFor(row)}</h3>
-                        <p className="text-muted-foreground mt-1 text-sm">
-                          {descriptionFor(row)}
-                        </p>
-                      </div>
-                      <code className="max-w-full text-xs break-all">
-                        {row.id}
-                      </code>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setDetail(row)}
-                      >
-                        Details
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
+              ))}
+            </div>
           )}
           <section className="space-y-3">
             <button
@@ -1017,9 +936,6 @@ export default function ModelsClient() {
             >
               <span>
                 <span className="font-medium">All models</span>
-                <span className="text-muted-foreground ml-2 text-sm">
-                  {modelRows.length} shown
-                </span>
               </span>
               <ChevronDown
                 aria-hidden="true"
@@ -1047,21 +963,8 @@ export default function ModelsClient() {
                         onClick={() => setDetail(row)}
                       >
                         <TableCell className="font-medium">
-                          <Button
-                            variant="ghost"
-                            className="h-auto min-h-11 justify-start text-left whitespace-normal"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              setDetail(row);
-                            }}
-                          >
-                            <span className="space-y-1">
-                              <span className="block">{titleFor(row)}</span>
-                              <code className="text-muted-foreground block text-xs font-normal">
-                                {row.id}
-                              </code>
-                            </span>
-                          </Button>
+                          <span className="mb-1 block">{titleFor(row)}</span>
+                          <CopyModelName row={row} />
                         </TableCell>
                         <TableCell>{primaryCapabilityLabel(row)}</TableCell>
                         <TableCell>{summaryEngineLabel(row)}</TableCell>
@@ -1070,11 +973,16 @@ export default function ModelsClient() {
                           <Availability row={row} showReason={false} />
                         </TableCell>
                         <TableCell>
-                          <TableUseCell
-                            row={row}
-                            viewerAdmin={viewer.admin}
-                            onDetail={setDetail}
-                          />
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setDetail(row);
+                            }}
+                          >
+                            Details
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}

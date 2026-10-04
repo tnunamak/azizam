@@ -39,14 +39,8 @@ for (const theme of ["light", "dark"]) {
         ).toBeVisible();
         if (state !== "empty") {
           await page
-            .getByRole("button", { name: "Prepare Try key" })
-            .first()
+            .getByRole("tab", { name: "Decisions", exact: true })
             .click();
-          await expect(
-            page.getByText("Try app key", { exact: true }),
-          ).toBeVisible();
-          await page.getByRole("button", { name: "I’ve saved it" }).click();
-          await page.getByRole("tab", { name: "Decide", exact: true }).click();
           const id = "request-0123456789-abcdef0123456789";
           await page.route("**/me/api/receipts/**", (route) =>
             route.fulfill({ json: { request_id: id } }),
@@ -78,9 +72,9 @@ for (const theme of ["light", "dark"]) {
                   },
             ),
           );
-          await expect(
-            page.getByRole("combobox", { name: "Model", exact: true }),
-          ).toContainText("Local");
+          await expect(page.getByRole("combobox").first()).toContainText(
+            "Local",
+          );
           await page.getByRole("button", { name: "Run", exact: true }).click();
           if (state === "seeded") {
             await expect(
@@ -106,7 +100,9 @@ for (const theme of ["light", "dark"]) {
           }
         } else {
           await expect(
-            page.getByText("Prepare a session key", { exact: true }),
+            page.getByText("Run creates a Try key for your access plan.", {
+              exact: true,
+            }),
           ).toBeVisible();
         }
         await expect(
@@ -139,12 +135,11 @@ test("Try prepares a key and links a real public chat receipt", async ({
   page,
 }) => {
   await page.goto("/ui/try/");
-  await page.getByRole("button", { name: "Prepare Try key" }).first().click();
-  await expect(page.getByText("Try app key", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "I’ve saved it" }).click();
-  await expect(page.getByLabel("Model", { exact: true })).not.toContainText(
-    "Not in the catalog",
-  );
+  await expect(
+    page.getByText("Run creates a Try key for your access plan.", {
+      exact: true,
+    }),
+  ).toBeVisible();
   const chatResponse = page.waitForResponse(
     (response) =>
       response.url().includes("/openai/v1/chat/completions") &&

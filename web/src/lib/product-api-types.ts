@@ -284,6 +284,7 @@ export interface CatalogSummary {
 }
 
 export interface CatalogRow {
+  recommended?: boolean;
   capability_title?: string;
   icon_key?: "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank";
   recommended_model?: string;

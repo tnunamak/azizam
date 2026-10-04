@@ -6,8 +6,6 @@ import {
   AlertCircle,
   CheckCircle2,
   Cloud,
-  CreditCard,
-  DollarSign,
   ExternalLink,
   Fish,
   KeyRound,
@@ -558,10 +556,13 @@ function providerState(provider: ProviderRecord) {
   if (provider.reachable === false)
     return {
       status: "unavailable" as const,
-      reason: "Gateway check observed it down.",
+      reason: "Provider connection check observed it down.",
     };
   if (provider.reachable === true && provider.keyStatus === "set")
-    return { status: "ready" as const, reason: "Gateway check passed." };
+    return {
+      status: "ready" as const,
+      reason: "Provider connection check passed.",
+    };
   return {
     status: "unknown" as const,
     reason: "Configured, observation unknown.",
@@ -617,6 +618,14 @@ function SpendBar({
   );
 }
 
+function capSummary(daily?: number | null, monthly?: number | null): string {
+  const parts = [
+    daily == null ? null : `${money(daily)} per day`,
+    monthly == null ? null : `${money(monthly)} per month`,
+  ].filter(Boolean);
+  return parts.length ? parts.join(" · ") : "No cap set";
+}
+
 function DetailCard({
   provider,
   plans,
@@ -657,358 +666,401 @@ function DetailCard({
     );
   }
   return (
-    <article className="border-border bg-card min-w-0 rounded-xl border p-5 shadow-xs">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex min-w-0 gap-3">
-          <Logo value={provider.name} />
-          <div className="min-w-0">
-            <h2 className="truncate text-base font-semibold">
-              {provider.name}
-            </h2>
-            <p className="text-muted-foreground mt-1 text-sm">
-              <ProviderKeySummary provider={provider} />
-            </p>
+    <article className="border-border bg-card min-w-0 overflow-hidden rounded-xl border shadow-xs">
+      <details className="group">
+        <summary className="list-none marker:hidden">
+          <div className="grid cursor-pointer gap-3 p-4 sm:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-center sm:px-5">
+            <div className="flex min-w-0 gap-3 sm:items-center">
+              <Logo value={provider.name} />
+              <div className="min-w-0">
+                <h2 className="truncate text-base font-semibold">
+                  {provider.name}
+                </h2>
+                <p className="text-muted-foreground mt-1 text-sm">
+                  <ProviderKeySummary provider={provider} />
+                </p>
+              </div>
+            </div>
+            <StatusPill status={state.status} reason={state.reason} summary />
+            <div className="min-w-0 space-y-2">
+              {provider.spendMonth != null ? (
+                <SpendBar
+                  label="This month"
+                  spent={provider.spendMonth}
+                  cap={provider.capMonthly}
+                />
+              ) : provider.capMonthly != null ? (
+                <p className="text-muted-foreground text-xs">
+                  Monthly cap: {money(provider.capMonthly)}
+                </p>
+              ) : null}
+              {provider.capDaily != null && (
+                <p className="text-muted-foreground text-xs">
+                  Daily cap: {money(provider.capDaily)}
+                </p>
+              )}
+            </div>
+            <span className="border-input bg-background hover:bg-accent hover:text-accent-foreground inline-flex h-8 w-full cursor-pointer items-center justify-center gap-2 rounded-md border px-3 text-sm font-medium transition-colors">
+              Manage
+            </span>
           </div>
-        </div>
-        <StatusPill status={state.status} reason={state.reason} />
-      </div>
-      <details className="mt-3 text-sm">
-        <summary className="text-muted-foreground min-h-11 cursor-pointer content-center">
-          Provider details
         </summary>
-        <p className="text-muted-foreground pb-3 text-xs break-all">
-          Provider ID: {provider.id}
-        </p>
-      </details>
-      {provider.recommendation && (
-        <div className="bg-warning/10 border-warning/30 text-foreground mt-4 rounded-lg border p-3 text-sm">
-          {provider.recommendation}
-        </div>
-      )}
-      {provider.reachable === true && provider.checkedAt != null && (
-        <p className="text-muted-foreground mt-3 text-xs">
-          Reachability checked <RelativeTime ts={provider.checkedAt} />.
-        </p>
-      )}
-      {provider.needsReconciliation && (
-        <div className="border-warning/30 bg-warning/10 mt-4 rounded-lg border p-3 text-sm">
-          <div className="font-medium">
-            {reconciliationLabel(provider.pendingReconciliationCount)}
+        <div className="border-t px-4 pt-4 pb-4 sm:px-5">
+          <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
+            <div className="space-y-3">
+              <SpendBar
+                label="Today"
+                spent={provider.spendToday}
+                cap={provider.capDaily}
+              />
+              <SpendBar
+                label="This month"
+                spent={provider.spendMonth}
+                cap={provider.capMonthly}
+              />
+              {provider.needsReconciliation && (
+                <p className="text-muted-foreground text-xs">
+                  Totals include estimated charges that are not final bills.
+                </p>
+              )}
+            </div>
+            <div className="rounded-lg border p-3">
+              <h3 className="text-sm font-medium">Enabled models</h3>
+              <div className="mt-3 flex min-w-0 flex-wrap gap-2">
+                {enabledModels.length ? (
+                  enabledModels.map((model) => (
+                    <Badge
+                      key={model.id}
+                      variant="outline"
+                      className="max-w-full break-words whitespace-normal"
+                    >
+                      {model.id}
+                    </Badge>
+                  ))
+                ) : (
+                  <span className="text-muted-foreground text-sm">
+                    No models enabled
+                  </span>
+                )}
+              </div>
+              <h3 className="mt-4 text-sm font-medium">Access plans</h3>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {plans
+                  .filter((plan) => provider.plans.includes(plan.id))
+                  .map((plan) => (
+                    <Badge key={plan.id} variant="secondary">
+                      {plan.name}
+                    </Badge>
+                  ))}
+                {!provider.plans.length && (
+                  <span className="text-muted-foreground text-sm">
+                    No access plans can use this provider
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
-          <p className="text-muted-foreground mt-1">
-            Spend totals include estimates until an owner records the verified
-            provider charge. Reconcile before removing this provider.
-          </p>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="mt-3"
-            onClick={() => onAction("reconcile", provider)}
-          >
-            Reconcile charges
-          </Button>
-        </div>
-      )}
-      <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_1fr]">
-        <div className="space-y-3">
-          <SpendBar
-            label="Today"
-            spent={provider.spendToday}
-            cap={provider.capDaily}
-          />
-          <SpendBar
-            label="This month"
-            spent={provider.spendMonth}
-            cap={provider.capMonthly}
-          />
-          {provider.needsReconciliation && (
-            <p className="text-muted-foreground text-xs">
-              Totals include estimated charges that are not final bills.
+          <details className="mt-3 text-sm">
+            <summary className="text-muted-foreground min-h-11 cursor-pointer content-center">
+              Provider details
+            </summary>
+            <p className="text-muted-foreground pb-3 text-xs break-all">
+              Provider ID: {provider.id}
+            </p>
+          </details>
+          {provider.recommendation && (
+            <div className="bg-warning/10 border-warning/30 text-foreground mt-4 rounded-lg border p-3 text-sm">
+              {provider.recommendation}
+            </div>
+          )}
+          {provider.reachable === true && provider.checkedAt != null && (
+            <p className="text-muted-foreground mt-3 text-xs">
+              Reachability checked <RelativeTime ts={provider.checkedAt} />.
             </p>
           )}
-        </div>
-        <div className="rounded-lg border p-3">
-          <h3 className="text-sm font-medium">Enabled models</h3>
-          <div className="mt-3 flex min-w-0 flex-wrap gap-2">
-            {enabledModels.length ? (
-              enabledModels.map((model) => (
-                <Badge
-                  key={model.id}
-                  variant="outline"
-                  className="max-w-full break-words whitespace-normal"
-                >
-                  {model.id}
-                </Badge>
-              ))
-            ) : (
-              <span className="text-muted-foreground text-sm">
-                No models enabled
-              </span>
-            )}
+          {provider.needsReconciliation && (
+            <div className="border-warning/30 bg-warning/10 mt-4 rounded-lg border p-3 text-sm">
+              <div className="font-medium">
+                {reconciliationLabel(provider.pendingReconciliationCount)}
+              </div>
+              <p className="text-muted-foreground mt-1">
+                Spend totals include estimates until an owner records the
+                verified provider charge. Reconcile before removing this
+                provider.
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-3"
+                onClick={() => onAction("reconcile", provider)}
+              >
+                Reconcile charges
+              </Button>
+            </div>
+          )}
+          <div
+            className="mt-5 max-w-full overflow-x-auto rounded-lg border"
+            tabIndex={0}
+            aria-label={`${provider.name} models`}
+          >
+            <table className="w-full min-w-0 table-fixed text-sm">
+              <thead className="bg-muted/40 text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium">Model</th>
+                  <th className="px-3 py-2 text-left font-medium">
+                    Input: USD per 1 million tokens
+                  </th>
+                  <th className="px-3 py-2 text-left font-medium">
+                    Output: USD per 1 million tokens
+                  </th>
+                  <th className="px-3 py-2 text-left font-medium">State</th>
+                </tr>
+              </thead>
+              <tbody>
+                {provider.models.map((model) => (
+                  <tr key={model.id} className="border-t">
+                    <td className="px-3 py-2 font-medium break-words">
+                      {model.id}
+                    </td>
+                    <td className="px-3 py-2 break-words">
+                      {model.priceInput || "Unknown"}
+                    </td>
+                    <td className="px-3 py-2 break-words">
+                      {model.priceOutput || "Unknown"}
+                    </td>
+                    <td className="px-3 py-2 break-words">
+                      {model.enabled ? "Enabled" : "Disabled"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-          <h3 className="mt-4 text-sm font-medium">Access plans</h3>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {plans
-              .filter((plan) => provider.plans.includes(plan.id))
-              .map((plan) => (
-                <Badge key={plan.id} variant="secondary">
-                  {plan.name}
-                </Badge>
-              ))}
-            {!provider.plans.length && (
-              <span className="text-muted-foreground text-sm">
-                No paid plans allowed
-              </span>
-            )}
-          </div>
-        </div>
-      </div>
-      <div
-        className="mt-5 max-w-full overflow-x-auto rounded-lg border"
-        tabIndex={0}
-        aria-label={`${provider.name} models`}
-      >
-        <table className="w-full min-w-0 table-fixed text-sm">
-          <thead className="bg-muted/40 text-muted-foreground">
-            <tr>
-              <th className="px-3 py-2 text-left font-medium">Model</th>
-              <th className="px-3 py-2 text-left font-medium">Input $/M</th>
-              <th className="px-3 py-2 text-left font-medium">Output $/M</th>
-              <th className="px-3 py-2 text-left font-medium">State</th>
-            </tr>
-          </thead>
-          <tbody>
-            {provider.models.map((model) => (
-              <tr key={model.id} className="border-t">
-                <td className="px-3 py-2 font-medium break-words">
-                  {model.id}
-                </td>
-                <td className="px-3 py-2 break-words">
-                  {model.priceInput || "Unknown"}
-                </td>
-                <td className="px-3 py-2 break-words">
-                  {model.priceOutput || "Unknown"}
-                </td>
-                <td className="px-3 py-2 break-words">
-                  {model.enabled ? "Enabled" : "Disabled"}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="mt-5 flex flex-wrap gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => onAction("toggle-enabled", provider)}
-          disabled={busy}
-        >
-          {provider.enabled === false ? "Enable provider" : "Disable provider"}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setEditing(editing === "models" ? null : "models")}
-        >
-          Edit models
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setEditing(editing === "caps" ? null : "caps")}
-        >
-          Edit caps
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setEditing(editing === "plans" ? null : "plans")}
-        >
-          Edit plans
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => onAction("test", provider)}
-        >
-          <RefreshCw aria-hidden="true" /> Gateway check
-        </Button>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
+          <div className="mt-5 flex flex-wrap gap-2">
             <Button
               variant="outline"
               size="sm"
-              aria-label={`More actions for ${provider.name}`}
+              onClick={() => onAction("toggle-enabled", provider)}
+              disabled={busy}
             >
-              <MoreHorizontal aria-hidden="true" /> More
+              {provider.enabled === false
+                ? "Enable provider"
+                : "Disable provider"}
             </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            {provider.keySource === "env" ? (
-              <DropdownMenuItem disabled>
-                Key owned by {provider.apiKeyEnv ?? "environment"}
-              </DropdownMenuItem>
-            ) : (
-              <>
-                <DropdownMenuItem onClick={() => onAction("rotate", provider)}>
-                  <RotateCw aria-hidden="true" /> Rotate key
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => onAction("delete-key", provider)}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setEditing(editing === "models" ? null : "models")}
+            >
+              Edit models
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setEditing(editing === "caps" ? null : "caps")}
+            >
+              Edit caps
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setEditing(editing === "plans" ? null : "plans")}
+            >
+              Edit plans
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onAction("test", provider)}
+            >
+              <RefreshCw aria-hidden="true" /> Check provider connection
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  aria-label={`More actions for ${provider.name}`}
                 >
-                  <KeyRound aria-hidden="true" /> Delete key
-                </DropdownMenuItem>
-              </>
-            )}
-            <DropdownMenuItem
-              variant={provider.needsReconciliation ? undefined : "destructive"}
-              onClick={() =>
-                provider.needsReconciliation
-                  ? onAction("reconcile", provider)
-                  : onAction("remove", provider)
-              }
-            >
-              {provider.needsReconciliation ? (
-                <>
-                  <MinusCircle aria-hidden="true" /> Reconcile before removing
-                </>
-              ) : (
-                <>
-                  <Trash2 aria-hidden="true" /> Remove provider
-                </>
-              )}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-      {editing === "models" && (
-        <div className="mt-4 space-y-3 rounded-lg border p-3">
-          <h3 className="text-sm font-medium">Edit models and prices</h3>
-          {modelDraft.map((model) => (
-            <div
-              key={model.id}
-              className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_110px_110px_auto]"
-            >
-              <label className="flex items-start gap-3 text-sm">
-                <Checkbox
-                  checked={model.enabled}
-                  onCheckedChange={(checked) =>
-                    updateModel(model.id, { enabled: checked === true })
+                  <MoreHorizontal aria-hidden="true" /> More
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {provider.keySource === "env" ? (
+                  <DropdownMenuItem disabled>
+                    Key owned by {provider.apiKeyEnv ?? "environment"}
+                  </DropdownMenuItem>
+                ) : (
+                  <>
+                    <DropdownMenuItem
+                      onClick={() => onAction("rotate", provider)}
+                    >
+                      <RotateCw aria-hidden="true" /> Rotate key
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => onAction("delete-key", provider)}
+                    >
+                      <KeyRound aria-hidden="true" /> Delete key
+                    </DropdownMenuItem>
+                  </>
+                )}
+                <DropdownMenuItem
+                  variant={
+                    provider.needsReconciliation ? undefined : "destructive"
                   }
-                  aria-label={`Enable ${model.id}`}
+                  onClick={() =>
+                    provider.needsReconciliation
+                      ? onAction("reconcile", provider)
+                      : onAction("remove", provider)
+                  }
+                >
+                  {provider.needsReconciliation ? (
+                    <>
+                      <MinusCircle aria-hidden="true" /> Reconcile before
+                      removing
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 aria-hidden="true" /> Remove provider
+                    </>
+                  )}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+          {editing === "models" && (
+            <div className="mt-4 space-y-3 rounded-lg border p-3">
+              <h3 className="text-sm font-medium">Edit models and prices</h3>
+              {modelDraft.map((model) => (
+                <div
+                  key={model.id}
+                  className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_110px_110px_auto]"
+                >
+                  <label className="flex items-start gap-3 text-sm">
+                    <Checkbox
+                      checked={model.enabled}
+                      onCheckedChange={(checked) =>
+                        updateModel(model.id, { enabled: checked === true })
+                      }
+                      aria-label={`Enable ${model.id}`}
+                    />
+                    <span>
+                      <span className="block font-medium">{model.id}</span>
+                      <span className="text-muted-foreground break-words">
+                        {model.upstreamModel}
+                      </span>
+                    </span>
+                  </label>
+                  <Input
+                    aria-label={`${model.id} managed input price`}
+                    value={model.priceInput}
+                    onChange={(event) =>
+                      updateModel(model.id, {
+                        priceInput: event.target.value,
+                      })
+                    }
+                    placeholder="USD per 1M input tokens"
+                  />
+                  <Input
+                    aria-label={`${model.id} managed output price`}
+                    value={model.priceOutput}
+                    onChange={(event) =>
+                      updateModel(model.id, {
+                        priceOutput: event.target.value,
+                      })
+                    }
+                    placeholder="USD per 1M output tokens"
+                  />
+                  <Button
+                    size="sm"
+                    onClick={() => onSaveModels(provider, modelDraft)}
+                    disabled={busy}
+                  >
+                    Save models
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+          {editing === "caps" && (
+            <div className="mt-4 grid gap-3 rounded-lg border p-3 sm:grid-cols-[1fr_1fr_auto]">
+              <label className="space-y-2 text-sm font-medium">
+                Daily cap (USD){" "}
+                <Input
+                  aria-label={`${provider.name} daily cap (USD)`}
+                  value={capsDraft.daily}
+                  onChange={(event) =>
+                    setCapsDraft((draft) => ({
+                      ...draft,
+                      daily: event.target.value,
+                    }))
+                  }
                 />
-                <span>
-                  <span className="block font-medium">{model.id}</span>
-                  <span className="text-muted-foreground break-words">
-                    {model.upstreamModel}
-                  </span>
-                </span>
               </label>
-              <Input
-                aria-label={`${model.id} managed input price`}
-                value={model.priceInput}
-                onChange={(event) =>
-                  updateModel(model.id, { priceInput: event.target.value })
-                }
-                placeholder="Input $/M"
-              />
-              <Input
-                aria-label={`${model.id} managed output price`}
-                value={model.priceOutput}
-                onChange={(event) =>
-                  updateModel(model.id, { priceOutput: event.target.value })
-                }
-                placeholder="Output $/M"
-              />
+              <label className="space-y-2 text-sm font-medium">
+                Monthly cap (USD){" "}
+                <Input
+                  aria-label={`${provider.name} monthly cap (USD)`}
+                  value={capsDraft.monthly}
+                  onChange={(event) =>
+                    setCapsDraft((draft) => ({
+                      ...draft,
+                      monthly: event.target.value,
+                    }))
+                  }
+                />
+              </label>
               <Button
+                className="self-end"
                 size="sm"
-                onClick={() => onSaveModels(provider, modelDraft)}
+                onClick={() =>
+                  onSaveCaps(provider, capsDraft.daily, capsDraft.monthly)
+                }
                 disabled={busy}
               >
-                Save models
+                Save caps
               </Button>
             </div>
-          ))}
-        </div>
-      )}
-      {editing === "caps" && (
-        <div className="mt-4 grid gap-3 rounded-lg border p-3 sm:grid-cols-[1fr_1fr_auto]">
-          <label className="space-y-2 text-sm font-medium">
-            Daily cap{" "}
-            <Input
-              aria-label={`${provider.name} daily cap`}
-              value={capsDraft.daily}
-              onChange={(event) =>
-                setCapsDraft((draft) => ({
-                  ...draft,
-                  daily: event.target.value,
-                }))
-              }
-            />
-          </label>
-          <label className="space-y-2 text-sm font-medium">
-            Monthly cap{" "}
-            <Input
-              aria-label={`${provider.name} monthly cap`}
-              value={capsDraft.monthly}
-              onChange={(event) =>
-                setCapsDraft((draft) => ({
-                  ...draft,
-                  monthly: event.target.value,
-                }))
-              }
-            />
-          </label>
-          <Button
-            className="self-end"
-            size="sm"
-            onClick={() =>
-              onSaveCaps(provider, capsDraft.daily, capsDraft.monthly)
-            }
-            disabled={busy}
-          >
-            Save caps
-          </Button>
-        </div>
-      )}
-      {editing === "plans" && (
-        <div className="mt-4 space-y-3 rounded-lg border p-3">
-          <h3 className="text-sm font-medium">Edit access plans</h3>
-          {planDraft.length === 0 && (
-            <p className="text-muted-foreground text-sm">
-              No plans selected. Paid requests will be denied.
-            </p>
           )}
-          {plans.map((plan) => (
-            <label
-              key={plan.id}
-              className="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm"
-            >
-              <span>{plan.name}</span>
-              <Switch
-                checked={planDraft.includes(plan.id)}
-                onCheckedChange={(checked) =>
-                  setPlanDraft((rows) =>
-                    checked
-                      ? [...new Set([...rows, plan.id])]
-                      : rows.filter((id) => id !== plan.id),
-                  )
-                }
-                aria-label={`Allow ${plan.name} for ${provider.name}`}
-              />
-            </label>
-          ))}
-          <Button
-            size="sm"
-            onClick={() => onSavePlans(provider, planDraft)}
-            disabled={busy}
-          >
-            Save plans
-          </Button>
+          {editing === "plans" && (
+            <div className="mt-4 space-y-3 rounded-lg border p-3">
+              <h3 className="text-sm font-medium">Edit access plans</h3>
+              {planDraft.length === 0 && (
+                <p className="text-muted-foreground text-sm">
+                  No plans selected. Paid requests will be denied.
+                </p>
+              )}
+              {plans.map((plan) => (
+                <label
+                  key={plan.id}
+                  className="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm"
+                >
+                  <span>{plan.name}</span>
+                  <Switch
+                    checked={planDraft.includes(plan.id)}
+                    onCheckedChange={(checked) =>
+                      setPlanDraft((rows) =>
+                        checked
+                          ? [...new Set([...rows, plan.id])]
+                          : rows.filter((id) => id !== plan.id),
+                      )
+                    }
+                    aria-label={`Allow ${plan.name} for ${provider.name}`}
+                  />
+                </label>
+              ))}
+              <Button
+                size="sm"
+                onClick={() => onSavePlans(provider, planDraft)}
+                disabled={busy}
+              >
+                Save plans
+              </Button>
+            </div>
+          )}
         </div>
-      )}
+      </details>
     </article>
   );
 }
@@ -1117,7 +1169,7 @@ function ReconciliationDialog({
                       </div>
                     </div>
                     <div>
-                      <span className="text-muted-foreground">Profile</span>
+                      <span className="text-muted-foreground">Access plan</span>
                       <div className="font-mono text-xs break-all">
                         {formatIdentity(row.profileId)}
                       </div>
@@ -1519,13 +1571,13 @@ function AddProviderDialog({
                 ) : (
                   <RefreshCw />
                 )}{" "}
-                Gateway check
+                Check provider connection
               </Button>
               {testConnection.error && (
                 <p role="alert" className="text-danger text-sm">
                   {testConnection.error instanceof Error
                     ? testConnection.error.message
-                    : "Gateway check failed. Check the provider settings and try again."}
+                    : "Provider connection check failed. Check the provider settings and try again."}
                 </p>
               )}
               {testResult && (
@@ -1551,7 +1603,7 @@ function AddProviderDialog({
             {!models.length ? (
               <EmptyState
                 title="No models loaded"
-                description="Run Gateway check to read models from the provider."
+                description="Run Check provider connection to read models from the provider."
                 icon={Cloud}
               />
             ) : (
@@ -1581,7 +1633,7 @@ function AddProviderDialog({
                     onChange={(e) =>
                       price(model.id, "priceInput", e.target.value)
                     }
-                    placeholder="Input $/M"
+                    placeholder="USD per 1M input tokens"
                   />
                   <Input
                     aria-label={`${model.id} output price`}
@@ -1589,7 +1641,7 @@ function AddProviderDialog({
                     onChange={(e) =>
                       price(model.id, "priceOutput", e.target.value)
                     }
-                    placeholder="Output $/M"
+                    placeholder="USD per 1M output tokens"
                   />
                   <Badge
                     variant={
@@ -1611,17 +1663,17 @@ function AddProviderDialog({
           <div className="space-y-5">
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="space-y-2 text-sm font-medium">
-                Daily cap{" "}
+                Daily cap (USD){" "}
                 <Input
-                  aria-label="Daily cap"
+                  aria-label="Daily cap (USD)"
                   value={dailyCap}
                   onChange={(e) => setDailyCap(e.target.value)}
                 />
               </label>
               <label className="space-y-2 text-sm font-medium">
-                Monthly cap{" "}
+                Monthly cap (USD){" "}
                 <Input
-                  aria-label="Monthly cap"
+                  aria-label="Monthly cap (USD)"
                   value={monthlyCap}
                   onChange={(e) => setMonthlyCap(e.target.value)}
                 />
@@ -1731,30 +1783,19 @@ function AddProviderDialog({
 
 function ProviderEmptyState({ onAdd }: { onAdd: () => void }) {
   return (
-    <div className="bg-card relative overflow-hidden rounded-3xl border p-8 text-center sm:p-12">
-      <div className="bg-primary/10 pointer-events-none absolute inset-x-8 top-8 h-24 rounded-full blur-3xl" />
-      <div className="relative mx-auto flex max-w-xl flex-col items-center gap-5">
-        <div className="bg-primary/10 text-primary relative flex size-20 items-center justify-center rounded-[2rem]">
-          <Fish className="size-9" aria-hidden="true" />
-          <span className="bg-warning absolute top-3 -right-2 size-3 rounded-full" />
-          <span className="bg-primary/40 absolute -bottom-2 left-4 h-1.5 w-10 rounded-full" />
-        </div>
-        <div className="space-y-3">
-          <p className="font-serif text-3xl font-semibold tracking-tight">
-            No providers yet
-          </p>
-          <p className="text-muted-foreground text-sm leading-6 sm:text-base">
-            Connect a provider to use cloud models alongside your local ones.
-            Requests only go to a provider when a model names it.
-          </p>
-        </div>
-        <div className="bg-background/70 grid w-full gap-2 rounded-2xl border p-3 text-left text-sm sm:grid-cols-3">
-          <div className="bg-primary/5 text-foreground rounded-xl p-3">
-            1. Pick a preset
+    <div className="border-border bg-card rounded-xl border p-5">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 gap-3">
+          <div className="bg-primary/10 text-primary relative flex size-12 shrink-0 items-center justify-center rounded-xl">
+            <Fish className="size-9" aria-hidden="true" />
+            <span className="bg-warning absolute top-3 -right-2 size-3 rounded-full" />
           </div>
-          <div className="bg-muted rounded-xl p-3">2. Run Gateway check</div>
-          <div className="bg-muted rounded-xl p-3">
-            3. Allow plans explicitly
+          <div>
+            <p className="font-medium">No providers yet</p>
+            <p className="text-muted-foreground text-sm">
+              Add one provider, then choose its models, access plans and USD
+              caps before it can receive paid requests.
+            </p>
           </div>
         </div>
         <Button onClick={onAdd}>
@@ -1782,20 +1823,46 @@ function GlobalCapsEditor({
   );
   return (
     <section className="rounded-xl border p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="font-medium">Global spend cap</h2>
           <p className="text-muted-foreground mt-1 text-sm">
-            Gateway-wide backstop for paid provider reservations.
+            {capSummary(global.capDaily, global.capMonthly)}
           </p>
         </div>
-        <div className="text-muted-foreground text-sm">
-          Month:{" "}
-          {global.spendMonth == null
-            ? "Not measured yet"
-            : money(global.spendMonth)}
-          {global.needsReconciliation ? " estimated" : ""}
-        </div>
+        <details className="group">
+          <summary className="list-none marker:hidden">
+            <span className="border-input bg-background hover:bg-accent hover:text-accent-foreground inline-flex h-8 cursor-pointer items-center justify-center rounded-md border px-3 text-sm font-medium transition-colors">
+              Edit
+            </span>
+          </summary>
+          <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
+            <label className="space-y-2 text-sm font-medium">
+              Daily cap (USD){" "}
+              <Input
+                aria-label="Global daily provider cap (USD)"
+                value={daily}
+                onChange={(event) => setDaily(event.target.value)}
+              />
+            </label>
+            <label className="space-y-2 text-sm font-medium">
+              Monthly cap (USD){" "}
+              <Input
+                aria-label="Global monthly provider cap (USD)"
+                value={monthly}
+                onChange={(event) => setMonthly(event.target.value)}
+              />
+            </label>
+            <Button
+              className="self-end"
+              size="sm"
+              onClick={() => onSave(daily, monthly)}
+              disabled={busy}
+            >
+              Save global cap
+            </Button>
+          </div>
+        </details>
       </div>
       {global.needsReconciliation && (
         <div className="border-warning/30 bg-warning/10 mt-4 rounded-lg border p-3 text-sm">
@@ -1809,32 +1876,6 @@ function GlobalCapsEditor({
           </p>
         </div>
       )}
-      <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
-        <label className="space-y-2 text-sm font-medium">
-          Daily cap{" "}
-          <Input
-            aria-label="Global daily provider cap"
-            value={daily}
-            onChange={(event) => setDaily(event.target.value)}
-          />
-        </label>
-        <label className="space-y-2 text-sm font-medium">
-          Monthly cap{" "}
-          <Input
-            aria-label="Global monthly provider cap"
-            value={monthly}
-            onChange={(event) => setMonthly(event.target.value)}
-          />
-        </label>
-        <Button
-          className="self-end"
-          size="sm"
-          onClick={() => onSave(daily, monthly)}
-          disabled={busy}
-        >
-          Save global cap
-        </Button>
-      </div>
     </section>
   );
 }
@@ -2004,7 +2045,7 @@ export default function ProvidersPage() {
       <PageHeader
         title="Providers"
         answer="Remote providers are explicit paid routes."
-        description="Requests go to a remote provider only when a model or alias names it. We never switch to a paid provider on our own."
+        description="Requests only go remote when a model names that provider. Paid access is never automatic."
         actions={
           missingApi ? undefined : (
             <Button onClick={() => setAddOpen(true)}>
@@ -2061,43 +2102,7 @@ export default function ProvidersPage() {
                 saveGlobalCaps.mutate({ daily, monthly })
               }
             />
-            <section className="grid gap-3 sm:grid-cols-2">
-              <div className="rounded-xl border p-4">
-                <DollarSign className="text-primary size-5" />
-                <div className="mt-3 text-2xl font-semibold">
-                  {globalState.spendMonth == null
-                    ? "Not measured yet"
-                    : money(globalState.spendMonth)}
-                </div>
-                <p className="text-muted-foreground text-sm">
-                  Remote spend this month
-                  {globalState.needsReconciliation
-                    ? " (includes estimates)"
-                    : ""}
-                </p>
-                {(globalState.needsReconciliation ||
-                  records.some((row) => row.needsReconciliation)) && (
-                  <p className="text-warning mt-2 text-xs">
-                    Includes estimates pending reconciliation; final spend is
-                    unknown.
-                  </p>
-                )}
-              </div>
-              <div className="rounded-xl border p-4">
-                <CreditCard className="text-primary size-5" />
-                <div className="mt-3 text-2xl font-semibold">
-                  {
-                    records.filter((row) =>
-                      row.models.some((model) => model.enabled),
-                    ).length
-                  }
-                </div>
-                <p className="text-muted-foreground text-sm">
-                  Providers with enabled models
-                </p>
-              </div>
-            </section>
-            <div className="grid gap-4 xl:grid-cols-2">
+            <div className="space-y-3">
               {records.map((provider) => (
                 <DetailCard
                   key={provider.id}

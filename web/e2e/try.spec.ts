@@ -3,15 +3,17 @@ import AxeBuilder from "@axe-core/playwright";
 
 async function prepareTryKey(page: import("@playwright/test").Page) {
   await page.goto("/ui/try/");
-  await page.getByRole("button", { name: "Prepare Try key" }).first().click();
-  await expect(page.getByText("Try app key", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "I’ve saved it" }).click();
-  await expect(page.getByText("Session key ready")).toBeVisible();
+  await expect(
+    page.getByText("Run creates a Try key for your access plan.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(page.getByText("Using a Try key")).toBeVisible();
 }
 
 async function waitForCatalog(page: import("@playwright/test").Page) {
-  await expect(page.getByText("Catalog loaded")).toBeVisible();
-  await expect(page.getByLabel("Model", { exact: true })).not.toContainText(
+  await expect(page.getByRole("combobox").first()).not.toContainText(
     "Not in the catalog",
   );
 }
@@ -22,19 +24,21 @@ test("try creates a session key, runs public chat, and links a receipt", async (
   const catalogResponse = page.waitForResponse((response) =>
     response.url().includes("/me/api/models/catalog"),
   );
-  await prepareTryKey(page);
-  const catalog = await catalogResponse;
-  expect(catalog.ok(), `catalog HTTP ${catalog.status()}`).toBe(true);
-  await waitForCatalog(page);
+  await page.goto("/ui/try/");
   await expect(
-    page.getByRole("combobox", { name: "Model", exact: true }),
-  ).not.toHaveText("");
+    page.getByText("Run creates a Try key for your access plan.", {
+      exact: true,
+    }),
+  ).toBeVisible();
   const chatResponse = page.waitForResponse(
     (response) =>
       response.url().includes("/openai/v1/chat/completions") &&
       response.request().method() === "POST",
   );
   await page.getByRole("button", { name: "Run", exact: true }).click();
+  const catalog = await catalogResponse;
+  expect(catalog.ok(), `catalog HTTP ${catalog.status()}`).toBe(true);
+  await waitForCatalog(page);
   const response = await chatResponse;
   expect(response.request().postDataJSON().model).not.toBe("");
   const receiptId = response.headers()["x-ai-gateway-receipt-id"] ?? "";
@@ -49,7 +53,9 @@ test("try creates a session key, runs public chat, and links a receipt", async (
     ),
   ).toBeVisible();
   await expect(page.getByText("Copy as", { exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: receiptId })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: /Open receipt/ }),
+  ).toHaveAttribute("title", receiptId);
 });
 
 test("try shows empty, public API error, decision 404, and non-chat results", async ({
@@ -57,7 +63,9 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
 }) => {
   await page.goto("/ui/try/");
   await expect(
-    page.getByText("Prepare a session key", { exact: true }),
+    page.getByText("Run creates a Try key for your access plan.", {
+      exact: true,
+    }),
   ).toBeVisible();
   await prepareTryKey(page);
   await waitForCatalog(page);
@@ -92,8 +100,8 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Receipt header priority works.")).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "receipt_preferred" }),
-  ).toBeVisible();
+    page.getByRole("link", { name: /Open receipt/ }),
+  ).toHaveAttribute("title", "receipt_preferred");
   await expect(page.getByRole("link", { name: "generic_request" })).toHaveCount(
     0,
   );
@@ -131,7 +139,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Speech result", { exact: true })).toBeVisible();
 
-  await page.getByRole("tab", { name: "Transcribe" }).click();
+  await page.getByRole("tab", { name: "Transcription" }).click();
   await page.setInputFiles("input[type=file]", {
     name: "sample.wav",
     mimeType: "audio/wav",
@@ -146,7 +154,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("The gateway is ready.")).toBeVisible();
 
-  await page.getByRole("tab", { name: "Decide" }).click();
+  await page.getByRole("tab", { name: "Decisions" }).click();
   await page.route("**/v1/systemone", async (route) => {
     const body = route.request().postDataJSON();
     expect(body.state).toBe("Gateway smoke test is starting.");
@@ -183,7 +191,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("70%")).toBeVisible();
 
-  await page.getByRole("tab", { name: "Embed" }).click();
+  await page.getByRole("tab", { name: "Embeddings" }).click();
   await page.route("**/openai/v1/embeddings", (route) =>
     route.fulfill({
       headers: {
@@ -230,36 +238,33 @@ test("try catalog maps exact capability intents to the right tabs", async ({
     }),
   );
   await prepareTryKey(page);
-  await expect(page.getByText("Catalog loaded")).toBeVisible();
-  await expect(page.getByLabel("Model", { exact: true })).toContainText(
+  await expect(page.getByRole("combobox").first()).toContainText(
     "Remote · OpenRouter · Paid · $0.01/request",
   );
-  await expect(page.getByLabel("Model", { exact: true })).not.toContainText(
+  await expect(page.getByRole("combobox").first()).not.toContainText(
     "completion-only",
   );
   await page.getByRole("tab", { name: "Image", exact: true }).click();
-  await expect(page.getByLabel("Model", { exact: true })).not.toContainText(
+  await expect(page.getByRole("combobox").first()).not.toContainText(
     "edit-only",
   );
   await page.getByRole("tab", { name: "Speech", exact: true }).click();
-  await expect(page.getByLabel("Model", { exact: true })).not.toContainText(
+  await expect(page.getByRole("combobox").first()).not.toContainText(
     "music-only",
   );
   await page.getByRole("tab", { name: "Chat", exact: true }).click();
 
-  await page.getByRole("tab", { name: "Transcribe" }).click();
-  await expect(page.getByLabel("Model", { exact: true })).toContainText(
-    "stt model",
-  );
-  await expect(page.getByLabel("Model", { exact: true })).not.toContainText(
+  await page.getByRole("tab", { name: "Transcription" }).click();
+  await expect(page.getByRole("combobox").first()).toContainText("stt model");
+  await expect(page.getByRole("combobox").first()).not.toContainText(
     "tts model",
   );
 
-  await page.getByRole("tab", { name: "Embed" }).click();
-  await expect(page.getByLabel("Model", { exact: true })).toContainText(
+  await page.getByRole("tab", { name: "Embeddings" }).click();
+  await expect(page.getByRole("combobox").first()).toContainText(
     "embeddings model",
   );
-  await expect(page.getByLabel("Model", { exact: true })).not.toContainText(
+  await expect(page.getByRole("combobox").first()).not.toContainText(
     "chat model",
   );
 });
@@ -283,35 +288,30 @@ test("try query params select capability and preserve requested model", async ({
     }),
   );
   await page.goto("/ui/try/?capability=decide");
-  await page.getByRole("button", { name: "Prepare Try key" }).first().click();
-  await page.getByRole("button", { name: "I’ve saved it" }).click();
-  await expect(page.getByText("Catalog loaded")).toBeVisible();
-  await expect(page.getByRole("tab", { name: "Decide" })).toHaveAttribute(
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(page.getByText("Using a Try key")).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Decisions" })).toHaveAttribute(
     "aria-selected",
     "true",
   );
-  await expect(page.getByLabel("Model", { exact: true })).toContainText(
+  await expect(page.getByRole("combobox").first()).toContainText(
     "decide model",
   );
 
   await page.goto("/ui/try/?capability=chat&model=fast");
-  await page.getByRole("button", { name: "Prepare Try key" }).first().click();
-  await page.getByRole("button", { name: "I’ve saved it" }).click();
-  await expect(page.getByText("Catalog loaded")).toBeVisible();
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(page.getByText("Using a Try key")).toBeVisible();
   await expect(page.getByRole("tab", { name: "Chat" })).toHaveAttribute(
     "aria-selected",
     "true",
   );
-  await expect(page.getByLabel("Model", { exact: true })).toContainText("fast");
+  await expect(page.getByRole("combobox").first()).toContainText("fast");
 
   await page.goto("/ui/try/?capability=chat&model=chat");
-  await page.getByRole("button", { name: "Prepare Try key" }).first().click();
-  await page.getByRole("button", { name: "I’ve saved it" }).click();
-  await expect(page.getByText("Catalog loaded")).toBeVisible();
-  await expect(page.getByLabel("Model", { exact: true })).toContainText(
-    "chat model",
-  );
-  await expect(page.getByLabel("Model", { exact: true })).not.toContainText(
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(page.getByText("Using a Try key")).toBeVisible();
+  await expect(page.getByRole("combobox").first()).toContainText("chat model");
+  await expect(page.getByRole("combobox").first()).not.toContainText(
     "coder model",
   );
 });
@@ -368,7 +368,7 @@ test("try records audio, uploads it, and stops microphone tracks", async ({
 
   await prepareTryKey(page);
   await waitForCatalog(page);
-  await page.getByRole("tab", { name: "Transcribe" }).click();
+  await page.getByRole("tab", { name: "Transcription" }).click();
 
   await page.getByRole("button", { name: "Record" }).click();
   await expect(page.getByRole("button", { name: "Stop" })).toBeEnabled();
@@ -430,9 +430,13 @@ for (const theme of ["light", "dark"] as const) {
       }, theme);
 
       await page.goto("/ui/try/");
-      await expect(page.getByRole("heading", { name: "Try" })).toBeVisible();
       await expect(
-        page.getByText("Prepare a session key", { exact: true }),
+        page.getByRole("heading", { name: "Try", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByText("Run creates a Try key for your access plan.", {
+          exact: true,
+        }),
       ).toBeVisible();
       await checkState(page, `try-empty-${theme}-${width}.png`);
 

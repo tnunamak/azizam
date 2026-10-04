@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import HomePage from "@/app/home/page";
 import ProvidersPage from "@/app/providers/page";
@@ -54,6 +55,7 @@ describe("integrated UI coherence", () => {
   });
 
   it("renders normalized provider status without secret fields", async () => {
+    const user = userEvent.setup();
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -134,11 +136,14 @@ describe("integrated UI coherence", () => {
     ).toBeVisible();
     expect(screen.getAllByText("Ready")).toHaveLength(3);
     expect(screen.getByText("Set · ends in 4f2a")).toBeVisible();
-    expect(screen.getAllByText("$1.25 of $10.00")).toHaveLength(2);
+    for (const manage of screen.getAllByText("Manage", { exact: true })) {
+      await user.click(manage);
+    }
+    expect(screen.getAllByText("$1.25 of $10.00")).toHaveLength(3);
     expect(screen.getByText("$0.00 of $0.01")).toBeVisible();
     expect(screen.getByText("$0.01 of $1.25")).toBeVisible();
-    expect(screen.getByText("<$0.01 of $1.25")).toBeVisible();
-    expect(screen.getByText("<$0.01 of $10.00")).toBeVisible();
+    expect(screen.getAllByText("<$0.01 of $1.25")).toHaveLength(2);
+    expect(screen.getAllByText("<$0.01 of $10.00")).toHaveLength(2);
     expect(screen.getByRole("cell", { name: "3" })).toBeVisible();
     expect(screen.getByRole("cell", { name: "15" })).toBeVisible();
     await waitFor(() =>
@@ -147,6 +152,7 @@ describe("integrated UI coherence", () => {
   });
 
   it("shows reconciliation state without inventing a pending count", async () => {
+    const user = userEvent.setup();
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -175,11 +181,12 @@ describe("integrated UI coherence", () => {
       ),
     );
     renderWithQuery(<ProvidersPage />);
+    await user.click(await screen.findByText("Manage", { exact: true }));
     expect(
       await screen.findByText("Charges need reconciliation"),
     ).toBeVisible();
     expect(screen.queryByText("1 charge need reconciliation")).toBeNull();
-    expect(screen.getByText(/final spend is unknown/i)).toBeVisible();
+    expect(screen.getByText(/verified provider charge/i)).toBeVisible();
   });
 
   it("does not call unknown or disabled providers Starting", async () => {
@@ -210,9 +217,11 @@ describe("integrated UI coherence", () => {
     expect(
       await screen.findByRole("heading", { name: "Disabled remote" }),
     ).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Unchecked remote" })).toBeVisible();
-    expect(screen.getByText("Unknown")).toBeVisible();
-    expect(screen.getByText("Configured, observation unknown.")).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: "Unchecked remote" }),
+    ).toBeVisible();
+    expect(screen.queryByText("Unknown")).toBeNull();
+    expect(screen.queryByText("Configured, observation unknown.")).toBeNull();
     expect(screen.getByText("Unavailable")).toBeVisible();
     expect(screen.getByText("Configured, currently disabled.")).toBeVisible();
     expect(screen.queryByText("Starting")).toBeNull();

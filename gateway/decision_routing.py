@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 import asyncio
+import math
 from collections.abc import Callable, Mapping
 from typing import Any
 from dataclasses import dataclass, field
@@ -11,10 +12,18 @@ import httpx
 
 from gateway.capabilities import Capability
 from gateway.decisions_api import DecisionDispatchResult, DecisionModel, DecisionsError
-from gateway.stable_aliases import AliasUnavailableError, resolve_alias
+from gateway.stable_aliases import AliasResolution, AliasUnavailableError, resolve_alias
 
 
 ROUTING_TIMEOUT_SECONDS = 15.0
+
+
+def _positive_float(value: Any) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return number if math.isfinite(number) and number > 0 else 0.0
 
 
 @dataclass
@@ -143,21 +152,34 @@ class DecisionRuntime:
 
     async def dispatch(self, auth: Any, _profile: Any, body: Mapping[str, Any], _request_id: str) -> DecisionDispatchResult:
         attempts = _DecisionAttempts()
-        deadline = time.monotonic() + ROUTING_TIMEOUT_SECONDS
+        resolved = self.resolve(str(body["model"]))
+        timeout = self._dispatch_timeout_seconds(resolved)
+        deadline = time.monotonic() + timeout
         try:
             # httpx timeouts bound individual phases; this bounds the entire
             # route, including authorization, activation, response and fallback.
+            # Honor the configured service budget so cold startup is not cut
+            # short by the default; fallbacks share that one finite deadline.
             async with asyncio.timeout_at(deadline):
-                return await self._dispatch_before_deadline(auth, _profile, body, deadline, attempts)
+                return await self._dispatch_before_deadline(auth, _profile, body, deadline, attempts, resolved)
         except TimeoutError:
             if attempts.backend:
                 attempts.fallbacks.append(f"{attempts.backend}:deadline_exceeded")
             return self._unavailable_result(attempts)
 
+    def _dispatch_timeout_seconds(self, resolved: AliasResolution) -> float:
+        service = self.config().get("backends", {}).get(resolved.service, {})
+        timeout = _positive_float(service.get("timeout"))
+        if timeout:
+            return timeout
+        lifecycle = service.get("lifecycle")
+        driver_config = lifecycle.get("driver_config") if isinstance(lifecycle, Mapping) else None
+        startup_timeout = _positive_float(driver_config.get("health_timeout_s")) if isinstance(driver_config, Mapping) else 0
+        return max(ROUTING_TIMEOUT_SECONDS, startup_timeout)
+
     async def _dispatch_before_deadline(self, auth: Any, _profile: Any,
                                         body: Mapping[str, Any], deadline: float,
-                                        attempts: _DecisionAttempts) -> DecisionDispatchResult:
-        resolved = self.resolve(str(body["model"]))
+                                        attempts: _DecisionAttempts, resolved: AliasResolution) -> DecisionDispatchResult:
         attempts.fallback_declared = resolved.fallback_declared
         candidates = [(resolved.engine, resolved.service)] + list(resolved.fallbacks)
         fallbacks = attempts.fallbacks

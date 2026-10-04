@@ -318,12 +318,24 @@ for (const theme of ["light", "dark"] as const) {
     test(`models seeded catalog: ${theme} at ${width}px`, async ({ page }) => {
       await preparePage(page, theme, width, seededCatalog);
       await expect(
-        page.getByText("Best default for short conversations"),
+        page.getByRole("button", { name: "Copy model name chat" }),
       ).toBeVisible();
-      await expect(page.getByText("Image generation through")).toBeVisible();
       await expect(
-        page.getByText("Local · no provider charge", { exact: true }).first(),
+        page.getByRole("heading", { name: "Images", exact: true }),
       ).toBeVisible();
+      await expect(
+        page.getByRole("heading", { name: "Decide", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("heading", { name: "Speech", exact: true }),
+      ).toBeVisible();
+      await expect(page.getByText(/Other options/)).toHaveCount(0);
+      await expect(
+        page.getByRole("button", { name: "Copy model name image" }),
+      ).toBeVisible();
+      await expect(
+        page.getByText("Local · no provider charge", { exact: true }),
+      ).toHaveCount(0);
       await expect(
         page.getByRole("button", { name: "No provider charge", exact: true }),
       ).toHaveAttribute("aria-pressed", "true");
@@ -331,16 +343,32 @@ for (const theme of ["light", "dark"] as const) {
       await expect(
         page.getByText("Ready to start", { exact: true }),
       ).toBeVisible();
-      await expect(page.getByText("Unknown", { exact: true })).toHaveCount(2);
+      await expect(page.getByText("Unknown", { exact: true })).toHaveCount(0);
       await expect(
         page.getByText("Starts when you send a request."),
-      ).toBeVisible();
+      ).toHaveCount(0);
       await expect(
         page.getByText("No health endpoint is configured."),
+      ).toHaveCount(0);
+      const decision = page.locator("section").filter({
+        has: page.getByRole("heading", { name: "Decide", exact: true }),
+      });
+      await decision.getByRole("button", { name: "Details" }).click();
+      await expect(
+        page.getByRole("dialog").getByText("Starts when you send a request."),
       ).toBeVisible();
+      await page.keyboard.press("Escape");
+      const speech = page.locator("section").filter({
+        has: page.getByRole("heading", { name: "Speech", exact: true }),
+      });
+      await speech.getByRole("button", { name: "Details" }).click();
+      await expect(
+        page.getByRole("dialog").getByText("No health endpoint is configured."),
+      ).toBeVisible();
+      await page.keyboard.press("Escape");
       await expect(
         page.getByText("Paid · $0.04 per image", { exact: true }),
-      ).toBeVisible();
+      ).toHaveCount(0);
       await assertNoOverflow(page);
       await assertNoSeriousAxe(page);
       await page.screenshot({
@@ -385,10 +413,10 @@ test("models filters, snippets, table and detail sheet work", async ({
   page,
 }) => {
   await preparePage(page, "light", 1440, seededCatalog);
-  await page
-    .getByPlaceholder("Search models, aliases or providers")
-    .fill("image");
-  await expect(page.getByText("Image generation through")).toBeVisible();
+  await page.getByPlaceholder("Search model names or providers").fill("image");
+  await expect(
+    page.getByRole("button", { name: "Copy model name image" }),
+  ).toBeVisible();
   await expect(
     page.getByText("Best default for short conversations"),
   ).toHaveCount(0);
@@ -398,13 +426,17 @@ test("models filters, snippets, table and detail sheet work", async ({
   ).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByText("No models match these filters")).toBeVisible();
   await page.getByRole("button", { name: "Paid" }).click();
-  await page.getByRole("button", { name: "Use", exact: true }).click();
+  await page.getByRole("button", { name: "Details" }).first().click();
+  const imageDetails = page.getByRole("dialog");
+  await expect(imageDetails.getByText("Example request")).toBeVisible();
   await expect(
-    page.getByText("Copy the alias or a starter request."),
+    imageDetails.getByText(/\/v1\/images\/generations/),
   ).toBeVisible();
-  await expect(page.getByText(/\/v1\/images\/generations/)).toBeVisible();
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: /All models/ }).click();
+  await expect(
+    page.getByRole("button", { name: "All models", exact: true }),
+  ).toBeVisible();
   await expect(
     page
       .getByRole("table")

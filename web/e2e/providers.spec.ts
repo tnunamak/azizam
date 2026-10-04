@@ -363,15 +363,15 @@ for (const theme of ["light", "dark"] as const) {
           await expect(
             page.getByRole("heading", { name: "OpenRouter" }),
           ).toBeVisible();
+          await page.getByText("Manage", { exact: true }).click();
           await expect(
-            page.getByRole("cell", { name: "Claude Sonnet 4.5" }),
+            page.getByRole("cell", {
+              name: "openrouter/anthropic/claude-sonnet-4.5",
+            }),
           ).toBeVisible();
-          await expect(page.getByText(/Set · ends in 4f2a/)).toBeVisible();
         } else if (state === "empty") {
           await expect(
-            page.getByText(
-              "Connect a provider to use cloud models alongside your local ones.",
-            ),
+            page.getByText(/Add one provider, then choose its models/),
           ).toBeVisible();
           await expect(
             page.getByRole("button", { name: "Add provider" }).first(),
@@ -392,13 +392,18 @@ test("providers detail edits models caps and plans through real admin paths", as
 }) => {
   await routeProviders(page, "seeded");
   await page.goto("/ui/providers/");
+  await page.getByText("Manage", { exact: true }).click();
   await page.getByRole("button", { name: "Edit models" }).click();
-  await page.getByLabel("Enable Claude Sonnet 4.5").click();
-  await page.getByLabel("Claude Sonnet 4.5 managed output price").fill("12");
+  await page
+    .getByLabel("Enable openrouter/anthropic/claude-sonnet-4.5")
+    .click();
+  await page
+    .getByLabel("openrouter/anthropic/claude-sonnet-4.5 managed output price")
+    .fill("12");
   await page.getByRole("button", { name: "Save models" }).click();
   await page.getByRole("button", { name: "Edit caps" }).click();
-  await page.getByLabel("OpenRouter daily cap").fill("7");
-  await page.getByLabel("OpenRouter monthly cap").fill("70");
+  await page.getByLabel("OpenRouter daily cap (USD)").fill("7");
+  await page.getByLabel("OpenRouter monthly cap (USD)").fill("70");
   await page.getByRole("button", { name: "Save caps" }).click();
   await page.getByRole("button", { name: "Edit plans" }).click();
   await page.getByLabel("Allow Paid cloud for OpenRouter").click();
@@ -417,6 +422,7 @@ test("providers detail edits models caps and plans through real admin paths", as
 test("providers reconcile pending charges before removal", async ({ page }) => {
   await routeProviders(page, "seeded");
   await page.goto("/ui/providers/");
+  await page.getByText("Manage", { exact: true }).click();
   await expect(page.getByText("1 charge needs reconciliation")).toBeVisible();
   await page.getByRole("button", { name: "Reconcile charges" }).click();
   await expect(page.getByRole("dialog")).toContainText(
@@ -462,6 +468,7 @@ for (const theme of ["light", "dark"] as const) {
     await setViewport(page, theme, 390);
     await routeProviders(page, "seeded");
     await page.goto("/ui/providers/");
+    await page.getByText("Manage", { exact: true }).click();
     await expect(page.getByText("1 charge needs reconciliation")).toBeVisible();
     await inspect(page, `providers-reconciliation-card-${theme}-390`);
     await page.getByRole("button", { name: "Reconcile charges" }).click();
@@ -546,13 +553,15 @@ test("providers add OpenRouter and keep paid access gated", async ({
     "https://openrouter.ai/api/v1",
   );
   await page.getByLabel("Provider API key").fill("sk-or-browser-test");
-  await page.getByRole("button", { name: "Gateway check" }).click();
+  await page.getByRole("button", { name: "Check provider connection" }).click();
   await expect(
     page.getByText("Listed 2 models from OpenRouter."),
   ).toBeVisible();
   await page.getByRole("button", { name: "Next" }).click();
-  await expect(page.getByText("Claude Sonnet 4.5")).toBeVisible();
-  await expect(page.getByText("Unknown new model")).toBeVisible();
+  await expect(
+    page.getByText("openrouter/anthropic/claude-sonnet-4.5"),
+  ).toBeVisible();
+  await expect(page.getByText("openrouter/unknown-new-model")).toBeVisible();
   await page.getByRole("button", { name: "Next" }).click();
   await expect(
     page.getByText(
@@ -561,8 +570,9 @@ test("providers add OpenRouter and keep paid access gated", async ({
   ).toBeVisible();
   await page.getByRole("button", { name: "Save provider" }).click();
   await expect(page.getByRole("heading", { name: "OpenRouter" })).toBeVisible();
+  await page.getByText("Manage", { exact: true }).click();
   await expect(
-    page.getByRole("cell", { name: "Claude Sonnet 4.5" }),
+    page.getByRole("cell", { name: "openrouter/anthropic/claude-sonnet-4.5" }),
   ).toBeVisible();
 
   const models = await page.evaluate(() =>
@@ -590,7 +600,7 @@ test("providers add OpenRouter and keep paid access gated", async ({
   });
 });
 
-test("providers clear pasted key when switching provider before Gateway check", async ({
+test("providers clear pasted key when switching provider before Check provider connection", async ({
   page,
 }) => {
   const checks = await routeProviderCredentialSecurity(page);
@@ -601,11 +611,11 @@ test("providers clear pasted key when switching provider before Gateway check", 
   await chooseCatalogProvider(page, "generic", /Generic OpenAI-compatible/);
   await expect(page.getByLabel("Provider API key")).toHaveValue("");
   await expect(
-    page.getByRole("button", { name: "Gateway check" }),
+    page.getByRole("button", { name: "Check provider connection" }),
   ).toBeDisabled();
 
   await page.getByLabel("Provider API key").fill("sk-provider-b-secret");
-  await page.getByRole("button", { name: "Gateway check" }).click();
+  await page.getByRole("button", { name: "Check provider connection" }).click();
   await expect(
     page.getByText("Listed 1 model from Generic OpenAI."),
   ).toBeVisible();
@@ -619,7 +629,7 @@ test("providers clear pasted key when switching provider before Gateway check", 
   expect(JSON.stringify(checks[0])).not.toContain("sk-provider-a-secret");
 });
 
-test("providers clear environment reference when switching provider before Gateway check", async ({
+test("providers clear environment reference when switching provider before Check provider connection", async ({
   page,
 }) => {
   const checks = await routeProviderCredentialSecurity(page);
@@ -631,11 +641,11 @@ test("providers clear environment reference when switching provider before Gatew
   await chooseCatalogProvider(page, "generic", /Generic OpenAI-compatible/);
   await expect(page.getByLabel("Environment variable")).toHaveValue("");
   await expect(
-    page.getByRole("button", { name: "Gateway check" }),
+    page.getByRole("button", { name: "Check provider connection" }),
   ).toBeDisabled();
 
   await page.getByLabel("Environment variable").fill("GENERIC_B_KEY");
-  await page.getByRole("button", { name: "Gateway check" }).click();
+  await page.getByRole("button", { name: "Check provider connection" }).click();
   await expect(
     page.getByText("Listed 1 model from Generic OpenAI."),
   ).toBeVisible();
@@ -649,7 +659,7 @@ test("providers clear environment reference when switching provider before Gatew
   expect(JSON.stringify(checks[0])).not.toContain("OPENROUTER_A_KEY");
 });
 
-test("providers clear credentials when base URL changes before Gateway check", async ({
+test("providers clear credentials when base URL changes before Check provider connection", async ({
   page,
 }) => {
   const checks = await routeProviderCredentialSecurity(page);
@@ -661,11 +671,11 @@ test("providers clear credentials when base URL changes before Gateway check", a
     .fill("https://alt-openrouter.example/v1");
   await expect(page.getByLabel("Provider API key")).toHaveValue("");
   await expect(
-    page.getByRole("button", { name: "Gateway check" }),
+    page.getByRole("button", { name: "Check provider connection" }),
   ).toBeDisabled();
 
   await page.getByLabel("Provider API key").fill("sk-after-base-change");
-  await page.getByRole("button", { name: "Gateway check" }).click();
+  await page.getByRole("button", { name: "Check provider connection" }).click();
   await expect(page.getByText("Listed 1 model from OpenRouter.")).toBeVisible();
 
   expect(checks).toHaveLength(1);
@@ -677,7 +687,7 @@ test("providers clear credentials when base URL changes before Gateway check", a
   expect(JSON.stringify(checks[0])).not.toContain("sk-before-base-change");
 });
 
-test("providers ignore stale Gateway check results after provider switch", async ({
+test("providers ignore stale provider connection check results after provider switch", async ({
   page,
 }) => {
   let releaseOpenRouter!: () => void;
@@ -690,14 +700,14 @@ test("providers ignore stale Gateway check results after provider switch", async
   await openAddProvider(page);
   await chooseCatalogProvider(page, "openrouter", /OpenRouter/);
   await page.getByLabel("Provider API key").fill("sk-provider-a-secret");
-  await page.getByRole("button", { name: "Gateway check" }).click();
+  await page.getByRole("button", { name: "Check provider connection" }).click();
   await page.getByRole("button", { name: "Back" }).click();
   await chooseCatalogProvider(page, "generic", /Generic OpenAI-compatible/);
   releaseOpenRouter();
   await page.waitForTimeout(100);
 
   await expect(
-    page.getByRole("button", { name: "Gateway check" }),
+    page.getByRole("button", { name: "Check provider connection" }),
   ).toBeDisabled();
   await expect(page.getByRole("button", { name: "Next" })).toBeDisabled();
   await expect(page.getByText("Listed 1 model from OpenRouter.")).toHaveCount(
@@ -705,12 +715,14 @@ test("providers ignore stale Gateway check results after provider switch", async
   );
 
   await page.getByLabel("Provider API key").fill("sk-provider-b-secret");
-  await page.getByRole("button", { name: "Gateway check" }).click();
+  await page.getByRole("button", { name: "Check provider connection" }).click();
   await expect(
     page.getByText("Listed 1 model from Generic OpenAI."),
   ).toBeVisible();
   await page.getByRole("button", { name: "Next" }).click();
-  await expect(page.getByText("Claude Sonnet 4.5")).toBeVisible();
+  await expect(
+    page.getByText("generic-openai/anthropic/claude-sonnet-4.5"),
+  ).toBeVisible();
 
   expect(checks).toHaveLength(2);
   expect(checks[0]).toMatchObject({
@@ -860,16 +872,20 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
       .getByLabel("Provider base URL")
       .fill(`http://127.0.0.1:${port + 1}/provider/v1`);
     await page.getByLabel("Provider API key").fill("sk-test-openrouter");
-    await page.getByRole("button", { name: "Gateway check" }).click();
+    await page
+      .getByRole("button", { name: "Check provider connection" })
+      .click();
     await expect(page.getByText(/Listed 1 models?/)).toBeVisible();
     await page.getByRole("button", { name: "Next" }).click();
-    await expect(page.getByText("Claude Sonnet 4.5")).toBeVisible();
-    await expect(page.getByLabel("Claude Sonnet 4.5 input price")).toHaveValue(
-      "3.000000",
-    );
-    await expect(page.getByLabel("Claude Sonnet 4.5 output price")).toHaveValue(
-      "15.000000",
-    );
+    await expect(
+      page.getByText("openrouter/anthropic/claude-sonnet-4.5"),
+    ).toBeVisible();
+    await expect(
+      page.getByLabel("openrouter/anthropic/claude-sonnet-4.5 input price"),
+    ).toHaveValue("3.000000");
+    await expect(
+      page.getByLabel("openrouter/anthropic/claude-sonnet-4.5 output price"),
+    ).toHaveValue("15.000000");
     await page.getByRole("button", { name: "Next" }).click();
     await expect(
       page.getByText(
@@ -881,11 +897,16 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
       page.getByRole("heading", { name: "OpenRouter" }),
     ).toBeVisible();
     await expect(page.getByText("sk-test-openrouter")).toHaveCount(0);
+    await page.getByText("Manage", { exact: true }).click();
     await expect(
-      page.getByRole("cell", { name: "Claude Sonnet 4.5" }),
+      page.getByRole("cell", {
+        name: "openrouter/anthropic/claude-sonnet-4.5",
+      }),
     ).toBeVisible();
     await expect(
-      page.getByRole("columnheader", { name: "Input $/M" }),
+      page.getByRole("columnheader", {
+        name: "Input: USD per 1 million tokens",
+      }),
     ).toBeVisible();
     await expect(
       page.getByRole("cell", { name: /^3(?:\.000000)?$/ }),
@@ -1009,6 +1030,7 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
     });
 
     await page.goto("/ui/providers/");
+    await page.getByText("Manage", { exact: true }).click();
     await expect(
       page.getByRole("button", { name: "Reconcile charges" }),
     ).toBeVisible();

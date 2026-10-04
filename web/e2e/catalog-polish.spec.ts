@@ -78,9 +78,14 @@ test("polished model grouping fills width before and after filtering", async ({
     page.getByRole("heading", { name: "Fast", exact: true }),
   ).toBeVisible();
   const cards = page.locator('[aria-label="Available model aliases"] article');
-  await verifyGrid(page, cards, 1440, 3);
+  await verifyModelLayout(page, cards, 1);
+  await expect(page.getByText("2 more", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Audio", exact: true }),
+  ).toHaveCount(0);
   await page.getByRole("textbox", { name: "Search models" }).fill("fast");
-  await verifyGrid(page, cards, 1440, 1);
+  await verifyModelLayout(page, cards, 1);
+  await expect(page.getByText(/\d+ more/)).toHaveCount(0);
 });
 
 for (const width of [390, 1440]) {
@@ -119,41 +124,17 @@ for (const width of [390, 1440]) {
     const cards = page.locator(
       '[aria-label="Available model aliases"] article',
     );
-    await expect(cards).toHaveCount(3);
-    const geometry = await cards.evaluateAll((elements) =>
-      elements.map((card) => {
-        const row = card.querySelector('[data-slot="model-metadata"]')!;
-        const provider = row.querySelector("span[title]")!;
-        const rowRect = row.getBoundingClientRect();
-        const providerRect = provider.getBoundingClientRect();
-        return {
-          x: card.getBoundingClientRect().x,
-          y: card.getBoundingClientRect().y,
-          fits: row.scrollWidth <= row.clientWidth,
-          providerWidth: providerRect.width,
-          childrenFit: Array.from(row.children).every(
-            (child) => child.getBoundingClientRect().right <= rowRect.right + 1,
-          ),
-        };
-      }),
-    );
-    expect(geometry.every((row) => row.fits && row.childrenFit)).toBe(true);
-    expect(geometry.every((row) => row.providerWidth >= 80)).toBe(true);
-    if (width === 1440) {
-      expect(geometry[1].x).toBeGreaterThan(geometry[0].x);
-      expect(Math.abs(geometry[1].y - geometry[0].y)).toBeLessThan(2);
-      expect(geometry[2].x).toBeGreaterThan(geometry[1].x);
-      expect(Math.abs(geometry[2].y - geometry[0].y)).toBeLessThan(2);
-    }
+    await verifyModelLayout(page, cards, 1);
+    await expect(page.getByText("2 more", { exact: true })).toBeVisible();
     await expect(
       cards.first().getByText(`Paid · ${price}`, { exact: true }),
-    ).toBeVisible();
+    ).toHaveCount(0);
     await expect(
       cards.first().getByText("Not measured yet", { exact: true }),
     ).toHaveCount(0);
     await expect(
-      cards.first().getByTitle(provider, { exact: true }),
-    ).toBeVisible();
+      cards.first().getByText(provider, { exact: true }),
+    ).toHaveCount(0);
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= innerWidth,
@@ -164,6 +145,12 @@ for (const width of [390, 1440]) {
       fullPage: true,
     });
     await cards.first().getByRole("button", { name: "Details" }).click();
+    await expect(
+      page.getByRole("dialog").getByText(`Paid · ${price}`, { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("dialog").getByText(provider, { exact: true }),
+    ).toBeVisible();
     await expect(
       page.getByRole("dialog").getByText("Not measured yet", { exact: true }),
     ).toBeVisible();
@@ -177,6 +164,30 @@ async function prepare(page: Page, width: number, theme: "light" | "dark") {
     (value) => localStorage.setItem("theme", value),
     theme,
   );
+}
+
+async function verifyModelLayout(page: Page, cards: Locator, count: number) {
+  await expect(cards).toHaveCount(count);
+  const boxes = await cards.evaluateAll((elements) =>
+    elements.map((element) => {
+      const rect = element.getBoundingClientRect();
+      return { width: rect.width };
+    }),
+  );
+  expect(Math.min(...boxes.map((box) => box.width))).toBeGreaterThan(280);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  const a11y = await new AxeBuilder({ page }).analyze();
+  expect(
+    a11y.violations
+      .filter((violation) =>
+        ["serious", "critical"].includes(violation.impact ?? ""),
+      )
+      .map((violation) => violation.id),
+  ).toEqual([]);
 }
 
 async function verifyGrid(
@@ -247,19 +258,7 @@ for (const theme of ["light", "dark"] as const) {
         const cards = page.locator(
           '[aria-label="Available model aliases"] article',
         );
-        await verifyGrid(page, cards, width, count);
-        if (width === 1440) {
-          const positions = await cards
-            .first()
-            .locator('[data-slot="model-metadata"] > span')
-            .evaluateAll((elements) =>
-              elements.map((element) => element.getBoundingClientRect().y),
-            );
-          expect(
-            Math.max(...positions) - Math.min(...positions),
-            "Desktop metadata stays on one line",
-          ).toBeLessThan(2);
-        }
+        await verifyModelLayout(page, cards, count);
         await expect(
           page
             .getByRole("group", { name: "Price filters (choose any)" })

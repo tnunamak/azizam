@@ -51,15 +51,19 @@ test("Providers presents the current API shape without inventing readiness or na
           exact: true,
         }),
       ).toBeVisible();
+      await provider.getByText("Manage", { exact: true }).click();
+      await provider.getByText("Provider details", { exact: true }).click();
       await expect(
         provider.getByText("Provider ID: internal-provider-record", {
           exact: true,
         }),
       ).toBeVisible();
-      await expect(provider.getByText("Key set", { exact: true })).toBeVisible();
+      await expect(
+        provider.getByText("Key set", { exact: true }),
+      ).toBeVisible();
       await expect(
         provider.getByText("Configured, observation unknown.", { exact: true }),
-      ).toBeVisible();
+      ).toHaveCount(0);
       await expect(provider).toContainText("This month$12.50 of $50.00");
       const missing = page.locator("article").filter({
         has: page.getByRole("heading", {
@@ -70,7 +74,10 @@ test("Providers presents the current API shape without inventing readiness or na
       await expect(
         missing.getByText("Unavailable", { exact: true }),
       ).toBeVisible();
-      await expect(missing.getByText("Missing key", { exact: true })).toBeVisible();
+      await expect(
+        missing.getByText("Missing key", { exact: true }),
+      ).toBeVisible();
+      await missing.getByText("Manage", { exact: true }).click();
       const unknownSpend = missing.getByText("Not measured yet", {
         exact: true,
       });
@@ -78,7 +85,7 @@ test("Providers presents the current API shape without inventing readiness or na
       await expect(unknownSpend.nth(0)).toBeVisible();
       await expect(unknownSpend.nth(1)).toBeVisible();
       await expect(missing).not.toContainText("999");
-      await expect(page.getByText("Remote spend this month")).toBeVisible();
+      await expect(page.getByText("Global spend cap")).toBeVisible();
       await expect(page.locator("body")).not.toContainText("888");
       expect(
         await page.evaluate(
@@ -139,8 +146,8 @@ test("unknown provider readiness stays distinct from observed unavailability", a
   });
   await expect(
     unknown.getByText("Configured, observation unknown.", { exact: true }),
-  ).toBeVisible();
-  await expect(unknown.getByText("Unknown", { exact: true })).toBeVisible();
+  ).toHaveCount(0);
+  await expect(unknown.getByText("Unknown", { exact: true })).toHaveCount(0);
   await expect(unknown.getByText("Starting", { exact: true })).toHaveCount(0);
   await expect(unknown.getByText("Unavailable", { exact: true })).toHaveCount(
     0,
@@ -153,7 +160,9 @@ test("unknown provider readiness stays distinct from observed unavailability", a
   });
   await expect(down.getByText("Unavailable", { exact: true })).toBeVisible();
   await expect(
-    down.getByText("Gateway check observed it down.", { exact: true }),
+    down.getByText("Provider connection check observed it down.", {
+      exact: true,
+    }),
   ).toBeVisible();
   const ready = page.locator("article").filter({
     has: page.getByRole("heading", {
@@ -282,7 +291,9 @@ test("empty provider status exposes Add provider when API is installed", async (
   );
 
   await page.goto("/ui/providers/");
-  await expect(page.getByText("No providers yet", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("No providers yet", { exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Add provider" }).first().click();
   await expect(
     page.getByRole("heading", { name: "Add provider", exact: true }),
@@ -295,9 +306,9 @@ test("empty provider status exposes Add provider when API is installed", async (
   await expect(
     page.getByText("Provider controls are not installed", { exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Add provider" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Add provider" })).toHaveCount(
+    0,
+  );
 });
 
 test("Status offers a local action when no remote providers are configured", async ({

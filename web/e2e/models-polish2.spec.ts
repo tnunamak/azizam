@@ -102,24 +102,30 @@ for (const theme of ["light", "dark"] as const) {
         '[aria-label="Available model aliases"] article',
       );
       await expect(cards).toHaveCount(2);
+      const aliasGroups = page.getByLabel("Available model aliases");
+      await expect(
+        aliasGroups.getByText("Local · no provider charge", { exact: true }),
+      ).toHaveCount(0);
       await expect(
         cards.first().getByText("Local", { exact: true }),
-      ).toBeVisible();
-      await expect(cards.first().getByTitle("Household chat")).toBeVisible();
-      await expect(cards.first().getByText("~151 ms · Measured")).toBeVisible();
+      ).toHaveCount(0);
+      await expect(cards.first().getByText("Household chat")).toHaveCount(0);
+      await expect(cards.first().getByText("~151 ms · Measured")).toHaveCount(
+        0,
+      );
       await expect(
         cards.first().getByText("Unknown", { exact: true }),
-      ).toBeVisible();
+      ).toHaveCount(0);
       await expect(
         cards.first().getByText("Live availability is not measured yet"),
-      ).toBeVisible();
+      ).toHaveCount(0);
       await expect(
         cards.nth(1).getByText("Remote", { exact: true }),
-      ).toBeVisible();
+      ).toHaveCount(0);
       await expect(
-        cards.nth(1).getByTitle("Example image provider"),
-      ).toBeVisible();
-      await expect(cards.nth(1).getByText("~8.0 s · Typical")).toBeVisible();
+        cards.nth(1).getByText("Example image provider"),
+      ).toHaveCount(0);
+      await expect(cards.nth(1).getByText("~8.0 s · Typical")).toHaveCount(0);
       await expect(
         cards.getByText("Not measured yet", { exact: true }),
       ).toHaveCount(0);
@@ -143,10 +149,21 @@ for (const theme of ["light", "dark"] as const) {
       });
       await cards.first().getByRole("button", { name: "Details" }).click();
       await expect(
+        page.getByRole("dialog").getByText("Household chat"),
+      ).toBeVisible();
+      await expect(
         page.getByRole("dialog").getByText("Measured time"),
       ).toBeVisible();
       await expect(
         page.getByRole("dialog").getByText("~151 ms · Measured"),
+      ).toBeVisible();
+      await page.keyboard.press("Escape");
+      await cards.nth(1).getByRole("button", { name: "Details" }).click();
+      await expect(
+        page.getByRole("dialog").getByText("Example image provider"),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("dialog").getByText("~8.0 s · Typical"),
       ).toBeVisible();
     });
   }
@@ -162,7 +179,7 @@ test("models polish 2 absent telemetry stays honest without exposing service ids
       timing: { typical_seconds: null, source: null },
     },
   ]);
-  await expect(page.getByTitle("Configured engine")).toBeVisible();
+  await expect(page.getByText("Configured engine")).toHaveCount(0);
   await expect(
     page
       .getByLabel("Available model aliases")
@@ -188,6 +205,81 @@ test("models polish 2 empty states provide the next action", async ({
   await page.getByRole("textbox", { name: "Search models" }).fill("unmatched");
   await page.getByRole("button", { name: "Clear filters" }).click();
   await expect(
-    page.getByRole("button", { name: "Copy alias chat" }),
+    page.getByRole("button", { name: "Copy model name chat" }),
   ).toBeVisible();
+});
+
+test("legacy alias intents keep alternatives within the same capability", async ({
+  page,
+}) => {
+  const legacy = (id: string, intent: string, label: string) => ({
+    ...measured,
+    id,
+    display_name: id,
+    title: id,
+    capability_title: undefined,
+    icon_key: undefined,
+    use_names: [id],
+    operations: [id],
+    capabilities: [{ intent, label }],
+  });
+  const peer = (
+    id: string,
+    intent: string,
+    capability: string,
+    label: string,
+  ) => ({
+    ...measured,
+    id,
+    display_name: id,
+    title: id,
+    use_names: [id],
+    operations: [capability],
+    capabilities: [{ intent, label, capability, icon_key: capability }],
+  });
+  await catalog(page, [
+    legacy("default", "chat.completions", "Chat"),
+    legacy("image", "image.generate", "Images"),
+    legacy("decide", "decision.systemone", "Decisions"),
+    legacy("tts", "speech.synthesis", "Speech"),
+    peer("chat-peer", "chat.completions", "chat", "Chat"),
+    peer("image-peer", "image.generate", "image", "Images"),
+  ]);
+
+  for (const [label, primary, alternative] of [
+    ["Chat", "default", "chat-peer"],
+    ["Images", "image", "image-peer"],
+    ["Decisions", "decide", null],
+    ["Speech", "tts", null],
+  ] as const) {
+    const group = page.locator("section").filter({
+      has: page.getByRole("heading", { name: label, exact: true }),
+    });
+    await expect(
+      group.getByRole("heading", { name: primary, exact: true }),
+    ).toBeVisible();
+    if (alternative) {
+      await expect(group.getByText("1 more", { exact: true })).toBeVisible();
+      const copyAlternative = group.getByRole("button", {
+        name: `Copy model name ${alternative}`,
+      });
+      await expect(copyAlternative).toBeHidden();
+      await group.getByText("1 more", { exact: true }).click();
+      await expect(copyAlternative).toBeVisible();
+    } else {
+      await expect(group.getByText(/\d+ more/)).toHaveCount(0);
+    }
+  }
+  const chatGroup = page.locator("section").filter({
+    has: page.getByRole("heading", { name: "Chat", exact: true }),
+  });
+  await expect(
+    chatGroup.getByRole("button", { name: "Copy model name image-peer" }),
+  ).toHaveCount(0);
+  const imageGroup = page.locator("section").filter({
+    has: page.getByRole("heading", { name: "Images", exact: true }),
+  });
+  await expect(
+    imageGroup.getByRole("button", { name: "Copy model name chat-peer" }),
+  ).toHaveCount(0);
 });

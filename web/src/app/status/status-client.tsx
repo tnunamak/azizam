@@ -209,6 +209,22 @@ function enginesFrom(
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+function plainEngineProblem(engine: EngineView): string {
+  const source = engine.label || engine.name || "An engine";
+  const raw = (engine.lastError || "").toLowerCase();
+  if (
+    raw.includes("connection refused") ||
+    raw.includes("connect refused") ||
+    raw.includes("econnrefused")
+  ) {
+    return `${source} is not accepting connections. Check the engine address or start the engine.`;
+  }
+  if (raw.includes("timeout") || raw.includes("timed out")) {
+    return `${source} did not answer in time. Check whether the engine is busy or unreachable.`;
+  }
+  return `${source} is unavailable. Open the engine for details.`;
+}
+
 function topAnswer(
   engines: EngineView[],
   statusError: boolean,
@@ -233,7 +249,9 @@ function topAnswer(
     const first = engines.find(
       (engine) => engine.service.enabled && engine.state === "Unavailable",
     );
-    return `${unavailable} enabled engine${unavailable === 1 ? " needs" : "s need"} owner action${first?.lastError ? `: ${first.lastError}` : "."}`;
+    return unavailable === 1 && first
+      ? plainEngineProblem(first)
+      : `${unavailable} enabled engines need owner action. Open Engines for details.`;
   }
   if (degraded)
     return `${degraded} enabled engine${degraded === 1 ? " is" : "s are"} degraded; check last error and queue details below.`;
@@ -306,6 +324,12 @@ function EngineRow({
   selected: boolean;
 }) {
   const [open, setOpen] = useState(selected);
+  const visibleIssue =
+    engine.state === "Unavailable"
+      ? plainEngineProblem(engine)
+      : engine.state === "Degraded"
+        ? `${engine.label} is degraded.`
+        : "No issue";
   return (
     <tr
       className="border-b last:border-0"
@@ -370,7 +394,7 @@ function EngineRow({
         {engine.label}
       </td>
       <td className="hidden py-3 align-top text-sm break-words md:table-cell">
-        {engine.lastError ?? "—"}
+        {visibleIssue}
       </td>
     </tr>
   );
@@ -408,6 +432,14 @@ function thermalStateKey(kind: string): string | null {
   if (kind === "nvme_max_c") return "nvme_thermal_state";
   if (kind === "amdgpu_edge_c") return "amdgpu_thermal_state";
   return null;
+}
+
+function thermalLabel(kind: string): string {
+  if (kind === "amdgpu_edge_c") return "GPU temperature";
+  if (kind === "cpu_max_c") return "CPU temperature";
+  if (kind === "dimm_max_c") return "Memory temperature";
+  if (kind === "nvme_max_c") return "NVMe temperature";
+  return titleize(kind.replace(/_c$/, ""));
 }
 
 function thermalTone(
@@ -480,30 +512,39 @@ function Hardware({
       asNumber(gpu.memory_used_mb) != null &&
       (asNumber(gpu.memory_total_mb) ?? asNumber(gpu.total_memory_mb)) != null,
   );
-  const disk = currentDisk(status).filter((item) => item.pct != null);
+  const disk = currentDisk(status).filter(
+    (item) => item.pct != null && item.pct >= 90,
+  );
   const thermals =
     asRecord(record?.thermals) ?? asRecord(record?.thermal) ?? {};
-  const hasThermals = Object.entries(thermals).some(
-    ([name, value]) => name.endsWith("_c") && asNumber(value) != null,
+  const hotThermals = Object.entries(thermals).filter(([name, value]) => {
+    const temp = asNumber(value);
+    return (
+      name.endsWith("_c") &&
+      temp != null &&
+      thermalTone(name, temp, thermals) !== "ok"
+    );
+  });
+  const hotGpus = gpus.filter((gpu) => {
+    const used = asNumber(gpu.memory_used_mb)!;
+    const total =
+      asNumber(gpu.memory_total_mb) ?? asNumber(gpu.total_memory_mb);
+    return total != null && total > 0 && used / total >= 0.9;
+  });
+  const hasHardwareSignal = Boolean(
+    warnings.length || disk.length || hotThermals.length || hotGpus.length,
   );
-  if (
-    !gpus.length &&
-    !totalKb &&
-    !disk.length &&
-    !warnings.length &&
-    !hasThermals
-  )
-    return null;
+  if (!hasHardwareSignal) return null;
   return (
     <Section title="Hardware">
       <div className="grid gap-6 lg:grid-cols-3">
-        {gpus.length > 0 && (
+        {hotGpus.length > 0 && (
           <div className="space-y-3">
             <h3 className="flex items-center gap-2 text-sm font-medium">
               <Cpu className="size-4" />
               GPU VRAM
             </h3>
-            {gpus.map((gpu, index) => {
+            {hotGpus.map((gpu, index) => {
               const id = asNumber(gpu.index) ?? index;
               const used = asNumber(gpu.memory_used_mb)!;
               const total = (asNumber(gpu.memory_total_mb) ??
@@ -543,24 +584,27 @@ function Hardware({
             })}
           </div>
         )}
-        {totalKb != null && totalKb > 0 && availableKb != null && (
-          <div className="space-y-3">
-            <h3 className="flex items-center gap-2 text-sm font-medium">
-              <Zap className="size-4" />
-              RAM
-            </h3>
-            <p className="text-sm tabular-nums">
-              {gb(kbToGb(totalKb - availableKb))} / {gb(kbToGb(totalKb))} used
-            </p>
-            <Progress
-              value={Math.max(
-                0,
-                Math.min(100, ((totalKb - availableKb) / totalKb) * 100),
-              )}
-              aria-label="RAM usage"
-            />
-          </div>
-        )}
+        {warnings.some((warning) => /ram|memory/i.test(warning.reason)) &&
+          totalKb != null &&
+          totalKb > 0 &&
+          availableKb != null && (
+            <div className="space-y-3">
+              <h3 className="flex items-center gap-2 text-sm font-medium">
+                <Zap className="size-4" />
+                RAM
+              </h3>
+              <p className="text-sm tabular-nums">
+                {gb(kbToGb(totalKb - availableKb))} / {gb(kbToGb(totalKb))} used
+              </p>
+              <Progress
+                value={Math.max(
+                  0,
+                  Math.min(100, ((totalKb - availableKb) / totalKb) * 100),
+                )}
+                aria-label="RAM usage"
+              />
+            </div>
+          )}
         {disk.length > 0 && (
           <div className="space-y-3">
             <h3 className="flex items-center gap-2 text-sm font-medium">
@@ -584,7 +628,7 @@ function Hardware({
           </div>
         )}
       </div>
-      {Object.entries(thermals).map(([name, raw]) => {
+      {hotThermals.map(([name, raw]) => {
         const temp = asNumber(raw);
         if (temp == null || !name.endsWith("_c")) return null;
         const tone = thermalTone(name, temp, thermals);
@@ -593,7 +637,7 @@ function Hardware({
             key={name}
             className={`text-xs ${tone === "bad" ? "text-danger" : tone === "warn" ? "text-warning" : "text-muted-foreground"}`}
           >
-            {name}: {temp} °C.
+            {thermalLabel(name)}: {temp} °C.
             {tone === "bad"
               ? " Check cooling before heavy work."
               : tone === "warn"
@@ -702,6 +746,71 @@ export function StatusClient() {
     void refetchRegistry();
     void providers.refetch();
   };
+  const enabledEngines = visibleEngines.filter(
+    (engine) => engine.service.enabled,
+  );
+  const enabledEngineCount = enabledEngines.length;
+  const allVisibleEnginesHealthy =
+    enabledEngineCount > 0 &&
+    enabledEngines.every((engine) => engine.state === "Ready");
+  const actionRows = [
+    statusIsError
+      ? {
+          key: "status",
+          title: "Status probe failed",
+          detail: errorMessage(statusError),
+          href: null,
+        }
+      : null,
+    registryIsError
+      ? {
+          key: "registry",
+          title: "Engine list could not load",
+          detail: errorMessage(registryError),
+          href: null,
+        }
+      : null,
+    ...engines
+      .filter(
+        (engine) =>
+          engine.service.enabled &&
+          (engine.state === "Unavailable" || engine.state === "Degraded"),
+      )
+      .map((engine) => ({
+        key: engine.service.id,
+        title: engine.name,
+        detail:
+          engine.state === "Unavailable"
+            ? plainEngineProblem(engine)
+            : `${engine.label} is degraded. Open the engine for details.`,
+        href: `/engines?service=${encodeURIComponent(engine.service.id)}`,
+      })),
+    providerIssue
+      ? {
+          key: "provider",
+          title: "Provider needs owner action",
+          detail: providerIssue,
+          href: "/providers",
+        }
+      : null,
+    hostWarning
+      ? {
+          key: "hardware",
+          title: "Hardware needs attention",
+          detail: hostWarning,
+          href: null,
+        }
+      : null,
+  ].filter(
+    (
+      row,
+    ): row is {
+      key: string;
+      title: string;
+      detail: string;
+      href: string | null;
+    } => row != null,
+  );
 
   if (statusIsPending && registryIsPending)
     return (
@@ -753,6 +862,32 @@ export function StatusClient() {
           </div>
         )}
       </header>
+      <Section title={actionRows.length ? "Needs attention" : "Summary"}>
+        {actionRows.length ? (
+          <div className="divide-y rounded-xl border">
+            {actionRows.map((row) => (
+              <div
+                key={row.key}
+                className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="min-w-0">
+                  <p className="font-medium">{row.title}</p>
+                  <p className="text-muted-foreground text-sm">{row.detail}</p>
+                </div>
+                {row.href && (
+                  <Button variant="outline" size="sm" asChild>
+                    <Link href={row.href}>Open</Link>
+                  </Button>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-muted-foreground text-sm">
+            No owner action is needed from the latest observation.
+          </p>
+        )}
+      </Section>
       <Section
         title="Engines"
         action={
@@ -773,47 +908,54 @@ export function StatusClient() {
         {registryIsPending ? (
           <div className="text-muted-foreground text-sm">Loading engines…</div>
         ) : visibleEngines.length ? (
-          <div className="space-y-6">
-            {Array.from(
-              new Set(visibleEngines.map((engine) => engine.group)),
-            ).map((group) => (
-              <div key={group}>
-                <h3 className="text-muted-foreground mb-2 text-sm font-medium">
-                  {group}
-                </h3>
-                <table className="w-full table-fixed text-sm">
-                  <caption className="sr-only">
-                    {group} engine status. Select an engine for details.
-                  </caption>
-                  <thead>
-                    <tr className="text-muted-foreground border-b text-left text-xs">
-                      <th className="w-3/5 py-2 font-medium sm:w-1/3">
-                        Engine
-                      </th>
-                      <th className="py-2 font-medium sm:w-1/5">State</th>
-                      <th className="hidden py-2 font-medium sm:table-cell">
-                        Serves
-                      </th>
-                      <th className="hidden py-2 font-medium md:table-cell">
-                        Last error
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {visibleEngines
-                      .filter((engine) => engine.group === group)
-                      .map((engine) => (
-                        <EngineRow
-                          key={engine.service.id}
-                          engine={engine}
-                          selected={engine.service.id === selectedServiceId}
-                        />
-                      ))}
-                  </tbody>
-                </table>
-              </div>
-            ))}
-          </div>
+          <details open={!allVisibleEnginesHealthy} className="space-y-4">
+            <summary className="min-h-11 cursor-pointer text-sm font-medium">
+              {allVisibleEnginesHealthy
+                ? `${enabledEngineCount} engine${enabledEngineCount === 1 ? "" : "s"} ready · Show`
+                : `${visibleEngines.length} engine${visibleEngines.length === 1 ? "" : "s"} observed`}
+            </summary>
+            <div className="space-y-6">
+              {Array.from(
+                new Set(visibleEngines.map((engine) => engine.group)),
+              ).map((group) => (
+                <div key={group}>
+                  <h3 className="text-muted-foreground mb-2 text-sm font-medium">
+                    {group}
+                  </h3>
+                  <table className="w-full table-fixed text-sm">
+                    <caption className="sr-only">
+                      {group} engine status. Select an engine for details.
+                    </caption>
+                    <thead>
+                      <tr className="text-muted-foreground border-b text-left text-xs">
+                        <th className="w-3/5 py-2 font-medium sm:w-1/3">
+                          Engine
+                        </th>
+                        <th className="py-2 font-medium sm:w-1/5">State</th>
+                        <th className="hidden py-2 font-medium sm:table-cell">
+                          Serves
+                        </th>
+                        <th className="hidden py-2 font-medium md:table-cell">
+                          Last error
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleEngines
+                        .filter((engine) => engine.group === group)
+                        .map((engine) => (
+                          <EngineRow
+                            key={engine.service.id}
+                            engine={engine}
+                            selected={engine.service.id === selectedServiceId}
+                          />
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
+            </div>
+          </details>
         ) : (
           <p className="text-muted-foreground text-sm">
             No enabled engines. Turn on Show disabled or add an engine from
