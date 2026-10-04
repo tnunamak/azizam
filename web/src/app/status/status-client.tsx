@@ -921,7 +921,7 @@ export function StatusClient() {
                 No remote providers are configured.
               </p>
               <Button type="button" variant="outline" size="sm" asChild>
-                <Link href="/providers">Review connections</Link>
+                <Link href="/engines">Review connections</Link>
               </Button>
             </div>
           )}

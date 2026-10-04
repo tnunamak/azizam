@@ -362,3 +362,19 @@ test("failed refresh removes stale green engine observations", async ({
     page.locator("main").getByText("Ready", { exact: true }),
   ).toHaveCount(0);
 });
+
+test("Status keeps the local action when no remote providers are configured", async ({
+  page,
+}) => {
+  await mockStatusApis(page);
+  await page.route("**/admin/api/providers", (route) =>
+    route.fulfill({ json: { providers: [] } }),
+  );
+  await page.goto("/ui/status/");
+  await expect(
+    page.getByText("No remote providers are configured.", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Review connections", exact: true }),
+  ).toHaveAttribute("href", "/ui/engines/");
+});
