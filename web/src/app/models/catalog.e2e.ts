@@ -171,12 +171,15 @@ for (const theme of ["light", "dark"])
     test(`contract states ${theme} ${width}`, async ({ page }) => {
       await prepare(page, theme, width, seeded);
       await expect(page.getByText("Ready", { exact: true })).toBeVisible();
+      await page.getByText("Other options · 6").click();
       await expect(
         page.getByText("Ready to start", { exact: true }),
       ).toBeVisible();
       await expect(page.getByText("Starting", { exact: true })).toBeVisible();
       await expect(page.getByText("Busy", { exact: true })).toBeVisible();
-      await expect(page.getByText("Unknown", { exact: true })).toBeVisible();
+      await expect(
+        page.locator("article").getByText("Unknown", { exact: true }),
+      ).toHaveCount(0);
       await expect(page.getByText("Unavailable", { exact: true })).toHaveCount(
         2,
       );
@@ -253,15 +256,10 @@ test("member recovery keeps owner controls out of the catalog", async ({
   page,
 }) => {
   await prepare(page, "light", 390, seeded, 200, "member");
-  const card = page.locator("article").filter({
-    has: page.getByRole("button", {
-      name: "Copy model name catalog-only",
-      exact: true,
-    }),
-  });
-  await expect(
-    card.getByRole("link", { name: "Check status" }),
-  ).toHaveAttribute("href", "/ui/status/");
+  await page.getByText("Other options · 6").click();
+  await expect(page.getByText("catalog-only", { exact: true })).toBeVisible();
+  const checkStatusLinks = page.getByRole("link", { name: "Check status" });
+  await expect(checkStatusLinks.first()).toHaveAttribute("href", "/ui/status/");
   await expect(
     page.getByRole("link", { name: "Connect an engine" }),
   ).toHaveCount(0);
@@ -355,13 +353,22 @@ for (const theme of ["light", "dark"]) {
       const cards = page
         .getByLabel("Available model aliases")
         .locator("article");
-      await expect(cards).toHaveCount(4);
-      for (const title of ["Default", "Fast", "Coder", "Music"]) {
+      await expect(cards).toHaveCount(2);
+      for (const title of ["Default", "Music"]) {
         await expect(
           cards.getByRole("heading", { name: title, exact: true }),
         ).toBeVisible();
       }
-      await expect(cards.first().getByText("llama.cpp (chat)")).toBeVisible();
+      await expect(cards.first().getByText("llama.cpp (chat)")).toHaveCount(0);
+      await cards.first().getByRole("button", { name: "Details" }).click();
+      await expect(
+        page.getByRole("dialog").getByText("llama.cpp (chat)"),
+      ).toBeVisible();
+      await page.keyboard.press("Escape");
+      await page.getByText("Other options · 2").click();
+      for (const code of ["fast", "coder"]) {
+        await expect(page.getByText(code, { exact: true })).toBeVisible();
+      }
       await expect(
         page.getByRole("heading", { name: "Coder Q5", exact: true }),
       ).toHaveCount(0);

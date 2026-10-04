@@ -105,21 +105,23 @@ for (const theme of ["light", "dark"] as const) {
       await expect(
         cards.first().getByText("Local", { exact: true }),
       ).toBeVisible();
-      await expect(cards.first().getByTitle("Household chat")).toBeVisible();
-      await expect(cards.first().getByText("~151 ms · Measured")).toBeVisible();
+      await expect(cards.first().getByText("Household chat")).toHaveCount(0);
+      await expect(cards.first().getByText("~151 ms · Measured")).toHaveCount(
+        0,
+      );
       await expect(
         cards.first().getByText("Unknown", { exact: true }),
-      ).toBeVisible();
+      ).toHaveCount(0);
       await expect(
         cards.first().getByText("Live availability is not measured yet"),
-      ).toBeVisible();
+      ).toHaveCount(0);
       await expect(
         cards.nth(1).getByText("Remote", { exact: true }),
       ).toBeVisible();
       await expect(
-        cards.nth(1).getByTitle("Example image provider"),
-      ).toBeVisible();
-      await expect(cards.nth(1).getByText("~8.0 s · Typical")).toBeVisible();
+        cards.nth(1).getByText("Example image provider"),
+      ).toHaveCount(0);
+      await expect(cards.nth(1).getByText("~8.0 s · Typical")).toHaveCount(0);
       await expect(
         cards.getByText("Not measured yet", { exact: true }),
       ).toHaveCount(0);
@@ -143,10 +145,21 @@ for (const theme of ["light", "dark"] as const) {
       });
       await cards.first().getByRole("button", { name: "Details" }).click();
       await expect(
+        page.getByRole("dialog").getByText("Household chat"),
+      ).toBeVisible();
+      await expect(
         page.getByRole("dialog").getByText("Measured time"),
       ).toBeVisible();
       await expect(
         page.getByRole("dialog").getByText("~151 ms · Measured"),
+      ).toBeVisible();
+      await page.keyboard.press("Escape");
+      await cards.nth(1).getByRole("button", { name: "Details" }).click();
+      await expect(
+        page.getByRole("dialog").getByText("Example image provider"),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("dialog").getByText("~8.0 s · Typical"),
       ).toBeVisible();
     });
   }
@@ -162,7 +175,7 @@ test("models polish 2 absent telemetry stays honest without exposing service ids
       timing: { typical_seconds: null, source: null },
     },
   ]);
-  await expect(page.getByTitle("Configured engine")).toBeVisible();
+  await expect(page.getByText("Configured engine")).toHaveCount(0);
   await expect(
     page
       .getByLabel("Available model aliases")
@@ -188,6 +201,6 @@ test("models polish 2 empty states provide the next action", async ({
   await page.getByRole("textbox", { name: "Search models" }).fill("unmatched");
   await page.getByRole("button", { name: "Clear filters" }).click();
   await expect(
-    page.getByRole("button", { name: "Copy alias chat" }),
+    page.getByRole("button", { name: "Copy model name chat" }),
   ).toBeVisible();
 });

@@ -63,7 +63,7 @@ test("Providers presents the current API shape without inventing readiness or na
       ).toBeVisible();
       await expect(
         provider.getByText("Configured, observation unknown.", { exact: true }),
-      ).toBeVisible();
+      ).toHaveCount(0);
       await expect(provider).toContainText("This month$12.50 of $50.00");
       const missing = page.locator("article").filter({
         has: page.getByRole("heading", {
@@ -146,7 +146,7 @@ test("unknown provider readiness stays distinct from observed unavailability", a
   });
   await expect(
     unknown.getByText("Configured, observation unknown.", { exact: true }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   await expect(unknown.getByText("Unknown", { exact: true })).toHaveCount(0);
   await expect(unknown.getByText("Starting", { exact: true })).toHaveCount(0);
   await expect(unknown.getByText("Unavailable", { exact: true })).toHaveCount(

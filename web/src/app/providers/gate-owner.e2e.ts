@@ -65,6 +65,7 @@ for (const theme of ["light", "dark"]) {
           page.getByRole("heading", { name: "Providers", exact: true }),
         ).toBeVisible();
         if (state === "seeded") {
+          await page.getByText("Manage", { exact: true }).click();
           await expect(
             page.getByRole("cell", {
               name: "openai/gpt-4.1-nano",
