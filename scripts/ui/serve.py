@@ -55,8 +55,10 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
     try:
         for module, port in [('scripts.ui.fake_engine:app', ENGINE_PORT), ('proxy:app', PORT)]:
             log = (state / f'{port}.log').open('w')
-            children.append(subprocess.Popen([sys.executable, '-m', 'uvicorn', module, '--host',
-                                              '127.0.0.1', '--port', str(port)], cwd=state, env=env,
+            command = ([sys.executable, '-m', 'scripts.ui.fixture_gateway', str(PORT), str(ENGINE_PORT)]
+                       if module == 'proxy:app' else [sys.executable, '-m', 'uvicorn', module, '--host',
+                                                    '127.0.0.1', '--port', str(port)])
+            children.append(subprocess.Popen(command, cwd=state, env=env,
                                              stdout=log, stderr=subprocess.STDOUT))
             log.close()
         deadline = time.monotonic() + 90

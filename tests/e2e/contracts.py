@@ -208,6 +208,10 @@ if __name__ == "__main__":
         import uvicorn
         uvicorn.run(engine_app, host="127.0.0.1", port=int(sys.argv[2]), log_level="warning")
     elif len(sys.argv) > 1 and sys.argv[1] == "gateway":
+        from scripts.ui.fixture_guard import install
+        import yaml
+        fixture_config = yaml.safe_load(Path(os.environ["AI_GATEWAY_CONFIG_PATH"]).read_text())
+        install({int(sys.argv[2]), *(backend["port"] for backend in fixture_config["backends"].values())})
         from gateway import lifecycle_drivers
         async def stopped(self, service):
             return lifecycle_drivers.ProcessState.STOPPED
