@@ -409,6 +409,45 @@ def test_dispatch_deadline_bounds_total_response_time(monkeypatch):
     assert cancelled == [True]
 
 
+def test_dispatch_deadline_includes_lifecycle_health_timeout(monkeypatch):
+    import gateway.decision_routing as routing
+
+    monkeypatch.setattr(routing, "ROUTING_TIMEOUT_SECONDS", .01, raising=False)
+    cfg = config()
+    cfg["backends"]["small"]["lifecycle"] = {
+        "driver": "systemd",
+        "driver_config": {"health_timeout_s": .2},
+    }
+    started = []
+
+    async def ensure(_service):
+        started.append(True)
+        await asyncio.sleep(.04)
+        return None
+
+    rt = runtime(cfg=cfg, ensure=ensure)
+    real = httpx.AsyncClient
+
+    def handler(_request):
+        return httpx.Response(
+            200,
+            json={
+                "model": "small-v1",
+                "answers": {"q": {"type": "noul", "noul": .9}},
+                "usage": {"input_tokens": 1, "output_tokens": 0},
+            },
+        )
+
+    with patch(
+        "gateway.decision_routing.httpx.AsyncClient",
+        lambda **kw: real(transport=httpx.MockTransport(handler)),
+    ):
+        result = asyncio.run(rt.dispatch(None, None, BODY, "r"))
+
+    assert result.status_code == 200
+    assert started == [True]
+
+
 @pytest.mark.parametrize("app_key", [False, True])
 def test_configured_timeout_allows_on_demand_start_for_app_and_lan(monkeypatch, app_key):
     import gateway.decision_routing as routing
@@ -421,7 +460,7 @@ def test_configured_timeout_allows_on_demand_start_for_app_and_lan(monkeypatch, 
     # fits the operator's explicit service timeout and lifecycle health budget.
     monkeypatch.setattr(routing, "ROUTING_TIMEOUT_SECONDS", .03)
     cfg = config()
-    cfg["backends"]["small"].update(timeout=.3, lifecycle={
+    cfg["backends"]["large"].update(timeout=.3, lifecycle={
         "driver": "systemd", "driver_config": {"health_timeout_s": .2},
     })
     monkeypatch.setattr(proxy, "config", cfg)
@@ -440,10 +479,32 @@ def test_configured_timeout_allows_on_demand_start_for_app_and_lan(monkeypatch, 
     profile = AppProfile(id="local")
     auth = proxy.AuthContext(RuntimeIdentity("test-app", "hash", profile=profile)) if app_key else proxy.AuthContext()
     real = httpx.AsyncClient
-    with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"model": "small-v1", "answers": {"q": {"type": "noul", "noul": .9}}, "usage": {"input_tokens": 1, "output_tokens": 0}})))):
-        result = asyncio.run(proxy.DECISION_RUNTIME.dispatch(auth, profile, BODY, "r"))
+    with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"model": "large-v1", "answers": {"q": {"type": "noul", "noul": .9}}, "usage": {"input_tokens": 1, "output_tokens": 0}})))):
+        result = asyncio.run(proxy.DECISION_RUNTIME.dispatch(auth, profile, {**BODY, "model": "decide-quality"}, "r"))
     assert result.status_code == 200
     assert starts == [.2]
+
+
+@pytest.mark.parametrize("timeout", [.03, None, "invalid", float("inf"), float("nan"), 0, -1])
+def test_configured_decision_timeout_still_bounds_startup(monkeypatch, timeout):
+    import gateway.decision_routing as routing
+    monkeypatch.setattr(routing, "ROUTING_TIMEOUT_SECONDS", .03)
+    cfg = config()
+    cfg["backends"]["large"]["timeout"] = timeout
+    cancelled = []
+
+    async def ensure(service):
+        try:
+            await asyncio.sleep(.12)
+        except asyncio.CancelledError:
+            cancelled.append(service)
+            raise
+
+    rt = runtime(cfg=cfg, ensure=ensure)
+    result = asyncio.run(rt.dispatch(None, None, {**BODY, "model": "decide-quality"}, "r"))
+    assert result.status_code == 529
+    assert result.fallback_reasons == ("large:deadline_exceeded",)
+    assert cancelled == ["large"]
 
 
 def test_engine_deadline_response_is_retryable_and_preserves_reason():
