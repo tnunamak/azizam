@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 import proxy
-from gateway import admin_store, custom_voices as cv
+from gateway import admin_store, custom_voices as cv, media_jobs, receipt_store
 from gateway.admin_api import AdminContext
 from gateway.admin_runtime import AdminSQLiteStore
 from tests.voice_test_audio import HAVE_FFMPEG, speechlike
@@ -50,7 +50,12 @@ class CustomVoiceRouteCase(unittest.TestCase):
         _FakeClient.requests = []
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.store = cv.VoiceStore(Path(self.tmp.name))
+        root = Path(self.tmp.name)
+        self.store = cv.VoiceStore(root)
+        self.receipts_db = root / "receipts.db"
+        self.media_jobs_db = root / "media_jobs.db"
+        receipt_store.init_db(self.receipts_db)
+        media_jobs.init_db(self.media_jobs_db)
         cfg = copy.deepcopy(proxy.config)
         cfg["backends"]["tts-supertonic"] = {"name": "supertonic", "host": "127.0.0.1", "port": 8010, "capabilities": ["audio", "speech"]}
         self.ready = AsyncMock(return_value=None)
@@ -64,6 +69,8 @@ class CustomVoiceRouteCase(unittest.TestCase):
             patch.object(proxy, "_ensure_speech_service_ready", self.ready),
             patch.object(proxy, "_voice_store", lambda: self.store),
             patch.object(proxy, "_asset_owner_key", lambda _auth: self.owner),
+            patch.object(receipt_store, "DB_PATH", self.receipts_db),
+            patch.object(media_jobs, "DB_PATH", self.media_jobs_db),
         ]
         for p in self.patches:
             p.start()

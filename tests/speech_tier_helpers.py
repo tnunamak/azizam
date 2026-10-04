@@ -7,6 +7,7 @@ import shutil
 import struct
 import tempfile
 import unittest
+from pathlib import Path
 import wave
 from unittest.mock import AsyncMock, patch
 
@@ -14,6 +15,7 @@ import httpx
 from fastapi.testclient import TestClient
 
 import proxy
+from gateway import media_jobs, receipt_store
 
 HAVE_FFMPEG = shutil.which("ffmpeg") is not None
 
@@ -94,6 +96,10 @@ class RouteCase(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.cfg = _base_config(self.tmp.name)
+        self.receipts_db = Path(self.tmp.name) / "receipts.db"
+        self.media_jobs_db = Path(self.tmp.name) / "media_jobs.db"
+        receipt_store.init_db(self.receipts_db)
+        media_jobs.init_db(self.media_jobs_db)
         self.client = TestClient(proxy.app)
         self.ensure = AsyncMock(return_value=True)
         self.health = AsyncMock(return_value=True)
@@ -102,6 +108,8 @@ class RouteCase(unittest.TestCase):
             patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
             patch.object(proxy, "config", self.cfg),
             patch.object(proxy, "_service_availability_response", return_value=None),
+            patch.object(receipt_store, "DB_PATH", self.receipts_db),
+            patch.object(media_jobs, "DB_PATH", self.media_jobs_db),
             patch.object(proxy, "ensure_target", self.ensure),
             patch("gateway.lifecycle_drivers._poll_health", self.health),
             patch.object(proxy.receipt_store, "begin"),
