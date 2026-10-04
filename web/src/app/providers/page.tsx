@@ -386,6 +386,10 @@ function mapProviders(raw: unknown): ProviderRecord[] {
   return rows.map((item, index) => {
     const row =
       item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+    const id = text(row.id, text(row.provider_id, `provider-${index}`));
+    const declaredName = text(row.name, text(row.label, ""));
+    const name =
+      declaredName && declaredName !== id ? declaredName : "Remote provider";
     const keyObj =
       row.key_status && typeof row.key_status === "object"
         ? (row.key_status as Record<string, unknown>)
@@ -396,6 +400,7 @@ function mapProviders(raw: unknown): ProviderRecord[] {
       row.spend && typeof row.spend === "object"
         ? (row.spend as Record<string, unknown>)
         : {};
+    const spendStatus = text(spendObj.status, "known");
     const capsObj =
       row.caps && typeof row.caps === "object"
         ? (row.caps as Record<string, unknown>)
@@ -407,8 +412,8 @@ function mapProviders(raw: unknown): ProviderRecord[] {
       (entry) => entry && typeof entry === "object",
     ) as Record<string, unknown> | undefined;
     return {
-      id: text(row.id, text(row.provider_id, `provider-${index}`)),
-      name: text(row.name, text(row.label, `Provider ${index + 1}`)),
+      id,
+      name,
       enabled: bool(row.enabled),
       reachable: bool(row.reachable),
       keyStatus: text(
@@ -433,11 +438,17 @@ function mapProviders(raw: unknown): ProviderRecord[] {
           : "key",
       checkedAt: numberOrNull(row.checked_at),
       models: Array.isArray(row.models) ? row.models.map(mapModel) : [],
-      spendToday: numberOrNull(spendObj.daily_usd ?? row.spend_today_usd),
-      spendMonth: numberOrNull(
-        spendObj.monthly_usd ?? row.spend_month_usd ?? row.spend_usd,
-      ),
-      spendStatus: text(spendObj.status, "known"),
+      spendToday:
+        spendStatus === "unknown"
+          ? null
+          : numberOrNull(spendObj.daily_usd ?? row.spend_today_usd),
+      spendMonth:
+        spendStatus === "unknown"
+          ? null
+          : numberOrNull(
+              spendObj.monthly_usd ?? row.spend_month_usd ?? row.spend_usd,
+            ),
+      spendStatus,
       pendingReconciliationCount: pendingCountFromSpend(spendObj),
       needsReconciliation: needsReconciliationFromSpend(spendObj),
       capDaily: numberOrNull(capsObj.daily_usd ?? row.cap_daily_usd),
@@ -673,6 +684,9 @@ function DetailCard({
             </h2>
             <p className="text-muted-foreground mt-1 text-sm">
               <ProviderKeySummary provider={provider} />
+            </p>
+            <p className="text-muted-foreground mt-1 text-xs break-all">
+              Provider ID: {provider.id}
             </p>
           </div>
         </div>
@@ -1997,6 +2011,7 @@ export default function ProvidersPage() {
         answer="Remote providers are explicit paid routes."
         description="Requests go to a remote provider only when a model or alias names it. We never switch to a paid provider on our own."
         actions={
+          missingApi ? undefined :
           <Button onClick={() => setAddOpen(true)}>
             <Plus aria-hidden="true" /> Add provider
           </Button>

@@ -42,14 +42,22 @@ test("Providers presents the current API shape without inventing readiness or na
           exact: true,
         }),
       });
-      await expect(provider.locator("code")).toHaveText(
-        "internal-provider-record",
-      );
-      await expect(provider.getByText("Set", { exact: true })).toBeVisible();
       await expect(
-        provider.getByText("Availability not checked", { exact: true }),
+        provider.getByRole("heading", {
+          name: "Remote provider",
+          exact: true,
+        }),
       ).toBeVisible();
-      await expect(provider).toContainText("$12.50 of $50.00 this month");
+      await expect(
+        provider.getByText("Provider ID: internal-provider-record", {
+          exact: true,
+        }),
+      ).toBeVisible();
+      await expect(provider.getByText("Key set", { exact: true })).toBeVisible();
+      await expect(
+        provider.getByText("Configured, observation unknown.", { exact: true }),
+      ).toBeVisible();
+      await expect(provider).toContainText("This month$12.50 of $50.00");
       const missing = page.locator("article").filter({
         has: page.getByRole("heading", {
           name: "Missing key provider",
@@ -59,7 +67,7 @@ test("Providers presents the current API shape without inventing readiness or na
       await expect(
         missing.getByText("Unavailable", { exact: true }),
       ).toBeVisible();
-      await expect(missing.getByText("Missing", { exact: true })).toBeVisible();
+      await expect(missing.getByText("Missing key", { exact: true })).toBeVisible();
       await expect(
         missing.getByText("Not measured yet", { exact: true }),
       ).toBeVisible();
@@ -122,7 +130,7 @@ test("unknown provider readiness stays distinct from observed unavailability", a
     }),
   });
   await expect(
-    unknown.getByText("Availability not checked", { exact: true }),
+    unknown.getByText("Configured, observation unknown.", { exact: true }),
   ).toBeVisible();
   await expect(unknown.getByText("Unavailable", { exact: true })).toHaveCount(
     0,
@@ -134,6 +142,9 @@ test("unknown provider readiness stays distinct from observed unavailability", a
     }),
   });
   await expect(down.getByText("Unavailable", { exact: true })).toBeVisible();
+  await expect(
+    down.getByText("Gateway check observed it down.", { exact: true }),
+  ).toBeVisible();
   const ready = page.locator("article").filter({
     has: page.getByRole("heading", {
       name: "Reachable provider",
@@ -235,16 +246,37 @@ test("an observed-up engine with a bad health tone is shown as unavailable", asy
   await expect(card.getByText("Ready", { exact: true })).toHaveCount(0);
 });
 
-test("empty provider status offers connection review without promising provider creation", async ({
+test("empty provider status exposes Add provider when API is installed", async ({
   page,
 }) => {
   await page.route("**/admin/api/providers", (route) =>
     route.fulfill({ json: { providers: [] } }),
   );
+  await page.route("**/admin/api/providers/-/catalog", (route) =>
+    route.fulfill({
+      json: {
+        providers: [
+          {
+            id: "openrouter",
+            display_name: "OpenRouter",
+            base_url: "https://openrouter.ai/api/v1",
+            protocol: "openai-chat",
+            billing_dimensions: ["prompt_tokens", "completion_tokens"],
+          },
+        ],
+      },
+    }),
+  );
+  await page.route("**/admin/api/profiles", (route) =>
+    route.fulfill({ json: { profiles: [] } }),
+  );
 
   await page.goto("/ui/providers/");
-  const configure = page.getByRole("link", { name: "Review connections" });
-  await expect(configure).toHaveAttribute("href", "/ui/engines/");
+  await expect(page.getByText("No providers yet", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Add provider" }).first().click();
+  await expect(
+    page.getByRole("heading", { name: "Add provider", exact: true }),
+  ).toBeVisible();
   await page.unroute("**/admin/api/providers");
   await page.route("**/admin/api/providers", (route) =>
     route.fulfill({ status: 404, json: {} }),
@@ -253,7 +285,9 @@ test("empty provider status offers connection review without promising provider 
   await expect(
     page.getByText("Provider controls are not installed", { exact: true }),
   ).toBeVisible();
-  await expect(configure).toHaveAttribute("href", "/ui/engines/");
+  await expect(
+    page.getByRole("button", { name: "Add provider" }),
+  ).toHaveCount(0);
 });
 
 test("Status offers a local action when no remote providers are configured", async ({
