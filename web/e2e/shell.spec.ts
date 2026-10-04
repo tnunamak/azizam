@@ -159,8 +159,7 @@ test("phone More and tablet expansion expose every destination", async ({
 test("member shell hides owner controls and makes no owner API calls", async ({
   page,
 }) => {
-  // Built-in member invitation APIs are not present in this foundation lane.
-  // Keep the member identity consistent across session and Home snapshots.
+  // Keep member snapshots consistent across Home and Status navigation.
   // Owner APIs remain real so any unexpected request fails this assertion.
   const member = {
     id: "member-fixture",
@@ -199,6 +198,20 @@ test("member shell hides owner controls and makes no owner API calls", async ({
       },
     });
   });
+  await page.route("**/me/api/status", (route) =>
+    route.fulfill({
+      json: {
+        scope: "member",
+        status: {
+          state: "unavailable",
+          reason: "No service has been measured as ready yet.",
+        },
+        capabilities: [],
+        receipts: [],
+        help: "Ask the owner if an allowed capability is unavailable.",
+      },
+    }),
+  );
   await page.goto("/ui/");
   await expect(
     page.getByRole("button", { name: "Account menu" }),
