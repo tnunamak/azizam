@@ -631,3 +631,13 @@ def test_disabled_registry_model_does_not_prove_generic_endpoint_usable():
     registry = {"services": {"service": {"config": {"models": [{"id": "disabled", "enabled": False}]}}}}
     caps = _resolved_capabilities(identity, lambda _: [Capability(intent="chat.completions", backend="service")], registry)
     assert caps[0].policy_available is False
+
+
+def test_bound_remote_alias_cannot_override_denied_concrete_target():
+    identity = RuntimeIdentity(name="Scoped", key_hash="", profile=load_profile({"id": "no-remote"}))
+    raw = [Capability(intent="chat.completions", backend="cloud-service", model="provider/model",
+                      tags=("remote",), policy_available=False),
+           Capability(intent="chat.completions", backend="cloud-service", model="fast",
+                      tags=("alias", "resolves_to:provider/model"))]
+    projected = _resolved_capabilities(identity, lambda _: raw)
+    assert not next(cap for cap in projected if cap.model == "fast").policy_available

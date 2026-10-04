@@ -121,7 +121,7 @@ def _resolved_capabilities(identity: RuntimeIdentity, provider,
         if "remote" in cap.tags or "remote" in concrete.tags:
             # Remote verdicts include canonical provider grants and admin plan
             # restrictions. The local binding check cannot reproduce those.
-            upstream = cap if cap.backend != "gateway" else concrete
+            upstream = concrete if cap.backend == "gateway" or not concrete.policy_available else cap
             return replace(resolved, policy_available=upstream.policy_available,
                            policy_sources=upstream.policy_sources,
                            policy_reasons=upstream.policy_reasons)
