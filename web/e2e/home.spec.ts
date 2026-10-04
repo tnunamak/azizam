@@ -13,9 +13,14 @@ async function chooseRecipeKey(page: Page, optionName: string | RegExp) {
 }
 
 async function openClientInstructionsOnPhone(page: Page, width: number) {
+  if ((await page.getByRole("textbox", { name: "Base URL" }).count()) === 0) {
+    const picker = page.getByRole("button", { name: "Open WebUI" });
+    await expect(picker).toBeVisible();
+    await picker.click();
+  }
   if (width !== 390) return;
   if ((await page.getByRole("tabpanel").count()) === 0) {
-    await page.getByText("Client instructions", { exact: true }).click();
+    await page.getByText("App instructions", { exact: true }).click();
   }
 }
 
@@ -93,7 +98,7 @@ for (const theme of ["light", "dark"] as const) {
                 creations: null,
                 status: {
                   state: "unavailable",
-                  reason: "No capabilities are available to your account yet.",
+                  reason: "No tasks are available to your account yet.",
                 },
               },
             });
@@ -230,10 +235,8 @@ for (const theme of ["light", "dark"] as const) {
           await expect(page.getByLabel("Loading Home")).toHaveCount(0);
           if (state === "empty") {
             await expect(
-              page.getByText(
-                /No capabilities are available to your account yet/,
-              ),
-            ).toBeVisible();
+              page.getByText(/No tasks are available to your account yet/),
+            ).toHaveCount(1);
             await expect(
               page.getByRole("heading", {
                 name: "Finish setting up",
@@ -327,7 +330,7 @@ test("all ten client recipes fit a phone and remain accessible", async ({
     await expect(
       page
         .getByRole("tabpanel")
-        .getByText("Client setup: not verified", { exact: true }),
+        .getByText("App setup: not verified", { exact: true }),
     ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: `Connect ${name}`, exact: true }),
@@ -335,7 +338,7 @@ test("all ten client recipes fit a phone and remain accessible", async ({
     await expect(
       page
         .getByRole("tabpanel")
-        .getByText("Client setup: not verified", { exact: true }),
+        .getByText("App setup: not verified", { exact: true }),
     ).toBeVisible();
     expect(
       await page.evaluate(
@@ -381,7 +384,7 @@ test("Home shows a loading skeleton until the real snapshot arrives", async ({
   ).toEqual([]);
   release();
   await expect(
-    page.getByRole("tab", { name: "Open WebUI", exact: true }),
+    page.getByRole("button", { name: "Open WebUI", exact: true }),
   ).toBeVisible();
   await expect(page.getByLabel("Loading Home")).toHaveCount(0);
 });
@@ -390,7 +393,7 @@ test("signed-in landing redirects to Home", async ({ page }) => {
   await page.goto("/ui/");
   await expect(page).toHaveURL(/\/ui\/home\/$/);
   await expect(
-    page.getByRole("tab", { name: "Open WebUI", exact: true }),
+    page.getByRole("button", { name: "Open WebUI", exact: true }),
   ).toBeVisible();
 });
 
@@ -424,7 +427,7 @@ test("member Home never requests owner APIs", async ({ page, request }) => {
   );
   await page.goto(homePath);
   await expect(
-    page.getByRole("tab", { name: "Open WebUI", exact: true }),
+    page.getByRole("button", { name: "Open WebUI", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Finish setting up", exact: true }),
@@ -584,6 +587,7 @@ test("inline reveal-once key tests a real chat request and produces one owned re
       ).ok(),
     ).toBe(true);
     await page.goto(homePath);
+    await page.getByRole("button", { name: "Open WebUI", exact: true }).click();
     const mintResponse = page.waitForResponse(
       (response) =>
         /\/me\/api\/apps\/[^/]+\/keys$/.test(
@@ -715,7 +719,7 @@ test("inline reveal-once key tests a real chat request and produces one owned re
     );
     expect(progress.complete).toBe(true);
     await expect(
-      page.getByText("Client setup: not verified", { exact: true }),
+      page.getByText("App setup: not verified", { exact: true }),
     ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "What you can use", exact: true }),
@@ -793,14 +797,13 @@ test("a new inherited key cannot borrow a broader existing app's recipe", async 
     ).toBe(true);
     expect(snapshot.new_app_aliases).toEqual([]);
     await page.goto(homePath);
+    await page.getByRole("button", { name: "Open WebUI", exact: true }).click();
     const selector = page.getByRole("combobox", {
       name: "App key",
     });
     await expect(selector).toContainText("New app");
     await expect(
-      page.getByText("No chat alias is advertised for this key yet", {
-        exact: true,
-      }),
+      page.getByText("No chat alias is listed for this key", { exact: true }),
     ).toBeVisible();
     await chooseRecipeKey(page, /Browser test app/);
     await expect(page.getByRole("tabpanel").locator("pre")).toContainText(
@@ -821,7 +824,7 @@ test("a new inherited key cannot borrow a broader existing app's recipe", async 
     const { credential } = await minted.json();
     await expect(selector).toContainText("New key");
     await expect(
-      page.getByText("No chat alias is advertised for this key yet", {
+      page.getByText("No chat alias is listed for this key", {
         exact: true,
       }),
     ).toBeVisible();
@@ -857,7 +860,7 @@ test("a new inherited key cannot borrow a broader existing app's recipe", async 
       .getByRole("button", { name: "I’ve saved it", exact: true })
       .click();
     await expect(
-      page.getByText("No chat alias is advertised for this key yet", {
+      page.getByText("No chat alias is listed for this key", {
         exact: true,
       }),
     ).toBeVisible();

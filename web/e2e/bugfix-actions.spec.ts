@@ -17,7 +17,9 @@ test("remove an app through Apps & keys and invalidate its key", async ({
       response.url().endsWith("/keys") &&
       response.request().method() === "POST",
   );
-  await page.getByRole("button", { name: "Create app", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Create app and key", exact: true })
+    .click();
   const { credential } = await (await mintedResponse).json();
   const reveal = page.getByRole("dialog", { name: `Connect ${name}` });
   await expect(reveal).toBeVisible();

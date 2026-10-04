@@ -186,6 +186,7 @@ for (const theme of ["light", "dark"] as const) {
       await expect(page.getByRole("heading", { level: 1 })).toHaveText(
         "Hello, Tim.",
       );
+      await page.getByText("Needs attention", { exact: true }).click();
       await expect(
         page.getByText(
           "Images are unavailable: the service is disabled, with 1 other capability affected.",
@@ -212,14 +213,14 @@ for (const theme of ["light", "dark"] as const) {
       await expect(page.locator("main")).not.toContainText("face-likeness");
       await expect(page.locator("main")).not.toContainText("bernini-r-remix");
       await expect(page.getByRole("combobox", { name: "App key" })).toHaveCount(
+        0,
+      );
+      await page.getByRole("button", { name: "Open WebUI" }).click();
+      await expect(page.getByRole("combobox", { name: "App key" })).toHaveCount(
         1,
       );
-      if (width === 390) {
-        await expect(page.getByRole("tabpanel")).toHaveCount(0);
-        await page.getByText("Client instructions", { exact: true }).click();
-      }
       await expect(page.getByRole("tabpanel").locator("summary")).toHaveText(
-        "Client setup: not verified",
+        "App setup: not verified",
       );
       await expect(page.locator("main > div > details")).toHaveCount(0);
       expect(
@@ -290,7 +291,7 @@ test("one selected and pasted app key scopes all recipes and the gateway check",
     .getByRole("button", { name: "Gateway check", exact: true })
     .click();
   await expect(
-    page.getByText("Gateway check passed · 25 ms", { exact: true }),
+    page.getByText("Gateway responded with this key", { exact: true }),
   ).toBeVisible();
   expect(checks).toEqual([
     { api_key: "fixture-chat-secret", credential_id: "chat-key" },
@@ -302,7 +303,7 @@ test("one selected and pasted app key scopes all recipes and the gateway check",
   await expect(paste).toHaveValue("");
   await expect(page.getByRole("tabpanel").locator("pre")).toHaveCount(0);
   await expect(
-    page.getByText("No chat alias is advertised for this key yet", {
+    page.getByText("No chat alias is listed for this key", {
       exact: true,
     }),
   ).toBeVisible();

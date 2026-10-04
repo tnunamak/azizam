@@ -136,8 +136,7 @@ function joinNames(names: string[]): string {
 }
 
 export function capabilitySummary(tiles: HomeCapability[]): string {
-  if (!tiles.length)
-    return "No capabilities are available to your account yet.";
+  if (!tiles.length) return "No tasks are available to your account yet.";
   const names: Record<string, string> = {
     chat: "chat",
     image: "images",
@@ -153,7 +152,7 @@ export function capabilitySummary(tiles: HomeCapability[]): string {
     audio: "audio",
   };
   const clauses = (
-    ["ready", "idle", "starting", "busy", "unknown", "unavailable"] as const
+    ["ready", "idle", "starting", "busy", "unavailable"] as const
   ).flatMap((status) => {
     const matching = tiles
       .filter((tile) => tile.status === status)
@@ -162,12 +161,7 @@ export function capabilitySummary(tiles: HomeCapability[]): string {
     const plural =
       matching.length > 1 ||
       ["images", "decisions", "embeddings"].includes(matching[0]);
-    const description =
-      status === "idle"
-        ? "ready to start"
-        : status === "unknown"
-          ? "not measured yet"
-          : status;
+    const description = status === "idle" ? "ready to start" : status;
     return [`${joinNames(matching)} ${plural ? "are" : "is"} ${description}`];
   });
   const summary = clauses.join(" · ");
@@ -230,7 +224,7 @@ export function setupSteps(progress: SetupProgress) {
     optional: false,
     reason: progress.evidence.settings_copied.recorded
       ? "You confirmed that the settings were copied."
-      : "Copy the settings into your client, then confirm below.",
+      : "Copy the settings into your app, then confirm below.",
     href: "#connect",
   };
   const viewed = {
@@ -247,8 +241,8 @@ export function setupSteps(progress: SetupProgress) {
     done: progress.evidence.external_client_confirmed.recorded,
     optional: false,
     reason: progress.evidence.external_client_confirmed.recorded
-      ? "You confirmed that your client sent a request."
-      : "Send one request from your client, then confirm below.",
+      ? "You confirmed that your app sent a request."
+      : "Send one request from your app, then confirm below.",
     href: "#connect",
   };
   return [
@@ -262,10 +256,21 @@ export function setupSteps(progress: SetupProgress) {
   ];
 }
 
+export function hasEstablishedTraffic(home: HomeSnapshot): boolean {
+  return home.receipts.some((receipt) => Boolean(receipt.request_id));
+}
+
 export function needsSetup(progress: SetupProgress): boolean {
   return (
     !progress.dismissed &&
     (!progress.complete ||
       setupSteps(progress).some((step) => !step.optional && !step.done))
   );
+}
+
+export function shouldShowSetup(
+  progress: SetupProgress,
+  home: HomeSnapshot,
+): boolean {
+  return needsSetup(progress) && !hasEstablishedTraffic(home);
 }

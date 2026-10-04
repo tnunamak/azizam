@@ -167,9 +167,7 @@ export default function PeoplePage() {
   });
   const profiles =
     plansData || peopleData?.profiles || invitesData?.profiles || [];
-  const pending = (invitesData?.invites || []).filter(
-    (i) => !i.used_at && !i.revoked_at && i.expires_at * 1000 > Date.now(),
-  );
+  const invites = invitesData?.invites || [];
   const actions = (person: Person) =>
     person.protected && person.builtin === false ? null : (
       <DropdownMenu>
@@ -244,8 +242,8 @@ export default function PeoplePage() {
     <div>
       <PageHeader
         title="People"
-        answer="Choose who can use your gateway and what they can reach."
-        actions={
+        subtitle="Give someone the right access."
+        primaryAction={
           <Button
             onClick={() => setInviteOpen(true)}
             disabled={!profiles.length}
@@ -279,7 +277,7 @@ export default function PeoplePage() {
             <EmptyState
               icon={Users}
               title="Your people will appear here"
-              description="Create an access plan, then invite someone. Their account, activity and access will be listed here."
+              description="Invite someone to list their access and activity."
               action={
                 <Button
                   onClick={() =>
@@ -344,9 +342,13 @@ export default function PeoplePage() {
                   </div>
                   <div className="text-muted-foreground col-start-1 text-sm md:col-auto">
                     <span className="md:hidden">This month · </span>
-                    {person.requests_this_month === null
-                      ? "Not measured yet"
-                      : `${person.requests_this_month.toLocaleString()} requests`}
+                    {person.requests_this_month === null ? (
+                      <span className="sr-only">
+                        Request count not measured
+                      </span>
+                    ) : (
+                      `${person.requests_this_month.toLocaleString()} requests`
+                    )}
                   </div>
                   <div className="col-start-2 row-start-1 md:col-auto md:row-auto">
                     {actions(person)}
@@ -364,11 +366,11 @@ export default function PeoplePage() {
               message="Invites could not be loaded. Try again."
               onRetry={() => void invitesRefetch()}
             />
-          ) : !pending.length ? (
+          ) : !invites.length ? (
             <EmptyState
               icon={Mail}
-              title="No pending invitations"
-              description="Invite links give someone an account and the access plan you choose. Each link can be used once."
+              title="No invitations yet"
+              description="Create a single-use link for one access plan."
               action={
                 <Button
                   disabled={!profiles.length}
@@ -380,7 +382,7 @@ export default function PeoplePage() {
             />
           ) : (
             <div className="divide-y">
-              {pending.map((invite) => (
+              {invites.map((invite) => (
                 <InviteRow
                   key={invite.id}
                   invite={invite}
@@ -425,7 +427,7 @@ export default function PeoplePage() {
             <EmptyState
               icon={ShieldCheck}
               title="Create your first access plan"
-              description="Choose what people can use before inviting them. You can keep access local or allow selected remote capabilities."
+              description="Choose access before inviting people."
               action={
                 <Button onClick={() => setEditor("new")}>
                   Create an access plan
@@ -579,15 +581,46 @@ function InviteRow({
   copy: () => void;
   copying: boolean;
 }) {
+  const isPending =
+    !invite.used_at &&
+    !invite.revoked_at &&
+    invite.expires_at * 1000 > Date.now();
+  const status = invite.revoked_at
+    ? "Revoked"
+    : invite.used_at
+      ? "Accepted"
+      : invite.expires_at * 1000 <= Date.now()
+        ? "Expired"
+        : "Pending";
   return (
     <div className="flex items-start justify-between gap-4 py-5">
       <div className="min-w-0">
         <p className="font-medium break-all">
           {invite.email || "Anyone with the link"}
         </p>
-        <p className="text-muted-foreground mt-1 text-sm">
-          {invite.plan_name} · Expires <RelativeTime ts={invite.expires_at} />
-        </p>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <Badge variant={isPending ? "default" : "secondary"}>{status}</Badge>
+          <p className="text-muted-foreground text-sm">
+            {invite.plan_name} ·{" "}
+            {status === "Accepted" && invite.used_at ? (
+              <>
+                Accepted <RelativeTime ts={invite.used_at} />
+              </>
+            ) : status === "Revoked" && invite.revoked_at ? (
+              <>
+                Revoked <RelativeTime ts={invite.revoked_at} />
+              </>
+            ) : status === "Expired" ? (
+              <>
+                Expired <RelativeTime ts={invite.expires_at} />
+              </>
+            ) : (
+              <>
+                Expires <RelativeTime ts={invite.expires_at} />
+              </>
+            )}
+          </p>
+        </div>
       </div>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -600,11 +633,15 @@ function InviteRow({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem onSelect={copy} disabled={copying}>
+          <DropdownMenuItem onSelect={copy} disabled={copying || !isPending}>
             Copy invite link
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem variant="destructive" onSelect={revoke}>
+          <DropdownMenuItem
+            variant="destructive"
+            onSelect={revoke}
+            disabled={!isPending}
+          >
             Revoke invitation
           </DropdownMenuItem>
         </DropdownMenuContent>
@@ -624,6 +661,7 @@ function InviteDialog({
   const [plan, setPlan] = useState("");
   const [email, setEmail] = useState("");
   const [expiry, setExpiry] = useState("604800");
+  const selectedPlan = profiles.find((profile) => profile.id === plan);
   const mutation = useMutation({
     mutationFn: () =>
       peopleApi.invite({
@@ -656,6 +694,7 @@ function InviteDialog({
             <Label htmlFor="access-plan">Access plan</Label>
             <PlanSelect profiles={profiles} value={plan} onChange={setPlan} />
           </div>
+          {selectedPlan && <PlanPreview plan={selectedPlan} />}
           <div className="space-y-2">
             <Label htmlFor="invite-email">Email (optional)</Label>
             <Input
@@ -716,6 +755,7 @@ function ChangePlan({
   saved: () => Promise<void>;
 }) {
   const [plan, setPlan] = useState(person.profile_id || "");
+  const selectedPlan = profiles.find((profile) => profile.id === plan);
   const mutation = useMutation({
     mutationFn: () => peopleApi.change(person.id, { profile_id: plan }),
     onSuccess: async () => {
@@ -737,6 +777,7 @@ function ChangePlan({
           </DialogDescription>
         </DialogHeader>
         <PlanSelect profiles={profiles} value={plan} onChange={setPlan} />
+        {selectedPlan && <PlanPreview plan={selectedPlan} />}
         {mutation.isError && (
           <p role="alert" className="text-destructive text-sm">
             {message(mutation.error)}
@@ -755,6 +796,24 @@ function ChangePlan({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+function PlanPreview({ plan }: { plan: Profile }) {
+  return (
+    <div className="rounded-lg border p-4">
+      <p className="text-sm font-medium">{plan.name}</p>
+      <p className="text-muted-foreground mt-2 text-sm leading-6">
+        {planSummary(plan.profile)}
+      </p>
+      {planCounts(plan.profile) && (
+        <p className="text-muted-foreground mt-2 text-xs">
+          {planCounts(plan.profile)}
+        </p>
+      )}
+      {plan.description && (
+        <p className="mt-2 text-sm break-words">{plan.description}</p>
+      )}
+    </div>
   );
 }
 function Confirmation({

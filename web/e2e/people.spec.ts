@@ -156,9 +156,19 @@ async function open(page: Page, surface: Surface, state: State) {
     await page.getByRole("tab", { name: "Invites", exact: true }).click();
   if (surface === "plans")
     await page.getByRole("tab", { name: "Access plans", exact: true }).click();
-  if (state === "error")
+  if (state === "error" && surface === "invite") {
+    const alert = page
+      .getByRole("alert")
+      .filter({ hasText: /Couldn’t use this invitation/ });
+    await expect(alert).toBeVisible();
+    await expect(alert).toContainText(
+      "The request could not be completed. Try again; if this continues, ask the gateway owner for help.",
+    );
+  } else if (state === "error")
     await expect(
-      page.getByRole("alert").filter({ hasText: /Couldn’t load this/ }),
+      page
+        .getByRole("alert")
+        .filter({ hasText: /Couldn’t load (this|sign-in options)/ }),
     ).toBeVisible();
   else if (surface === "people")
     await expect(
@@ -170,7 +180,7 @@ async function open(page: Page, surface: Surface, state: State) {
   else if (surface === "invites")
     await expect(
       page.getByText(
-        state === "empty" ? "No pending invitations" : "sam@example.test",
+        state === "empty" ? "No invitations yet" : "sam@example.test",
         { exact: true },
       ),
     ).toBeVisible();
@@ -264,6 +274,9 @@ test("people lane invite create, plan change, disable, reset and remove journeys
     .getByRole("combobox", { name: "Access plan", exact: true })
     .click();
   await page.getByRole("option", { name: plan.name }).click();
+  await expect(page.getByRole("dialog")).toContainText(
+    "Chat and images. Local models only. No paid providers.",
+  );
   await page.getByLabel("Email (optional)").fill("friend@example.test");
   await page.getByRole("button", { name: "Create invite link" }).click();
   await expect(page.getByRole("dialog")).toContainText("Invitation ready");
@@ -298,6 +311,9 @@ test("people lane invite create, plan change, disable, reset and remove journeys
   });
   await page.getByRole("button", { name: "Actions for Morgan Rivera" }).click();
   await page.getByRole("menuitem", { name: "Change access plan" }).click();
+  await expect(page.getByRole("dialog")).toContainText(
+    "Chat and images. Local models only. No paid providers.",
+  );
   await page.getByRole("button", { name: "Save access plan" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   expect(writes[0]).toEqual({ method: "PATCH", body: { profile_id: plan.id } });
@@ -487,6 +503,53 @@ test("people lane failed list retries, pending invitation revokes with confirmat
   await page.getByRole("button", { name: "Confirm", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   expect(revoked).toBe(true);
+});
+
+test("people lane invitation rows distinguish pending, accepted, expired and revoked", async ({
+  page,
+}) => {
+  const now = Math.floor(Date.now() / 1000);
+  const invites = [
+    invitation,
+    {
+      ...invitation,
+      id: "invitation-accepted",
+      email: "accepted@example.test",
+      used_at: now - 120,
+    },
+    {
+      ...invitation,
+      id: "invitation-expired",
+      email: "expired@example.test",
+      expires_at: now - 120,
+    },
+    {
+      ...invitation,
+      id: "invitation-revoked",
+      email: "revoked@example.test",
+      revoked_at: now - 120,
+    },
+  ];
+  await mock(page, "seeded");
+  await page.route("**/admin/api/invites", (route) =>
+    route.fulfill({ json: { invites, profiles: [plan] } }),
+  );
+  await page.goto("/ui/people/");
+  await page.getByRole("tab", { name: "Invites", exact: true }).click();
+  for (const status of ["Pending", "Accepted", "Expired", "Revoked"]) {
+    await expect(page.getByText(status, { exact: true })).toBeVisible();
+  }
+  await page
+    .getByRole("button", {
+      name: "Actions for invitation to accepted@example.test",
+    })
+    .click();
+  await expect(
+    page.getByRole("menuitem", { name: "Copy invite link", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("menuitem", { name: "Revoke invitation", exact: true }),
+  ).toBeDisabled();
 });
 
 test("people lane OIDC invitation resumes its private token and accepts with session CSRF", async ({

@@ -27,6 +27,7 @@ test("Home and client recipes use the saved public URL on a different request ho
     expect(home.public_base_url).toBe(publicUrl);
     expect(home.api_base_url).toBe(`${publicUrl}/v1`);
     await page.goto("/ui/home/");
+    await page.getByRole("button", { name: "Open WebUI" }).click();
     await expect(
       page.getByRole("textbox", { name: "Base URL", exact: true }),
     ).toHaveValue(`${publicUrl}/v1`);
@@ -37,13 +38,6 @@ test("Home and client recipes use the saved public URL on a different request ho
         exact: true,
       })
       .click();
-    // Desktop instructions start open; keep this regression independent of that default.
-    await page
-      .locator("details")
-      .filter({ has: page.getByText("Client instructions", { exact: true }) })
-      .evaluate((element) => {
-        (element as HTMLDetailsElement).open = true;
-      });
     await expect(page.getByRole("tabpanel").locator("pre")).toContainText(
       `${publicUrl}/v1`,
     );

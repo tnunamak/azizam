@@ -23,15 +23,30 @@ async function routeFocusedHome(page: Page) {
           },
         ],
         capabilities: [
-          {
-            capability: "chat",
-            intent: "chat.completions",
-            model: "fast",
-            available: true,
-            status: "ready",
-            reason: "Chat is ready.",
-          },
-        ],
+          ["chat", "Chat"],
+          ["image", "Images"],
+          ["video", "Video"],
+          ["speech", "Speech"],
+          ["transcribe", "Transcription"],
+          ["decide", "Decisions"],
+          ["rerank", "Reranking"],
+        ].map(([capability, capability_title]) => ({
+          capability,
+          capability_title,
+          intent:
+            capability === "chat"
+              ? "chat.completions"
+              : `${capability}.generate`,
+          model: capability === "chat" ? "fast" : capability,
+          use_name: capability === "chat" ? "fast" : capability,
+          icon_key: capability,
+          available: capability !== "rerank",
+          status: capability === "rerank" ? "unavailable" : "ready",
+          reason:
+            capability === "rerank"
+              ? "Reranking is not available."
+              : `${capability_title} is ready.`,
+        })),
         credential_aliases: {},
         new_app_aliases: [
           {
@@ -85,6 +100,11 @@ test("Home capability Try link carries chat and fast into Try", async ({
   await expect(
     page.getByRole("heading", { name: "What you can use", exact: true }),
   ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Reranking" })).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "View all capabilities", exact: true })
+    .click();
+  await expect(page.getByRole("heading", { name: "Reranking" })).toBeVisible();
 
   const tryLink = page
     .locator('a[href*="/try/?capability=chat&model=fast"]')
@@ -105,6 +125,21 @@ test("Home capability Try link carries chat and fast into Try", async ({
   await expect(page.getByRole("combobox").first()).not.toContainText(
     "coder model",
   );
+});
+
+test("Home picks the app recipe before creating a key", async ({ page }) => {
+  await routeFocusedHome(page);
+
+  await page.goto("/ui/home/");
+  await expect(page.getByRole("textbox", { name: "Base URL" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Open WebUI" }).click();
+  await expect(
+    page.getByRole("button", { name: "Create key for Open WebUI" }),
+  ).toBeVisible();
+  await page.getByRole("tab", { name: "Phone", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Create key for Phone" }),
+  ).toBeVisible();
 });
 
 function catalogRow(id: string, intent: string) {

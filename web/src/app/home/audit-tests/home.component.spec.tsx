@@ -202,9 +202,10 @@ describe("Home audit component behavior", () => {
       }),
     );
     renderHome();
-    expect(
-      await screen.findByText("Everything you can use is ready."),
-    ).toBeVisible();
+    expect((await screen.findAllByText("Ready")).length).toBeGreaterThan(0);
+    for (const details of screen.getAllByText("Details")) {
+      await userEvent.click(details);
+    }
     await waitFor(() =>
       expect(screen.getByText("ACE-Step XL Turbo")).toBeVisible(),
     );
@@ -224,7 +225,8 @@ describe("Home audit component behavior", () => {
         const path = String(input);
         if (path === "/.well-known/ai-gateway")
           return Response.json({ service: { name: "Family gateway" } });
-        if (path === "/me/api/home") return Response.json(home);
+        if (path === "/me/api/home")
+          return Response.json({ ...home, receipts: [] });
         if (path === "/me/api/media?limit=5")
           return Response.json({ assets: [] });
         if (path === "/me/api/session")
@@ -268,7 +270,8 @@ describe("Home audit component behavior", () => {
         const path = String(input);
         if (path === "/.well-known/ai-gateway")
           return Response.json({ service: { name: "Family gateway" } });
-        if (path === "/me/api/home") return Response.json(home);
+        if (path === "/me/api/home")
+          return Response.json({ ...home, receipts: [] });
         if (path === "/me/api/media?limit=5")
           return Response.json({ assets: [] });
         if (path === "/me/api/session")
@@ -279,7 +282,7 @@ describe("Home audit component behavior", () => {
           return Response.json({
             ok: true,
             latency_ms: 12,
-            reason: "Gateway check passed.",
+            reason: "Gateway responded with this key",
             path: "/openai/v1/chat/completions",
             model: "fast",
             request_id: "req-1",
@@ -299,40 +302,39 @@ describe("Home audit component behavior", () => {
 
     renderHome();
     expect(
-      await screen.findByText("Next: Copy settings into your client"),
+      await screen.findByText("Next: Copy settings into your app"),
     ).toBeVisible();
     expect(evidencePosts).toEqual([]);
 
+    await userEvent.click(screen.getByRole("button", { name: "Open WebUI" }));
     await userEvent.click(screen.getByRole("combobox", { name: "App key" }));
     await userEvent.click(
       await screen.findByRole("option", { name: /Browser test app/ }),
     );
     await userEvent.type(
-      screen.getByLabelText("Paste your key"),
+      screen.getByLabelText("Paste your API key"),
       "opk_test_secret",
     );
     await userEvent.click(
       screen.getByRole("button", { name: "Gateway check" }),
     );
-    await screen.findByText("Gateway check passed.");
+    await screen.findByText("Gateway responded with this key");
     expect(evidencePosts).toEqual([]);
     await userEvent.click(
       screen.getByRole("button", { name: "I copied the settings" }),
     );
     await waitFor(() => expect(evidencePosts).toHaveLength(1));
     await userEvent.click(
-      screen.getByRole("button", { name: "My client sent a request" }),
+      screen.getByRole("button", { name: "My app sent a request" }),
     );
     await waitFor(() => expect(evidencePosts).toHaveLength(2));
     await userEvent.click(screen.getByText("Setup details"));
-    await userEvent.click(
-      screen.getByRole("button", { name: "I viewed this receipt" }),
-    );
-    await waitFor(() => expect(evidencePosts).toHaveLength(3));
+    expect(
+      screen.queryByRole("button", { name: "I viewed this receipt" }),
+    ).toBeNull();
     expect(evidencePosts).toEqual([
       { event: "settings_copied", app_id: "app-browser" },
       { event: "external_client_confirmed", app_id: "app-browser" },
-      { event: "receipt_viewed", request_id: "req-1" },
     ]);
   });
   it("does not infer missing chat access from a missing recipe alias", async () => {
@@ -366,8 +368,11 @@ describe("Home audit component behavior", () => {
       }),
     );
     renderHome();
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Open WebUI" }),
+    );
     expect(
-      await screen.findByText("No chat alias is advertised for this key yet"),
+      await screen.findByText("No chat alias is listed for this key"),
     ).toBeVisible();
     expect(
       screen.queryByText("No chat model is available to this key yet"),

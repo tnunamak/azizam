@@ -40,6 +40,7 @@ import {
   CopyField,
   CodeBlock,
 } from "@/components/product";
+import { preferredTerms } from "@/lib/terms";
 
 const accountKey = ["account", "session"];
 const CLIENTS = [
@@ -54,6 +55,12 @@ const CLIENTS = [
 ];
 type Reveal = { secret: string; app: string; client: string; oldIds: string[] };
 type KeyAction = { kind: "rotate" | "revoke" | "remove"; app: AccountApp };
+
+function accessPlanSummary(app: AccountApp): string {
+  return app.profile?.name
+    ? `${preferredTerms.permissionSet}: ${app.profile.name}`
+    : `${preferredTerms.permissionSet}: unavailable`;
+}
 
 function AppsContents() {
   const searchParams = useSearchParams();
@@ -231,8 +238,8 @@ function AppsContents() {
     <div className="space-y-8">
       <PageHeader
         title="Apps & keys"
-        answer="Which apps can use my account?"
-        actions={
+        subtitle="Which apps can use my account?"
+        primaryAction={
           <Button
             onClick={() => {
               setCreating(true);
@@ -265,7 +272,7 @@ function AppsContents() {
       ) : !accountData?.authenticated ? (
         <EmptyState
           title="Sign in to connect your apps"
-          description="Each app gets its own key and uses your account's access plan."
+          description="Each app gets a key with your account's access plan."
           action={
             <Button asChild>
               <a href="/admin/login">Sign in</a>
@@ -276,7 +283,7 @@ function AppsContents() {
         <EmptyState
           icon={KeyRound}
           title="Connect your first app"
-          description="Create an app to get a key for your AI client. You can revoke its access at any time."
+          description="Create a key for an app you already use."
           action={<Button onClick={() => setCreating(true)}>New app</Button>}
         />
       ) : (
@@ -311,7 +318,7 @@ function AppsContents() {
                   <p className="text-muted-foreground mt-1 text-sm">
                     {app.credentials.length}{" "}
                     {app.credentials.length === 1 ? "key" : "keys"} ·{" "}
-                    {app.profile?.name ?? "Access plan unavailable"}
+                    {accessPlanSummary(app)}
                   </p>
                   <p className="text-muted-foreground mt-2 text-xs">
                     Last used:{" "}
@@ -402,7 +409,7 @@ function AppsContents() {
           <DialogHeader>
             <DialogTitle>New app</DialogTitle>
             <DialogDescription>
-              Give your client its own key. The key appears once after creation.
+              Create access for an existing app; its key appears once.
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={create} className="space-y-5">
@@ -423,7 +430,7 @@ function AppsContents() {
             </div>
             <div className="space-y-2">
               <label htmlFor="app-client" className="text-sm font-medium">
-                Client
+                App recipe
               </label>
               <Select value={client} onValueChange={setClient}>
                 <SelectTrigger id="app-client" className="w-full">
@@ -460,7 +467,7 @@ function AppsContents() {
                   ? "Creating…"
                   : createdApp
                     ? "Retry key creation"
-                    : "Create app"}
+                    : "Create app and key"}
               </Button>
             </DialogFooter>
           </form>
@@ -480,14 +487,19 @@ function AppsContents() {
                 : action?.kind === "rotate"
                   ? "Rotate"
                   : "Revoke"}{" "}
-              {action?.kind === "remove" ? actionAppName : `keys for ${actionAppName}`}?
+              {action?.kind === "remove"
+                ? actionAppName
+                : `keys for ${actionAppName}`}
+              ?
             </DialogTitle>
             <DialogDescription>
-              {action?.kind === "rotate"
-                ? "Save the replacement key first. Once you confirm it is saved, all previous keys for this app will stop working."
-                : action?.kind === "remove"
-                  ? "This removes the app and its keys. Requests from those keys will stop working immediately."
-                  : "All keys for this app will stop working immediately. You can create a new key later."}
+              {action
+                ? action.kind === "rotate"
+                  ? `${accessPlanSummary(action.app)}. Save the replacement key first. Old keys stop after you confirm.`
+                  : action.kind === "remove"
+                    ? `${accessPlanSummary(action.app)}. This removes the app and its keys.`
+                    : `${accessPlanSummary(action.app)}. Apps using these keys will stop connecting.`
+                : ""}
             </DialogDescription>
           </DialogHeader>
           {error && (
@@ -533,8 +545,7 @@ function AppsContents() {
           <DialogHeader>
             <DialogTitle>Connect {reveal?.app}</DialogTitle>
             <DialogDescription>
-              Save this key somewhere safe. You cannot view it again after
-              leaving this step.
+              Save this key; you cannot view it again.
             </DialogDescription>
           </DialogHeader>
           {reveal && (
@@ -545,13 +556,15 @@ function AppsContents() {
                   onSaved={() => void saveKey()}
                 />
               )}
-              <CopyField label="Base URL" value={baseUrl} />
+              <CopyField
+                label={preferredTerms.connectionAddress}
+                value={baseUrl}
+              />
               <p className="text-muted-foreground text-sm">
                 {reveal.client === "Other app"
-                  ? "Choose your client's OpenAI-compatible provider"
+                  ? "Choose your app's OpenAI-compatible provider"
                   : `Use ${reveal.client} with the OpenAI-compatible API`}
-                , paste this base URL, and enter your saved key. The examples
-                below read the key from GATEWAY_API_KEY.
+                , paste this gateway address, and enter your saved key.
               </p>
               <details className="text-sm">
                 <summary className="cursor-pointer font-medium">

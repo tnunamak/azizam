@@ -195,6 +195,7 @@ for (const state of ["seeded", "empty", "error"] as const) {
           await expect(
             page.getByRole("heading", { name: /^Hello,/ }),
           ).toBeVisible();
+          await page.getByRole("button", { name: "Open WebUI" }).click();
           await expect(
             page.getByText("Base URL", { exact: true }),
           ).toBeVisible();
@@ -214,6 +215,7 @@ test("fresh owner sees setup and connection task in the first viewport", async (
   await page.setViewportSize({ width: 390, height: 844 });
   await setupRoutes(page, "seeded", "owner");
   await page.goto("/ui/home/");
+  await page.getByRole("button", { name: "Open WebUI" }).click();
   for (const locator of [
     page.getByRole("heading", { name: "Finish setting up" }),
     page.getByText("Base URL", { exact: true }),
@@ -238,6 +240,7 @@ test("member Home keeps owner setup API out and connection task in the first vie
     });
   });
   await page.goto("/ui/home/");
+  await page.getByRole("button", { name: "Open WebUI" }).click();
   const baseUrl = page.getByText("Base URL", { exact: true });
   await expect(baseUrl).toBeVisible();
   const box = await baseUrl.boundingBox();
@@ -256,7 +259,7 @@ test("setup evidence posts only after explicit owner confirmations", async ({
       json: {
         ok: true,
         latency_ms: 12,
-        reason: "Gateway check passed.",
+        reason: "Gateway responded with this key",
         path: "/openai/v1/chat/completions",
         model: "fast",
         request_id: "req-1",
@@ -280,17 +283,18 @@ test("setup evidence posts only after explicit owner confirmations", async ({
   });
   await page.goto("/ui/home/");
   expect(posts).toEqual([]);
+  await page.getByRole("button", { name: "Open WebUI" }).click();
   await page.getByRole("combobox", { name: "App key" }).click();
   await page.getByRole("option", { name: /Browser test app/ }).click();
   await page.getByLabel("Paste your key").fill("opk_test_secret");
   await page.getByRole("button", { name: "Gateway check" }).click();
   await expect(
-    page.getByText("Gateway check passed.", { exact: true }),
+    page.getByText("Gateway responded with this key", { exact: true }),
   ).toBeVisible();
   expect(posts).toEqual([]);
   await page.getByRole("button", { name: "I copied the settings" }).click();
   await expect.poll(() => posts.length).toBe(1);
-  await page.getByRole("button", { name: "My client sent a request" }).click();
+  await page.getByRole("button", { name: "My app sent a request" }).click();
   await expect.poll(() => posts.length).toBe(2);
   await page.getByText("Setup details").click();
   await page.getByRole("button", { name: "I viewed this receipt" }).click();
@@ -340,6 +344,7 @@ test("real gateway setup evidence stays separate from gateway check", async ({
   expect(typeof secret).toBe("string");
 
   await page.goto("/ui/home/");
+  await page.getByRole("button", { name: "Open WebUI" }).click();
   await page.getByRole("combobox", { name: "App key" }).click();
   await page.getByRole("option", { name: /Home audit evidence key/ }).click();
   await page.getByLabel("Paste your key").fill(secret);
@@ -382,7 +387,7 @@ test("real gateway setup evidence stays separate from gateway check", async ({
     )
     .toBe(true);
 
-  await page.getByRole("button", { name: "My client sent a request" }).click();
+  await page.getByRole("button", { name: "My app sent a request" }).click();
   await expect
     .poll(
       async () =>

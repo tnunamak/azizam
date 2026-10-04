@@ -106,7 +106,9 @@ test("command palette navigates and runs three real actions", async ({
       response.url().endsWith("/keys") &&
       response.request().method() === "POST",
   );
-  await page.getByRole("button", { name: "Create app", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Create app and key", exact: true })
+    .click();
   expect((await key).status()).toBe(201);
   await page.getByRole("button", { name: "I’ve saved it" }).click();
   await expect(

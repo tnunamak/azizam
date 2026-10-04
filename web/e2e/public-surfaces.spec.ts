@@ -103,6 +103,12 @@ for (const theme of ["light", "dark"] as const) {
             ).toBeVisible();
           } else if (surface === "setup") {
             await expect(page.getByLabel("Email or username")).toBeVisible();
+            await expect(
+              page.getByRole("button", {
+                name: state === "empty" ? "Create owner account" : "Sign in",
+                exact: true,
+              }),
+            ).toBeVisible();
             await page
               .getByText("Recovery and advanced setup", { exact: true })
               .click();
@@ -238,6 +244,45 @@ test("built-in sign-in posts JSON and retains its fields after denied credential
   await expect(
     page.getByRole("button", { name: "Sign in", exact: true }),
   ).toBeEnabled();
+});
+
+test("expired invite links ask for a new invitation without retry", async ({
+  page,
+}) => {
+  await page.route("**/auth/api/options*", (route) =>
+    route.fulfill({
+      json: {
+        built_in: true,
+        oidc: false,
+        oidc_label: "",
+        oidc_url: "/admin/login?return_to=/ui/",
+        instance_name: "Browser test gateway",
+        owner_name: "Gateway owner",
+      },
+    }),
+  );
+  await page.route("**/auth/api/invite?**", (route) =>
+    route.fulfill({
+      status: 404,
+      json: {
+        error: {
+          code: "link_unavailable",
+          message: "This link has expired or is no longer available.",
+        },
+      },
+    }),
+  );
+  await page.goto("/ui/invite/#token=expired-browser-token");
+  const alert = page
+    .getByRole("alert")
+    .filter({ hasText: "Couldn’t use this invitation" });
+  await expect(alert).toBeVisible();
+  await expect(alert).toContainText(
+    "This link can no longer be used. Ask the gateway owner for a new link.",
+  );
+  await expect(page.getByRole("button", { name: /try again/i })).toHaveCount(
+    0,
+  );
 });
 
 for (const theme of ["light", "dark"] as const) {

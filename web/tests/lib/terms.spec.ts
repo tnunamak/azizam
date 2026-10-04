@@ -151,6 +151,14 @@ const technicalExceptions: Record<string, { value: string; reason: string }[]> =
     ],
     "app/home/recipes.ts": [
       {
+        value: "Base URL",
+        reason: "Exact field label used by OpenAI-compatible app recipes",
+      },
+      {
+        value: "Override OpenAI Base URL",
+        reason: "Exact Cursor setting label",
+      },
+      {
         value:
           "In Cursor Settings → Models, enable your OpenAI API key, set Override OpenAI Base URL, and add the model below. Cursor’s servers must reach this URL; a localhost or private LAN URL will not work. Your key is sent through Cursor’s servers. Custom keys cover chat; Tab uses Cursor’s models.",
         reason: "Third-party Cursor setup recipe must name its exact setting",

@@ -109,6 +109,14 @@ async function seed(page: Page, state: "seeded" | "empty" | "error") {
   );
 }
 
+async function editSection(page: Page, name: string) {
+  const section = page.getByRole("region", { name, exact: true });
+  await section
+    .getByRole("button", { name: `Edit ${name}`, exact: true })
+    .click();
+  return section;
+}
+
 for (const theme of ["light", "dark"] as const) {
   for (const width of [1440, 390]) {
     for (const state of ["seeded", "empty", "error"] as const) {
@@ -142,6 +150,7 @@ for (const theme of ["light", "dark"] as const) {
             page.getByRole("heading", { name, exact: true }),
           ).toBeVisible();
         }
+        await editSection(page, "Advanced");
         await page
           .getByText("Effective configuration and export", { exact: true })
           .click();
@@ -150,14 +159,25 @@ for (const theme of ["light", "dark"] as const) {
             page.getByRole("button", { name: "Try again" }),
           ).toHaveCount(6);
         } else {
-          await expect(page.getByLabel("Instance name")).toHaveValue(
+          await expect(
+            page.getByText("Our gateway", { exact: true }),
+          ).toBeVisible();
+          await expect(
+            page.getByLabel("Instance name", { exact: true }),
+          ).toHaveCount(0);
+          const instance = await editSection(page, "Instance");
+          await expect(instance.getByLabel("Instance name")).toHaveValue(
             "Our gateway",
           );
           await expect(
             page.getByText("Built-in accounts on", { exact: true }),
+          ).toHaveCount(0);
+          const signIn = await editSection(page, "Sign-in");
+          await expect(
+            signIn.getByText("Built-in accounts on", { exact: true }),
           ).toBeVisible();
           await expect(
-            page.getByLabel("Available sign-in methods"),
+            signIn.getByLabel("Available sign-in methods"),
           ).toContainText(
             state === "empty"
               ? "Built-in accounts only"
@@ -173,7 +193,11 @@ for (const theme of ["light", "dark"] as const) {
           ).toBeVisible();
           if (state === "empty") {
             await expect(
-              page.getByText("No extensions installed"),
+              page.getByRole("region", { name: "Extensions", exact: true }),
+            ).toContainText("No extensions installed");
+            await editSection(page, "Extensions");
+            await expect(
+              page.getByText("No extensions installed").nth(1),
             ).toBeVisible();
             await expect(
               page.getByText(/No identity provider is connected yet/),
@@ -205,6 +229,7 @@ test("settings saves each section through its own API and keeps OIDC secret writ
   page,
 }) => {
   await page.goto("/ui/settings/");
+  await editSection(page, "Instance");
   await expect(page.getByLabel("Instance name")).toBeVisible();
   await page.getByLabel("Instance name").fill("Browser settings journey");
   const saved = page.waitForResponse(
@@ -220,6 +245,7 @@ test("settings saves each section through its own API and keeps OIDC secret writ
     page.getByText("Instance settings saved", { exact: true }),
   ).toBeVisible();
   await page.reload();
+  await editSection(page, "Instance");
   await expect(page.getByLabel("Instance name")).toHaveValue(
     "Browser settings journey",
   );
@@ -228,6 +254,7 @@ test("settings saves each section through its own API and keeps OIDC secret writ
       .locator("aside")
       .getByText("Browser settings journey", { exact: true }),
   ).toBeVisible();
+  await editSection(page, "Media admission");
   await page.getByLabel("Maximum queued jobs").fill("7");
   const mediaSaved = page.waitForResponse(
     (r) =>
@@ -237,7 +264,9 @@ test("settings saves each section through its own API and keeps OIDC secret writ
   await page.getByRole("button", { name: "Save media admission" }).click();
   expect((await mediaSaved).status()).toBe(200);
   await page.reload();
+  await editSection(page, "Media admission");
   await expect(page.getByLabel("Maximum queued jobs")).toHaveValue("7");
+  await editSection(page, "Defaults");
   await page.getByLabel("Default access plan").click();
   await page.getByRole("option", { name: "Local chat", exact: true }).click();
   const planSaved = page.waitForResponse(
@@ -248,9 +277,11 @@ test("settings saves each section through its own API and keeps OIDC secret writ
   await page.getByRole("button", { name: "Save default plan" }).click();
   expect((await planSaved).status()).toBe(200);
   await page.reload();
+  await editSection(page, "Defaults");
   await expect(page.getByLabel("Default access plan")).toContainText(
     "Local chat",
   );
+  await editSection(page, "Sign-in");
   await page.getByLabel("Available sign-in methods").click();
   await page
     .getByRole("option", { name: "Built-in accounts only", exact: true })
@@ -268,6 +299,7 @@ test("settings saves each section through its own API and keeps OIDC secret writ
     page.getByText("Sign-in choice saved", { exact: true }),
   ).toBeVisible();
   await page.reload();
+  await editSection(page, "Sign-in");
   await expect(page.getByLabel("Available sign-in methods")).toContainText(
     "Built-in accounts only",
   );
@@ -317,6 +349,7 @@ test("settings saves each section through its own API and keeps OIDC secret writ
   await page.getByRole("button", { name: "Save sign-in", exact: true }).click();
   expect((await oidcSaved).status()).toBe(200);
   await page.reload();
+  await editSection(page, "Sign-in");
   await expect(page.getByLabel("Client secret", { exact: true })).toHaveValue(
     "",
   );
@@ -328,6 +361,7 @@ test("settings saves each section through its own API and keeps OIDC secret writ
   );
   await page.getByRole("button", { name: "Save sign-in", exact: true }).click();
   expect((await preserve).postDataJSON()).not.toHaveProperty("client_secret");
+  await editSection(page, "Advanced");
   await page
     .getByText("Effective configuration and export", { exact: true })
     .click();
@@ -402,13 +436,21 @@ test("settings reports save failure and retries a failed load", async ({
   ).toBeVisible();
   failing = false;
   await section.getByRole("button", { name: "Try again" }).click();
+  await section
+    .getByRole("button", { name: "Edit Instance", exact: true })
+    .click();
   await expect(page.getByLabel("Instance name")).toHaveValue("Recovered");
   failing = true;
+  await page.getByLabel("Instance name").fill("Typed but not saved");
   await page
     .getByRole("button", { name: "Save instance", exact: true })
     .click();
+  await expect(section.getByRole("alert")).toContainText("Unsaved changes");
   await expect(section.getByRole("alert")).toContainText(
     "Instance could not be saved",
+  );
+  await expect(page.getByLabel("Instance name")).toHaveValue(
+    "Typed but not saved",
   );
 });
 
@@ -445,6 +487,7 @@ test("built-in default plans remain visible without a database profile row", asy
     }),
   );
   await page.goto("/ui/settings/");
+  await editSection(page, "Defaults");
   await expect(page.getByLabel("Default access plan")).toContainText(
     "Default local (built-in)",
   );
@@ -473,6 +516,7 @@ test("extension enable uses the validated source and waits for explicit code tru
     route.fulfill({ json: {} }),
   );
   await page.goto("/ui/settings/");
+  await editSection(page, "Extensions");
   await page.getByRole("button", { name: "Add extension" }).click();
   await page.getByLabel("Directory on the gateway").fill("/extensions/fixture");
   await page.getByRole("button", { name: "Validate package" }).click();

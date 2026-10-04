@@ -92,14 +92,19 @@ const split = (value: string) =>
 function Section({
   title,
   description,
+  summary,
   children,
 }: {
   title: string;
   description: string;
+  summary?: ReactNode;
   children: ReactNode;
 }) {
+  const [editing, setEditing] = useState(false);
+  const showSummary = summary && !editing;
   return (
     <section
+      id={title.toLowerCase().replaceAll(" ", "-")}
       aria-label={title}
       className="grid min-w-0 gap-5 border-t py-8 xl:grid-cols-[220px_minmax(0,1fr)] xl:gap-10"
     >
@@ -109,7 +114,34 @@ function Section({
           {description}
         </p>
       </div>
-      <div className="max-w-2xl min-w-0">{children}</div>
+      <div className="max-w-2xl min-w-0">
+        {showSummary ? (
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="min-w-0 text-sm leading-6">{summary}</div>
+            <Button
+              variant="outline"
+              aria-label={`Edit ${title}`}
+              onClick={() => setEditing(true)}
+            >
+              Edit
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-5">
+            {summary && (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="text-muted-foreground min-w-0 text-sm leading-6">
+                  {summary}
+                </div>
+                <Button variant="ghost" onClick={() => setEditing(false)}>
+                  Close
+                </Button>
+              </div>
+            )}
+            {children}
+          </div>
+        )}
+      </div>
     </section>
   );
 }
@@ -192,6 +224,7 @@ function Toggle({
 function MutationError({ error }: { error: unknown }) {
   return error ? (
     <p role="alert" className="text-destructive text-sm">
+      <span className="font-medium">Unsaved changes. </span>
       {error instanceof Error
         ? error.message
         : "Changes could not be saved. Try again."}
@@ -209,6 +242,19 @@ function InstanceSection() {
     <Section
       title="Instance"
       description="The name, public address and default appearance of your gateway."
+      summary={
+        data ? (
+          <>
+            <p>{data.instance.name || "Unnamed gateway"}</p>
+            <p className="text-muted-foreground">
+              {data.instance.base_url || "No public address set"} ·{" "}
+              {data.instance.theme_default === "system"
+                ? "Follows device theme"
+                : `${data.instance.theme_default} theme`}
+            </p>
+          </>
+        ) : undefined
+      }
     >
       {isPending ? (
         <Loading />
@@ -262,7 +308,7 @@ function InstanceForm({ initial }: { initial: Instance }) {
       <Field
         id="base-url"
         label="Public base URL"
-        help="Your public origin, without /v1. This changes discovery links, not the network listener."
+        help="Use the address people open, without /v1; shared links change, listeners do not."
       >
         <Input
           id="base-url"
@@ -322,7 +368,25 @@ function SignInSection() {
   return (
     <Section
       title="Sign-in"
-      description="Choose whether people sign in with built-in accounts, an identity provider or both."
+      description="Manage built-in accounts and identity provider sign-in."
+      summary={
+        oidcData && signInData ? (
+          <>
+            <p>
+              {signInData.mode === "both"
+                ? "Built-in accounts and identity provider"
+                : signInData.mode === "oidc"
+                  ? "Identity provider only"
+                  : "Built-in accounts only"}
+            </p>
+            <p className="text-muted-foreground">
+              {oidcData.oidc_config?.enabled
+                ? `Identity provider enabled${oidcData.oidc_config.issuer ? ` · ${oidcData.oidc_config.issuer}` : ""}`
+                : "No identity provider enabled"}
+            </p>
+          </>
+        ) : undefined
+      }
     >
       {oidcIsPending || signInIsPending ? (
         <Loading />
@@ -590,6 +654,29 @@ function DefaultsSection() {
     <Section
       title="Defaults"
       description="The default access plan and personal app options."
+      summary={
+        data ? (
+          <>
+            <p>
+              {data.defaults.profile_id
+                ? `Default plan: ${
+                    data.profiles.find((p) => p.id === data.defaults.profile_id)
+                      ?.name ?? "Access plan unavailable"
+                  }`
+                : "No default access plan"}
+            </p>
+            <p className="text-muted-foreground">
+              {data.access.self_service_apps
+                ? "People can create apps"
+                : "Only owners create apps"}{" "}
+              ·{" "}
+              {data.access.auto_create_personal_app
+                ? "Personal app created at sign-in"
+                : "No automatic personal app"}
+            </p>
+          </>
+        ) : undefined
+      }
     >
       {isPending ? (
         <Loading />
@@ -623,6 +710,7 @@ function DefaultsForm({
         body: { profile_id: plan === "none" ? null : plan },
       }),
     onSuccess: () => {
+      void client.invalidateQueries({ queryKey: keys.defaults });
       void client.invalidateQueries({ queryKey: keys.effective });
       toast.success("Default access plan saved");
     },
@@ -630,6 +718,7 @@ function DefaultsForm({
   const accessSave = useMutation({
     mutationFn: () => api.userAccessDefaults.update(access),
     onSuccess: () => {
+      void client.invalidateQueries({ queryKey: keys.defaults });
       void client.invalidateQueries({ queryKey: keys.effective });
       toast.success("Personal app defaults saved");
     },
@@ -746,7 +835,36 @@ function MediaSection() {
   return (
     <Section
       title="Media admission"
-      description="Control which media jobs enter the queue and how much work can wait."
+      description="Set media queue limits and paused job types."
+      summary={
+        data ? (
+          <>
+            <p>
+              {data.overrides.media_job_admission?.max_queue_depth ===
+                undefined ||
+              data.overrides.media_job_admission?.max_queue_depth === null
+                ? "Queue depth follows runtime default"
+                : `${data.overrides.media_job_admission.max_queue_depth} jobs can queue`}
+            </p>
+            <p className="text-muted-foreground">
+              {[
+                data.overrides.media_job_admission?.disabled_intents?.length
+                  ? `${data.overrides.media_job_admission.disabled_intents.length} paused job types`
+                  : null,
+                data.overrides.media_job_admission?.disabled_resource_classes
+                  ?.length
+                  ? `${data.overrides.media_job_admission.disabled_resource_classes.length} paused resource classes`
+                  : null,
+                data.overrides.media_job_admission?.reserved_tokens?.length
+                  ? `${data.overrides.media_job_admission.reserved_tokens.length} reserved tokens`
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" · ") || "No media admission rules set"}
+            </p>
+          </>
+        ) : undefined
+      }
     >
       {isPending ? (
         <Loading />
@@ -923,6 +1041,25 @@ function ExtensionsSection() {
     <Section
       title="Extensions"
       description="Add services and capabilities from packages you trust."
+      summary={
+        data ? (
+          <>
+            <p>
+              {packages.length
+                ? `${packages.filter((pkg) => pkg.enabled).length} enabled extensions`
+                : "No extensions installed"}
+            </p>
+            {packages.length ? (
+              <p className="text-muted-foreground">
+                {packages
+                  .slice(0, 3)
+                  .map((pkg) => pkg.id)
+                  .join(" · ")}
+              </p>
+            ) : null}
+          </>
+        ) : undefined
+      }
     >
       {isPending ? (
         <Loading />
@@ -964,7 +1101,7 @@ function ExtensionsSection() {
             <EmptyState
               icon={Puzzle}
               title="No extensions installed"
-              description="Extensions add capabilities to your gateway. Validate a trusted package before enabling it."
+              description="Validate a trusted package to add capabilities."
             />
           )}
           <Button variant="outline" onClick={() => setAdding(!adding)}>
@@ -1115,6 +1252,14 @@ function AdvancedSection() {
     <Section
       title="Advanced"
       description="Inspect the effective configuration. Secrets are redacted."
+      summary={
+        <>
+          <p>Redacted configuration snapshot</p>
+          <p className="text-muted-foreground">
+            Read-only export for inspection.
+          </p>
+        </>
+      }
     >
       <details onToggle={(e) => setOpen(e.currentTarget.open)}>
         <summary className="min-h-11 cursor-pointer py-3 text-sm font-medium">
@@ -1157,12 +1302,29 @@ function AdvancedSection() {
   );
 }
 export default function SettingsPage() {
+  const sections = [
+    "Instance",
+    "Sign-in",
+    "Defaults",
+    "Media admission",
+    "Extensions",
+    "Advanced",
+  ];
   return (
     <div className="max-w-5xl">
-      <PageHeader
-        title="Settings"
-        answer="Make this gateway yours. Changes save one section at a time."
-      />
+      <PageHeader title="Settings" subtitle="Change one thing at a time." />
+      <nav
+        aria-label="Settings sections"
+        className="mb-2 flex gap-2 overflow-x-auto pb-3"
+      >
+        {sections.map((section) => (
+          <Button key={section} variant="ghost" size="sm" asChild>
+            <a href={`#${section.toLowerCase().replaceAll(" ", "-")}`}>
+              {section}
+            </a>
+          </Button>
+        ))}
+      </nav>
       <InstanceSection />
       <SignInSection />
       <DefaultsSection />

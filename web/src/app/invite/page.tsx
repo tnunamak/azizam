@@ -98,8 +98,7 @@ export default function InvitePage() {
         {accept.data ? (
           <div className="mt-6 space-y-6">
             <p className="text-muted-foreground text-sm">
-              Your first app and key are ready. Save your key, then connect an
-              app from Home.
+              Save this key, then connect an app from Home.
             </p>
             <SecretReveal
               secret={accept.data.credential.api_key}
@@ -123,7 +122,7 @@ export default function InvitePage() {
           <div className="mt-6">
             <EmptyState
               title="You need an invite link"
-              description="Ask the gateway owner for an invitation, then open the complete link they share."
+              description="Ask the owner for a new invitation, then open the complete link."
               action={
                 <Button asChild variant="outline">
                   <a href="/ui/home/">Return to gateway home</a>
@@ -134,7 +133,8 @@ export default function InvitePage() {
         ) : inviteIsError ? (
           <div className="mt-6">
             <ErrorState
-              message={inviteError.message}
+              heading="Couldn’t use this invitation"
+              error={inviteError}
               onRetry={() => void inviteRefetch()}
             />
           </div>
@@ -161,6 +161,7 @@ export default function InvitePage() {
                 <p role="status">Loading sign-in options…</p>
               ) : optionsIsError ? (
                 <ErrorState
+                  heading="Couldn’t load sign-in options"
                   message="Sign-in options could not be loaded."
                   onRetry={() => void optionsRefetch()}
                 />

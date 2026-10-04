@@ -107,7 +107,8 @@ describe("Home and Library polish", () => {
       screen.getByRole("heading", { level: 1, name: "Hello, Alex." }),
     ).toBeVisible();
     expect(screen.queryByRole("heading", { name: "Home" })).toBeNull();
-    expect(screen.getByText("Client setup: not verified")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Open WebUI" }));
+    expect(screen.getByText("App setup: not verified")).toBeVisible();
     expect(screen.getByRole("button", { name: "Gateway check" })).toBeVisible();
     expect(
       screen.queryByRole("button", { name: "Test connection" }),
@@ -175,14 +176,19 @@ describe("Home and Library polish", () => {
       }),
     );
     renderPage(<HomePage />);
-    const summary = await screen.findByText("Client setup: not verified");
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Open WebUI" }),
+    );
+    const summary = await screen.findByText("App setup: not verified");
     expect(
       await screen.findByRole("heading", { name: "What you can use" }),
     ).toBeVisible();
     expect(await screen.findByText("An ocean")).toBeVisible();
     await userEvent.click(summary);
     expect(
-      screen.getByText(/Copy these settings into Open WebUI and connect there/),
+      screen.getByText(
+        /Copy these settings into Open WebUI\. The gateway check verifies the route and key/,
+      ),
     ).toBeVisible();
     expect(screen.queryByText("An app key has been used.")).toBeNull();
     expect(
@@ -226,9 +232,12 @@ describe("Home and Library polish", () => {
       }),
     );
     renderPage(<HomePage />);
-    expect(await screen.findByText("Unknown")).toBeVisible();
+    await screen.findByRole("heading", { name: "Images" });
+    expect(screen.queryByText("Unknown")).toBeNull();
+    await userEvent.click(screen.getAllByText("Details")[0]);
     expect(screen.getByText("No health endpoint is configured.")).toBeVisible();
     expect(screen.getByText("Ready to start")).toBeVisible();
+    await userEvent.click(screen.getAllByText("Details")[1]);
     expect(screen.getByText("Starts when you send a request.")).toBeVisible();
     expect(screen.queryByText("Unavailable right now")).toBeNull();
   });

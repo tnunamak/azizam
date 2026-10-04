@@ -1,3 +1,5 @@
+import { ApiError } from "@/lib/api";
+
 export interface SignInOptions {
   built_in: boolean;
   oidc: boolean;
@@ -24,12 +26,29 @@ export async function authFetch<T>(
       : {}),
   });
   const result = await response.json();
-  if (!response.ok)
+  if (!response.ok) {
+    if (
+      result &&
+      typeof result === "object" &&
+      "error" in result &&
+      result.error &&
+      typeof result.error === "object" &&
+      "code" in result.error &&
+      "message" in result.error &&
+      typeof result.error.code === "string" &&
+      typeof result.error.message === "string"
+    )
+      throw new ApiError(
+        result.error.code,
+        result.error.message,
+        response.status,
+      );
     throw new Error(
       result.error?.message ||
         result.detail ||
         "The gateway could not complete this request. Try again.",
     );
+  }
   return result;
 }
 export function safeContinuePath(next: string): string {

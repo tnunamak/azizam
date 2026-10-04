@@ -125,9 +125,7 @@ describe("Home audit presentation contract", () => {
         reason: "Not measured yet.",
       },
     ];
-    expect(capabilitySummary(tiles)).toBe(
-      "Chat is ready to start · images are not measured yet",
-    );
+    expect(capabilitySummary(tiles)).toBe("Chat is ready to start");
   });
 
   it("projects scoped chat aliases into Home tiles", () => {

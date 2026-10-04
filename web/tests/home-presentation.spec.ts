@@ -119,7 +119,7 @@ describe("Home presentation", () => {
       ]),
     ).toBe("Images are starting · voice is busy");
     expect(capabilitySummary([])).toBe(
-      "No capabilities are available to your account yet.",
+      "No tasks are available to your account yet.",
     );
   });
 });

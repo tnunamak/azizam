@@ -63,8 +63,8 @@ export default function SignInPage() {
         </h1>
         <p className="text-muted-foreground mt-2 mb-8 text-sm">
           {reset
-            ? "Use at least 12 characters to protect your account."
-            : `Connect to ${optionsData?.instance_name || PRODUCT_NAME}, your own AI provider.`}
+            ? "Use at least 12 characters."
+            : `Sign in to ${optionsData?.instance_name || PRODUCT_NAME}.`}
         </p>
         {optionsIsPending ? (
           <div
@@ -77,6 +77,7 @@ export default function SignInPage() {
           </div>
         ) : optionsIsError ? (
           <ErrorState
+            heading="Couldn’t load sign-in options"
             message="Sign-in options could not be loaded. Try again."
             onRetry={() => void optionsRefetch()}
           />
@@ -153,7 +154,7 @@ export default function SignInPage() {
             {!optionsData.built_in && !optionsData.oidc && !reset && (
               <EmptyState
                 title="Sign-in is not configured"
-                description="Ask the gateway owner to enable accounts or an identity provider in Settings."
+                description="Ask the owner to enable a sign-in method."
               />
             )}
           </>

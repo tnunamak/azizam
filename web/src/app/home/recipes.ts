@@ -13,6 +13,7 @@ export const clients = [
   "Phone",
 ] as const;
 export type Client = (typeof clients)[number];
+export type RecipeField = { label: string; value: string };
 
 function shellQuote(value: string): string {
   return "'" + value.replaceAll("'", "'\"'\"'") + "'";
@@ -41,11 +42,17 @@ export function recipeFor(
   const quotedUrl = JSON.stringify(baseUrl);
   const messages = '[{"role":"user","content":"Say hello."}]';
   const settings = `Base URL: ${baseUrl}\nAPI key: Paste your saved gateway key\nModel: ${model}`;
+  const openAiFields = [
+    { label: "Base URL", value: baseUrl },
+    { label: "Model", value: model },
+  ];
   switch (client) {
     case "Open WebUI":
       return {
         description:
-          "Open WebUI v0.11.4: as an administrator, open Settings → Admin → Connections → OpenAI and add a connection. Paste these settings, save, refresh models, and send a message in Open WebUI. Personal/direct connections are separate and must be enabled by its administrator. Open WebUI’s server must reach the gateway: localhost inside a container points to that container. For a gateway on the Docker host, use host.docker.internal where supported; Linux may require a host-gateway mapping or a reachable LAN address. Keep the URL path below. The prior v0.11.4 check used host networking and non-streaming; other versions and network layouts are untested.",
+          "Add an OpenAI connection, paste these settings, then send a message.",
+        fields: openAiFields,
+        keyLabel: "API key",
         language: "Settings",
         code: settings,
         docs: "https://docs.openwebui.com/getting-started/quick-start/connect-a-provider/starting-with-openai-compatible",
@@ -53,7 +60,12 @@ export function recipeFor(
     case "LibreChat":
       return {
         description:
-          "Add this custom endpoint to librechat.yaml. Set GATEWAY_API_KEY in LibreChat’s environment, then restart LibreChat.",
+          "Add this custom endpoint to librechat.yaml, set GATEWAY_API_KEY, then restart LibreChat.",
+        fields: [
+          { label: "baseURL", value: baseUrl },
+          { label: "models.default", value: model },
+        ],
+        keyLabel: "GATEWAY_API_KEY",
         language: "YAML",
         code: `endpoints:\n  custom:\n    - name: "Vivid Fish"\n      apiKey: "\${GATEWAY_API_KEY}"\n      baseURL: ${quotedUrl}\n      models:\n        default: [${quotedModel}]\n        fetch: true\n      modelDisplayLabel: "Vivid Fish"`,
         docs: "https://www.librechat.ai/docs/configuration/librechat_yaml/ai_endpoints",
@@ -61,7 +73,12 @@ export function recipeFor(
     case "SillyTavern":
       return {
         description:
-          "Open API Connections. Choose Chat Completion → Custom (OpenAI-compatible), then enter these settings and connect.",
+          "Choose Custom (OpenAI-compatible), then paste these settings.",
+        fields: [
+          { label: "Custom endpoint", value: baseUrl },
+          { label: "Custom model", value: model },
+        ],
+        keyLabel: "API key",
         language: "Settings",
         code: `API: Chat Completion\nSource: Custom (OpenAI-compatible)\nCustom endpoint: ${baseUrl}\nAPI key: Paste your saved gateway key\nCustom model: ${model}`,
         docs: "https://docs.sillytavern.app/usage/api-connections/",
@@ -69,7 +86,12 @@ export function recipeFor(
     case "Cursor":
       return {
         description:
-          "In Cursor Settings → Models, enable your OpenAI API key, set Override OpenAI Base URL, and add the model below. Cursor’s servers must reach this URL; a localhost or private LAN URL will not work. Your key is sent through Cursor’s servers. Custom keys cover chat; Tab uses Cursor’s models.",
+          "In Cursor Settings → Models, add an OpenAI key and the model below.",
+        fields: [
+          { label: "Override OpenAI Base URL", value: baseUrl },
+          { label: "Add model", value: model },
+        ],
+        keyLabel: "OpenAI API key",
         language: "Settings",
         code: `OpenAI API key: Paste your saved gateway key\nOverride OpenAI Base URL: ${baseUrl}\nAdd model: ${model}`,
         docs: "https://cursor.com/help/models-and-usage/api-keys",
@@ -77,15 +99,24 @@ export function recipeFor(
     case "Codex":
       return {
         description:
-          "Add this to your user-level ~/.codex/config.toml. Set GATEWAY_API_KEY in the shell before starting codex. This provider uses the gateway’s Responses API.",
+          "Add this to ~/.codex/config.toml, then set GATEWAY_API_KEY before starting codex.",
+        fields: [
+          { label: "base_url", value: baseUrl },
+          { label: "model", value: model },
+        ],
+        keyLabel: "GATEWAY_API_KEY",
         language: "TOML",
         code: `model = ${quotedModel}\nmodel_provider = "vivid_fish"\n\n[model_providers.vivid_fish]\nname = "Vivid Fish"\nbase_url = ${quotedUrl}\nenv_key = "GATEWAY_API_KEY"\nwire_api = "responses"`,
         docs: "https://learn.chatgpt.com/docs/config-file/config-advanced#custom-model-providers",
       };
     case "Claude Code":
       return {
-        description:
-          "Set GATEWAY_API_KEY to your saved key first, then run these commands in the shell that starts Claude Code. Check /status after launch to confirm the gateway URL and credential.",
+        description: "Set these variables before starting Claude Code.",
+        fields: [
+          { label: "ANTHROPIC_BASE_URL", value: publicUrl },
+          { label: "ANTHROPIC_MODEL", value: model },
+        ],
+        keyLabel: "ANTHROPIC_AUTH_TOKEN",
         language: "Shell",
         code: `export ANTHROPIC_BASE_URL=${shellQuote(publicUrl)}\nexport ANTHROPIC_AUTH_TOKEN="$GATEWAY_API_KEY"\nexport ANTHROPIC_MODEL=${shellQuote(model)}\nexport ANTHROPIC_DEFAULT_HAIKU_MODEL=${shellQuote(model)}\nclaude`,
         docs: "https://code.claude.com/docs/en/llm-gateway-connect",
@@ -93,7 +124,12 @@ export function recipeFor(
     case "Python":
       return {
         description:
-          "Install the openai package in your Python project. Set GATEWAY_API_KEY in your environment, then run this example.",
+          "Install openai, set GATEWAY_API_KEY, then run this example.",
+        fields: [
+          { label: "base_url", value: baseUrl },
+          { label: "model", value: model },
+        ],
+        keyLabel: "GATEWAY_API_KEY",
         language: "Python",
         code: `import os\nfrom openai import OpenAI\n\nclient = OpenAI(\n    base_url=${quotedUrl},\n    api_key=os.environ["GATEWAY_API_KEY"],\n)\nresponse = client.chat.completions.create(\n    model=${quotedModel},\n    messages=[{"role": "user", "content": "Say hello."}],\n)\nprint(response.choices[0].message.content)`,
         docs: "https://github.com/openai/openai-python#usage",
@@ -101,7 +137,12 @@ export function recipeFor(
     case "JavaScript":
       return {
         description:
-          "Install openai with your package manager. Run this on your server with GATEWAY_API_KEY in the environment.",
+          "Install openai, set GATEWAY_API_KEY on your server, then run this example.",
+        fields: [
+          { label: "baseURL", value: baseUrl },
+          { label: "model", value: model },
+        ],
+        keyLabel: "GATEWAY_API_KEY",
         language: "JavaScript",
         code: `import OpenAI from "openai";\n\nconst client = new OpenAI({\n  baseURL: ${quotedUrl},\n  apiKey: process.env.GATEWAY_API_KEY,\n});\nconst response = await client.chat.completions.create({\n  model: ${quotedModel},\n  messages: [{ role: "user", content: "Say hello." }],\n});\nconsole.log(response.choices[0].message.content);`,
         docs: "https://github.com/openai/openai-node#usage",
@@ -109,15 +150,21 @@ export function recipeFor(
     case "curl":
       return {
         description:
-          "Set GATEWAY_API_KEY to your saved key in your shell. This sends one chat request through your gateway.",
+          "Set GATEWAY_API_KEY in your shell. This sends one chat request.",
+        fields: [
+          { label: "URL", value: `${baseUrl}/chat/completions` },
+          { label: "model", value: model },
+        ],
+        keyLabel: "GATEWAY_API_KEY",
         language: "Shell",
         code: `curl ${shellQuote(`${baseUrl}/chat/completions`)} \\\n  -H "Authorization: Bearer $GATEWAY_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  --data ${shellQuote(`{"model":${quotedModel},"messages":${messages}}`)}`,
         docs: "https://platform.openai.com/docs/api-reference/chat/create",
       };
     case "Phone":
       return {
-        description:
-          "On your phone, open your household’s Open WebUI address in Safari or Chrome and sign in. Its administrator adds the connection in Settings → Admin → Connections → OpenAI with the settings below. Open WebUI’s server must reach this gateway URL. Add the page to your home screen for quick access.",
+        description: "Use your household Open WebUI connection.",
+        fields: openAiFields,
+        keyLabel: "API key",
         language: "Settings",
         code: settings,
         docs: "https://docs.openwebui.com/getting-started/quick-start/",

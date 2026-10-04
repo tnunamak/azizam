@@ -41,7 +41,7 @@ export default function SetupPage() {
               ? "Load your gateway’s sign-in and setup options."
               : returning
                 ? "Use your owner account to manage this gateway."
-                : "Create the owner account. You’ll connect an engine or provider next."}
+                : "Create your account, then connect AI."}
           </p>
         </CardHeader>
         <CardContent className="min-w-0 space-y-6">
@@ -53,6 +53,7 @@ export default function SetupPage() {
             </div>
           ) : isError ? (
             <ErrorState
+              heading="Couldn’t load setup options"
               message="Setup options could not be loaded. Check your connection and try again."
               onRetry={() => void refetch()}
               retrying={isFetching}
@@ -130,7 +131,7 @@ export default function SetupPage() {
                     </div>
                   )}
                   <Button type="submit" className="w-full">
-                    {returning ? "Sign in" : "Create owner and continue"}
+                    {returning ? "Sign in" : "Create owner account"}
                   </Button>
                 </form>
               )}

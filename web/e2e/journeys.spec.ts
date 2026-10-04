@@ -11,7 +11,7 @@ test("create, rotate and revoke an app key, then inspect its audit receipt", asy
     .first()
     .click();
   await page.getByLabel("App name", { exact: true }).fill(name);
-  await page.getByRole("combobox", { name: "Client", exact: true }).click();
+  await page.getByRole("combobox", { name: "App recipe", exact: true }).click();
   await page.getByRole("option", { name: "Python", exact: true }).click();
   const mintedResponse = page.waitForResponse(
     (response) =>
@@ -19,7 +19,9 @@ test("create, rotate and revoke an app key, then inspect its audit receipt", asy
       response.url().endsWith("/keys") &&
       response.request().method() === "POST",
   );
-  await page.getByRole("button", { name: "Create app", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Create app and key", exact: true })
+    .click();
   const { credential: firstKey } = await (await mintedResponse).json();
   const reveal = page.getByRole("dialog", { name: `Connect ${name}` });
   await expect(reveal).toBeVisible();
