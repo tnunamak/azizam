@@ -1,0 +1,466 @@
+import {
+  test,
+  expect,
+  request,
+  type APIRequestContext,
+  type Page,
+} from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
+import { createServer } from "node:http";
+import { spawn, type ChildProcess } from "node:child_process";
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
+
+let engine: ChildProcess;
+let enginePort: number;
+let registryApi: APIRequestContext;
+let originalSubstrates: Record<string, unknown> = {};
+let registryHeaders: Record<string, string>;
+
+test.beforeAll(async ({ baseURL }) => {
+  // Reserve a port in the explicit fixture-only throwaway range. Other lanes may
+  // already be using adjacent gateway ports, so do not assume baseURL + 2.
+  for (let candidate = 18690; candidate <= 18710; candidate++) {
+    const reservation = createServer();
+    const available = await new Promise<boolean>((resolve) => {
+      reservation.once("error", () => resolve(false));
+      reservation.listen(candidate, "127.0.0.1", () => resolve(true));
+    });
+    if (available) {
+      await new Promise<void>((resolve) => reservation.close(() => resolve()));
+      enginePort = candidate;
+      break;
+    }
+  }
+  if (!enginePort) throw new Error("No isolated strict-engine port available");
+  const fixtureHome = path.resolve("../.ui-e2e-state/strict-home");
+  await mkdir(fixtureHome, { recursive: true });
+  engine = spawn(
+    path.resolve("../venv/bin/python"),
+    [
+      "-m",
+      "uvicorn",
+      "engines_test_substrate:app",
+      "--app-dir",
+      "e2e",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      String(enginePort),
+    ],
+    {
+      env: {
+        PATH: process.env.PATH,
+        NODE_ENV: "test",
+        HOME: fixtureHome,
+        LITELLM_LOCAL_MODEL_COST_MAP: "True",
+        LITELLM_TELEMETRY: "False",
+        PYTHONDONTWRITEBYTECODE: "1",
+      },
+      stdio: "ignore",
+    },
+  );
+  await expect
+    .poll(
+      async () => {
+        if (engine.exitCode !== null)
+          throw new Error("Strict engine fixture exited before readiness");
+        try {
+          return (await fetch(`http://127.0.0.1:${enginePort}/health`)).status;
+        } catch {
+          return 0;
+        }
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(200);
+  registryApi = await request.newContext({
+    baseURL,
+    storageState: `test-results/auth-${new URL(baseURL!).port}.json`,
+  });
+  const session = await (await registryApi.get("/admin/api/session")).json();
+  registryHeaders = {
+    "x-ai-gateway-csrf": session.actor.csrf_token,
+    "x-ai-gateway-admin-action": "1",
+  };
+  const response = await registryApi.get(
+    "/admin/api/operator/service-registry",
+  );
+  const registry = (await response.json()).service_registry;
+  for (const [id, record] of Object.entries(registry.services) as [
+    string,
+    { kind: string; config: Record<string, unknown> },
+  ][]) {
+    if (id !== "litellm") continue;
+    originalSubstrates[id] = structuredClone(record);
+    record.config = {
+      ...record.config,
+      base_url_env: "",
+      api_base_env: "",
+      base_url: `http://127.0.0.1:${enginePort}/substrate`,
+      host: "127.0.0.1",
+      port: enginePort,
+      base_path: "/substrate",
+      health_endpoint: "/health",
+    };
+  }
+  expect(Object.keys(originalSubstrates)).not.toHaveLength(0);
+  const seeded = await registryApi.put("/admin/api/operator/service-registry", {
+    headers: { ...registryHeaders, "if-match": response.headers().etag },
+    data: registry,
+  });
+  expect(seeded.ok()).toBe(true);
+});
+
+test.afterAll(async () => {
+  try {
+    if (registryApi && Object.keys(originalSubstrates).length) {
+      const response = await registryApi.get(
+        "/admin/api/operator/service-registry",
+      );
+      const registry = (await response.json()).service_registry;
+      Object.assign(registry.services, originalSubstrates);
+      const restored = await registryApi.put(
+        "/admin/api/operator/service-registry",
+        {
+          headers: { ...registryHeaders, "if-match": response.headers().etag },
+          data: registry,
+        },
+      );
+      expect(restored.ok()).toBe(true);
+    }
+  } finally {
+    if (registryApi) await registryApi.dispose();
+    if (engine && engine.exitCode === null) {
+      const exited = new Promise<void>((resolve) =>
+        engine.once("exit", () => resolve()),
+      );
+      engine.kill("SIGTERM");
+      const timeout = setTimeout(() => engine.kill("SIGKILL"), 8000);
+      await exited;
+      clearTimeout(timeout);
+    }
+  }
+});
+
+async function checkVisuals(page: Page, name: string) {
+  expect(
+    (await new AxeBuilder({ page }).analyze()).violations.filter((row) =>
+      ["serious", "critical"].includes(row.impact ?? ""),
+    ),
+  ).toEqual([]);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: `test-results/screens/${name}.png`,
+    fullPage: true,
+  });
+}
+
+for (const theme of ["light", "dark"]) {
+  for (const width of [1440, 390]) {
+    test(`detected model applies and routes with explicit access ${theme} ${width}`, async ({
+      page,
+    }) => {
+      const suffix = `${theme}-${width}`;
+      const serviceId = `strict-${suffix}`;
+      const publicName = `mapped-${suffix}`;
+      const session = await (
+        await page.request.get("/admin/api/session")
+      ).json();
+      const headers = { "x-ai-gateway-csrf": session.actor.csrf_token };
+      const registryResponse = await page.request.get(
+        "/admin/api/operator/service-registry",
+      );
+      const added = await page.request.post("/admin/api/operator/services", {
+        headers: { ...headers, "if-match": registryResponse.headers().etag },
+        data: {
+          id: serviceId,
+          name: `Strict engine ${suffix}`,
+          base_url: `http://127.0.0.1:${enginePort}/v1`,
+          protocol: "openai-compatible",
+          capabilities: ["chat"],
+          health_endpoint: "/health",
+          role: "optional",
+          enabled: true,
+          custom_operator_field: "preserve",
+        },
+      });
+      expect(added.ok()).toBe(true);
+      const { profile } = await (
+        await page.request.post("/admin/api/profiles", {
+          headers,
+          data: {
+            name: `Restricted ${suffix}`,
+            profile: {
+              protocols: ["openai"],
+              backends: [serviceId],
+              models: [publicName],
+            },
+          },
+        })
+      ).json();
+      expect(profile.id).toBeTruthy();
+      const { users } = await (
+        await page.request.get("/admin/api/users")
+      ).json();
+      const { app } = await (
+        await page.request.post("/admin/api/apps", {
+          headers,
+          data: {
+            name: `Strict app ${suffix}`,
+            kind: "personal",
+            owner_user_id: users[0].id,
+            profile_id: profile.id,
+          },
+        })
+      ).json();
+      const { credential } = await (
+        await page.request.post(`/admin/api/apps/${app.id}/keys`, {
+          headers,
+          data: { label: "Strict routing test" },
+        })
+      ).json();
+      const callerHeaders = { authorization: `Bearer ${credential.api_key}` };
+      const before = await page.request.get("/openai/v1/models", {
+        headers: callerHeaders,
+      });
+      expect(
+        (await before.json()).data.map((row: { id: string }) => row.id),
+      ).not.toContain(publicName);
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 960 });
+      await page.addInitScript(
+        (value) => localStorage.setItem("theme", value),
+        theme,
+      );
+      await page.goto(
+        `/ui/${width === 390 ? "services" : "engines"}/?service=${serviceId}`,
+      );
+      const card = page
+        .locator("article")
+        .filter({ hasText: `Strict engine ${suffix}` });
+      await card.getByText("Connection and models", { exact: true }).click();
+      await card.getByRole("button", { name: "Detect", exact: true }).click();
+      await expect(
+        card.getByRole("heading", { name: "Preview detected models" }),
+      ).toBeVisible();
+      await card.getByLabel("Public name for strict-chat").fill(publicName);
+      await expect(
+        card.getByRole("button", { name: "Apply models" }),
+      ).toBeDisabled();
+      if (width === 390) {
+        for (const label of ["Detect", "Test", "Edit"]) {
+          const box = await card
+            .getByRole("button", { name: label, exact: true })
+            .boundingBox();
+          expect(box!.height).toBeGreaterThanOrEqual(44);
+          expect(box!.width).toBeGreaterThanOrEqual(44);
+        }
+        const labelBox = await card
+          .locator(`label[for='engine-enabled-${serviceId}']`)
+          .boundingBox();
+        expect(labelBox!.height).toBeGreaterThanOrEqual(44);
+      }
+      await checkVisuals(page, `engines-preview-${suffix}`);
+      if (width === 390) {
+        const consent = card.getByLabel(
+          "Use existing access rules for these models",
+        );
+        await consent.evaluate((element) =>
+          element.scrollIntoView({ block: "center" }),
+        );
+        expect(
+          await consent.evaluate((element) => {
+            const rect = element.getBoundingClientRect();
+            return (
+              document.elementFromPoint(
+                rect.x + rect.width / 2,
+                rect.y + rect.height / 2,
+              ) === element
+            );
+          }),
+        ).toBe(true);
+        await page.screenshot({
+          path: `test-results/screens/engines-consent-viewport-${suffix}.png`,
+        });
+      }
+      await card
+        .getByLabel("Use existing access rules for these models")
+        .check();
+      await card.getByRole("button", { name: "Apply models" }).click();
+      await expect(card.getByText(`${serviceId}`, { exact: true })).toHaveCount(
+        0,
+      );
+      await expect(
+        card.getByText(`${publicName}`, { exact: true }),
+      ).toBeVisible();
+      await expect(card.getByText(/models applied/)).toBeVisible();
+      const registry = (
+        await (
+          await page.request.get("/admin/api/operator/service-registry")
+        ).json()
+      ).service_registry;
+      expect(registry.services[serviceId].config.models).toEqual([
+        {
+          id: publicName,
+          model_group: publicName,
+          upstream_model: "strict-chat",
+          transforms: [],
+        },
+      ]);
+      expect(
+        registry.services[serviceId].config.model_policy_schema_version,
+      ).toBe(1);
+      expect(registry.services[serviceId].config.custom_operator_field).toBe(
+        "preserve",
+      );
+      expect(registry.services[serviceId].enabled).toBe(true);
+      const unchanged = (
+        await (await page.request.get("/admin/api/profiles")).json()
+      ).profiles.find((row: { id: string }) => row.id === profile.id);
+      expect(unchanged.profile.models).toEqual([publicName]);
+      const generated = await page.request.get(
+        "/admin/api/operator/litellm-config",
+      );
+      expect(generated.ok()).toBe(true);
+      const deployment = (
+        await generated.json()
+      ).litellm_config.model_list.filter(
+        (row: { model_name: string }) => row.model_name === publicName,
+      );
+      expect(deployment).toHaveLength(1);
+      expect(deployment[0].litellm_params.model).toBe("openai/strict-chat");
+      const configured = await page.request.post(
+        `http://127.0.0.1:${enginePort}/test/configure`,
+        { data: { model_list: deployment } },
+      );
+      expect(configured.ok()).toBe(true);
+      const models = await page.request.get("/openai/v1/models", {
+        headers: callerHeaders,
+      });
+      expect(
+        (await models.json()).data.map((row: { id: string }) => row.id),
+      ).toContain(publicName);
+      const unknown = await page.request.post(
+        `http://127.0.0.1:${enginePort}/v1/chat/completions`,
+        {
+          data: {
+            model: "unknown-model",
+            messages: [{ role: "user", content: "Test" }],
+          },
+        },
+      );
+      expect(unknown.status()).toBe(404);
+      const allowed = await page.request.post("/openai/v1/chat/completions", {
+        headers: callerHeaders,
+        data: {
+          model: publicName,
+          messages: [{ role: "user", content: "Test the public mapping" }],
+        },
+      });
+      expect(allowed.status()).toBe(200);
+      expect((await allowed.json()).choices[0].message.content).toBe(
+        "Strict model mapping works.",
+      );
+      const observations = await (
+        await page.request.get(
+          `http://127.0.0.1:${enginePort}/test/observations`,
+        )
+      ).json();
+      expect(observations.accepted_models.at(-1)).toBe("strict-chat");
+      const denied = await page.request.post("/openai/v1/chat/completions", {
+        headers: callerHeaders,
+        data: {
+          model: "demo-chat",
+          messages: [{ role: "user", content: "Not granted" }],
+        },
+      });
+      expect(denied.status()).toBe(403);
+      await checkVisuals(page, `engines-applied-${suffix}`);
+    });
+
+    test(`failed engine check identifies target and recovers ${theme} ${width}`, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 960 });
+      await page.addInitScript(
+        (value) => localStorage.setItem("theme", value),
+        theme,
+      );
+      let failing = true;
+      await page.route("**/admin/api/operator/services/test", (route) =>
+        route.fulfill({
+          json: {
+            probe: {
+              ok: !failing,
+              url: "http://127.0.0.1:18498/health",
+              status: failing ? 503 : 200,
+              error: failing ? "Engine unavailable" : "",
+            },
+          },
+        }),
+      );
+      await page.goto("/ui/engines/?service=capture-engine");
+      const card = page
+        .locator("article")
+        .filter({ hasText: "Local test engine" });
+      await card.getByText("Connection and models", { exact: true }).click();
+      await card.getByRole("button", { name: "Test", exact: true }).click();
+      await expect(card.getByRole("alert")).toContainText(
+        "Local test engine: connection failed",
+      );
+      await expect(card.getByRole("alert")).toContainText(
+        "http://127.0.0.1:18498/health (HTTP 503)",
+      );
+      await expect(card.getByRole("alert")).toContainText(
+        "reachable from the gateway",
+      );
+      await checkVisuals(page, `engines-failed-${theme}-${width}`);
+      await card.getByRole("button", { name: "Edit endpoint" }).click();
+      await expect(
+        page.getByRole("dialog", { name: "Edit engine" }),
+      ).toBeVisible();
+      await page.keyboard.press("Escape");
+      failing = false;
+      await card.getByRole("button", { name: "Retry test" }).click();
+      await expect(card.getByText(/connection passed/)).toBeVisible();
+      await expect(card.getByRole("alert")).toHaveCount(0);
+    });
+  }
+}
+
+test("a registry conflict preserves the detected-model preview for retry", async ({
+  page,
+}) => {
+  await page.route("**/admin/api/operator/services/capture-engine", (route) => {
+    expect(route.request().method()).toBe("PATCH");
+    expect(route.request().headers()["if-match"]).toBeTruthy();
+    return route.fulfill({
+      status: 412,
+      json: {
+        error: {
+          code: "generation_mismatch",
+          message: "The registry changed. Review your preview and try again.",
+        },
+      },
+    });
+  });
+  await page.goto("/ui/engines/?service=capture-engine");
+  const card = page.locator("article").filter({ hasText: "Local test engine" });
+  await card.getByText("Connection and models", { exact: true }).click();
+  await card.getByRole("button", { name: "Detect", exact: true }).click();
+  await card.getByLabel("Public name for demo-chat").fill("draft-chat");
+  await card.getByLabel("Use existing access rules for these models").check();
+  await card.getByRole("button", { name: "Apply models" }).click();
+  await expect(card.getByRole("alert")).toContainText("The registry changed");
+  await expect(card.getByLabel("Public name for demo-chat")).toHaveValue(
+    "draft-chat",
+  );
+  await expect(
+    card.getByRole("button", { name: "Apply models" }),
+  ).toBeEnabled();
+  await expect(card.getByText(/models applied/)).toHaveCount(0);
+});
