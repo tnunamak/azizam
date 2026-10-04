@@ -14,7 +14,7 @@ import path from "node:path";
 let engine: ChildProcess;
 let enginePort: number;
 let registryApi: APIRequestContext;
-let originalSubstrates: Record<string, unknown> = {};
+const originalSubstrates: Record<string, unknown> = {};
 let registryHeaders: Record<string, string>;
 
 test.beforeAll(async ({ baseURL }) => {
