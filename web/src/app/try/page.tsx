@@ -749,7 +749,8 @@ function selectedOrDefaultModel(
 ) {
   if (!options.length) return current;
   if (explicit) return current;
-  if (current && options.some((option) => option.id === current)) return current;
+  if (current && options.some((option) => option.id === current))
+    return current;
   if (!current || current === DEFAULTS[tab].model) return options[0].id;
   return current;
 }
@@ -841,14 +842,14 @@ export default function TryPage() {
   }, [requestedCapability]);
 
   useEffect(() => {
-    if (!requestedModel) return;
+    if (!requestedModel || requestedCapabilityKey === "audio") return;
     const tab =
       requestedCapability == null
         ? "chat"
-        : CAPABILITY_TABS[requestedCapability.toLowerCase().trim()] ?? "chat";
+        : (CAPABILITY_TABS[requestedCapability.toLowerCase().trim()] ?? "chat");
     explicitModelTabs.current.add(tab);
     setModel((current) => ({ ...current, [tab]: requestedModel }));
-  }, [requestedCapability, requestedModel]);
+  }, [requestedCapability, requestedCapabilityKey, requestedModel]);
 
   useEffect(() => {
     if (requestedWorkflow) {
@@ -950,9 +951,19 @@ export default function TryPage() {
       const workflowsResponse = await fetch("/me/api/workflows", {
         credentials: "same-origin",
       });
-      const workflowOptions = workflowsResponse.ok
+      let workflowOptions = workflowsResponse.ok
         ? groupWorkflows(await workflowsResponse.json())
         : [];
+      if (requestedCapabilityKey === "audio" && !requestedWorkflow) {
+        workflowOptions = workflowOptions.filter((option) =>
+          option.workflow?.outputs?.some(
+            (output) =>
+              output.kind === "audio" ||
+              output.type === "audio" ||
+              output.media_type?.startsWith("audio/"),
+          ),
+        );
+      }
       if (catalogResponse.ok) {
         const grouped = groupCatalog(await catalogResponse.json());
         if (workflowOptions.length) grouped.workflow = workflowOptions;
@@ -1536,9 +1547,11 @@ export default function TryPage() {
                     <CatalogNotice state={catalogState} />
                   )}
                   {tab.value === "workflow" &&
-                    requestedCapabilityKey === "audio" &&
-                    !selectedWorkflow && (
-                      <p role="status" className="text-muted-foreground text-sm">
+                    requestedCapabilityKey === "audio" && (
+                      <p
+                        role="status"
+                        className="text-muted-foreground text-sm"
+                      >
                         Audio has no dedicated Try panel. Choose a workflow if
                         this gateway exposes one.
                       </p>

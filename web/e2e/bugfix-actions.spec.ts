@@ -91,3 +91,43 @@ test("Showcase handles real structured request shapes in the browser", async ({
   await expect(page.locator("pre")).toContainText('"messages": [');
   expect(exceptions).toEqual([]);
 });
+
+test("audio capability never selects an image-only workflow", async ({
+  page,
+}) => {
+  await page.route("**/me/api/models/catalog", (route) =>
+    route.fulfill({ json: { aliases: [], models: [] } }),
+  );
+  await page.route("**/me/api/workflows", (route) =>
+    route.fulfill({
+      json: {
+        workflows: [
+          {
+            id: "image-only",
+            title: "Image-only workflow",
+            outputs: [{ kind: "image" }],
+            inputs: [],
+          },
+        ],
+      },
+    }),
+  );
+  await page.goto("/ui/try/?capability=audio&model=audio");
+  await page.getByRole("button", { name: "Prepare Try key" }).first().click();
+  await page.getByRole("button", { name: "I’ve saved it" }).click();
+  await expect(
+    page.getByRole("tab", { name: "Workflow", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(
+    page.getByText(
+      "Audio has no dedicated Try panel. Choose a workflow if this gateway exposes one.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(page.getByLabel("Model", { exact: true })).not.toContainText(
+    "Image-only workflow",
+  );
+  await expect(
+    page.getByRole("button", { name: "Run", exact: true }),
+  ).toBeDisabled();
+});

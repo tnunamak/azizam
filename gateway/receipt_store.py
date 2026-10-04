@@ -393,6 +393,8 @@ def update_cost(
     if not isinstance(cost, Mapping):
         raise TypeError("cost must be a mapping")
     assert_safe_mapping("receipt.cost", cost)
+    if not path.exists():
+        return False
     with _conn(path) as conn:
         row = conn.execute(
             "SELECT receipt_json FROM receipts WHERE request_id = ?",

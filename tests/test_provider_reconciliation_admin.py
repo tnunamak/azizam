@@ -234,7 +234,7 @@ class ProviderReconciliationAdminApiTests(unittest.TestCase):
                 "reconciliation_status": "settled",
             },
         )
-        self.assertEqual(stored["decisions"]["cost_usd"], "0.030000000")
+        self.assertEqual(stored["metadata"]["decisions"]["cost_usd"], "0.030000000")
 
     def test_owner_reconciliation_retry_repairs_receipt_after_update_failure(self) -> None:
         receipt_store.record(
@@ -305,7 +305,7 @@ class ProviderReconciliationAdminApiTests(unittest.TestCase):
         stored = receipt_store.get("req_123", path=self.receipts_path)
         self.assertEqual(stored["cost"]["usd"], "0.030000000")
         self.assertEqual(stored["cost"]["reconciliation_status"], "settled")
-        self.assertEqual(stored["decisions"]["cost_usd"], "0.030000000")
+        self.assertEqual(stored["metadata"]["decisions"]["cost_usd"], "0.030000000")
 
     def test_owner_reconciliation_retry_rejects_different_settled_amount(self) -> None:
         first = self.client.post(

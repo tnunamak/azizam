@@ -434,12 +434,35 @@ class TestReceiptStore(unittest.TestCase):
         )
 
         self.assertTrue(updated)
-        admin = receipt_store.get(r.request_id, audience="admin", path=self.db)
-        self.assertEqual(admin["cost"]["usd"], "0.030000000")
-        self.assertEqual(admin["cost"]["source"], "owner-reported")
-        self.assertEqual(admin["cost"]["provider"], "openrouter")
-        self.assertEqual(admin["cost"]["reconciliation_status"], "settled")
-        self.assertEqual(admin["decisions"]["cost_usd"], "0.030000000")
+        stored = receipt_store.get(r.request_id, path=self.db)
+        self.assertEqual(stored["cost"]["usd"], "0.030000000")
+        self.assertEqual(stored["cost"]["source"], "owner-reported")
+        self.assertEqual(stored["cost"]["provider"], "openrouter")
+        self.assertEqual(stored["cost"]["reconciliation_status"], "settled")
+        self.assertEqual(stored["metadata"]["decisions"]["cost_usd"], "0.030000000")
+
+    def test_update_cost_noops_when_store_is_absent(self) -> None:
+        missing = self.db.with_name("missing-receipts.db")
+
+        self.assertFalse(
+            receipt_store.update_cost(
+                "req_missing",
+                {"usd": "0.01", "source": "owner-reported"},
+                path=missing,
+            )
+        )
+        self.assertFalse(missing.exists())
+
+    def test_update_cost_errors_when_existing_store_is_malformed(self) -> None:
+        malformed = self.db.with_name("malformed-receipts.db")
+        malformed.write_text("not sqlite", encoding="utf-8")
+
+        with self.assertRaises(Exception):
+            receipt_store.update_cost(
+                "req_missing",
+                {"usd": "0.01", "source": "owner-reported"},
+                path=malformed,
+            )
 
     def test_recent_zero_limit_returns_empty(self) -> None:
         receipt_store.record(_make_receipt(), path=self.db)

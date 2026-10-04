@@ -25,7 +25,7 @@ def test_decision_receipt_records_canonical_outcome(tmp_path, monkeypatch, http_
     proxy._record_decision_receipt(SimpleNamespace(identity=None), result)
     stored = receipt_store.get(result.request_id, audience="admin", path=path)
     assert stored["status"] == expected
-    assert stored["metadata"]["status_code"] == http_status
+    assert stored["status_code"] == http_status
     assert stored["latency_ms"] == 12.5
     if http_status == 529:
         assert stored["rejected_inputs"]["request"] == "decision_backend_unavailable"

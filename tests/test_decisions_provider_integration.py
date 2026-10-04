@@ -288,8 +288,8 @@ def test_typesafe_resolved_model_alias_price_persists_receipt_and_ledger(tmp_pat
     assert stored["cost"]["usd"] == "0.000012684"
     assert stored["cost"]["source"] == "price-table"
     assert stored["cost"]["reconciliation_status"] == "settled"
-    assert stored["decisions"]["cost_usd"] == "0.000012684"
-    assert stored["decisions"]["usage"] == {"input_tokens": 302, "output_tokens": 37}
+    assert stored["metadata"]["decisions"]["cost_usd"] == "0.000012684"
+    assert stored["metadata"]["decisions"]["usage"] == {"input_tokens": 302, "output_tokens": 37}
 
 
 def test_bare_jev_alias_stays_local_and_never_uses_paid_provider(tmp_path):
