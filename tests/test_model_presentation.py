@@ -445,3 +445,24 @@ def test_alias_keeps_target_model_specific_description():
         service_records={"one": {"config": {"models": [{"id": "actual", "upstream_model": "Configured weights", "context_window": 4096}]}}},
     )
     assert catalog["aliases"][0]["description"] == "Uses Configured weights, supports a context of 4096 tokens."
+
+
+
+def test_internal_role_names_are_hidden_only_with_permitted_public_counterpart():
+    from gateway.model_presentation import capability_presentation, group_product_capabilities
+    rows = [{**capability_presentation(Capability(intent="chat.completions", backend="one", model=name)),
+             "status": "ready", "available": True} for name in ("role:default", "default", "role:other")]
+    assert group_product_capabilities(rows)[0]["use_names"] == ["default", "role:other"]
+
+
+def test_declared_role_weights_supply_recommendation_without_private_path():
+    from gateway.local_capabilities import build_local_capabilities
+    from gateway.capabilities import summarize_capability
+    capabilities = build_local_capabilities(
+        {"roles": {"default": {"backend": "one", "model": "/private/models/Declared-Weights-Q4.gguf"}}},
+        backends={"one": {"capabilities": ["chat"]}},
+    )
+    row = summarize_capability(next(cap for cap in capabilities if cap.model == "role:default"), "client")
+    assert row["title"] == "Default"
+    assert row["recommended_model"] == "Declared-Weights-Q4"
+    assert "/private" not in str(row)

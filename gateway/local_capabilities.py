@@ -174,12 +174,17 @@ def _build_llm_capabilities(
         caveats: list[str] = []
         if backend not in backends:
             caveats.append(f"backend {backend!r} not declared under backends")
+        declared_model = spec.get("model")
+        model_title = None
+        if isinstance(declared_model, str) and "/" in declared_model:
+            # Display the declared weights, never their private filesystem path.
+            model_title = declared_model.rsplit("/", 1)[-1].rsplit(".", 1)[0]
         out.append(
             Capability(
                 intent=INTENT_CHAT,
                 backend=backend,
                 model=f"role:{role_name}",
-                title=spec.get("title") or spec.get("display_name"),
+                title=spec.get("title") or spec.get("display_name") or model_title,
                 description=spec.get("description"),
                 input_modalities=modalities,
                 output_modalities=("text",),

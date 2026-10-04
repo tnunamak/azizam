@@ -347,7 +347,7 @@ test("accepted member can fetch real scoped Status and keep the Status URL", asy
 
   try {
     const session = await (await request.get("/admin/api/session")).json();
-    const headers = { "x-ai-gateway-csrf": session.actor.csrf_token };
+    const headers = { "x-ai-gateway-csrf": session.actor.csrf_token, "x-ai-gateway-admin-action": "1" };
     const profiles = await (await request.get("/admin/api/profiles")).json();
     const local = profiles.profiles.find(
       (profile: { name: string }) => profile.name === "Local chat",

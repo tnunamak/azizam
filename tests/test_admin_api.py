@@ -481,7 +481,7 @@ class DeriveAdminAttentionTests(unittest.TestCase):
         )
         self.assertEqual((required_down["state"], required_down["tone"]), ("bad", "bad"))
         self.assertEqual(required_down["incomplete"], {"routing": ["unknown"]})
-        self.assertIn("No route declaration for unknown.", required_down["detail"])
+        self.assertIn("No route declaration for Unknown.", required_down["detail"])
 
         degraded_with_unobserved = derive_admin_health_projection(
             {

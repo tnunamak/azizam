@@ -181,7 +181,7 @@ it("uses human model titles while keeping exact ids as secondary code and detail
   fireEvent.click(table.getByText("Chat model"));
   const detail = within(screen.getByRole("dialog"));
   expect(detail.getByRole("heading", { name: "Chat model" })).toBeVisible();
-  expect(detail.getByText(id)).toBeVisible();
+  for (const identifier of detail.getAllByText(id)) expect(identifier).toBeVisible();
 });
 
 it("uses the shared status badge for measured availability", async () => {

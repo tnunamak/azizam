@@ -15,11 +15,17 @@
         "observation": "up",
         "routable": null,
         "tone": "ok",
-        "last_error": null
+        "last_error": null,
+        "engine_label": "Route declaration pending",
+        "capability_title": "AI",
+        "capability_labels": [],
+        "icon_key": "chat"
       }
     ],
     "incomplete": {
-      "routing": ["Route declaration pending"]
+      "routing": [
+        "Route declaration pending"
+      ]
     },
     "signals": []
   },
@@ -39,7 +45,11 @@
         "observation": "up",
         "routable": null,
         "tone": "ok",
-        "last_error": null
+        "last_error": null,
+        "engine_label": "Route declaration pending",
+        "capability_title": "AI",
+        "capability_labels": [],
+        "icon_key": "chat"
       },
       {
         "service_id": "required-down",
@@ -50,11 +60,17 @@
         "observation": "down",
         "routable": true,
         "tone": "bad",
-        "last_error": null
+        "last_error": null,
+        "engine_label": "Required service down",
+        "capability_title": "AI",
+        "capability_labels": [],
+        "icon_key": "chat"
       }
     ],
     "incomplete": {
-      "routing": ["Route declaration pending"]
+      "routing": [
+        "Route declaration pending"
+      ]
     },
     "signals": []
   }

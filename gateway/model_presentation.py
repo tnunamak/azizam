@@ -257,7 +257,11 @@ def group_product_capabilities(rows: list[dict[str, Any]]) -> list[dict[str, Any
                     row.get("use_name") in {"default", kind}, "alias" in row.get("tags", []),
                     bool(row.get("use_name")))
         best = dict(max(candidates, key=preference))
-        best["use_names"] = list(dict.fromkeys(name for row in candidates for name in row.get("use_names", [])))
+        names = list(dict.fromkeys(name for row in candidates for name in row.get("use_names", [])))
+        # The public role spelling covers its internal role: identity only when
+        # that public spelling was independently permitted in this projection.
+        best["use_names"] = [name for name in names
+                             if not name.startswith("role:") or name.removeprefix("role:") not in names]
         result.append(best)
     order = list(CAPABILITY_LABELS)
     return sorted(result, key=lambda row: order.index(row["capability"]) if row["capability"] in order else len(order))
