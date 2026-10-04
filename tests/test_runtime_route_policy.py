@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi import Response
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -193,10 +194,6 @@ class _CaptureLoopbackClient:
         return None
 
 
-class _HeaderOnlyRequest:
-    headers = AUTH_HEADERS
-
-
 def litellm_registry():
     return {
         "services": {
@@ -300,7 +297,11 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         with patch.object(proxy.httpx, "AsyncClient", _CaptureLoopbackClient):
             client, response = asyncio.run(
                 proxy._forward_chat_completions(
-                    _HeaderOnlyRequest(),
+                    Request({
+                        "type": "http", "method": "POST", "path": "/v1/messages",
+                        "headers": [(b"authorization", f"Bearer {RAW_KEY}".encode())],
+                        "query_string": b"", "client": ("203.0.113.10", 41000),
+                    }),
                     proxy.NO_AUTH_CONTEXT,
                     {
                         "model": "test-model",
