@@ -337,9 +337,10 @@ function EngineRow({
           <SheetTrigger asChild>
             <Button
               variant="ghost"
-              className="h-auto min-h-11 max-w-full justify-start px-0 text-left break-words whitespace-normal"
+              className="h-auto min-h-11 w-full max-w-full min-w-0 justify-start overflow-hidden px-0 text-left"
+              title={engine.name}
             >
-              {engine.name}
+              <span className="block min-w-0 truncate">{engine.name}</span>
             </Button>
           </SheetTrigger>
           <SheetContent className="w-full overflow-y-auto sm:max-w-lg">

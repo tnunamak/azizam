@@ -89,9 +89,16 @@ for (const theme of ["light", "dark"]) {
             await expect(
               page.getByRole("link", { name: "Open receipt request-…" }),
             ).toHaveAttribute("href", `/r/${id}`);
+            await page
+              .context()
+              .grantPermissions(["clipboard-read", "clipboard-write"]);
+            await page.getByRole("button", { name: "Copy receipt ID" }).click();
+            await expect
+              .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+              .toBe(id);
             await expect(
-              page.getByRole("button", { name: "Copy receipt ID" }),
-            ).toBeVisible();
+              page.getByText("Receipt ID copied", { exact: true }),
+            ).toHaveCount(1);
           } else {
             await expect(
               page.getByText("Your access plan does not allow decisions."),
