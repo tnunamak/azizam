@@ -190,7 +190,7 @@ for (const theme of ["light", "dark"])
         page.getByText("Price not provided", { exact: true }).first(),
       ).toBeVisible();
       await expect(
-        page.getByText("Local · no provider charge", { exact: true }).first(),
+        page.getByText("Local", { exact: true }).first(),
       ).toBeVisible();
       await verify(page, `states-${theme}-${width}`);
       await page.getByRole("button", { name: /All models/ }).click();
@@ -198,7 +198,12 @@ for (const theme of ["light", "dark"])
       await expect(table.getByText("Unavailable").first()).toBeVisible();
       await expect(
         table.getByRole("link", { name: "Check status" }),
+      ).toHaveCount(0);
+      await table.getByRole("row").filter({ hasText: "named-down" }).click();
+      await expect(
+        page.getByRole("dialog").getByRole("link", { name: "Check status" }),
       ).toHaveAttribute("href", "/ui/status/");
+      await page.keyboard.press("Escape");
       await verify(page, `table-${theme}-${width}`);
     });
     test(`empty and error recovery ${theme} ${width}`, async ({ page }) => {
@@ -258,8 +263,22 @@ test("member recovery keeps owner controls out of the catalog", async ({
   await prepare(page, "light", 390, seeded, 200, "member");
   await page.getByText("Other options · 6").click();
   await expect(page.getByText("catalog-only", { exact: true })).toBeVisible();
-  const checkStatusLinks = page.getByRole("link", { name: "Check status" });
-  await expect(checkStatusLinks.first()).toHaveAttribute("href", "/ui/status/");
+  await expect(page.getByRole("link", { name: "Check status" })).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Copy model name catalog-only" })
+    .locator("xpath=../../..")
+    .getByRole("button", { name: "Details" })
+    .click();
+  await expect(
+    page.getByRole("dialog").getByRole("link", { name: "Check status" }),
+  ).toHaveAttribute("href", "/ui/status/");
+  const detailsAxe = await new AxeBuilder({ page }).analyze();
+  expect(
+    detailsAxe.violations.filter((v) =>
+      ["serious", "critical"].includes(v.impact ?? ""),
+    ),
+  ).toEqual([]);
+  await page.keyboard.press("Escape");
   await expect(
     page.getByRole("link", { name: "Connect an engine" }),
   ).toHaveCount(0);

@@ -75,7 +75,8 @@ it("shows the supplied engine label and measured speed without an unknown speed 
     name: "Copy model name chat",
   });
   const card = within(copy.closest("article")!);
-  expect(card.getByText("Local", { exact: true })).toBeVisible();
+  expect(card.queryByText("Local", { exact: true })).toBeNull();
+  expect(screen.getByText("Local · no provider charge")).toBeVisible();
   expect(card.queryByText("Unknown", { exact: true })).toBeNull();
   expect(card.queryByText("Live availability is not measured yet")).toBeNull();
   expect(card.queryByText("Not measured yet", { exact: true })).toBeNull();

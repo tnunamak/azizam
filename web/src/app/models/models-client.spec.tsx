@@ -134,6 +134,152 @@ afterEach(() => {
 });
 
 describe("models catalog contract distinctions", () => {
+  it("copies unavailable names from recommendations, alternatives, profiles and exact models", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const unavailableRow = (id: string, overrides: Partial<CatalogRow> = {}) =>
+      row({
+        id,
+        availability: {
+          ...row().availability,
+          available: false,
+          status: "unavailable",
+        },
+        ...overrides,
+      });
+    renderModels(
+      catalog(
+        [
+          unavailableRow("default", {
+            examples: [
+              {
+                kind: "chat.completions",
+                body: { model: "default", messages: [] },
+              },
+            ],
+          }),
+          unavailableRow("fast"),
+          unavailableRow("profile", { secondary_profile: true }),
+        ],
+        [
+          unavailableRow("exact", {
+            alias: false,
+            object: "model_catalog.model",
+          }),
+        ],
+      ),
+    );
+    const copy = await screen.findByRole("button", {
+      name: "Copy model name default",
+    });
+    fireEvent.click(screen.getByText("Other options · 1"));
+    fireEvent.click(screen.getByRole("button", { name: /More chat profiles/ }));
+    fireEvent.click(screen.getByRole("button", { name: "All models" }));
+    for (const id of ["default", "fast", "profile", "exact"]) {
+      fireEvent.click(
+        screen.getByRole("button", { name: `Copy model name ${id}` }),
+      );
+      expect(writeText).toHaveBeenCalledWith(id);
+    }
+    expect(screen.queryByRole("link", { name: "Check status" })).toBeNull();
+    expect(screen.queryByText(/\d+ shown/)).toBeNull();
+    expect(document.querySelectorAll('[data-variant="default"]')).toHaveLength(
+      0,
+    );
+    fireEvent.click(
+      within(copy.closest("article")!).getByRole("button", { name: "Details" }),
+    );
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getByText("Example request")).toBeVisible();
+    expect(dialog.getByRole("link", { name: "Check status" })).toBeVisible();
+    expect(dialog.getByText(/curl 'http/)).toBeInTheDocument();
+  });
+
+  it("keeps explicit server capability authoritative over a legacy intent", async () => {
+    renderModels(
+      catalog([
+        row({
+          id: "operator-audio",
+          capabilities: [
+            {
+              ...row().capabilities[0],
+              intent: "speech.synthesis",
+              capability: "audio",
+              label: "Audio",
+            },
+          ],
+        }),
+      ]),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Audio", level: 2 }),
+    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Speech" })).toBeNull();
+  });
+
+  it("keeps free remote placement honest and price filters quiet in the capability row", async () => {
+    renderModels(catalog([row({ locality: "remote" })]));
+    await screen.findByRole("button", { name: "Copy model name chat" });
+    expect(screen.getByText("Remote", { exact: true })).toBeVisible();
+    expect(screen.queryByText(/Local/)).toBeNull();
+    const price = screen.getByRole("group", {
+      name: "Price filters (choose any)",
+    });
+    expect(price.parentElement).toContainElement(
+      screen.getByRole("button", { name: /^All$/ }),
+    );
+    const free = within(price).getByRole("button", {
+      name: "No provider charge",
+    });
+    expect(free).toHaveAttribute("aria-pressed", "true");
+    expect(free).not.toHaveAttribute("data-slot", "button");
+    fireEvent.click(free);
+    expect(free).toHaveAttribute("aria-pressed", "false");
+    expect(
+      screen.queryByRole("button", { name: "Copy model name chat" }),
+    ).toBeNull();
+  });
+
+  it("groups aliases without presentation metadata by their contract intent", async () => {
+    const intentRow = (id: string, intent: string, label: string) =>
+      row({
+        id,
+        capabilities: [{ ...row().capabilities[0], intent, label }],
+      });
+    renderModels(
+      catalog([
+        intentRow("chat", "chat.completions", "Chat"),
+        intentRow("fast", "text.completions", "Chat"),
+        intentRow("image", "image.generate", "Images"),
+        intentRow("decide", "decision.systemone", "Decisions"),
+        intentRow("tts", "speech.synthesis", "Speech"),
+      ]),
+    );
+    await screen.findByRole("button", { name: "Copy model name chat" });
+    const chatGroup = screen
+      .getByRole("heading", { name: "Chat", level: 2 })
+      .closest("section")!;
+    expect(
+      within(chatGroup).getByText("Other options · 1"),
+    ).toBeInTheDocument();
+    expect(within(chatGroup).queryByText("image", { exact: true })).toBeNull();
+    for (const label of ["Images", "Decisions", "Speech"]) {
+      expect(
+        screen.getByRole("heading", { name: label, level: 2 }),
+      ).toBeVisible();
+    }
+    fireEvent.click(screen.getByRole("button", { name: "Images" }));
+    expect(
+      screen.getByRole("button", { name: "Copy model name image" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Copy model name chat" }),
+    ).toBeNull();
+  });
+
   it("uses product alias fallback and one availability line for allowed configured observed rows", async () => {
     renderModels(catalog([row()]));
 
@@ -149,7 +295,10 @@ describe("models catalog contract distinctions", () => {
     expect(card.queryByText("Allowed by your access")).toBeNull();
     expect(card.queryByText("Observed:")).toBeNull();
     expect(card.queryByText("Not measured yet")).toBeNull();
-    expect(card.getByRole("button", { name: "Use" })).toBeVisible();
+    expect(card.queryByRole("button", { name: "Use" })).toBeNull();
+    expect(
+      card.getByRole("button", { name: "Copy model name chat" }),
+    ).toBeVisible();
   });
 
   it("uses authored row descriptions before alias fallback", async () => {
@@ -555,7 +704,7 @@ describe("models catalog contract distinctions", () => {
       screen.queryByText("No stable aliases match these filters"),
     ).toBeNull();
     expect(screen.queryByRole("heading", { name: "Coder Q8" })).toBeNull();
-    expect(screen.getByText("0 shown")).toBeVisible();
+    expect(screen.queryByText(/\d+ shown/)).toBeNull();
     fireEvent.click(more);
     expect(screen.getByRole("heading", { name: "Coder Q8" })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Details" }));
@@ -676,17 +825,26 @@ describe("models catalog contract distinctions", () => {
       owner,
     );
 
-    const action = await screen.findByRole("link", {
-      name: "Connect an engine",
+    const copy = await screen.findByRole("button", {
+      name: "Copy model name catalog-chat",
     });
-    expect(action).toHaveAttribute("href", "/ui/engines/");
+    expect(
+      screen.queryByRole("link", { name: "Connect an engine" }),
+    ).toBeNull();
     expect(screen.getByText("Unavailable")).toBeVisible();
     expect(screen.queryByText("The service is not configured.")).toBeNull();
     expect(screen.queryByText("Catalog only")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Use" })).toBeNull();
+    fireEvent.click(
+      within(copy.closest("article")!).getByRole("button", { name: "Details" }),
+    );
+    const action = screen.getByRole("link", { name: "Connect an engine" });
+    expect(action).toHaveAttribute("href", "/ui/engines/");
+    expect(
+      within(screen.getByRole("dialog")).getByText("Catalog only"),
+    ).toBeVisible();
   });
 
-  it("keeps Use for busy rows and sends remote catalog-only owners to providers", async () => {
+  it("keeps copying available for busy rows and sends remote catalog-only owners to providers from Details", async () => {
     renderModels(
       catalog([
         row({
@@ -742,9 +900,22 @@ describe("models catalog contract distinctions", () => {
       name: "Copy model name busy-image",
     });
     const busyCard = within(busyCopy.closest("article")!);
-    expect(busyCard.getByRole("button", { name: "Use" })).toBeVisible();
+    expect(
+      busyCard.getByRole("button", { name: "Copy model name busy-image" }),
+    ).toBeVisible();
     expect(busyCard.queryByRole("link", { name: "Check status" })).toBeNull();
 
+    expect(
+      screen.queryByRole("link", { name: "Connect a provider" }),
+    ).toBeNull();
+    const remoteCopy = screen.getByRole("button", {
+      name: "Copy model name remote-catalog",
+    });
+    fireEvent.click(
+      within(remoteCopy.closest("article")!).getByRole("button", {
+        name: "Details",
+      }),
+    );
     const providerAction = screen.getByRole("link", {
       name: "Connect a provider",
     });
@@ -761,12 +932,21 @@ describe("models catalog contract distinctions", () => {
     };
     renderModels(catalog([row({ availability })]), member);
 
-    const action = await screen.findByRole("link", { name: "Check status" });
-    expect(action).toHaveAttribute("href", "/ui/status/");
+    const copy = await screen.findByRole("button", {
+      name: "Copy model name chat",
+    });
+    expect(screen.queryByRole("link", { name: "Check status" })).toBeNull();
     expect(screen.queryByText("Unknown")).toBeNull();
     expect(screen.queryByText("Configuration not reported")).toBeNull();
     expect(screen.queryByText("Observation time not reported")).toBeNull();
     expect(screen.queryByText("Catalog only")).toBeNull();
+    fireEvent.click(
+      within(copy.closest("article")!).getByRole("button", { name: "Details" }),
+    );
+    expect(screen.getByRole("link", { name: "Check status" })).toHaveAttribute(
+      "href",
+      "/ui/status/",
+    );
   });
 
   it("shows distinctions and one role action for unavailable direct model rows", async () => {
@@ -808,9 +988,13 @@ describe("models catalog contract distinctions", () => {
     expect(table.queryByText("From configuration")).toBeNull();
     expect(table.queryByText("Disabled")).toBeNull();
     expect(table.queryByText("Observed:")).toBeNull();
+    expect(table.queryByRole("link", { name: "Review provider" })).toBeNull();
     expect(
-      table.getByRole("link", { name: "Review provider" }),
+      table.getByRole("button", { name: "Copy model name remote-model" }),
+    ).toBeVisible();
+    fireEvent.click(table.getByRole("button", { name: "Details" }));
+    expect(
+      screen.getByRole("link", { name: "Review provider" }),
     ).toHaveAttribute("href", "/ui/providers/");
-    expect(table.queryByRole("link", { name: "Review engine" })).toBeNull();
   });
 });

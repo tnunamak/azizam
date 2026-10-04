@@ -30,11 +30,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useViewer } from "@/components/shell/session";
 import { FilterToggle } from "@/components/product/filter-toggle";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -142,7 +137,16 @@ function CatalogIcon({ row }: { row: CatalogRow }) {
 }
 
 function entryCapability(entry: CatalogCapabilityEntry): ProductCapability {
-  return (entry.capability as ProductCapability | undefined) ?? "chat";
+  if (entry.capability) return entry.capability as ProductCapability;
+  // Legacy catalog entries retain their protocol intent without presentation metadata.
+  const intent = entry.intent;
+  if (/^(chat\.|text\.completions|responses\.)/.test(intent)) return "chat";
+  if (/^(speech\.trans|audio\.trans)/.test(intent)) return "transcribe";
+  if (/^(speech\.|audio\.speech)/.test(intent)) return "speech";
+  if (/^(decision|systemone)/.test(intent)) return "decide";
+  if (intent === "text.embeddings") return "embed";
+  if (intent === "text.rerank") return "rerank";
+  return intent.split(".")[0] as ProductCapability;
 }
 
 function primaryCapability(row: CatalogRow): ProductCapability {
@@ -181,7 +185,7 @@ function hasNoProviderCharge(row: CatalogRow): boolean {
 }
 
 function costLabel(row: CatalogRow): string {
-  if (row.locality === "local") return "Local · no provider charge";
+  if (row.locality === "local") return "No provider charge";
   if (hasNoProviderCharge(row)) return "No provider charge";
   if (row.cost.kind === "paid") {
     return row.cost.price === null
@@ -349,36 +353,30 @@ function ObservedAt({ row }: { row: CatalogRow }) {
   );
 }
 
-function TableUseCell({
-  row,
-  viewerAdmin,
-  onDetail,
-}: {
-  row: CatalogRow;
-  viewerAdmin: boolean;
-  onDetail: (row: CatalogRow) => void;
-}) {
-  const action = availabilityAction(row, viewerAdmin);
-  if (action) {
-    return (
-      <Button size="sm" asChild>
-        <a href={action.href} onClick={(event) => event.stopPropagation()}>
-          {action.label}
-        </a>
-      </Button>
-    );
+function CopyModelName({ row }: { row: CatalogRow }) {
+  const [copied, setCopied] = useState(false);
+  async function copyName() {
+    await navigator.clipboard.writeText(row.id);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
   }
   return (
-    <Button
-      variant="outline"
-      size="sm"
+    <button
+      type="button"
       onClick={(event) => {
         event.stopPropagation();
-        onDetail(row);
+        void copyName();
       }}
+      aria-label={`Copy model name ${row.id}`}
+      className="bg-muted hover:bg-muted/80 focus-visible:ring-ring flex min-h-11 min-w-0 items-center justify-between gap-2 rounded-md px-3 py-2 text-left font-mono text-xs transition outline-none focus-visible:ring-[3px]"
     >
-      Details
-    </Button>
+      <code className="truncate">{row.id}</code>
+      {copied ? (
+        <Check aria-label="Model name copied" className="size-4 shrink-0" />
+      ) : (
+        <Copy aria-hidden="true" className="size-4 shrink-0" />
+      )}
+    </button>
   );
 }
 
@@ -465,21 +463,14 @@ function Availability({
 function AliasCard({
   row,
   onDetail,
-  viewerAdmin,
   showCost = true,
+  showLocality = true,
 }: {
   row: CatalogRow;
   onDetail: (row: CatalogRow) => void;
-  viewerAdmin: boolean;
   showCost?: boolean;
+  showLocality?: boolean;
 }) {
-  const [copied, setCopied] = useState(false);
-  const action = availabilityAction(row, viewerAdmin);
-  async function copyAlias() {
-    await navigator.clipboard.writeText(row.id);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
-  }
   return (
     <article className="bg-card text-card-foreground flex min-w-0 flex-col gap-5 rounded-xl border p-5">
       <div className="flex min-w-0 items-start gap-3">
@@ -491,24 +482,12 @@ function AliasCard({
           </p>
         </div>
       </div>
-      <button
-        type="button"
-        onClick={copyAlias}
-        aria-label={`Copy model name ${row.id}`}
-        className="bg-muted hover:bg-muted/80 focus-visible:ring-ring flex min-h-11 min-w-0 items-center justify-between gap-2 rounded-md px-3 py-2 text-left font-mono text-xs transition outline-none focus-visible:ring-[3px]"
-      >
-        <span className="truncate">{row.id}</span>
-        {copied ? (
-          <Check aria-label="Model name copied" className="size-4 shrink-0" />
-        ) : (
-          <Copy aria-hidden="true" className="size-4 shrink-0" />
-        )}
-      </button>
-      <div className="text-muted-foreground text-xs">
-        <span>{localityLabel(row)}</span>
-      </div>
+      <CopyModelName row={row} />
+      {showLocality && (
+        <p className="text-muted-foreground text-xs">{localityLabel(row)}</p>
+      )}
       {showCost && (
-        <div className="text-muted-foreground flex min-w-0 flex-wrap items-center gap-2 text-xs">
+        <div>
           <Badge variant="outline" className="max-w-full text-xs">
             <span className="whitespace-normal">{costLabel(row)}</span>
           </Badge>
@@ -516,34 +495,6 @@ function AliasCard({
       )}
       <Availability row={row} showReason={false} />
       <div className="mt-auto flex flex-wrap gap-2">
-        {action ? (
-          <Button size="sm" asChild>
-            <a href={action.href}>{action.label}</a>
-          </Button>
-        ) : (
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button size="sm">Use</Button>
-            </PopoverTrigger>
-            <PopoverContent
-              align="start"
-              className="w-[min(92vw,560px)] p-0"
-              aria-label={`Use ${row.id}`}
-            >
-              <div className="border-b p-4">
-                <h4 className="font-medium">Use {row.id}</h4>
-                <p className="text-muted-foreground mt-1 text-sm">
-                  Copy the model name or a starter request.
-                </p>
-              </div>
-              <div className="p-4">
-                <CodeBlock
-                  snippets={snippetsFor(row, window.location.origin)}
-                />
-              </div>
-            </PopoverContent>
-          </Popover>
-        )}
         <Button variant="outline" size="sm" onClick={() => onDetail(row)}>
           Details
           <ChevronRight aria-hidden="true" />
@@ -556,22 +507,17 @@ function AliasCard({
 function AliasOptionRow({
   row,
   onDetail,
-  viewerAdmin,
   showCost = true,
 }: {
   row: CatalogRow;
   onDetail: (row: CatalogRow) => void;
-  viewerAdmin: boolean;
   showCost?: boolean;
 }) {
-  const action = availabilityAction(row, viewerAdmin);
   return (
     <div className="flex min-w-0 flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0 space-y-1">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <code className="bg-muted rounded px-2 py-1 text-xs break-all">
-            {row.id}
-          </code>
+          <CopyModelName row={row} />
           {showCost && (
             <Badge variant="outline" className="text-xs">
               {costLabel(row)}
@@ -584,11 +530,6 @@ function AliasOptionRow({
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-2">
         <Availability row={row} showReason={false} />
-        {action && (
-          <Button size="sm" asChild>
-            <a href={action.href}>{action.label}</a>
-          </Button>
-        )}
         <Button variant="outline" size="sm" onClick={() => onDetail(row)}>
           Details
         </Button>
@@ -683,7 +624,7 @@ function DetailSheet({
                   <AvailabilityFacts row={row} />
                   <ObservedAt row={row} />
                   {action && (
-                    <Button size="sm" asChild>
+                    <Button variant="outline" size="sm" asChild>
                       <a href={action.href}>{action.label}</a>
                     </Button>
                   )}
@@ -719,7 +660,7 @@ function DetailSheet({
               </div>
               <div>
                 <h3 className="font-medium">Example request</h3>
-                <div className="mt-3">
+                <div className="mt-3 [&_pre]:break-all [&_pre]:whitespace-pre-wrap">
                   <CodeBlock
                     snippets={snippetsFor(row, window.location.origin)}
                   />
@@ -833,7 +774,7 @@ export default function ModelsClient() {
           title="No models are available yet"
           description="Ask the owner to connect models your access plan allows."
           action={
-            <Button asChild>
+            <Button variant="outline" asChild>
               <a href="/ui/home/">Review setup</a>
             </Button>
           }
@@ -855,26 +796,8 @@ export default function ModelsClient() {
                   className="pl-9"
                 />
               </label>
-              <div
-                role="group"
-                aria-label="Price filters (choose any)"
-                className="flex flex-wrap gap-2"
-              >
-                <FilterToggle
-                  pressed={showNoProviderCharge}
-                  onClick={() => setShowNoProviderCharge((value) => !value)}
-                >
-                  No provider charge
-                </FilterToggle>
-                <FilterToggle
-                  pressed={showPaid}
-                  onClick={() => setShowPaid((value) => !value)}
-                >
-                  Paid
-                </FilterToggle>
-              </div>
             </div>
-            <div className="flex gap-2 overflow-x-auto pb-1">
+            <div className="flex flex-wrap items-center gap-2 pb-1">
               <FilterToggle
                 pressed={capability === "all"}
                 onClick={() => setCapability("all")}
@@ -893,6 +816,28 @@ export default function ModelsClient() {
                     capabilityLabels[cap]}
                 </FilterToggle>
               ))}
+              <div
+                role="group"
+                aria-label="Price filters (choose any)"
+                className="ml-auto flex shrink-0 gap-1 border-l pl-3"
+              >
+                <button
+                  type="button"
+                  aria-pressed={showNoProviderCharge}
+                  onClick={() => setShowNoProviderCharge((value) => !value)}
+                  className="text-muted-foreground hover:bg-muted focus-visible:ring-ring aria-pressed:text-foreground min-h-11 rounded-md px-3 text-xs underline-offset-4 transition outline-none focus-visible:ring-[3px] aria-pressed:underline"
+                >
+                  No provider charge
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={showPaid}
+                  onClick={() => setShowPaid((value) => !value)}
+                  className="text-muted-foreground hover:bg-muted focus-visible:ring-ring aria-pressed:text-foreground min-h-11 rounded-md px-3 text-xs underline-offset-4 transition outline-none focus-visible:ring-[3px] aria-pressed:underline"
+                >
+                  Paid
+                </button>
+              </div>
             </div>
           </section>
           {groupedAliases.length === 0 && secondaryChatRows.length === 0 ? (
@@ -910,11 +855,12 @@ export default function ModelsClient() {
               }
               action={
                 modelRows.length ? (
-                  <Button onClick={() => setTableOpen(true)}>
+                  <Button variant="outline" onClick={() => setTableOpen(true)}>
                     Show all models
                   </Button>
                 ) : (
                   <Button
+                    variant="outline"
                     onClick={() => {
                       setQuery("");
                       setCapability("all");
@@ -932,6 +878,9 @@ export default function ModelsClient() {
               <div aria-label="Available model aliases" className="grid gap-6">
                 {groupedAliases.map((group) => {
                   const [primary, ...alternatives] = group.rows;
+                  const groupLocal = group.rows.every(
+                    (row) => row.locality === "local",
+                  );
                   const groupNoProviderCharge =
                     group.rows.every(hasNoProviderCharge);
                   return (
@@ -946,7 +895,9 @@ export default function ModelsClient() {
                         </h2>
                         {groupNoProviderCharge && (
                           <Badge variant="outline" className="text-xs">
-                            Local · no provider charge
+                            {groupLocal
+                              ? "Local · no provider charge"
+                              : "No provider charge"}
                           </Badge>
                         )}
                       </div>
@@ -954,7 +905,7 @@ export default function ModelsClient() {
                         <AliasCard
                           row={primary}
                           onDetail={setDetail}
-                          viewerAdmin={viewer.admin}
+                          showLocality={!groupLocal}
                           showCost={!groupNoProviderCharge}
                         />
                         {alternatives.length > 0 && (
@@ -972,7 +923,6 @@ export default function ModelsClient() {
                                   key={row.id}
                                   row={row}
                                   onDetail={setDetail}
-                                  viewerAdmin={viewer.admin}
                                   showCost={!groupNoProviderCharge}
                                 />
                               ))}
@@ -1020,9 +970,7 @@ export default function ModelsClient() {
                           {descriptionFor(row)}
                         </p>
                       </div>
-                      <code className="max-w-full text-xs break-all">
-                        {row.id}
-                      </code>
+                      <CopyModelName row={row} />
                       <Button
                         variant="outline"
                         size="sm"
@@ -1045,9 +993,6 @@ export default function ModelsClient() {
             >
               <span>
                 <span className="font-medium">All models</span>
-                <span className="text-muted-foreground ml-2 text-sm">
-                  {modelRows.length} shown
-                </span>
               </span>
               <ChevronDown
                 aria-hidden="true"
@@ -1075,21 +1020,8 @@ export default function ModelsClient() {
                         onClick={() => setDetail(row)}
                       >
                         <TableCell className="font-medium">
-                          <Button
-                            variant="ghost"
-                            className="h-auto min-h-11 justify-start text-left whitespace-normal"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              setDetail(row);
-                            }}
-                          >
-                            <span className="space-y-1">
-                              <span className="block">{titleFor(row)}</span>
-                              <code className="text-muted-foreground block text-xs font-normal">
-                                {row.id}
-                              </code>
-                            </span>
-                          </Button>
+                          <span className="mb-1 block">{titleFor(row)}</span>
+                          <CopyModelName row={row} />
                         </TableCell>
                         <TableCell>{primaryCapabilityLabel(row)}</TableCell>
                         <TableCell>{summaryEngineLabel(row)}</TableCell>
@@ -1098,11 +1030,16 @@ export default function ModelsClient() {
                           <Availability row={row} showReason={false} />
                         </TableCell>
                         <TableCell>
-                          <TableUseCell
-                            row={row}
-                            viewerAdmin={viewer.admin}
-                            onDetail={setDetail}
-                          />
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setDetail(row);
+                            }}
+                          >
+                            Details
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}
