@@ -147,3 +147,12 @@ ID or progress for about nine minutes. I stopped that exact process with
 SIGTERM and continued from the complete brief and source evidence. No shared
 index state was reset. Task creation needs bounded waiting and progress output
 so an implementation lane can tell whether the index is working or stalled.
+
+## 2026-10-04 — final gateway polish
+
+`ds tldr` and `ds recent` completed and supplied useful repository context.
+`ds task --quick` did not return a task ID during the implementation window.
+I continued from the supplied brief and checked source files directly. The
+process later disappeared; I did not capture an exit status, so I cannot say
+whether task creation failed or finished. A task ID at start and visible
+progress would make this workflow easier to observe. No index state was reset.
