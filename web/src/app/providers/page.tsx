@@ -170,9 +170,13 @@ function nonnegativeNumberOrNull(value: unknown): number | null {
 }
 
 function money(value: number | null | undefined): string {
-  return typeof value === "number" && Number.isFinite(value)
-    ? `$${value.toFixed(2)}`
-    : "Not measured yet";
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "Not measured yet";
+  }
+  if (value > 0 && value < 0.01) {
+    return "<$0.01";
+  }
+  return `$${value.toFixed(2)}`;
 }
 
 function countOrZero(value: unknown): number {
