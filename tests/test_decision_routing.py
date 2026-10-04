@@ -86,7 +86,7 @@ def test_configured_fallback_discloses_skipped_primary_in_http_and_receipt(monke
     records = []
     monkeypatch.setattr(proxy.receipt_store, "record", records.append)
     real = httpx.AsyncClient
-    with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"model": "small-v1", "answers": {"q": {"type": "noul", "noul": .9}}})))):
+    with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"model": "small-v1", "answers": {"q": {"type": "noul", "noul": .9}}, "usage": {"input_tokens": 9, "output_tokens": 0}})))):
         response = TestClient(proxy.app).post("/v1/systemone", json={**BODY, "model": "decide-quality"})
     assert response.status_code == 200, response.text
     assert response.headers["x-gateway-fallback"] == "large:not_deployed"
