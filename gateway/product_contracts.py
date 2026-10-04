@@ -199,7 +199,7 @@ class CatalogTiming(TypedDict):
 
 class CatalogCost(TypedDict):
     kind: Literal["free", "paid", "unknown"]
-    price: str | float | None
+    price: object
 
 
 class CatalogIO(TypedDict):

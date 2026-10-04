@@ -45,6 +45,21 @@ def test_shared_types_describe_real_catalog_and_capability_payloads():
     TypeAdapter(ModelsCatalog).validate_python(build_models_catalog(capabilities=capabilities))
 
 
+def test_catalog_contract_preserves_structured_operator_price():
+    # The operator price table documented in docs/REMOTE_PROVIDERS.md.
+    price = {"input_usd_per_million_tokens": "3.00", "output_usd_per_million_tokens": "15.00"}
+    catalog = build_models_catalog(
+        capabilities=[Capability(intent="chat.completions", backend="provider", model="demo-chat")],
+        service_records={"services": {"provider": {"config": {
+            "remote_provider": True, "price": price,
+        }}}},
+    )
+    adapter = TypeAdapter(ModelsCatalog)
+    round_trip = adapter.dump_python(adapter.validate_python(catalog))
+    assert round_trip == catalog
+    assert round_trip["models"][0]["cost"] == {"kind": "paid", "price": price}
+
+
 @pytest.mark.parametrize("intent", ["image.edit", "speech.transcription", "decision.systemone"])
 def test_catalog_contract_covers_multipart_and_unsupported_snippets(intent):
     catalog = build_models_catalog(capabilities=[Capability(intent=intent, backend="service", model="model")])

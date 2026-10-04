@@ -214,7 +214,7 @@ export interface CatalogTiming {
 
 export interface CatalogCost {
   kind: "free" | "paid" | "unknown";
-  price: string | number | null;
+  price: unknown;
 }
 
 export interface CatalogIO {
