@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import copy
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -75,7 +75,8 @@ class VideoLimitsDiscoveryTests(unittest.TestCase):
         self.client = TestClient(proxy.app)
 
     def test_capabilities_carry_the_cap_and_segment_limits(self) -> None:
-        rows = self.client.get("/gateway/v1/capabilities").json()["capabilities"]
+        with patch.object(proxy, "_capabilities_availability_evidence", new=AsyncMock(return_value={})):
+            rows = self.client.get("/gateway/v1/capabilities").json()["capabilities"]
         by_workflow = {r["workflow"]: r for r in rows if r.get("intent") == "video.generate" and r.get("workflow")}
         long = by_workflow["video-ltx-2.5-long"]["limits"]
         self.assertEqual(long["max_total_seconds"], 33)

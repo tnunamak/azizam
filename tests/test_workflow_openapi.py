@@ -6,7 +6,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator
@@ -91,7 +91,8 @@ class WorkflowOpenApiTests(unittest.TestCase):
             self.assertEqual(self.catalog[item["id"]]["intent"], item["intent"])
 
     def test_catalog_workflows_match_capability_rows(self) -> None:
-        with patch.object(proxy, "AUTH_ENABLED", False):
+        with patch.object(proxy, "AUTH_ENABLED", False), \
+             patch.object(proxy, "_capabilities_availability_evidence", new=AsyncMock(return_value={})):
             rows = self.client.get("/gateway/v1/capabilities").json()["capabilities"]
         names = {
             value

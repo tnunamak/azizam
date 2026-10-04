@@ -7,4 +7,4 @@ install({port, engine_port})
 
 import uvicorn
 
-uvicorn.run("proxy:app", host="127.0.0.1", port=port, log_level="warning")
+uvicorn.run("proxy:app", host="127.0.0.1", port=port, log_level="warning", loop="asyncio")

@@ -217,6 +217,6 @@ if __name__ == "__main__":
             return lifecycle_drivers.ProcessState.STOPPED
         lifecycle_drivers.SystemdDriver.status = stopped
         import uvicorn
-        uvicorn.run("proxy:app", host="127.0.0.1", port=int(sys.argv[2]), log_level="warning")
+        uvicorn.run("proxy:app", host="127.0.0.1", port=int(sys.argv[2]), log_level="warning", loop="asyncio")
     else:
         run()
