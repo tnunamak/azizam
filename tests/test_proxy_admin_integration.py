@@ -2160,7 +2160,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         self._loaded_model_projection.start()
         admin_store.init_db(self.db)
         # No service-account admin key here -> no owner/admin exists yet.
-        self.client = TestClient(proxy.app)
+        self.client = TestClient(proxy.app, client=("127.0.0.1", 50000))
 
     def tearDown(self) -> None:
         proxy.ADMIN_STORE.path = self.old_path

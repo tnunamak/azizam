@@ -16,15 +16,15 @@ import time
 
 READS = (
     "/health", "/v1/models", "/anthropic/v1/models", "/api/tags",
-    "/ollama/api/tags", "/sdapi/v1/sd-models", "/gateway/v1/discovery",
-    "/gateway/v1/receipts", "/me/api/apps", "/me/api/usage",
-    "/me/api/media", "/admin/api/services", "/admin/api/people",
+    "/ollama/api/tags", "/sdapi/v1/sd-models", "/gateway/v1/capabilities",
+    "/gateway/v1/receipts", "/me/api/session", "/me/api/usage/summary",
+    "/me/api/media", "/admin/api/operator/service-registry", "/admin/api/people",
     "/typesafe/v1/models", "/status/raw", "/docs", "/openapi.json",
-    "/showcase", "/ui/home/", "/ui/settings/", "/mcp",
+    "/showcase", "/showcase/api/status", "/ui/home/", "/ui/settings/", "/mcp",
     "/v1/assets/exposure-probe-missing/content",
     "/v1/images/exposure-probe-missing/content",
     "/v1/videos/exposure-probe-missing/content",
-    "/.well-known/ai-gateway.json",
+    "/.well-known/ai-gateway", "/.well-known/skills",
 )
 WRITES = (
     "/v1/chat/completions", "/anthropic/v1/messages", "/api/generate",
@@ -82,7 +82,7 @@ def main():
             }, None, "websocket"))
             for spoof, headers in SPOOFS.items():
                 cases.extend((path, "GET", headers, None, spoof) for path in (
-                    "/v1/models", "/gateway/v1/discovery", "/status/raw", "/typesafe/v1/models",
+                    "/v1/models", "/gateway/v1/capabilities", "/status/raw", "/typesafe/v1/models",
                 ))
             for path, method, headers, body, case in cases:
                 record = probe(host, ip, path, method=method, headers=headers, body=body)
