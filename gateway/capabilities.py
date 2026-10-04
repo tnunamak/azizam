@@ -127,6 +127,8 @@ class Capability:
     calibrated: bool | None = None
     reason: str | None = None
     availability: Mapping[str, Any] | None = None
+    # Effective workflow policy target; public alias identity stays in model.
+    resolved_workflow: str | None = None
 
     def __post_init__(self) -> None:
         if self.execution not in EXECUTION_MODES:
@@ -276,11 +278,69 @@ def summarize_capabilities(
     """Audience-scoped catalog payload with deterministic ordering."""
     _check_audience(audience)
     ordered = sorted(capabilities, key=lambda c: c.sort_key)
+    if audience == "client":
+        ordered = caller_visible_capabilities(ordered)
     return {
         "schema_version": 1,
         "audience": audience,
         "capabilities": [summarize_capability(c, audience) for c in ordered],
     }
+
+
+def resolve_capability_targets(capabilities: Iterable[Capability], service_records: Mapping[str, Any] | None = None) -> list[Capability]:
+    """Bind aliases to a unique declared target without inventing routing truth."""
+    from gateway.alias_policy import service_model_records
+
+    raw = list(capabilities)
+    alias_names = {(cap.intent, cap.model) for cap in raw if "alias" in cap.tags}
+    services = (service_records or {}).get("services", service_records or {})
+    out = []
+    for cap in raw:
+        if "alias" not in cap.tags and (cap.intent, cap.model) in alias_names:
+            continue
+        target = next((tag.removeprefix("resolves_to:") for tag in cap.tags if tag.startswith("resolves_to:")), None)
+        if "alias" not in cap.tags or not target or cap.backend != "gateway":
+            out.append(cap)
+            continue
+        matches = [candidate for candidate in raw if "alias" not in candidate.tags
+                   and candidate.intent == cap.intent
+                   and (candidate.model in {target, f"role:{target}"} or candidate.workflow == target)]
+        for service_id, service in services.items():
+            if not isinstance(service, Mapping) or not service.get("enabled", True):
+                continue
+            config = service.get("config") or {}
+            if any(target in {row.get("id"), row.get("model_group")} for row in service_model_records(config)):
+                matches.append(replace(cap, backend=str(service_id)))
+        backends = {candidate.backend for candidate in matches}
+        if len(backends) == 1:
+            concrete = matches[0]
+            cap = replace(cap, backend=concrete.backend, lifecycle=concrete.lifecycle,
+                          health=concrete.health, availability=concrete.availability,
+                          exposure=concrete.exposure, trust_tier=concrete.trust_tier,
+                          resource_tier=concrete.resource_tier, resources=concrete.resources,
+                          input_modalities=concrete.input_modalities, output_modalities=concrete.output_modalities,
+                          streaming=concrete.streaming, execution=concrete.execution,
+                          resolved_workflow=concrete.workflow or concrete.resolved_workflow,
+                          tags=tuple(dict.fromkeys((*cap.tags, *concrete.tags))))
+        out.append(cap)
+    return out
+
+
+def caller_visible_capabilities(capabilities: Iterable[Capability]) -> list[Capability]:
+    """One row per public intent and named target; retain distinct generic shapes."""
+    rows = {}
+    rank = {"ready": 5, "idle": 4, "starting": 3, "busy": 2, "unavailable": 1, "unknown": 0}
+    for cap in capabilities:
+        key = (cap.intent, cap.model, cap.workflow)
+        if cap.model is None and cap.workflow is None:
+            key += (cap.input_modalities, cap.output_modalities, cap.execution)
+        current = rows.get(key)
+        def preference(candidate):
+            status = (candidate.availability or {}).get("status", "unknown")
+            return ("alias" in candidate.tags, candidate.policy_available, rank.get(status, 0))
+        if current is None or preference(cap) > preference(current):
+            rows[key] = cap
+    return sorted(rows.values(), key=lambda cap: cap.sort_key)
 
 
 def capability_from_workflow_record(

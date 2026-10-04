@@ -366,7 +366,7 @@ def test_backend_grid_lifecycle_starting_overrides_http_down(monkeypatch):
         async def status(self, svc):
             return "starting"
 
-    async def fake_probe(client, key, name, url, role, note):
+    async def fake_probe(client, key, name, url, role, note, **kwargs):
         return {"key": key, "service_id": key, "name": name, "url": url, "role": role,
                 "note": note, "status": "down", "live_status": "down", "latency_ms": None,
                 "last_error": "connect refused"}
@@ -394,7 +394,7 @@ def test_backend_grid_lifecycle_running_does_not_hide_http_down(monkeypatch):
         async def status(self, svc):
             return "running"
 
-    async def fake_probe(client, key, name, url, role, note):
+    async def fake_probe(client, key, name, url, role, note, **kwargs):
         return {"key": key, "service_id": key, "name": name, "url": url, "role": role,
                 "note": note, "status": "down", "live_status": "down", "latency_ms": None,
                 "last_error": "connect refused"}
@@ -595,3 +595,165 @@ def test_status_404_missing_health_route_does_not_override_recent_success():
         evidence=merged,
     )
     assert projection.status == "ready"
+
+
+def test_alias_projection_inherits_unique_concrete_target():
+    alias = Capability(intent="chat.completions", backend="gateway", model="fast", tags=("alias", "resolves_to:actual"))
+    concrete = Capability(intent="chat.completions", backend="svc", model="actual")
+    caps = project_capabilities([alias, concrete], service_records={"services": {"svc": {"enabled": True}}},
+                                evidence={"svc": {"status": "ready", "available": True, "observed_at_s": 123}})
+    assert caps[0].backend == "svc"
+    assert caps[0].availability["status"] == "ready"
+    assert caps[0].availability["evidence"]["observed_at_s"] == 123
+
+
+def test_caller_catalog_deduplicates_same_visible_model():
+    from gateway.capabilities import summarize_capabilities
+    caps = project_capabilities([
+        Capability(intent="chat.completions", backend="gateway", model="actual"),
+        Capability(intent="chat.completions", backend="svc", model="actual"),
+    ], evidence={"svc": {"status": "ready", "available": True}})
+    rows = summarize_capabilities(caps, "client")["capabilities"]
+    assert len(rows) == 1
+    assert rows[0]["availability"]["status"] == "ready"
+
+
+def test_status_targets_use_declared_base_url():
+    import status_endpoint
+    targets = status_endpoint._resolve_backend_targets({"backends": {"svc": {
+        "base_url": "https://example.test/v1", "health_endpoint": "/health",
+    }}})
+    assert targets[0]["url"] == "https://example.test/health"
+
+
+def test_ambiguous_alias_target_preserves_unknown():
+    caps = project_capabilities([
+        Capability(intent="chat.completions", backend="gateway", model="fast", tags=("alias", "resolves_to:actual")),
+        Capability(intent="chat.completions", backend="a", model="actual"),
+        Capability(intent="chat.completions", backend="b", model="actual"),
+    ], evidence={"a": {"status": "ready", "available": True}})
+    assert caps[0].backend == "gateway"
+    assert caps[0].availability["status"] == "unknown"
+
+
+def test_alias_target_resolves_from_registry_model_group():
+    caps = project_capabilities([
+        Capability(intent="chat.completions", backend="gateway", model="fast", tags=("alias", "resolves_to:logical")),
+    ], service_records={"services": {"svc": {"config": {"models": [{"id": "engine-id", "model_group": "logical"}]}}}},
+       evidence={"svc": {"status": "ready", "available": True}})
+    assert caps[0].backend == "svc"
+    assert caps[0].availability["status"] == "ready"
+
+
+@pytest.mark.parametrize("payload,expected", [({"system": {}}, "up"), ({"devices": []}, "unknown"), ({"system": {}, "ready": False}, "down")])
+def test_declared_health_success_path_does_not_mask_readiness(payload, expected):
+    import asyncio
+    import status_endpoint
+    class Response:
+        status_code = 200
+        def json(self):
+            return payload
+    class Client:
+        async def get(self, url):
+            return Response()
+    row = asyncio.run(status_endpoint._probe(Client(), "svc", "Service", "http://fixture/stats", "required", None,
+                                             service={"health_success_path": "system"}))
+    assert row["live_status"] == expected
+
+
+def test_catalog_configured_health_success_has_observation_time():
+    import asyncio
+    from gateway.models_catalog import probe_service_health
+    async def get_json(url):
+        assert url == "http://fixture/stats"
+        return {"system": {"version": "fixture"}}
+    evidence = asyncio.run(probe_service_health({"services": {"svc": {"config": {
+        "base_url": "http://fixture/v1", "health_endpoint": "/stats", "health_success_path": "system",
+    }}}}, get_json=get_json))
+    assert evidence["svc"]["status"] == "ready"
+    assert isinstance(evidence["svc"]["observed_at_s"], int)
+
+
+def test_workflow_idle_projection_preserves_evidence():
+    from gateway.workflows_catalog import _availability
+    caps = project_capabilities([Capability(intent="image.generate", backend="svc", workflow="fixture")],
+        service_records={"services": {"svc": {"lifecycle": {"driver": "command"}}}},
+        evidence={"svc": {"status": "stopped", "source": "lifecycle", "observed_at_s": 123}})
+    result = _availability(caps)
+    assert result["status"] == "idle"
+    assert result["available"] is True
+    assert result["evidence"]["observed_at_s"] == 123
+
+
+def test_alias_binding_inherits_target_policy_facts():
+    from gateway.capabilities import resolve_capability_targets
+    caps = resolve_capability_targets([
+        Capability(intent="chat.completions", backend="gateway", model="fast", tags=("alias", "resolves_to:actual")),
+        Capability(intent="chat.completions", backend="svc", model="actual", exposure="opt_in", trust_tier="experimental", tags=("private",)),
+    ])
+    assert caps[0].exposure == "opt_in"
+    assert caps[0].trust_tier == "experimental"
+    assert "private" in caps[0].tags
+
+
+def test_cold_capability_provider_measures_declared_services(monkeypatch, tmp_path):
+    import asyncio
+    import proxy
+    receipts = tmp_path / "cold-receipts.db"
+    receipt_store.init_db(receipts)
+    monkeypatch.setattr(proxy.receipt_store, "DB_PATH", receipts)
+    registry = {"services": {"svc": {"enabled": True, "config": {"base_url": "http://fixture", "health_endpoint": "/health"}}}}
+    monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: registry)
+    monkeypatch.setattr(proxy, "_gateway_capabilities_for_auth_context", lambda auth: [Capability(intent="chat.completions", backend="svc", model="actual")])
+    monkeypatch.setattr(proxy, "_auth_context_from_scope", lambda request: None)
+    monkeypatch.setattr(proxy, "_cached_status_payload_for_availability", lambda: {})
+    observed = []
+    async def grid(config):
+        observed.append(config)
+        return [{"service_id": "svc", "status": "up", "observed_at_s": 123}]
+    monkeypatch.setattr(proxy.status_endpoint, "_backend_grid", grid)
+    caps = asyncio.run(proxy._gateway_capabilities_provider(None))
+    assert observed[0]["backends"]["svc"]["health_endpoint"] == "/health"
+    assert caps[0].availability["status"] == "ready"
+    assert caps[0].availability["evidence"]["observed_at_s"] == 123
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_stopped_lifecycle_is_not_overridden_by_later_connect_failure(reverse):
+    stopped = {"svc": {"status": "stopped", "source": "lifecycle", "observed_at_s": 100}}
+    no_response = {"svc": {"status": "unavailable", "available": False, "source": "health", "kind": "no_response", "observed_at_s": 101}}
+    sources = [stopped, no_response]
+    if reverse:
+        sources.reverse()
+    projection = project_service("svc", service_records={"services": {"svc": {"lifecycle": {"driver": "systemd"}}}},
+                                 evidence=merge_evidence(*sources))
+    assert projection.status == "idle"
+
+
+@pytest.mark.parametrize("allowed,expected", [(frozenset(), False), (frozenset({"workflow-id"}), True)])
+def test_workflow_alias_policy_uses_resolved_workflow_without_changing_alias(monkeypatch, allowed, expected):
+    import proxy
+    from gateway.capabilities import resolve_capability_targets, summarize_capability
+    from gateway.policy import AppProfile
+    monkeypatch.setattr(proxy, "_profile_for_auth_context", lambda context: AppProfile(id="workflow-policy", workflows=allowed))
+    alias, concrete = resolve_capability_targets([
+        Capability(intent="image.generate", backend="gateway", model="image", tags=("alias", "resolves_to:workflow-id")),
+        Capability(intent="image.generate", backend="fixture", workflow="workflow-id"),
+    ])
+    assert proxy._capability_for_profile(concrete, None).policy_available is expected
+    projected = proxy._capability_for_profile(alias, None)
+    assert projected.policy_available is expected
+    assert projected.model == "image"
+    assert projected.workflow is None
+    assert "resolved_workflow" not in summarize_capability(projected, "client")
+
+
+def test_denied_alias_shadows_allowed_same_named_model_before_filtering():
+    from gateway.capabilities import caller_visible_capabilities, resolve_capability_targets
+    alias = Capability(intent="chat.completions", backend="remote", model="fast", policy_available=False,
+                       tags=("alias", "resolves_to:remote-model"))
+    local = Capability(intent="chat.completions", backend="local", model="fast", policy_available=True)
+    assert caller_visible_capabilities([local, alias]) == [alias]
+    resolved = resolve_capability_targets([local, alias])
+    assert resolved == [alias]
+    assert [cap for cap in resolved if cap.policy_available] == []

@@ -53,7 +53,7 @@ from gateway.extension_catalog import (
 )
 
 AudienceResolver = Callable[[Request], str]
-CapabilitiesProvider = Callable[[Request], Sequence[Capability] | Iterable[Capability]]
+CapabilitiesProvider = Callable[[Request], Iterable[Capability] | Awaitable[Iterable[Capability]]]
 ReceiptGetter = Callable[..., dict[str, Any] | None]
 ReceiptLister = Callable[..., list[dict[str, Any]]]
 ResourceLister = Callable[..., list[dict[str, Any]] | Awaitable[list[dict[str, Any]]]]
@@ -422,13 +422,15 @@ def create_gateway_router(
         return JSONResponse(status_code=status.HTTP_200_OK, content=summary)
 
     @router.get("/capabilities")
-    def list_capabilities(request: Request) -> JSONResponse:
+    async def list_capabilities(request: Request) -> JSONResponse:
         audience = _resolve_request_audience(resolve_audience, request)
         try:
             if capabilities_provider is None:
                 capabilities: Iterable[Capability] = ()
             else:
                 capabilities = capabilities_provider(request) or ()
+                if inspect.isawaitable(capabilities):
+                    capabilities = await capabilities
             catalog = summarize_capabilities(capabilities, audience=audience)
         except Exception as exc:  # noqa: BLE001
             return _internal_error(audience, exc)
@@ -464,13 +466,15 @@ def create_gateway_router(
         return JSONResponse(status_code=status.HTTP_200_OK, content=catalog)
 
     @router.get("/models/{model}/capabilities")
-    def get_model_capabilities(model: str, request: Request) -> JSONResponse:
+    async def get_model_capabilities(model: str, request: Request) -> JSONResponse:
         audience = _resolve_request_audience(resolve_audience, request)
         try:
             if capabilities_provider is None:
                 capabilities: Iterable[Capability] = ()
             else:
                 capabilities = capabilities_provider(request) or ()
+                if inspect.isawaitable(capabilities):
+                    capabilities = await capabilities
             catalog = summarize_model_capabilities(
                 capabilities, model=model, audience=audience
             )

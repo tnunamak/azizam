@@ -2316,7 +2316,7 @@ class TestGatewayCapabilitiesProviderUsesLocalBuilder(unittest.TestCase):
             return []
 
         with patch.object(proxy, "build_local_capabilities", fake_build):
-            result = proxy._gateway_capabilities_provider(_StubScope())  # type: ignore[arg-type]
+            result = asyncio.run(proxy._gateway_capabilities_provider(_StubScope()))  # type: ignore[arg-type]
 
         self.assertTrue(sentinel, "build_local_capabilities was not invoked")
         self.assertIsInstance(result, list)
@@ -2335,7 +2335,7 @@ class TestGatewayCapabilitiesProviderUsesLocalBuilder(unittest.TestCase):
             return projected
 
         with patch.object(proxy, "_capability_for_profile", spy_project):
-            result = proxy._gateway_capabilities_provider(_StubScope())  # type: ignore[arg-type]
+            result = asyncio.run(proxy._gateway_capabilities_provider(_StubScope()))  # type: ignore[arg-type]
 
         self.assertEqual(len(result), len(seen))
 

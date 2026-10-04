@@ -30,6 +30,7 @@ import yaml
 
 from gateway import lifecycle_drivers
 from gateway.models_catalog import _availability_from_health_payload, _status_from_health_payload
+from gateway.model_presentation import declared_health_success, service_health_endpoint
 
 # Module-level cache (single in-process consumer is fine).
 _CACHE: dict[str, Any] = {"ts": 0.0, "data": None}
@@ -196,6 +197,7 @@ async def _probe(
     url: str,
     role: str,
     note: Optional[str],
+    service: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     base = {
         "key": key,
@@ -218,7 +220,7 @@ async def _probe(
             if isinstance(payload, Mapping):
                 parsed_status = _status_from_health_payload(payload)
                 available = _availability_from_health_payload(payload)
-                if parsed_status == "ready" or available is True:
+                if parsed_status == "ready" or available is True or (parsed_status == "unknown" and declared_health_success(service or {}, payload)):
                     return {**base, "status": "up", "live_status": "up", "latency_ms": dt, "last_error": None}
                 if parsed_status in {"starting", "busy"}:
                     return {**base, "status": parsed_status, "live_status": parsed_status, "latency_ms": dt, "last_error": None}
@@ -264,14 +266,9 @@ def _resolve_backend_targets(config: dict) -> list[dict[str, Any]]:
     for key, cfg in backends.items():
         if not isinstance(cfg, dict):
             continue
-        host = cfg.get("host", "127.0.0.1")
-        port = cfg.get("port")
-        if port is None:
+        url = service_health_endpoint(cfg)
+        if not url:
             continue
-        path = cfg.get("health_endpoint")
-        if not path:
-            continue
-        url = f"http://{host}:{port}{path}"
         name = cfg.get("name") or key
         role = cfg.get("role", "required")
         if role not in _VALID_ROLES:
@@ -381,10 +378,15 @@ async def _backend_grid(config: dict) -> list[dict]:
     lifecycle_targets = _lifecycle_backend_targets(config)
     backends = config.get("backends", {}) or {}
     async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
+        async def configured_probe(target):
+            service = backends.get(target["key"], {})
+            row = await _probe(client, target["key"], target["name"], target["url"], target["role"], target["note"], service=service)
+            row["observed_at_s"] = int(time.time())
+            return row
         http_results, lifecycle_results = await asyncio.gather(
             asyncio.gather(
                 *[
-                    _probe(client, t["key"], t["name"], t["url"], t["role"], t["note"])
+                    configured_probe(t)
                     for t in targets
                 ],
                 return_exceptions=False,

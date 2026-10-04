@@ -314,14 +314,32 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
             "disabled protocol frontend must not appear in public recipes",
         )
 
-    def test_service_block_advertises_canonical_host_and_alias(self) -> None:
-        metadata = build_gateway_discovery_metadata(base_url="http://gw")
+    def test_service_block_advertises_instance_origin(self) -> None:
+        metadata = build_gateway_discovery_metadata(base_url="https://gateway.example/")
         service = metadata["service"]
         self.assertEqual(service["product"], "Vivid Fish AI Gateway")
-        self.assertEqual(service["canonical_host"], "https://ai.vivid.fish")
-        self.assertIn("https://openai.vivid.fish", service["compatibility_aliases"])
+        self.assertEqual(service["base_url"], "https://gateway.example")
+        self.assertEqual(service["canonical_host"], service["base_url"])
+        self.assertNotIn("compatibility_aliases", service)
         # Default service name no longer leaks the legacy product slug.
         self.assertNotEqual(service["name"], "openai-proxy")
+
+    def test_unknown_origin_does_not_fabricate_a_canonical_host(self) -> None:
+        metadata = build_gateway_discovery_metadata()
+        self.assertIsNone(metadata["service"]["canonical_host"])
+        self.assertNotIn("compatibility_aliases", metadata["service"])
+        self.assertEqual(metadata["absolute_links"]["health"], "/health")
+
+    def test_public_documents_do_not_advertise_another_deployment(self) -> None:
+        documents = repr(build_gateway_discovery_metadata(base_url="http://gw"))
+        documents += build_llms_txt(base_url="http://gw")
+        for host in ("https://ai.vivid.fish", "https://openai.vivid.fish"):
+            self.assertNotIn(host, documents)
+
+    def test_llms_txt_without_origin_uses_relative_links(self) -> None:
+        text = build_llms_txt()
+        self.assertIn("Gateway metadata: /.well-known/ai-gateway", text)
+        self.assertNotIn("Canonical host:", text)
 
     def test_metadata_does_not_contain_secret_values(self) -> None:
         rendered = repr(build_gateway_discovery_metadata(base_url="http://gw"))
@@ -353,14 +371,56 @@ class TestPureDiscoveryMetadata(unittest.TestCase):
         self.assertIn("create/pull/push/copy/delete", text)
         self.assertIn("/v1/assets/{asset_id}/content", text)
         self.assertIn("Vivid Fish AI Gateway", text)
-        self.assertIn("https://ai.vivid.fish", text)
-        self.assertIn("https://openai.vivid.fish", text)
+        self.assertIn("Canonical host: http://gw", text)
         self.assertNotIn("opk_", text)
 
 
 class TestLiveDiscoveryRoutes(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(proxy.app)
+
+    def assert_public_origin(self, origin: str, *, headers: dict[str, str]) -> None:
+        metadata = self.client.get("/.well-known/ai-gateway", headers=headers).json()
+        alias = self.client.get("/.well-known/openai-proxy", headers=headers).json()
+        catalog = self.client.get("/.well-known/skills", headers=headers).json()
+        llms = self.client.get("/llms.txt", headers=headers).text
+        self.assertEqual(metadata["service"]["base_url"], origin)
+        self.assertEqual(metadata["service"]["canonical_host"], origin)
+        self.assertNotIn("compatibility_aliases", metadata["service"])
+        self.assertEqual(alias, metadata)
+        self.assertEqual(metadata["absolute_links"]["health"], f"{origin}/health")
+        self.assertEqual(metadata["recipes"]["openai"]["canonical_base_url"], f"{origin}/openai/v1")
+        self.assertEqual(catalog["skills"][0]["url"], f"{origin}/.well-known/skills/openai-proxy-gateway/SKILL.md")
+        self.assertIn(f"Canonical host: {origin}", llms)
+        self.assertIn(f"Gateway metadata: {origin}/.well-known/ai-gateway", llms)
+        for host in ("https://ai.vivid.fish", "https://openai.vivid.fish"):
+            self.assertNotIn(host, repr(metadata) + repr(catalog) + llms)
+
+    def test_saved_public_origin_wins_over_reverse_proxy_and_request_host(self) -> None:
+        settings = {"name": "Household AI", "base_url": "https://public.example", "theme_default": "system"}
+        with patch.object(proxy, "instance_settings", return_value=settings):
+            self.assert_public_origin("https://public.example", headers={
+                "host": "alternate.example:8080",
+                "x-forwarded-host": "proxy.example",
+                "x-forwarded-proto": "https",
+            })
+            service = self.client.get("/.well-known/ai-gateway").json()["service"]
+            self.assertEqual(service["name"], "Household AI")
+            self.assertEqual(service["product"], "Vivid Fish AI Gateway")
+
+    def test_unconfigured_public_origin_uses_alternate_request_host(self) -> None:
+        settings = {"name": "Household AI", "base_url": "", "theme_default": "system"}
+        with patch.object(proxy, "instance_settings", return_value=settings):
+            self.assert_public_origin("http://alternate.example:8080", headers={"host": "alternate.example:8080"})
+
+    def test_unconfigured_public_origin_uses_reverse_proxy_headers(self) -> None:
+        settings = {"name": "Household AI", "base_url": "", "theme_default": "system"}
+        with patch.object(proxy, "instance_settings", return_value=settings):
+            self.assert_public_origin("https://proxy.example", headers={
+                "host": "internal.example:8080",
+                "x-forwarded-host": "proxy.example",
+                "x-forwarded-proto": "https",
+            })
 
     def test_root_serves_user_portal(self) -> None:
         response = self.client.get("/", follow_redirects=False)
@@ -379,7 +439,7 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
         body = response.json()
         self.assertEqual(body["object"], "ai_gateway_discovery")
         self.assertEqual(body["service"]["product"], "Vivid Fish AI Gateway")
-        self.assertEqual(body["service"]["canonical_host"], "https://ai.vivid.fish")
+        self.assertEqual(body["service"]["canonical_host"], "http://testserver")
         self.assertEqual(body["links"]["user_portal"], "/")
         self.assertEqual(body["links"]["user_portal_alias"], "/me")
         self.assertEqual(body["links"]["media_jobs"], "/gateway/v1/media/jobs")

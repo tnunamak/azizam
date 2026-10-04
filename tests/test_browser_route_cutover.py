@@ -101,6 +101,21 @@ def test_owner_static_entries_require_authorization(page, entry):
     assert response.json()["error"]["code"] == "admin_forbidden"
 
 
+def test_member_status_static_route_serves_page_without_owner_gate(tmp_path):
+    from fastapi import FastAPI
+    from fastapi.staticfiles import StaticFiles
+    status_dir = tmp_path / "status"
+    status_dir.mkdir()
+    (status_dir / "index.html").write_text("Member scoped Status")
+    app = FastAPI()
+    app.middleware("http")(proxy._guard_admin_static_ui)
+    app.mount("/ui", StaticFiles(directory=tmp_path, html=True))
+    with patch.object(type(proxy.ADMIN_AUTH), "__call__", side_effect=AssertionError("owner gate called")):
+        response = TestClient(app).get("/ui/status/", follow_redirects=False)
+    assert response.status_code == 200
+    assert response.text == "Member scoped Status"
+
+
 @pytest.mark.parametrize("path,endpoint", [
     ("/me/api/session", proxy.user_portal_session),
     ("/admin/api/drain", proxy.admin_drain_status),

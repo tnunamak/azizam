@@ -24,7 +24,7 @@ from fastapi.responses import JSONResponse, Response
 from gateway.capabilities import Capability
 from gateway.availability import project_service
 from gateway.local_capabilities import build_local_capabilities
-from gateway.model_presentation import engine_label, model_locality, service_health_endpoint
+from gateway.model_presentation import declared_health_success, engine_label, model_locality, service_health_endpoint
 from gateway.provider_model_catalog import (
     remote_provider_model_capabilities,
     remote_provider_model_metadata,
@@ -874,6 +874,8 @@ async def probe_service_health(
             }
         available = _availability_from_health_payload(payload)
         status = _status_from_health_payload(payload)
+        if status == "unknown" and declared_health_success(service, payload):
+            available, status = True, "ready"
         if available is False:
             reason = "Health endpoint reported unavailable"
         elif available is True:

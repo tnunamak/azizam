@@ -13,6 +13,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Request
@@ -21,14 +22,14 @@ from fastapi.responses import JSONResponse
 from gateway import admin_store
 from gateway.admin_api import AdminAuthError
 from gateway.alias_policy import service_model_records
-from gateway.availability import availability_evidence_snapshot, project_service
-from gateway.capabilities import Capability, summarize_capability, capability_with_policy_view
+from gateway.availability import availability_evidence_snapshot, project_service, project_capabilities
+from gateway.capabilities import Capability, summarize_capability, capability_with_policy_view, caller_visible_capabilities
 from gateway.policy import DEFAULT_PROFILE
 from gateway.profiles import ProfileLoadError, load_profile
 from gateway.runtime_auth import RuntimeIdentity, hash_api_key, make_policy_request
 from gateway.user_runtime import (
     UserPortalError, build_user_activity_snapshot, build_user_portal_snapshot,
-    get_user_app_credential,
+    get_user_app_credential, get_user_receipt,
 )
 
 
@@ -84,12 +85,23 @@ def _has_success(receipts_path: Path) -> bool:
                             "AND parent_request_id IS NULL)").fetchone()[0] == 1
 
 
-def _explicit_app_ids(path: Path) -> set[str]:
-    """Explicitly created client Apps can have the same kind as bootstrap Apps."""
+def _setup_evidence(path: Path, subject: str) -> dict[str, dict[str, Any]]:
+    """Persisted acknowledgements are distinct from observed gateway traffic."""
     with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
-        rows = conn.execute("SELECT target_id, metadata_json FROM audit_events "
-                            "WHERE action IN ('app.self_create', 'app.create') AND target_kind = 'app'")
-        return {target_id for target_id, metadata in rows if not json.loads(metadata or "{}").get("via")}
+        rows = conn.execute("SELECT action, MAX(created_at) FROM audit_events "
+                            "WHERE actor_id = ? AND action IN "
+                            "('setup.settings_copied', 'setup.external_client_confirmed', 'setup.receipt_viewed') "
+                            "GROUP BY action", (subject,))
+        return {action.removeprefix("setup."): {"recorded": True, "source": "user_confirmation",
+                                               "observed_at_s": timestamp}
+                for action, timestamp in rows}
+
+
+def _invitation_created(path: Path) -> bool:
+    with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_links'").fetchone():
+            return False
+        return bool(conn.execute("SELECT EXISTS(SELECT 1 FROM account_links WHERE kind='invite')").fetchone()[0])
 
 
 def _resolved_capabilities(identity: RuntimeIdentity, provider,
@@ -194,7 +206,9 @@ def _declared_local_fast(cap: Capability, registry: Mapping[str, Any]) -> bool:
 
 def _capability_rows(capabilities, evidence, registry=None) -> list[dict[str, Any]]:
     rows = []
-    for cap in sorted(capabilities, key=lambda item: item.sort_key):
+    visible = caller_visible_capabilities(project_capabilities(
+        capabilities, service_records=registry, evidence=evidence))
+    for cap in visible:
         if not cap.policy_available:
             continue
         state, reason = _availability(cap, evidence, registry)
@@ -224,7 +238,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                        require_action, csrf_token, default_profile_id, capabilities,
                        aliases, public_base_url, status_provider, admin_auth,
                        inherited_profile_id_for_app=None, self_service_enabled=lambda: True) -> APIRouter:
-    """Register three small surfaces over the gateway's existing auth and stores."""
+    """Register session discovery, connection checks and owner setup evidence."""
     router = APIRouter()
 
     async def live_status_payload() -> dict[str, Any]:
@@ -311,6 +325,70 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                       "aliases": alias_rows, "credential_aliases": credential_aliases,
                       "new_app_aliases": new_app_aliases, "status": {"state": state, "reason": status_reason},
                       "receipts": activity["receipts"], "creations": None})
+
+    @router.get("/me/api/status", include_in_schema=False)
+    async def member_status(request: Request):
+        response = await home(request)
+        if response.status_code != 200:
+            return response
+        # Explicit allowlists keep host telemetry, service identities and raw
+        # backend error messages outside this member contract.
+        snapshot = json.loads(response.body)
+        reasons = {"ready": "Ready to use.", "idle": "Ready to start when you make a request.",
+                   "starting": "Starting. Try again shortly.", "busy": "Busy. Try again shortly.",
+                   "unknown": "Availability has not been measured yet.",
+                   "unavailable": "Unavailable. Ask the owner for help."}
+        rows = []
+        for row in snapshot["capabilities"]:
+            availability = row.get("availability") or {}
+            evidence = availability.get("evidence") or {}
+            rows.append({**{key: row.get(key) for key in ("capability", "intent", "model", "workflow", "status", "available")},
+                         "reason": reasons.get(row["status"], reasons["unavailable"]),
+                         "measured": bool(availability.get("measured")),
+                         "observed_at_s": evidence.get("observed_at_s")})
+        receipts = [{**{key: row.get(key) for key in ("request_id", "status", "intent")},
+                     "created_at": row.get("created_at", row.get("_stored_at")),
+                     "href": f"/ui/usage/?receipt={quote(str(row['request_id']), safe='')}"}
+                    for row in snapshot["receipts"]]
+        return _json({"scope": "member", "status": snapshot["status"], "capabilities": rows,
+                      "receipts": receipts, "help": "Ask the owner if an allowed capability is unavailable."})
+
+    @router.post("/admin/api/setup-evidence", include_in_schema=False)
+    async def setup_evidence(request: Request):
+        try:
+            context = admin_auth(request)
+            if "owner" not in context.roles:
+                raise AdminAuthError("Owner access required.", status_code=403, code="owner_required")
+            session = require_session(request)
+            action_error = require_action(request, session)
+            if action_error is not None:
+                return action_error
+            try:
+                body = await request.json()
+            except ValueError:
+                body = None
+            event = body.get("event") if isinstance(body, Mapping) else None
+            if not isinstance(event, str) or event not in {"settings_copied", "external_client_confirmed", "receipt_viewed"}:
+                raise UserPortalError("invalid_setup_evidence", "Choose a supported setup acknowledgement.")
+            metadata = {}
+            if event == "receipt_viewed":
+                request_id = body.get("request_id")
+                if not isinstance(request_id, str) or not request_id:
+                    raise UserPortalError("receipt_required", "Choose one of your receipts.")
+                get_user_receipt(session, request_id, path=store.path, receipts_path=receipts_path())
+                metadata["request_id"] = request_id
+            else:
+                app_id = body.get("app_id")
+                app = admin_store.get_app(app_id, path=store.path) if isinstance(app_id, str) else None
+                if not app or app.get("owner_user_id") != session.subject or app.get("disabled_at"):
+                    raise UserPortalError("app_not_found", "App not found for this account.", status_code=404)
+                metadata["app_id"] = app_id
+            admin_store.record_audit(f"setup.{event}", actor_kind="user", actor_id=session.subject,
+                                     target_kind="setup", target_id=session.subject,
+                                     metadata={**metadata, "source": "user_confirmation"}, path=store.path)
+            return _json({"event": event, "recorded": True, "source": "user_confirmation"})
+        except (UserPortalError, AdminAuthError) as exc:
+            return _error(exc)
 
     @router.post("/me/api/connection-test", include_in_schema=False)
     async def connection_test(request: Request):
@@ -400,19 +478,21 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
             for service in services
         )
         succeeded = _has_success(receipts_path())
-        used_apps = {credential.get("app_id") for credential in admin_store.list_credentials(path=store.path)
-                     if credential.get("subject_kind") == "app" and credential.get("last_used_at") is not None}
-        explicit_apps = _explicit_app_ids(store.path)
-        app_used = any((app.get("kind") != "personal" or app.get("id") in explicit_apps)
-                       and app.get("id") in used_apps for app in admin_store.list_apps(path=store.path))
+        evidence = _setup_evidence(store.path, context.subject)
+        app_confirmed = "external_client_confirmed" in evidence
+        invited = _invitation_created(store.path)
         steps = [
             {"id": "claim_owner", "done": True, "optional": False, "reason": "The owner account is claimed.", "href": "/setup"},
             {"id": "connect_service", "done": connected, "optional": False, "reason": "A connected service is healthy." if connected else "Connect a service and check its health.", "href": "/ui/admin/services/"},
             {"id": "test_request", "done": succeeded, "optional": False, "reason": "A request has succeeded." if succeeded else "Run a test request with your key.", "href": "/ui/home/#connect"},
-            {"id": "connect_app", "done": app_used, "optional": False, "reason": "An app key has been used." if app_used else "Create an app key and use it in your client.", "href": "/ui/home/#connect"},
-            {"id": "invite_someone", "done": False, "optional": True, "reason": "Invite tracking is not available yet. You can manage people now.", "href": "/ui/people/"},
+            {"id": "connect_app", "done": app_confirmed, "optional": False, "reason": "You confirmed that your external client works. This is not an automated client test." if app_confirmed else "Use your key in an external client, then confirm that it works.", "href": "/ui/home/#connect"},
+            {"id": "invite_someone", "done": invited, "optional": True, "reason": "An invitation has been created." if invited else "Invite someone to use your gateway.", "href": "/ui/people/"},
         ]
-        return _json({"complete": all(step["done"] for step in steps if not step["optional"]), "steps": steps})
+        evidence["gateway_request"] = {"recorded": succeeded, "source": "receipt"}
+        for event in ("settings_copied", "external_client_confirmed", "receipt_viewed"):
+            evidence.setdefault(event, {"recorded": False, "source": "user_confirmation", "observed_at_s": None})
+        return _json({"complete": all(step["done"] for step in steps if not step["optional"]),
+                      "steps": steps, "evidence": evidence})
 
     return router
 

@@ -34,6 +34,21 @@ def service_health_endpoint(service: Mapping[str, Any]) -> str | None:
     return urljoin(f"{base_url}/", endpoint)
 
 
+def declared_health_success(service: Mapping[str, Any], payload: Mapping[str, Any]) -> bool:
+    """Match a declared JSON path with a value other than null or false."""
+    config = service.get("config")
+    connection = {**(config if isinstance(config, Mapping) else {}), **service}
+    path = connection.get("health_success_path")
+    if not isinstance(path, str) or not path.strip():
+        return False
+    value: Any = payload
+    for key in path.split("."):
+        if not isinstance(value, Mapping) or key not in value:
+            return False
+        value = value[key]
+    return value is not None and value is not False
+
+
 def engine_label(service: Mapping[str, Any], service_id: str | None) -> str | None:
     config = service.get("config")
     for source in (service, config if isinstance(config, Mapping) else {}):

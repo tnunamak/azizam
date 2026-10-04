@@ -15,7 +15,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from gateway.capabilities import Capability
+from gateway.capabilities import Capability, resolve_capability_targets
 
 READY_STATUSES = frozenset({"ready", "up", "ok", "healthy", "available"})
 STARTING_STATUSES = frozenset({"starting", "warming"})
@@ -69,7 +69,7 @@ def project_capabilities(
     service_records = service_records or {}
     evidence = evidence or {}
     out: list[Capability] = []
-    for capability in capabilities:
+    for capability in resolve_capability_targets(capabilities, service_records):
         projection = project_service(
             capability.backend,
             service_records=service_records,
@@ -237,7 +237,7 @@ def evidence_from_status_rows(
             "source": str(row.get("source") or "status"),
             "status": raw,
             "available": available,
-            "observed_at_s": observed_at_s,
+            "observed_at_s": row.get("observed_at_s", observed_at_s),
         }
         kind = row.get("kind")
         if isinstance(kind, str) and kind.strip():
@@ -413,6 +413,10 @@ def _observed_stopped(evidence: Mapping[str, Any]) -> bool:
 
 
 def _evidence_newer(incoming: Mapping[str, Any], current: Mapping[str, Any]) -> bool:
+    if incoming.get("kind") == "no_response" and current.get("source") == "lifecycle" and _observed_stopped(current):
+        return False
+    if current.get("kind") == "no_response" and incoming.get("source") == "lifecycle" and _observed_stopped(incoming):
+        return True
     if incoming.get("source") == "request" and current.get("kind") == "no_response":
         return True
     if _evidence_unknown(incoming) and current.get("source") == "request":

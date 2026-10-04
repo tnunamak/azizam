@@ -13,8 +13,10 @@ from gateway.capabilities import Capability, capability_with_policy_view
 from gateway.home_api import create_home_router, _resolved_capabilities, _declared_local_fast
 from gateway.local_capabilities import build_alias_capabilities
 from gateway.profiles import load_profile
+from gateway.product_contracts import HomeCapability, MemberStatus, SetupEvidenceResponse, SetupProgress
 from gateway.runtime_auth import RuntimeIdentity, hash_api_key, make_policy_request
 from gateway.user_runtime import UserPortalError, create_user_app
+from pydantic import TypeAdapter
 
 
 @pytest.fixture
@@ -105,6 +107,7 @@ def test_home_uses_allowed_capabilities_and_owned_last_five(home_case):
     assert all(row["status"] == "ready" for row in data["capabilities"])
     assert data["api_base_url"] == "https://gateway.example/v1"
     assert data["creations"] is None
+    TypeAdapter(list[HomeCapability]).validate_python(data["capabilities"])
     assert c.key not in response.text and "sha256:" not in response.text
     assert admin_store.get_credential(c.cred["id"], path=c.db)["last_used_at"] is None
     assert response.headers["cache-control"] == "no-store"
@@ -192,7 +195,7 @@ def test_connection_rejects_revoked_and_expired_keys(home_case):
     assert c.calls == []
 
 
-def test_setup_is_owner_only_and_requires_observed_use(home_case):
+def test_setup_internal_try_requires_separate_external_confirmation(home_case):
     c = home_case
     c.owner = False
     assert c.http.get("/admin/api/setup-progress").status_code == 403
@@ -203,6 +206,15 @@ def test_setup_is_owner_only_and_requires_observed_use(home_case):
     assert steps["claim_owner"]["done"] and steps["connect_service"]["done"]
     assert not steps["connect_app"]["done"]
     c.http.post("/me/api/connection-test", json={"api_key": c.key}, headers=c.headers)
+    progress = c.http.get("/admin/api/setup-progress").json()
+    assert not progress["complete"]
+    assert progress["evidence"]["gateway_request"]["recorded"]
+    assert not progress["evidence"]["external_client_confirmed"]["recorded"]
+    result = c.http.post("/admin/api/setup-evidence", json={"event": "external_client_confirmed", "app_id": c.client_app["id"]}, headers=c.headers)
+    assert result.status_code == 200, result.text
+    assert result.json()["source"] == "user_confirmation"
+    TypeAdapter(SetupEvidenceResponse).validate_python(result.json())
+    TypeAdapter(SetupProgress).validate_python(progress)
     assert c.http.get("/admin/api/setup-progress").json()["complete"]
 
 
@@ -215,22 +227,90 @@ def test_setup_default_app_used_does_not_complete_app_step(home_case):
     assert not next(step for step in steps if step["id"] == "connect_app")["done"]
 
 
-def test_setup_explicit_first_app_can_complete_without_bootstrap(home_case):
+def test_setup_explicit_first_app_use_does_not_prove_external_client(home_case):
     c = home_case
     admin_store.disable_app(c.personal["id"], path=c.db)
     admin_store.touch_credential_last_used(c.cred["id"], path=c.db)
     steps = c.http.get("/admin/api/setup-progress").json()["steps"]
-    assert next(step for step in steps if step["id"] == "connect_app")["done"]
+    assert not next(step for step in steps if step["id"] == "connect_app")["done"]
 
 
-def test_setup_admin_created_personal_app_counts_when_used(home_case):
+def test_setup_admin_created_app_use_does_not_prove_external_client(home_case):
     c = home_case
     named = admin_store.create_app("Cursor", kind="personal", owner_user_id=c.user["id"], path=c.db)
     admin_store.record_audit("app.create", target_kind="app", target_id=named["id"], path=c.db)
     cred = admin_store.create_credential_hash(subject_kind="app", subject_id=named["id"], hash=hash_api_key("cursor-key"), prefix="masked", path=c.db)
     admin_store.touch_credential_last_used(cred["id"], path=c.db)
     steps = c.http.get("/admin/api/setup-progress").json()["steps"]
-    assert next(step for step in steps if step["id"] == "connect_app")["done"]
+    assert not next(step for step in steps if step["id"] == "connect_app")["done"]
+
+
+def test_setup_evidence_is_owner_csrf_scoped_and_separate(home_case):
+    c = home_case
+    payload = {"event": "settings_copied", "app_id": c.client_app["id"]}
+    assert c.http.post("/admin/api/setup-evidence", json=payload).status_code == 403
+    c.owner = False
+    assert c.http.post("/admin/api/setup-evidence", json=payload, headers=c.headers).status_code == 403
+    c.owner = True
+    assert c.http.post("/admin/api/setup-evidence", json={**payload, "app_id": c.outsider["id"]}, headers=c.headers).status_code == 404
+    assert c.http.post("/admin/api/setup-evidence", json={"event": "not_real"}, headers=c.headers).status_code == 400
+    assert c.http.post("/admin/api/setup-evidence", json={"event": []}, headers=c.headers).status_code == 400
+    assert c.http.post("/admin/api/setup-evidence", json=payload, headers=c.headers).status_code == 200
+    progress = c.http.get("/admin/api/setup-progress").json()
+    assert progress["evidence"]["settings_copied"]["recorded"]
+    assert not progress["evidence"]["external_client_confirmed"]["recorded"]
+    assert not progress["complete"]
+    admin_store.disable_app(c.client_app["id"], path=c.db)
+    assert c.http.post("/admin/api/setup-evidence", json=payload, headers=c.headers).status_code == 404
+    c.logged_in = False
+    assert c.http.post("/admin/api/setup-evidence", json=payload, headers=c.headers).status_code == 401
+
+
+def test_setup_receipt_acknowledgement_requires_owned_receipt(home_case):
+    c = home_case
+    for request_id, app in (("mine", c.client_app), ("other", c.outsider)):
+        receipt_store.record({"request_id": request_id, "app_id": app["id"], "status": "succeeded"}, path=c.receipts)
+    for request_id in ("other", "absent"):
+        assert c.http.post("/admin/api/setup-evidence", json={"event": "receipt_viewed", "request_id": request_id}, headers=c.headers).status_code == 404
+    assert c.http.post("/admin/api/setup-evidence", json={"event": "receipt_viewed", "request_id": "mine"}, headers=c.headers).status_code == 200
+    evidence = c.http.get("/admin/api/setup-progress").json()["evidence"]
+    assert evidence["receipt_viewed"]["recorded"]
+    assert not evidence["external_client_confirmed"]["recorded"]
+
+
+def test_setup_actual_invitation_completes_optional_step(home_case):
+    from gateway import accounts
+    c = home_case
+    accounts.initialize(c.db)
+    profile = admin_store.create_profile("Member", {"id": "member"}, path=c.db)
+    # Creating the invitation is the recorded milestone; accepting is separate.
+    accounts.create_link("invite", c.user["id"], profile_id=profile["id"], path=c.db)
+    steps = c.http.get("/admin/api/setup-progress").json()["steps"]
+    assert next(step for step in steps if step["id"] == "invite_someone")["done"]
+
+
+def test_member_status_contains_only_allowed_capabilities_and_owned_receipts(home_case):
+    c = home_case
+    c.owner = False
+    c.health = {"gpu": {"name": "secret-host"}, "backends": [
+        {"key": "service", "live_status": "up", "endpoint": "http://private:1234"}]}
+    receipt_store.record({"request_id": "mine", "app_id": c.client_app["id"], "status": "failed", "backend": "private-engine"}, path=c.receipts)
+    receipt_store.record({"request_id": "other", "app_id": c.outsider["id"], "status": "failed"}, path=c.receipts)
+    response = c.http.get("/me/api/status")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    data = response.json()
+    TypeAdapter(MemberStatus).validate_python(data)
+    assert data["scope"] == "member"
+    assert {row["capability"] for row in data["capabilities"]} == {"chat"}
+    assert [row["request_id"] for row in data["receipts"]] == ["mine"]
+    assert data["receipts"][0]["href"] == "/ui/usage/?receipt=mine"
+    assert isinstance(data["receipts"][0]["created_at"], int)
+    assert all(set(row) == {"capability", "intent", "model", "workflow", "status", "available", "reason", "measured", "observed_at_s"} for row in data["capabilities"])
+    for hidden in ("backend", "private", "secret-host", c.outsider["id"], "other", "csrf_token", "credential"):
+        assert hidden not in response.text
+    c.logged_in = False
+    assert c.http.get("/me/api/status").status_code == 401
 
 
 def test_home_and_connection_use_credential_profile_override(home_case):

@@ -212,6 +212,7 @@ from gateway.backends.llm_execution import (
 )
 from gateway.backends.litellm_admin import LiteLLMKeyAdminClient
 from gateway.capabilities import (
+    resolve_capability_targets,
     Capability,
     ResourceEstimate,
     capability_from_workflow_record,
@@ -13198,6 +13199,8 @@ def _capability_for_profile(
     protocol: str | None = None,
 ) -> Capability:
     profile = _profile_for_auth_context(auth_context)
+    if "alias" in capability.tags and capability.backend == "gateway":
+        return replace(capability, policy_available=False)
     remote_provider_id = None
     if "remote" in capability.tags:
         provider = provider_lookup(ADMIN_STORE.get_service_registry(), capability.backend)
@@ -13213,8 +13216,8 @@ def _capability_for_profile(
         request=make_policy_request(
             protocol=protocol or _protocol_for_intent(capability.intent),
             intent=capability.intent,
-            workflow=capability.workflow,
-            model=capability.model,
+            workflow=capability.resolved_workflow or capability.workflow,
+            model=next((tag.removeprefix("resolves_to:") for tag in capability.tags if "alias" in capability.tags and tag.startswith("resolves_to:")), capability.model),
             backend=capability.backend,
             capability_exposure=capability.exposure,
             capability_trust_tier=capability.trust_tier,
@@ -13284,7 +13287,7 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
         replace(capability, limits=tuple(limits_for_workflow(published_video_limits, capability.workflow).items()))
         if capability.intent == INTENT_VIDEO_GENERATE and limits_for_workflow(published_video_limits, capability.workflow)
         else capability
-        for capability in capabilities
+        for capability in resolve_capability_targets(capabilities, live_registry)
     ]
 
     return [
@@ -13293,14 +13296,17 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
     ]
 
 
-def _gateway_capabilities_provider(request: Request) -> list[Capability]:
+async def _gateway_capabilities_provider(request: Request) -> list[Capability]:
     capabilities = _gateway_capabilities_for_auth_context(_auth_context_from_scope(request))
     try:
         service_records = ADMIN_STORE.get_service_registry()
+        status_payload = _cached_status_payload_for_availability()
+        if not status_payload:
+            status_payload = {"backends": await status_endpoint._backend_grid({"backends": service_registry.runtime_backends(service_records)}), "generated_at": int(time.time())}
         return project_capabilities(
             capabilities,
             service_records=service_records,
-            evidence=_runtime_availability_evidence(service_records),
+            evidence=status_payload.get("_availability_evidence") or _runtime_availability_evidence(service_records, status_payload=status_payload),
         )
     except Exception:  # noqa: BLE001
         return capabilities
@@ -13338,11 +13344,13 @@ async def _status_payload_with_availability() -> Mapping[str, Any]:
     payload = await status_endpoint.get_cached_status(config)
     try:
         service_records = ADMIN_STORE.get_service_registry()
+        health_evidence = await _models_catalog_health_evidence(service_records, service_ids=(service_records.get("services") or {}).keys())
         return {
             **payload,
             "_availability_evidence": _runtime_availability_evidence(
                 service_records,
                 status_payload=payload,
+                health_evidence=health_evidence,
             ),
         }
     except Exception:  # noqa: BLE001
@@ -14824,6 +14832,12 @@ async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
         audience="client",
         path=media_jobs.DB_PATH,
         **scope,
+    )
+    service_records = ADMIN_STORE.get_service_registry()
+    status_payload = await _status_payload_with_availability()
+    capabilities = project_capabilities(
+        capabilities, service_records=service_records,
+        evidence=status_payload.get("_availability_evidence") or {},
     )
     return build_workflows_catalog(
         records=GATEWAY_WORKFLOW_REGISTRY.records(),

@@ -18,7 +18,7 @@ ADMIN_SECTIONS = {
 }
 
 OWNER_UI_PAGES = frozenset({
-    "status", "engines", "providers", "people", "activity", "settings",
+    "engines", "providers", "people", "activity", "settings",
 })
 
 

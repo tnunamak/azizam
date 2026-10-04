@@ -845,3 +845,13 @@ class GatewayMediaJobAssetTTLTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+def test_async_capability_provider_works_for_list_and_model():
+    async def provider(request):
+        return [Capability(intent="chat.completions", backend="fixture", model="actual")]
+    client = _make_capabilities_client(provider=provider)
+    for path in ("/gateway/v1/capabilities", "/gateway/v1/models/actual/capabilities"):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert response.json()["capabilities"][0]["model"] == "actual"

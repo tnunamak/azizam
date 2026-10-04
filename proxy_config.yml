@@ -599,6 +599,7 @@ backends:
     host: 127.0.0.1
     port: 7890
     health_endpoint: /system_stats
+    health_success_path: system
     timeout: 300
     workflows_dir: ./workflows/images
     default_model: krea2-turbo

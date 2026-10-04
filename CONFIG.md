@@ -22,6 +22,15 @@ silently disabled (they return empty data rather than crashing).
 
 ## Status / monitoring
 
+Service records can declare `health_endpoint` and `health_success_path` in
+their configuration. The latter is a dot-separated JSON object path: an HTTP
+2xx response whose selected value is neither null nor false is positive health
+evidence. Explicit readiness failure, starting or busy states take precedence.
+For example, a `/system_stats` probe can declare `health_success_path: system`.
+An opaque JSON response without such a declaration remains unknown. These
+fields are operator-authored registry data and apply after a registry edit;
+changing bootstrap seeds does not overwrite an existing service record.
+
 | Env var | What it controls | Default |
 |---|---|---|
 | `AGW_GPU_BUDGET_PATH` | Path to a shell script that exports GPU VRAM budget variables (e.g. `GPU0_TOTAL`, `GPU0_DESKTOP`). When unset, budget data is omitted from `/v1/status`. | unset (feature off) |
