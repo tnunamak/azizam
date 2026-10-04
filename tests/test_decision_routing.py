@@ -75,6 +75,55 @@ def test_free_fallback_observes_engine_and_model():
     assert result.fallback_reasons == ("large:overloaded",)
 
 
+def test_configured_fallback_discloses_skipped_primary_in_http_and_receipt(monkeypatch):
+    import proxy
+    cfg = config()
+    cfg["backends"]["large"]["enabled"] = False
+    monkeypatch.setattr(proxy, "config", cfg)
+    monkeypatch.setattr(proxy, "authenticate_request", lambda *a: proxy.AuthContext())
+    monkeypatch.setattr(proxy.DECISION_RUNTIME, "authorize", lambda *a: True)
+    monkeypatch.setattr(proxy.DECISION_RUNTIME, "ensure_ready", AsyncMock(return_value=None))
+    records = []
+    monkeypatch.setattr(proxy.receipt_store, "record", records.append)
+    real = httpx.AsyncClient
+    with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"model": "small-v1", "answers": {"q": {"type": "noul", "noul": .9}}})))):
+        response = TestClient(proxy.app).post("/v1/systemone", json={**BODY, "model": "decide-quality"})
+    assert response.status_code == 200, response.text
+    assert response.headers["x-gateway-fallback"] == "large:not_deployed"
+    receipt = records[0].to_dict(audience="client")
+    assert receipt["requested_model"] == "decide-quality"
+    assert receipt["resolved_model"] == "small-v1"
+    assert receipt["fallback_reasons"] == ["large:not_deployed"]
+
+
+@pytest.mark.parametrize("model", ["decide", "small", "small-v1"])
+def test_unavailable_single_target_returns_503_without_substitution(model):
+    rt = runtime(ensure=AsyncMock(return_value=False))
+    result = asyncio.run(rt.dispatch(None, None, {**BODY, "model": model}, "r"))
+    assert result.status_code == 503
+    assert result.body["error"]["code"] == "model_not_deployed"
+    assert "No fallback is configured" in result.body["error"]["message"]
+    assert result.resolved_model is None
+
+
+def test_missing_single_target_is_503():
+    cfg = config()
+    cfg["backends"]["small"]["enabled"] = False
+    with pytest.raises(DecisionsError) as error:
+        runtime(cfg=cfg).resolve("decide")
+    assert error.value.status == 503
+
+
+def test_backend_cannot_substitute_undeclared_decision_model():
+    rt = runtime()
+    real = httpx.AsyncClient
+    with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"model": "different-v1", "answers": {"q": {"type": "noul", "noul": .9}}})))):
+        with pytest.raises(DecisionsError) as error:
+            asyncio.run(rt.dispatch(None, None, BODY, "r"))
+    assert error.value.status == 503
+    assert error.value.code == "model_not_deployed"
+
+
 def test_malformed_backend_rejected():
     rt = runtime()
     real = httpx.AsyncClient
