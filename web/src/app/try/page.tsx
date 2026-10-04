@@ -22,6 +22,19 @@ import {
   Play,
   Layers,
 } from "lucide-react";
+import {
+  WorkflowInputs,
+  parseWorkflowInputs,
+  workflowDefaults,
+  type WorkflowInput,
+  type WorkflowInputMapping,
+} from "./workflow-inputs";
+import {
+  mediaFrom,
+  workflowJob,
+  type WorkflowMedia,
+  type WorkflowJob,
+} from "./workflow-media";
 import { accountApi, type AccountApp } from "@/lib/account-api";
 import { ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -59,13 +72,13 @@ type RequestInfo = {
   multipart?: boolean;
   form?: Record<string, unknown>;
   files?: WorkflowExampleFile[];
-  snippets?: Array<{ language: string; code: string }>;
 };
 type WorkflowExampleFile = {
   field: string;
   placeholder: string;
   type?: string;
   required?: boolean;
+  selected?: boolean;
 };
 type CatalogOption = {
   id: string;
@@ -75,23 +88,15 @@ type CatalogOption = {
   locality: string;
   workflow?: WorkflowOption;
 };
-type WorkflowInput = {
-  name: string;
-  type: string;
-  request_field?: string;
-  required?: boolean;
-  default?: unknown;
-  enum?: unknown[];
-  minimum?: number;
-  accepted?: boolean;
-  ignored?: boolean;
-};
 type WorkflowOption = {
   id: string;
   short_id?: string;
   title: string;
   description?: string;
   inputs: WorkflowInput[];
+  inputMapping?: WorkflowInputMapping;
+  jobRoutes?: { poll?: { path?: string }; content?: { path?: string } };
+  outputs?: Array<{ kind?: string; type?: string; media_type?: string }>;
   engine_binding?: string;
   native_route?: string | null;
   example_request?: {
@@ -118,6 +123,9 @@ type Result = {
   downloadUrl?: string;
   downloadName?: string;
   vector?: { dimensions: number; min: number; max: number; mean: number };
+  media?: WorkflowMedia[];
+  job?: WorkflowJob;
+  technical?: string;
   probabilities?: Array<{ option: string; probability: number | null }>;
 };
 
@@ -241,6 +249,7 @@ function receiptFrom(response: Response, payload: unknown) {
   const header =
     response.headers.get("x-ai-gateway-receipt-id") ??
     response.headers.get("x-ai-gateway-request-id") ??
+    response.headers.get("x-gateway-request-id") ??
     response.headers.get("x-request-id");
   if (header) return header;
   if (typeof payload === "object" && payload !== null) {
@@ -251,19 +260,55 @@ function receiptFrom(response: Response, payload: unknown) {
 }
 
 async function verifiedReceiptId(response: Response, payload: unknown) {
-  const requestId = receiptFrom(response, payload);
-  if (!requestId) return null;
-  try {
+  async function verify(requestId: string | null) {
+    if (!requestId) return null;
     const receipt = await fetch(
       `/me/api/receipts/${encodeURIComponent(requestId)}`,
-      {
-        credentials: "same-origin",
-      },
+      { credentials: "same-origin" },
     );
     return receipt.ok ? requestId : null;
+  }
+  try {
+    const direct = await verify(receiptFrom(response, payload));
+    if (direct) return direct;
+    // Media routes can return asset handles without a request-id header. The
+    // account-scoped asset record carries the exact generation's provenance.
+    const record = payload as {
+      data?: Array<{ asset_id?: unknown }>;
+      assets?: Array<{ asset_id?: unknown }>;
+    } | null;
+    const items = [
+      ...(Array.isArray(record?.data) ? record.data : []),
+      ...(Array.isArray(record?.assets) ? record.assets : []),
+    ];
+    const ids = [
+      ...new Set(
+        items
+          .map((item) => item?.asset_id)
+          .filter(
+            (id): id is string => typeof id === "string" && id.length > 0,
+          ),
+      ),
+    ].slice(0, 10);
+    for (const id of ids) {
+      const detail = await fetch(`/me/api/media/${encodeURIComponent(id)}`, {
+        credentials: "same-origin",
+      });
+      if (!detail.ok) continue;
+      const value = (await detail.json()) as {
+        asset?: { request_id?: unknown };
+      };
+      const requestId =
+        typeof value.asset?.request_id === "string"
+          ? value.asset.request_id
+          : null;
+      const verified = await verify(requestId);
+      if (verified) return verified;
+    }
   } catch {
     return null;
   }
+  return null;
 }
 
 function costFrom(payload: unknown, response?: Response) {
@@ -288,7 +333,6 @@ function costFrom(payload: unknown, response?: Response) {
 }
 
 function codeSnippets(request: RequestInfo) {
-  if (request.snippets?.length) return request.snippets;
   const origin = typeof window === "undefined" ? "" : window.location.origin;
   const url =
     request.path.startsWith("/v1/") || request.path.startsWith("/gateway/")
@@ -297,18 +341,59 @@ function codeSnippets(request: RequestInfo) {
   const model = (request.body as { model?: string }).model ?? "";
   const jsonBody = JSON.stringify(request.body, null, 2);
   if (request.multipart) {
+    const form = request.form ?? { model };
+    const files = request.files?.filter(
+      (file) => file.required !== false || file.selected,
+    ) ?? [{ field: "file", placeholder: "sample.wav" }];
+    const fields = Object.entries(form)
+      .filter(([, value]) => value !== undefined && value !== null)
+      .map(([name, value]) => [
+        name,
+        typeof value === "object" ? JSON.stringify(value) : String(value),
+      ]);
+    const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+    const curlFields = fields.map(
+      ([name, value]) => `  --form-string ${shellQuote(`${name}=${value}`)}`,
+    );
+    const curlFiles = files.map(
+      (file) =>
+        `  -F ${shellQuote(`${file.field}=@${file.placeholder}${file.type ? `;type=${file.type}` : ""}`)}`,
+    );
+    const pythonFiles = files
+      .map(
+        (file) =>
+          `    ${JSON.stringify(file.field)}: (${JSON.stringify(file.placeholder)}, stack.enter_context(open(${JSON.stringify(file.placeholder)}, "rb")), ${JSON.stringify(file.type ?? "application/octet-stream")}),`,
+      )
+      .join("\n");
+    const jsFields = fields
+      .map(
+        ([name, value]) =>
+          `form.set(${JSON.stringify(name)}, ${JSON.stringify(value)});`,
+      )
+      .join("\n");
+    const jsFiles = files
+      .map(
+        (file) =>
+          `form.set(${JSON.stringify(file.field)}, new Blob([await fs.readFile(${JSON.stringify(file.placeholder)})], {type: ${JSON.stringify(file.type ?? "application/octet-stream")}}), ${JSON.stringify(file.placeholder)});`,
+      )
+      .join("\n");
     return [
       {
         language: "curl",
-        code: `curl '${url}' \\\n  -H "Authorization: Bearer $GATEWAY_API_KEY" \\\n  -F model='${model}' \\\n  -F file='@sample.wav'`,
+        code: [
+          `curl ${shellQuote(url)}`,
+          '  -H "Authorization: Bearer $GATEWAY_API_KEY"',
+          ...curlFields,
+          ...curlFiles,
+        ].join(" \\\n"),
       },
       {
         language: "Python",
-        code: `import os\nfrom openai import OpenAI\n\nclient = OpenAI(base_url="${baseUrl()}", api_key=os.environ["GATEWAY_API_KEY"])\nwith open("sample.wav", "rb") as audio:\n    print(client.audio.transcriptions.create(model="${model}", file=audio))`,
+        code: `import os\nimport json\nimport requests\nfrom contextlib import ExitStack\n\nwith ExitStack() as stack:\n    files = {\n${pythonFiles}\n    }\n    data = json.loads(${JSON.stringify(JSON.stringify(Object.fromEntries(fields)))})\n    response = requests.post(${JSON.stringify(url)}, headers={"Authorization": f"Bearer {os.environ['GATEWAY_API_KEY']}"}, data=data, files=files)\n    print(response.status_code)\n    open("workflow-result", "wb").write(response.content)`,
       },
       {
         language: "JavaScript",
-        code: `import fs from "node:fs";\nimport OpenAI from "openai";\n\nconst client = new OpenAI({ baseURL: "${baseUrl()}", apiKey: process.env.GATEWAY_API_KEY });\nconsole.log(await client.audio.transcriptions.create({ model: "${model}", file: fs.createReadStream("sample.wav") }));`,
+        code: `import fs from "node:fs/promises";\n\nconst form = new FormData();\n${jsFields}\n${jsFiles}\nconst response = await fetch(${JSON.stringify(url)}, {method: "POST", headers: {authorization: \`Bearer \${process.env.GATEWAY_API_KEY}\`}, body: form});\nconsole.log(response.status);\nawait fs.writeFile("workflow-result", Buffer.from(await response.arrayBuffer()));`,
       },
     ];
   }
@@ -444,40 +529,72 @@ function groupWorkflows(payload: unknown): CatalogOption[] {
   }
   const options: CatalogOption[] = [];
   for (const value of (payload as { workflows: unknown[] }).workflows) {
-      if (typeof value !== "object" || value === null) continue;
-      const record = value as Record<string, unknown>;
-      const workflow: WorkflowOption = {
-        id: String(record.id ?? ""),
-        short_id: stringValue(record.short_id) ?? undefined,
-        title:
-          stringValue(record.title) ??
-          stringValue(record.display_name) ??
-          String(record.id ?? ""),
-        description: stringValue(record.description) ?? undefined,
-        inputs: Array.isArray(record.inputs)
-          ? (record.inputs as WorkflowInput[])
-          : [],
-        engine_binding: stringValue(record.engine_binding) ?? undefined,
-        native_route:
-          record.native_route === null
-            ? null
-            : stringValue(record.native_route) ?? undefined,
-        example_request: workflowExampleRequest(record.example_request),
-      };
-      if (!workflow.id) continue;
-      options.push({
-        id: workflow.id,
-        label: workflow.title || workflow.id,
-        capability: "workflow" as const,
-        price: "Cost not measured yet",
-        locality: "Workflow manifest",
-        workflow,
-      });
+    if (typeof value !== "object" || value === null) continue;
+    const record = value as Record<string, unknown>;
+    const workflow: WorkflowOption = {
+      id: String(record.id ?? ""),
+      short_id: stringValue(record.short_id) ?? undefined,
+      title:
+        stringValue(record.title) ??
+        stringValue(record.display_name) ??
+        String(record.id ?? ""),
+      description: stringValue(record.description) ?? undefined,
+      outputs: Array.isArray(record.outputs)
+        ? (record.outputs as WorkflowOption["outputs"])
+        : [],
+      inputs: Array.isArray(record.inputs)
+        ? (record.inputs as WorkflowInput[])
+        : [],
+      engine_binding: stringValue(record.engine_binding) ?? undefined,
+      native_route:
+        record.native_route === null
+          ? null
+          : (stringValue(record.native_route) ?? undefined),
+      example_request: workflowExampleRequest(record.example_request),
+      ...workflowExecution(record),
+    };
+    if (!workflow.id) continue;
+    options.push({
+      id: workflow.id,
+      label: workflow.title || workflow.id,
+      capability: "workflow" as const,
+      price: "Cost not measured yet",
+      locality: "Workflow manifest",
+      workflow,
+    });
   }
   return options;
 }
 
-function workflowExampleRequest(value: unknown): WorkflowOption["example_request"] {
+function workflowExecution(record: Record<string, unknown>) {
+  const openapi = record.openapi as
+    | { execution?: Record<string, unknown> }
+    | undefined;
+  const execution = openapi?.execution;
+  if (!execution) return {};
+  const example = record.example_request as { path?: string } | undefined;
+  const routes = [execution.sync, execution.async] as Array<
+    | {
+        path?: string;
+        submit?: { path?: string };
+        fields?: WorkflowInputMapping;
+        poll?: { path?: string };
+        content?: { path?: string };
+      }
+    | undefined
+  >;
+  const route = routes.find(
+    (route) => route && (route.path ?? route.submit?.path) === example?.path,
+  );
+  return {
+    inputMapping: route?.fields,
+    jobRoutes: route ? { poll: route.poll, content: route.content } : undefined,
+  };
+}
+
+function workflowExampleRequest(
+  value: unknown,
+): WorkflowOption["example_request"] {
   if (typeof value !== "object" || value === null) return undefined;
   const record = value as Record<string, unknown>;
   return {
@@ -512,30 +629,35 @@ function workflowExampleFiles(value: unknown): WorkflowExampleFile[] {
     .filter((file) => file.field);
 }
 
-function workflowFileSpecs(workflow: WorkflowOption) {
-  return (workflow.example_request?.files ?? []).map((file) => {
+function workflowFileSpecs(workflow: WorkflowOption): WorkflowExampleFile[] {
+  const files = [...(workflow.example_request?.files ?? [])];
+  if (requestIsMultipart(workflow)) {
+    for (const input of workflow.inputs) {
+      const mapping = workflow.inputMapping?.[input.name];
+      const location = mapping?.in ?? input.applies?.toLowerCase();
+      if (input.ignored || input.accepted === false) continue;
+      if (
+        location?.includes("file") ||
+        (!location && ["asset", "file", "binary"].includes(input.type))
+      ) {
+        const field = mapping?.field ?? input.request_field ?? input.name;
+        if (!files.some((file) => file.field === field))
+          files.push({ field, placeholder: `./${field}.bin` });
+      }
+    }
+  }
+  return files.map((file) => {
     const input = workflow.inputs.find(
       (item) =>
         item.name === file.field ||
-        item.request_field === file.field,
+        item.request_field === file.field ||
+        workflow.inputMapping?.[item.name]?.field === file.field,
     );
     return {
       ...file,
-      required: input ? input.required !== false : true,
+      required: input ? input.required === true : file.required !== false,
     };
   });
-}
-
-function workflowSnippets(workflow: WorkflowOption) {
-  const snippets = [
-    { language: "curl", code: workflow.example_request?.curl },
-    { language: "Python", code: workflow.example_request?.python },
-    { language: "JavaScript", code: workflow.example_request?.javascript },
-  ].filter(
-    (snippet): snippet is { language: string; code: string } =>
-      typeof snippet.code === "string" && snippet.code.trim().length > 0,
-  );
-  return snippets.length ? snippets : undefined;
 }
 
 function stringValue(value: unknown) {
@@ -592,8 +714,8 @@ function localityLabel(record: Record<string, unknown>) {
 
 function workflowExampleBody(workflow: WorkflowOption) {
   return requestIsMultipart(workflow)
-    ? workflow.example_request?.form ?? {}
-    : workflow.example_request?.body ?? {};
+    ? (workflow.example_request?.form ?? {})
+    : (workflow.example_request?.body ?? {});
 }
 
 function requestIsMultipart(workflow: WorkflowOption) {
@@ -628,9 +750,11 @@ export default function TryPage() {
   );
   const [options, setOptions] = useState("Run chat\nRun embeddings");
   const [file, setFile] = useState<File | null>(null);
-  const [workflowFiles, setWorkflowFiles] = useState<Record<string, File | null>>(
-    {},
-  );
+  const [workflowFiles, setWorkflowFiles] = useState<
+    Record<string, File | null>
+  >({});
+  const [checkingJob, setCheckingJob] = useState(false);
+  const [jobError, setJobError] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const recorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
@@ -638,6 +762,7 @@ export default function TryPage() {
   const mounted = useRef(true);
   const activeTabRef = useRef<TryTab>("chat");
   const chunks = useRef<Blob[]>([]);
+  const requestForm = useRef<HTMLFormElement | null>(null);
   const [running, setRunning] = useState<TryTab | null>(null);
   const [results, setResults] = useState<Partial<Record<TryTab, Result>>>({});
   const [errors, setErrors] = useState<Partial<Record<TryTab, string>>>({});
@@ -683,7 +808,11 @@ export default function TryPage() {
   useEffect(() => {
     if (!selectedWorkflow) return;
     const body = workflowExampleBody(selectedWorkflow);
-    const inputs = body && typeof body === "object" ? { ...body } : {};
+    const inputs = workflowDefaults(
+      selectedWorkflow.inputs,
+      body,
+      selectedWorkflow.inputMapping,
+    );
     setPrompt((current) => ({
       ...current,
       workflow: JSON.stringify(inputs, null, 2),
@@ -876,34 +1005,54 @@ export default function TryPage() {
         );
       }
       const multipart = requestIsMultipart(selectedWorkflow);
-      let body: Record<string, unknown> = selectedWorkflow.example_request?.body
-        ? { ...selectedWorkflow.example_request.body }
-        : {};
-      let formBody: Record<string, unknown> = selectedWorkflow.example_request?.form
-        ? { ...selectedWorkflow.example_request.form }
-        : {};
-      try {
-        const parsed = JSON.parse(prompt.workflow || "{}");
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          if (multipart) {
-            formBody = { ...formBody, ...(parsed as Record<string, unknown>) };
-          } else {
-            body = { ...body, ...(parsed as Record<string, unknown>) };
-          }
+      const values = parseWorkflowInputs(
+        prompt.workflow || "{}",
+        selectedWorkflow.inputs,
+        selectedWorkflow.inputMapping,
+      );
+      const body = multipart ? {} : values;
+      const formBody = multipart ? values : {};
+      if (multipart) {
+        for (const input of selectedWorkflow.inputs) {
+          const mapping = selectedWorkflow.inputMapping?.[input.name];
+          if (
+            mapping?.in !== "file+extension" ||
+            !mapping.field ||
+            !workflowFiles[mapping.field]
+          )
+            continue;
+          const wasString = typeof formBody.extensions === "string";
+          const extensions = wasString
+            ? JSON.parse(formBody.extensions as string)
+            : { ...((formBody.extensions as Record<string, unknown>) ?? {}) };
+          extensions["com.vividfish.workflow"] = {
+            ...extensions["com.vividfish.workflow"],
+            [mapping.field]: { multipart_field: mapping.field },
+          };
+          formBody.extensions = wasString
+            ? JSON.stringify(extensions)
+            : extensions;
         }
-      } catch {
-        throw new Error("Workflow inputs must be a JSON object.");
       }
-      if (!multipart && body.model === undefined) {
+
+      if (
+        !multipart &&
+        body.model === undefined &&
+        body.request === undefined
+      ) {
         body.model = selectedWorkflow.short_id ?? selectedWorkflow.id;
       }
       return {
         path: route,
         body,
         form: formBody,
-        files: workflowFileSpecs(selectedWorkflow),
+        files: workflowFileSpecs(selectedWorkflow).map((file) => ({
+          ...file,
+          placeholder: workflowFiles[file.field]?.name ?? file.placeholder,
+          type: workflowFiles[file.field]?.type || file.type,
+          selected: Boolean(workflowFiles[file.field]),
+        })),
         multipart,
-        snippets: workflowSnippets(selectedWorkflow),
       };
     }
     return {
@@ -916,6 +1065,7 @@ export default function TryPage() {
     event.preventDefault();
     if (!key?.secret) return;
     setRunning(tab);
+    if (tab === "workflow") setJobError(null);
     setErrors((current) => ({ ...current, [tab]: undefined }));
     try {
       const request = buildRequest(tab);
@@ -933,9 +1083,7 @@ export default function TryPage() {
               form.set(field, selectedFile);
             }
           }
-          for (const [name, value] of Object.entries(
-            request.form ?? {},
-          )) {
+          for (const [name, value] of Object.entries(request.form ?? {})) {
             if (value === undefined || value === null) continue;
             if (typeof value === "object") {
               form.set(name, JSON.stringify(value));
@@ -965,6 +1113,14 @@ export default function TryPage() {
         result.response,
         result.payload,
       );
+      const oldUrls = [
+        results[tab]?.audioUrl,
+        ...(results[tab]?.media?.map((item) => item.url) ?? []),
+      ].filter((url): url is string => Boolean(url?.startsWith("blob:")));
+      oldUrls.forEach((url) => URL.revokeObjectURL(url));
+      objectUrls.current = objectUrls.current.filter(
+        (url) => !oldUrls.includes(url),
+      );
       setResults((current) => ({
         ...current,
         [tab]: formatResult(
@@ -989,6 +1145,83 @@ export default function TryPage() {
     } finally {
       setRunning(null);
     }
+  }
+
+  async function checkWorkflowJob() {
+    const previous = results.workflow;
+    if (!previous?.job || !key?.secret) return;
+    setCheckingJob(true);
+    setJobError(null);
+    try {
+      const status = await publicRequest(previous.job.pollPath, key.secret, {
+        method: "GET",
+      });
+      const job = workflowJob(status.payload, {
+        poll: { path: previous.job.pollPath },
+        content: { path: previous.job.contentPath },
+      });
+      if (!job)
+        throw new Error(
+          "The gateway did not return a job status. Check again.",
+        );
+      let payload = status.payload;
+      if (["succeeded", "completed"].includes(job.status)) {
+        const content = await publicRequest(job.contentPath, key.secret, {
+          method: "GET",
+        });
+        payload = content.payload;
+      }
+      const requestId =
+        previous.receiptId ?? job.requestId ?? previous.job.requestId;
+      const receiptId = requestId
+        ? await verifiedReceiptId(
+            new Response(null, {
+              headers: { "x-ai-gateway-receipt-id": requestId },
+            }),
+            null,
+          )
+        : null;
+      setResults((current) => ({
+        ...current,
+        workflow: {
+          ...previous,
+          job,
+          media: workflowOutputMedia(payload),
+          technical:
+            payload instanceof Blob
+              ? `${payload.type || "Unknown media type"} · ${payload.size} bytes`
+              : JSON.stringify(payload, null, 2),
+          receiptId,
+        },
+      }));
+    } catch (error) {
+      setJobError(
+        error instanceof Error
+          ? error.message
+          : "Could not check the job. Try again.",
+      );
+    } finally {
+      setCheckingJob(false);
+    }
+  }
+
+  function workflowOutputMedia(payload: unknown): WorkflowMedia[] {
+    if (payload instanceof Blob) {
+      const url = URL.createObjectURL(payload);
+      objectUrls.current.push(url);
+      const kind = payload.type.startsWith("image/")
+        ? "image"
+        : payload.type.startsWith("audio/")
+          ? "audio"
+          : payload.type.startsWith("video/")
+            ? "video"
+            : "file";
+      return [{ kind, url, label: "Workflow output", mediaType: payload.type }];
+    }
+    const kind =
+      selectedWorkflow?.outputs?.[0]?.kind ??
+      selectedWorkflow?.outputs?.[0]?.type;
+    return mediaFrom(payload, kind);
   }
 
   function formatResult(
@@ -1025,8 +1258,7 @@ export default function TryPage() {
       const audioUrl =
         payload instanceof Blob ? URL.createObjectURL(payload) : undefined;
       if (audioUrl) {
-        objectUrls.current.forEach((url) => URL.revokeObjectURL(url));
-        objectUrls.current = [audioUrl];
+        objectUrls.current.push(audioUrl);
       }
       return {
         title: "Speech result",
@@ -1062,30 +1294,22 @@ export default function TryPage() {
       };
     }
     if (tab === "workflow") {
-      let imageUrl: string | undefined;
-      let audioUrl: string | undefined;
-      let downloadUrl: string | undefined;
-      if (payload instanceof Blob) {
-        const objectUrl = URL.createObjectURL(payload);
-        objectUrls.current.push(objectUrl);
-        if (payload.type.startsWith("image/")) {
-          imageUrl = objectUrl;
-        } else if (payload.type.startsWith("audio/")) {
-          audioUrl = objectUrl;
-        } else {
-          downloadUrl = objectUrl;
-        }
-      }
+      const media = workflowOutputMedia(payload);
+      const job =
+        workflowJob(payload, selectedWorkflow?.jobRoutes) ?? undefined;
       return {
         title: "Workflow result",
-        body:
+        body: job
+          ? `Job ${job.status}.`
+          : media.length
+            ? `${media.length} output${media.length === 1 ? "" : "s"} returned.`
+            : "Workflow returned a response. Open Technical details to inspect it.",
+        media,
+        job,
+        technical:
           payload instanceof Blob
-            ? "Workflow returned media bytes."
+            ? `${payload.type || "Unknown media type"} · ${payload.size} bytes`
             : JSON.stringify(payload, null, 2),
-        imageUrl,
-        audioUrl,
-        downloadUrl,
-        downloadName: "workflow-result",
         elapsedMs,
         cost,
         receiptId,
@@ -1203,6 +1427,8 @@ export default function TryPage() {
             <TabsContent key={tab.value} value={tab.value} className="mt-4">
               <div className="grid gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
                 <form
+                  ref={requestForm}
+                  noValidate
                   onSubmit={(event) => void run(tab.value, event)}
                   className="bg-card min-w-0 space-y-4 rounded-xl border p-5"
                 >
@@ -1249,7 +1475,14 @@ export default function TryPage() {
                     </label>
                   )}
                   {tab.value === "workflow" && selectedWorkflow && (
-                    <WorkflowInputs workflow={selectedWorkflow} />
+                    <WorkflowInputs
+                      inputs={selectedWorkflow.inputs}
+                      mapping={selectedWorkflow.inputMapping}
+                      json={prompt.workflow}
+                      onChange={(json) =>
+                        setPrompt((current) => ({ ...current, workflow: json }))
+                      }
+                    />
                   )}
                   {tab.value === "workflow" && selectedWorkflow && (
                     <WorkflowFileInputs
@@ -1263,14 +1496,34 @@ export default function TryPage() {
                       }
                     />
                   )}
-                  {tab.value !== "transcribe" && (
+                  {tab.value === "workflow" && (
+                    <details className="border-t pt-3">
+                      <summary className="min-h-11 cursor-pointer text-sm font-medium">
+                        Advanced JSON
+                      </summary>
+                      <label className="block space-y-2">
+                        <span className="text-sm font-medium">Inputs JSON</span>
+                        <Textarea
+                          value={prompt.workflow}
+                          onChange={(event) =>
+                            setPrompt((current) => ({
+                              ...current,
+                              workflow: event.target.value,
+                            }))
+                          }
+                          className="min-h-40 font-mono"
+                        />
+                        <span className="text-muted-foreground text-xs">
+                          This is the native request body. Extra fields are
+                          preserved. File inputs are attached separately.
+                        </span>
+                      </label>
+                    </details>
+                  )}
+                  {tab.value !== "transcribe" && tab.value !== "workflow" && (
                     <label className="block space-y-2">
                       <span className="text-sm font-medium">
-                        {tab.value === "decide"
-                          ? "Question"
-                          : tab.value === "workflow"
-                            ? "Inputs JSON"
-                            : "Prompt"}
+                        {tab.value === "decide" ? "Question" : "Prompt"}
                       </span>
                       <Textarea
                         value={prompt[tab.value]}
@@ -1350,7 +1603,7 @@ export default function TryPage() {
                   <Button
                     type="submit"
                     variant="outline"
-                    disabled={!key?.secret || running !== null}
+                    disabled={!key?.secret || running !== null || checkingJob}
                   >
                     {running === tab.value ? (
                       <Loader2 aria-hidden="true" className="animate-spin" />
@@ -1371,9 +1624,17 @@ export default function TryPage() {
                       <Skeleton className="h-20 w-full" />
                     </div>
                   ) : currentError ? (
-                    <ErrorState message={currentError} />
+                    <ErrorState
+                      message={currentError}
+                      onRetry={() => requestForm.current?.requestSubmit()}
+                    />
                   ) : currentResult ? (
-                    <ResultView result={currentResult} />
+                    <ResultView
+                      result={currentResult}
+                      onCheckJob={() => void checkWorkflowJob()}
+                      checkingJob={checkingJob}
+                      jobError={jobError}
+                    />
                   ) : (
                     <EmptyState
                       icon={tab.icon}
@@ -1391,11 +1652,27 @@ export default function TryPage() {
   );
 }
 
-function ResultView({ result }: { result: Result }) {
+function ResultView({
+  result,
+  onCheckJob,
+  checkingJob,
+  jobError,
+}: {
+  result: Result;
+  onCheckJob: () => void;
+  checkingJob: boolean;
+  jobError: string | null;
+}) {
   return (
     <div className="min-w-0 space-y-5">
       <div className="space-y-2">
         <h2 className="font-semibold">{result.title}</h2>
+        {Boolean(result.media?.length) && (
+          <p className="text-muted-foreground text-sm">
+            {result.media?.length} output{result.media?.length === 1 ? "" : "s"}{" "}
+            returned.
+          </p>
+        )}
         {result.imageUrl && (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -1450,8 +1727,81 @@ function ResultView({ result }: { result: Result }) {
             </table>
           </div>
         )}
+        {result.media?.map((item, index) => (
+          <div key={`${item.url}-${index}`} className="space-y-2">
+            {item.kind === "image" && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={item.url}
+                alt="Generated result"
+                className="max-h-96 w-full rounded-lg border object-contain"
+              />
+            )}
+            {item.kind === "audio" && (
+              <audio
+                aria-label={item.label}
+                controls
+                src={item.url}
+                className="w-full"
+              />
+            )}
+            {item.kind === "video" && (
+              <video
+                aria-label={item.label}
+                controls
+                src={item.url}
+                className="max-h-96 w-full rounded-lg"
+              />
+            )}
+            <a
+              href={item.url}
+              download
+              className="inline-flex min-h-11 items-center text-sm underline underline-offset-4"
+            >
+              Download {item.kind === "file" ? "output" : item.kind}
+              {(result.media?.length ?? 0) > 1 ? ` ${index + 1}` : ""}
+            </a>
+          </div>
+        ))}
+        {result.job && (
+          <div className="space-y-2">
+            <p className="text-sm">Job status: {result.job.status}</p>
+            {jobError && <ErrorState message={jobError} onRetry={onCheckJob} />}
+            {result.job.error && (
+              <p className="text-destructive text-sm">{result.job.error}</p>
+            )}
+            {!result.media?.length &&
+              !["failed", "cancelled", "canceled"].includes(
+                result.job.status,
+              ) && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={checkingJob}
+                  onClick={onCheckJob}
+                >
+                  {checkingJob ? "Checking job…" : "Check job"}
+                </Button>
+              )}
+            {!result.media?.length &&
+              ![
+                "succeeded",
+                "completed",
+                "failed",
+                "cancelled",
+                "canceled",
+              ].includes(result.job.status) && (
+                <p className="text-muted-foreground text-sm">
+                  The gateway is still processing this request. Check again to
+                  load its output.
+                </p>
+              )}
+          </div>
+        )}
         {!result.imageUrl &&
           !result.audioUrl &&
+          !result.media?.length &&
+          !result.job &&
           !result.vector &&
           !result.probabilities && (
             <pre className="bg-muted overflow-x-auto rounded-lg p-3 font-mono text-sm whitespace-pre-wrap">
@@ -1460,7 +1810,10 @@ function ResultView({ result }: { result: Result }) {
           )}
       </div>
       <dl className="grid gap-3 text-sm sm:grid-cols-3">
-        <Fact label="Time" value={`${result.elapsedMs} ms`} />
+        <Fact
+          label={result.job ? "Request time" : "Time"}
+          value={`${result.elapsedMs} ms`}
+        />
         <Fact label="Cost" value={result.cost} />
         <Fact
           label="Receipt"
@@ -1468,63 +1821,35 @@ function ResultView({ result }: { result: Result }) {
             result.receiptId ? (
               <a
                 className="underline underline-offset-4"
-                href={`/r/${result.receiptId}`}
+                href={`/r/${encodeURIComponent(result.receiptId)}`}
               >
                 {result.receiptId}
               </a>
             ) : (
-              "Not measured yet"
+              "Not available for this session"
             )
           }
         />
       </dl>
+      {result.technical && (
+        <details className="border-t pt-3">
+          <summary className="min-h-11 cursor-pointer text-sm font-medium">
+            Technical details
+          </summary>
+          <pre
+            tabIndex={0}
+            className="bg-muted max-h-80 overflow-auto rounded-lg p-3 font-mono text-xs break-all whitespace-pre-wrap"
+          >
+            {result.technical}
+          </pre>
+        </details>
+      )}
       <div className="space-y-2">
         <h3 className="flex items-center gap-2 text-sm font-medium">
           <Copy aria-hidden="true" className="size-4" />
-          {result.request.snippets?.length ? "Example request" : "Copy as"}
+          Copy as
         </h3>
         <SnippetBlock snippets={codeSnippets(result.request)} />
-      </div>
-    </div>
-  );
-}
-
-function WorkflowInputs({ workflow }: { workflow: WorkflowOption }) {
-  const rows = workflow.inputs ?? [];
-  if (!rows.length) return null;
-  return (
-    <div className="rounded-lg border">
-      <div className="border-b p-3">
-        <h3 className="text-sm font-medium">Typed inputs</h3>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-muted-foreground border-b text-left">
-              <th className="p-3 font-medium">Name</th>
-              <th className="p-3 font-medium">Type</th>
-              <th className="p-3 font-medium">Default</th>
-              <th className="p-3 font-medium">Applies</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((input) => (
-              <tr key={input.name} className="border-b last:border-0">
-                <td className="p-3 font-mono text-xs">
-                  {input.name}
-                  {input.required && (
-                    <span className="text-destructive ml-1">*</span>
-                  )}
-                </td>
-                <td className="p-3">{input.type}</td>
-                <td className="p-3">{valueText(input.default)}</td>
-                <td className="p-3">
-                  {input.ignored ? "Ignored" : input.accepted === false ? "Unavailable" : "Accepted"}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
       </div>
     </div>
   );
@@ -1569,12 +1894,6 @@ function WorkflowFileInputs({
   );
 }
 
-function valueText(value: unknown) {
-  if (value === undefined || value === null || value === "") return "None";
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
-}
-
 function Fact({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="rounded-lg border p-3">
@@ -1593,8 +1912,12 @@ function SnippetBlock({
   const [activeLanguage, setActiveLanguage] = useState(firstLanguage);
   const [copied, setCopied] = useState<string | null>(null);
   async function copy(language: string, code: string) {
-    await navigator.clipboard.writeText(code);
-    setCopied(language);
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(language);
+    } catch {
+      setCopied("Copy failed");
+    }
   }
   return (
     <Tabs
@@ -1617,7 +1940,7 @@ function SnippetBlock({
           type="button"
           variant="ghost"
           size="sm"
-          className="self-end sm:self-auto"
+          className="min-h-11 self-end sm:self-auto"
           onClick={() => {
             const snippet =
               snippets.find((item) => item.language === activeLanguage) ??
@@ -1625,7 +1948,11 @@ function SnippetBlock({
             if (snippet) void copy(snippet.language, snippet.code);
           }}
         >
-          {copied ? "Copied" : "Copy"}
+          {copied === "Copy failed"
+            ? "Copy failed"
+            : copied
+              ? "Copied"
+              : "Copy"}
         </Button>
       </div>
       {snippets.map((snippet) => (
