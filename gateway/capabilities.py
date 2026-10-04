@@ -408,9 +408,17 @@ def caller_visible_capabilities(capabilities: Iterable[Capability]) -> list[Capa
                    and candidate.model == role_target and "alias" not in candidate.tags
                    for candidate in capabilities):
                 alias_targets.add((cap.intent, cap.backend, role_target))
+    # Registered public names can expose the same logical role without a
+    # stable alias. Hide the internal spelling only when that public pair is
+    # actually permitted on the same serving backend and intent.
+    public_roles = {(cap.intent, cap.backend, cap.model) for cap in capabilities
+                    if cap.policy_available and "alias" not in cap.tags and cap.model and not cap.model.startswith("role:")}
     rows = {}
     rank = {"ready": 5, "idle": 4, "starting": 3, "busy": 2, "unavailable": 1, "unknown": 0}
     for cap in capabilities:
+        if (cap.model and cap.model.startswith("role:")
+                and (cap.intent, cap.backend, cap.model.removeprefix("role:")) in public_roles):
+            continue
         if "alias" not in cap.tags and any(
             (cap.intent, cap.backend, target) in alias_targets
             for target in (cap.model, cap.workflow) if target

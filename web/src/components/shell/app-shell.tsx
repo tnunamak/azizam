@@ -781,6 +781,7 @@ function Shell({ children }: { children: React.ReactNode }) {
               <header className="flex h-16 items-center justify-between border-b px-5 sm:hidden">
                 <Link
                   href="/"
+                  aria-label={`${PRODUCT_NAME}${instanceData?.service?.name ? ` ${instanceData.service.name}` : ""} Home`}
                   className="flex min-h-11 items-center gap-2 font-semibold"
                 >
                   <Fish className="text-primary size-5" />

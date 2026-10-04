@@ -259,7 +259,8 @@ def test_unrelated_role_ids_and_unresolved_aliases_remain_visible():
 def test_catalog_logical_role_alias_dedupes_only_covered_chat_role():
     catalog = build_models_catalog(
         alias_views={"chat": {"stable": [{"alias": "coder", "resolves_to": "coder", "service": "one"}]}},
-        capabilities=[Capability(intent="chat.completions", backend="one", model="role:coder", title="Coding profile")],
+        capabilities=[Capability(intent="chat.completions", backend="one", model="role:coder", title="Coding profile"),
+                      Capability(intent="chat.completions", backend="one", model="coder", tags=("alias", "resolves_to:coder"))],
     )
     assert catalog["models"] == []
     assert catalog["aliases"][0]["id"] == "coder"
@@ -276,3 +277,16 @@ def test_alias_resolution_carries_target_limits_and_preserves_alias_override():
     override = Capability(intent=alias.intent, backend=alias.backend, model=alias.model,
                           tags=alias.tags, limits=(("max_total_seconds", 60),))
     assert next(cap for cap in resolve_capability_targets([override, target]) if cap.model == "video").limits == override.limits
+
+
+def test_permitted_registered_public_role_hides_internal_spelling_only_same_shape():
+    from gateway.capabilities import caller_visible_capabilities, summarize_capability
+    public = Capability(intent="chat.completions", backend="one", model="coder-q5", title="Coding profile")
+    internal = Capability(intent="chat.completions", backend="one", model="role:coder-q5")
+    other_backend = Capability(intent="chat.completions", backend="two", model="role:coder-q5")
+    other_intent = Capability(intent="text.embeddings", backend="one", model="role:coder-q5")
+    rows = caller_visible_capabilities([public, internal, other_backend, other_intent])
+    assert rows == sorted([public, other_backend, other_intent], key=lambda cap: cap.sort_key)
+    assert summarize_capability(public, "client")["title"] == "Chat (Coding profile)"
+    denied = Capability(intent=public.intent, backend=public.backend, model=public.model, policy_available=False)
+    assert internal in caller_visible_capabilities([denied, internal])

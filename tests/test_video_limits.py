@@ -75,7 +75,11 @@ class VideoLimitsDiscoveryTests(unittest.TestCase):
         self.client = TestClient(proxy.app)
 
     def test_capabilities_carry_the_cap_and_segment_limits(self) -> None:
-        with patch.object(proxy, "_capabilities_availability_evidence", new=AsyncMock(return_value={})):
+        # Inspect unaliased concrete workflows; the separate alias case below
+        # proves their limits survive when a caller alias replaces the row.
+        with patch.object(proxy, "_gateway_aliases_provider", return_value={}), patch.object(
+            proxy, "_capabilities_availability_evidence", new=AsyncMock(return_value={})
+        ):
             rows = self.client.get("/gateway/v1/capabilities").json()["capabilities"]
         by_workflow = {r["workflow"]: r for r in rows if r.get("intent") == "video.generate" and r.get("workflow")}
         # Config and manifest entries now share the canonical workflow id.

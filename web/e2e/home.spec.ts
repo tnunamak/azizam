@@ -676,6 +676,7 @@ test("inline reveal-once key tests a real chat request and produces one owned re
     const receipt = detail.receipt ?? detail;
     expect(receipt.request_id).toBe(connection.request_id);
     expect(receipt.status).toBe("succeeded");
+    expect(receipt.source_kind).toBe("gateway-ui");
     // Stable alias resolution precedes the existing durable receipt boundary.
     expect(receipt.requested_model).toBe("demo-chat");
     expect(
@@ -700,12 +701,15 @@ test("inline reveal-once key tests a real chat request and produces one owned re
         `${id} reflects an observed gateway action, not client setup`,
       ).toBe(true);
     }
-    expect(steps.find((step) => step.id === "connect_app")?.done).toBe(false);
+    // Global setup already made a successful external app request. A UI test
+    // remains UI-attributed and does not fabricate a manual confirmation.
+    expect(steps.find((step) => step.id === "connect_app")?.done).toBe(true);
+    expect(progress.evidence.observed_external_client.recorded).toBe(true);
     expect(progress.evidence.external_client_confirmed.recorded).toBe(false);
     expect(steps.find((step) => step.id === "invite_someone")?.optional).toBe(
       true,
     );
-    expect(progress.complete).toBe(false);
+    expect(progress.complete).toBe(true);
     await expect(
       page.getByText("Client setup: not verified", { exact: true }),
     ).toBeVisible();
