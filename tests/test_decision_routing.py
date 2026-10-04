@@ -515,8 +515,15 @@ def test_explicit_timeout_bounds_lifecycle_and_fallback_budget(monkeypatch):
         "driver": "systemd", "driver_config": {"health_timeout_s": .2},
     })
     cfg["backends"]["small"]["timeout"] = .4
-    rt = runtime(cfg=cfg)
-    assert rt._dispatch_timeout_seconds(rt.resolve("decide-quality")) == .03
+    async def start(service):
+        await asyncio.sleep(.06)
+
+    ensure = AsyncMock(side_effect=start)
+    rt = runtime(cfg=cfg, ensure=ensure)
+    result = asyncio.run(rt.dispatch(None, None, {**BODY, "model": "decide-quality"}, "r"))
+    assert result.status_code == 529
+    assert result.fallback_reasons == ("large:deadline_exceeded",)
+    ensure.assert_awaited_once_with("large")
 
 
 def test_engine_deadline_response_is_retryable_and_preserves_reason():
