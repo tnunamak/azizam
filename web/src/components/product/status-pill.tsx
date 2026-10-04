@@ -16,6 +16,8 @@ export type AvailabilityStatus =
 export interface StatusPillProps {
   status: AvailabilityStatus;
   reason?: string;
+  /** Summaries omit unobserved values; details still explain unknown status. */
+  summary?: boolean;
 }
 const states = {
   ready: { label: "Ready", icon: Check, color: "text-success" },
@@ -63,8 +65,18 @@ function normalizeStatus(status: AvailabilityStatus): keyof typeof states {
   return "unknown";
 }
 
-export function StatusPill({ status, reason }: StatusPillProps) {
-  const { label, icon: Icon, color } = states[normalizeStatus(status)];
+export function StatusPill({
+  status,
+  reason,
+  summary = false,
+}: StatusPillProps) {
+  const normalized = normalizeStatus(status);
+  if (
+    summary &&
+    ["unknown", "not_measured", "not measured yet"].includes(normalized)
+  )
+    return null;
+  const { label, icon: Icon, color } = states[normalized];
   return (
     <span className="inline-flex flex-wrap items-center gap-2">
       <Badge variant="secondary">

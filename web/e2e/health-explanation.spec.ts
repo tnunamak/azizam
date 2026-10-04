@@ -48,13 +48,16 @@ test("health popover explains a measured outage and links to Status", async ({
       ["serious", "critical"].includes(violation.impact ?? ""),
     ),
   ).toEqual([]);
-  await explanation.getByRole("link", { name: "View status" }).click();
-  await expect(page).toHaveURL(/\/ui\/status\/?$/);
-  // The owner banner sends keyboard focus to the affected diagnostic section,
-  // including when it is activated while already on Status.
+  await expect(
+    explanation.getByRole("link", { name: "View status" }),
+  ).toHaveAttribute("href", "/ui/status/");
+  await page.keyboard.press("Escape");
+  // Off-page owner alerts hand keyboard focus to the affected section. The
+  // target page already shows those diagnostics and must not repeat the banner.
   const banner = page.getByRole("status").filter({
     hasText: "Image engine is unavailable. Check its connection on Status.",
   });
+  await expect(banner).toBeVisible();
   const action = banner.getByRole("link", { name: "View status", exact: true });
   await action.focus();
   await page.keyboard.press("Enter");
@@ -62,11 +65,7 @@ test("health popover explains a measured outage and links to Status", async ({
   await expect(
     page.getByRole("heading", { name: "Engines", exact: true, level: 2 }),
   ).toBeFocused();
-  await action.focus();
-  await page.keyboard.press("Enter");
-  await expect(
-    page.getByRole("heading", { name: "Engines", exact: true, level: 2 }),
-  ).toBeFocused();
+  await expect(banner).toHaveCount(0);
 });
 
 test("member health uses their allowed models and never requests owner diagnostics", async ({

@@ -373,8 +373,9 @@ function Nav({
 
 function AlertSlot() {
   const viewer = useViewer();
-  const alert = useOwnerAlertTarget(viewer.admin);
   const pathname = usePathname();
+  const onStatus = canonicalDestinationPath(pathname) === "/status";
+  const alert = useOwnerAlertTarget(viewer.admin && !onStatus);
   // Status owns its section markup. Resolve its visible heading after route
   // loading so the banner can hand keyboard focus to the affected section.
   useEffect(() => {
@@ -411,7 +412,7 @@ function AlertSlot() {
       window.removeEventListener("hashchange", onHashChange);
     };
   }, [pathname, viewer.admin]);
-  if (!alert) return null;
+  if (!alert || onStatus) return null;
   return (
     <div
       className="bg-warning-tint text-warning flex flex-wrap items-center justify-between gap-3 border-b px-5 py-3 text-sm sm:px-8"

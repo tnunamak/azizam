@@ -57,7 +57,11 @@ for (const mode of [
       await page
         .getByRole("link", { name: "View status", exact: true })
         .click();
-      await expect(page).toHaveURL(/\/ui\/status\/?$/);
+      await expect(page).toHaveURL(/\/ui\/status\/?#engines$/);
+      await expect(
+        page.getByRole("heading", { name: "Engines", exact: true, level: 2 }),
+      ).toBeFocused();
+      await expect(alert).toHaveCount(0);
     } else await expect(alert).toHaveCount(0);
     await expect(page.getByText("Disk is full", { exact: true })).toHaveCount(
       0,
@@ -92,4 +96,18 @@ test("provider alerts use explicit enabled and reachability data", async ({
       { exact: true },
     ),
   ).toBeVisible();
+  const banner = page
+    .getByRole("status")
+    .filter({
+      hasText:
+        "Remote provider is unreachable. Check its connection on Status.",
+    });
+  const action = banner.getByRole("link", { name: "View status", exact: true });
+  await action.focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/\/ui\/status\/?#providers$/);
+  await expect(
+    page.getByRole("heading", { name: "Providers", exact: true, level: 2 }),
+  ).toBeFocused();
+  await expect(banner).toHaveCount(0);
 });

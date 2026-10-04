@@ -4,8 +4,77 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CopyField, ErrorState, SecretReveal } from "@/components/product";
 import { ApiError } from "@/lib/api";
+import { Money } from "@/components/product/money";
+import { StatusPill } from "@/components/product/status-pill";
 
 afterEach(cleanup);
+
+describe("summary attention budgets", () => {
+  it.each([
+    null,
+    undefined,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+  ])("omits unmeasured amount %s only from summaries", (amount) => {
+    const { container, rerender } = render(<Money amount={amount} summary />);
+    expect(container).toBeEmptyDOMElement();
+    rerender(<Money amount={amount} />);
+    expect(screen.getByText("Not measured yet")).toBeVisible();
+  });
+
+  it("keeps measured zero and known local execution in money summaries", () => {
+    render(
+      <>
+        <Money amount={0} summary />
+        <Money amount={null} local summary />
+      </>,
+    );
+    expect(screen.getByText("$0.00")).toBeVisible();
+    expect(screen.getByText("Local · no provider charge")).toBeVisible();
+    expect(screen.queryByText("Not measured yet")).toBeNull();
+  });
+
+  it.each([
+    "unknown",
+    "not_measured",
+    "not measured yet",
+    "unexpected-observation",
+  ])("omits unknown status %s and its reason only from summaries", (status) => {
+    const { container, rerender } = render(
+      <StatusPill
+        status={status}
+        reason="Observation has not been measured."
+        summary
+      />,
+    );
+    expect(container).toBeEmptyDOMElement();
+    rerender(
+      <StatusPill
+        status={status}
+        reason="Observation has not been measured."
+      />,
+    );
+    expect(screen.getByText("Unknown", { exact: true })).toBeVisible();
+    expect(
+      screen.getByText("Observation has not been measured."),
+    ).toBeVisible();
+    expect(screen.queryByText("Ready", { exact: true })).toBeNull();
+    expect(screen.queryByText("Unavailable", { exact: true })).toBeNull();
+  });
+
+  it.each([
+    ["ready", "Ready"],
+    ["idle", "Ready to start"],
+    ["standby_stopped", "Ready to start"],
+    ["starting", "Starting"],
+    ["busy", "Busy"],
+    ["unavailable", "Unavailable"],
+  ])("keeps known %s status in summaries", (status, label) => {
+    render(<StatusPill status={status} summary />);
+    expect(screen.getByText(label, { exact: true })).toBeVisible();
+  });
+});
 
 describe("shared error recovery", () => {
   it("retries a transient load and discloses only safe technical identifiers", async () => {
