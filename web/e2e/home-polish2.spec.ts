@@ -292,7 +292,7 @@ test("one selected and pasted app key scopes all recipes and the gateway check",
     .getByRole("button", { name: "Gateway check", exact: true })
     .click();
   await expect(
-    page.getByText("Gateway responded with this key", { exact: true }),
+    page.getByText(/^Gateway responded with this key · 25 ms$/),
   ).toBeVisible();
   expect(checks).toEqual([
     { api_key: "fixture-chat-secret", credential_id: "chat-key" },
