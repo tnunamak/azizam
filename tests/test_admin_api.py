@@ -480,7 +480,7 @@ class DeriveAdminAttentionTests(unittest.TestCase):
             observation_available=True,
         )
         self.assertEqual((required_down["state"], required_down["tone"]), ("bad", "bad"))
-        self.assertEqual(required_down["incomplete"], {"routing": ["unknown"]})
+        self.assertEqual(required_down["incomplete"], {"routing": ["Unknown"]})
         self.assertIn("No route declaration for Unknown.", required_down["detail"])
 
         degraded_with_unobserved = derive_admin_health_projection(
@@ -497,7 +497,7 @@ class DeriveAdminAttentionTests(unittest.TestCase):
             (degraded_with_unobserved["state"], degraded_with_unobserved["tone"]),
             ("warn", "warn"),
         )
-        self.assertEqual(degraded_with_unobserved["incomplete"], {"observations": ["missing"]})
+        self.assertEqual(degraded_with_unobserved["incomplete"], {"observations": ["Missing"]})
 
         signal_with_unknown = derive_admin_health_projection(
             {"services": {"unknown": {"config": {"models": []}}}},
@@ -510,7 +510,7 @@ class DeriveAdminAttentionTests(unittest.TestCase):
             observation_available=True,
         )
         self.assertEqual((signal_with_unknown["state"], signal_with_unknown["tone"]), ("warn", "warn"))
-        self.assertEqual(signal_with_unknown["incomplete"], {"routing": ["unknown"]})
+        self.assertEqual(signal_with_unknown["incomplete"], {"routing": ["Unknown"]})
         self.assertEqual(signal_with_unknown["signals"][0]["source"], "api")
 
     def test_current_health_routing_unknown_fixture_matches_producer_by_service_id(self) -> None:
