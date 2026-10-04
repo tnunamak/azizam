@@ -6,7 +6,7 @@ import asyncio
 import tempfile
 from dataclasses import replace
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import yaml
 from fastapi import FastAPI
@@ -500,6 +500,7 @@ class WorkflowsCatalogTests(unittest.TestCase):
                  patch.object(proxy, "build_user_activity_snapshot", return_value={"receipts": []}), \
                  patch.object(proxy.media_jobs, "DB_PATH", jobs_db), \
                  patch.object(proxy, "_gateway_aliases_provider", return_value={}), \
+                 patch.object(proxy, "_capabilities_availability_evidence", new=AsyncMock(return_value={})), \
                  patch.object(proxy, "_public_base_url", return_value="http://testserver"), \
                  patch.object(proxy, "GATEWAY_WORKFLOW_REGISTRY", _registry()):
                 app = FastAPI()

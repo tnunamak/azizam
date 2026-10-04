@@ -757,3 +757,33 @@ def test_denied_alias_shadows_allowed_same_named_model_before_filtering():
     resolved = resolve_capability_targets([local, alias])
     assert resolved == [alias]
     assert [cap for cap in resolved if cap.policy_available] == []
+
+
+def test_availability_does_not_measure_services_when_caller_has_no_allowed_capabilities(monkeypatch):
+    import asyncio
+    import proxy
+    def unexpected(*args, **kwargs):
+        raise AssertionError("No allowed capabilities require measurement")
+    monkeypatch.setattr(proxy, "_cached_status_payload_for_availability", unexpected)
+    monkeypatch.setattr(proxy.status_endpoint, "_backend_grid", unexpected)
+    denied = Capability(intent="chat.completions", backend="private", policy_available=False)
+    assert asyncio.run(proxy._capabilities_availability_evidence([], {})) == {}
+    assert asyncio.run(proxy._capabilities_availability_evidence([denied], {})) == {}
+
+
+def test_availability_probes_only_caller_visible_services(monkeypatch, tmp_path):
+    import asyncio
+    import proxy
+    receipts = tmp_path / "scoped-receipts.db"
+    receipt_store.init_db(receipts)
+    monkeypatch.setattr(proxy.receipt_store, "DB_PATH", receipts)
+    registry = {"services": {name: {"config": {"base_url": f"http://{name}", "health_endpoint": "/health"}}
+                             for name in ("allowed", "private")}}
+    monkeypatch.setattr(proxy, "_cached_status_payload_for_availability", lambda: {})
+    async def grid(config):
+        assert set(config["backends"]) == {"allowed"}
+        return []
+    monkeypatch.setattr(proxy.status_endpoint, "_backend_grid", grid)
+    caps = [Capability(intent="chat.completions", backend="allowed"),
+            Capability(intent="chat.completions", backend="private", policy_available=False)]
+    assert asyncio.run(proxy._capabilities_availability_evidence(caps, registry)) == {}

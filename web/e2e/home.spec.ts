@@ -680,17 +680,18 @@ test("inline reveal-once key tests a real chat request and produces one owned re
       "claim_owner",
       "connect_service",
       "test_request",
-      "connect_app",
     ]) {
       expect(
         steps.find((step) => step.id === id)?.done,
         `${id} reflects an observed gateway action, not client setup`,
       ).toBe(true);
     }
+    expect(steps.find((step) => step.id === "connect_app")?.done).toBe(false);
+    expect(progress.evidence.external_client_confirmed.recorded).toBe(false);
     expect(steps.find((step) => step.id === "invite_someone")?.optional).toBe(
       true,
     );
-    expect(progress.complete).toBe(true);
+    expect(progress.complete).toBe(false);
     await expect(
       page.getByText("Client setup: not verified", { exact: true }),
     ).toBeVisible();
@@ -699,7 +700,7 @@ test("inline reveal-once key tests a real chat request and produces one owned re
     ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Finish setting up", exact: true }),
-    ).toHaveCount(0);
+    ).toBeVisible();
     await page
       .getByRole("link", { name: "View request receipt", exact: true })
       .click();

@@ -17,7 +17,7 @@ import tempfile
 import time
 
 import httpx
-from fastapi import FastAPI
+import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
@@ -66,6 +66,7 @@ def run():
         state = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="contracts-", dir=scratch)))
         gateway_socket, port = reserve(stack)
         engine_socket, engine_port = reserve(stack)
+        _idle_socket, idle_port = reserve(stack)  # Bound but not listening.
         config = state / "config.yml"
         # JSON is valid YAML. Known fixture integrations are operator-authored
         # data, including the explicit JSON-path health assertion.
@@ -121,17 +122,21 @@ def run():
             return response.json()
 
         registry = expect(client.get("/admin/api/operator/service-registry"))
-        service = post("/admin/api/operator/services", {"id": "fixture-chat", "name": "Fixture llama",
+        post("/admin/api/operator/services", {"id": "fixture-chat", "name": "Fixture llama",
             "protocol": "openai-compatible", "base_url": f"http://127.0.0.1:{engine_port}",
             "health_endpoint": "/health", "capabilities": ["chat", "completions"],
             "gateway_lifecycle": True, "models": [{"public": "demo-chat", "upstream": "demo-chat"}],
             "model_policy_schema_version": 1, "enabled": True}, {"if-match": registry.headers["etag"]})
         # A lifecycle status fixture replaces host systemd for this process.
-        for name, intent in (("decisions", "decisions"), ("realtime", "realtime"), ("rerank", "rerank"), ("face", "image.analyze")):
+        idle_names = ("decisions", "realtime", "rerank", "face")
+        for name in idle_names:
             registry = expect(client.get("/admin/api/operator/service-registry"))
             post("/admin/api/operator/services", {"id": f"fixture-{name}", "name": f"Fixture {name}",
-                "protocol": "openai-compatible", "base_url": f"http://127.0.0.1:{engine_port}",
-                "capabilities": [intent], "lifecycle": {"driver": "systemd", "service_name": f"fixture-{name}.service"},
+                "protocol": "openai-compatible", "base_url": f"http://127.0.0.1:{idle_port}",
+                "health_endpoint": "/health",
+                "capabilities": ["chat"], "models": [{"public": f"idle-{name}", "upstream": f"idle-{name}"}],
+                "model_policy_schema_version": 1,
+                "lifecycle": {"driver": "systemd", "service_name": f"fixture-{name}.service"},
                 "enabled": True}, {"if-match": registry.headers["etag"]})
         post("/admin/api/config/reload", {})
         profile = post("/admin/api/profiles", {"name": "Contracts full local", "profile": {"id": "contracts-local"}})["profile"]
@@ -148,12 +153,22 @@ def run():
         chat = {row.get("model"): row for row in rows if row["intent"] == "chat.completions"}
         for name in ("fast", "default", "coder", "vision", "demo-chat"):
             assert chat[name]["availability"]["status"] == "ready", f"{name} did not inherit ready target"
-        workflows = [row for row in rows if row["intent"] in {"image.generate", "video.generate", "audio.generate"} and row.get("workflow")]
+        comfy_ids = set()
+        for path in (ROOT / "manifests/workflows").glob("*.yml"):
+            manifest = yaml.safe_load(path.read_text())
+            if "comfyui" in (manifest.get("bindings") or {}):
+                comfy_ids.add(manifest["id"])
+        workflows = [row for row in rows if row.get("workflow") in comfy_ids]
         assert workflows, "No configured workflows found"
+        assert {row["intent"] for row in workflows} >= {"image.generate", "video.generate", "audio.generate"}
         assert all(row["availability"]["status"] == "ready" and row["availability"]["evidence"].get("observed_at_s") for row in workflows), json.dumps([
             {"intent": row["intent"], "model": row.get("model"), "workflow": row.get("workflow"),
              "availability": row["availability"]} for row in workflows if row["availability"]["status"] != "ready"])
         print(f"PASS cold discovery: {len(rows)} unique caller entries; chat aliases ready; {len(workflows)} media workflows have timestamped health", flush=True)
+        for name in idle_names:
+            assert chat[f"idle-{name}"]["availability"]["status"] == "idle", json.dumps(chat[f"idle-{name}"]["availability"])
+            assert chat[f"idle-{name}"]["availability"]["idle_startable"]
+        print("PASS four stopped managed service fixtures are idle-startable without invoking systemd", flush=True)
         report = subprocess.run([sys.executable, str(ROOT / "scripts/local/availability_report.py"), str(client.base_url).rstrip("/")],
             env={"PATH": os.defpath, "AI_GATEWAY_API_KEY": key}, capture_output=True, text=True, check=True)
         print(report.stdout, end="", flush=True)
@@ -195,7 +210,10 @@ if __name__ == "__main__":
         from gateway import lifecycle_drivers
         async def stopped(self, service):
             return lifecycle_drivers.ProcessState.STOPPED
+        async def preflight(self, service):
+            return None
         lifecycle_drivers.SystemdDriver.status = stopped
+        lifecycle_drivers.SystemdDriver.preflight = preflight
         import uvicorn
         uvicorn.run("proxy:app", host="127.0.0.1", port=int(sys.argv[2]), log_level="warning")
     else:

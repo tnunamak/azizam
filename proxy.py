@@ -13300,16 +13300,30 @@ async def _gateway_capabilities_provider(request: Request) -> list[Capability]:
     capabilities = _gateway_capabilities_for_auth_context(_auth_context_from_scope(request))
     try:
         service_records = ADMIN_STORE.get_service_registry()
-        status_payload = _cached_status_payload_for_availability()
-        if not status_payload:
-            status_payload = {"backends": await status_endpoint._backend_grid({"backends": service_registry.runtime_backends(service_records)}), "generated_at": int(time.time())}
         return project_capabilities(
             capabilities,
             service_records=service_records,
-            evidence=status_payload.get("_availability_evidence") or _runtime_availability_evidence(service_records, status_payload=status_payload),
+            evidence=await _capabilities_availability_evidence(capabilities, service_records),
         )
     except Exception:  # noqa: BLE001
         return capabilities
+
+
+async def _capabilities_availability_evidence(
+    capabilities: Iterable[Capability], service_records: Mapping[str, Any],
+) -> dict[str, dict[str, Any]]:
+    visible = {cap.backend for cap in capabilities if cap.policy_available}
+    if not visible:
+        return {}
+    status_payload = _cached_status_payload_for_availability()
+    if not status_payload:
+        backends = service_registry.runtime_backends(service_records)
+        scoped_backends = {key: value for key, value in backends.items() if key in visible}
+        status_payload = {
+            "backends": await status_endpoint._backend_grid({"backends": scoped_backends}),
+            "generated_at": int(time.time()),
+        }
+    return _runtime_availability_evidence(service_records, status_payload=status_payload)
 
 
 def _cached_status_payload_for_availability() -> Mapping[str, Any]:
@@ -14834,10 +14848,9 @@ async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
         **scope,
     )
     service_records = ADMIN_STORE.get_service_registry()
-    status_payload = await _status_payload_with_availability()
     capabilities = project_capabilities(
         capabilities, service_records=service_records,
-        evidence=status_payload.get("_availability_evidence") or {},
+        evidence=await _capabilities_availability_evidence(capabilities, service_records),
     )
     return build_workflows_catalog(
         records=GATEWAY_WORKFLOW_REGISTRY.records(),
