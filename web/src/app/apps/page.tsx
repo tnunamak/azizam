@@ -53,7 +53,7 @@ const CLIENTS = [
   "curl",
 ];
 type Reveal = { secret: string; app: string; client: string; oldIds: string[] };
-type KeyAction = { kind: "rotate" | "revoke"; app: AccountApp };
+type KeyAction = { kind: "rotate" | "revoke" | "remove"; app: AccountApp };
 
 function AppsContents() {
   const searchParams = useSearchParams();
@@ -154,7 +154,7 @@ function AppsContents() {
           oldIds: ids,
         });
         setSaved(false);
-      } else {
+      } else if (action.kind === "revoke") {
         for (const id of ids) {
           await accountApi.revokeKey(id);
           setAction((current) =>
@@ -172,6 +172,9 @@ function AppsContents() {
           );
         }
         toast.success("App keys revoked");
+      } else {
+        await accountApi.deleteApp(action.app.id);
+        toast.success("App removed");
       }
       setAction(null);
       await refresh();
@@ -372,6 +375,16 @@ function AppsContents() {
                     >
                       Revoke keys
                     </DropdownMenuItem>
+                    <DropdownMenuItem
+                      variant="destructive"
+                      disabled={busy}
+                      onSelect={() => {
+                        setAction({ kind: "remove", app });
+                        setError(null);
+                      }}
+                    >
+                      Remove app
+                    </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
               </article>
@@ -462,13 +475,19 @@ function AppsContents() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {action?.kind === "rotate" ? "Rotate" : "Revoke"} keys for{" "}
-              {actionAppName}?
+              {action?.kind === "remove"
+                ? "Remove"
+                : action?.kind === "rotate"
+                  ? "Rotate"
+                  : "Revoke"}{" "}
+              {action?.kind === "remove" ? actionAppName : `keys for ${actionAppName}`}?
             </DialogTitle>
             <DialogDescription>
               {action?.kind === "rotate"
                 ? "Save the replacement key first. Once you confirm it is saved, all previous keys for this app will stop working."
-                : "All keys for this app will stop working immediately. You can create a new key later."}
+                : action?.kind === "remove"
+                  ? "This removes the app and its keys. Requests from those keys will stop working immediately."
+                  : "All keys for this app will stop working immediately. You can create a new key later."}
             </DialogDescription>
           </DialogHeader>
           {error && (
@@ -485,7 +504,11 @@ function AppsContents() {
               Cancel
             </Button>
             <Button
-              variant={action?.kind === "revoke" ? "destructive" : "default"}
+              variant={
+                action?.kind === "revoke" || action?.kind === "remove"
+                  ? "destructive"
+                  : "default"
+              }
               disabled={busy}
               onClick={() => void performAction()}
             >
@@ -493,7 +516,9 @@ function AppsContents() {
                 ? "Working…"
                 : action?.kind === "rotate"
                   ? "Create replacement key"
-                  : "Revoke keys"}
+                  : action?.kind === "remove"
+                    ? "Remove app"
+                    : "Revoke keys"}
             </Button>
           </DialogFooter>
         </DialogContent>

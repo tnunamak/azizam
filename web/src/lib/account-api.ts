@@ -72,4 +72,8 @@ export const accountApi = {
     accountRequest(`/me/api/credentials/${encodeURIComponent(id)}`, {
       method: "DELETE",
     }),
+  deleteApp: (appId: string) =>
+    accountRequest(`/me/api/apps/${encodeURIComponent(appId)}`, {
+      method: "DELETE",
+    }),
 };

@@ -25,7 +25,7 @@ from typing import Any, Callable, Mapping, Protocol
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, service_registry
+from gateway import admin_store, receipt_store, service_registry
 from gateway import provider_catalog, provider_configuration, provider_listing, secret_store
 from gateway.admin_api import AdminAuthError, AdminContext
 from gateway import providers as provider_core
@@ -148,6 +148,7 @@ def create_provider_admin_router(
     auth: AdminAuth,
     spending_provider: MoneyUsageProvider | None = None,
     ledger_path: Path = provider_core.DEFAULT_LEDGER_PATH,
+    receipts_path: Path = receipt_store.DB_PATH,
     prefix: str = "/admin/api/providers",
 ) -> APIRouter:
     """Build the provider admin router.
@@ -309,6 +310,7 @@ def create_provider_admin_router(
                 provider_id=provider_id,
                 path=ledger_path,
             )
+            _update_reconciled_receipt_cost(row, path=receipts_path)
             _audit_provider_reconciliation(store, ctx, provider_id, row)
         except _RouteError as exc:
             return exc.as_response()
@@ -1434,6 +1436,24 @@ def _audit_provider_reconciliation(
             "actual_usd": row.get("actual_usd"),
             "cost_source": row.get("cost_source"),
         },
+    )
+
+
+def _update_reconciled_receipt_cost(row: Mapping[str, Any], *, path: Path) -> None:
+    request_id = row.get("request_id")
+    if not isinstance(request_id, str) or not request_id:
+        return
+    receipt_store.update_cost(
+        request_id,
+        {
+            "usd": row.get("actual_usd"),
+            "source": row.get("cost_source") or "owner-reported",
+            "provider": row.get("provider"),
+            "cost_class": "paid-remote",
+            "reservation_id": row.get("id"),
+            "reconciliation_status": "settled",
+        },
+        path=path,
     )
 
 

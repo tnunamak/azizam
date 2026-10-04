@@ -22,7 +22,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import proxy
-from gateway import admin_store, decision_provider_execution, providers
+from gateway import admin_store, decision_provider_execution, providers, receipt_store
 from gateway.policy import AppProfile, CapabilitySelector, RemoteProviderPolicy
 from gateway.runtime_auth import RuntimeIdentity
 
@@ -234,6 +234,62 @@ def test_typesafe_prefixed_systemone_routes_to_paid_provider_and_records_owner_r
         assert projected["cost"] == {"usd": "0.002000000", "source": "provider-reported", "cost_class": "paid-remote", "reconciliation_status": "settled"}
         assert "ts_secret_test_key" not in str(projected)
         assert "backend_secret" not in str(projected)
+
+
+def test_typesafe_resolved_model_alias_price_persists_receipt_and_ledger(tmp_path):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert json.loads(request.content.decode())["model"] == "jev-latest"
+        return httpx.Response(
+            200,
+            json={
+                "model": "jev-1.13.0",
+                "answers": {"is_urgent": {"type": "noul", "noul": 0.91}},
+                "usage": {"input_tokens": 302, "output_tokens": 37},
+            },
+        )
+
+    registry = _provider_registry(
+        models=[{"id": "typesafe/jev-latest", "upstream_model": "jev-latest"}],
+        price={
+            "models": {
+                "typesafe/jev-latest": {
+                    "input_usd_per_million_tokens": "0.042",
+                    "output_usd_per_million_tokens": "0",
+                }
+            }
+        },
+    )
+    registry["services"]["typesafe"]["config"]["preset_id"] = "typesafe"
+    receipts_db = tmp_path / "receipts.db"
+    receipt_store.init_db(receipts_db)
+    real_record = receipt_store.record
+    real_begin = receipt_store.begin
+    real_finalize = receipt_store.finalize
+
+    with _authenticated(_profile()) as (_identity, mp):
+        _install_registry(mp, tmp_path, registry)
+        mp.setattr(proxy.receipt_store, "record", lambda receipt, *args, **kwargs: real_record(receipt, *args, **{**kwargs, "path": receipts_db}))
+        mp.setattr(proxy.receipt_store, "begin", lambda receipt, *args, **kwargs: real_begin(receipt, *args, **{**kwargs, "path": receipts_db}))
+        mp.setattr(proxy.receipt_store, "finalize", lambda receipt, *args, **kwargs: real_finalize(receipt, *args, **{**kwargs, "path": receipts_db}))
+        with _mock_typesafe_http(handler):
+            client = TestClient(proxy.app)
+            response = client.post("/v1/systemone", json=BODY, headers=AUTH_HEADERS)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["model"] == "jev-1.13.0"
+    assert Decimal(response.headers["x-gateway-cost-usd"]) == Decimal("0.000012684")
+    rows = _ledger_rows(tmp_path / "provider_spend.db")
+    assert len(rows) == 1
+    assert rows[0][0] == "typesafe"
+    assert rows[0][2] == "settled"
+    assert rows[0][4] == "0.000012684"
+    stored = receipt_store.get(response.headers["x-gateway-request-id"], path=receipts_db)
+    assert stored["resolved_model"] == "jev-1.13.0"
+    assert stored["cost"]["usd"] == "0.000012684"
+    assert stored["cost"]["source"] == "price-table"
+    assert stored["cost"]["reconciliation_status"] == "settled"
+    assert stored["metadata"]["decisions"]["cost_usd"] == "0.000012684"
+    assert stored["metadata"]["decisions"]["usage"] == {"input_tokens": 302, "output_tokens": 37}
 
 
 def test_bare_jev_alias_stays_local_and_never_uses_paid_provider(tmp_path):

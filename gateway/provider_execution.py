@@ -647,6 +647,7 @@ async def execute_paid_litellm(
                 body={**body, "model": resolved_upstream_model},
                 headers=response.headers,
                 stream="text/event-stream" in response.headers.get("content-type", ""),
+                price_model_fallback=model,
             )
             generation_id = generation_id or (body.get("id") if isinstance(body.get("id"), str) else None)
             providers.identify_provider_spend(reservation, generation_id=generation_id, path=ledger_path)

@@ -209,6 +209,23 @@ const INTENT_TABS: Record<string, TryTab> = {
   "decision.systemone": "decide",
   systemone: "decide",
 };
+const CAPABILITY_TABS: Record<string, TryTab> = {
+  chat: "chat",
+  image: "image",
+  images: "image",
+  speech: "speech",
+  voice: "speech",
+  tts: "speech",
+  transcribe: "transcribe",
+  transcription: "transcribe",
+  stt: "transcribe",
+  decide: "decide",
+  decision: "decide",
+  embed: "embed",
+  embeddings: "embed",
+  audio: "workflow",
+  workflow: "workflow",
+};
 
 function baseUrl() {
   if (typeof window === "undefined") return "";
@@ -724,9 +741,26 @@ function requestIsMultipart(workflow: WorkflowOption) {
   );
 }
 
+function selectedOrDefaultModel(
+  tab: TryTab,
+  current: string,
+  options: CatalogOption[],
+  explicit: boolean,
+) {
+  if (!options.length) return current;
+  if (explicit) return current;
+  if (current && options.some((option) => option.id === current))
+    return current;
+  if (!current || current === DEFAULTS[tab].model) return options[0].id;
+  return current;
+}
+
 export default function TryPage() {
   const searchParams = useSearchParams();
   const requestedWorkflow = searchParams.get("workflow");
+  const requestedCapability = searchParams.get("capability");
+  const requestedModel = searchParams.get("model") ?? searchParams.get("alias");
+  const requestedCapabilityKey = requestedCapability?.toLowerCase().trim();
   const [key, setKey] = useState<TryKey | null>(null);
   const [keyBusy, setKeyBusy] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
@@ -761,6 +795,7 @@ export default function TryPage() {
   const objectUrls = useRef<string[]>([]);
   const mounted = useRef(true);
   const activeTabRef = useRef<TryTab>("chat");
+  const explicitModelTabs = useRef<Set<TryTab>>(new Set());
   const chunks = useRef<Blob[]>([]);
   const requestForm = useRef<HTMLFormElement | null>(null);
   const [running, setRunning] = useState<TryTab | null>(null);
@@ -797,6 +832,24 @@ export default function TryPage() {
       urls.forEach((url) => URL.revokeObjectURL(url));
     };
   }, []);
+
+  useEffect(() => {
+    const tab =
+      requestedCapability == null
+        ? null
+        : CAPABILITY_TABS[requestedCapability.toLowerCase().trim()];
+    if (tab) setActiveTab(tab);
+  }, [requestedCapability]);
+
+  useEffect(() => {
+    if (!requestedModel || requestedCapabilityKey === "audio") return;
+    const tab =
+      requestedCapability == null
+        ? "chat"
+        : (CAPABILITY_TABS[requestedCapability.toLowerCase().trim()] ?? "chat");
+    explicitModelTabs.current.add(tab);
+    setModel((current) => ({ ...current, [tab]: requestedModel }));
+  }, [requestedCapability, requestedCapabilityKey, requestedModel]);
 
   useEffect(() => {
     if (requestedWorkflow) {
@@ -898,9 +951,19 @@ export default function TryPage() {
       const workflowsResponse = await fetch("/me/api/workflows", {
         credentials: "same-origin",
       });
-      const workflowOptions = workflowsResponse.ok
+      let workflowOptions = workflowsResponse.ok
         ? groupWorkflows(await workflowsResponse.json())
         : [];
+      if (requestedCapabilityKey === "audio" && !requestedWorkflow) {
+        workflowOptions = workflowOptions.filter((option) =>
+          option.workflow?.outputs?.some(
+            (output) =>
+              output.kind === "audio" ||
+              output.type === "audio" ||
+              output.media_type?.startsWith("audio/"),
+          ),
+        );
+      }
       if (catalogResponse.ok) {
         const grouped = groupCatalog(await catalogResponse.json());
         if (workflowOptions.length) grouped.workflow = workflowOptions;
@@ -909,7 +972,12 @@ export default function TryPage() {
           const next = { ...current };
           for (const tab of TAB_ITEMS) {
             const options = grouped[tab.value] ?? [];
-            if (options.length) next[tab.value] = options[0].id;
+            next[tab.value] = selectedOrDefaultModel(
+              tab.value,
+              next[tab.value],
+              options,
+              explicitModelTabs.current.has(tab.value),
+            );
           }
           if (
             requestedWorkflow &&
@@ -944,6 +1012,21 @@ export default function TryPage() {
           locality: "Available to this Try key",
         })),
       });
+      setModel((current) => ({
+        ...current,
+        chat: selectedOrDefaultModel(
+          "chat",
+          current.chat,
+          (ids ?? []).map((id) => ({
+            id,
+            label: id,
+            capability: "chat" as const,
+            price: "Cost not measured yet",
+            locality: "Available to this Try key",
+          })),
+          explicitModelTabs.current.has("chat"),
+        ),
+      }));
       setCatalogState(ids?.length ? "ready" : "empty");
     } catch {
       setCatalogState("error");
@@ -1463,6 +1546,16 @@ export default function TryPage() {
                   {tab.value === activeTab && (
                     <CatalogNotice state={catalogState} />
                   )}
+                  {tab.value === "workflow" &&
+                    requestedCapabilityKey === "audio" && (
+                      <p
+                        role="status"
+                        className="text-muted-foreground text-sm"
+                      >
+                        Audio has no dedicated Try panel. Choose a workflow if
+                        this gateway exposes one.
+                      </p>
+                    )}
                   {tab.value === "decide" && (
                     <label className="block space-y-2">
                       <span className="text-sm font-medium">State</span>
@@ -1603,7 +1696,14 @@ export default function TryPage() {
                   <Button
                     type="submit"
                     variant="outline"
-                    disabled={!key?.secret || running !== null || checkingJob}
+                    disabled={
+                      !key?.secret ||
+                      running !== null ||
+                      checkingJob ||
+                      (tab.value === "workflow" &&
+                        requestedCapabilityKey === "audio" &&
+                        !selectedWorkflow)
+                    }
                   >
                     {running === tab.value ? (
                       <Loader2 aria-hidden="true" className="animate-spin" />

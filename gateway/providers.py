@@ -587,6 +587,13 @@ def reconcile_provider_spend(
         if row is None:
             conn.execute("ROLLBACK")
             raise LookupError("provider charge was not found")
+        if row["status"] == "settled":
+            persisted = _decimal_or_none(row["actual_usd"])
+            if persisted == amount:
+                conn.execute("COMMIT")
+                return dict(row)
+            conn.execute("ROLLBACK")
+            raise ValueError("provider charge is already settled with a different amount")
         if row["status"] != "needs_reconciliation":
             conn.execute("ROLLBACK")
             raise ValueError("provider charge does not need reconciliation")
@@ -638,6 +645,7 @@ def extract_provider_cost(
     headers: Mapping[str, str] | None = None,
     stream: bool = False,
     allow_usage_pricing: bool = True,
+    price_model_fallback: str | None = None,
 ) -> Cost:
     headers = headers or {}
     if body is not None:
@@ -648,8 +656,8 @@ def extract_provider_cost(
                 return Cost(reported, "provider-reported", provider.id, provider.cost_class)
             if allow_usage_pricing:
                 model = str(body.get("model") or "")
-                if _has_owned_token_prices(provider, model):
-                    owned_cost = _configured_usage_cost(provider, body)
+                if _has_owned_token_prices(provider, model, fallback_model=price_model_fallback):
+                    owned_cost = _configured_usage_cost(provider, body, price_model_fallback=price_model_fallback)
                     return Cost(owned_cost, "price-table" if owned_cost is not None else "unknown", provider.id, provider.cost_class)
                 sdk_model = _official_sdk_cost_model(provider, body)
                 sdk_cost = _litellm_full_usage_cost(sdk_model, body, provider.price.get("usage_price_requirements")) if sdk_model else None
@@ -674,12 +682,48 @@ def resolve_provider_model(provider: ProviderRef, model: str) -> str:
     return str(facts.get("upstream_model") or model) if facts else model
 
 
-def price_for_provider_model(provider: ProviderRef, model: str) -> Mapping[str, Any]:
+def price_for_provider_model(
+    provider: ProviderRef,
+    model: str,
+    *,
+    fallback_model: str | None = None,
+) -> Mapping[str, Any]:
     if not isinstance(provider.price.get("models"), Mapping) or not provider.price["models"]:
         return provider.price
     resolved = resolve_provider_model(provider, model)
     upstream_price = _price_for_model(provider.price, resolved)
-    return _price_for_model(upstream_price, model)
+    exact_price = _price_for_model(upstream_price, model)
+    if exact_price is not upstream_price or not _catalog_declares_alias_price_resolution(provider):
+        return exact_price
+    if fallback_model:
+        fallback_price = _price_for_model(upstream_price, fallback_model)
+        if fallback_price is not upstream_price:
+            return fallback_price
+    return exact_price
+
+
+def _catalog_declares_alias_price_resolution(provider: ProviderRef) -> bool:
+    listing = provider.config.get("model_listing")
+    if isinstance(listing, Mapping) and "alias_resolution" in listing:
+        alias_resolution = listing.get("alias_resolution")
+        return (
+            isinstance(alias_resolution, Mapping)
+            and alias_resolution.get("price_model") == "configured_model"
+        )
+    preset_id = provider.config.get("preset_id")
+    if not isinstance(preset_id, str):
+        return False
+    try:
+        from gateway.provider_catalog import load_provider_catalog
+        preset = load_provider_catalog().get(preset_id)
+    except (ValueError, OSError):
+        return False
+    if preset is None:
+        return False
+    alias_resolution = preset.model_listing.get("alias_resolution")
+    if not isinstance(alias_resolution, Mapping):
+        return False
+    return alias_resolution.get("price_model") == "configured_model"
 
 
 def estimate_typesafe_cost(provider: ProviderRef, body: Mapping[str, Any]) -> Cost:
@@ -794,7 +838,12 @@ async def call_typesafe_systemone(
         if not isinstance(payload, dict):
             raise ProviderError("provider returned a non-object JSON body")
         payload = _redact_provider_payload(payload, api_key)
-        actual_cost = extract_provider_cost(provider, body=payload, headers=response.headers)
+        actual_cost = extract_provider_cost(
+            provider,
+            body=payload,
+            headers=response.headers,
+            price_model_fallback=str(body.get("model") or ""),
+        )
         actual_cost = settle_provider_spend(reservation, actual_cost, path=ledger_path)
         return payload, actual_cost, extract_usage(payload), reservation
     except httpx.TimeoutException as exc:
@@ -1188,8 +1237,9 @@ def _cost_from_tokens(
     model: str,
     input_tokens: int | None,
     output_tokens: int | None,
+    fallback_model: str | None = None,
 ) -> Decimal | None:
-    price = price_for_provider_model(provider, model)
+    price = price_for_provider_model(provider, model, fallback_model=fallback_model)
     if _has_unsupported_owned_rates(price):
         return None
     input_price = _decimal_or_none(price.get("input_usd_per_million_tokens", price.get("input_per_million_usd")))
@@ -1206,8 +1256,13 @@ def _cost_from_tokens(
     return _quantize_usd(total)
 
 
-def _has_owned_token_prices(provider: ProviderRef, model: str) -> bool:
-    return _contains_owned_prices(price_for_provider_model(provider, model))
+def _has_owned_token_prices(
+    provider: ProviderRef,
+    model: str,
+    *,
+    fallback_model: str | None = None,
+) -> bool:
+    return _contains_owned_prices(price_for_provider_model(provider, model, fallback_model=fallback_model))
 
 
 def _contains_owned_prices(price: Mapping[str, Any]) -> bool:
@@ -1267,7 +1322,12 @@ def _usage_token_count(usage: Mapping[str, Any], *names: str) -> int | None:
     return counts[0]
 
 
-def _configured_usage_cost(provider: ProviderRef, body: Mapping[str, Any]) -> Decimal | None:
+def _configured_usage_cost(
+    provider: ProviderRef,
+    body: Mapping[str, Any],
+    *,
+    price_model_fallback: str | None = None,
+) -> Decimal | None:
     """Price complete text/cache-read usage using this provider's own rates.
 
     A new or unpriced billing dimension is an unknown bill, never permission
@@ -1292,7 +1352,7 @@ def _configured_usage_cost(provider: ProviderRef, body: Mapping[str, Any]) -> De
     if set(usage) - supported:
         return None
     model = str(body.get("model") or "")
-    price = price_for_provider_model(provider, model)
+    price = price_for_provider_model(provider, model, fallback_model=price_model_fallback)
     if _has_unsupported_owned_rates(price):
         return None
     inputs = _usage_token_count(usage, "prompt_tokens", "input_tokens")
@@ -1327,7 +1387,13 @@ def _configured_usage_cost(provider: ProviderRef, body: Mapping[str, Any]) -> De
         return None
     if "total_tokens" in usage and _optional_int(usage["total_tokens"]) != inputs + outputs + separate_cached:
         return None
-    total = _cost_from_tokens(provider, model=model, input_tokens=inputs - cached, output_tokens=outputs)
+    total = _cost_from_tokens(
+        provider,
+        model=model,
+        input_tokens=inputs - cached,
+        output_tokens=outputs,
+        fallback_model=price_model_fallback,
+    )
     if total is None:
         return None
     if cached or separate_cached:

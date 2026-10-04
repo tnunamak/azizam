@@ -166,6 +166,61 @@ class DecisionProviderReconciliationTests(unittest.IsolatedAsyncioTestCase):
             ).fetchall()
         self.assertEqual(rows, [("needs_reconciliation", "req-ts-unknown")])
 
+    async def test_typesafe_resolved_response_model_prices_requested_alias(self) -> None:
+        async def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "model": "jev-1.13.0",
+                    "answers": {"q": {"type": "noul", "noul": 1.0}},
+                    "usage": {"input_tokens": 302, "output_tokens": 37},
+                },
+            )
+
+        real_client = httpx.AsyncClient
+        transport = httpx.MockTransport(handler)
+        registry = _registry(
+            models=[{"id": "typesafe/jev-latest", "upstream_model": "jev-latest"}],
+            price={
+                "models": {
+                    "typesafe/jev-latest": {
+                        "input_usd_per_million_tokens": "0.042",
+                        "output_usd_per_million_tokens": "0",
+                    }
+                }
+            },
+        )
+        registry["services"]["typesafe"]["config"]["model_listing"] = {
+            "alias_resolution": {"price_model": "configured_model"}
+        }
+        with patch.object(
+            execution.providers.httpx,
+            "AsyncClient",
+            lambda *args, **kwargs: real_client(transport=transport, timeout=kwargs.get("timeout")),
+        ):
+            result = await execution.systemone(
+                _auth(),
+                _profile(),
+                {
+                    "model": "typesafe/jev-latest",
+                    "state": "x",
+                    "questions": {"q": {"type": "noul", "instructions": "ok?"}},
+                },
+                "req-ts-priced",
+                registry,
+                self.ledger,
+            )
+
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.cost_usd, "0.000012684")
+        self.assertEqual(result.cost_source, "price-table")
+        self.assertEqual(result.reconciliation_status, "settled")
+        with sqlite3.connect(self.ledger) as conn:
+            rows = conn.execute(
+                "SELECT status, actual_usd, request_id FROM provider_spend"
+            ).fetchall()
+        self.assertEqual(rows, [("settled", "0.000012684", "req-ts-priced")])
+
     async def test_typesafe_timeout_result_marks_reconciliation_needed(self) -> None:
         async def timeout_call(provider, profile, body, **kwargs):
             reservation = execution.providers.reserve_provider_spend(profile, provider,

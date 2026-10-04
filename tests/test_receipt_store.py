@@ -401,6 +401,69 @@ class TestReceiptStore(unittest.TestCase):
         )
         self.assertEqual(admin_rows[0]["cost"]["provider"], "openrouter")
 
+    def test_update_cost_refreshes_persisted_receipt_cost(self) -> None:
+        r = _make_receipt(remote=True)
+        r.cost = {
+            "usd": None,
+            "source": "unknown",
+            "provider": "openrouter",
+            "cost_class": "paid-remote",
+            "reservation_id": 1,
+            "reconciliation_status": "needs_reconciliation",
+        }
+        r.metadata["decisions"] = {
+            "question_count": 2,
+            "engine": None,
+            "remote": True,
+            "cost_usd": None,
+            "usage": {"input_tokens": 302, "output_tokens": 37},
+        }
+        receipt_store.record(r, path=self.db)
+
+        updated = receipt_store.update_cost(
+            r.request_id,
+            {
+                "usd": "0.030000000",
+                "source": "owner-reported",
+                "provider": "openrouter",
+                "cost_class": "paid-remote",
+                "reservation_id": 1,
+                "reconciliation_status": "settled",
+            },
+            path=self.db,
+        )
+
+        self.assertTrue(updated)
+        stored = receipt_store.get(r.request_id, path=self.db)
+        self.assertEqual(stored["cost"]["usd"], "0.030000000")
+        self.assertEqual(stored["cost"]["source"], "owner-reported")
+        self.assertEqual(stored["cost"]["provider"], "openrouter")
+        self.assertEqual(stored["cost"]["reconciliation_status"], "settled")
+        self.assertEqual(stored["metadata"]["decisions"]["cost_usd"], "0.030000000")
+
+    def test_update_cost_noops_when_store_is_absent(self) -> None:
+        missing = self.db.with_name("missing-receipts.db")
+
+        self.assertFalse(
+            receipt_store.update_cost(
+                "req_missing",
+                {"usd": "0.01", "source": "owner-reported"},
+                path=missing,
+            )
+        )
+        self.assertFalse(missing.exists())
+
+    def test_update_cost_errors_when_existing_store_is_malformed(self) -> None:
+        malformed = self.db.with_name("malformed-receipts.db")
+        malformed.write_text("not sqlite", encoding="utf-8")
+
+        with self.assertRaises(Exception):
+            receipt_store.update_cost(
+                "req_missing",
+                {"usd": "0.01", "source": "owner-reported"},
+                path=malformed,
+            )
+
     def test_recent_zero_limit_returns_empty(self) -> None:
         receipt_store.record(_make_receipt(), path=self.db)
         self.assertEqual(receipt_store.recent(limit=0, path=self.db), [])

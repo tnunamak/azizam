@@ -136,6 +136,12 @@ def normalize_provider_preset(raw: Mapping[str, Any], *, source: Path | str = "<
             raise ValueError(f"{source}: invalid price scale") from None
         if not scale.is_finite() or scale <= 0:
             raise ValueError(f"{source}: invalid price scale")
+    alias_resolution = listing.get("alias_resolution")
+    if alias_resolution is not None:
+        if not isinstance(alias_resolution, Mapping):
+            raise ValueError(f"{source}: model_listing.alias_resolution must be a mapping")
+        if alias_resolution.get("price_model") != "configured_model":
+            raise ValueError(f"{source}: unsupported model_listing.alias_resolution.price_model")
     return ProviderPreset(
         id=preset_id,
         display_name=str(raw.get("display_name") or preset_id).strip(),
@@ -154,6 +160,7 @@ def normalize_provider_preset(raw: Mapping[str, Any], *, source: Path | str = "<
             "id_path": str(listing.get("id_path") or "id").strip(),
             "name_path": str(listing.get("name_path") or listing.get("id_path") or "id").strip(),
             "prices": dict(listing.get("prices") if isinstance(listing.get("prices"), Mapping) else {}),
+            **({"alias_resolution": dict(alias_resolution)} if isinstance(alias_resolution, Mapping) else {}),
             **({"pricing_path": str(listing["pricing_path"]).strip()} if listing.get("pricing_path") else {}),
             **({"headers": dict(listing["headers"])} if isinstance(listing.get("headers"), Mapping) else {}),
         },

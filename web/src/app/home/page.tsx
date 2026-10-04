@@ -857,7 +857,7 @@ function Capabilities({
                   {capability.available ? (
                     <Button variant="ghost" asChild>
                       <Link
-                        href={`/try/?capability=${encodeURIComponent(capability.capability)}`}
+                        href={`/try/?capability=${encodeURIComponent(capability.capability)}${capability.model ? `&model=${encodeURIComponent(capability.model)}` : ""}`}
                       >
                         Try
                         <ArrowUpRight aria-hidden="true" />
