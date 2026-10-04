@@ -93,15 +93,16 @@ test("Home capability Try link carries chat and fast into Try", async ({
   await tryLink.click();
   await expect(page).toHaveURL(/\/ui\/try\/\?capability=chat&model=fast$/);
 
-  await page.getByRole("button", { name: "Prepare Try key" }).first().click();
-  await page.getByRole("button", { name: "I’ve saved it" }).click();
+  await expect(
+    page.getByText("Run creates a Try key for your access plan.", {
+      exact: true,
+    }),
+  ).toBeVisible();
   await expect(
     page.getByRole("tab", { name: "Chat", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByLabel("Model", { exact: true })).toContainText(
-    "fast model",
-  );
-  await expect(page.getByLabel("Model", { exact: true })).not.toContainText(
+  await expect(page.getByRole("combobox").first()).toContainText("fast model");
+  await expect(page.getByRole("combobox").first()).not.toContainText(
     "coder model",
   );
 });

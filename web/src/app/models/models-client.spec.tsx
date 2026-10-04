@@ -137,13 +137,15 @@ describe("models catalog contract distinctions", () => {
   it("uses product alias fallback and one availability line for allowed configured observed rows", async () => {
     renderModels(catalog([row()]));
 
-    const copy = await screen.findByRole("button", { name: "Copy alias chat" });
+    const copy = await screen.findByRole("button", {
+      name: "Copy model name chat",
+    });
     const card = within(copy.closest("article")!);
 
     expect(productApi.models).toHaveBeenCalledOnce();
     expect(card.getByText("Chat through your configured model.")).toBeVisible();
     expect(card.getByText("Ready")).toBeVisible();
-    expect(card.getByText("Recent request succeeded.")).toBeVisible();
+    expect(card.queryByText("Recent request succeeded.")).toBeNull();
     expect(card.queryByText("Allowed by your access")).toBeNull();
     expect(card.queryByText("Observed:")).toBeNull();
     expect(card.queryByText("Not measured yet")).toBeNull();
@@ -160,7 +162,9 @@ describe("models catalog contract distinctions", () => {
       ]),
     );
 
-    const copy = await screen.findByRole("button", { name: "Copy alias fast" });
+    const copy = await screen.findByRole("button", {
+      name: "Copy model name fast",
+    });
     const card = within(copy.closest("article")!);
 
     expect(
@@ -181,7 +185,9 @@ describe("models catalog contract distinctions", () => {
       ]),
     );
 
-    const copy = await screen.findByRole("button", { name: "Copy alias chat" });
+    const copy = await screen.findByRole("button", {
+      name: "Copy model name chat",
+    });
     const card = within(copy.closest("article")!);
 
     expect(
@@ -199,7 +205,9 @@ describe("models catalog contract distinctions", () => {
       ]),
     );
 
-    const copy = await screen.findByRole("button", { name: "Copy alias fast" });
+    const copy = await screen.findByRole("button", {
+      name: "Copy model name fast",
+    });
     const card = within(copy.closest("article")!);
 
     expect(
@@ -222,7 +230,9 @@ describe("models catalog contract distinctions", () => {
       ]),
     );
 
-    const copy = await screen.findByRole("button", { name: "Copy alias fast" });
+    const copy = await screen.findByRole("button", {
+      name: "Copy model name fast",
+    });
     const card = within(copy.closest("article")!);
     expect(
       card.getByText("Answers quickly for everyday prompts."),
@@ -248,10 +258,14 @@ describe("models catalog contract distinctions", () => {
         }),
       ]),
     );
-    const copy = await screen.findByRole("button", { name: "Copy alias chat" });
+    const copy = await screen.findByRole("button", {
+      name: "Copy model name chat",
+    });
     const card = within(copy.closest("article")!);
     expect(card.getByRole("heading", { name: "Default" })).toBeVisible();
-    expect(card.getByText("llama.cpp (chat)")).toBeVisible();
+    expect(card.queryByText("llama.cpp (chat)")).toBeNull();
+    fireEvent.click(card.getByRole("button", { name: /Details/ }));
+    expect(screen.getByText("llama.cpp (chat)")).toBeVisible();
     expect(card.queryByText(/rollback|official/i)).toBeNull();
   });
 
@@ -266,10 +280,14 @@ describe("models catalog contract distinctions", () => {
       ]),
     );
 
-    const copy = await screen.findByRole("button", { name: "Copy alias chat" });
+    const copy = await screen.findByRole("button", {
+      name: "Copy model name chat",
+    });
     const card = within(copy.closest("article")!);
 
-    expect(card.getByText("OpenRouter")).toBeVisible();
+    expect(card.queryByText("OpenRouter")).toBeNull();
+    fireEvent.click(card.getByRole("button", { name: /Details/ }));
+    expect(screen.getByText("OpenRouter")).toBeVisible();
   });
 
   it("groups explicit music and speech capabilities separately with server labels", async () => {
@@ -316,8 +334,8 @@ describe("models catalog contract distinctions", () => {
 
     expect(await screen.findByRole("heading", { name: "Music" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Speech" })).toBeVisible();
-    expect(screen.getByText("Music (ACE-Step XL Turbo)")).toBeVisible();
-    expect(screen.getByText("Chatterbox (speech)")).toBeVisible();
+    expect(screen.queryByText("Music (ACE-Step XL Turbo)")).toBeNull();
+    expect(screen.queryByText("Chatterbox (speech)")).toBeNull();
   });
 
   it("uses the server audio taxonomy instead of the operation intent", async () => {
@@ -408,14 +426,16 @@ describe("models catalog contract distinctions", () => {
 
     expect(
       await screen.findByRole("button", {
-        name: "Copy alias local-unknown-cost",
+        name: "Copy model name local-unknown-cost",
       }),
     ).toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: "No provider charge" }));
 
     expect(
-      screen.queryByRole("button", { name: "Copy alias local-unknown-cost" }),
+      screen.queryByRole("button", {
+        name: "Copy model name local-unknown-cost",
+      }),
     ).toBeNull();
     expect(screen.getByText("No models match these filters")).toBeVisible();
   });
@@ -432,13 +452,15 @@ describe("models catalog contract distinctions", () => {
     );
 
     expect(
-      await screen.findByRole("button", { name: "Copy alias local-paid-cost" }),
+      await screen.findByRole("button", {
+        name: "Copy model name local-paid-cost",
+      }),
     ).toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: "Paid" }));
 
     expect(
-      screen.getByRole("button", { name: "Copy alias local-paid-cost" }),
+      screen.getByRole("button", { name: "Copy model name local-paid-cost" }),
     ).toBeVisible();
     expect(screen.getByText("Local · no provider charge")).toBeVisible();
   });
@@ -494,8 +516,10 @@ describe("models catalog contract distinctions", () => {
     expect(
       await screen.findByRole("heading", { name: "Default" }),
     ).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Fast" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Coder" })).toBeVisible();
+    const otherOptions = screen.getByText("Other options · 2");
+    fireEvent.click(otherOptions);
+    expect(screen.getByText("fast")).toBeVisible();
+    expect(screen.getByText("coder")).toBeVisible();
     expect(screen.queryByRole("heading", { name: "Coder Q5" })).toBeNull();
     const more = screen.getByRole("button", { name: /More chat profiles/ });
     expect(more).toHaveAttribute("aria-expanded", "false");
@@ -603,13 +627,13 @@ describe("models catalog contract distinctions", () => {
       ]),
     );
     const music = within(
-      (await screen.findByRole("button", { name: "Copy alias music" })).closest(
-        "article",
-      )!,
+      (
+        await screen.findByRole("button", { name: "Copy model name music" })
+      ).closest("article")!,
     );
     const sfx = within(
       screen
-        .getByRole("button", { name: "Copy alias sfx" })
+        .getByRole("button", { name: "Copy model name sfx" })
         .closest("article")!,
     );
     expect(
@@ -657,7 +681,7 @@ describe("models catalog contract distinctions", () => {
     });
     expect(action).toHaveAttribute("href", "/ui/engines/");
     expect(screen.getByText("Unavailable")).toBeVisible();
-    expect(screen.getByText("The service is not configured.")).toBeVisible();
+    expect(screen.queryByText("The service is not configured.")).toBeNull();
     expect(screen.queryByText("Catalog only")).toBeNull();
     expect(screen.queryByRole("button", { name: "Use" })).toBeNull();
   });
@@ -715,7 +739,7 @@ describe("models catalog contract distinctions", () => {
     );
 
     const busyCopy = await screen.findByRole("button", {
-      name: "Copy alias busy-image",
+      name: "Copy model name busy-image",
     });
     const busyCard = within(busyCopy.closest("article")!);
     expect(busyCard.getByRole("button", { name: "Use" })).toBeVisible();
@@ -739,7 +763,7 @@ describe("models catalog contract distinctions", () => {
 
     const action = await screen.findByRole("link", { name: "Check status" });
     expect(action).toHaveAttribute("href", "/ui/status/");
-    expect(screen.getByText("Unknown")).toBeVisible();
+    expect(screen.queryByText("Unknown")).toBeNull();
     expect(screen.queryByText("Configuration not reported")).toBeNull();
     expect(screen.queryByText("Observation time not reported")).toBeNull();
     expect(screen.queryByText("Catalog only")).toBeNull();

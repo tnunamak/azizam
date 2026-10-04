@@ -11,6 +11,7 @@ it("shows exact provider model ids and discloses provider identity", () => {
     defaultOptions: { queries: { staleTime: Infinity } },
   });
   client.setQueryData(["providers"], {
+    global: { caps: { daily_usd: 12, monthly_usd: 120 } },
     providers: [
       {
         id: "provider-openai",
@@ -20,7 +21,7 @@ it("shows exact provider model ids and discloses provider identity", () => {
         models: [
           { id: "openai/gpt-4.1-nano", name: "Gpt 4.1 Nano", enabled: true },
         ],
-        allowed_plans: ["family"],
+        allowed_plans: [],
       },
     ],
   });
@@ -38,5 +39,22 @@ it("shows exact provider model ids and discloses provider identity", () => {
   ).not.toBeInTheDocument();
   const identity = screen.getByText("Provider ID: provider-openai");
   expect(identity.closest("details")).not.toHaveAttribute("open");
+  screen.getByText("Manage", { exact: true }).click();
   expect(screen.getByText("Provider details")).toBeInTheDocument();
+  screen.getByText("Edit", { exact: true }).click();
+  expect(
+    screen.getByLabelText("Global daily provider cap (USD)"),
+  ).toBeVisible();
+  expect(
+    screen.getByLabelText("Global monthly provider cap (USD)"),
+  ).toBeVisible();
+  expect(screen.getByText("Input: USD per 1 million tokens")).toBeVisible();
+  expect(screen.getByText("Output: USD per 1 million tokens")).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Check provider connection" }),
+  ).toBeVisible();
+  expect(
+    screen.getByText("No access plans can use this provider"),
+  ).toBeVisible();
+  expect(screen.queryByText("Gateway check")).not.toBeInTheDocument();
 });

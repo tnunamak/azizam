@@ -105,9 +105,7 @@ try {
         page.goto = async (url, options) => {
           const response = await navigate(url, options);
           const state = new URL(url).searchParams.get("review");
-          await page.getByRole("button", { name: "Prepare Try key" }).click();
-          await page.getByRole("button", { name: "I’ve saved it" }).click();
-          await page.getByRole("heading", { name: "Typed inputs" }).waitFor();
+          await page.getByRole("heading", { name: "Inputs" }).waitFor();
           if (state !== "empty") {
             await page.route("**/v1/images/generations", (route) =>
               state === "error"

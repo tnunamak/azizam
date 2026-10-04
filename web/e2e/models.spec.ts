@@ -320,6 +320,10 @@ for (const theme of ["light", "dark"] as const) {
       await expect(
         page.getByText("Best default for short conversations"),
       ).toBeVisible();
+      await page
+        .getByText(/Other options/)
+        .first()
+        .click();
       await expect(page.getByText("Image generation through")).toBeVisible();
       await expect(
         page.getByText("Local · no provider charge", { exact: true }).first(),
@@ -331,13 +335,13 @@ for (const theme of ["light", "dark"] as const) {
       await expect(
         page.getByText("Ready to start", { exact: true }),
       ).toBeVisible();
-      await expect(page.getByText("Unknown", { exact: true })).toHaveCount(2);
+      await expect(page.getByText("Unknown", { exact: true })).toHaveCount(0);
       await expect(
         page.getByText("Starts when you send a request."),
-      ).toBeVisible();
+      ).toHaveCount(0);
       await expect(
         page.getByText("No health endpoint is configured."),
-      ).toBeVisible();
+      ).toHaveCount(0);
       await expect(
         page.getByText("Paid · $0.04 per image", { exact: true }),
       ).toBeVisible();
@@ -385,9 +389,7 @@ test("models filters, snippets, table and detail sheet work", async ({
   page,
 }) => {
   await preparePage(page, "light", 1440, seededCatalog);
-  await page
-    .getByPlaceholder("Search models, aliases or providers")
-    .fill("image");
+  await page.getByPlaceholder("Search model names or providers").fill("image");
   await expect(page.getByText("Image generation through")).toBeVisible();
   await expect(
     page.getByText("Best default for short conversations"),
@@ -400,7 +402,7 @@ test("models filters, snippets, table and detail sheet work", async ({
   await page.getByRole("button", { name: "Paid" }).click();
   await page.getByRole("button", { name: "Use", exact: true }).click();
   await expect(
-    page.getByText("Copy the alias or a starter request."),
+    page.getByText("Copy the model name or a starter request."),
   ).toBeVisible();
   await expect(page.getByText(/\/v1\/images\/generations/)).toBeVisible();
   await page.keyboard.press("Escape");

@@ -305,11 +305,11 @@ async function routeCatalogs(page: Page) {
 async function prepareTryKey(page: Page, workflowId: string) {
   await routeCatalogs(page);
   await page.goto(`/ui/try/?workflow=${encodeURIComponent(workflowId)}`);
-  await page.getByRole("button", { name: "Prepare Try key" }).first().click();
-  await expect(page.getByText("Try app key", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "I’ve saved it" }).click();
-  await expect(page.getByText("Session key ready")).toBeVisible();
-  await expect(page.getByText("Catalog loaded")).toBeVisible();
+  await expect(
+    page.getByText("Run creates a Try key for your access plan.", {
+      exact: true,
+    }),
+  ).toBeVisible();
   await expect(page.getByRole("tab", { name: "Workflow" })).toHaveAttribute(
     "aria-selected",
     "true",
@@ -384,7 +384,7 @@ async function fillGuidedImageInputs(page: Page) {
 }
 
 async function selectWorkflowModel(page: Page, name: string) {
-  await page.getByLabel("Model", { exact: true }).click();
+  await page.getByRole("combobox").first().click();
   await page.getByRole("option", { name }).click();
 }
 
@@ -393,7 +393,7 @@ test("workflow deep link edits guided JSON fields and preserves advanced extras"
 }) => {
   await prepareTryKey(page, "image.generate.poster");
 
-  await expect(page.getByLabel("Model", { exact: true })).toContainText(
+  await expect(page.getByRole("combobox").first()).toContainText(
     "Poster image",
   );
   await expect(textbox(page, "prompt", true)).toHaveValue("A teal poster.");
@@ -552,7 +552,9 @@ test("workflow multipart guided fields include file, numeric edits, and preserve
   await expect(page.locator("pre").filter({ hasText: "curl" })).toContainText(
     "Turn this source into a crisp launch clip.",
   );
-  await expect(page.locator("pre").filter({ hasText: "curl" })).toContainText("colorGrade=teal");
+  await expect(page.locator("pre").filter({ hasText: "curl" })).toContainText(
+    "colorGrade=teal",
+  );
 });
 
 test("workflow guided validation blocks missing, range, enum, and invalid JSON inputs", async ({

@@ -255,7 +255,7 @@ test("member recovery keeps owner controls out of the catalog", async ({
   await prepare(page, "light", 390, seeded, 200, "member");
   const card = page.locator("article").filter({
     has: page.getByRole("button", {
-      name: "Copy alias catalog-only",
+      name: "Copy model name catalog-only",
       exact: true,
     }),
   });

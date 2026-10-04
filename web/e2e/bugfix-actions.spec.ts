@@ -120,8 +120,11 @@ test("audio capability never selects an image-only workflow", async ({
     }),
   );
   await page.goto("/ui/try/?capability=audio&model=audio");
-  await page.getByRole("button", { name: "Prepare Try key" }).first().click();
-  await page.getByRole("button", { name: "I’ve saved it" }).click();
+  await expect(
+    page.getByText("Run creates a Try key for your access plan.", {
+      exact: true,
+    }),
+  ).toBeVisible();
   await expect(
     page.getByRole("tab", { name: "Workflow", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
@@ -131,7 +134,7 @@ test("audio capability never selects an image-only workflow", async ({
       { exact: true },
     ),
   ).toBeVisible();
-  await expect(page.getByLabel("Model", { exact: true })).not.toContainText(
+  await expect(page.getByRole("combobox").first()).not.toContainText(
     "Image-only workflow",
   );
   await expect(

@@ -91,23 +91,19 @@ describe("catalog polish", () => {
       row("fast", "chat.completions"),
       row("image", "image.generate", true),
     ]);
-    expect(
-      await screen.findByRole("heading", { name: "Fast" }),
-    ).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Fast" })).toBeVisible();
     expect(
       screen.getByRole("heading", { name: "Images", level: 3 }),
     ).toBeVisible();
     expect(
-      screen.getByRole("button", { name: "Copy alias fast" }),
+      screen.getByRole("button", { name: "Copy model name fast" }),
     ).toHaveTextContent("fast");
     expect(screen.getByText("Paid · $0.04 per image")).toBeVisible();
     expect(screen.getByText("Local · no provider charge")).toBeVisible();
     expect(screen.queryByText(/Free/)).toBeNull();
     expect(screen.queryByText("Not measured yet")).toBeNull();
     expect(screen.queryByTitle("Typical time")).toBeNull();
-    expect(screen.getAllByText(/Two requests are ahead of yours/)).toHaveLength(
-      2,
-    );
+    expect(screen.queryByText(/Two requests are ahead of yours/)).toBeNull();
     fireEvent.click(screen.getAllByRole("button", { name: "Details" })[0]);
     const detail = screen.getByRole("dialog");
     expect(within(detail).getByText("Typical time")).toBeVisible();
@@ -132,19 +128,19 @@ describe("catalog polish", () => {
     expect(paid).toHaveAttribute("aria-pressed", "false");
     expect(noCharge).toHaveAttribute("aria-pressed", "true");
     expect(
-      screen.queryByRole("button", { name: "Copy alias image" }),
+      screen.queryByRole("button", { name: "Copy model name image" }),
     ).toBeNull();
     expect(
-      screen.getByRole("button", { name: "Copy alias chat" }),
+      screen.getByRole("button", { name: "Copy model name chat" }),
     ).toBeVisible();
     fireEvent.click(noCharge);
     expect(screen.getByText("No models match these filters")).toBeVisible();
     fireEvent.click(paid);
     expect(
-      screen.getByRole("button", { name: "Copy alias image" }),
+      screen.getByRole("button", { name: "Copy model name image" }),
     ).toBeVisible();
     expect(
-      screen.queryByRole("button", { name: "Copy alias chat" }),
+      screen.queryByRole("button", { name: "Copy model name chat" }),
     ).toBeNull();
   });
 
@@ -169,13 +165,16 @@ describe("catalog polish", () => {
         reason: "Live availability is not measured yet.",
       }),
     ]);
-    expect(await screen.findAllByText("Unknown")).toHaveLength(1);
-    expect(screen.getByText(/No health endpoint is configured/)).toBeVisible();
+    await screen.findByText("Ready to start", { exact: true });
+    expect(screen.queryByText("Unknown")).toBeNull();
+    expect(screen.queryByText(/No health endpoint is configured/)).toBeNull();
     expect(
-      screen.getByText(/Live availability is not measured yet/),
-    ).toBeVisible();
-    expect(screen.getByText("Ready to start")).toBeVisible();
-    expect(screen.getByText(/Starts when you send a request/)).toBeVisible();
+      screen.queryByText(/Live availability is not measured yet/),
+    ).toBeNull();
+    expect(
+      screen.getByText("Ready to start", { exact: true }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Starts when you send a request/)).toBeNull();
     expect(screen.queryByText("Unavailable")).toBeNull();
   });
 

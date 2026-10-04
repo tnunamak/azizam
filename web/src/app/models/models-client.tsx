@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { productApi, type CatalogRow } from "@/lib/product-api";
+import { preferredTerms } from "@/lib/terms";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -105,10 +106,10 @@ const capabilityLabels: Record<ProductCapability, string> = {
   sfx: "Sound effects",
   speech: "Speech",
   audio: "Audio",
-  transcribe: "Transcribe",
-  decide: "Decide",
-  embed: "Embed",
-  rerank: "Rerank",
+  transcribe: "Transcription",
+  decide: "Decisions",
+  embed: "Embeddings",
+  rerank: "Reranking",
 };
 
 // The server owns taxonomy and labels; this map only selects a glyph.
@@ -226,14 +227,6 @@ function timingLabel(row: CatalogRow): string {
         ? "Typical"
         : "Source not provided";
   return `${duration} · ${source}`;
-}
-
-function timingSummaryLabel(row: CatalogRow): string | null {
-  const value = row.timing.typical_seconds;
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-    return null;
-  }
-  return timingLabel(row);
 }
 
 function readString(value: unknown): string | null {
@@ -464,6 +457,7 @@ function Availability({
     <StatusPill
       status={state}
       reason={showReason ? row.availability.reason : undefined}
+      summary={!showReason}
     />
   );
 }
@@ -472,14 +466,15 @@ function AliasCard({
   row,
   onDetail,
   viewerAdmin,
+  showCost = true,
 }: {
   row: CatalogRow;
   onDetail: (row: CatalogRow) => void;
   viewerAdmin: boolean;
+  showCost?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const action = availabilityAction(row, viewerAdmin);
-  const timingSummary = timingSummaryLabel(row);
   async function copyAlias() {
     await navigator.clipboard.writeText(row.id);
     setCopied(true);
@@ -499,47 +494,27 @@ function AliasCard({
       <button
         type="button"
         onClick={copyAlias}
-        aria-label={`Copy alias ${row.id}`}
+        aria-label={`Copy model name ${row.id}`}
         className="bg-muted hover:bg-muted/80 focus-visible:ring-ring flex min-h-11 min-w-0 items-center justify-between gap-2 rounded-md px-3 py-2 text-left font-mono text-xs transition outline-none focus-visible:ring-[3px]"
       >
         <span className="truncate">{row.id}</span>
         {copied ? (
-          <Check aria-label="Alias copied" className="size-4 shrink-0" />
+          <Check aria-label="Model name copied" className="size-4 shrink-0" />
         ) : (
           <Copy aria-hidden="true" className="size-4 shrink-0" />
         )}
       </button>
-      <div
-        data-slot="model-metadata"
-        className="text-muted-foreground flex min-w-0 flex-wrap items-center gap-1 text-xs"
-      >
-        <span className="shrink-0">{localityLabel(row)}</span>
-        <span
-          className="min-w-20 flex-1 truncate"
-          title={summaryEngineLabel(row)}
-        >
-          <span aria-hidden="true">· </span>
-          {summaryEngineLabel(row)}
-        </span>
+      <div className="text-muted-foreground text-xs">
+        <span>{localityLabel(row)}</span>
       </div>
-      <div className="text-muted-foreground flex min-w-0 flex-wrap items-center gap-2 text-xs">
-        <Badge variant="outline" className="max-w-full text-xs">
-          <span className="whitespace-normal">{costLabel(row)}</span>
-        </Badge>
-        {timingSummary && (
-          <span
-            className="inline-flex shrink-0 items-center gap-1"
-            title={
-              row.timing.source === "receipts"
-                ? "Measured time from successful requests"
-                : "Typical time"
-            }
-          >
-            <span>{timingSummary}</span>
-          </span>
-        )}
-      </div>
-      <Availability row={row} />
+      {showCost && (
+        <div className="text-muted-foreground flex min-w-0 flex-wrap items-center gap-2 text-xs">
+          <Badge variant="outline" className="max-w-full text-xs">
+            <span className="whitespace-normal">{costLabel(row)}</span>
+          </Badge>
+        </div>
+      )}
+      <Availability row={row} showReason={false} />
       <div className="mt-auto flex flex-wrap gap-2">
         {action ? (
           <Button size="sm" asChild>
@@ -558,7 +533,7 @@ function AliasCard({
               <div className="border-b p-4">
                 <h4 className="font-medium">Use {row.id}</h4>
                 <p className="text-muted-foreground mt-1 text-sm">
-                  Copy the alias or a starter request.
+                  Copy the model name or a starter request.
                 </p>
               </div>
               <div className="p-4">
@@ -575,6 +550,50 @@ function AliasCard({
         </Button>
       </div>
     </article>
+  );
+}
+
+function AliasOptionRow({
+  row,
+  onDetail,
+  viewerAdmin,
+  showCost = true,
+}: {
+  row: CatalogRow;
+  onDetail: (row: CatalogRow) => void;
+  viewerAdmin: boolean;
+  showCost?: boolean;
+}) {
+  const action = availabilityAction(row, viewerAdmin);
+  return (
+    <div className="flex min-w-0 flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0 space-y-1">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <code className="bg-muted rounded px-2 py-1 text-xs break-all">
+            {row.id}
+          </code>
+          {showCost && (
+            <Badge variant="outline" className="text-xs">
+              {costLabel(row)}
+            </Badge>
+          )}
+        </div>
+        <p className="text-muted-foreground line-clamp-1 text-sm">
+          {descriptionFor(row)}
+        </p>
+      </div>
+      <div className="flex shrink-0 flex-wrap items-center gap-2">
+        <Availability row={row} showReason={false} />
+        {action && (
+          <Button size="sm" asChild>
+            <a href={action.href}>{action.label}</a>
+          </Button>
+        )}
+        <Button variant="outline" size="sm" onClick={() => onDetail(row)}>
+          Details
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -625,7 +644,10 @@ function DetailSheet({
             </SheetHeader>
             <div className="space-y-6 p-4">
               <div className="grid gap-3 text-sm sm:grid-cols-2">
-                <Fact label={row.alias ? "Alias" : "Model"} value={row.id} />
+                <Fact
+                  label={row.alias ? "Model name" : "Exact model"}
+                  value={row.id}
+                />
                 <Fact
                   label="Resolves to"
                   value={
@@ -796,10 +818,7 @@ export default function ModelsClient() {
 
   return (
     <div className="space-y-8">
-      <PageHeader
-        title="Models"
-        answer="What can I use, and which one should I pick?"
-      />
+      <PageHeader title="Models" answer="Pick a model name." />
       {catalogPending ? (
         <LoadingCatalog />
       ) : catalogError ? (
@@ -812,7 +831,7 @@ export default function ModelsClient() {
         <EmptyState
           icon={SlidersHorizontal}
           title="No models are available yet"
-          description="Models appear here after an owner connects a local engine or remote provider that your access plan can use."
+          description="Ask the owner to connect models your access plan allows."
           action={
             <Button asChild>
               <a href="/ui/home/">Review setup</a>
@@ -832,7 +851,7 @@ export default function ModelsClient() {
                 <Input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search models, aliases or providers"
+                  placeholder={`Search ${preferredTerms.requestSelector.toLowerCase()}s or providers`}
                   className="pl-9"
                 />
               </label>
@@ -881,12 +900,12 @@ export default function ModelsClient() {
               icon={Search}
               title={
                 modelRows.length
-                  ? "No stable aliases match these filters"
+                  ? "No recommended names match these filters"
                   : "No models match these filters"
               }
               description={
                 modelRows.length
-                  ? "Expand All models below to use a model directly."
+                  ? "Show all models to use an exact model directly."
                   : "Clear the search or turn on another price filter."
               }
               action={
@@ -910,51 +929,60 @@ export default function ModelsClient() {
             />
           ) : (
             <div className="space-y-4">
-              <p className="text-muted-foreground text-sm">
-                Stable aliases stay the same when the backing model changes.
-                This catalog is scoped to models your access plan allows.
-              </p>
-              <div
-                aria-label="Available model aliases"
-                className={cn(
-                  "grid gap-6",
-                  primaryAliasRows.length > 1 && "sm:grid-cols-2",
-                  primaryAliasRows.length > 2 && "lg:grid-cols-3",
-                )}
-              >
-                {groupedAliases.map((group) => (
-                  <section
-                    key={group.capability}
-                    className={cn(
-                      "min-w-0 space-y-4",
-                      group.rows.length > 1 && "sm:col-span-2",
-                      group.rows.length > 2 && "lg:col-span-3",
-                    )}
-                  >
-                    <div className="flex items-center gap-3">
-                      <CatalogIcon row={group.rows[0]} />
-                      <h2 className="text-lg font-semibold">
-                        {primaryCapabilityLabel(group.rows[0])}
-                      </h2>
-                    </div>
-                    <div
-                      className={cn(
-                        "grid gap-4",
-                        group.rows.length > 1 && "sm:grid-cols-2",
-                        group.rows.length > 2 && "lg:grid-cols-3",
-                      )}
+              <div aria-label="Available model aliases" className="grid gap-6">
+                {groupedAliases.map((group) => {
+                  const [primary, ...alternatives] = group.rows;
+                  const groupNoProviderCharge =
+                    group.rows.every(hasNoProviderCharge);
+                  return (
+                    <section
+                      key={group.capability}
+                      className="min-w-0 space-y-4"
                     >
-                      {group.rows.map((row) => (
+                      <div className="flex flex-wrap items-center gap-3">
+                        <CatalogIcon row={primary} />
+                        <h2 className="text-lg font-semibold">
+                          {primaryCapabilityLabel(primary)}
+                        </h2>
+                        {groupNoProviderCharge && (
+                          <Badge variant="outline" className="text-xs">
+                            Local · no provider charge
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,28rem)]">
                         <AliasCard
-                          key={row.id}
-                          row={row}
+                          row={primary}
                           onDetail={setDetail}
                           viewerAdmin={viewer.admin}
+                          showCost={!groupNoProviderCharge}
                         />
-                      ))}
-                    </div>
-                  </section>
-                ))}
+                        {alternatives.length > 0 && (
+                          <details className="bg-card rounded-xl border">
+                            <summary className="flex min-h-11 cursor-pointer items-center justify-between gap-3 px-4 py-3 text-sm font-medium">
+                              <span>Other options · {alternatives.length}</span>
+                              <ChevronDown
+                                aria-hidden="true"
+                                className="size-4"
+                              />
+                            </summary>
+                            <div className="divide-y border-t">
+                              {alternatives.map((row) => (
+                                <AliasOptionRow
+                                  key={row.id}
+                                  row={row}
+                                  onDetail={setDetail}
+                                  viewerAdmin={viewer.admin}
+                                  showCost={!groupNoProviderCharge}
+                                />
+                              ))}
+                            </div>
+                          </details>
+                        )}
+                      </div>
+                    </section>
+                  );
+                })}
               </div>
             </div>
           )}

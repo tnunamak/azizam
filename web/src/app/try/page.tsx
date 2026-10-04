@@ -15,7 +15,6 @@ import {
   Copy,
   GitBranch,
   Image as ImageIcon,
-  KeyRound,
   Loader2,
   Mic,
   Pause,
@@ -52,12 +51,7 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  PageHeader,
-  EmptyState,
-  ErrorState,
-  SecretReveal,
-} from "@/components/product";
+import { PageHeader, EmptyState, ErrorState } from "@/components/product";
 
 type TryTab =
   | "chat"
@@ -67,7 +61,7 @@ type TryTab =
   | "decide"
   | "embed"
   | "workflow";
-type TryKey = { secret: string; appName: string };
+type TryKey = { id: string; secret: string; appName: string };
 type RequestInfo = {
   path: string;
   body: unknown;
@@ -113,6 +107,7 @@ type WorkflowOption = {
     javascript?: string;
   };
 };
+type CatalogGroups = Partial<Record<TryTab, CatalogOption[]>>;
 type Result = {
   title: string;
   body: string;
@@ -176,27 +171,27 @@ const TAB_ITEMS: Array<{
   },
   {
     value: "transcribe",
-    label: "Transcribe",
+    label: "Transcription",
     icon: Mic,
     help: "Upload or record audio and get text.",
   },
   {
     value: "decide",
-    label: "Decide",
+    label: "Decisions",
     icon: GitBranch,
-    help: "Ask System One to choose from options.",
+    help: "Choose an option based on the information you provide.",
   },
   {
     value: "embed",
-    label: "Embed",
+    label: "Embeddings",
     icon: Layers,
-    help: "Create a vector and inspect its shape.",
+    help: "Turn text into numbers for search.",
   },
   {
     value: "workflow",
     label: "Workflow",
     icon: GitBranch,
-    help: "Run a manifest workflow by id.",
+    help: "Run a workflow with its required inputs.",
   },
 ];
 
@@ -742,7 +737,6 @@ export default function TryPage() {
   const [key, setKey] = useState<TryKey | null>(null);
   const [keyBusy, setKeyBusy] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
-  const [savedKey, setSavedKey] = useState(false);
   const [activeTab, setActiveTab] = useState<TryTab>("chat");
   const [model, setModel] = useState(
     () =>
@@ -790,8 +784,7 @@ export default function TryPage() {
       options
         .split("\n")
         .map((line) => line.trim())
-        .filter(Boolean)
-        .slice(0, 3),
+        .filter(Boolean),
     [options],
   );
   const selectedWorkflow = useMemo(
@@ -837,6 +830,13 @@ export default function TryPage() {
   }, [requestedWorkflow]);
 
   useEffect(() => {
+    void loadCatalog();
+    // The catalog is safe to read without a public API key. Run refreshes it
+    // after minting a key so fallback model-list gateways still work.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedCapabilityKey, requestedWorkflow]);
+
+  useEffect(() => {
     if (!selectedWorkflow) return;
     const body = workflowExampleBody(selectedWorkflow);
     const inputs = workflowDefaults(
@@ -868,14 +868,39 @@ export default function TryPage() {
       );
       app ??= await accountApi.createApp("Try");
       const minted = await accountApi.mintKey(app.id, "Try session");
-      setKey({ secret: minted.api_key, appName: app.name });
-      setSavedKey(false);
-      void loadCatalog(minted.api_key);
+      setKey({ id: minted.id, secret: minted.api_key, appName: app.name });
+      const preparedCatalog = await loadCatalog(minted.api_key);
+      return {
+        id: minted.id,
+        secret: minted.api_key,
+        appName: app.name,
+        catalog: preparedCatalog,
+      };
     } catch (error) {
       setKeyError(
         error instanceof Error
           ? error.message
           : "Could not prepare a Try key. Try again.",
+      );
+      return null;
+    } finally {
+      setKeyBusy(false);
+    }
+  }
+
+  async function revokeTryKey() {
+    if (!key) return;
+    setKeyBusy(true);
+    setKeyError(null);
+    try {
+      await accountApi.revokeKey(key.id);
+      setKey(null);
+      setCatalogState("idle");
+    } catch (error) {
+      setKeyError(
+        error instanceof Error
+          ? error.message
+          : "Could not revoke the Try key. Try again.",
       );
     } finally {
       setKeyBusy(false);
@@ -920,7 +945,30 @@ export default function TryPage() {
     if (recorder.current?.state === "recording") recorder.current.stop();
   }
 
-  async function loadCatalog(secret: string) {
+  function nextModelForCatalog(
+    grouped: CatalogGroups,
+    sourceModel: Record<TryTab, string> = model,
+  ) {
+    const next = { ...sourceModel };
+    for (const tab of TAB_ITEMS) {
+      const options = grouped[tab.value] ?? [];
+      next[tab.value] = selectedOrDefaultModel(
+        tab.value,
+        next[tab.value],
+        options,
+        explicitModelTabs.current.has(tab.value),
+      );
+    }
+    if (
+      requestedWorkflow &&
+      grouped.workflow?.some((option) => option.id === requestedWorkflow)
+    ) {
+      next.workflow = requestedWorkflow;
+    }
+    return next;
+  }
+
+  async function loadCatalog(secret?: string): Promise<CatalogGroups | null> {
     setCatalogState("loading");
     try {
       const catalogResponse = await fetch("/me/api/models/catalog", {
@@ -946,34 +994,20 @@ export default function TryPage() {
         const grouped = groupCatalog(await catalogResponse.json());
         if (workflowOptions.length) grouped.workflow = workflowOptions;
         setCatalog(grouped);
-        setModel((current) => {
-          const next = { ...current };
-          for (const tab of TAB_ITEMS) {
-            const options = grouped[tab.value] ?? [];
-            next[tab.value] = selectedOrDefaultModel(
-              tab.value,
-              next[tab.value],
-              options,
-              explicitModelTabs.current.has(tab.value),
-            );
-          }
-          if (
-            requestedWorkflow &&
-            workflowOptions.some((option) => option.id === requestedWorkflow)
-          ) {
-            next.workflow = requestedWorkflow;
-          }
-          return next;
-        });
+        setModel((current) => nextModelForCatalog(grouped, current));
         setCatalogState(Object.keys(grouped).length ? "ready" : "empty");
-        return;
+        return grouped;
+      }
+      if (!secret) {
+        setCatalogState(catalogResponse.status === 404 ? "empty" : "error");
+        return null;
       }
       const response = await fetch("/openai/v1/models", {
         headers: { authorization: `Bearer ${secret}` },
       });
       if (!response.ok) {
         setCatalogState(catalogResponse.status === 404 ? "empty" : "error");
-        return;
+        return null;
       }
       const payload = (await response.json()) as {
         data?: Array<{ id?: string }>;
@@ -981,7 +1015,7 @@ export default function TryPage() {
       const ids = payload.data?.map((item) => item.id).filter(Boolean) as
         | string[]
         | undefined;
-      setCatalog({
+      const grouped = {
         chat: (ids ?? []).map((id) => ({
           id,
           label: id,
@@ -989,34 +1023,26 @@ export default function TryPage() {
           price: "",
           locality: "Available to this Try key",
         })),
-      });
-      setModel((current) => ({
-        ...current,
-        chat: selectedOrDefaultModel(
-          "chat",
-          current.chat,
-          (ids ?? []).map((id) => ({
-            id,
-            label: id,
-            capability: "chat" as const,
-            price: "",
-            locality: "Available to this Try key",
-          })),
-          explicitModelTabs.current.has("chat"),
-        ),
-      }));
+      } satisfies CatalogGroups;
+      setCatalog(grouped);
+      setModel((current) => nextModelForCatalog(grouped, current));
       setCatalogState(ids?.length ? "ready" : "empty");
+      return grouped;
     } catch {
       setCatalogState("error");
+      return null;
     }
   }
 
-  function buildRequest(tab: TryTab): RequestInfo {
+  function buildRequest(
+    tab: TryTab,
+    selectedModel: Record<TryTab, string> = model,
+  ): RequestInfo {
     if (tab === "chat") {
       return {
         path: "/chat/completions",
         body: {
-          model: model.chat,
+          model: selectedModel.chat,
           messages: [{ role: "user", content: prompt.chat }],
         },
       };
@@ -1024,19 +1050,23 @@ export default function TryPage() {
     if (tab === "image") {
       return {
         path: "/images/generations",
-        body: { model: model.image, prompt: prompt.image, size: "1024x1024" },
+        body: {
+          model: selectedModel.image,
+          prompt: prompt.image,
+          size: "1024x1024",
+        },
       };
     }
     if (tab === "speech") {
       return {
         path: "/audio/speech",
-        body: { model: model.speech, voice, input: prompt.speech },
+        body: { model: selectedModel.speech, voice, input: prompt.speech },
       };
     }
     if (tab === "transcribe") {
       return {
         path: "/audio/transcriptions",
-        body: { model: model.transcribe },
+        body: { model: selectedModel.transcribe },
         multipart: true,
       };
     }
@@ -1044,7 +1074,7 @@ export default function TryPage() {
       return {
         path: "/v1/systemone",
         body: {
-          model: model.decide,
+          model: selectedModel.decide,
           state: decisionState,
           questions: {
             route: {
@@ -1118,18 +1148,28 @@ export default function TryPage() {
     }
     return {
       path: "/embeddings",
-      body: { model: model.embed, input: prompt.embed },
+      body: { model: selectedModel.embed, input: prompt.embed },
     };
   }
 
   async function run(tab: TryTab, event: FormEvent) {
     event.preventDefault();
-    if (!key?.secret) return;
+    let runKey = key;
+    let preparedCatalog: CatalogGroups | null = null;
+    if (!runKey?.secret) {
+      const prepared = await prepareKey();
+      runKey = prepared;
+      preparedCatalog = prepared?.catalog ?? null;
+      if (!runKey?.secret) return;
+    }
+    const selectedModel = preparedCatalog
+      ? nextModelForCatalog(preparedCatalog, model)
+      : model;
     setRunning(tab);
     if (tab === "workflow") setJobError(null);
     setErrors((current) => ({ ...current, [tab]: undefined }));
     try {
-      const request = buildRequest(tab);
+      const request = buildRequest(tab, selectedModel);
       let result: Awaited<ReturnType<typeof publicRequest>>;
       if (request.multipart) {
         const form = new FormData();
@@ -1156,15 +1196,15 @@ export default function TryPage() {
           if (!file) {
             throw new Error("Choose an audio file or record one first.");
           }
-          form.set("model", model.transcribe);
+          form.set("model", selectedModel.transcribe);
           form.set("file", file);
         }
-        result = await publicRequest(request.path, key.secret, {
+        result = await publicRequest(request.path, runKey.secret, {
           method: "POST",
           body: form,
         });
       } else {
-        result = await publicRequest(request.path, key.secret, {
+        result = await publicRequest(request.path, runKey.secret, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(request.body),
@@ -1191,7 +1231,11 @@ export default function TryPage() {
           costFrom(
             result.payload,
             result.response,
-            catalog[tab]?.find((option) => option.id === model[tab])?.locality,
+            preparedCatalog?.[tab]?.find(
+              (option) => option.id === selectedModel[tab],
+            )?.locality ??
+              catalog[tab]?.find((option) => option.id === selectedModel[tab])
+                ?.locality,
           ),
           receiptId,
           request,
@@ -1395,74 +1439,46 @@ export default function TryPage() {
 
   return (
     <div className="space-y-8">
-      <PageHeader
-        title="Try"
-        answer="Does it work, and what does the request look like?"
-      />
+      <PageHeader title="Try" answer="Run a request and see what happened." />
 
-      {!key ? (
-        <section className="bg-card rounded-xl border p-5">
-          {keyBusy ? (
-            <div
-              aria-busy="true"
-              aria-label="Preparing Try key"
-              className="space-y-3"
+      <section className="text-muted-foreground text-sm">
+        {keyError && (
+          <div className="mb-3">
+            <ErrorState
+              message={keyError}
+              onRetry={() => void (key ? revokeTryKey() : prepareKey())}
+            />
+          </div>
+        )}
+        {!key ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <p>Run creates a Try key for your access plan.</p>
+            {keyBusy && (
+              <span
+                aria-busy="true"
+                role="status"
+                className="inline-flex items-center gap-2"
+              >
+                <Loader2 aria-hidden="true" className="size-4 animate-spin" />
+                Creating Try key
+              </span>
+            )}
+          </div>
+        ) : (
+          <p>
+            Using a Try key
+            <span aria-hidden="true"> · </span>
+            <button
+              type="button"
+              className="text-foreground underline underline-offset-4 disabled:opacity-50"
+              onClick={() => void revokeTryKey()}
+              disabled={keyBusy}
             >
-              <Skeleton className="h-6 w-48" />
-              <Skeleton className="h-20 w-full" />
-            </div>
-          ) : keyError ? (
-            <ErrorState message={keyError} onRetry={() => void prepareKey()} />
-          ) : (
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div className="max-w-prose space-y-1">
-                <h2 className="font-semibold">Prepare a session key</h2>
-                <p className="text-muted-foreground text-sm">
-                  Try calls the public API with your own key. Create a Try app
-                  key before running requests.
-                </p>
-              </div>
-              <Button variant="outline" onClick={() => void prepareKey()}>
-                <KeyRound aria-hidden="true" />
-                Prepare Try key
-              </Button>
-            </div>
-          )}
-        </section>
-      ) : (
-        <section className="bg-card rounded-xl border p-5">
-          {!savedKey ? (
-            <div className="space-y-4">
-              <div>
-                <h2 className="font-semibold">Try app key</h2>
-                <p className="text-muted-foreground mt-1 text-sm">
-                  This key stays only in this browser session. Save it if you
-                  want to reuse it outside Try.
-                </p>
-              </div>
-              <SecretReveal
-                secret={key.secret}
-                onSaved={() => setSavedKey(true)}
-              />
-            </div>
-          ) : (
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="font-semibold">
-                  {key.appName} key saved for this session
-                </h2>
-                <p className="text-muted-foreground mt-1 text-sm">
-                  Requests below use public API routes. Permission errors are
-                  shown from the gateway.
-                </p>
-              </div>
-              <Button variant="outline" onClick={() => setKey(null)}>
-                Clear session key
-              </Button>
-            </div>
-          )}
-        </section>
-      )}
+              Revoke
+            </button>
+          </p>
+        )}
+      </section>
 
       <Tabs
         value={activeTab}
@@ -1504,7 +1520,7 @@ export default function TryPage() {
                     </p>
                   </div>
                   <label className="block space-y-2">
-                    <span className="text-sm font-medium">Model</span>
+                    <span className="text-sm font-medium">Model name</span>
                     <ModelSelect
                       value={model[tab.value]}
                       fallbackLabel={DEFAULTS[tab.value].model}
@@ -1519,7 +1535,7 @@ export default function TryPage() {
                     <span className="text-muted-foreground text-xs">
                       {tab.value === "workflow"
                         ? "Workflow choices come from your access plan."
-                        : "Aliases follow your gateway’s model choices. This Try key may still be denied by its access plan."}
+                        : "Use this exact name in your app. Your access plan still applies."}
                     </span>
                   </label>
                   {tab.value === activeTab && (
@@ -1609,13 +1625,18 @@ export default function TryPage() {
                     </label>
                   )}
                   {tab.value === "speech" && (
-                    <label className="block space-y-2">
-                      <span className="text-sm font-medium">Voice</span>
-                      <Input
-                        value={voice}
-                        onChange={(event) => setVoice(event.target.value)}
-                      />
-                    </label>
+                    <details className="border-t pt-3">
+                      <summary className="min-h-11 cursor-pointer text-sm font-medium">
+                        More options
+                      </summary>
+                      <label className="mt-3 block space-y-2">
+                        <span className="text-sm font-medium">Voice</span>
+                        <Input
+                          value={voice}
+                          onChange={(event) => setVoice(event.target.value)}
+                        />
+                      </label>
+                    </details>
                   )}
                   {tab.value === "transcribe" && (
                     <div className="space-y-3">
@@ -1668,7 +1689,7 @@ export default function TryPage() {
                         id="options-help"
                         className="text-muted-foreground text-xs"
                       >
-                        One option per line. The first three are sent.
+                        One option per line. All listed options are sent.
                       </span>
                     </label>
                   )}
@@ -1676,8 +1697,8 @@ export default function TryPage() {
                     type="submit"
                     variant="outline"
                     disabled={
-                      !key?.secret ||
                       running !== null ||
+                      keyBusy ||
                       checkingJob ||
                       (tab.value === "workflow" &&
                         requestedCapabilityKey === "audio" &&
@@ -1927,13 +1948,13 @@ function ResultView({
           )}
         </details>
       )}
-      <div className="space-y-2">
-        <h3 className="flex items-center gap-2 text-sm font-medium">
+      <details className="space-y-2 border-t pt-3">
+        <summary className="flex min-h-11 cursor-pointer items-center gap-2 text-sm font-medium">
           <Copy aria-hidden="true" className="size-4" />
           Copy as
-        </h3>
+        </summary>
         <SnippetBlock snippets={codeSnippets(result.request)} />
-      </div>
+      </details>
     </div>
   );
 }
@@ -2123,7 +2144,7 @@ function CatalogNotice({
     return <Badge variant="outline">Catalog could not be loaded</Badge>;
   }
   if (state === "empty") {
-    return <Badge variant="outline">No catalog rows yet</Badge>;
+    return <Badge variant="outline">No models are listed for your key</Badge>;
   }
   return null;
 }
