@@ -237,30 +237,6 @@ function priceNumber(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function modelLabel(value: string): string {
-  const raw = value.split("/").filter(Boolean).at(-1) ?? value;
-  return raw
-    .split(/[-_]/)
-    .filter(Boolean)
-    .map((part) =>
-      /^\d+(\.\d+)?$/.test(part)
-        ? part
-        : part.charAt(0).toUpperCase() + part.slice(1),
-    )
-    .join(" ");
-}
-
-function displayModelName(
-  obj: Record<string, unknown>,
-  fallback: string,
-): string {
-  const display = text(obj.display_name, "");
-  if (display) return display;
-  const name = text(obj.name, "");
-  if (name && !name.includes("/") && !name.includes("-")) return name;
-  return modelLabel(fallback);
-}
-
 function mapModel(raw: unknown): ProviderModel {
   const obj =
     raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
@@ -297,7 +273,7 @@ function mapModel(raw: unknown): ProviderModel {
   return {
     id,
     upstreamModel,
-    name: displayModelName(obj, upstreamModel || id),
+    name: text(obj.name, upstreamModel || id),
     context: text(obj.context, ""),
     priceInput,
     priceOutput,
@@ -692,13 +668,18 @@ function DetailCard({
             <p className="text-muted-foreground mt-1 text-sm">
               <ProviderKeySummary provider={provider} />
             </p>
-            <p className="text-muted-foreground mt-1 text-xs break-all">
-              Provider ID: {provider.id}
-            </p>
           </div>
         </div>
         <StatusPill status={state.status} reason={state.reason} />
       </div>
+      <details className="mt-3 text-sm">
+        <summary className="text-muted-foreground min-h-11 cursor-pointer content-center">
+          Provider details
+        </summary>
+        <p className="text-muted-foreground pb-3 text-xs break-all">
+          Provider ID: {provider.id}
+        </p>
+      </details>
       {provider.recommendation && (
         <div className="bg-warning/10 border-warning/30 text-foreground mt-4 rounded-lg border p-3 text-sm">
           {provider.recommendation}
@@ -757,7 +738,7 @@ function DetailCard({
                   variant="outline"
                   className="max-w-full break-words whitespace-normal"
                 >
-                  {model.name}
+                  {model.id}
                 </Badge>
               ))
             ) : (
@@ -801,7 +782,7 @@ function DetailCard({
             {provider.models.map((model) => (
               <tr key={model.id} className="border-t">
                 <td className="px-3 py-2 font-medium break-words">
-                  {model.name}
+                  {model.id}
                 </td>
                 <td className="px-3 py-2 break-words">
                   {model.priceInput || "Unknown"}
@@ -916,17 +897,17 @@ function DetailCard({
                   onCheckedChange={(checked) =>
                     updateModel(model.id, { enabled: checked === true })
                   }
-                  aria-label={`Enable ${model.name}`}
+                  aria-label={`Enable ${model.id}`}
                 />
                 <span>
-                  <span className="block font-medium">{model.name}</span>
+                  <span className="block font-medium">{model.id}</span>
                   <span className="text-muted-foreground break-words">
                     {model.upstreamModel}
                   </span>
                 </span>
               </label>
               <Input
-                aria-label={`${model.name} managed input price`}
+                aria-label={`${model.id} managed input price`}
                 value={model.priceInput}
                 onChange={(event) =>
                   updateModel(model.id, { priceInput: event.target.value })
@@ -934,7 +915,7 @@ function DetailCard({
                 placeholder="Input $/M"
               />
               <Input
-                aria-label={`${model.name} managed output price`}
+                aria-label={`${model.id} managed output price`}
                 value={model.priceOutput}
                 onChange={(event) =>
                   updateModel(model.id, { priceOutput: event.target.value })
@@ -1540,6 +1521,13 @@ function AddProviderDialog({
                 )}{" "}
                 Gateway check
               </Button>
+              {testConnection.error && (
+                <p role="alert" className="text-danger text-sm">
+                  {testConnection.error instanceof Error
+                    ? testConnection.error.message
+                    : "Gateway check failed. Check the provider settings and try again."}
+                </p>
+              )}
               {testResult && (
                 <span
                   className={cn(
@@ -1578,17 +1566,17 @@ function AddProviderDialog({
                       onCheckedChange={(checked) =>
                         toggleModel(model.id, checked === true)
                       }
-                      aria-label={`Enable ${model.name}`}
+                      aria-label={`Enable ${model.id}`}
                     />
                     <span>
-                      <span className="block font-medium">{model.name}</span>
+                      <span className="block font-medium">{model.id}</span>
                       <span className="text-muted-foreground text-sm">
                         {model.context || "Context not reported"}
                       </span>
                     </span>
                   </label>
                   <Input
-                    aria-label={`${model.name} input price`}
+                    aria-label={`${model.id} input price`}
                     value={model.priceInput}
                     onChange={(e) =>
                       price(model.id, "priceInput", e.target.value)
@@ -1596,7 +1584,7 @@ function AddProviderDialog({
                     placeholder="Input $/M"
                   />
                   <Input
-                    aria-label={`${model.name} output price`}
+                    aria-label={`${model.id} output price`}
                     value={model.priceOutput}
                     onChange={(e) =>
                       price(model.id, "priceOutput", e.target.value)
@@ -2018,10 +2006,11 @@ export default function ProvidersPage() {
         answer="Remote providers are explicit paid routes."
         description="Requests go to a remote provider only when a model or alias names it. We never switch to a paid provider on our own."
         actions={
-          missingApi ? undefined :
-          <Button onClick={() => setAddOpen(true)}>
-            <Plus aria-hidden="true" /> Add provider
-          </Button>
+          missingApi ? undefined : (
+            <Button onClick={() => setAddOpen(true)}>
+              <Plus aria-hidden="true" /> Add provider
+            </Button>
+          )
         }
       />
       <div className="pb-20 sm:pb-0">
@@ -2072,7 +2061,7 @@ export default function ProvidersPage() {
                 saveGlobalCaps.mutate({ daily, monthly })
               }
             />
-            <section className="grid gap-3 sm:grid-cols-3">
+            <section className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-xl border p-4">
                 <DollarSign className="text-primary size-5" />
                 <div className="mt-3 text-2xl font-semibold">
@@ -2105,15 +2094,6 @@ export default function ProvidersPage() {
                 </div>
                 <p className="text-muted-foreground text-sm">
                   Providers with enabled models
-                </p>
-              </div>
-              <div className="rounded-xl border p-4">
-                <ShieldCheck className="text-primary size-5" />
-                <div className="mt-3 text-2xl font-semibold">
-                  {new Set(records.flatMap((row) => row.plans)).size}
-                </div>
-                <p className="text-muted-foreground text-sm">
-                  Plans allowed by configured providers
                 </p>
               </div>
             </section>

@@ -16,7 +16,7 @@ export default defineConfig({
   testMatch:
     process.env.STATUS_REAL_DATA === "1"
       ? "real-data-status.e2e.ts"
-      : "member-status.e2e.ts",
+      : ["member-status.e2e.ts", "owner-status.e2e.ts"],
   globalSetup: path.join(webRoot, "e2e/global-setup.ts"),
   outputDir: path.join(webRoot, "test-results/status-artifacts"),
   reporter: [["list"]],
