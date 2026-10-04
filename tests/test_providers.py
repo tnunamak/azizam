@@ -1115,6 +1115,47 @@ class TestCosts(unittest.TestCase):
         self.assertEqual(cost.usd, Decimal("0.000012684"))
         self.assertEqual(cost.source, "price-table")
 
+    def test_exact_resolved_response_model_price_wins_over_alias_fallback(self) -> None:
+        ref = provider(
+            price={
+                "models": {
+                    "typesafe/jev-latest": {
+                        "input_usd_per_million_tokens": "0.042",
+                        "output_usd_per_million_tokens": "0",
+                    },
+                    "jev-1.13.0": {
+                        "input_usd_per_million_tokens": "1.000",
+                        "output_usd_per_million_tokens": "0",
+                    },
+                }
+            },
+            config={
+                "model_listing": {
+                    "alias_resolution": {
+                        "price_model": "configured_model",
+                    }
+                },
+                "models": [
+                    {
+                        "id": "typesafe/jev-latest",
+                        "upstream_model": "jev-latest",
+                    }
+                ],
+            },
+        )
+
+        cost = extract_provider_cost(
+            ref,
+            body={
+                "model": "jev-1.13.0",
+                "usage": {"input_tokens": 302, "output_tokens": 37},
+            },
+            price_model_fallback="typesafe/jev-latest",
+        )
+
+        self.assertEqual(cost.usd, Decimal("0.000302000"))
+        self.assertEqual(cost.source, "price-table")
+
     def test_resolved_response_model_uses_preset_catalog_for_old_provider_snapshot(self) -> None:
         ref = provider(
             price={
@@ -1161,6 +1202,38 @@ class TestCosts(unittest.TestCase):
             config={
                 "preset_id": "typesafe",
                 "model_listing": {"alias_resolution": {}},
+                "models": [
+                    {
+                        "id": "typesafe/jev-latest",
+                        "upstream_model": "jev-latest",
+                    }
+                ],
+            },
+        )
+
+        cost = extract_provider_cost(
+            ref,
+            body={
+                "model": "jev-1.13.0",
+                "usage": {"input_tokens": 302, "output_tokens": 37},
+            },
+            price_model_fallback="typesafe/jev-latest",
+        )
+
+        self.assertIsNone(cost.usd)
+        self.assertEqual(cost.source, "unknown")
+
+    def test_resolved_response_model_without_catalog_declaration_remains_unknown(self) -> None:
+        ref = provider(
+            price={
+                "models": {
+                    "typesafe/jev-latest": {
+                        "input_usd_per_million_tokens": "0.042",
+                        "output_usd_per_million_tokens": "0",
+                    }
+                }
+            },
+            config={
                 "models": [
                     {
                         "id": "typesafe/jev-latest",
