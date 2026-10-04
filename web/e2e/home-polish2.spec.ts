@@ -184,6 +184,10 @@ for (const theme of ["light", "dark"] as const) {
       await expect(page.getByRole("combobox", { name: "App key" })).toHaveCount(
         1,
       );
+      if (width === 390) {
+        await expect(page.getByRole("tabpanel")).toHaveCount(0);
+        await page.getByText("Client instructions", { exact: true }).click();
+      }
       await expect(page.getByRole("tabpanel").locator("summary")).toHaveText(
         "Client setup: not verified",
       );
@@ -268,7 +272,7 @@ test("one selected and pasted app key scopes all recipes and the gateway check",
   await expect(paste).toHaveValue("");
   await expect(page.getByRole("tabpanel").locator("pre")).toHaveCount(0);
   await expect(
-    page.getByText("No chat model is available to this key yet", {
+    page.getByText("No chat alias is advertised for this key yet", {
       exact: true,
     }),
   ).toBeVisible();
