@@ -641,3 +641,25 @@ def test_bound_remote_alias_cannot_override_denied_concrete_target():
                       tags=("alias", "resolves_to:provider/model"))]
     projected = _resolved_capabilities(identity, lambda _: raw)
     assert not next(cap for cap in projected if cap.model == "fast").policy_available
+
+
+@pytest.mark.parametrize("surface", ["home", "shared"])
+def test_chat_alias_cannot_bind_remote_model_without_matching_protocol_capability(surface):
+    from gateway.capabilities import resolve_capability_targets
+    from gateway.models_catalog import registered_model_capabilities
+    registry = {"services": {"decision-cloud": {"id": "decision-cloud", "kind": "provider", "enabled": True,
+        "capabilities": ["typesafe-systemone"], "config": {
+            "remote_provider": True, "provider_type": "paid-remote", "provider_id": "typesafe",
+            "protocol": "typesafe-systemone", "base_url": "https://provider.example/v1",
+            "models": [{"model_group": "typesafe/jev"}],
+        },
+    }}}
+    assert registered_model_capabilities(registry) == []
+    aliases = build_alias_capabilities({"chat": {"stable": [{"alias": "fast", "resolves_to": "typesafe/jev"}]}})
+    identity = RuntimeIdentity(name="No remote", key_hash="", profile=load_profile({"id": "no-remote"}))
+    if surface == "home":
+        home_caps = _resolved_capabilities(identity, lambda _: aliases, registry)
+        assert home_caps[0].policy_available is False
+    else:
+        resolved = resolve_capability_targets(aliases, registry)
+        assert resolved[0].backend == "gateway"
