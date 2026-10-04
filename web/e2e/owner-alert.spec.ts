@@ -1,6 +1,13 @@
 import { test, expect } from "@playwright/test";
 
-for (const mode of ["down", "disabled", "unavailable", "hardware"] as const) {
+for (const mode of [
+  "down",
+  "disabled",
+  "unavailable",
+  "hardware",
+  "unused",
+  "unknown-usage",
+] as const) {
   test(`global owner alert: ${mode}`, async ({ page }) => {
     await page.route("**/admin/api/status", (route) =>
       route.fulfill({
@@ -24,6 +31,8 @@ for (const mode of ["down", "disabled", "unavailable", "hardware"] as const) {
                         name: "Image engine",
                         configured: true,
                         enabled: mode !== "disabled",
+                        in_use:
+                          mode === "unknown-usage" ? null : mode !== "unused",
                         role: "required",
                         routable: false,
                         observation:

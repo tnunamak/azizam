@@ -212,6 +212,7 @@ from gateway.backends.llm_execution import (
 )
 from gateway.backends.litellm_admin import LiteLLMKeyAdminClient
 from gateway.capabilities import (
+    canonicalize_workflow_capabilities,
     resolve_capability_targets,
     Capability,
     ResourceEstimate,
@@ -13367,7 +13368,9 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
         replace(capability, limits=tuple(limits_for_workflow(published_video_limits, capability.workflow).items()))
         if capability.intent == INTENT_VIDEO_GENERATE and limits_for_workflow(published_video_limits, capability.workflow)
         else capability
-        for capability in resolve_capability_targets(capabilities, live_registry)
+        for capability in resolve_capability_targets(
+            canonicalize_workflow_capabilities(capabilities, _build_workflow_model_entries()), live_registry
+        )
     ]
 
     return [

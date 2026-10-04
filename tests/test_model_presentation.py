@@ -188,3 +188,44 @@ def test_local_engine_labels_come_from_declared_capabilities(name, capabilities,
     service = {"name": name, "capabilities": capabilities,
                "config": {"locality": "local", "engine_name": engine}}
     assert engine_label(service, "internal") == expected
+
+
+def test_public_workflow_ids_and_manifest_ids_share_one_friendly_alias_entry():
+    from gateway.capabilities import canonicalize_workflow_capabilities, caller_visible_capabilities, resolve_capability_targets, summarize_capability
+    raw = Capability(intent="audio.generate", backend="test", workflow="instrument")
+    manifest = Capability(intent="audio.generate", backend="test", workflow="audio.generate.instrument",
+                          title="Configured instrument", capability="music")
+    alias = Capability(intent="audio.generate", backend="gateway", model="music", tags=("alias", "resolves_to:instrument"))
+    entries = [{"id": "instrument", "vivid_fish_workflow_id": "audio.generate.instrument",
+                "vivid_fish_intent": "audio.generate", "vivid_fish_backend": "test"}]
+    canonical = canonicalize_workflow_capabilities([raw, manifest, alias], entries)
+    visible = caller_visible_capabilities(resolve_capability_targets(canonical))
+    assert len(visible) == 1
+    row = summarize_capability(visible[0], "client")
+    assert row["title"] == "Music (Configured instrument)"
+    assert row["use_name"] == "music"
+    assert visible[0].resolved_workflow == "audio.generate.instrument"
+
+
+def test_workflow_canonicalization_keeps_distinct_public_names_and_shapes():
+    from gateway.capabilities import canonicalize_workflow_capabilities, caller_visible_capabilities
+    first = Capability(intent="image.generate", backend="one", workflow="first")
+    second = Capability(intent="image.generate", backend="one", workflow="second")
+    other = Capability(intent="image.generate", backend="two", workflow="first")
+    other_intent = Capability(intent="image.edit", backend="one", workflow="first")
+    entries = [{"id": name, "vivid_fish_workflow_id": "image." + name,
+                "vivid_fish_intent": "image.generate", "vivid_fish_backend": "one"}
+               for name in ("first", "second")]
+    rows = canonicalize_workflow_capabilities([first, second, other, other_intent], entries)
+    assert [(cap.model, cap.workflow) for cap in rows[:2]] == [("first", "image.first"), ("second", "image.second")]
+    assert rows[2:] == [other, other_intent]
+    assert len(caller_visible_capabilities(rows)) == 4
+
+
+def test_ambiguous_workflow_mapping_does_not_invent_a_target():
+    from gateway.capabilities import canonicalize_workflow_capabilities
+    raw = Capability(intent="audio.generate", backend="test", workflow="public")
+    entries = [{"id": "public", "vivid_fish_workflow_id": workflow,
+                "vivid_fish_intent": "audio.generate", "vivid_fish_backend": "test"}
+               for workflow in ("audio.one", "audio.two")]
+    assert canonicalize_workflow_capabilities([raw], entries) == [raw]

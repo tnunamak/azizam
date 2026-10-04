@@ -292,6 +292,54 @@ def summarize_capabilities(
     }
 
 
+def canonicalize_workflow_capabilities(
+    capabilities: Iterable[Capability], model_entries: Iterable[Mapping[str, Any]]
+) -> list[Capability]:
+    """Unify caller model ids and manifest workflow ids using published data.
+
+    A mapping is applied only for its declared intent/backend and a unique
+    public-model/workflow pair. Unknown or ambiguous records remain unchanged.
+    Aliases retain their caller identity and inherit metadata during resolution.
+    """
+    capabilities = list(capabilities)
+    bindings = {}
+    for entry in model_entries:
+        if not isinstance(entry, Mapping):
+            continue
+        public_id = entry.get("id")
+        workflow_id = entry.get("vivid_fish_workflow_id")
+        intent = entry.get("vivid_fish_intent")
+        backend = entry.get("vivid_fish_backend")
+        if not all(isinstance(value, str) and value for value in (public_id, workflow_id, intent, backend)):
+            continue
+        for identity in (public_id, workflow_id):
+            bindings.setdefault((intent, backend, identity), set()).add((public_id, workflow_id))
+    metadata = {}
+    for cap in capabilities:
+        if "alias" not in cap.tags and cap.workflow:
+            key = (cap.intent, cap.backend, cap.workflow)
+            current = metadata.get(key)
+            if current is None or (bool(cap.title), bool(cap.capability)) > (bool(current.title), bool(current.capability)):
+                metadata[key] = cap
+    out = []
+    for cap in capabilities:
+        if "alias" in cap.tags:
+            out.append(cap)
+            continue
+        matches = set()
+        for identity in (cap.model, cap.workflow):
+            matches.update(bindings.get((cap.intent, cap.backend, identity), ()))
+        if len(matches) == 1:
+            public_id, workflow_id = next(iter(matches))
+            manifest = metadata.get((cap.intent, cap.backend, workflow_id))
+            cap = replace(cap, model=public_id, workflow=workflow_id,
+                          title=cap.title or (manifest.title if manifest else None),
+                          description=cap.description or (manifest.description if manifest else None),
+                          capability=cap.capability or (manifest.capability if manifest else None))
+        out.append(cap)
+    return out
+
+
 def resolve_capability_targets(capabilities: Iterable[Capability], service_records: Mapping[str, Any] | None = None) -> list[Capability]:
     """Bind aliases to a unique declared target without inventing routing truth."""
     from gateway.alias_policy import service_model_records

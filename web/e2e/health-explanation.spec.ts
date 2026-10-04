@@ -21,6 +21,7 @@ test("health popover explains a measured outage and links to Status", async ({
                 name: "Image engine",
                 configured: true,
                 enabled: true,
+                in_use: true,
                 role: "required",
                 routable: false,
                 observation: "down",
