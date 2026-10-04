@@ -663,3 +663,48 @@ def test_chat_alias_cannot_bind_remote_model_without_matching_protocol_capabilit
     else:
         resolved = resolve_capability_targets(aliases, registry)
         assert resolved[0].backend == "gateway"
+
+
+@pytest.mark.parametrize("permission", ["no_remote_grant", "disallowed_provider_plan", "allowed_canonical_grant"])
+def test_service_selected_remote_alias_obeys_canonical_provider_permission(home_case, monkeypatch, permission):
+    import proxy
+    from gateway import service_registry
+    c = home_case
+    profile_document = {"id": "service-policy", "remote": {
+        "providers": [] if permission == "no_remote_grant" else ["openrouter"],
+    }}
+    profile_record = admin_store.create_profile("Service policy", profile_document, path=c.db)
+    c.inherited_profile = c.prospective_profile = profile_record["id"]
+    c.registry = {"services": {"voice-cloud": {"id": "voice-cloud", "enabled": True, "config": {
+        "remote_provider": True, "provider_type": "paid-remote", "provider_id": "openrouter",
+        "protocol": "openai-compatible", "base_url": "https://provider.example/v1",
+        "models": [{"model_group": "voice-model"}],
+    }}}}
+    alias_config = {"speech": {"engines": {"provider-option": {"service": "voice-cloud", "model": "voice-model"}},
+                               "stable": {"voice": ["provider-option"]}}}
+    monkeypatch.setattr(proxy, "config", {"model_aliases": alias_config,
+                                         "backends": service_registry.runtime_backends(c.registry)})
+    monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: c.registry)
+    monkeypatch.setattr(proxy.ADMIN_STORE, "get_provider_admin_state", lambda: {"providers": {"openrouter": {
+        "allowed_plans": ["another-plan"] if permission == "disallowed_provider_plan" else ["service-policy"],
+    }}})
+    resolution = proxy.resolve_model_for_operation("speech", "voice")
+    assert resolution.alias.service == "voice-cloud"
+    assert resolution.effective_model == "voice-model"
+    c.aliases_override = proxy._gateway_aliases_provider("speech")
+    aliases = build_alias_capabilities(c.aliases_override)
+    assert aliases[0].backend == "voice-cloud"
+    assert "engine:provider-option" in aliases[0].tags
+    assert "remote" not in aliases[0].tags
+    identity = RuntimeIdentity(name="Service policy", key_hash="", profile=load_profile(profile_document))
+    expected = permission == "allowed_canonical_grant"
+    assert proxy._capability_for_profile(aliases[0], proxy.AuthContext(identity=identity)).policy_available is expected
+    c.capabilities_override = lambda caller: [proxy._capability_for_profile(cap, proxy.AuthContext(identity=caller)) for cap in aliases]
+    c.health = {"backends": [{"key": "voice-cloud", "live_status": "up"}]}
+    for path in ("/me/api/home", "/me/api/status"):
+        response = c.http.get(path)
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert any(row.get("model") == "voice" for row in data["capabilities"]) is expected
+        if path.endswith("home"):
+            assert [row["id"] for row in data["aliases"]] == (["voice"] if expected else [])
