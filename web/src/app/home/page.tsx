@@ -375,13 +375,15 @@ function Connect({
         </div>
         {appChoice ? (
           <div className="grid min-w-0 gap-3 lg:grid-cols-3">
-            {selectedRecipe.fields.map((field) => (
-              <CopyField
-                key={field.label}
-                label={field.label}
-                value={field.value}
-              />
-            ))}
+            {selectedRecipe.fields
+              .filter((field) => field.value)
+              .map((field) => (
+                <CopyField
+                  key={field.label}
+                  label={field.label}
+                  value={field.value}
+                />
+              ))}
             <div className="min-w-0 space-y-3">
               <label htmlFor="app-key" className="text-sm font-medium">
                 App key
