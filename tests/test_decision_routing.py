@@ -180,7 +180,7 @@ def test_existing_only_plan_never_starts_service():
     profile = SimpleNamespace(target_policy=SimpleNamespace(activation="existing_only"))
     with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(503, json={})))):
         result = asyncio.run(rt.dispatch(None, profile, BODY, "r"))
-    assert result.status_code == 529 and result.headers["retry-after"] == "5"
+    assert result.status_code == 503 and result.headers["retry-after"] == "5"
     assert result.fallback_reasons == ("small:overloaded",)
     ensure.assert_not_called()
 
@@ -403,7 +403,7 @@ def test_dispatch_deadline_bounds_total_response_time(monkeypatch):
             raise
     with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(handler))):
         result = asyncio.run(rt.dispatch(None, None, BODY, "r"))
-    assert result.status_code == 529
+    assert result.status_code == 503
     assert cancelled == [True]
 
 
@@ -412,7 +412,7 @@ def test_engine_deadline_response_is_retryable_and_preserves_reason():
     real = httpx.AsyncClient
     with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(504, json={"error": {"code": "deadline_exceeded"}})))):
         result = asyncio.run(rt.dispatch(None, None, BODY, "r"))
-    assert result.status_code == 529
+    assert result.status_code == 503
     assert result.fallback_reasons == ("small:deadline_exceeded",)
 
 

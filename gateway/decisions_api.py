@@ -667,7 +667,12 @@ def _is_validation_detail(value: Any) -> bool:
             return False
     return True
 
-def _response_headers(request_id: str, result: DecisionDispatchResult) -> dict[str, str]:
+def _response_headers(
+    request_id: str,
+    result: DecisionDispatchResult,
+    *,
+    requested_model: str | None = None,
+) -> dict[str, str]:
     headers = {
         "x-gateway-remote": "1" if result.remote else "0",
         "x-gateway-cost-usd": str(result.cost_usd) if result.cost_usd is not None else "unknown",
@@ -681,6 +686,17 @@ def _response_headers(request_id: str, result: DecisionDispatchResult) -> dict[s
         headers["x-decision-engine"] = result.engine
     if result.fallback_reasons:
         headers["x-gateway-fallback-reasons"] = ",".join(result.fallback_reasons)
+    served_model = result.resolved_model or (
+        str(result.body.get("model")) if isinstance(result.body.get("model"), str) else None
+    )
+    if (
+        result.fallback_reasons
+        and 200 <= result.status_code < 300
+        and requested_model
+        and served_model
+        and served_model != requested_model
+    ):
+        headers["x-gateway-fallback"] = ",".join(result.fallback_reasons)
     return headers
 
 
@@ -889,7 +905,11 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
             ),
         )
 
-        return JSONResponse(_systemone_body_for_client(result.status_code, result.body), status_code=result.status_code, headers=_response_headers(request_id, result))
+        return JSONResponse(
+            _systemone_body_for_client(result.status_code, result.body),
+            status_code=result.status_code,
+            headers=_response_headers(request_id, result, requested_model=body.get("model")),
+        )
 
     app.add_api_route("/v1/systemone", systemone, methods=["POST"])
     app.add_api_route("/typesafe/v1/systemone", systemone, methods=["POST"])

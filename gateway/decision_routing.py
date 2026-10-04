@@ -21,6 +21,7 @@ ROUTING_TIMEOUT_SECONDS = 15.0
 class _DecisionAttempts:
     backend: str | None = None
     fallbacks: list[str] = field(default_factory=list)
+    fallback_declared: bool = False
 
 
 class DecisionRuntime:
@@ -45,7 +46,9 @@ class DecisionRuntime:
             result = resolve_alias(self.config().get("model_aliases"), "decisions", lookup,
                                    engine_available=self.available)
         except AliasUnavailableError as exc:
-            raise DecisionsError(529, exc.code, str(exc), headers={"retry-after": "5"}) from exc
+            status = 529 if exc.fallback_declared else 503
+            message = str(exc) if exc.fallback_declared else f"{exc} No fallback is configured."
+            raise DecisionsError(status, exc.code, message, headers={"retry-after": "5"}) from exc
         if result is None or result.engine is None:
             raise DecisionsError(422, "invalid_model", "This decision model is not configured.", param="model")
         return result
@@ -155,6 +158,7 @@ class DecisionRuntime:
                                         body: Mapping[str, Any], deadline: float,
                                         attempts: _DecisionAttempts) -> DecisionDispatchResult:
         resolved = self.resolve(str(body["model"]))
+        attempts.fallback_declared = resolved.fallback_declared
         candidates = [(resolved.engine, resolved.service)] + list(resolved.fallbacks)
         fallbacks = attempts.fallbacks
         fallbacks.extend(f"{name}:not_deployed" for name in resolved.skipped_engines)
@@ -204,6 +208,8 @@ class DecisionRuntime:
                 raise DecisionsError(502, "decision_backend_error", "The decision engine returned an invalid response.")
             if response.status_code == 200 and (not isinstance(payload.get("answers"), dict) or set(payload["answers"]) != set(body["questions"]) or not isinstance(payload.get("model"), str)):
                 raise DecisionsError(502, "decision_backend_error", "The decision engine did not answer every question.")
+            if response.status_code == 200 and payload["model"] != forwarded["model"]:
+                raise DecisionsError(503, "model_not_deployed", "The decision service did not serve the configured model. Undeclared model substitution is not allowed.")
             engine = response.headers.get("x-decision-engine")
             engine = engine if engine in {"gpu", "cpu"} else None
             self.observed[str(service_id)] = (time.monotonic(), engine)
@@ -218,9 +224,10 @@ class DecisionRuntime:
 
     @staticmethod
     def _unavailable_result(attempts: _DecisionAttempts) -> DecisionDispatchResult:
+        status = 529 if attempts.fallback_declared else 503
         return DecisionDispatchResult(
-            {"error": {"message": "The local decision engines are starting or unavailable.",
-                       "type": "server_error", "code": "overloaded"}},
-            status_code=529, headers={"retry-after": "5"},
+            {"error": {"message": "The local decision engines are starting or unavailable." if attempts.fallback_declared else "The configured decision engine is unavailable. No fallback is configured.",
+                       "type": "server_error", "code": "overloaded" if attempts.fallback_declared else "model_not_deployed"}},
+            status_code=status, headers={"retry-after": "5"},
             backend=attempts.backend, fallback_reasons=tuple(attempts.fallbacks),
         )

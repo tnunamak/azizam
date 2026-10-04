@@ -878,6 +878,7 @@ def test_free_fallback_reasons_are_reported_in_headers_and_receipts(env):
     )
     resp = env.client.post("/v1/systemone", json=fixture["request"], headers=H)
     assert resp.status_code == 200
+    assert resp.headers["x-gateway-fallback"] == "decider-gpu:529"
     assert resp.headers["x-gateway-fallback-reasons"] == "decider-gpu:529"
     assert env.fakes.receipts[0][1].fallback_reasons == ("decider-gpu:529",)
 

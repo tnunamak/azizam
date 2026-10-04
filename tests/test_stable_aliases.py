@@ -93,6 +93,15 @@ class ResolverTests(unittest.TestCase):
             sa.resolve_alias(TOY, "speech", "b", engine_available=_only("a"))
         self.assertEqual(ctx.exception.code, "model_not_deployed")
 
+    def test_missing_primary_is_recorded_as_a_declared_fallback(self):
+        import copy
+        cfg = copy.deepcopy(TOY)
+        cfg["speech"]["stable"]["missing-first"] = ["not-configured", "a"]
+        res = sa.resolve_alias(cfg, "speech", "missing-first")
+        self.assertEqual(res.skipped_engines, ("not-configured",))
+        self.assertTrue(res.fallback_declared)
+        self.assertFalse(sa.resolve_alias(cfg, "speech", "a").fallback_declared)
+
     def test_no_deployed_candidate_raises(self):
         with self.assertRaises(sa.AliasUnavailableError):
             sa.resolve_alias(TOY, "speech", "tts", engine_available=_only())

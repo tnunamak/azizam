@@ -58,9 +58,10 @@ EngineAvailable = Callable[[str, Mapping[str, Any]], bool]
 class AliasUnavailableError(Exception):
     """A known alias or engine name resolves to nothing that is deployed."""
 
-    def __init__(self, message: str, *, code: str = "model_not_deployed"):
+    def __init__(self, message: str, *, code: str = "model_not_deployed", fallback_declared: bool = False):
         super().__init__(message)
         self.code = code
+        self.fallback_declared = fallback_declared
 
 
 @dataclass(frozen=True)
@@ -78,6 +79,7 @@ class AliasResolution:
     # Deployed engines after the picked one in the same tier, as (engine id, service id), in order.
     # A caller that cannot start the picked engine may try these; empty for a name that is an engine id.
     fallbacks: tuple[tuple[str, str | None], ...] = ()
+    fallback_declared: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -144,6 +146,7 @@ def _engine_resolution(
     spec: Mapping[str, Any],
     skipped: tuple[str, ...] = (),
     fallbacks: tuple[tuple[str, str | None], ...] = (),
+    fallback_declared: bool = False,
 ) -> AliasResolution:
     return AliasResolution(
         requested=requested,
@@ -157,6 +160,7 @@ def _engine_resolution(
         skipped_engines=skipped,
         engine_spec=spec,
         fallbacks=fallbacks,
+        fallback_declared=fallback_declared,
     )
 
 
@@ -185,6 +189,7 @@ def _pick_engine(
         engine_id = _norm(raw)
         spec = engines.get(engine_id)
         if spec is None:
+            skipped.append(engine_id)
             continue
         if available(engine_id, spec):
             return engine_id, spec, tuple(skipped)
@@ -248,6 +253,7 @@ def resolve_alias(
                     raise AliasUnavailableError(
                         f"Model alias '{cur}' has no deployed engine "
                         f"(candidates: {', '.join(str(c) for c in spec)}).",
+                        fallback_declared=len(spec) > 1,
                     )
                 engine_id, engine_spec, skipped = picked
                 chain.append(engine_id)
@@ -260,6 +266,7 @@ def resolve_alias(
                     spec=engine_spec,
                     skipped=skipped,
                     fallbacks=_fallbacks_after(spec, engine_id, engines, engine_available),
+                    fallback_declared=len(spec) > 1,
                 )
             target = str(spec or "").strip()
             if not target:
