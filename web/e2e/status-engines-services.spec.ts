@@ -324,18 +324,54 @@ for (const theme of ["light", "dark"] as const) {
           page
             .locator("article")
             .filter({ hasText: "Local chat engine" })
-            .getByRole("heading", { name: "Chat (openai-compatible)" }),
+            .getByRole("heading", { name: "Local chat engine", exact: true }),
         ).toBeVisible();
-        await expect(
-          page.getByText("legacy-chat", { exact: true }),
-        ).toBeVisible();
-        await expect(page.getByText("Image & Video (comfy)")).toHaveCount(0);
-        await page.getByText("Show disabled").click();
-        await expect(page.getByText("Image & Video (comfy)")).toBeVisible();
-
         const chatCard = page
           .locator("article")
           .filter({ hasText: "Local chat engine" });
+        await expect(
+          page.getByRole("region", { name: "Chat engines", exact: true }),
+        ).toContainText("Local chat engine");
+        await chatCard.getByText("Advanced", { exact: true }).click();
+        await expect(chatCard.locator("pre")).toContainText(
+          '"protocol": "openai-compatible"',
+        );
+        await chatCard.getByText("Advanced", { exact: true }).click();
+        await expect(
+          chatCard.getByText("legacy-chat", { exact: true }),
+        ).toBeHidden();
+        await chatCard
+          .getByText("Connection and models", { exact: true })
+          .click();
+        await expect(
+          chatCard.getByText("legacy-chat", { exact: true }),
+        ).toBeVisible();
+        await expect(
+          page.getByRole("heading", {
+            name: "Local image engine",
+            exact: true,
+          }),
+        ).toHaveCount(0);
+        await page.getByRole("switch", { name: "Show not in use" }).check();
+        await expect(
+          page.getByRole("heading", {
+            name: "Local image engine",
+            exact: true,
+          }),
+        ).toBeVisible();
+        const imageCard = page
+          .getByRole("region", { name: "Images engines", exact: true })
+          .locator("article");
+        await imageCard
+          .getByText("Connection and models", { exact: true })
+          .click();
+        await expect(
+          imageCard.getByText("Images, Video", { exact: true }),
+        ).toBeVisible();
+        await imageCard.getByText("Advanced", { exact: true }).click();
+        await expect(imageCard.locator("pre")).toContainText('"kind": "comfy"');
+        await imageCard.getByText("Advanced", { exact: true }).click();
+
         await chatCard.getByRole("button", { name: "Test" }).click();
         await expect(page.getByText("Connected to")).toBeVisible();
         await chatCard.getByRole("button", { name: "Detect" }).click();
@@ -413,10 +449,12 @@ test("engines route selects a disabled service from the query string", async ({
 }) => {
   await mockEngineApis(page);
   await page.goto("/ui/engines/?service=image");
-  await expect(page.getByText("Image & Video (comfy)")).toBeVisible();
-  await expect(page.locator("article").first()).toContainText(
-    "Local image engine",
-  );
+  await expect(
+    page.getByRole("heading", { name: "Local image engine", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("switch", { name: "Show not in use" }),
+  ).not.toBeChecked();
   await expect(
     page
       .locator("article[aria-current='true']")
@@ -491,7 +529,7 @@ test("engines add, edit, toggle, and remove use existing APIs safely", async ({
   await expect(page.getByText("Engine saved")).toBeVisible();
 
   await page.getByRole("switch", { name: "Toggle Local chat engine" }).click();
-  await page.getByText("Show disabled").click();
+  await page.getByRole("switch", { name: "Show not in use" }).check();
   const imageCard = page
     .locator("article")
     .filter({ hasText: "Local image engine" });
