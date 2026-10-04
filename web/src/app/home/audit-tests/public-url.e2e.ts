@@ -32,7 +32,10 @@ test("Home and client recipes use the saved public URL on a different request ho
     ).toHaveValue(`${publicUrl}/v1`);
     await page.getByRole("combobox", { name: "App key", exact: true }).click();
     await page
-      .getByRole("option", { name: "Browser test app · Seeded", exact: true })
+      .getByRole("option", {
+        name: "Browser test app · Seeded desktop key",
+        exact: true,
+      })
       .click();
     // Desktop instructions start open; keep this regression independent of that default.
     await page

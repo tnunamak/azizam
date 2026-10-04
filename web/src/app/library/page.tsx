@@ -227,7 +227,7 @@ function MiniAudioPlayer({
             setIsPlaying(true);
           } catch {
             setIsPlaying(false);
-            setError("playback");
+            setError(audio.error ? "media" : "playback");
           }
         }}
       >

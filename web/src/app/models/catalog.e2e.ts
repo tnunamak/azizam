@@ -75,7 +75,9 @@ const states: AvailabilityStatus[] = [
   "unknown",
   "unavailable",
 ];
-const aliases = states.map((status) => row(status, status));
+const aliases = states.map((status) =>
+  row(status, status, status === "unknown" ? { locality: "remote" } : {}),
+);
 aliases.push(
   row("catalog-only", "unavailable", {
     availability: {
@@ -183,6 +185,9 @@ for (const theme of ["light", "dark"])
       ).toHaveCount(0);
       await expect(
         page.getByText("Price not provided", { exact: true }).first(),
+      ).toBeVisible();
+      await expect(
+        page.getByText("Local · no provider charge", { exact: true }).first(),
       ).toBeVisible();
       await verify(page, `states-${theme}-${width}`);
       await page.getByRole("button", { name: /All models/ }).click();

@@ -98,7 +98,7 @@ def _member_user(db: Path) -> dict[str, str]:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             """
-            SELECT u.id, u.email, u.display_name
+            SELECT u.id, u.email, u.display_name, u.subject
             FROM users u
             LEFT JOIN account_access a
               ON a.user_id=u.id
@@ -112,7 +112,6 @@ def _member_user(db: Path) -> dict[str, str]:
               AND a.disabled_at IS NULL
               AND u.email IS NOT NULL
               AND u.email != ''
-              AND u.issuer='local'
               AND u.subject NOT LIKE 'service%%'
               AND u.subject NOT LIKE '%%service%%'
             ORDER BY u.created_at
@@ -120,7 +119,7 @@ def _member_user(db: Path) -> dict[str, str]:
             """
         ).fetchone()
         if row:
-            return {"id": row["id"], "email": row["email"], "name": row["display_name"] or row["email"], "created": "false"}
+            return {"id": row["id"], "email": row["email"], "name": row["display_name"] or row["email"], "created": "true" if row["subject"] == "gate-you-copy-member" else "false"}
 
     profile_id = _first_profile_id(db)
     user = admin_store.upsert_oidc_user(

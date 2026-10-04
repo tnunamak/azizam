@@ -91,6 +91,8 @@ test("library mini audio player handles live-data audio playback", async ({
     element.load();
   });
   await expect(card.getByText("Audio unavailable")).toBeVisible();
+  await card.getByRole("button", { name: "Play Audio generation" }).click();
+  await expect(card.getByText("Audio unavailable")).toBeVisible();
 
   const badResponse = await page.request.get(
     `${download_url.replace(/.$/, "x")}`,
