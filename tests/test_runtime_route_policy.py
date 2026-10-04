@@ -6,6 +6,7 @@ import asyncio
 import copy
 import json
 import sys
+import tempfile
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
@@ -19,6 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from gateway import media_jobs, receipt_store  # noqa: E402
 from gateway.policy import (  # noqa: E402
     AppProfile,
     ModelAccessPolicy,
@@ -279,6 +281,21 @@ class _FakeAsyncStreamContext:
 
 class TestRuntimeRoutePolicy(unittest.TestCase):
     def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.receipts_db = root / "receipts.db"
+        self.media_jobs_db = root / "media_jobs.db"
+        self.cache_dir = root / "cache"
+        receipt_store.init_db(self.receipts_db)
+        media_jobs.init_db(self.media_jobs_db)
+        self._receipt_store_path = patch.object(receipt_store, "DB_PATH", self.receipts_db)
+        self._media_jobs_path = patch.object(media_jobs, "DB_PATH", self.media_jobs_db)
+        self._image_cache_dir = patch.object(proxy, "IMAGE_CACHE_DIR", self.cache_dir)
+        self._image_url_secret = patch.object(proxy, "_image_url_signing_secret", b"test-secret")
+        for patcher in (self._receipt_store_path, self._media_jobs_path, self._image_cache_dir, self._image_url_secret):
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self._model_policy_config = patch.object(proxy, "config", _migrated_model_policy_config())
         self._model_policy_config.start()
         self.addCleanup(self._model_policy_config.stop)

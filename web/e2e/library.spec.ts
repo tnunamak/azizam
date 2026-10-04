@@ -328,9 +328,13 @@ test("library audio plays independently and video uses its recorded poster", asy
   await expect.poll(() => posterRequests.at(-1) ?? "").toContain("scope=me");
   await page.getByLabel("Owner", { exact: true }).click();
   await page.getByRole("option", { name: "Everyone’s" }).click();
-  await expect
-    .poll(() => posterRequests.at(-1) ?? "")
-    .toContain("scope=everyone");
-  await expect(page.getByRole("listbox")).toHaveCount(0);
+  await expect(page.getByLabel("Owner", { exact: true })).toContainText(
+    "Everyone’s",
+  );
+  // The instance poster is already cached from the default owner view.
+  expect(posterRequests.some((url) => url.includes("scope=everyone"))).toBe(
+    true,
+  );
+  await expect(page.locator('[role="listbox"]')).toHaveCount(0);
   await auditPage(page);
 });

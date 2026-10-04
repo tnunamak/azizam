@@ -29,7 +29,26 @@ import proxy  # noqa: E402
 import _fake_comfy_video as rr_fake  # noqa: E402
 import test_video_remix_replace as rr  # noqa: E402
 from test_video_remix_replace import RemixReplaceBase  # noqa: E402,F401
-from gateway import media_jobs, video_inputs, video_media_jobs  # noqa: E402
+from gateway import media_jobs, receipt_store, video_inputs, video_media_jobs  # noqa: E402
+
+
+def _patch_route_stores(case: unittest.TestCase) -> None:
+    tmp = tempfile.TemporaryDirectory()
+    case.addCleanup(tmp.cleanup)
+    root = Path(tmp.name)
+    media_db = root / "media_jobs.db"
+    receipts_db = root / "receipts.db"
+    cache_dir = root / "asset-cache"
+    media_jobs.init_db(media_db)
+    receipt_store.init_db(receipts_db)
+    for module, path in ((media_jobs, media_db), (receipt_store, receipts_db)):
+        patcher = patch.object(module, "DB_PATH", path)
+        patcher.start()
+        case.addCleanup(patcher.stop)
+    for name, value in (("IMAGE_CACHE_DIR", cache_dir), ("_image_url_signing_secret", b"test-secret")):
+        patcher = patch.object(proxy, name, value)
+        patcher.start()
+        case.addCleanup(patcher.stop)
 
 
 SPEC_PATH = ROOT / "tests" / "fixtures" / "openai-openapi-responses.json"
@@ -63,6 +82,7 @@ def assert_openai_schema(test: unittest.TestCase, schema_name: str, payload: dic
 
 class OpenAISchemaConformanceTests(unittest.TestCase):
     def setUp(self) -> None:
+        _patch_route_stores(self)
         self.client = TestClient(proxy.app)
         self.auth = patch.object(proxy, "AUTH_ENABLED", False)
         self.policy = patch.object(proxy, "_enforce_runtime_route_policy", return_value=None)
@@ -250,6 +270,10 @@ def _conforms_to_video_resource(test: unittest.TestCase, payload: dict) -> None:
 
 class RemixReplaceConformanceTests(RemixReplaceBase):
     """New remix, edit and character-replace paths return the OpenAI video shape."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        _patch_route_stores(self)
 
     def test_remix_resource_conforms_and_keeps_gateway_fields(self) -> None:
         r = self.client.post(f"/v1/videos/{rr.SOURCE_ID}/remix", json={"prompt": "make it snowy"})

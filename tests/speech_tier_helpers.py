@@ -96,8 +96,10 @@ class RouteCase(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.cfg = _base_config(self.tmp.name)
-        self.receipts_db = Path(self.tmp.name) / "receipts.db"
-        self.media_jobs_db = Path(self.tmp.name) / "media_jobs.db"
+        self.stores_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.stores_tmp.cleanup)
+        self.receipts_db = Path(self.stores_tmp.name) / "receipts.db"
+        self.media_jobs_db = Path(self.stores_tmp.name) / "media_jobs.db"
         receipt_store.init_db(self.receipts_db)
         media_jobs.init_db(self.media_jobs_db)
         self.client = TestClient(proxy.app)

@@ -106,10 +106,12 @@ Owner source filters use stable source IDs:
 | `app:<app_id>` | Receipts for one App, including service Apps |
 
 Library uses the same source IDs. Job-backed assets take their source from the
-job receipt. Cache-only assets first use embedded provenance `request_id` to
+job receipt, or the job's trusted App/key identity if the receipt is absent.
+Cache-only assets first use embedded provenance `request_id` to
 find a receipt; if no receipt exists, their internal owner key hashes are
-matched to historical App credentials, including revoked credentials, to recover the App label. If neither path
-can recover a source, owner views show the asset as `Local network · no key`.
+matched to historical App credentials, including revoked credentials, to
+recover the App label. If neither path can recover a source, owner views show
+the asset as `Local network · no key`.
 The hashes are never returned by the API.
 
 **Upgrade behavior:** historical records without trusted App/key attribution
