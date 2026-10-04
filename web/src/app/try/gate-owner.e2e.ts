@@ -134,3 +134,45 @@ for (const theme of ["light", "dark"]) {
     }
   }
 }
+
+test("Try prepares a key and links a real public chat receipt", async ({
+  page,
+}) => {
+  await page.goto("/ui/try/");
+  await page.getByRole("button", { name: "Prepare Try key" }).first().click();
+  await expect(page.getByText("Try app key", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "I’ve saved it" }).click();
+  await expect(page.getByLabel("Model", { exact: true })).not.toContainText(
+    "Not in the catalog",
+  );
+  const chatResponse = page.waitForResponse(
+    (response) =>
+      response.url().includes("/openai/v1/chat/completions") &&
+      response.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  const response = await chatResponse;
+  expect(response.ok()).toBe(true);
+  const id = response.headers()["x-ai-gateway-receipt-id"];
+  expect(id).toBeTruthy();
+  expect(response.headers()["x-ai-gateway-request-id"]).toBe(id);
+  await expect(page.getByText("Chat result", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText(
+      "Your gateway is connected. This is a demonstration response from the isolated capture engine.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(page.locator(`a[href="/r/${id}"]`)).toBeVisible();
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.getByRole("button", { name: "Copy receipt ID" }).click();
+  await expect
+    .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+    .toBe(id);
+  await expect(
+    page.getByText("Session key ready", { exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByText("Catalog loaded", { exact: true })).toHaveCount(
+    0,
+  );
+});
