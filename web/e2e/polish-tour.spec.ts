@@ -11,7 +11,7 @@ const finalScreens =
 // Usage, activity, availability and model timing still come from the seeded API.
 const image =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 640 420'%3E%3Crect width='640' height='420' fill='%23e0f2fe'/%3E%3Ccircle cx='300' cy='210' r='110' fill='%230f766e'/%3E%3Cpath d='M365 210l120-80v160z' fill='%2314b8a6'/%3E%3Ccircle cx='265' cy='178' r='16' fill='white'/%3E%3C/svg%3E";
-// One second of real, decodable PCM silence for the native mini player.
+// One second of real, decodable PCM silence for the audio player.
 const wav = Buffer.alloc(44 + 16_000);
 wav.write("RIFF", 0);
 wav.writeUInt32LE(wav.length - 8, 4);
@@ -83,18 +83,23 @@ async function inspect(page: Page, name: string) {
     `${name} images must decode`,
   ).toBe(true);
   if (name.startsWith("library-")) {
-    // Native controls load on demand; exercise them before the settled capture.
-    const player = page.locator("audio").first();
-    await player.click({ position: { x: 20, y: 20 } });
+    // Exercise visible custom controls before the settled capture.
+    const player = page.locator("article audio").first();
+    await expect(player).toBeAttached();
+    await expect(player).toHaveAttribute("preload", "metadata");
+    const controls = player.locator("..");
+    await controls.getByRole("button", { name: /^Play / }).click();
     await expect
       .poll(() =>
         player.evaluate((audio) => (audio as HTMLAudioElement).duration),
       )
       .toBe(1);
+    await controls.getByRole("button", { name: /^Pause / }).click();
+    await expect(
+      controls.getByRole("button", { name: /^Play / }),
+    ).toBeVisible();
     await player.evaluate((audio) => {
-      const media = audio as HTMLAudioElement;
-      media.pause();
-      media.currentTime = 0;
+      (audio as HTMLAudioElement).currentTime = 0;
     });
   }
   expect(
