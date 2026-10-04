@@ -39,6 +39,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from gateway.capabilities import Capability, ResourceEstimate
+from gateway.model_files import missing_model_file_caveat, model_file_availability
 
 # Intent vocabulary used by the gateway. Mirrors what proxy.py advertises
 # today, kept here so this module does not depend on the proxy.
@@ -174,6 +175,9 @@ def _build_llm_capabilities(
         caveats: list[str] = []
         if backend not in backends:
             caveats.append(f"backend {backend!r} not declared under backends")
+        missing_file = missing_model_file_caveat(spec)
+        if missing_file:
+            caveats.append(missing_file)
         declared_model = spec.get("model")
         model_title = None
         if isinstance(declared_model, str) and "/" in declared_model:
@@ -192,6 +196,7 @@ def _build_llm_capabilities(
                 streaming=True,
                 resources=ResourceEstimate(gpu_required=True),
                 caveats=tuple(caveats),
+                availability=model_file_availability(spec),
             )
         )
 
@@ -215,6 +220,9 @@ def _build_llm_capabilities(
             caveats: list[str] = []
             if backend not in backends:
                 caveats.append(f"backend {backend!r} not declared under backends")
+            missing_file = missing_model_file_caveat(spec)
+            if missing_file:
+                caveats.append(missing_file)
             out.append(
                 Capability(
                     intent=INTENT_CHAT,
@@ -226,6 +234,7 @@ def _build_llm_capabilities(
                     streaming=True,
                     resources=ResourceEstimate(gpu_required=True),
                     caveats=tuple(caveats),
+                    availability=model_file_availability(spec),
                 )
             )
 

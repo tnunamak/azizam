@@ -158,6 +158,13 @@ class BuildLocalCapabilitiesTest(unittest.TestCase):
         # cydonia is bound to kobold, which doesn't have vision capability
         self.assertEqual(cydonia.input_modalities, ("text",))
 
+    def test_missing_local_model_path_is_unavailable(self):
+        caps = build_local_capabilities(REPRESENTATIVE_CONFIG)
+        cydonia = next(c for c in caps if c.model == "cydonia-24b")
+        self.assertFalse(cydonia.available)
+        self.assertEqual(cydonia.availability["status"], "unavailable")
+        self.assertIn("Model file is not installed.", cydonia.caveats)
+
     def test_backend_vision_capability_propagates(self):
         caps = build_local_capabilities(REPRESENTATIVE_CONFIG)
         # role:vision is bound to tabby which has 'vision' in capabilities;

@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 import httpx
 
+import proxy
 from gateway import speech_stream
 
 from tests.speech_tier_helpers import HAVE_FFMPEG, RouteCase, _Chunks, _wav_bytes
@@ -71,7 +72,20 @@ class TtsRuntimeFallbackTests(RouteCase):
         self.assertEqual((resp.status_code, resp.content), (200, b"RIFFwav"))
         self.assertEqual([r.url.port for r in seen], list(self._ports()))
         self.assertEqual(resp.headers["x-vivid-fallback"], "chatterbox->omnivoice (gpu_oom)")
+        self.assertEqual(resp.headers["x-gateway-fallback"], "chatterbox->omnivoice (gpu_oom)")
         self.assertEqual(json.loads(seen[1].content)["model"], "k2-fsa/OmniVoice")
+
+    def test_skipped_primary_engine_is_reported_without_runtime_retry(self) -> None:
+        self.cfg["backends"]["tts-chatterbox"]["enabled"] = False
+        seen = self.use_upstream(lambda r: httpx.Response(200, content=b"RIFFwav", headers={"content-type": "audio/wav"}))
+        proxy.receipt_store.begin.reset_mock()
+        resp = self._speak()
+        self.assertEqual((resp.status_code, resp.content), (200, b"RIFFwav"))
+        self.assertEqual([r.url.port for r in seen], [self.cfg["backends"]["tts"]["port"]])
+        self.assertEqual(resp.headers["x-gateway-fallback"], "chatterbox->omnivoice (not_deployed)")
+        self.assertEqual(resp.headers["x-vivid-fallback"], "chatterbox->omnivoice (not_deployed)")
+        receipts = [call.args[0] for call in proxy.receipt_store.begin.call_args_list]
+        self.assertIn("chatterbox->omnivoice (not_deployed)", receipts[-1].fallback_reasons)
 
     def test_start_failure_falls_back(self) -> None:
         self.health.side_effect = lambda bcfg, _t: bcfg.get("port") != self._ports()[0]

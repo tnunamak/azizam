@@ -298,6 +298,7 @@ export interface CatalogRow {
   operations: Array<string>;
   resolves_to: Record<string, string>;
   description: string | null;
+  technical_description?: string;
   capabilities: Array<CatalogCapability>;
   provider: string | null;
   engine_label: string | null;

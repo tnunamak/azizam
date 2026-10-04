@@ -343,6 +343,7 @@ def canonicalize_workflow_capabilities(
 def resolve_capability_targets(capabilities: Iterable[Capability], service_records: Mapping[str, Any] | None = None) -> list[Capability]:
     """Bind aliases to a unique declared target without inventing routing truth."""
     from gateway.alias_policy import service_model_records
+    from gateway.model_files import model_file_availability
     from gateway.service_registry import is_remote_provider_config
 
     raw = list(capabilities)
@@ -359,7 +360,8 @@ def resolve_capability_targets(capabilities: Iterable[Capability], service_recor
         matches = [candidate for candidate in raw if "alias" not in candidate.tags
                    and candidate.intent == cap.intent
                    and (cap.backend == "gateway" or candidate.backend == cap.backend)
-                   and (candidate.model in {target, f"role:{target}"} or candidate.workflow == target)]
+                   and (candidate.model in {target, f"role:{target}"} or candidate.workflow == target)
+                   and candidate.available]
         for service_id, service in services.items():
             if (not isinstance(service, Mapping) or not service.get("enabled", True)
                     or cap.backend not in {"gateway", str(service_id)}):
@@ -367,8 +369,11 @@ def resolve_capability_targets(capabilities: Iterable[Capability], service_recor
             config = service.get("config") or {}
             if is_remote_provider_config(config):
                 continue  # Remote aliases need a concrete capability of this intent.
-            if any(row.get("enabled") is not False and target in {row.get("id"), row.get("model_group")}
-                   for row in service_model_records(config)):
+            rows = service_model_records(config)
+            if any(row.get("enabled") is not False
+                   and target in {row.get("id"), row.get("model_group")}
+                   and model_file_availability(row, rows) is None
+                   for row in rows):
                 matches.append(replace(cap, backend=str(service_id)))
         backends = {candidate.backend for candidate in matches}
         if len(backends) == 1:

@@ -70,6 +70,13 @@ def project_capabilities(
     evidence = evidence or {}
     out: list[Capability] = []
     for capability in resolve_capability_targets(capabilities, service_records):
+        if _capability_declares_unavailable(capability):
+            out.append(replace(
+                capability,
+                lifecycle="stopped",
+                health="unhealthy",
+            ))
+            continue
         projection = project_service(
             capability.backend,
             service_records=service_records,
@@ -342,6 +349,13 @@ def _capability_states(projection: AvailabilityProjection) -> tuple[str, str]:
     if projection.status == "unavailable":
         return "stopped", "unhealthy"
     return "unknown", "unknown"
+
+
+def _capability_declares_unavailable(capability: Capability) -> bool:
+    return (
+        isinstance(capability.availability, Mapping)
+        and capability.availability.get("available") is False
+    )
 
 
 def _services_mapping(service_records: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:

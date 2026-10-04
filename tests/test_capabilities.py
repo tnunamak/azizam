@@ -169,6 +169,18 @@ class AvailabilityTests(unittest.TestCase):
         cap = Capability(intent="x", backend="b")
         self.assertTrue(cap.available)
 
+    def test_explicit_unavailable_projection_wins_over_unknown_states(self) -> None:
+        cap = Capability(
+            intent="x",
+            backend="b",
+            availability={
+                "available": False,
+                "status": "unavailable",
+                "reason": "Model file is not installed.",
+            },
+        )
+        self.assertFalse(cap.available)
+
 
 class CaveatsTests(unittest.TestCase):
     def test_with_caveats_appends_unique(self) -> None:

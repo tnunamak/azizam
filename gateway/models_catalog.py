@@ -26,6 +26,7 @@ from gateway.availability import project_service
 from gateway.local_capabilities import build_local_capabilities
 from gateway.model_presentation import (CAPABILITY_LABELS, capability_presentation, product_capability,
     declared_health_success, engine_label, model_locality, service_health_endpoint, CAPABILITY_ICON_KEYS)
+from gateway.model_files import model_file_availability
 from gateway.provider_model_catalog import (
     remote_provider_model_capabilities,
     remote_provider_model_metadata,
@@ -112,13 +113,15 @@ def registered_model_capabilities(service_records: Mapping[str, Any]) -> list[Ca
             enabled_flags={"llm": True, "embeddings": True, "tts": True, "stt": True,
                            "images": False, "videos": False, "audio": False},
         )
-        for model in models:
+        model_records = [model for model in models if isinstance(model, Mapping)]
+        for model in model_records:
             if not isinstance(model, Mapping):
                 continue
             model_id = model.get("model_group") or model.get("public") or model.get("id")
             if not model_id:
                 continue
-            out.extend(replace(capability, model=str(model_id))
+            availability = model_file_availability(model, model_records)
+            out.extend(replace(capability, model=str(model_id), availability=availability)
                        for capability in capabilities if capability.model is None)
     return out
 
@@ -530,6 +533,7 @@ def _base_row(
     )
     locality = _locality(service, model_mapping or model_entry)
     presentation_metadata = {**(model_entry or {}), **model_mapping, **manifest, "locality": locality}
+    raw_description = _description(presentation_metadata)
     if is_alias:
         presentation_metadata["alias"] = row_id
         if capabilities and product_capability(capabilities[0], presentation_metadata) == "chat":
@@ -556,6 +560,8 @@ def _base_row(
         "operations": [],
         "resolves_to": {},
         "description": presentation.get("summary"),
+        **({"technical_description": raw_description}
+           if raw_description and raw_description != presentation.get("summary") else {}),
         "name": presentation.get("title", display_name),
         "capabilities": _capability_summaries(capabilities, manifest),
         "provider": _provider(service, model_mapping or model_entry, service_id),
@@ -617,6 +623,17 @@ def _availability(
     health: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     if capabilities and any(cap.policy_available is not False for cap in capabilities):
+        declared_unavailable = next(
+            (
+                cap.availability
+                for cap in capabilities
+                if isinstance(cap.availability, Mapping)
+                and cap.availability.get("available") is False
+            ),
+            None,
+        )
+        if isinstance(declared_unavailable, Mapping):
+            return dict(declared_unavailable)
         projected_service_id = service_id or _first_backend(capabilities) or ""
         projection = project_service(
             projected_service_id,

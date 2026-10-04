@@ -28,6 +28,7 @@ const snapshot: Snapshot = {
       title: "Flux",
       recommended_model: "Flux",
       use_names: ["image", "flux-dev"],
+      use_name: "image",
       summary: "Generate images with Flux.",
       intent: "image.generate",
       model: "image-model",
@@ -84,8 +85,12 @@ describe("member Status diagnosis", () => {
     expect(
       screen.getByRole("link", { name: "View receipt my-failed-request" }),
     ).toHaveAttribute("href", snapshot.receipts[0].href);
-    await user.click(screen.getByText("Names you can use", { exact: true }));
+    await user.click(screen.getByText("Details", { exact: true }));
+    expect(
+      screen.getByText("Names you can use", { exact: true }),
+    ).toBeVisible();
     expect(screen.getByText("image, flux-dev", { exact: true })).toBeVisible();
+    expect(screen.queryByText("image, flux-dev, image")).toBeNull();
     expect(screen.getByText("Not measured yet")).toBeVisible();
     expect(
       screen.queryByText(/GPU|VRAM|Raw probe data/),
@@ -180,6 +185,29 @@ describe("member Status diagnosis", () => {
     expect(
       screen.getByRole("img", { name: "Capability" }).querySelector("svg"),
     ).toHaveClass("lucide-circle-question-mark");
+  });
+  it("hides the names heading when the contract has no names", async () => {
+    vi.spyOn(productApi, "status").mockResolvedValue({
+      ...snapshot,
+      capabilities: [
+        {
+          ...snapshot.capabilities[0],
+          use_names: [],
+          use_name: undefined,
+          summary: "",
+        },
+      ],
+    });
+    mount();
+    expect(
+      await screen.findByRole("heading", { name: "Images" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByText("Names you can use", { exact: true }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Names unavailable", { exact: true }),
+    ).not.toBeInTheDocument();
   });
   it("offers sign-in after a 401 without retrying an expired session", async () => {
     const status = vi

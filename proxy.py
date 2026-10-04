@@ -4234,8 +4234,10 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext, *, rece
     fallback engine applies its own voice map, so the voice can differ; ``x-vivid-fallback`` says so.
     """
     response = await _proxy_tts_once(request, auth_context, receipt=receipt)
-    fallbacks = await _tts_tier_fallbacks(request)
-    notes: list[str] = []
+    fallbacks, notes = await _tts_tier_fallbacks(request)
+    if receipt is not None:
+        for note in notes:
+            receipt.add_fallback_reason(note)
     engine_id, _ = fallbacks.pop(0) if fallbacks else (None, None)
     for next_engine, _service in fallbacks:
         reason = _speech_fallback_reason(response)
@@ -4243,32 +4245,35 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext, *, rece
             break
         note = f"{engine_id}->{next_engine} ({reason})"
         notes.append(note)
+        if receipt is not None:
+            receipt.add_fallback_reason(note)
         print(f"[proxy] TTS fallback {note}", flush=True)
         response = await _proxy_tts_once(request, auth_context, model_override=next_engine, receipt=receipt)
         engine_id = next_engine
     return _with_fallback_header(response, notes)
 
 
-async def _tts_tier_fallbacks(request: Request) -> list[tuple[str, str | None]]:
-    """``[(picked engine, service), *(fallback engine, service)]`` for the request's model, or ``[]``.
+async def _tts_tier_fallbacks(request: Request) -> tuple[list[tuple[str, str | None]], list[str]]:
+    """Return tier engines and notes for primary candidates skipped before dispatch.
 
     Empty when the body is not a JSON object, the model is not a tier, or it names an engine.
     A custom voice only goes to engines that accept one.
     """
     try:
         body_json = json.loads(await request.body())
-        resolution = resolve_model_for_operation("speech", body_json.get("model", "tts-1")).alias
+        resolution = resolve_model_for_operation("speech", body_json.get("model", "tts-1"))
     except (ValueError, AttributeError, ModelCompatibilityError):
-        return []
-    if resolution is None or not resolution.engine or not resolution.fallbacks:
-        return []
+        return [], []
+    alias = resolution.alias
+    if alias is None or not alias.engine or not alias.fallbacks:
+        return [], _speech_skipped_engine_notes(resolution)
     custom_voice = voices_api.custom_voice_id(body_json.get("voice")) is not None
     engines = _speech_engines()
     usable = [
-        (engine, service) for engine, service in resolution.fallbacks
+        (engine, service) for engine, service in alias.fallbacks
         if not custom_voice or bool_from_config((engines.get(engine) or {}).get("custom_voices"), False)
     ]
-    return [(resolution.engine, resolution.service), *usable]
+    return [(alias.engine, alias.service), *usable], _speech_skipped_engine_notes(resolution)
 
 
 async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_override: str | None = None, receipt: RouteReceipt | None = None) -> Response:
@@ -4621,10 +4626,21 @@ def _speech_fallback_reason(response: Response) -> str | None:
 
 
 def _with_fallback_header(response: Response, notes: Sequence[str]) -> Response:
-    """Make a fallback visible to the caller: ``x-vivid-fallback: parakeet-gpu->parakeet (gpu_oom)``."""
+    """Make a speech fallback visible to old and canonical clients."""
     if notes:
-        response.headers["x-vivid-fallback"] = ", ".join(notes)
+        value = ", ".join(notes)
+        response.headers["x-vivid-fallback"] = value
+        response.headers["x-gateway-fallback"] = value
     return response
+
+
+def _speech_skipped_engine_notes(
+    resolution: ModelResolution | None,
+) -> list[str]:
+    alias = resolution.alias if resolution is not None else None
+    if alias is None or not alias.skipped_engines or not alias.engine:
+        return []
+    return [f"{engine}->{alias.engine} (not_deployed)" for engine in alias.skipped_engines]
 
 
 class _ReplayableBody:
@@ -4683,6 +4699,7 @@ async def _dispatch_selected_stt_route(
     selected_service: str | None = None
     peeked_engine: str | None = None
     fallbacks: tuple[tuple[str, str | None], ...] = ()
+    skipped_notes: list[str] = []
     model_unpeeked = False
     if "multipart/form-data" in request.headers.get("content-type", ""):
         peeked_model, request = await speech_stream.peek_multipart_field(request, "model")
@@ -4696,6 +4713,7 @@ async def _dispatch_selected_stt_route(
                 selected_service = peeked.alias.service
                 peeked_engine = peeked.alias.engine
                 fallbacks = peeked.alias.fallbacks
+                skipped_notes = _speech_skipped_engine_notes(peeked)
     try:
         execution = _stt_execution_snapshot(operation, selected_service)
     except stt_chunking.SttConfigurationError:
@@ -4715,7 +4733,9 @@ async def _dispatch_selected_stt_route(
     body = _ReplayableBody(request, execution.spool_dir) if remaining else None
     engine_id = peeked_engine
     model_override: str | None = None
-    notes: list[str] = []
+    notes: list[str] = list(skipped_notes)
+    for note in notes:
+        receipt.add_fallback_reason(note)
     try:
         while True:
             not_ready = await _ensure_speech_service_ready(execution.service_id, label="STT engine")
@@ -26311,13 +26331,25 @@ async def _forward_litellm_proxy_request(
     if not runtime.enabled:
         return _litellm_unconfigured_response()
 
+    receipt_requested_model = model_name
+    if model_override:
+        original_model = getattr(request.state, "provider_requested_model", None)
+        if isinstance(original_model, str) and original_model:
+            receipt_requested_model = original_model
     receipt = _start_litellm_route_receipt(
         request_path=request_path,
         auth_context=auth_context,
-        requested_model=model_name,
+        requested_model=receipt_requested_model,
         delegated_litellm_api_key=delegated_litellm_api_key,
         parent_request_id=parent_request_id,
     )
+    fallback_reasons = [
+        str(reason)
+        for reason in getattr(request.state, "gateway_fallback_reasons", [])
+        if str(reason)
+    ]
+    for reason in fallback_reasons:
+        receipt.add_fallback_reason(reason)
     body_for_litellm = body_json
     if request_path == "/v1/chat/completions":
         try:
@@ -26452,6 +26484,8 @@ async def _forward_litellm_proxy_request(
         response_headers["X-AI-Gateway-LLM-Execution"] = "litellm"
         response_headers["X-AI-Gateway-Request-Id"] = receipt.request_id
         response_headers["X-AI-Gateway-Receipt-Id"] = receipt.request_id
+        if fallback_reasons and 200 <= resp.status_code < 300:
+            response_headers["x-gateway-fallback"] = ", ".join(fallback_reasons)
         _attach_litellm_response_metadata(receipt, resp.headers)
         record_request_shape_stage(
             receipt.metadata,
@@ -26633,17 +26667,32 @@ async def _handle_openai_litellm_request(
         return await _handle_openai_litellm_request_once(request, request_path)
     request.state.provider_requested_model = str(body.get("model") or "")
     request.state.paid_provider_fallback = bool(alias and alias.skipped_engines)
+    request.state.gateway_fallback_reasons = []
     response = await _handle_openai_litellm_request_once(request, request_path)
     if alias is None or not alias.fallbacks:
         return response
     engines = ((config.get("model_aliases") or {}).get(operation) or {}).get("engines") or {}
+    previous_engine = alias.engine or alias.target
     for engine_id, service_id in alias.fallbacks:
         if response.status_code != 429 and response.status_code < 500:
             break
+        reason = f"http_{response.status_code}"
+        request.state.gateway_fallback_reasons = [
+            *getattr(request.state, "gateway_fallback_reasons", []),
+            f"{previous_engine}->{engine_id} ({reason})",
+        ]
         spec = engines.get(engine_id) or {}
         target = _provider_alias_model(engine_id, service_id, spec)
         request.state.paid_provider_fallback = True
         response = await _handle_openai_litellm_request_once(request, request_path, model_override=target)
+        previous_engine = engine_id
+    fallback_reasons = [
+        str(reason)
+        for reason in getattr(request.state, "gateway_fallback_reasons", [])
+        if str(reason)
+    ]
+    if fallback_reasons and 200 <= response.status_code < 300:
+        response.headers["x-gateway-fallback"] = ", ".join(fallback_reasons)
     return response
 
 

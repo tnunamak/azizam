@@ -645,6 +645,40 @@ def test_alias_target_resolves_from_registry_model_group():
     assert caps[0].availability["status"] == "ready"
 
 
+def test_alias_target_does_not_resolve_from_missing_model_file():
+    missing = str(Path(__file__).resolve().parent / "fixtures" / "missing-model.gguf")
+    caps = project_capabilities([
+        Capability(intent="chat.completions", backend="gateway", model="legacy", tags=("alias", "resolves_to:legacy")),
+    ], service_records={"services": {"svc": {"enabled": True, "config": {"models": [{
+        "id": "legacy",
+        "model_group": "legacy",
+        "upstream_model": "legacy.gguf",
+        "activation_model": missing,
+    }]}}}},
+       evidence={"svc": {"status": "ready", "available": True}})
+
+    assert caps[0].backend == "gateway"
+    assert caps[0].availability["status"] == "unknown"
+
+
+def test_model_level_unavailability_wins_over_ready_service():
+    missing_projection = {
+        "available": False,
+        "status": "unavailable",
+        "reason": "Model file is not installed.",
+        "measured": True,
+    }
+    caps = project_capabilities([
+        Capability(intent="chat.completions", backend="svc", model="legacy", availability=missing_projection),
+    ], service_records={"services": {"svc": {"enabled": True, "config": {"base_url": "http://svc/v1"}}}},
+       evidence={"svc": {"status": "ready", "available": True}})
+
+    assert not caps[0].available
+    assert caps[0].availability == missing_projection
+    assert caps[0].lifecycle == "stopped"
+    assert caps[0].health == "unhealthy"
+
+
 @pytest.mark.parametrize("payload,expected", [({"system": {}}, "up"), ({"devices": []}, "unknown"), ({"system": {}, "ready": False}, "down")])
 def test_declared_health_success_path_does_not_mask_readiness(payload, expected):
     import asyncio

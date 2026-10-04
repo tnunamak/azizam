@@ -274,6 +274,7 @@ class CatalogRow(TypedDict):
     operations: list[str]
     resolves_to: dict[str, str]
     description: str | None
+    technical_description: NotRequired[str]
     capabilities: list[CatalogCapability]
     provider: str | None
     engine_label: str | None

@@ -382,6 +382,19 @@ def test_distinct_chat_profiles_keep_alias_titles_and_metadata_summary():
     assert not rows["default"]["secondary_profile"]
 
 
+def test_explicit_technical_chat_description_uses_plain_summary_and_keeps_details():
+    catalog = build_models_catalog(
+        capabilities=[Capability(intent="chat.completions", backend="one", model="actual", title="Declared model")],
+        alias_views={"chat": {"stable": [
+            {"alias": "fast", "resolves_to": "actual", "description": "Served via local llama.cpp on :5051."},
+        ]}},
+    )
+    row = catalog["aliases"][0]
+    assert row["description"] == "Answers quickly for everyday prompts."
+    assert row["technical_description"] == "Served via local llama.cpp on :5051."
+    assert ":5051" not in row["description"]
+
+
 def test_product_status_recommends_ready_model_once_per_taxonomy():
     from gateway.model_presentation import capability_presentation, group_product_capabilities, product_status_summary
     rows = []
@@ -445,7 +458,38 @@ def test_alias_keeps_target_model_specific_description():
         alias_views={"chat": {"stable": [{"alias": "coder-q5", "resolves_to": "actual"}]}},
         service_records={"one": {"config": {"models": [{"id": "actual", "upstream_model": "Configured weights", "context_window": 4096}]}}},
     )
-    assert catalog["aliases"][0]["description"] == "Uses Configured weights, supports a context of 4096 tokens."
+    assert catalog["aliases"][0]["description"] == "Helps with coding tasks and technical questions."
+    assert "Configured weights" not in str(catalog["aliases"][0])
+    assert "context of" not in str(catalog["aliases"][0])
+
+
+def test_chat_descriptions_keep_backend_details_out_of_summaries():
+    catalog = build_models_catalog(
+        capabilities=[Capability(intent="chat.completions", backend="one", model="default")],
+        service_records={"one": {"config": {"models": [{
+            "id": "default",
+            "upstream_model": "Qwen3.8-27B-Uncensored-Q4_K_M.gguf",
+            "context_window": 65536,
+        }]}}},
+    )
+    row = catalog["models"][0]
+    assert row["description"] == "Thinks through questions before answering."
+    assert ".gguf" not in row["description"]
+    assert "context" not in row["description"].casefold()
+
+
+def test_metadata_derived_engine_label_preserves_gpu_acronym():
+    assert engine_label(
+        {"name": "parakeet-gpu", "capabilities": ["transcriptions"]},
+        "internal",
+    ) == "Parakeet (GPU)"
+
+
+def test_declared_hardware_suffix_is_not_stripped_as_note():
+    assert engine_label(
+        {"display_name": "Parakeet (GPU)", "capabilities": ["transcriptions"]},
+        "parakeet-gpu",
+    ) == "Parakeet (GPU)"
 
 
 def test_internal_role_names_are_hidden_only_with_permitted_public_counterpart():

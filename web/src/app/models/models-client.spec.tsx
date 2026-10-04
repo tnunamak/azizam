@@ -210,6 +210,34 @@ describe("models catalog contract distinctions", () => {
     ).toBeNull();
   });
 
+  it("keeps technical descriptions out of cards and shows them in details", async () => {
+    renderModels(
+      catalog([
+        row({
+          id: "fast",
+          title: "Fast",
+          description: "Answers quickly for everyday prompts.",
+          technical_description: "Served via local llama.cpp on :5051.",
+        }),
+      ]),
+    );
+
+    const copy = await screen.findByRole("button", { name: "Copy alias fast" });
+    const card = within(copy.closest("article")!);
+    expect(
+      card.getByText("Answers quickly for everyday prompts."),
+    ).toBeVisible();
+    expect(
+      card.queryByText("Served via local llama.cpp on :5051."),
+    ).not.toBeInTheDocument();
+    fireEvent.click(card.getByRole("button", { name: "Details" }));
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getByText("Technical description")).toBeVisible();
+    expect(
+      dialog.getByText("Served via local llama.cpp on :5051."),
+    ).toBeVisible();
+  });
+
   it("renders the human engine label independently of profile description", async () => {
     renderModels(
       catalog([

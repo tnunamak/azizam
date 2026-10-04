@@ -639,6 +639,12 @@ function DetailSheet({
                 <Fact label="Engine or provider" value={engineLabel(row)} />
                 <Fact label="Location" value={localityLabel(row)} />
                 <Fact label="Cost" value={costLabel(row)} />
+                {row.technical_description && (
+                  <Fact
+                    label="Technical description"
+                    value={row.technical_description}
+                  />
+                )}
                 <Fact
                   label={
                     row.timing.source === "receipts"

@@ -37,6 +37,85 @@ class ModelsCatalogBuildTests(unittest.TestCase):
         catalog = build_models_catalog(capabilities=capabilities, service_records=services)
         self.assertEqual([row["id"] for row in catalog["models"]], ["demo-chat"])
 
+    def test_registered_local_model_with_missing_file_is_not_available(self) -> None:
+        missing = str(ROOT / "tests" / "fixtures" / "missing-model.gguf")
+        services = {"services": {
+            "capture-engine": {
+                "enabled": True,
+                "capabilities": ["chat", "completions"],
+                "config": {
+                    "models": [
+                        {
+                            "model_group": "missing-chat",
+                            "upstream_model": "missing-chat.gguf",
+                            "activation_model": missing,
+                        }
+                    ]
+                },
+            }
+        }}
+
+        capabilities = registered_model_capabilities(services)
+        self.assertFalse(capabilities[0].available)
+        self.assertEqual(capabilities[0].availability["status"], "unavailable")
+        catalog = build_models_catalog(capabilities=capabilities, service_records=services)
+        row = catalog["models"][0]
+        self.assertEqual(row["id"], "missing-chat")
+        self.assertFalse(row["availability"]["available"])
+        self.assertEqual(row["availability"]["reason"], "Model file is not installed.")
+
+    def test_registered_local_policy_alias_inherits_missing_base_file(self) -> None:
+        missing = str(ROOT / "tests" / "fixtures" / "missing-base.gguf")
+        services = {"services": {
+            "capture-engine": {
+                "enabled": True,
+                "capabilities": ["chat"],
+                "config": {
+                    "models": [
+                        {
+                            "id": "base",
+                            "model_group": "base",
+                            "upstream_model": "base.gguf",
+                            "activation_model": missing,
+                        },
+                        {
+                            "id": "fast",
+                            "model_group": "fast",
+                            "base_model_id": "base",
+                            "upstream_model": "base.gguf",
+                        },
+                    ]
+                },
+            }
+        }}
+
+        capabilities = registered_model_capabilities(services)
+        rows = {cap.model: cap for cap in capabilities}
+        self.assertFalse(rows["base"].available)
+        self.assertFalse(rows["fast"].available)
+
+    def test_present_local_model_file_remains_available(self) -> None:
+        present = str(Path(__file__).resolve())
+        services = {"services": {
+            "capture-engine": {
+                "enabled": True,
+                "capabilities": ["chat"],
+                "config": {
+                    "models": [
+                        {
+                            "model_group": "present-chat",
+                            "upstream_model": "present-chat.gguf",
+                            "activation_model": present,
+                        }
+                    ]
+                },
+            }
+        }}
+
+        capabilities = registered_model_capabilities(services)
+        self.assertTrue(capabilities[0].available)
+        self.assertIsNone(capabilities[0].availability)
+
 
     def test_remote_provider_models_are_visible_and_priced_from_own_rows(self) -> None:
         services = {"services": {

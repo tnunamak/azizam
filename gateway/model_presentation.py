@@ -63,8 +63,8 @@ def engine_label(service: Mapping[str, Any], service_id: str | None) -> str | No
         return " & ".join(labels) or None
     name = name.removesuffix(" (provider)").removesuffix(" (Provider)")
     # Legacy seed names sometimes carry deployment notes in parentheses.
-    # The engine line keeps only identity; notes belong in engine details.
-    name = name.split(" (", 1)[0].split(";", 1)[0].strip()
+    # The engine line keeps hardware suffixes but moves notes to details.
+    name = _strip_deployment_notes(name)
     if labels:
         name = re.sub(r"^(?:Local|Remote)\s+", "", name)
         name = re.sub(r"\s+(?:server|provider|engine)$", "", name, flags=re.IGNORECASE)
@@ -74,6 +74,9 @@ def engine_label(service: Mapping[str, Any], service_id: str | None) -> str | No
             name = re.sub(rf"-{suffix}$", "", name, flags=re.IGNORECASE)
     if re.fullmatch(r"[a-z][a-z0-9-]+", name):
         name = friendly_name(name)
+    name = _preserve_engine_acronyms(name)
+    if re.search(r"\((?:CPU|GPU|STT|TTS)\)$", name):
+        return name
     if not labels or name.casefold() in {label.casefold() for label in labels}:
         return name
     return f"{name} ({' & '.join(labels).lower()})"
@@ -192,6 +195,20 @@ def friendly_name(value: str) -> str:
     return " ".join(word[:1].upper() + word[1:] for word in value.replace("_", " ").replace("-", " ").split())
 
 
+def _preserve_engine_acronyms(value: str) -> str:
+    """Keep common hardware acronyms in human labels from metadata-derived IDs."""
+    replacements = {
+        "Cpu": "CPU",
+        "Gpu": "GPU",
+        "Stt": "STT",
+        "Tts": "TTS",
+    }
+    parts = [replacements.get(part, part) for part in value.split(" ")]
+    if len(parts) > 1 and parts[-1] in {"CPU", "GPU"}:
+        return f"{' '.join(parts[:-1])} ({parts[-1]})"
+    return " ".join(parts)
+
+
 def capability_presentation(capability: Any, metadata: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """One product contract: taxonomy, friendly identity and safe description."""
     metadata = metadata or {}
@@ -209,17 +226,12 @@ def capability_presentation(capability: Any, metadata: Mapping[str, Any] | None 
                               else getattr(capability, "title", None))
     title = title or (friendly_name(str(use_name)) if use_name else label)
     description = metadata.get("description") or getattr(capability, "description", None)
+    if description and _is_technical_description(str(description)):
+        description = None
     if not description:
         if kind == "chat":
             profile_name = str(use_name or "chat").removeprefix("role:")
-            context = metadata.get("context_window") or metadata.get("context_length")
-            upstream = metadata.get("upstream_model") or metadata.get("model_id")
-            details = []
-            if upstream and upstream != use_name:
-                details.append(f"Uses {upstream}")
-            if context:
-                details.append(f"supports a context of {context} tokens")
-            description = ", ".join(details) + "." if details else f"A separate chat profile named {profile_name}."
+            description = _chat_profile_description(profile_name)
         else:
             description = {
                 "image": "Generate or edit images from your prompts.", "video": "Generate video from your prompts.",
@@ -242,6 +254,38 @@ def capability_presentation(capability: Any, metadata: Mapping[str, Any] | None 
     if use_name:
         out["use_name"] = str(use_name)
     return out
+
+
+def _chat_profile_description(profile_name: str) -> str:
+    normalized = profile_name.strip().casefold().replace("_", "-")
+    if normalized in {"default", "chat"}:
+        return "Thinks through questions before answering."
+    if normalized in {"fast", "quick"}:
+        return "Answers quickly for everyday prompts."
+    if normalized in {"coder", "code"} or "coder" in normalized:
+        return "Helps with coding tasks and technical questions."
+    if normalized in {"rp", "roleplay"} or "roleplay" in normalized:
+        return "Uses a roleplay-tuned chat profile."
+    return f"A separate chat profile named {profile_name}."
+
+
+def _strip_deployment_notes(value: str) -> str:
+    note = re.search(r"\(([^)]*)\)", value)
+    if note and note.group(1).strip().upper() in {"CPU", "GPU"}:
+        return value.split(";", 1)[0].strip()
+    return value.split(" (", 1)[0].split(";", 1)[0].strip()
+
+
+def _is_technical_description(value: str) -> bool:
+    technical_patterns = (
+        r":\d{2,5}\b",
+        r"\b(?:port|host|localhost|127\.0\.0\.1)\b",
+        r"\b(?:gguf|safetensors|checkpoint)\b",
+        r"\bcontext (?:of|window|length)\b",
+        r"[/\\][\w.-]+",
+    )
+    lowered = value.casefold()
+    return any(re.search(pattern, lowered) for pattern in technical_patterns)
 
 
 def group_product_capabilities(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

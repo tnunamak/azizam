@@ -68,6 +68,13 @@ function MemberCapability({
 }: {
   capability: MemberStatusCapability;
 }) {
+  const usableNames = Array.from(
+    new Set(
+      [...(capability.use_names ?? []), capability.use_name].filter(
+        (name): name is string => Boolean(name),
+      ),
+    ),
+  );
   const { icon: Icon, color } = capabilityIcons[
     capability.icon_key as keyof typeof capabilityIcons
   ] ?? {
@@ -99,22 +106,27 @@ function MemberCapability({
             Observed <RelativeTime ts={capability.observed_at_s} />
           </p>
         )}
-        <details className="text-sm">
-          <summary className="focus-visible:outline-ring text-muted-foreground flex min-h-11 cursor-pointer items-center focus-visible:outline focus-visible:outline-2">
-            Names you can use
-          </summary>
-          <div className="text-muted-foreground space-y-2 pb-2">
-            <p className="break-all">
-              {capability.use_names?.join(", ") ||
-                capability.use_name ||
-                "Names unavailable"}
-            </p>
-            <p>{capability.summary}</p>
-            {!capability.measured && (
-              <p className="text-xs">Not measured yet</p>
-            )}
-          </div>
-        </details>
+        {(usableNames.length > 0 || capability.summary) && (
+          <details className="text-sm">
+            <summary className="focus-visible:outline-ring text-muted-foreground flex min-h-11 cursor-pointer items-center focus-visible:outline focus-visible:outline-2">
+              Details
+            </summary>
+            <div className="text-muted-foreground space-y-2 pb-2">
+              {usableNames.length > 0 && (
+                <>
+                  <h4 className="text-foreground text-sm font-medium">
+                    Names you can use
+                  </h4>
+                  <p className="break-all">{usableNames.join(", ")}</p>
+                </>
+              )}
+              {capability.summary && <p>{capability.summary}</p>}
+              {!capability.measured && (
+                <p className="text-xs">Not measured yet</p>
+              )}
+            </div>
+          </details>
+        )}
       </div>
     </li>
   );

@@ -127,6 +127,7 @@ class ProviderRoutingTests(unittest.TestCase):
         with patch.object(proxy, "config", alias_config), patch.object(proxy, "_handle_openai_litellm_request_once", handler):
             response = asyncio.run(proxy._handle_openai_litellm_request(request, "/v1/chat/completions"))
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["x-gateway-fallback"], "free->paid (http_503)")
         self.assertEqual(handler.await_count, 2)
         self.assertEqual(handler.call_args.kwargs["model_override"], "openrouter/openai/gpt-4.1-mini")
         self.assertTrue(request.state.paid_provider_fallback)
