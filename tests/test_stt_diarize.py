@@ -103,13 +103,15 @@ class DiarizeNotDeployedTests(SttCase):
         super().setUp()
         del self.cfg["backends"]["stt-diarize"]
 
-    def test_without_the_service_the_diarize_names_are_a_clear_400_not_plain_text(self) -> None:
+    def test_without_the_service_the_diarize_names_are_a_clear_503_not_plain_text(self) -> None:
         seen = self.use_upstream(lambda r: httpx.Response(200, json={"text": "no speakers"}))
         for model in ("gpt-4o-transcribe-diarize", "stt-diarize"):
             with self.subTest(model=model):
                 resp = self._post([("model", model), ("response_format", "diarized_json")])
-                self.assertEqual(resp.status_code, 400, resp.text)
-                self.assertEqual(resp.json()["error"]["code"], "model_not_deployed")
+                self.assertEqual(resp.status_code, 503, resp.text)
+                error = resp.json()["error"]
+                self.assertEqual(error["type"], "service_unavailable")
+                self.assertEqual(error["code"], "model_not_deployed")
         self.assertEqual(seen, [])
 
 
