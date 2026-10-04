@@ -1,7 +1,7 @@
 services:
   gateway:
     build: .
-    command: ["python3", "-m", "uvicorn", "proxy:app", "--host", "0.0.0.0", "--port", "5000", "--log-level", "warning"]
+    command: ["python3", "-m", "uvicorn", "proxy:app", "--host", "0.0.0.0", "--port", "5000", "--log-level", "warning", "--no-proxy-headers"]
     ports:
       - "127.0.0.1:${OPENAI_PROXY_PORT:-5000}:5000"
     env_file:

@@ -2232,23 +2232,29 @@ def resolve_real_client_ip(request: Request):
     # Cloudflare: only when the peer is verified Cloudflare infra (fail closed).
     if CLOUDFLARE_MODE and _CF_IP_NETWORKS and _ip_in_any(peer, _CF_IP_NETWORKS):
         cf = request.headers.get("cf-connecting-ip", "").strip()
-        if cf:
-            try:
-                return _normalize_ip(cf)
-            except ValueError:
-                return peer
+        if not cf:
+            return None
+        try:
+            return _normalize_ip(cf)
+        except ValueError:
+            return None
 
     # X-Forwarded-For, only if the immediate peer is a trusted proxy.
     if TRUSTED_PROXIES and _ip_in_any(peer, TRUSTED_PROXIES):
         xff = request.headers.get("x-forwarded-for", "")
-        if xff:
-            for candidate in reversed([p.strip() for p in xff.split(",") if p.strip()]):
-                try:
-                    cand = _normalize_ip(candidate)
-                except ValueError:
-                    continue
-                if not _ip_in_any(cand, TRUSTED_PROXIES):
-                    return cand  # first non-proxy IP from the right = real client
+        candidates = [p.strip() for p in xff.split(",")]
+        if not candidates or any(not candidate for candidate in candidates):
+            return None
+        parsed = []
+        for candidate in candidates:
+            try:
+                parsed.append(_normalize_ip(candidate))
+            except ValueError:
+                return None
+        for cand in reversed(parsed):
+            if not _ip_in_any(cand, TRUSTED_PROXIES):
+                return cand  # first non-proxy IP from the right = real client
+        return None
 
     return peer
 
@@ -27839,5 +27845,6 @@ if __name__ == "__main__":
         port=PROXY_PORT,
         log_level="warning",
         access_log=False,
+        proxy_headers=False,
         timeout_graceful_shutdown=graceful_s if graceful_s > 0 else None,
     )
