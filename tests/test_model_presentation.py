@@ -447,7 +447,6 @@ def test_alias_keeps_target_model_specific_description():
     assert catalog["aliases"][0]["description"] == "Uses Configured weights, supports a context of 4096 tokens."
 
 
-
 def test_internal_role_names_are_hidden_only_with_permitted_public_counterpart():
     from gateway.model_presentation import capability_presentation, group_product_capabilities
     rows = [{**capability_presentation(Capability(intent="chat.completions", backend="one", model=name)),

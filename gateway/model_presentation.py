@@ -292,5 +292,7 @@ def product_status_summary(rows: list[Mapping[str, Any]]) -> dict[str, str]:
         "unavailable": "the service is not responding", "unknown": "no current health observation is available",
         "starting": "the service is warming up", "busy": "the service is handling other requests",
     }[state]
-    extra = f", with {len(issues) - 1} other capabilities affected" if len(issues) > 1 else ""
+    other_count = len(issues) - 1
+    noun = "capability" if other_count == 1 else "capabilities"
+    extra = f", with {other_count} other {noun} affected" if other_count else ""
     return {"state": state, "reason": f"{row['capability_title']} {verb} {states[state]}: {detail}{extra}."}

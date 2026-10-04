@@ -347,7 +347,10 @@ test("accepted member can fetch real scoped Status and keep the Status URL", asy
 
   try {
     const session = await (await request.get("/admin/api/session")).json();
-    const headers = { "x-ai-gateway-csrf": session.actor.csrf_token, "x-ai-gateway-admin-action": "1" };
+    const headers = {
+      "x-ai-gateway-csrf": session.actor.csrf_token,
+      "x-ai-gateway-admin-action": "1",
+    };
     const profiles = await (await request.get("/admin/api/profiles")).json();
     const local = profiles.profiles.find(
       (profile: { name: string }) => profile.name === "Local chat",
@@ -384,12 +387,15 @@ test("accepted member can fetch real scoped Status and keep the Status URL", asy
     expect(status.ok()).toBe(true);
     const statusBody = await status.json();
     expect(statusBody.scope).toBe("member");
-    expect(
-      statusBody.capabilities.some(
-        (capability: { model?: string | null }) =>
-          capability.model === "demo-chat",
-      ),
-    ).toBe(true);
+    const chat = statusBody.capabilities.find(
+      (capability: { capability: string }) => capability.capability === "chat",
+    );
+    expect(chat).toMatchObject({
+      capability_title: "Chat",
+      use_names: expect.arrayContaining(["demo-chat"]),
+      recommended_model: expect.any(String),
+    });
+    expect(chat.recommended_model.trim()).not.toBe("");
 
     ownerCalls.length = 0;
     await memberPage.goto("/ui/status/");
@@ -397,6 +403,14 @@ test("accepted member can fetch real scoped Status and keep the Status URL", asy
     await expect(
       memberPage.getByRole("heading", { name: "Chat", exact: true }).first(),
     ).toBeVisible();
+    const chatRow = memberPage.locator("li").filter({
+      has: memberPage.getByRole("heading", { name: "Chat", exact: true }),
+    });
+    await expect(
+      chatRow.getByText(chat.recommended_model, { exact: true }),
+    ).toBeVisible();
+    await chatRow.getByText("Names you can use", { exact: true }).click();
+    await expect(chatRow.locator("details")).toContainText("demo-chat");
     await expect(
       memberPage.getByRole("link", { name: "Try a request" }),
     ).toBeVisible();

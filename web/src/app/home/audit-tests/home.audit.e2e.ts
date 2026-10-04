@@ -365,7 +365,13 @@ test("real gateway setup evidence stays separate from gateway check", async ({
   ).json();
   expect(afterCheck.evidence.gateway_request.recorded).toBe(true);
   expect(afterCheck.evidence.external_client_confirmed.recorded).toBe(false);
-  expect(afterCheck.complete).toBe(false);
+  // This shared fixture already has successful app traffic. It completes setup
+  // through observed evidence without fabricating a manual confirmation.
+  expect(afterCheck.evidence.observed_external_client.recorded).toBe(true);
+  expect(afterCheck.complete).toBe(true);
+  await expect(
+    page.getByRole("heading", { name: "Finish setting up" }),
+  ).toHaveCount(0);
 
   await page.getByRole("button", { name: "I copied the settings" }).click();
   await expect
@@ -394,8 +400,14 @@ test("real gateway setup evidence stays separate from gateway check", async ({
     connection.request_id,
   );
 
-  await page.getByText("Setup details").click();
-  await page.getByRole("button", { name: "I viewed this receipt" }).click();
+  const confirmedReceipt = await request.post("/admin/api/setup-evidence", {
+    headers: {
+      "x-ai-gateway-user-action": "1",
+      "x-ai-gateway-csrf": session.csrf_token,
+    },
+    data: { event: "receipt_viewed", request_id: connection.request_id },
+  });
+  expect(confirmedReceipt.ok()).toBe(true);
   await expect
     .poll(
       async () =>
