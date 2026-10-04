@@ -564,3 +564,61 @@ def test_generic_endpoint_requires_unshadowed_permitted_registry_model():
     registry["services"]["local"]["config"]["models"] = [{"id": "plain"}]
     caps = _resolved_capabilities(allowed, lambda _identity: raw[:1], registry)
     assert caps[0].policy_available  # A real permitted registry target is sufficient.
+
+
+@pytest.mark.parametrize("restriction", ["no_remote_grant", "disallowed_provider_plan"])
+def test_home_and_member_status_preserve_upstream_remote_alias_denial(home_case, monkeypatch, restriction):
+    import proxy
+    from gateway.capabilities import resolve_capability_targets
+    from gateway.models_catalog import registered_model_capabilities
+    c = home_case
+    profile_record = admin_store.create_profile("Remote policy", {
+        "id": "remote-policy", "remote": {"providers": [] if restriction == "no_remote_grant" else ["openrouter"]},
+    }, path=c.db)
+    c.inherited_profile = c.prospective_profile = profile_record["id"]
+    c.registry = {"services": {"cloud-service": {"id": "cloud-service", "enabled": True, "config": {
+        "remote_provider": True, "provider_type": "paid-remote", "provider_id": "openrouter",
+        "protocol": "openai-compatible", "base_url": "https://provider.example/v1",
+        "models": [{"model_group": "openrouter/visible", "upstream_model": "visible-upstream"}],
+    }}}}
+    c.aliases_override = {"chat": {"stable": [{"alias": "fast", "resolves_to": "openrouter/visible"}]}}
+    c.health = {"backends": [{"key": "cloud-service", "live_status": "up"}]}
+    monkeypatch.setattr(proxy.ADMIN_STORE, "get_service_registry", lambda: c.registry)
+    monkeypatch.setattr(proxy.ADMIN_STORE, "get_provider_admin_state", lambda: {
+        "providers": {"openrouter": {"allowed_plans": ["another-plan"]} if restriction == "disallowed_provider_plan" else {}},
+    })
+    def upstream_projection(identity):
+        raw = [*registered_model_capabilities(c.registry), *build_alias_capabilities(c.aliases_override)]
+        projected = [proxy._capability_for_profile(cap, proxy.AuthContext(identity=identity))
+                     for cap in resolve_capability_targets(raw, c.registry)]
+        assert not any(cap.policy_available for cap in projected)
+        return projected
+    c.capabilities_override = upstream_projection
+    for path in ("/me/api/home", "/me/api/status"):
+        response = c.http.get(path)
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert not any(row.get("model") == "fast" for row in data["capabilities"])
+        if path.endswith("home"):
+            assert data["aliases"] == []
+            assert data["new_app_aliases"] == []
+
+
+def test_disabled_remote_model_cannot_be_resolved_by_registry_alias_fallback(home_case):
+    from gateway.capabilities import resolve_capability_targets
+    from gateway.models_catalog import registered_model_capabilities
+    c = home_case
+    c.registry = {"services": {"cloud-service": {"id": "cloud-service", "enabled": True, "config": {
+        "remote_provider": True, "provider_type": "paid-remote", "provider_id": "openrouter",
+        "protocol": "openai-compatible", "base_url": "https://provider.example/v1",
+        "models": [{"model_group": "openrouter/disabled", "upstream_model": "disabled-upstream", "enabled": False}],
+    }}}}
+    aliases = build_alias_capabilities({"chat": {"stable": [{"alias": "fast", "resolves_to": "openrouter/disabled"}]}})
+    concrete = registered_model_capabilities(c.registry)
+    assert concrete == []
+    resolved = resolve_capability_targets([*concrete, *aliases], c.registry)
+    assert resolved[0].backend == "gateway"
+    profile = load_profile({"id": "no-remote"})
+    identity = RuntimeIdentity(name="No remote", key_hash="", profile=profile)
+    home_caps = _resolved_capabilities(identity, lambda _: aliases, c.registry)
+    assert home_caps[0].policy_available is False

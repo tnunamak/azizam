@@ -73,3 +73,38 @@ def test_catalog_contract_covers_alias_configuration_error():
     )
     assert catalog["aliases"][0]["availability"]["status"] == "unavailable"
     TypeAdapter(ModelsCatalog).validate_python(catalog)
+
+
+@pytest.mark.parametrize("ready,expected", [(True, "ready"), (None, "unknown")])
+def test_remote_model_price_and_alias_share_observed_availability(ready, expected):
+    import asyncio
+    from gateway.availability import project_capabilities
+    from gateway.local_capabilities import build_alias_capabilities
+    from gateway.models_catalog import probe_service_health, registered_model_capabilities
+    registry = {"services": {"cloud-service": {"enabled": True, "config": {
+        "remote_provider": True, "provider_type": "paid-remote", "provider_id": "openrouter",
+        "protocol": "openai-compatible", "base_url": "https://provider.example/v1", "health_endpoint": "/health",
+        "models": [{"model_group": "openrouter/visible", "upstream_model": "visible-upstream"}],
+        "price": {"models": {"openrouter/visible": {
+            "input_usd_per_million_tokens": "3", "output_usd_per_million_tokens": "15",
+        }}},
+    }}}}
+    views = {"chat": {"stable": [{"alias": "fast", "resolves_to": "openrouter/visible"}]}}
+    async def get_json(url):
+        assert url == "https://provider.example/health"
+        return {"ready": ready} if ready is not None else {"object": "unmeasured"}
+    evidence = asyncio.run(probe_service_health(registry, get_json=get_json))
+    capabilities = project_capabilities([
+        *registered_model_capabilities(registry), *build_alias_capabilities(views),
+    ], service_records=registry, evidence=evidence)
+    catalog = build_models_catalog(capabilities=capabilities, alias_views=views,
+                                  service_records=registry, health_evidence=evidence)
+    adapter = TypeAdapter(ModelsCatalog)
+    round_trip = adapter.dump_python(adapter.validate_python(catalog))
+    assert round_trip == catalog
+    for row in [*round_trip["aliases"], *round_trip["models"]]:
+        assert row["locality"] == "remote"
+        assert row["cost"] == {"kind": "paid", "price": "$3 input / $15 output per 1M tokens"}
+        assert row["availability"]["status"] == expected
+        assert row["availability"]["evidence"]["observed_at_s"] == evidence["cloud-service"]["observed_at_s"]
+    assert len(round_trip["aliases"]) == len(round_trip["models"]) == 1
