@@ -283,7 +283,8 @@ def test_oidc_callback_rejects_replay_and_expired_state(
 
     assert expired.status_code == 400, expired.text
     assert expired_calls == []
-    _assert_flow_cookie_deleted(expired, expired_record.browser_cookie_name)
+    assert "set-cookie" not in expired.headers
+    assert expired_state not in proxy.ADMIN_OIDC_STATES
 
 
 def test_oidc_parallel_login_states_are_independent_per_browser_tab(
