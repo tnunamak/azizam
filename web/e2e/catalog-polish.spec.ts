@@ -79,10 +79,13 @@ test("polished model grouping fills width before and after filtering", async ({
   ).toBeVisible();
   const cards = page.locator('[aria-label="Available model aliases"] article');
   await verifyModelLayout(page, cards, 1);
-  await expect(page.getByText("Other options · 2")).toBeVisible();
+  await expect(page.getByText("2 more", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Audio", exact: true }),
+  ).toHaveCount(0);
   await page.getByRole("textbox", { name: "Search models" }).fill("fast");
   await verifyModelLayout(page, cards, 1);
-  await expect(page.getByText(/Other options/)).toHaveCount(0);
+  await expect(page.getByText(/\d+ more/)).toHaveCount(0);
 });
 
 for (const width of [390, 1440]) {
@@ -122,10 +125,10 @@ for (const width of [390, 1440]) {
       '[aria-label="Available model aliases"] article',
     );
     await verifyModelLayout(page, cards, 1);
-    await expect(page.getByText("Other options · 2")).toBeVisible();
+    await expect(page.getByText("2 more", { exact: true })).toBeVisible();
     await expect(
       cards.first().getByText(`Paid · ${price}`, { exact: true }),
-    ).toBeVisible();
+    ).toHaveCount(0);
     await expect(
       cards.first().getByText("Not measured yet", { exact: true }),
     ).toHaveCount(0);
@@ -142,6 +145,12 @@ for (const width of [390, 1440]) {
       fullPage: true,
     });
     await cards.first().getByRole("button", { name: "Details" }).click();
+    await expect(
+      page.getByRole("dialog").getByText(`Paid · ${price}`, { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("dialog").getByText(provider, { exact: true }),
+    ).toBeVisible();
     await expect(
       page.getByRole("dialog").getByText("Not measured yet", { exact: true }),
     ).toBeVisible();

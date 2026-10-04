@@ -105,7 +105,7 @@ for (const theme of ["light", "dark"] as const) {
       const aliasGroups = page.getByLabel("Available model aliases");
       await expect(
         aliasGroups.getByText("Local · no provider charge", { exact: true }),
-      ).toHaveCount(1);
+      ).toHaveCount(0);
       await expect(
         cards.first().getByText("Local", { exact: true }),
       ).toHaveCount(0);
@@ -121,7 +121,7 @@ for (const theme of ["light", "dark"] as const) {
       ).toHaveCount(0);
       await expect(
         cards.nth(1).getByText("Remote", { exact: true }),
-      ).toBeVisible();
+      ).toHaveCount(0);
       await expect(
         cards.nth(1).getByText("Example image provider"),
       ).toHaveCount(0);
@@ -259,17 +259,15 @@ test("legacy alias intents keep alternatives within the same capability", async 
       group.getByRole("heading", { name: primary, exact: true }),
     ).toBeVisible();
     if (alternative) {
-      await expect(
-        group.getByText("Other options · 1", { exact: true }),
-      ).toBeVisible();
+      await expect(group.getByText("1 more", { exact: true })).toBeVisible();
       const copyAlternative = group.getByRole("button", {
         name: `Copy model name ${alternative}`,
       });
       await expect(copyAlternative).toBeHidden();
-      await group.getByText("Other options · 1", { exact: true }).click();
+      await group.getByText("1 more", { exact: true }).click();
       await expect(copyAlternative).toBeVisible();
     } else {
-      await expect(group.getByText(/Other options/)).toHaveCount(0);
+      await expect(group.getByText(/\d+ more/)).toHaveCount(0);
     }
   }
   const chatGroup = page.locator("section").filter({

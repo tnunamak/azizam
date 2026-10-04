@@ -76,7 +76,7 @@ it("shows the supplied engine label and measured speed without an unknown speed 
   });
   const card = within(copy.closest("article")!);
   expect(card.queryByText("Local", { exact: true })).toBeNull();
-  expect(screen.getByText("Local · no provider charge")).toBeVisible();
+  expect(screen.queryByText("Local · no provider charge")).toBeNull();
   expect(card.queryByText("Unknown", { exact: true })).toBeNull();
   expect(card.queryByText("Live availability is not measured yet")).toBeNull();
   expect(card.queryByText("Not measured yet", { exact: true })).toBeNull();
@@ -99,8 +99,8 @@ it("distinguishes configured typical speed from measured requests", async () => 
     }),
   ]);
   await screen.findByRole("button", { name: "Copy model name chat" });
-  expect(screen.getByText("Remote", { exact: true })).toBeVisible();
-  expect(screen.getByText("Paid · $0.02 per request")).toBeVisible();
+  expect(screen.queryByText("Remote", { exact: true })).toBeNull();
+  expect(screen.queryByText("Paid · $0.02 per request")).toBeNull();
   expect(screen.queryByText("~1.2 s · Typical")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Details" }));
   expect(

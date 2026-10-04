@@ -260,6 +260,7 @@ class CatalogSummary(TypedDict, total=False):
 
 
 class CatalogRow(TypedDict):
+    recommended: NotRequired[bool]
     capability_title: NotRequired[str]
     icon_key: NotRequired[CapabilityIconKey]
     recommended_model: NotRequired[str]

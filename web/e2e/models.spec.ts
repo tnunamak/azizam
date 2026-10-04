@@ -318,7 +318,7 @@ for (const theme of ["light", "dark"] as const) {
     test(`models seeded catalog: ${theme} at ${width}px`, async ({ page }) => {
       await preparePage(page, theme, width, seededCatalog);
       await expect(
-        page.getByText("Best default for short conversations"),
+        page.getByRole("button", { name: "Copy model name chat" }),
       ).toBeVisible();
       await expect(
         page.getByRole("heading", { name: "Images", exact: true }),
@@ -330,10 +330,12 @@ for (const theme of ["light", "dark"] as const) {
         page.getByRole("heading", { name: "Speech", exact: true }),
       ).toBeVisible();
       await expect(page.getByText(/Other options/)).toHaveCount(0);
-      await expect(page.getByText("Image generation through")).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "Copy model name image" }),
+      ).toBeVisible();
       await expect(
         page.getByText("Local · no provider charge", { exact: true }),
-      ).toHaveCount(3);
+      ).toHaveCount(0);
       await expect(
         page.getByRole("button", { name: "No provider charge", exact: true }),
       ).toHaveAttribute("aria-pressed", "true");
@@ -366,7 +368,7 @@ for (const theme of ["light", "dark"] as const) {
       await page.keyboard.press("Escape");
       await expect(
         page.getByText("Paid · $0.04 per image", { exact: true }),
-      ).toBeVisible();
+      ).toHaveCount(0);
       await assertNoOverflow(page);
       await assertNoSeriousAxe(page);
       await page.screenshot({
@@ -412,7 +414,9 @@ test("models filters, snippets, table and detail sheet work", async ({
 }) => {
   await preparePage(page, "light", 1440, seededCatalog);
   await page.getByPlaceholder("Search model names or providers").fill("image");
-  await expect(page.getByText("Image generation through")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Copy model name image" }),
+  ).toBeVisible();
   await expect(
     page.getByText("Best default for short conversations"),
   ).toHaveCount(0);

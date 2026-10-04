@@ -140,6 +140,25 @@ PROTOCOL_CAPABILITIES = {
     "audio.generate": "audio",
 }
 PRIMARY_CHAT_NAMES = frozenset({"default", "fast", "coder", "code", "chat"})
+# Product defaults are stable caller names, independent of catalog order,
+# engine identity, and current health. Operators still control their targets.
+RECOMMENDED_ALIASES = {
+    "chat": "default", "image": "image", "video": "video", "music": "music",
+    "sfx": "sfx", "speech": "tts", "transcribe": "stt", "decide": "decide",
+    "embed": "embed", "rerank": "rerank",
+}
+CAPABILITY_DESCRIPTIONS = {
+    "image": "Generate or edit images from your prompts.",
+    "video": "Video from a prompt or image.",
+    "music": "Songs and instrumentals from a prompt.",
+    "sfx": "Sound effects from a description.",
+    "speech": "Turn text into spoken audio.",
+    "transcribe": "Turn recorded speech into text.",
+    "decide": "Choose an outcome from your options.",
+    "embed": "Create vectors for search and similarity.",
+    "rerank": "Order search results by relevance.",
+    "audio": "Generate audio from your prompts.",
+}
 
 
 def service_capability_labels(service: Mapping[str, Any]) -> list[str]:
@@ -240,27 +259,27 @@ def capability_presentation(capability: Any, metadata: Mapping[str, Any] | None 
     else:
         title = capability_title
     title = title or (_presentation_label(friendly_name(str(use_name))) if use_name else label)
+    if title.casefold() in {"tts", "stt"}:
+        title = label
     description = metadata.get("description") or getattr(capability, "description", None)
-    if description and _is_technical_description(str(description)):
+    if description:
+        description = re.split(r"(?<=[.!?])\s+", str(description).strip(), maxsplit=1)[0]
+    if description and (_is_technical_description(str(description)) or len(str(description).split()) > 8):
         description = None
     if not description:
         if kind == "chat":
             profile_name = str(use_name or "chat").removeprefix("role:")
             description = _chat_profile_description(profile_name)
         else:
-            description = {
-                "image": "Generate or edit images from your prompts.", "video": "Generate video from your prompts.",
-                "music": "Generate music from your prompts.", "sfx": "Generate sound effects from your prompts.",
-                "speech": "Turn text into spoken audio.", "transcribe": "Turn recorded speech into text.",
-                "decide": "Choose an outcome from the options you provide.", "embed": "Create vectors for search and similarity.",
-                "rerank": "Order search results by relevance.", "audio": "Generate audio from your prompts.",
-            }.get(kind, "Use this configured AI capability.")
+            description = CAPABILITY_DESCRIPTIONS.get(kind, "Use this configured AI capability.")
     description = re.split(r"(?<=[.!?])\s+", str(description).strip(), maxsplit=1)[0]
     description = description.rstrip(".") + "." if not description.endswith(("!", "?")) else description
     target = next((tag.removeprefix("resolves_to:") for tag in getattr(capability, "tags", ())
                    if tag.startswith("resolves_to:")), None)
     recommended = _presentation_label(metadata.get("recommended_model")) or capability_title or declared_title
     recommended = recommended or (_presentation_label(friendly_name(target)) if target else title)
+    if recommended.casefold() in {"tts", "stt"}:
+        recommended = title
     out = {"capability": kind, "capability_title": label, "icon_key": CAPABILITY_ICON_KEYS.get(kind, "chat"),
            "title": title, "recommended_model": str(recommended), "summary": description,
            "use_names": [str(use_name)] if use_name else [],
@@ -296,6 +315,7 @@ def _is_technical_description(value: str) -> bool:
         r":\d{2,5}\b",
         r"\b(?:port|host|localhost|127\.0\.0\.1)\b",
         r"\b(?:gguf|safetensors|checkpoint)\b",
+        r"\b(?:contract|workflow|flac|khz)\b",
         r"\bcontext (?:of|window|length)\b",
         r"\bvia\s+(?:local|remote|backend|engine|server)\b",
         r"\b(?:served by|served via|running on)\b",

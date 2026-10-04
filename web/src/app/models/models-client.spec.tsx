@@ -134,6 +134,66 @@ afterEach(() => {
 });
 
 describe("models catalog contract distinctions", () => {
+  it("uses the catalog recommendation even when coding and roleplay come first", async () => {
+    renderModels(
+      catalog([
+        row({ id: "coder", title: "Coder", recommended: false }),
+        row({
+          id: "rp",
+          title: "Roleplay",
+          secondary_profile: true,
+          recommended: false,
+        }),
+        row({ id: "default", title: "Default", recommended: true }),
+      ]),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Copy model name default" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Copy model name coder" }),
+    ).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "2 more Chat models" }));
+    for (const id of ["coder", "rp"]) {
+      expect(
+        screen.getByRole("button", { name: `Copy model name ${id}` }),
+      ).toBeVisible();
+    }
+    expect(
+      screen.queryByRole("button", { name: /More chat profiles/ }),
+    ).toBeNull();
+  });
+
+  it("offers capability chips only for visible list sections", async () => {
+    renderModels(
+      catalog(
+        [row()],
+        [
+          row({
+            id: "generic-audio",
+            alias: false,
+            object: "model_catalog.model",
+            capabilities: [
+              {
+                ...row().capabilities[0],
+                capability: "audio",
+                intent: "audio.generate",
+                label: "Audio",
+              },
+            ],
+          }),
+        ],
+      ),
+    );
+    await screen.findByRole("button", { name: "Copy model name chat" });
+    expect(
+      screen.getByRole("button", { name: /^Chat$/ }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /^Audio$/ }),
+    ).toBeNull();
+  });
+
   it("copies unavailable names from recommendations, alternatives, profiles and exact models", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
@@ -175,8 +235,7 @@ describe("models catalog contract distinctions", () => {
     const copy = await screen.findByRole("button", {
       name: "Copy model name default",
     });
-    fireEvent.click(screen.getByText("Other options · 1"));
-    fireEvent.click(screen.getByRole("button", { name: /More chat profiles/ }));
+    fireEvent.click(screen.getByRole("button", { name: "2 more Chat models" }));
     fireEvent.click(screen.getByRole("button", { name: "All models" }));
     for (const id of ["default", "fast", "profile", "exact"]) {
       fireEvent.click(
@@ -223,7 +282,7 @@ describe("models catalog contract distinctions", () => {
   it("keeps free remote placement honest and price filters quiet in the capability row", async () => {
     renderModels(catalog([row({ locality: "remote" })]));
     await screen.findByRole("button", { name: "Copy model name chat" });
-    expect(screen.getByText("Remote", { exact: true })).toBeVisible();
+    expect(screen.queryByText("Remote", { exact: true })).toBeNull();
     expect(screen.queryByText(/Local/)).toBeNull();
     const price = screen.getByRole("group", {
       name: "Price filters (choose any)",
@@ -263,7 +322,7 @@ describe("models catalog contract distinctions", () => {
       .getByRole("heading", { name: "Chat", level: 2 })
       .closest("section")!;
     expect(
-      within(chatGroup).getByText("Other options · 1"),
+      within(chatGroup).getByRole("button", { name: "1 more Chat models" }),
     ).toBeInTheDocument();
     expect(within(chatGroup).queryByText("image", { exact: true })).toBeNull();
     for (const label of ["Images", "Decisions", "Speech"]) {
@@ -280,7 +339,7 @@ describe("models catalog contract distinctions", () => {
     ).toBeNull();
   });
 
-  it("uses product alias fallback and one availability line for allowed configured observed rows", async () => {
+  it("keeps ready status quiet and puts description in Details", async () => {
     renderModels(catalog([row()]));
 
     const copy = await screen.findByRole("button", {
@@ -288,17 +347,21 @@ describe("models catalog contract distinctions", () => {
     });
     const card = within(copy.closest("article")!);
 
+    expect(copy).toBeVisible();
+    fireEvent.click(card.getByRole("button", { name: "Details" }));
     expect(productApi.models).toHaveBeenCalledOnce();
-    expect(card.getByText("Chat through your configured model.")).toBeVisible();
-    expect(card.getByText("Ready")).toBeVisible();
+    expect(
+      within(screen.getByRole("dialog")).getByText(
+        "Chat through your configured model.",
+      ),
+    ).toBeVisible();
+    expect(card.queryByText("Ready")).toBeNull();
     expect(card.queryByText("Recent request succeeded.")).toBeNull();
     expect(card.queryByText("Allowed by your access")).toBeNull();
     expect(card.queryByText("Observed:")).toBeNull();
     expect(card.queryByText("Not measured yet")).toBeNull();
     expect(card.queryByRole("button", { name: "Use" })).toBeNull();
-    expect(
-      card.getByRole("button", { name: "Copy model name chat" }),
-    ).toBeVisible();
+    expect(copy).toBeVisible();
   });
 
   it("uses authored row descriptions before alias fallback", async () => {
@@ -316,8 +379,11 @@ describe("models catalog contract distinctions", () => {
     });
     const card = within(copy.closest("article")!);
 
+    fireEvent.click(card.getByRole("button", { name: "Details" }));
     expect(
-      card.getByText("Use this when you want short replies."),
+      within(screen.getByRole("dialog")).getByText(
+        "Use this when you want short replies.",
+      ),
     ).toBeVisible();
     expect(
       card.queryByText("Fast chat alias for lower-latency replies."),
@@ -339,8 +405,11 @@ describe("models catalog contract distinctions", () => {
     });
     const card = within(copy.closest("article")!);
 
+    fireEvent.click(card.getByRole("button", { name: "Details" }));
     expect(
-      card.getByText("Thinks through questions before answering."),
+      within(screen.getByRole("dialog")).getByText(
+        "Thinks through questions before answering.",
+      ),
     ).toBeVisible();
   });
 
@@ -359,8 +428,11 @@ describe("models catalog contract distinctions", () => {
     });
     const card = within(copy.closest("article")!);
 
+    fireEvent.click(card.getByRole("button", { name: "Details" }));
     expect(
-      card.getByText("Local server tuned for short replies."),
+      within(screen.getByRole("dialog")).getByText(
+        "Local server tuned for short replies.",
+      ),
     ).toBeVisible();
     expect(
       card.queryByText("Fast chat alias for lower-latency replies."),
@@ -384,8 +456,8 @@ describe("models catalog contract distinctions", () => {
     });
     const card = within(copy.closest("article")!);
     expect(
-      card.getByText("Answers quickly for everyday prompts."),
-    ).toBeVisible();
+      card.queryByText("Answers quickly for everyday prompts."),
+    ).toBeNull();
     expect(
       card.queryByText("Served via local llama.cpp on :5051."),
     ).not.toBeInTheDocument();
@@ -558,7 +630,8 @@ describe("models catalog contract distinctions", () => {
       ]),
     );
 
-    expect(await screen.findByText("Local · no provider charge")).toBeVisible();
+    await screen.findByRole("button", { name: "Copy model name chat" });
+    expect(screen.queryByText("Local · no provider charge")).toBeNull();
     expect(screen.queryByText("Price not provided")).toBeNull();
   });
 
@@ -611,7 +684,7 @@ describe("models catalog contract distinctions", () => {
     expect(
       screen.getByRole("button", { name: "Copy model name local-paid-cost" }),
     ).toBeVisible();
-    expect(screen.getByText("Local · no provider charge")).toBeVisible();
+    expect(screen.queryByText("Local · no provider charge")).toBeNull();
   });
 
   it("uses the friendly alias title from the server", async () => {
@@ -630,7 +703,7 @@ describe("models catalog contract distinctions", () => {
     expect(await screen.findByText("Coder")).toBeVisible();
   });
 
-  it("keeps primary profile cards distinct and secondary profiles collapsed until opened", async () => {
+  it("merges primary and secondary profiles into one Chat alternative list", async () => {
     renderModels(
       catalog([
         row({
@@ -665,14 +738,12 @@ describe("models catalog contract distinctions", () => {
     expect(
       await screen.findByRole("heading", { name: "Default" }),
     ).toBeVisible();
-    const otherOptions = screen.getByText("Other options · 2");
-    fireEvent.click(otherOptions);
+    const more = screen.getByRole("button", { name: "4 more Chat models" });
+    expect(more).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("heading", { name: "Coder Q5" })).toBeNull();
+    fireEvent.click(more);
     expect(screen.getByText("fast")).toBeVisible();
     expect(screen.getByText("coder")).toBeVisible();
-    expect(screen.queryByRole("heading", { name: "Coder Q5" })).toBeNull();
-    const more = screen.getByRole("button", { name: /More chat profiles/ });
-    expect(more).toHaveAttribute("aria-expanded", "false");
-    fireEvent.click(more);
     expect(screen.getByRole("heading", { name: "Coder Q5" })).toBeVisible();
     expect(screen.getByText("Coding profile with Q5 weights.")).toBeVisible();
     expect(screen.getByText("Chat profile for roleplay.")).toBeVisible();
@@ -681,7 +752,7 @@ describe("models catalog contract distinctions", () => {
     ).toBeNull();
   });
 
-  it("puts direct secondary model profiles under More chat profiles instead of All models", async () => {
+  it("shows direct secondary profiles in Chat and keeps them in All models", async () => {
     renderModels(
       catalog(
         [],
@@ -697,17 +768,20 @@ describe("models catalog contract distinctions", () => {
         ],
       ),
     );
-    const more = await screen.findByRole("button", {
-      name: /More chat profiles/,
-    });
+    await screen.findByRole("button", { name: "Copy model name coder-q8" });
     expect(
-      screen.queryByText("No stable aliases match these filters"),
-    ).toBeNull();
-    expect(screen.queryByRole("heading", { name: "Coder Q8" })).toBeNull();
-    expect(screen.queryByText(/\d+ shown/)).toBeNull();
-    fireEvent.click(more);
+      screen.getByRole("heading", { name: "Chat", level: 2 }),
+    ).toBeVisible();
     expect(screen.getByRole("heading", { name: "Coder Q8" })).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Details" }));
+    fireEvent.click(screen.getByRole("button", { name: "All models" }));
+    expect(
+      within(screen.getByRole("table")).getByText("Coder Q8"),
+    ).toBeVisible();
+    fireEvent.click(
+      within(screen.getByRole("table")).getByRole("button", {
+        name: "Details",
+      }),
+    );
     expect(
       within(screen.getByRole("dialog")).getByRole("heading", {
         name: "Coder Q8",
@@ -727,7 +801,7 @@ describe("models catalog contract distinctions", () => {
         }),
       ]),
     );
-    await screen.findByRole("button", { name: /More chat profiles/ });
+    await screen.findByRole("button", { name: "Copy model name coder-q8" });
     fireEvent.change(screen.getByRole("textbox", { name: "Search models" }), {
       target: { value: "coding-heavy" },
     });

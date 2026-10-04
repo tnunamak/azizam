@@ -368,7 +368,7 @@ function CopyModelName({ row }: { row: CatalogRow }) {
         void copyName();
       }}
       aria-label={`Copy model name ${row.id}`}
-      className="bg-muted hover:bg-muted/80 focus-visible:ring-ring flex min-h-11 min-w-0 items-center justify-between gap-2 rounded-md px-3 py-2 text-left font-mono text-xs transition outline-none focus-visible:ring-[3px]"
+      className="bg-muted hover:bg-muted/80 focus-visible:ring-ring flex min-h-11 max-w-full min-w-0 items-center justify-between gap-2 rounded-md px-3 py-2 text-left font-mono text-xs transition outline-none focus-visible:ring-[3px]"
     >
       <code className="truncate">{row.id}</code>
       {copied ? (
@@ -460,81 +460,121 @@ function Availability({
   );
 }
 
-function AliasCard({
+function AliasOptionRow({
   row,
   onDetail,
-  showCost = true,
-  showLocality = true,
 }: {
   row: CatalogRow;
   onDetail: (row: CatalogRow) => void;
-  showCost?: boolean;
-  showLocality?: boolean;
 }) {
   return (
-    <article className="bg-card text-card-foreground flex min-w-0 flex-col gap-5 rounded-xl border p-5">
-      <div className="flex min-w-0 items-start gap-3">
-        <CatalogIcon row={row} />
-        <div className="min-w-0 flex-1">
-          <h3 className="truncate font-semibold">{titleFor(row)}</h3>
-          <p className="text-muted-foreground mt-1 line-clamp-2 text-sm">
-            {descriptionFor(row)}
-          </p>
-        </div>
+    <article
+      className="hover:bg-muted/40 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 sm:flex-nowrap sm:pl-14"
+      onClick={() => onDetail(row)}
+    >
+      <div className="min-w-0 flex-1 basis-40">
+        <h3 className="truncate text-sm font-medium">{titleFor(row)}</h3>
+        <p className="text-muted-foreground truncate text-xs">
+          {descriptionFor(row)}
+        </p>
       </div>
       <CopyModelName row={row} />
-      {showLocality && (
-        <p className="text-muted-foreground text-xs">{localityLabel(row)}</p>
+      {availabilityState(row) !== "ready" && (
+        <Availability row={row} showReason={false} />
       )}
-      {showCost && (
-        <div>
-          <Badge variant="outline" className="max-w-full text-xs">
-            <span className="whitespace-normal">{costLabel(row)}</span>
-          </Badge>
-        </div>
-      )}
-      <Availability row={row} showReason={false} />
-      <div className="mt-auto flex flex-wrap gap-2">
-        <Button variant="outline" size="sm" onClick={() => onDetail(row)}>
-          Details
-          <ChevronRight aria-hidden="true" />
-        </Button>
-      </div>
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={(event) => {
+          event.stopPropagation();
+          onDetail(row);
+        }}
+      >
+        <span className="sr-only">Details</span>
+        <ChevronRight aria-hidden="true" />
+      </Button>
     </article>
   );
 }
 
-function AliasOptionRow({
-  row,
+function CapabilityRow({
+  rows,
   onDetail,
-  showCost = true,
+  searching,
 }: {
-  row: CatalogRow;
+  rows: CatalogRow[];
   onDetail: (row: CatalogRow) => void;
-  showCost?: boolean;
+  searching: boolean;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  // An unmarked catalog has a neutral first option, never an inferred recommendation.
+  const primary = rows.find((row) => row.recommended) ?? rows[0];
+  const alternatives = rows.filter((row) => row !== primary);
+  const open = expanded || searching;
+  const alternativesId = `model-alternatives-${primaryCapability(primary)}`;
   return (
-    <div className="flex min-w-0 flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
-      <div className="min-w-0 space-y-1">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <CopyModelName row={row} />
-          {showCost && (
-            <Badge variant="outline" className="text-xs">
-              {costLabel(row)}
-            </Badge>
+    <section className="min-w-0 border-b last:border-b-0">
+      <article
+        className="hover:bg-muted/40 grid min-h-16 grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 px-3 py-2 xl:grid-cols-[2rem_8rem_minmax(0,1fr)_9rem_7rem_5rem_2.75rem] xl:px-4"
+        onClick={() => onDetail(primary)}
+      >
+        <CatalogIcon row={primary} />
+        <h2 className="text-sm font-semibold">
+          {primaryCapabilityLabel(primary)}
+        </h2>
+        <h3 className="col-start-2 row-start-2 min-w-0 truncate text-sm xl:col-start-auto xl:row-start-auto">
+          {titleFor(primary)}
+        </h3>
+        <div className="col-start-2 row-start-3 min-w-0 xl:col-start-auto xl:row-start-auto">
+          <CopyModelName row={primary} />
+        </div>
+        <div className="col-start-3 row-start-2 xl:col-start-auto xl:row-start-auto">
+          {availabilityState(primary) !== "ready" && (
+            <Availability row={primary} showReason={false} />
           )}
         </div>
-        <p className="text-muted-foreground line-clamp-1 text-sm">
-          {descriptionFor(row)}
-        </p>
-      </div>
-      <div className="flex shrink-0 flex-wrap items-center gap-2">
-        <Availability row={row} showReason={false} />
-        <Button variant="outline" size="sm" onClick={() => onDetail(row)}>
-          Details
+        <div className="col-start-3 row-start-3 xl:col-start-auto xl:row-start-auto">
+          {alternatives.length > 0 && (
+            <button
+              type="button"
+              aria-label={`${alternatives.length} more ${primaryCapabilityLabel(primary)} models`}
+              aria-expanded={open}
+              aria-controls={alternativesId}
+              className="text-muted-foreground hover:text-foreground focus-visible:ring-ring inline-flex min-h-11 items-center gap-1 rounded px-2 text-xs whitespace-nowrap outline-none focus-visible:ring-[3px]"
+              onClick={(event) => {
+                event.stopPropagation();
+                setExpanded((value) => !value);
+              }}
+            >
+              {alternatives.length} more
+              <ChevronDown
+                aria-hidden="true"
+                className={cn("size-3 transition", open && "rotate-180")}
+              />
+            </button>
+          )}
+        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="col-start-3 row-start-1 xl:col-start-auto xl:row-start-auto"
+          onClick={(event) => {
+            event.stopPropagation();
+            onDetail(primary);
+          }}
+        >
+          <span className="sr-only">Details</span>
+          <ChevronRight aria-hidden="true" />
         </Button>
-      </div>
-    </div>
+      </article>
+      {open && alternatives.length > 0 && (
+        <div id={alternativesId} className="bg-muted/20 divide-y border-t">
+          {alternatives.map((row) => (
+            <AliasOptionRow key={row.id} row={row} onDetail={onDetail} />
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -713,7 +753,6 @@ export default function ModelsClient() {
   const [showNoProviderCharge, setShowNoProviderCharge] = useState(true);
   const [showPaid, setShowPaid] = useState(true);
   const [tableOpen, setTableOpen] = useState(false);
-  const [moreChatOpen, setMoreChatOpen] = useState(false);
   const [detail, setDetail] = useState<CatalogRow | null>(null);
   const {
     data: catalogData,
@@ -729,8 +768,11 @@ export default function ModelsClient() {
     () => [...(catalogData?.aliases ?? []), ...(catalogData?.models ?? [])],
     [catalogData],
   );
+  const sectionRows = allRows.filter(
+    (row) => row.alias || row.secondary_profile,
+  );
   const availableCapabilities = productCapabilityOrder.filter((cap) =>
-    allRows.some((row) => hasCapability(row, cap)),
+    sectionRows.some((row) => primaryCapability(row) === cap),
   );
   const passesFilters = (row: CatalogRow) => {
     if (!itemMatches(row, query)) return false;
@@ -742,23 +784,18 @@ export default function ModelsClient() {
       return false;
     return true;
   };
-  const aliasRows = (catalogData?.aliases ?? []).filter(passesFilters);
-  const modelRows = (catalogData?.models ?? []).filter(
-    (row) => passesFilters(row) && !row.secondary_profile,
-  );
-  const secondaryChatRows = allRows.filter(
-    (row) => passesFilters(row) && row.secondary_profile,
-  );
-  const primaryAliasRows = aliasRows.filter((row) => !row.secondary_profile);
+  const modelRows = (catalogData?.models ?? []).filter(passesFilters);
   const groupedAliases = productCapabilityOrder
     .map((cap) => ({
       capability: cap,
-      rows: primaryAliasRows.filter((row) => primaryCapability(row) === cap),
+      rows: sectionRows.filter(
+        (row) => passesFilters(row) && primaryCapability(row) === cap,
+      ),
     }))
     .filter((group) => group.rows.length > 0);
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-4">
       <PageHeader title="Models" answer="Pick a model name." />
       {catalogPending ? (
         <LoadingCatalog />
@@ -799,6 +836,7 @@ export default function ModelsClient() {
             </div>
             <div className="flex flex-wrap items-center gap-2 pb-1">
               <FilterToggle
+                className="px-3 text-xs [&>svg]:hidden"
                 pressed={capability === "all"}
                 onClick={() => setCapability("all")}
               >
@@ -807,6 +845,7 @@ export default function ModelsClient() {
               {availableCapabilities.map((cap) => (
                 <FilterToggle
                   key={cap}
+                  className="px-3 text-xs [&>svg]:hidden"
                   pressed={capability === cap}
                   onClick={() => setCapability(cap)}
                 >
@@ -840,7 +879,7 @@ export default function ModelsClient() {
               </div>
             </div>
           </section>
-          {groupedAliases.length === 0 && secondaryChatRows.length === 0 ? (
+          {groupedAliases.length === 0 ? (
             <EmptyState
               icon={Search}
               title={
@@ -874,115 +913,19 @@ export default function ModelsClient() {
               }
             />
           ) : (
-            <div className="space-y-4">
-              <div aria-label="Available model aliases" className="grid gap-6">
-                {groupedAliases.map((group) => {
-                  const [primary, ...alternatives] = group.rows;
-                  const groupLocal = group.rows.every(
-                    (row) => row.locality === "local",
-                  );
-                  const groupNoProviderCharge =
-                    group.rows.every(hasNoProviderCharge);
-                  return (
-                    <section
-                      key={group.capability}
-                      className="min-w-0 space-y-4"
-                    >
-                      <div className="flex flex-wrap items-center gap-3">
-                        <CatalogIcon row={primary} />
-                        <h2 className="text-lg font-semibold">
-                          {primaryCapabilityLabel(primary)}
-                        </h2>
-                        {groupNoProviderCharge && (
-                          <Badge variant="outline" className="text-xs">
-                            {groupLocal
-                              ? "Local · no provider charge"
-                              : "No provider charge"}
-                          </Badge>
-                        )}
-                      </div>
-                      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,28rem)]">
-                        <AliasCard
-                          row={primary}
-                          onDetail={setDetail}
-                          showLocality={!groupLocal}
-                          showCost={!groupNoProviderCharge}
-                        />
-                        {alternatives.length > 0 && (
-                          <details className="bg-card rounded-xl border">
-                            <summary className="flex min-h-11 cursor-pointer items-center justify-between gap-3 px-4 py-3 text-sm font-medium">
-                              <span>Other options · {alternatives.length}</span>
-                              <ChevronDown
-                                aria-hidden="true"
-                                className="size-4"
-                              />
-                            </summary>
-                            <div className="divide-y border-t">
-                              {alternatives.map((row) => (
-                                <AliasOptionRow
-                                  key={row.id}
-                                  row={row}
-                                  onDetail={setDetail}
-                                  showCost={!groupNoProviderCharge}
-                                />
-                              ))}
-                            </div>
-                          </details>
-                        )}
-                      </div>
-                    </section>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-          {secondaryChatRows.length > 0 && (
-            <section className="space-y-3">
-              <Button
-                variant="outline"
-                className="w-full justify-between"
-                aria-expanded={moreChatOpen || Boolean(query.trim())}
-                aria-controls="more-chat-profiles"
-                onClick={() => setMoreChatOpen((value) => !value)}
-              >
-                <span>More chat profiles · {secondaryChatRows.length}</span>
-                <ChevronDown
-                  aria-hidden="true"
-                  className={cn(
-                    "size-4 transition",
-                    (moreChatOpen || Boolean(query.trim())) && "rotate-180",
-                  )}
+            <div
+              aria-label="Available model aliases"
+              className="bg-card overflow-hidden rounded-lg border"
+            >
+              {groupedAliases.map((group) => (
+                <CapabilityRow
+                  key={group.capability}
+                  rows={group.rows}
+                  onDetail={setDetail}
+                  searching={Boolean(query.trim())}
                 />
-              </Button>
-              {(moreChatOpen || Boolean(query.trim())) && (
-                <div
-                  id="more-chat-profiles"
-                  className="divide-y rounded-lg border px-4"
-                >
-                  {secondaryChatRows.map((row) => (
-                    <div
-                      key={row.id}
-                      className="flex min-w-0 flex-wrap items-center gap-3 py-4"
-                    >
-                      <div className="min-w-0 flex-1 basis-48">
-                        <h3 className="font-medium">{titleFor(row)}</h3>
-                        <p className="text-muted-foreground mt-1 text-sm">
-                          {descriptionFor(row)}
-                        </p>
-                      </div>
-                      <CopyModelName row={row} />
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setDetail(row)}
-                      >
-                        Details
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
+              ))}
+            </div>
           )}
           <section className="space-y-3">
             <button

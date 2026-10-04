@@ -24,7 +24,7 @@ from fastapi.responses import JSONResponse, Response
 from gateway.capabilities import Capability
 from gateway.availability import project_service
 from gateway.local_capabilities import build_local_capabilities
-from gateway.model_presentation import (CAPABILITY_LABELS, capability_presentation, product_capability,
+from gateway.model_presentation import (CAPABILITY_LABELS, RECOMMENDED_ALIASES, capability_presentation, product_capability,
     declared_health_success, engine_label, model_locality, service_health_endpoint, CAPABILITY_ICON_KEYS)
 from gateway.model_files import model_file_availability
 from gateway.provider_model_catalog import (
@@ -292,7 +292,11 @@ def _dedupe_alias_targets(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             merged[key] = row
         else:
             current = merged[key]
-            current["use_names"] = list(dict.fromkeys([*current["use_names"], *row["use_names"]]))
+            names = list(dict.fromkeys([*current["use_names"], *row["use_names"]]))
+            if row["recommended"] and not current["recommended"]:
+                merged[key] = row
+                current = row
+            current["use_names"] = names
     for row in merged.values():
         row.pop("_serving_backend", None)
     return list(merged.values())
@@ -397,6 +401,7 @@ def _alias_rows(
                 "capability": operation_row["capabilities"][0]["capability"], **raw})
             operation_row.update({key: presentation[key] for key in
                                  ("title", "capability_title", "icon_key", "secondary_profile")})
+            operation_row["recommended"] = alias == RECOMMENDED_ALIASES.get(presentation["capability"])
             operation_row["display_name"] = presentation["title"]
             operation_row["name"] = presentation["title"]
             if raw.get("description"):
@@ -556,14 +561,16 @@ def _base_row(
         "id": row_id,
         "object": "model_catalog.alias" if is_alias else "model_catalog.model",
         "display_name": presentation.get("title", display_name),
+        "recommended": row_id == RECOMMENDED_ALIASES.get(presentation.get("capability")),
         **{key: presentation[key] for key in ("title", "capability_title", "icon_key", "recommended_model", "secondary_profile") if key in presentation},
         "use_names": list(dict.fromkeys([row_id, *([target] if target and not target.startswith("role:") else [])])),
         "alias": is_alias,
         "operations": [],
         "resolves_to": {},
         "description": presentation.get("summary"),
-        **({"technical_description": raw_description}
-           if raw_description and raw_description != presentation.get("summary") else {}),
+        **({"technical_description": presentation_metadata.get("technical_description") or raw_description}
+           if presentation_metadata.get("technical_description")
+           or raw_description and raw_description != presentation.get("summary") else {}),
         "name": presentation.get("title", display_name),
         "capabilities": _capability_summaries(capabilities, manifest),
         "provider": _provider(service, model_mapping or model_entry, service_id),

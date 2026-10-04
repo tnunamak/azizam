@@ -170,8 +170,8 @@ for (const theme of ["light", "dark"])
   for (const width of [1440, 390]) {
     test(`contract states ${theme} ${width}`, async ({ page }) => {
       await prepare(page, theme, width, seeded);
-      await expect(page.getByText("Ready", { exact: true })).toBeVisible();
-      await page.getByText("Other options · 6").click();
+      await expect(page.getByText("Ready", { exact: true })).toHaveCount(0);
+      await page.getByRole("button", { name: "6 more Chat models" }).click();
       await expect(
         page.getByText("Ready to start", { exact: true }),
       ).toBeVisible();
@@ -187,11 +187,22 @@ for (const theme of ["light", "dark"])
         page.locator("article").getByText("Not measured yet", { exact: true }),
       ).toHaveCount(0);
       await expect(
-        page.getByText("Price not provided", { exact: true }).first(),
+        page.getByText("Price not provided", { exact: true }),
+      ).toHaveCount(0);
+      await expect(page.getByText("Local", { exact: true })).toHaveCount(0);
+      const unknownRow = page
+        .getByRole("button", { name: "Copy model name unknown" })
+        .locator("xpath=..");
+      await unknownRow.getByRole("button", { name: "Details" }).click();
+      await expect(
+        page
+          .getByRole("dialog")
+          .getByText("Price not provided", { exact: true }),
       ).toBeVisible();
       await expect(
-        page.getByText("Local", { exact: true }).first(),
+        page.getByRole("dialog").getByText("Unknown", { exact: true }),
       ).toBeVisible();
+      await page.keyboard.press("Escape");
       await verify(page, `states-${theme}-${width}`);
       await page.getByRole("button", { name: /All models/ }).click();
       const table = page.getByRole("table");
@@ -225,7 +236,9 @@ for (const theme of ["light", "dark"])
         route.fulfill({ json: seeded }),
       );
       await page.getByRole("button", { name: /try again|retry/i }).click();
-      await expect(page.getByText("Ready", { exact: true })).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "Copy model name ready" }),
+      ).toBeVisible();
     });
   }
 
@@ -245,7 +258,21 @@ for (const theme of ["light", "dark"])
           r.capabilities.some((c) => c.intent === "chat.completions"),
         ),
       ).toBe(true);
+      expect(
+        payload.aliases.some(
+          (row) =>
+            row.id === "default" &&
+            row.recommended === true &&
+            row.capabilities.some((c) => c.intent === "chat.completions"),
+        ),
+      ).toBe(true);
       await prepare(page, theme, width, payload);
+      const chat = page.locator("section").filter({
+        has: page.getByRole("heading", { name: "Chat", exact: true }),
+      });
+      await expect(
+        chat.getByRole("button", { name: "Copy model name default" }),
+      ).toBeVisible();
       await page
         .getByRole("button", { name: /Show all models|All models/ })
         .first()
@@ -261,12 +288,19 @@ test("member recovery keeps owner controls out of the catalog", async ({
   page,
 }) => {
   await prepare(page, "light", 390, seeded, 200, "member");
-  await page.getByText("Other options · 6").click();
-  await expect(page.getByText("catalog-only", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "6 more Chat models" }).click();
+  await expect(
+    page.getByRole("heading", { name: "catalog-only", exact: true }),
+  ).toBeVisible();
   await expect(page.getByRole("link", { name: "Check status" })).toHaveCount(0);
   await page
-    .getByRole("button", { name: "Copy model name catalog-only" })
-    .locator("xpath=../../..")
+    .getByRole("article")
+    .filter({
+      has: page.getByRole("button", {
+        name: "Copy model name catalog-only",
+        exact: true,
+      }),
+    })
     .getByRole("button", { name: "Details" })
     .click();
   await expect(
@@ -300,20 +334,20 @@ test("loading finishes with observed models", async ({ page }) => {
     page.getByRole("status", { name: "Loading models" }),
   ).toHaveAttribute("aria-busy", "true");
   release();
-  await expect(page.getByText("Ready", { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Copy model name ready" }),
+  ).toBeVisible();
 });
 
 for (const theme of ["light", "dark"]) {
   for (const width of [1440, 390]) {
     test(`presentation contract ${theme} ${width}`, async ({ page }) => {
       const profiles = [
-        row("default", "ready", {
-          title: "Default",
-          description: "Thinks through questions before answering.",
+        row("coder", "ready", {
+          title: "Coder",
+          description: "Coding profile for technical work.",
           icon_key: "chat",
           capability_title: "Chat",
-          engine_label: "llama.cpp (chat)",
-          use_names: ["default", "chat-model"],
         }),
         row("fast", "ready", {
           title: "Fast",
@@ -321,11 +355,14 @@ for (const theme of ["light", "dark"]) {
           icon_key: "chat",
           capability_title: "Chat",
         }),
-        row("coder", "ready", {
-          title: "Coder",
-          description: "Coding profile for technical work.",
+        row("default", "ready", {
+          recommended: true,
+          title: "Default",
+          description: "Thinks through questions before answering.",
           icon_key: "chat",
           capability_title: "Chat",
+          engine_label: "llama.cpp (chat)",
+          use_names: ["default", "chat-model"],
         }),
         row("coder-q5", "ready", {
           title: "Coder Q5",
@@ -369,41 +406,54 @@ for (const theme of ["light", "dark"]) {
           capabilities: profiles.length,
         },
       });
-      const cards = page
+      const rows = page
         .getByLabel("Available model aliases")
         .locator("article");
-      await expect(cards).toHaveCount(2);
+      await expect(rows).toHaveCount(2);
+      await expect(
+        page.getByRole("button", { name: "Audio", exact: true }),
+      ).toHaveCount(0);
       for (const title of ["Default", "Music"]) {
         await expect(
-          cards.getByRole("heading", { name: title, exact: true }),
+          rows.getByRole("heading", { name: title, exact: true, level: 3 }),
         ).toBeVisible();
       }
-      await expect(cards.first().getByText("llama.cpp (chat)")).toHaveCount(0);
-      await cards.first().getByRole("button", { name: "Details" }).click();
+      await expect(rows.first().getByText("llama.cpp (chat)")).toHaveCount(0);
+      await expect(
+        rows.first().getByRole("button", { name: "Copy model name default" }),
+      ).toBeVisible();
+      await rows.first().getByRole("button", { name: "Details" }).click();
       await expect(
         page.getByRole("dialog").getByText("llama.cpp (chat)"),
       ).toBeVisible();
       await page.keyboard.press("Escape");
-      await page.getByText("Other options · 2").click();
+      await page.getByRole("button", { name: "4 more Chat models" }).click();
       for (const code of ["fast", "coder"]) {
-        await expect(page.getByText(code, { exact: true })).toBeVisible();
+        await expect(
+          page.getByRole("button", {
+            name: `Copy model name ${code}`,
+            exact: true,
+          }),
+        ).toBeVisible();
       }
       await expect(
         page.getByRole("heading", { name: "Coder Q5", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("heading", { name: "Roleplay", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: /More chat profiles/ }),
       ).toHaveCount(0);
       await expect(
-        cards.getByRole("img", { name: "Music", exact: true }).locator("svg"),
+        rows.getByRole("img", { name: "Music", exact: true }).locator("svg"),
       ).toHaveClass(/lucide-music-2/);
       await verify(page, `presentation-${theme}-${width}`);
-      await page.getByRole("button", { name: /More chat profiles/ }).click();
-      await expect(
-        page.getByRole("heading", { name: "Coder Q5", exact: true }),
-      ).toBeVisible();
       await expect(page.getByText("Chat profile for roleplay.")).toBeVisible();
-      await verify(page, `more-profiles-${theme}-${width}`);
+      await verify(page, `merged-chat-alternatives-${theme}-${width}`);
       await page.getByRole("textbox", { name: "Search models" }).fill("song");
-      await expect(cards).toHaveCount(1);
-      await cards.getByRole("button", { name: "Details" }).click();
+      await expect(rows).toHaveCount(1);
+      await rows.getByRole("button", { name: "Details" }).click();
       await expect(
         page.getByRole("dialog").getByText("Names you can use"),
       ).toBeVisible();

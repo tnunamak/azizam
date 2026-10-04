@@ -7,6 +7,93 @@ from gateway.models_catalog import build_models_catalog
 from gateway.model_presentation import engine_label, model_locality, service_health_endpoint
 
 
+def test_chat_catalog_recommends_default_independent_of_order_and_health():
+    catalog = build_models_catalog(
+        capabilities=[Capability(intent="chat.completions", backend="one", model="actual")],
+        alias_views={"chat": {"stable": [
+            {"alias": "coder", "resolves_to": "actual"},
+            {"alias": "rp", "resolves_to": "actual"},
+            {"alias": "default", "resolves_to": "actual", "error": "Unavailable"},
+        ]}},
+    )
+    assert catalog["aliases"][0]["id"] == "coder"
+    assert [row["id"] for row in catalog["aliases"] if row["recommended"]] == ["default"]
+
+
+@pytest.mark.parametrize("kind,alias", [
+    ("chat", "default"), ("image", "image"), ("video", "video"), ("music", "music"),
+    ("sfx", "sfx"), ("speech", "tts"), ("transcribe", "stt"), ("decide", "decide"),
+    ("embed", "embed"), ("rerank", "rerank"),
+])
+def test_general_purpose_stable_alias_is_recommended(kind, alias):
+    catalog = build_models_catalog(capabilities=[
+        Capability(intent="audio.generate", backend="operator", capability=kind, model=alias),
+        Capability(intent="audio.generate", backend="operator", capability=kind, model=f"{alias}-specialist"),
+    ])
+    assert [row["id"] for row in catalog["models"] if row["recommended"]] == [alias]
+
+
+def test_media_synonyms_preserve_recommended_alias_even_when_seen_last():
+    catalog = build_models_catalog(
+        capabilities=[Capability(intent="audio.generate", backend="one", model="actual", capability="music")],
+        alias_views={"audio_generate": {"stable": [
+            {"alias": "song", "resolves_to": "actual"},
+            {"alias": "music", "resolves_to": "actual"},
+        ]}},
+    )
+    row, = catalog["aliases"]
+    assert row["id"] == "music"
+    assert row["recommended"]
+    assert set(row["use_names"]) >= {"music", "song"}
+
+
+@pytest.mark.parametrize("kind,expected", [
+    ("music", "Songs and instrumentals from a prompt."),
+    ("sfx", "Sound effects from a description."),
+    ("video", "Video from a prompt or image."),
+])
+def test_media_technical_description_stays_in_details(kind, expected):
+    technical = "Portable contract workflow with ComfyUI T2V FLAC 44.1 kHz."
+    catalog = build_models_catalog(
+        capabilities=[Capability(intent="audio.generate", backend="one", model="actual", capability=kind)],
+        model_entries=[{"id": "actual", "description": technical}],
+    )
+    row, = catalog["models"]
+    assert row["description"] == expected
+    assert len(row["description"].split()) <= 8
+    assert row["technical_description"] == technical
+
+
+@pytest.mark.parametrize("kind,title,expected", [("speech", "TTS", "Speech"), ("transcribe", "STT", "Transcription")])
+def test_speech_protocol_acronyms_use_friendly_titles(kind, title, expected):
+    from gateway.model_presentation import capability_presentation
+    row = capability_presentation(Capability(intent="audio.generate", backend="one", capability=kind, title=title))
+    assert row["title"] == expected
+
+
+def test_long_operator_description_uses_short_capability_summary():
+    from gateway.model_presentation import capability_presentation
+    row = capability_presentation(Capability(intent="image.generate", backend="one", model="actual"), {
+        "description": "Create detailed pictures with adjustable quality and style from any written description.",
+    })
+    assert len(row["summary"].split()) <= 8
+
+
+def test_operator_authored_technical_description_survives_friendly_workflow_copy():
+    catalog = build_models_catalog(
+        capabilities=[Capability(intent="video.generate", backend="one", workflow="configured-video")],
+        workflow_records=[{
+            "id": "configured-video", "display_name": "Friendly video", "capability": "video",
+            "description": "Video from a prompt or image",
+            "technical_description": "Configured workflow format and generation details.",
+        }],
+    )
+    row, = catalog["models"]
+    assert row["title"] == "Friendly video"
+    assert row["description"] == "Video from a prompt or image."
+    assert row["technical_description"] == "Configured workflow format and generation details."
+
+
 @pytest.mark.parametrize("endpoint", ["http://127.0.0.1:18001", "http://[::1]:18001", "http://localhost:18001"])
 def test_direct_loopback_engine_is_local(endpoint):
     catalog = build_models_catalog(
