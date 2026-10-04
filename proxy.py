@@ -13829,7 +13829,7 @@ def _record_decision_receipt(auth: AuthContext, result: decisions_api.DecisionRe
         api_key_name=identity.name if identity else None,
     )
     receipt.begin(now_ms=int(time.time() * 1000 - result.latency_ms))
-    receipt.finish("ok" if result.status_code < 400 else "rejected" if result.status_code < 500 else "error",
+    receipt.finish("disconnected" if result.status_code == 499 else "succeeded" if result.status_code < 400 else "failed",
                    latency_ms=result.latency_ms)
     receipt.fallback_reasons = list(result.fallback_reasons)
     receipt.metadata["status_code"] = result.status_code

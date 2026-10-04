@@ -264,6 +264,53 @@ test("try catalog maps exact capability intents to the right tabs", async ({
   );
 });
 
+test("try query params select capability and preserve requested model", async ({
+  page,
+}) => {
+  await page.route("**/me/api/models/catalog", (route) =>
+    route.fulfill({
+      json: {
+        schema_version: 1,
+        object: "models.catalog",
+        aliases: [
+          catalogRow("coder", "chat.completions"),
+          catalogRow("chat", "chat.completions"),
+          catalogRow("fast", "chat.completions"),
+          catalogRow("decide", "decision.systemone"),
+        ],
+        models: [],
+      },
+    }),
+  );
+  await page.goto("/ui/try/?capability=decide");
+  await page.getByRole("button", { name: "Prepare Try key" }).first().click();
+  await expect(page.getByText("Catalog loaded")).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Decide" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.getByLabel("Model", { exact: true })).toContainText(
+    "decide model",
+  );
+
+  await page.goto("/ui/try/?capability=chat&model=fast");
+  await expect(page.getByText("Catalog loaded")).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Chat" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.getByLabel("Model", { exact: true })).toContainText("fast");
+
+  await page.goto("/ui/try/?capability=chat&model=chat");
+  await expect(page.getByText("Catalog loaded")).toBeVisible();
+  await expect(page.getByLabel("Model", { exact: true })).toContainText(
+    "chat model",
+  );
+  await expect(page.getByLabel("Model", { exact: true })).not.toContainText(
+    "coder model",
+  );
+});
+
 test("try records audio, uploads it, and stops microphone tracks", async ({
   page,
 }) => {

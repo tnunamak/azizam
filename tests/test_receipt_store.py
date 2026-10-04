@@ -401,6 +401,46 @@ class TestReceiptStore(unittest.TestCase):
         )
         self.assertEqual(admin_rows[0]["cost"]["provider"], "openrouter")
 
+    def test_update_cost_refreshes_persisted_receipt_cost(self) -> None:
+        r = _make_receipt(remote=True)
+        r.cost = {
+            "usd": None,
+            "source": "unknown",
+            "provider": "openrouter",
+            "cost_class": "paid-remote",
+            "reservation_id": 1,
+            "reconciliation_status": "needs_reconciliation",
+        }
+        r.metadata["decisions"] = {
+            "question_count": 2,
+            "engine": None,
+            "remote": True,
+            "cost_usd": None,
+            "usage": {"input_tokens": 302, "output_tokens": 37},
+        }
+        receipt_store.record(r, path=self.db)
+
+        updated = receipt_store.update_cost(
+            r.request_id,
+            {
+                "usd": "0.030000000",
+                "source": "owner-reported",
+                "provider": "openrouter",
+                "cost_class": "paid-remote",
+                "reservation_id": 1,
+                "reconciliation_status": "settled",
+            },
+            path=self.db,
+        )
+
+        self.assertTrue(updated)
+        admin = receipt_store.get(r.request_id, audience="admin", path=self.db)
+        self.assertEqual(admin["cost"]["usd"], "0.030000000")
+        self.assertEqual(admin["cost"]["source"], "owner-reported")
+        self.assertEqual(admin["cost"]["provider"], "openrouter")
+        self.assertEqual(admin["cost"]["reconciliation_status"], "settled")
+        self.assertEqual(admin["decisions"]["cost_usd"], "0.030000000")
+
     def test_recent_zero_limit_returns_empty(self) -> None:
         receipt_store.record(_make_receipt(), path=self.db)
         self.assertEqual(receipt_store.recent(limit=0, path=self.db), [])

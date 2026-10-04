@@ -380,6 +380,50 @@ def record(
     return data["request_id"]
 
 
+def update_cost(
+    request_id: str,
+    cost: Mapping[str, Any],
+    *,
+    path: Path = DB_PATH,
+) -> bool:
+    """Replace the cost block on an existing persisted receipt."""
+
+    if not request_id:
+        raise ValueError("request_id is required")
+    if not isinstance(cost, Mapping):
+        raise TypeError("cost must be a mapping")
+    assert_safe_mapping("receipt.cost", cost)
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT receipt_json FROM receipts WHERE request_id = ?",
+            (request_id,),
+        ).fetchone()
+        if row is None:
+            return False
+        data = _safe_loads(row[0])
+        if not isinstance(data, Mapping):
+            raise ValueError("cannot update malformed stored receipt")
+        updated = dict(data)
+        updated["remote"] = True
+        updated["cost"] = dict(cost)
+        metadata = updated.get("metadata")
+        if isinstance(metadata, Mapping):
+            metadata = dict(metadata)
+            decisions = metadata.get("decisions")
+            if isinstance(decisions, Mapping):
+                decisions = dict(decisions)
+                decisions["cost_usd"] = cost.get("usd")
+                metadata["decisions"] = decisions
+                updated["metadata"] = metadata
+        _assert_safe(updated)
+        conn.execute(
+            "UPDATE receipts SET receipt_json = ? WHERE request_id = ?",
+            (json.dumps(updated, ensure_ascii=False, sort_keys=True), request_id),
+        )
+        conn.commit()
+        return True
+
+
 def get(
     request_id: str,
     *,

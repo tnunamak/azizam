@@ -27,6 +27,9 @@ def test_builtin_provider_catalog_is_data_and_has_required_presets() -> None:
     } <= set(catalog)
     openrouter = catalog["openrouter"].to_dict()
     assert openrouter["model_listing"]["pricing_path"] == "pricing"
+    assert catalog["typesafe"].to_dict()["model_listing"]["alias_resolution"] == {
+        "price_model": "configured_model"
+    }
     assert openrouter["auth_test"] == {"method": "GET", "path": "/key"}
     assert catalog["anthropic"].to_dict()["model_listing"]["headers"] == {
         "anthropic-version": "2023-06-01"

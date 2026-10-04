@@ -247,6 +247,9 @@ for (const theme of ["light", "dark"] as const) {
                 exact: true,
               }),
             ).toBeVisible();
+            await expect(
+              page.locator('a[href*="/try/?capability=chat&model=fast"]'),
+            ).toHaveCount(1);
           }
         }
         await inspectHome(page, `${state}-${theme}-${width}`);

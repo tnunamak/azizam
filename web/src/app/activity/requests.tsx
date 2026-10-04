@@ -54,12 +54,16 @@ function outcome(status?: string) {
     (
       {
         succeeded: "Completed",
+        ok: "Completed",
         failed: "Failed",
+        error: "Failed",
+        rejected: "Failed",
         cancelled: "Cancelled",
         disconnected: "Disconnected",
         timed_out: "Timed out",
         accepted: "Accepted",
         running: "In progress",
+        in_progress: "In progress",
         stale_incomplete: "Outcome not recorded",
         incomplete: "Outcome not recorded",
       } as Record<string, string>

@@ -170,9 +170,10 @@ function nonnegativeNumberOrNull(value: unknown): number | null {
 }
 
 function money(value: number | null | undefined): string {
-  return typeof value === "number" && Number.isFinite(value)
-    ? `$${value.toFixed(2)}`
-    : "Not measured yet";
+  if (typeof value !== "number" || !Number.isFinite(value))
+    return "Not measured yet";
+  if (value > 0 && value < 0.01) return "<$0.01";
+  return `$${value.toFixed(2)}`;
 }
 
 function countOrZero(value: unknown): number {
@@ -1284,22 +1285,38 @@ function AddProviderDialog({
     mutationFn: async () => {
       if (!selected) throw new Error("Choose a provider first.");
       const generation = checkGeneration.current;
-      const raw = await adminFetch<Record<string, unknown>>(
-        `/admin/api/providers/-/test`,
-        {
-          method: "POST",
-          body: {
-            preset_id: selected.id,
-            provider_id: selected.id,
-            name: selected.name,
-            base_url: baseUrl.trim() || selected.baseUrl,
-            key_mode: mode === "env" ? "env" : "secret",
-            api_key: mode === "key" ? secret : undefined,
-            api_key_env: mode === "env" ? envName : undefined,
-            models: [],
+      let raw: Record<string, unknown>;
+      try {
+        raw = await adminFetch<Record<string, unknown>>(
+          `/admin/api/providers/-/test`,
+          {
+            method: "POST",
+            body: {
+              preset_id: selected.id,
+              provider_id: selected.id,
+              name: selected.name,
+              base_url: baseUrl.trim() || selected.baseUrl,
+              key_mode: mode === "env" ? "env" : "secret",
+              api_key: mode === "key" ? secret : undefined,
+              api_key_env: mode === "env" ? envName : undefined,
+              models: [],
+            },
           },
-        },
-      );
+        );
+      } catch (err) {
+        if (generation === checkGeneration.current) {
+          setTestResult({
+            ok: false,
+            message:
+              err instanceof Error
+                ? err.message
+                : "Gateway check failed. Try again.",
+            models: [],
+          });
+          setModels([]);
+        }
+        throw err;
+      }
       const result: TestResult = {
         ok: bool(raw.ok) ?? true,
         message: text(raw.message, "Connection worked."),

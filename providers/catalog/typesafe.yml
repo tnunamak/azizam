@@ -12,6 +12,8 @@ model_listing:
   path: /models
   items_path: models
   id_path: name
+  alias_resolution:
+    price_model: configured_model
 docs_url: https://docs.typesafe.ai
 key_url: https://app.typesafe.ai/settings/api-keys
 billing_dimensions:

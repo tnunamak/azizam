@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
 type Output = { kind: string; file?: string; text?: string; label?: string };
+type RecordedInput = { label?: string; value?: unknown };
 type Example = {
   id: string;
   base: string;
@@ -18,7 +19,7 @@ type Example = {
   title?: string;
   model?: string;
   seconds?: number;
-  inputs?: { label?: string; value?: string }[];
+  inputs?: RecordedInput[];
   outputs?: Output[];
 };
 type Section = {
@@ -28,6 +29,16 @@ type Section = {
   fallback?: boolean;
   match?: { intent?: string; id?: string; not_id?: string };
 };
+
+function recordedValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value == null) return "";
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
 
 function belongsTo(example: Example, sections: Section[]): string | undefined {
   const aliases: Record<string, string> = {
@@ -237,14 +248,18 @@ export default function GalleryPage() {
                           Recorded input
                         </summary>
                         {example.inputs
-                          ?.filter((input) => input.value)
+                          ?.map((input) => ({
+                            ...input,
+                            renderedValue: recordedValue(input.value),
+                          }))
+                          .filter((input) => input.renderedValue)
                           .map((input, index) => (
-                            <p
+                            <pre
                               key={index}
-                              className="text-muted-foreground pb-3 text-sm [overflow-wrap:anywhere]"
+                              className="text-muted-foreground pb-3 font-sans text-sm [overflow-wrap:anywhere] whitespace-pre-wrap"
                             >
-                              {input.value}
-                            </p>
+                              {input.renderedValue}
+                            </pre>
                           ))}
                       </details>
                     </CardContent>

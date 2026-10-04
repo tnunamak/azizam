@@ -16,17 +16,22 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tests"))
 
-from gateway import admin_store
+from gateway import admin_store, receipt_store
 from gateway.provider_admin import create_provider_admin_router
 from test_provider_admin import FakeProviderAdminStore, _auth
 
 
-def _client(store: FakeProviderAdminStore, ledger_path: Path) -> TestClient:
+def _client(
+    store: FakeProviderAdminStore,
+    ledger_path: Path,
+    *,
+    raise_server_exceptions: bool = True,
+) -> TestClient:
     app = FastAPI()
     app.include_router(
         create_provider_admin_router(store, auth=_auth, ledger_path=ledger_path)
     )
-    return TestClient(app)
+    return TestClient(app, raise_server_exceptions=raise_server_exceptions)
 
 
 def _seed_ledger(path: Path) -> None:
@@ -96,7 +101,9 @@ class ProviderReconciliationAdminApiTests(unittest.TestCase):
         self.tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmpdir.cleanup)
         self.ledger_path = Path(self.tmpdir.name) / "provider_spend.db"
+        self.receipts_path = Path(self.tmpdir.name) / "receipts.db"
         _seed_ledger(self.ledger_path)
+        receipt_store.init_db(self.receipts_path)
         self.store = FakeProviderAdminStore()
         admin_store.init_db(self.store.path)
         self.client = _client(self.store, self.ledger_path)
@@ -174,6 +181,147 @@ class ProviderReconciliationAdminApiTests(unittest.TestCase):
         )
         self.assertEqual(followup.status_code, 200)
         self.assertEqual(followup.json(), {"reconciliations": []})
+
+    def test_owner_reconciliation_updates_persisted_receipt_cost(self) -> None:
+        receipt_store.record(
+            {
+                "request_id": "req_123",
+                "protocol": "openai.chat",
+                "intent": "chat.completions",
+                "path": "/v1/chat/completions",
+                "status": "succeeded",
+                "accepted_at_ms": 1_700_000_000_000,
+                "updated_at_ms": 1_700_000_001_000,
+                "remote": True,
+                "cost": {
+                    "usd": None,
+                    "source": "unknown",
+                    "provider": "openrouter",
+                    "cost_class": "paid-remote",
+                    "reservation_id": 1,
+                    "reconciliation_status": "needs_reconciliation",
+                },
+                "metadata": {
+                    "decisions": {
+                        "question_count": 2,
+                        "engine": None,
+                        "remote": True,
+                        "cost_usd": None,
+                        "usage": {"input_tokens": 302, "output_tokens": 37},
+                    }
+                },
+            },
+            path=self.receipts_path,
+        )
+
+        with patch.object(receipt_store, "DB_PATH", self.receipts_path):
+            response = self.client.post(
+                "/admin/api/providers/openrouter/reconciliation/1",
+                headers={"authorization": "Bearer admin"},
+                json={"actual_usd": "0.030000000"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        stored = receipt_store.get("req_123", path=self.receipts_path)
+        self.assertEqual(
+            stored["cost"],
+            {
+                "usd": "0.030000000",
+                "source": "owner-reported",
+                "provider": "openrouter",
+                "cost_class": "paid-remote",
+                "reservation_id": 1,
+                "reconciliation_status": "settled",
+            },
+        )
+        self.assertEqual(stored["decisions"]["cost_usd"], "0.030000000")
+
+    def test_owner_reconciliation_retry_repairs_receipt_after_update_failure(self) -> None:
+        receipt_store.record(
+            {
+                "request_id": "req_123",
+                "protocol": "openai.chat",
+                "intent": "chat.completions",
+                "path": "/v1/chat/completions",
+                "status": "succeeded",
+                "accepted_at_ms": 1_700_000_000_000,
+                "updated_at_ms": 1_700_000_001_000,
+                "remote": True,
+                "cost": {
+                    "usd": None,
+                    "source": "unknown",
+                    "provider": "openrouter",
+                    "cost_class": "paid-remote",
+                    "reservation_id": 1,
+                    "reconciliation_status": "needs_reconciliation",
+                },
+                "metadata": {
+                    "decisions": {
+                        "question_count": 2,
+                        "engine": None,
+                        "remote": True,
+                        "cost_usd": None,
+                        "usage": {"input_tokens": 302, "output_tokens": 37},
+                    }
+                },
+            },
+            path=self.receipts_path,
+        )
+
+        calls = 0
+        real_update = receipt_store.update_cost
+
+        def flaky_update(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("receipt store unavailable")
+            return real_update(*args, **kwargs)
+
+        retry_client = _client(self.store, self.ledger_path, raise_server_exceptions=False)
+        with (
+            patch.object(receipt_store, "DB_PATH", self.receipts_path),
+            patch.object(receipt_store, "update_cost", side_effect=flaky_update),
+        ):
+            failed = retry_client.post(
+                "/admin/api/providers/openrouter/reconciliation/1",
+                headers={"authorization": "Bearer admin"},
+                json={"actual_usd": "0.030000000"},
+            )
+            retry = retry_client.post(
+                "/admin/api/providers/openrouter/reconciliation/1",
+                headers={"authorization": "Bearer admin"},
+                json={"actual_usd": "0.030000000"},
+            )
+
+        self.assertEqual(failed.status_code, 500)
+        with sqlite3.connect(self.ledger_path) as conn:
+            self.assertEqual(
+                conn.execute("SELECT status, actual_usd FROM provider_spend WHERE id = 1").fetchone(),
+                ("settled", "0.030000000"),
+            )
+        self.assertEqual(retry.status_code, 200)
+        self.assertEqual(retry.json()["reconciliation"]["status"], "settled")
+        stored = receipt_store.get("req_123", path=self.receipts_path)
+        self.assertEqual(stored["cost"]["usd"], "0.030000000")
+        self.assertEqual(stored["cost"]["reconciliation_status"], "settled")
+        self.assertEqual(stored["decisions"]["cost_usd"], "0.030000000")
+
+    def test_owner_reconciliation_retry_rejects_different_settled_amount(self) -> None:
+        first = self.client.post(
+            "/admin/api/providers/openrouter/reconciliation/1",
+            headers={"authorization": "Bearer admin"},
+            json={"actual_usd": "0.030000000"},
+        )
+        second = self.client.post(
+            "/admin/api/providers/openrouter/reconciliation/1",
+            headers={"authorization": "Bearer admin"},
+            json={"actual_usd": "0.040000000"},
+        )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 400)
+        self.assertEqual(second.json()["error"]["code"], "invalid_provider_reconciliation")
 
 
 
