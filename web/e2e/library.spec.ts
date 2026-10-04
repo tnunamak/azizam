@@ -332,7 +332,7 @@ test("library audio plays independently and video uses its recorded poster", asy
     page.getByRole("img", { name: mediaFixture.assets[1].prompt }),
   ).toHaveAttribute("src", posterUrl);
   await expect(page.locator("article video")).toHaveCount(0);
-  await open.click();
+  await open.click({ position: { x: 20, y: 20 } });
   const detail = page.getByRole("dialog");
   await expect(detail.getByLabel("Generated audio")).toHaveAttribute(
     "controls",

@@ -38,7 +38,7 @@ const typical = {
   capabilities: [
     { intent: "image.generate", capability: "image", label: "Images" },
   ],
-  provider: "Example image provider",
+  provider: "provider-opaque-id",
   engine_label: "Example image provider",
   locality: "remote",
   cost: { kind: "paid", price: "$0.04 per image" },
