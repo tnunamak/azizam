@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -167,7 +168,7 @@ class MeMediaRouterTests(unittest.TestCase):
             json.dumps({"asset_id": asset_id, "owner_key_hashes": owner_hashes, "updated_at": 1_700_000_000})
         )
 
-    def _receipt(self, app_id: str | None, request_id: str, *, cost: float | None = None) -> None:
+    def _receipt(self, app_id: str | None, request_id: str, *, cost: float | None = None, created_at: int | None = None) -> None:
         receipt = RouteReceipt(
             protocol="openai.images",
             intent="image.generate",
@@ -182,7 +183,7 @@ class MeMediaRouterTests(unittest.TestCase):
         receipt.updated_at_ms = 1_700_000_001_000
         if cost is not None:
             receipt.metadata["litellm"] = {"response_cost": cost}
-        receipt_store.record(receipt, created_at=int(time.time()), path=self.receipts_db)
+        receipt_store.record(receipt, created_at=int(time.time()) if created_at is None else created_at, path=self.receipts_db)
 
     def _job(self, request_id: str, asset_id: str, *, workflow: str = "wf.image", media_type: str = "image/png") -> None:
         media_jobs.create(
@@ -359,6 +360,25 @@ class MeMediaRouterTests(unittest.TestCase):
         owner_usage = self.client.get("/me/api/usage/summary")
         self.assertEqual(owner_usage.status_code, 200, owner_usage.text)
         self.assertEqual(owner_usage.json()["media_count"], 1)
+
+    def test_usage_job_fallback_excludes_previous_month_receipt_assets(self) -> None:
+        now = datetime.now(timezone.utc)
+        start = int(now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
+        previous_month = start - 60
+        old_asset = "img_" + "6" * 64
+        self._write_asset(
+            old_asset,
+            ["sha256:alice"],
+            request_id="req_previous_month",
+            created_at=previous_month,
+        )
+        self._receipt(self.app_a["id"], "req_previous_month", created_at=previous_month)
+        self._job("req_previous_month", old_asset)
+
+        usage = self.client.get(f"/me/api/usage/summary?source=app:{self.app_a['id']}")
+        self.assertEqual(usage.status_code, 200, usage.text)
+        self.assertEqual(usage.json()["requests"], 0)
+        self.assertEqual(usage.json()["media_count"], 0)
 
     def test_local_network_source_label_preserves_no_key_with_client_hint(self) -> None:
         source = me_media._source_projection(

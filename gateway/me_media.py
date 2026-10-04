@@ -1090,7 +1090,11 @@ def _usage_summary(
             if job_receipt is not None:
                 _annotate_receipt_source(job_receipt, sources)
         if job_receipt is not None:
-            if _receipt_in_scope(job_receipt, media_scope) and _source_matches_filter(job_receipt.get("source"), source_filter):
+            if (
+                int(job_receipt.get("_stored_at") or 0) >= start
+                and _receipt_in_scope(job_receipt, media_scope)
+                and _source_matches_filter(job_receipt.get("source"), source_filter)
+            ):
                 made.update(str(a.get("asset_id") or a.get("id")) for a in _iter_job_assets(job))
             continue
         if app_ids is None and int(job.get("created_at") or 0) >= start:
