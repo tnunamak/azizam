@@ -2287,6 +2287,10 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             "/login?return_to=/setup", follow_redirects=False
         )
         self.assertEqual(login.status_code, 302, login.text)
+        if "redirect_uri=" not in login.headers["location"]:
+            self.assertEqual(proxy.ADMIN_OIDC_STATES, {})
+            login = self.client.get(login.headers["location"], follow_redirects=False)
+            self.assertEqual(login.status_code, 302, login.text)
         self.assertIn("https://idp.example/authorize", login.headers["location"])
 
         state, record = next(iter(proxy.ADMIN_OIDC_STATES.items()))
@@ -2311,7 +2315,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
             proxy, "_oidc_verify_id_token", fake_verify
         ):
             callback = self.client.get(
-                f"/admin/oidc/callback?state={state}&code=abc",
+                f"{record.redirect_uri}?state={state}&code=abc",
                 follow_redirects=False,
             )
         self.assertEqual(callback.status_code, 302, callback.text)
