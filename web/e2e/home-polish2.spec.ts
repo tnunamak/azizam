@@ -273,12 +273,13 @@ test("one selected and pasted app key scopes all recipes and the gateway check",
     });
   });
   await page.goto("/ui/home/");
+  await page.getByRole("button", { name: "Open WebUI", exact: true }).click();
   const select = page.getByRole("combobox", { name: "App key" });
   await select.click();
   await page
     .getByRole("option", { name: "Test client · Chat access", exact: true })
     .click();
-  const paste = page.getByLabel("Paste your key", { exact: true });
+  const paste = page.getByLabel(/^Paste your /);
   await expect(paste).toHaveCount(1);
   await paste.fill("fixture-chat-secret");
   await expect(page.getByRole("tabpanel").locator("pre")).toContainText("fast");
@@ -327,9 +328,7 @@ test("one selected and pasted app key scopes all recipes and the gateway check",
     ),
   ).toBe(false);
   await page.reload();
-  await expect(page.getByLabel("Paste your key", { exact: true })).toHaveCount(
-    0,
-  );
+  await expect(page.getByLabel(/^Paste your /)).toHaveCount(0);
 });
 
 test("recent work uses human labels with routing IDs kept as receipt detail", async ({

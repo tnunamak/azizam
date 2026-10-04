@@ -340,16 +340,17 @@ export default function PeoplePage() {
                       "Not measured yet"
                     )}
                   </div>
-                  <div className="text-muted-foreground col-start-1 text-sm md:col-auto">
-                    <span className="md:hidden">This month · </span>
-                    {person.requests_this_month === null ? (
-                      <span className="sr-only">
-                        Request count not measured
-                      </span>
-                    ) : (
-                      `${person.requests_this_month.toLocaleString()} requests`
-                    )}
-                  </div>
+                  {person.requests_this_month === null ? (
+                    <div
+                      aria-hidden="true"
+                      className="hidden md:col-auto md:block"
+                    />
+                  ) : (
+                    <div className="text-muted-foreground col-start-1 text-sm md:col-auto">
+                      <span className="md:hidden">This month · </span>
+                      {`${person.requests_this_month.toLocaleString()} requests`}
+                    </div>
+                  )}
                   <div className="col-start-2 row-start-1 md:col-auto md:row-auto">
                     {actions(person)}
                   </div>

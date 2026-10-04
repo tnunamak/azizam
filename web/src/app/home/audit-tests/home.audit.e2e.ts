@@ -214,6 +214,9 @@ test("fresh owner sees setup and connection task in the first viewport", async (
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await setupRoutes(page, "seeded", "owner");
+  await page.route("**/me/api/home", (route) =>
+    route.fulfill({ json: { ...home("owner"), receipts: [] } }),
+  );
   await page.goto("/ui/home/");
   await page.getByRole("button", { name: "Open WebUI" }).click();
   for (const locator of [
@@ -286,7 +289,9 @@ test("setup evidence posts only after explicit owner confirmations", async ({
   await page.getByRole("button", { name: "Open WebUI" }).click();
   await page.getByRole("combobox", { name: "App key" }).click();
   await page.getByRole("option", { name: /Browser test app/ }).click();
-  await page.getByLabel("Paste your key").fill("opk_test_secret");
+  await page
+    .getByLabel("Paste your API key", { exact: true })
+    .fill("opk_test_secret");
   await page.getByRole("button", { name: "Gateway check" }).click();
   await expect(
     page.getByText("Gateway responded with this key", { exact: true }),
@@ -296,6 +301,7 @@ test("setup evidence posts only after explicit owner confirmations", async ({
   await expect.poll(() => posts.length).toBe(1);
   await page.getByRole("button", { name: "My app sent a request" }).click();
   await expect.poll(() => posts.length).toBe(2);
+  await page.getByText("Setup progress", { exact: true }).click();
   await page.getByText("Setup details").click();
   await page.getByRole("button", { name: "I viewed this receipt" }).click();
   await expect.poll(() => posts.length).toBe(3);
@@ -347,7 +353,7 @@ test("real gateway setup evidence stays separate from gateway check", async ({
   await page.getByRole("button", { name: "Open WebUI" }).click();
   await page.getByRole("combobox", { name: "App key" }).click();
   await page.getByRole("option", { name: /Home audit evidence key/ }).click();
-  await page.getByLabel("Paste your key").fill(secret);
+  await page.getByLabel("Paste your API key", { exact: true }).fill(secret);
 
   const checkResponse = page.waitForResponse(
     (response) =>

@@ -58,6 +58,7 @@ import { capabilityLabels } from "@/lib/terms";
 import {
   capabilityTiles,
   greetingName,
+  needsSetup,
   requestLabel,
   setupSteps,
   shouldShowSetup,
@@ -964,22 +965,22 @@ function Capabilities({
                 className={`inline-flex min-h-11 max-w-full min-w-0 items-center gap-2 rounded-full border px-3 py-1.5 ${capability.available ? capabilityTint[copy.icon] : "border-border bg-muted/30 text-muted-foreground"}`}
               >
                 <HomeCapabilityIcon row={capability} />
-                <div className="min-w-0">
-                  <h3 className="truncate text-sm font-medium">
+                <div className="min-w-0 shrink-0">
+                  <h3 className="text-sm font-medium">
                     {capability.capability_title ?? copy.label}
                   </h3>
                 </div>
                 <StatusPill status={capability.status} summary />
-                {(capability.use_name ?? capability.model) && (
-                  <code className="text-muted-foreground max-w-28 truncate text-xs">
-                    {capability.use_name ?? capability.model}
-                  </code>
-                )}
                 <details className="max-w-full text-xs">
                   <summary className="text-muted-foreground min-h-11 cursor-pointer content-center">
                     Details
                   </summary>
                   <div className="text-muted-foreground mt-2 max-w-full space-y-2 rounded-lg">
+                    {(capability.use_name ?? capability.model) && (
+                      <code className="block break-all">
+                        {capability.use_name ?? capability.model}
+                      </code>
+                    )}
                     <p>{capability.summary ?? copy.description}</p>
                     <p>{capability.reason}</p>
                     {capability.recommended_model && (
@@ -1352,6 +1353,14 @@ export default function HomePage() {
             <SetupChecklist progress={setup} home={home} />
           ) : null}
           <Connect home={home} progress={isOwner ? setup : undefined} />
+          {!showSetup && isOwner && setup && needsSetup(setup) && (
+            <details>
+              <summary className="text-muted-foreground min-h-11 cursor-pointer content-center text-sm">
+                Setup progress
+              </summary>
+              <SetupChecklist progress={setup} home={home} />
+            </details>
+          )}
           {!showSetup && (
             <>
               <Capabilities

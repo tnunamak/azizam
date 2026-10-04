@@ -552,6 +552,40 @@ test("people lane invitation rows distinguish pending, accepted, expired and rev
   ).toBeDisabled();
 });
 
+test("people lane omits unknown monthly usage and keeps known usage", async ({
+  page,
+}) => {
+  await mock(page, "seeded");
+  await page.route("**/admin/api/people", (route) =>
+    route.fulfill({
+      json: {
+        people: [
+          person,
+          {
+            ...person,
+            id: "person-active",
+            name: "Casey Rivera",
+            email: "casey@example.test",
+            requests_this_month: 42,
+          },
+        ],
+        profiles: [plan],
+      },
+    }),
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/ui/people/");
+  const unknownRow = page
+    .getByText("Morgan Rivera", { exact: true })
+    .locator("xpath=ancestor::div[contains(@class, 'grid')][1]");
+  const knownRow = page
+    .getByText("Casey Rivera", { exact: true })
+    .locator("xpath=ancestor::div[contains(@class, 'grid')][1]");
+  await expect(unknownRow).toBeVisible();
+  await expect(unknownRow).not.toContainText("This month");
+  await expect(knownRow).toContainText("This month · 42 requests");
+});
+
 test("people lane OIDC invitation resumes its private token and accepts with session CSRF", async ({
   page,
 }) => {

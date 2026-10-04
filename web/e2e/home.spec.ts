@@ -493,6 +493,11 @@ for (const theme of ["light", "dark"] as const) {
         (value) => localStorage.setItem("theme", value),
         theme,
       );
+      await page.route(homeApi, async (route) => {
+        const response = await route.fetch();
+        const actual = await response.json();
+        await route.fulfill({ response, json: { ...actual, receipts: [] } });
+      });
       await page.route(setupApi, async (route) => {
         const response = await route.fetch();
         const actual = await response.json();
@@ -627,6 +632,7 @@ test("inline reveal-once key tests a real chat request and produces one owned re
       "Secret must disappear after acknowledgement",
     ).toBe(false);
     await page.reload();
+    await page.getByRole("button", { name: "Open WebUI", exact: true }).click();
     await expect(page.getByLabel("Your key", { exact: true })).toHaveCount(0);
     expect(
       await page.evaluate((key) => {
@@ -649,7 +655,7 @@ test("inline reveal-once key tests a real chat request and produces one owned re
     const ownedBefore = before.receipts.filter(
       (receipt: { request_id: string }) => receipt.request_id,
     ).length;
-    await page.getByLabel("Paste your key", { exact: true }).fill(secret);
+    await page.getByLabel("Paste your API key", { exact: true }).fill(secret);
     const testedResponse = page.waitForResponse(
       (response) =>
         new URL(response.url()).pathname === "/me/api/connection-test",
@@ -766,7 +772,8 @@ test("a new inherited key cannot borrow a broader existing app's recipe", async 
         id: "home-inherited-no-chat",
         protocols: ["openai"],
         backends: ["capture-engine"],
-        models: [],
+        // Empty model lists permit every model. Use an explicit non-chat model.
+        models: ["demo-image"],
       },
     },
   });
