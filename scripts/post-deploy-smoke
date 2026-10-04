@@ -7,14 +7,23 @@ BASE=${1:-http://127.0.0.1:5000}
 AUTH=(); [ -n "${AI_GATEWAY_SMOKE_KEY:-}" ] && AUTH=(-H "Authorization: Bearer $AI_GATEWAY_SMOKE_KEY")
 fail=0
 check() { if [ "$2" = ok ]; then echo "PASS $1"; else echo "FAIL $1: $2"; fail=1; fi; }
+# Right after a restart, engines can still be warming up and return an error body. Retry those
+# for up to ~90 s; an answer with empty content is a real failure and is not retried.
 for model in fast default; do
-  out=$(curl -s --max-time 180 "${AUTH[@]}" "$BASE/v1/chat/completions" -H 'Content-Type: application/json' \
-    -d "{\"model\":\"$model\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with the single word OK\"}],\"max_tokens\":400}")
-  verdict=$(printf '%s' "$out" | python3 -c 'import json,sys
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    out=$(curl -s --max-time 180 "${AUTH[@]}" "$BASE/v1/chat/completions" -H 'Content-Type: application/json' \
+      -d "{\"model\":\"$model\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with the single word OK\"}],\"max_tokens\":400}")
+    verdict=$(printf '%s' "$out" | python3 -c 'import json,sys
+raw=sys.stdin.read()
 try:
-    d=json.load(sys.stdin); c=(d["choices"][0]["message"].get("content") or "").strip()
+    d=json.loads(raw)
+    if "choices" not in d: print("error response: %s" % raw[:200]); sys.exit()
+    c=(d["choices"][0]["message"].get("content") or "").strip()
     print("ok" if c else "empty content (finish_reason=%s)" % d["choices"][0].get("finish_reason"))
-except Exception as e: print("bad response: %s" % str(e)[:80])')
+except Exception as e: print("error response: %s" % (raw[:200] or str(e)[:80]))')
+    case "$verdict" in "error response"*) [ "$attempt" -lt 10 ] && { sleep 10; continue; } ;; esac
+    break
+  done
   check "chat $model" "$verdict"
 done
 code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "${AUTH[@]}" "$BASE/sdapi/v1/sd-models"); check "a1111 models" "$([ "$code" = 200 ] && echo ok || echo "HTTP $code")"
