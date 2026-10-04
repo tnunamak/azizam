@@ -38,7 +38,7 @@ import {
   PRODUCT_NAME,
 } from "@/lib/product";
 import { gatewayHealthLabel, gatewayHealthReason } from "@/lib/gateway-health";
-import { useOwnerAlert } from "./use-owner-alert";
+import { useOwnerAlertTarget } from "./use-owner-alert";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -81,7 +81,9 @@ import {
 } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
 import { ErrorState } from "@/components/product/error-state";
+import { CopyField } from "@/components/product/copy-field";
 import { PageHeader } from "@/components/product/page-header";
+import { RelativeTime } from "@/components/product/relative-time";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Popover,
@@ -195,7 +197,11 @@ function HealthLink() {
     enabled: viewer.admin,
     refetchInterval: 60000,
   });
-  const { data: gatewayData, isError: gatewayError } = useQuery({
+  const {
+    data: gatewayData,
+    isError: gatewayError,
+    dataUpdatedAt: gatewayCheckedAt,
+  } = useQuery({
     queryKey: ["foundation", "reachability"],
     queryFn: async () => {
       const r = await fetch("/health");
@@ -219,7 +225,7 @@ function HealthLink() {
   });
   // /health reports gateway reachability only; it does not prove engine health.
   const { label, tone } = gatewayHealthLabel({
-    admin: viewer.admin,
+    admin: false,
     health,
     statusError: statusError,
     reachable: Boolean(gatewayData),
@@ -233,11 +239,7 @@ function HealthLink() {
     reachabilityError: gatewayError,
     memberStatus: memberHome?.status,
   });
-  const memberUnavailable =
-    !gatewayError &&
-    !viewer.admin &&
-    memberHome?.status?.state === "unavailable";
-  const visibleLabel = memberUnavailable ? "Models unavailable" : label;
+  const visibleLabel = label;
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -249,7 +251,7 @@ function HealthLink() {
         >
           <span
             aria-hidden="true"
-            className={`size-2 shrink-0 rounded-full ${memberUnavailable ? "bg-warning" : tone === "ok" ? "bg-success" : tone === "warn" ? "bg-warning" : tone === "bad" ? "bg-danger" : "bg-muted-foreground"}`}
+            className={`size-2 shrink-0 rounded-full ${tone === "ok" ? "bg-success" : tone === "warn" ? "bg-warning" : tone === "bad" ? "bg-danger" : "bg-muted-foreground"}`}
           />
           <span className="shell-nav-label">{visibleLabel}</span>
         </button>
@@ -261,7 +263,36 @@ function HealthLink() {
         aria-label="Gateway health"
       >
         <p className="font-medium">{visibleLabel}</p>
+        {gatewayData && !gatewayError && (
+          <p className="text-muted-foreground text-sm">
+            The gateway is reachable.
+          </p>
+        )}
         <p className="text-muted-foreground text-sm">{reason}</p>
+        <dl className="text-muted-foreground space-y-2 text-sm">
+          <div>
+            <dt>Last successful gateway check</dt>
+            <dd>
+              <RelativeTime
+                ts={gatewayCheckedAt || null}
+                fallback="Not measured yet"
+              />
+            </dd>
+          </div>
+          {viewer.admin && (
+            <div>
+              <dt>Engine observation</dt>
+              <dd>
+                {statusError
+                  ? "Couldn’t refresh status"
+                  : health?.observation_available
+                    ? health.label || "Status unknown"
+                    : "Status unknown"}
+              </dd>
+              <dd>Observation time is not provided by the gateway.</dd>
+            </div>
+          )}
+        </dl>
         <Button variant="outline" size="sm" asChild>
           <Link href="/status">
             View status
@@ -342,16 +373,60 @@ function Nav({
 
 function AlertSlot() {
   const viewer = useViewer();
-  const alert = useOwnerAlert(viewer.admin);
+  const alert = useOwnerAlertTarget(viewer.admin);
+  const pathname = usePathname();
+  // Status owns its section markup. Resolve its visible heading after route
+  // loading so the banner can hand keyboard focus to the affected section.
+  useEffect(() => {
+    if (!viewer.admin || canonicalDestinationPath(pathname) !== "/status")
+      return;
+    const focusSection = () => {
+      const section =
+        window.location.hash === "#engines"
+          ? "Engines"
+          : window.location.hash === "#providers"
+            ? "Providers"
+            : null;
+      if (!section) return false;
+      const heading = Array.from(
+        document.querySelectorAll<HTMLElement>("main h2"),
+      ).find((node) => node.textContent === section);
+      if (!heading) return false;
+      heading.tabIndex = -1;
+      heading.focus();
+      heading.scrollIntoView({ block: "start" });
+      return true;
+    };
+    const observer = new MutationObserver(() => {
+      if (focusSection()) observer.disconnect();
+    });
+    const onHashChange = () => {
+      if (!focusSection())
+        observer.observe(document.body, { childList: true, subtree: true });
+    };
+    onHashChange();
+    window.addEventListener("hashchange", onHashChange);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("hashchange", onHashChange);
+    };
+  }, [pathname, viewer.admin]);
   if (!alert) return null;
   return (
     <div
       className="bg-warning-tint text-warning flex flex-wrap items-center justify-between gap-3 border-b px-5 py-3 text-sm sm:px-8"
       role="status"
     >
-      <span>{alert}</span>
+      <span>{alert.message}</span>
       <Button variant="ghost" size="sm" asChild>
-        <Link href="/status">
+        <Link
+          href={`/status#${alert.section.toLowerCase()}`}
+          onClick={() => {
+            // Repeated activation on Status must still move focus.
+            if (canonicalDestinationPath(pathname) === "/status")
+              window.dispatchEvent(new HashChangeEvent("hashchange"));
+          }}
+        >
           View status
           <ChevronRight />
         </Link>
@@ -370,6 +445,22 @@ function CommandPalette({
   const viewer = useViewer();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [copyAddress, setCopyAddress] = useState<string | null>(null);
+  const [addressError, setAddressError] = useState(false);
+  const [previousOpen, setPreviousOpen] = useState(open);
+  const addressRecovery = useRef<HTMLDivElement>(null);
+  const commandInvoker = useRef<HTMLElement | null>(null);
+  if (previousOpen !== open) {
+    setPreviousOpen(open);
+    setCopyAddress(null);
+    setAddressError(false);
+  }
+  useEffect(() => {
+    if (copyAddress === null) return;
+    const input = addressRecovery.current?.querySelector("input");
+    input?.focus();
+    input?.select();
+  }, [copyAddress]);
   const { data: appData } = useQuery({
     queryKey: ["foundation", "command-apps"],
     queryFn: async () => {
@@ -408,8 +499,10 @@ function CommandPalette({
     setOpen(false);
     router.push(href);
   };
-  async function copyBaseUrl() {
+  async function copyGatewayAddress() {
     setBusy(true);
+    setAddressError(false);
+    setCopyAddress(null);
     try {
       const response = await fetch("/.well-known/ai-gateway");
       if (!response.ok) throw new Error();
@@ -417,11 +510,15 @@ function CommandPalette({
       const base =
         discovery.recipes?.openai?.canonical_base_url ||
         `${discovery.service?.base_url || window.location.origin}/openai/v1`;
-      await navigator.clipboard.writeText(base);
-      toast.success("Base URL copied");
-      setOpen(false);
+      try {
+        await navigator.clipboard.writeText(base);
+        toast.success("Gateway address copied to clipboard.");
+        setOpen(false);
+      } catch {
+        setCopyAddress(base);
+      }
     } catch {
-      toast.error("The base URL could not be copied. Try again.");
+      setAddressError(true);
     } finally {
       setBusy(false);
     }
@@ -448,6 +545,16 @@ function CommandPalette({
       <DialogContent
         className="overflow-hidden p-0 sm:max-w-xl"
         showCloseButton={false}
+        onOpenAutoFocus={() => {
+          commandInvoker.current =
+            document.activeElement instanceof HTMLElement
+              ? document.activeElement
+              : null;
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          commandInvoker.current?.focus();
+        }}
       >
         <DialogHeader className="sr-only">
           <DialogTitle>Search your gateway</DialogTitle>
@@ -553,17 +660,38 @@ function CommandPalette({
                 <KeyRound />
                 Create key
               </CommandItem>
-              <CommandItem onSelect={copyBaseUrl} disabled={busy}>
+              <CommandItem onSelect={copyGatewayAddress} disabled={busy}>
                 <ArrowUpRight />
-                Copy base URL
+                Copy gateway address
               </CommandItem>
               <CommandItem onSelect={testConnection} disabled={busy}>
                 <Zap />
-                Check gateway connection
+                Check gateway reachability
               </CommandItem>
             </CommandGroup>
           </CommandList>
         </Command>
+        {copyAddress !== null && (
+          <div ref={addressRecovery} className="space-y-3 border-t p-4">
+            <p role="alert" className="text-destructive text-sm">
+              Copy failed. Select the gateway address and copy it manually.
+            </p>
+            <CopyField value={copyAddress} />
+          </div>
+        )}
+        {addressError && (
+          <div className="border-t p-4">
+            <ErrorState
+              heading="Couldn’t load the gateway address"
+              message="The gateway address could not be loaded. Check your connection and try again."
+              action={{
+                label: "Try again",
+                onClick: () => void copyGatewayAddress(),
+              }}
+              retrying={busy}
+            />
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -645,7 +773,8 @@ function Shell({ children }: { children: React.ReactNode }) {
         }
       />
       <ErrorState
-        message="Your account could not be loaded. Check your connection and try again."
+        heading="Couldn’t load your account"
+        message="Check your connection and try again."
         onRetry={() => {
           void refreshSession();
         }}
@@ -661,8 +790,8 @@ function Shell({ children }: { children: React.ReactNode }) {
     <>
       <PageHeader title="Service admin session" />
       <p className="text-muted-foreground">
-        This session manages the gateway with a service credential. Sign in as a
-        person to use your AI, view your library and usage, or manage people.
+        This session uses a key to manage the gateway. Sign in as a person to
+        use your AI, view your library and usage, or manage people.
       </p>
       <Button variant="outline" asChild>
         <a href="/ui/sign-in/">Sign in as a person</a>
@@ -677,7 +806,14 @@ function Shell({ children }: { children: React.ReactNode }) {
           )?.title ?? "Your gateway"
         }
       />
-      <ErrorState message="This page is available to gateway owners and admins. Sign in with an owner account to continue." />
+      <ErrorState
+        heading="Owner access required"
+        message="This page is available to gateway owners and admins."
+        action={{
+          label: "Sign in with an owner account",
+          href: "/ui/sign-in/",
+        }}
+      />
     </>
   ) : (
     children

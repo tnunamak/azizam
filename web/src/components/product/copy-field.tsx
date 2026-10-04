@@ -1,5 +1,5 @@
 "use client";
-import { useId, useState } from "react";
+import { useId, useLayoutEffect, useRef, useState } from "react";
 import { Check, Copy, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,22 +14,31 @@ export interface CopyFieldProps {
 }
 export function CopyField({
   value,
-  label = "Base URL",
+  label = "Gateway address",
   disabled = false,
   loading = false,
   error,
 }: CopyFieldProps) {
   const id = useId();
-  const [copied, setCopied] = useState(false);
-  const [copyError, setCopyError] = useState(false);
+  const [feedback, setFeedback] = useState<{ copied: boolean } | null>(null);
+  const attempt = useRef(0);
+  useLayoutEffect(() => {
+    attempt.current += 1;
+    setFeedback(null);
+    return () => {
+      attempt.current += 1;
+    };
+  }, [value, label]);
+  const copied = feedback?.copied;
+  const copyError = feedback && !feedback.copied;
   async function copy() {
+    const request = ++attempt.current;
+    setFeedback(null);
     try {
       await navigator.clipboard.writeText(value);
-      setCopied(true);
-      setCopyError(false);
+      if (attempt.current === request) setFeedback({ copied: true });
     } catch {
-      setCopied(false);
-      setCopyError(true);
+      if (attempt.current === request) setFeedback({ copied: false });
     }
   }
   return (
@@ -63,10 +72,10 @@ export function CopyField({
         </Button>
       </div>
       <span className="sr-only" role="status">
-        {copied ? "Copied to clipboard" : ""}
+        {copied ? `${label} copied to clipboard.` : ""}
       </span>
       {(error || copyError) && (
-        <p id={`${id}-error`} className="text-destructive text-sm">
+        <p id={`${id}-error`} role="alert" className="text-destructive text-sm">
           {error || "Copy failed. Select the value and copy it manually."}
         </p>
       )}

@@ -1,6 +1,8 @@
 import type { AuditEntry } from "./api";
 
 const PHRASES: Record<string, string> = {
+  "media.library.everyone": "Viewed everyone’s media library",
+  "usage.summary.everyone": "Viewed everyone’s usage",
   "app.create": "Created an app",
   "app.self_create": "Created an app",
   "app.self_delete": "Removed an app",

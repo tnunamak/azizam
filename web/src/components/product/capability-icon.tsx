@@ -8,6 +8,7 @@ import {
   Layers,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { capabilityLabels } from "@/lib/terms";
 
 export type Capability =
   | "chat"
@@ -20,37 +21,37 @@ export type Capability =
 const capabilities = {
   chat: {
     icon: MessageSquare,
-    label: "Chat",
+    label: capabilityLabels.chat,
     color: "text-capability-chat bg-capability-chat/10",
   },
   image: {
     icon: Image,
-    label: "Images",
+    label: capabilityLabels.image,
     color: "text-capability-image bg-capability-image/10",
   },
   video: {
     icon: Video,
-    label: "Video",
+    label: capabilityLabels.video,
     color: "text-capability-video bg-capability-video/10",
   },
   voice: {
     icon: AudioLines,
-    label: "Voice",
+    label: capabilityLabels.speech,
     color: "text-capability-voice bg-capability-voice/10",
   },
   transcribe: {
     icon: Mic,
-    label: "Transcribe",
+    label: capabilityLabels.transcribe,
     color: "text-capability-transcribe bg-capability-transcribe/10",
   },
   decide: {
     icon: GitBranch,
-    label: "Decide",
+    label: capabilityLabels.decisions,
     color: "text-capability-decide bg-capability-decide/10",
   },
   embed: {
     icon: Layers,
-    label: "Embed",
+    label: capabilityLabels.embeddings,
     color: "text-capability-embed bg-capability-embed/10",
   },
 };

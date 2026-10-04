@@ -85,7 +85,7 @@ describe("gateway health honesty", () => {
         health: health("ok"),
         reachabilityError: true,
       }).label,
-    ).toBe("Down");
+    ).toBe("Gateway unreachable");
   });
   it("never treats an unmeasured or stale projection as healthy", () => {
     expect(

@@ -39,11 +39,15 @@ describe("foundation product contracts", () => {
       value: { writeText },
     });
     render(<CopyField value="https://gateway.example/v1" />);
-    fireEvent.click(screen.getByRole("button", { name: "Copy base url" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Copy gateway address" }),
+    );
     await waitFor(() =>
       expect(writeText).toHaveBeenCalledWith("https://gateway.example/v1"),
     );
-    expect(screen.getByRole("status")).toHaveTextContent("Copied to clipboard");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Gateway address copied to clipboard.",
+    );
   });
   it("keeps a failed copy recoverable instead of claiming success", async () => {
     Object.defineProperty(navigator, "clipboard", {
@@ -51,13 +55,15 @@ describe("foundation product contracts", () => {
       value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
     });
     render(<CopyField value="https://gateway.example/v1" />);
-    fireEvent.click(screen.getByRole("button", { name: "Copy base url" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Copy gateway address" }),
+    );
     expect(
       await screen.findByText(
         "Copy failed. Select the value and copy it manually.",
       ),
     ).toBeVisible();
-    expect(screen.getByLabelText("Base URL")).toHaveValue(
+    expect(screen.getByLabelText("Gateway address")).toHaveValue(
       "https://gateway.example/v1",
     );
   });
@@ -103,6 +109,22 @@ describe("foundation product contracts", () => {
     expect(screen.getByText("Ready to start")).toBeVisible();
     expect(screen.getByText("Starts when you send a request.")).toBeVisible();
     expect(screen.queryByText("Unavailable")).toBeNull();
+  });
+  it.each([
+    ["ready", "Ready"],
+    ["idle", "Ready to start"],
+    ["starting", "Starting"],
+    ["busy", "Busy"],
+    ["unavailable", "Unavailable"],
+    ["unknown", "Unknown"],
+  ])("preserves the measured %s state and its reason", (status, label) => {
+    render(<StatusPill status={status} reason={`Observation for ${status}`} />);
+    expect(screen.getByText(label, { exact: true })).toBeVisible();
+    expect(screen.getByText(`Observation for ${status}`)).toBeVisible();
+    if (status === "unknown") {
+      expect(screen.queryByText("Ready", { exact: true })).toBeNull();
+      expect(screen.queryByText("Unavailable", { exact: true })).toBeNull();
+    }
   });
   it("owns command dialog title and description inside its accessible dialog", () => {
     render(

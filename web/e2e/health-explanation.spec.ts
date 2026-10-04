@@ -35,11 +35,14 @@ test("health popover explains a measured outage and links to Status", async ({
     }),
   );
   await page.goto("/ui/models/");
-  await page.getByRole("button", { name: "Gateway status: Degraded" }).click();
+  await page
+    .getByRole("button", { name: "Gateway status: Gateway reachable" })
+    .click();
   const explanation = page.getByLabel("Gateway health");
   await expect(explanation).toContainText(
     "Image engine is unavailable. Check its connection on Status.",
   );
+  await expect(explanation).toContainText("The gateway is reachable.");
   expect(
     (await new AxeBuilder({ page }).analyze()).violations.filter((violation) =>
       ["serious", "critical"].includes(violation.impact ?? ""),
@@ -47,6 +50,23 @@ test("health popover explains a measured outage and links to Status", async ({
   ).toEqual([]);
   await explanation.getByRole("link", { name: "View status" }).click();
   await expect(page).toHaveURL(/\/ui\/status\/?$/);
+  // The owner banner sends keyboard focus to the affected diagnostic section,
+  // including when it is activated while already on Status.
+  const banner = page.getByRole("status").filter({
+    hasText: "Image engine is unavailable. Check its connection on Status.",
+  });
+  const action = banner.getByRole("link", { name: "View status", exact: true });
+  await action.focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/\/ui\/status\/?#engines$/);
+  await expect(
+    page.getByRole("heading", { name: "Engines", exact: true, level: 2 }),
+  ).toBeFocused();
+  await action.focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("heading", { name: "Engines", exact: true, level: 2 }),
+  ).toBeFocused();
 });
 
 test("member health uses their allowed models and never requests owner diagnostics", async ({
@@ -84,10 +104,11 @@ test("member health uses their allowed models and never requests owner diagnosti
   );
   await page.goto("/ui/models/");
   await page
-    .getByRole("button", { name: "Gateway status: Models unavailable" })
+    .getByRole("button", { name: "Gateway status: Gateway reachable" })
     .click();
   const explanation = page.getByLabel("Gateway health");
   await expect(explanation).toContainText("Images are unavailable right now.");
+  await expect(explanation).toContainText("The gateway is reachable.");
   await expect(
     explanation.getByRole("link", { name: "View status" }),
   ).toHaveAttribute("href", "/ui/status/");
@@ -126,7 +147,9 @@ test("an unreachable gateway takes priority over unavailable member models", asy
     route.fulfill({ status: 503, json: { error: "unavailable" } }),
   );
   await page.goto("/ui/models/");
-  await page.getByRole("button", { name: "Gateway status: Down" }).click();
+  await page
+    .getByRole("button", { name: "Gateway status: Gateway unreachable" })
+    .click();
   await expect(page.getByLabel("Gateway health")).toContainText(
     "The gateway could not be reached.",
   );

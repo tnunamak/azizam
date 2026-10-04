@@ -61,9 +61,9 @@ test("command palette navigates and runs three real actions", async ({
   );
   await page
     .getByRole("combobox", { name: "Search your gateway" })
-    .fill("Copy base URL");
+    .fill("Copy gateway address");
   await page
-    .getByRole("option", { name: "Copy base URL", exact: true })
+    .getByRole("option", { name: "Copy gateway address", exact: true })
     .click();
   const snapshot = await (await discovery).json();
   await expect(
@@ -74,11 +74,13 @@ test("command palette navigates and runs three real actions", async ({
   await page.keyboard.press("Control+k");
   await page
     .getByRole("combobox", { name: "Search your gateway" })
-    .fill("Check gateway connection");
+    .fill("Check gateway reachability");
   const health = page.waitForResponse((response) =>
     response.url().endsWith("/health"),
   );
-  await page.getByRole("option", { name: "Check gateway connection" }).click();
+  await page
+    .getByRole("option", { name: "Check gateway reachability" })
+    .click();
   expect((await health).ok()).toBe(true);
   await expect(
     page.getByText(
@@ -110,6 +112,99 @@ test("command palette navigates and runs three real actions", async ({
   await expect(
     page.getByRole("heading", { name: "Command palette app", exact: true }),
   ).toBeVisible();
+});
+
+test("command clipboard denial preserves and focuses the exact gateway address", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async () => {
+          throw new DOMException("Denied", "NotAllowedError");
+        },
+      },
+    });
+  });
+  const address = "https://gateway.example/openai/v1?exact=1";
+  await page.route("**/.well-known/ai-gateway", (route) =>
+    route.fulfill({
+      json: { recipes: { openai: { canonical_base_url: address } } },
+    }),
+  );
+  await page.goto("/ui/models/");
+  const trigger = page.getByRole("button", {
+    name: "Search",
+    exact: true,
+  });
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: "Search your gateway" });
+  await dialog.getByRole("combobox").fill("Copy gateway address");
+  await dialog
+    .getByRole("option", { name: "Copy gateway address", exact: true })
+    .click();
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("alert")).toContainText(
+    "Copy failed. Select the gateway address and copy it manually.",
+  );
+  const field = dialog.getByRole("textbox", {
+    name: "Gateway address",
+    exact: true,
+  });
+  await expect(field).toHaveValue(address);
+  await expect(field).toBeFocused();
+  expect(
+    await field.evaluate((element: HTMLInputElement) =>
+      element.value.slice(element.selectionStart!, element.selectionEnd!),
+    ),
+  ).toBe(address);
+  await expect(dialog.getByRole("status")).toBeEmpty();
+  await page.keyboard.press("Escape");
+  await expect(dialog).not.toBeVisible();
+  await expect(trigger).toBeFocused();
+});
+
+test("command discovery failure offers retry before attempting clipboard writes", async ({
+  page,
+}) => {
+  await page.goto("/ui/models/");
+  let clipboardWrites = 0;
+  await page.exposeFunction("recordClipboardWrite", () => {
+    clipboardWrites += 1;
+  });
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async () => {
+          await (
+            window as unknown as { recordClipboardWrite: () => Promise<void> }
+          ).recordClipboardWrite();
+        },
+      },
+    });
+  });
+  await page.route("**/.well-known/ai-gateway", (route) =>
+    route.fulfill({ status: 503, json: { error: "fixture unavailable" } }),
+  );
+  await page.keyboard.press("Control+k");
+  const dialog = page.getByRole("dialog", { name: "Search your gateway" });
+  await dialog.getByRole("combobox").fill("Copy gateway address");
+  await dialog
+    .getByRole("option", { name: "Copy gateway address", exact: true })
+    .click();
+  await expect(dialog.getByRole("alert")).toContainText(
+    "Couldn’t load the gateway address",
+  );
+  await expect(
+    dialog.getByRole("textbox", { name: "Gateway address", exact: true }),
+  ).toHaveCount(0);
+  expect(clipboardWrites).toBe(0);
+  await page.unroute("**/.well-known/ai-gateway");
+  await dialog.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  expect(clipboardWrites).toBe(1);
 });
 
 test("theme toggle persists after navigation and reload", async ({ page }) => {
@@ -287,10 +382,7 @@ test("session failure explains the problem and retry restores the account", asyn
   );
   await page.goto("/ui/");
   await expect(
-    page.getByText(
-      "Your account could not be loaded. Check your connection and try again.",
-      { exact: true },
-    ),
+    page.getByText("Check your connection and try again.", { exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("link", { name: "Settings", exact: true }),
@@ -306,9 +398,7 @@ test("session failure explains the problem and retry restores the account", asyn
 test("phone header navigation has 44px touch targets", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/ui/");
-  await expect(
-    page.getByRole("heading", { level: 1 }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   const header = page.locator("header").first();
   const navigation = page.getByRole("navigation", { name: "Phone navigation" });
   await expect(navigation.getByRole("link")).toHaveText([

@@ -61,7 +61,7 @@ export function gatewayHealthLabel({
   reachable: boolean;
   reachabilityError: boolean;
 }): { label: string; tone: "ok" | "warn" | "bad" | "neutral" } {
-  if (reachabilityError) return { label: "Down", tone: "bad" };
+  if (reachabilityError) return { label: "Gateway unreachable", tone: "bad" };
   if (!admin)
     return reachable
       ? { label: "Gateway reachable", tone: "ok" }

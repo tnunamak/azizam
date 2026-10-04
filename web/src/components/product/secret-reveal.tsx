@@ -24,7 +24,7 @@ export function SecretReveal({
       >
         <ShieldCheck className="size-4" aria-hidden="true" />
         {saved
-          ? "Key saved. It won’t be shown again."
+          ? "Key hidden. It won’t be shown again."
           : "This key is no longer available. Create a new key if you need one."}
       </div>
     );

@@ -36,7 +36,9 @@ export function ownerProviderAlert(
     : `${failed.name} is unreachable. Check its connection on Status.`;
 }
 
-export function useOwnerAlert(enabled: boolean) {
+export function useOwnerAlertTarget(
+  enabled: boolean,
+): { message: string; section: "Engines" | "Providers" } | null {
   const providers = useOptionalProviderStatus(enabled);
   const { data, isError } = useQuery({
     queryKey: ["foundation", "health"],
@@ -46,10 +48,16 @@ export function useOwnerAlert(enabled: boolean) {
   });
   if (!enabled) return null;
   const engineAlert = !isError ? ownerEngineAlert(data?.current_health) : null;
-  return (
-    engineAlert ??
-    (providers.state === "ready"
+  if (engineAlert) return { message: engineAlert, section: "Engines" };
+  const providerAlert =
+    providers.state === "ready"
       ? ownerProviderAlert(providers.providers)
-      : null)
-  );
+      : null;
+  return providerAlert
+    ? { message: providerAlert, section: "Providers" }
+    : null;
+}
+
+export function useOwnerAlert(enabled: boolean) {
+  return useOwnerAlertTarget(enabled)?.message ?? null;
 }
