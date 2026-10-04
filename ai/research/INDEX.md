@@ -1,5 +1,10 @@
 # Research Index
 
+- [Live paid-provider cost and authentication proof](live-paid-provider-proof.md) -
+  2026-10-03 - real TypeSafe/OpenRouter receipts, encrypted-key product setup,
+  owner-plan caps, LAN credential precedence, versioned-price settlement and
+  sub-cent spend display defects; exact measurements and source limits.
+
 - [Provider catalog and key custody](provider-catalog-and-key-custody.md) -
   2026-10-03 - primary provider model-listing shapes, price units, authentication
   probes, AES-GCM custody, source failures, and sidecar environment trade-offs.
