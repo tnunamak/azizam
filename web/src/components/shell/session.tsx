@@ -42,7 +42,7 @@ export async function fetchViewer(): Promise<Viewer> {
   // Admin service credentials have no person or member-owned apps.
   try {
     const { actor } = await api.session();
-    const serviceAdmin = actor.kind !== "user";
+    const serviceAdmin = Boolean(actor.kind && actor.kind !== "user");
     return {
       authenticated: true,
       serviceAdmin,

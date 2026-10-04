@@ -574,6 +574,8 @@ def derive_admin_health_projection(
             routable = True if model_mappings else None
         else:
             routable = None
+        if in_use is not None:
+            routable = in_use
         if not enabled:
             observation = "disabled"
             tone = "neutral"
@@ -639,7 +641,7 @@ def derive_admin_health_projection(
             role="required",
             raw_status=str((availability_evidence.get(service_id) or {}).get("status") or ""),
         )
-        tone = _admin_tone_from_observation(observation, role="required")
+        tone = "neutral" if relied_on_ids is not None else _admin_tone_from_observation(observation, role="required")
         if rank.get(tone, 0) > rank.get(worst, 0):
             worst = tone
         if tone in {"warn", "bad"}:
@@ -650,6 +652,8 @@ def derive_admin_health_projection(
             "configured": False,
             "enabled": False,
             "role": "unregistered",
+            "in_use": False if relied_on_ids is not None else None,
+            "usage_label": "Not in use" if relied_on_ids is not None else None,
             "observation": observation,
             "routable": None,
             "tone": tone,
@@ -718,7 +722,7 @@ def derive_admin_health_projection(
             "state": "inactive",
             "tone": "neutral",
             "label": "No active services",
-            "detail": "Configured services are disabled or stopped in standby.",
+            "detail": "Configured services are not in use, disabled, or stopped in standby.",
             "observation_available": observation_available,
             "services": rows,
         })

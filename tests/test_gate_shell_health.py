@@ -58,3 +58,25 @@ def test_disk_warning_does_not_invent_models_volume(monkeypatch):
     monkeypatch.setattr(Path, "stat", lambda self: SimpleNamespace(st_dev=1 if str(self) == "/logs" else 2))
     assert _disk_pressure_reason({"target": "/logs", "pct_used": 90},
                                  {"model_routing": {"model_dir": "/models"}}).startswith("The disk at /logs")
+
+
+def test_relied_on_route_proves_routability_without_registry_model_mapping():
+    health = derive_admin_health_projection(
+        {"services": {"active": {}}},
+        {"_relied_on_service_ids": ["active"], "backends": [
+            {"service_id": "active", "live_status": "up"},
+            {"service_id": "unregistered", "live_status": "down"},
+        ]}, observation_available=True,
+    )
+    assert health["state"] == "ok"
+    assert health["services"][0]["routable"] is True
+    assert health["services"][1]["in_use"] is False
+
+
+def test_missing_model_path_keeps_disk_location(monkeypatch):
+    from pathlib import Path
+    def missing(self):
+        raise OSError("missing path")
+    monkeypatch.setattr(Path, "stat", missing)
+    assert _disk_pressure_reason({"target": "/", "pct_used": 96},
+                                 {"model_routing": {"model_dir": "/missing"}}).startswith("The disk at /")

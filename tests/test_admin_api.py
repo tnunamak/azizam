@@ -1626,6 +1626,17 @@ class AdminSessionTests(unittest.TestCase):
         # Bearer-key callers don't need CSRF; the field is present but empty.
         self.assertEqual(actor["csrf_token"], "")
 
+    def test_session_names_service_admin_without_a_person_identity(self) -> None:
+        app = FastAPI()
+        app.include_router(create_admin_router(FakeAdminStore(), auth=lambda request: AdminContext(
+            subject="automation", actor_kind="service_account", actor_label="CI admin",
+            roles=frozenset({"admin"}),
+        )))
+        response = TestClient(app).get("/admin/api/session")
+        assert response.status_code == 200
+        assert response.json()["actor"]["kind"] == "service_account"
+        assert response.json()["actor"]["label"] == "CI admin"
+
     def test_session_exposes_csrf_token_for_cookie_sessions(self) -> None:
         def session_auth(_request: Request) -> AdminContext:
             return AdminContext(

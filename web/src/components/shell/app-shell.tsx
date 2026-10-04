@@ -149,12 +149,14 @@ function AccountMenu() {
         <DropdownMenuLabel>{viewer.name}</DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
-          <DropdownMenuItem asChild>
-            <Link href="/apps">
-              <KeyRound />
-              Apps & keys
-            </Link>
-          </DropdownMenuItem>
+          {!viewer.serviceAdmin && (
+            <DropdownMenuItem asChild>
+              <Link href="/apps">
+                <KeyRound />
+                Apps & keys
+              </Link>
+            </DropdownMenuItem>
+          )}
           <DropdownMenuItem asChild>
             <Link href="/design">
               <BookOpen />
@@ -803,7 +805,7 @@ function Shell({ children }: { children: React.ReactNode }) {
             </div>
             <nav
               aria-label="Phone navigation"
-              className="bg-background fixed inset-x-0 bottom-0 grid grid-cols-4 border-t pb-[env(safe-area-inset-bottom)] sm:hidden"
+              className={`bg-background fixed inset-x-0 bottom-0 grid ${viewer?.serviceAdmin ? "grid-cols-3" : "grid-cols-4"} border-t pb-[env(safe-area-inset-bottom)] sm:hidden`}
             >
               {destinations
                 .filter(

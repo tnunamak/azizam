@@ -19,6 +19,7 @@ const health: CurrentHealth = {
       name: "Image engine",
       configured: true,
       enabled: true,
+      in_use: true,
       role: "required",
       routable: false,
       observation: "down",
@@ -48,6 +49,20 @@ describe("owner-wide alerts", () => {
     expect(ownerEngineAlert(health)).toBe(
       "Image engine is unavailable. Check its connection on Status.",
     );
+  });
+  it("does not alert without a proven route dependency", () => {
+    expect(
+      ownerEngineAlert({
+        ...health,
+        services: [{ ...health.services[0], in_use: undefined }],
+      }),
+    ).toBeNull();
+    expect(
+      ownerEngineAlert({
+        ...health,
+        services: [{ ...health.services[0], in_use: false }],
+      }),
+    ).toBeNull();
   });
   it("excludes disabled engines and host warnings", () => {
     expect(
