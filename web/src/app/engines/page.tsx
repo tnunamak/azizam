@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -16,7 +16,11 @@ import {
 } from "@/lib/api";
 import { CompactTouchTargets } from "@/components/ui/compact-touch-targets";
 import { EngineChecks } from "./engine-checks";
-import { groupEngines, humanCapability } from "./engine-groups";
+import {
+  groupEngines,
+  humanCapabilities,
+  humanCapability,
+} from "./engine-groups";
 import { normalizeModelConfigForPatch } from "./detected-models";
 import { AddServiceDialog } from "@/components/admin/add-service-dialog";
 import { ErrorState } from "@/components/product/error-state";
@@ -24,14 +28,7 @@ import { useViewer } from "@/components/shell/session";
 import {
   Button,
   ConfirmDialog,
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
   DialogForm,
-  DialogHeader,
-  DialogTitle,
   EmptyOperationalState,
   Field,
   IncidentBanner,
@@ -46,6 +43,13 @@ import {
 } from "@/components/ui";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 
 type Tone = "ok" | "warn" | "bad" | "neutral";
 type Backend = NonNullable<StatusPayload["backends"]>[number];
@@ -251,31 +255,39 @@ function managedUpdateBody(
   };
 }
 
+function advancedJson(service: Service): string {
+  return JSON.stringify(
+    {
+      ...service.config,
+      role: service.role,
+      priority: service.priority,
+      capabilities: service.capabilities,
+    },
+    null,
+    2,
+  );
+}
+
 function EditEngineDialog({
   service,
   onClose,
   onSaved,
+  returnFocus,
 }: {
   service: Service;
   onClose: () => void;
-  onSaved: (registry: ServiceRegistry) => void;
+  onSaved: (registry: ServiceRegistry, options?: { close?: boolean }) => void;
+  returnFocus: HTMLElement | null;
 }) {
   const [name, setName] = useState(service.name);
   const [baseUrl, setBaseUrl] = useState(composeBaseUrl(service.config));
   const [note, setNote] = useState(String(service.config.note ?? ""));
-  const [advanced, setAdvanced] = useState(
-    JSON.stringify(
-      {
-        ...service.config,
-        role: service.role,
-        priority: service.priority,
-        capabilities: service.capabilities,
-      },
-      null,
-      2,
-    ),
-  );
+  const [advanced, setAdvanced] = useState(advancedJson(service));
+  const [savedAdvanced, setSavedAdvanced] = useState(advancedJson(service));
+  const connectionChanged =
+    baseUrl !== composeBaseUrl(service.config) || advanced !== savedAdvanced;
   const [error, setError] = useState<string | null>(null);
+  const formRef = useRef<HTMLDivElement>(null);
   const edit = useMutation({
     mutationFn: () => {
       const body =
@@ -284,7 +296,7 @@ function EditEngineDialog({
           : editableUpdateBody(service, name, baseUrl, note, advanced);
       return api.services.edit(service.id, body);
     },
-    onSuccess: onSaved,
+    onSuccess: (registry) => onSaved(registry, { close: true }),
     onError: (err) => setError(errorMessage(err)),
   });
 
@@ -295,81 +307,112 @@ function EditEngineDialog({
   }
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent>
-        <DialogForm onSubmit={submit}>
-          <DialogHeader>
-            <DialogTitle>Edit engine</DialogTitle>
-            <DialogDescription>
-              Save changes to this engine’s configuration.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogBody>
-            <div className="flex flex-col gap-4">
-              {error && (
-                <IncidentBanner
-                  tone="bad"
-                  title="Engine could not be saved"
-                  detail={error}
-                />
-              )}
-              <Field label="Name" required>
+    <Sheet open onOpenChange={(open) => !open && onClose()}>
+      <SheetContent
+        className="w-full overflow-y-auto sm:max-w-2xl"
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          returnFocus?.focus();
+        }}
+      >
+        <SheetHeader className="pr-14">
+          <SheetTitle>Edit engine</SheetTitle>
+          <SheetDescription>
+            Edit configuration, test the endpoint, and detect served models.
+          </SheetDescription>
+        </SheetHeader>
+        <div ref={formRef} className="space-y-6 px-4 pb-4">
+          {connectionChanged && (
+            <p role="status" className="text-vf-small text-vf-muted">
+              Save configuration changes before testing or detecting models.
+            </p>
+          )}
+          <fieldset disabled={connectionChanged} className="min-w-0">
+            <EngineChecks
+              service={service}
+              endpoint={serviceEndpoint(service)}
+              onSaved={(registry) => {
+                const next = registry.services[service.id];
+                if (next) {
+                  const latest = advancedJson(next);
+                  setAdvanced(latest);
+                  setSavedAdvanced(latest);
+                }
+                onSaved(registry, { close: false });
+              }}
+              onEdit={() =>
+                formRef.current
+                  ?.querySelector<HTMLInputElement>("#engine-endpoint")
+                  ?.focus()
+              }
+            />
+          </fieldset>
+          <DialogForm onSubmit={submit} className="space-y-4">
+            {error && (
+              <IncidentBanner
+                tone="bad"
+                title="Engine could not be saved"
+                detail={error}
+              />
+            )}
+            <Field label="Name" required>
+              <Input
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                required
+              />
+            </Field>
+            {service.editable !== false && (
+              <Field label="Endpoint">
                 <Input
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  required
+                  id="engine-endpoint"
+                  aria-label="Endpoint"
+                  value={baseUrl}
+                  onChange={(event) => setBaseUrl(event.target.value)}
                 />
               </Field>
-              {service.editable !== false && (
-                <Field label="Endpoint">
-                  <Input
-                    value={baseUrl}
-                    onChange={(event) => setBaseUrl(event.target.value)}
+            )}
+            <Field label="Note">
+              <Textarea
+                aria-label="Note"
+                value={note}
+                onChange={(event) => setNote(event.target.value)}
+              />
+            </Field>
+            <details>
+              <summary className="flex min-h-11 cursor-pointer items-center text-sm font-medium">
+                Advanced fields
+              </summary>
+              {service.editable === false ? (
+                <pre className="text-vf-micro rounded-vf-md mt-3 max-h-72 overflow-auto bg-[var(--vf-surface-2)] p-3 font-mono">
+                  {JSON.stringify(service.config, null, 2)}
+                </pre>
+              ) : (
+                <Field
+                  label="Advanced JSON"
+                  help="Edit service config, role, priority, and capabilities here. Name, endpoint, enabled state, and note use their dedicated controls."
+                >
+                  <Textarea
+                    aria-label="Advanced JSON"
+                    className="mt-2 min-h-36 font-mono"
+                    value={advanced}
+                    onChange={(event) => setAdvanced(event.target.value)}
                   />
                 </Field>
               )}
-              <Field label="Note">
-                <Textarea
-                  aria-label="Note"
-                  value={note}
-                  onChange={(event) => setNote(event.target.value)}
-                />
-              </Field>
-              <details>
-                <summary className="flex min-h-11 cursor-pointer items-center text-sm font-medium">
-                  Advanced fields
-                </summary>
-                {service.editable === false ? (
-                  <pre className="text-vf-micro rounded-vf-md mt-3 max-h-72 overflow-auto bg-[var(--vf-surface-2)] p-3 font-mono">
-                    {JSON.stringify(service.config, null, 2)}
-                  </pre>
-                ) : (
-                  <Field
-                    label="Advanced JSON"
-                    help="Edit service config, role, priority, and capabilities here. Name, endpoint, enabled state, and note use their dedicated controls."
-                  >
-                    <Textarea
-                      aria-label="Advanced JSON"
-                      className="mt-2 min-h-36 font-mono"
-                      value={advanced}
-                      onChange={(event) => setAdvanced(event.target.value)}
-                    />
-                  </Field>
-                )}
-              </details>
+            </details>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button type="button" variant="ghost" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button type="submit" variant="primary" loading={edit.isPending}>
+                Save engine
+              </Button>
             </div>
-          </DialogBody>
-          <DialogFooter>
-            <Button type="button" variant="ghost" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" loading={edit.isPending}>
-              Save engine
-            </Button>
-          </DialogFooter>
-        </DialogForm>
-      </DialogContent>
-    </Dialog>
+          </DialogForm>
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -380,7 +423,22 @@ function EnginesContents() {
   const [showNotInUse, setShowNotInUse] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<Service | null>(null);
+  const editInvoker = useRef<HTMLElement | null>(null);
   const [removeTarget, setRemoveTarget] = useState<Service | null>(null);
+
+  function openEditor(service: Service) {
+    const row = document.querySelector<HTMLElement>(
+      `[data-engine-id="${CSS.escape(service.id)}"]`,
+    );
+    const active = document.activeElement;
+    editInvoker.current =
+      active instanceof HTMLElement && row?.contains(active)
+        ? active
+        : (row?.querySelector<HTMLButtonElement>(
+            "button[aria-haspopup='menu']",
+          ) ?? null);
+    setEditTarget(service);
+  }
 
   const {
     data: registryData,
@@ -483,20 +541,28 @@ function EnginesContents() {
     const backend = backends.get(service.id);
     const health = healthByService.get(service.id);
     const serviceState = state(service, backend, health, observationAvailable);
+    const serves =
+      humanCapabilities(service.capabilities).join(", ") ||
+      (service.capabilities.length ? "Other capabilities" : "Not assigned");
     return (
       <article
         key={service.id}
-        className={`rounded-vf-xl border bg-[var(--vf-surface)] p-5 ${
+        data-engine-id={service.id}
+        className={`rounded-vf-lg border bg-[var(--vf-surface)] px-3 py-2 ${
           service.id === selectedServiceId
             ? "border-[var(--vf-accent)] ring-2 ring-[var(--vf-accent)]/20"
             : "border-[var(--vf-border)]"
         }`}
         aria-current={service.id === selectedServiceId ? "true" : undefined}
       >
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0">
-            <div className="mb-2 flex flex-wrap items-center gap-2">
-              <h3 className="text-vf-body text-vf-text font-semibold">
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3">
+          <button
+            type="button"
+            className="min-w-0 text-left"
+            onClick={() => openEditor(service)}
+          >
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <h3 className="text-vf-body text-vf-text truncate font-semibold">
                 {engineName(service)}
               </h3>
               <StatusDotLabel
@@ -504,35 +570,35 @@ function EnginesContents() {
                 label={serviceState.label}
               />
             </div>
-            <p className="text-vf-small text-vf-subtle mt-1 font-mono break-all">
-              {serviceEndpoint(service)}
+            <p className="text-vf-small text-vf-muted mt-1 truncate">
+              Serves {serves}
             </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <label
-              htmlFor={`engine-enabled-${service.id}`}
-              className="flex min-h-11 min-w-11 items-center gap-2 px-1 text-sm"
-            >
-              <Switch
-                id={`engine-enabled-${service.id}`}
-                checked={service.enabled}
-                aria-label={`Toggle ${service.name}`}
-                disabled={toggle.isPending}
-                onCheckedChange={(enabled) =>
-                  toggle.mutate({ service, enabled })
-                }
-              />
-              Enabled
-            </label>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => setEditTarget(service)}
-            >
-              Edit
-            </Button>
+          </button>
+          <label
+            htmlFor={`engine-enabled-${service.id}`}
+            className="flex min-h-11 min-w-11 items-center gap-2 px-1 text-sm"
+          >
+            <Switch
+              id={`engine-enabled-${service.id}`}
+              checked={service.enabled}
+              aria-label={`Toggle ${service.name}`}
+              disabled={toggle.isPending}
+              onCheckedChange={(enabled) => toggle.mutate({ service, enabled })}
+            />
+            <span className="sr-only sm:not-sr-only">Enabled</span>
+          </label>
+          <OverflowMenu label={`Actions for ${service.name}`}>
+            <OverflowMenuItem onSelect={() => openEditor(service)}>
+              Edit engine
+            </OverflowMenuItem>
+            <OverflowMenuItem onSelect={() => openEditor(service)}>
+              Test engine
+            </OverflowMenuItem>
+            <OverflowMenuItem onSelect={() => openEditor(service)}>
+              Detect models
+            </OverflowMenuItem>
             {service.editable !== false && (
-              <OverflowMenu label={`Actions for ${service.name}`}>
+              <>
                 <OverflowMenuSeparator />
                 <OverflowMenuItem
                   danger
@@ -540,58 +606,41 @@ function EnginesContents() {
                 >
                   Remove engine
                 </OverflowMenuItem>
-              </OverflowMenu>
+              </>
             )}
-          </div>
+          </OverflowMenu>
         </div>
-        <details className="mt-2">
-          <summary className="flex min-h-11 cursor-pointer items-center text-sm font-medium">
-            Connection and models
+        <details className="mt-1">
+          <summary className="text-vf-small text-vf-muted flex min-h-11 cursor-pointer items-center">
+            Details
           </summary>
-          <dl className="mt-3 grid gap-4 md:grid-cols-3">
+          <dl className="grid gap-3 pb-2 md:grid-cols-3">
             <div>
-              <dt className="text-vf-micro text-vf-subtle">Role</dt>
+              <dt className="text-vf-micro text-vf-subtle">Endpoint</dt>
               <dd className="text-vf-small text-vf-text">
-                {service.role ?? "optional"}
+                <span className="break-all">{serviceEndpoint(service)}</span>
+              </dd>
+            </div>
+            <div>
+              <dt className="text-vf-micro text-vf-subtle">Models served</dt>
+              <dd className="text-vf-small text-vf-text">
+                <span className="break-words">{modelNames(service)}</span>
               </dd>
             </div>
             <div>
               <dt className="text-vf-micro text-vf-subtle">Capabilities</dt>
               <dd className="text-vf-small text-vf-text">
                 {service.capabilities.map(humanCapability).join(", ") ||
-                  "No capabilities configured"}
+                  "Not assigned"}
               </dd>
             </div>
             <div>
-              <dt className="text-vf-micro text-vf-subtle">Served models</dt>
+              <dt className="text-vf-micro text-vf-subtle">Role</dt>
               <dd className="text-vf-small text-vf-text">
-                <span className="break-words">{modelNames(service)}</span>
+                {service.role ?? "optional"}
               </dd>
             </div>
           </dl>
-          <EngineChecks
-            service={service}
-            endpoint={serviceEndpoint(service)}
-            onSaved={updateRegistry}
-            onEdit={() => setEditTarget(service)}
-          />
-        </details>
-        <details className="mt-1">
-          <summary className="flex min-h-11 cursor-pointer items-center text-sm font-medium">
-            Advanced
-          </summary>
-          <pre className="text-vf-micro rounded-vf-md mt-3 max-h-72 overflow-auto bg-[var(--vf-surface-2)] p-3 font-mono">
-            {JSON.stringify(
-              {
-                id: service.id,
-                kind: service.kind,
-                source: service.source,
-                config: service.config,
-              },
-              null,
-              2,
-            )}
-          </pre>
         </details>
       </article>
     );
@@ -638,7 +687,7 @@ function EnginesContents() {
       <SectionActionHeader
         as="h1"
         title="Engines"
-        description="These local engines are available to the gateway."
+        description="Connect or fix local engines."
         action={
           <Button variant="primary" onClick={() => setAddOpen(true)}>
             Add engine
@@ -650,10 +699,6 @@ function EnginesContents() {
         <div>
           <p className="text-vf-body text-vf-text font-medium">
             {visibleCount} shown · {services.length} total
-          </p>
-          <p className="text-vf-small text-vf-muted">
-            Group engines by what they serve. Standby and fallback engines sit
-            under their primary.
           </p>
         </div>
         <label
@@ -761,11 +806,14 @@ function EnginesContents() {
       {editTarget && (
         <EditEngineDialog
           service={editTarget}
+          returnFocus={editInvoker.current}
           onClose={() => setEditTarget(null)}
-          onSaved={(registry) => {
+          onSaved={(registry, options) => {
             updateRegistry(registry);
-            setEditTarget(null);
-            toast.success("Engine saved");
+            if (options?.close) {
+              setEditTarget(null);
+              toast.success("Engine saved");
+            }
           }}
         />
       )}

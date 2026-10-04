@@ -101,17 +101,32 @@ test("real registry journey preserves disabled state and unknown config through 
   expect(legacySeeded.ok()).toBe(true);
   await page.reload();
   let card = page.locator("article").filter({ hasText: "Journey engine" });
-  await card.getByRole("button", { name: "Test", exact: true }).click();
-  await expect(page.getByText(/Connected to/).first()).toBeVisible();
-  await card.getByRole("button", { name: "Detect", exact: true }).click();
-  await expect(page.getByText(/Detected models:/).first()).toBeVisible();
+  await card.getByRole("button", { name: /Actions|More/ }).click();
+  await page
+    .getByRole("menuitem", { name: "Test engine", exact: true })
+    .click();
+  let sheet = page.getByRole("dialog", { name: "Edit engine", exact: true });
+  await sheet.getByRole("button", { name: "Test", exact: true }).click();
+  await expect(sheet.getByText(/Connected to/).first()).toBeVisible();
+  await page.keyboard.press("Escape");
+  await card.getByRole("button", { name: /Actions|More/ }).click();
+  await page
+    .getByRole("menuitem", { name: "Detect models", exact: true })
+    .click();
+  sheet = page.getByRole("dialog", { name: "Edit engine", exact: true });
+  await sheet.getByRole("button", { name: "Detect", exact: true }).click();
+  await expect(sheet.getByText(/Detected models:/).first()).toBeVisible();
+  await page.keyboard.press("Escape");
   await card
     .getByRole("switch", { name: "Toggle Journey engine", exact: true })
     .click();
   await expect(card).toHaveCount(0);
-  await page.getByText("Show disabled", { exact: true }).click();
+  await page.getByRole("switch", { name: "Show not in use" }).click();
   await expect(card).toBeVisible();
-  await card.getByRole("button", { name: "Edit", exact: true }).click();
+  await card.getByRole("button", { name: /Actions|More/ }).click();
+  await page
+    .getByRole("menuitem", { name: "Edit engine", exact: true })
+    .click();
   const edit = page.getByRole("dialog", { name: "Edit engine", exact: true });
   await edit.getByLabel(/^Name/).fill("Renamed journey engine");
   await edit

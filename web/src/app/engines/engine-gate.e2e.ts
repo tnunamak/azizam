@@ -302,6 +302,38 @@ async function checkPageBasics(page: Page, screenshotName: string) {
   });
 }
 
+function engineCard(page: Page, name: string) {
+  return page.locator("article").filter({ hasText: name });
+}
+
+async function openEngineEdit(
+  page: Page,
+  card: ReturnType<typeof engineCard>,
+  serviceName: string,
+) {
+  const summary = card
+    .getByRole("button", { name: new RegExp(serviceName) })
+    .first();
+  if (await summary.isVisible()) {
+    await summary.click();
+    return page.getByRole("dialog", { name: "Edit engine" });
+  }
+  await card
+    .getByRole("button", { name: `Actions for ${serviceName}` })
+    .click();
+  await page.getByRole("menuitem", { name: "Edit engine" }).click();
+  return page.getByRole("dialog", { name: "Edit engine" });
+}
+
+async function openEngineActions(
+  card: ReturnType<typeof engineCard>,
+  serviceName: string,
+) {
+  await card
+    .getByRole("button", { name: `Actions for ${serviceName}` })
+    .click();
+}
+
 for (const theme of ["light", "dark"] as const) {
   for (const width of [1440, 390]) {
     for (const route of ["engines", "services"]) {
@@ -320,37 +352,30 @@ for (const theme of ["light", "dark"] as const) {
         await expect(
           page.getByRole("heading", { name: "Engines", level: 1 }),
         ).toBeVisible();
+        const initialChat = engineCard(page, "Local chat engine");
         await expect(
-          page
-            .locator("article")
-            .filter({ hasText: "Local chat engine" })
-            .getByRole("heading", { name: "Local chat engine" }),
+          initialChat.getByRole("heading", { name: "Local chat engine" }),
         ).toBeVisible();
-        const initialChat = page
-          .locator("article")
-          .filter({ hasText: "Local chat engine" });
-        await initialChat
-          .getByText("Connection and models", { exact: true })
-          .click();
+        await initialChat.getByText("Details", { exact: true }).click();
         await expect(
-          page.getByText("legacy-chat", { exact: true }),
+          initialChat.getByText("legacy-chat", { exact: true }),
         ).toBeVisible();
         await expect(page.getByText("Local image engine")).toHaveCount(0);
         await page.getByRole("switch", { name: "Show not in use" }).click();
         await expect(page.getByText("Local image engine")).toBeVisible();
 
-        const chatCard = page
-          .locator("article")
-          .filter({ hasText: "Local chat engine" });
-        await chatCard.getByRole("button", { name: "Test" }).click();
-        await expect(page.getByText("Connected to")).toBeVisible();
-        await chatCard.getByRole("button", { name: "Detect" }).click();
+        const chatCard = engineCard(page, "Local chat engine");
+        const editSheet = await openEngineEdit(
+          page,
+          chatCard,
+          "Local chat engine",
+        );
+        await expect(editSheet).toBeVisible();
+        await editSheet.getByRole("button", { name: "Test" }).click();
+        await expect(editSheet.getByText("Connected to")).toBeVisible();
+        await editSheet.getByRole("button", { name: "Detect" }).click();
         await expect(
-          page.getByText("Detected models: demo-chat"),
-        ).toBeVisible();
-        await chatCard.getByRole("button", { name: "Edit" }).click();
-        await expect(
-          page.getByRole("dialog", { name: "Edit engine" }),
+          editSheet.getByText("Detected models: demo-chat"),
         ).toBeVisible();
         await page.keyboard.press("Escape");
 
@@ -456,11 +481,8 @@ test("engines add, edit, toggle, and remove use existing APIs safely", async ({
   await addDialog.getByRole("button", { name: "Add engine" }).click();
   await expect(page.getByText("Engine added")).toBeVisible();
 
-  const chatCard = page
-    .locator("article")
-    .filter({ hasText: "Local chat engine" });
-  await chatCard.getByRole("button", { name: "Edit" }).click();
-  const dialog = page.getByRole("dialog", { name: "Edit engine" });
+  const chatCard = engineCard(page, "Local chat engine");
+  const dialog = await openEngineEdit(page, chatCard, "Local chat engine");
   await dialog.getByLabel("Name").fill("Renamed chat engine");
   await dialog.getByLabel("Endpoint").fill("https://example.test/v1");
   await dialog.getByRole("button", { name: "Save engine" }).click();
@@ -479,28 +501,23 @@ test("engines add, edit, toggle, and remove use existing APIs safely", async ({
   await dialog.getByLabel("Advanced JSON", { exact: true }).fill(config);
   await dialog.getByLabel("Endpoint").fill("http://127.0.0.1:19000/v1");
   await dialog.getByRole("button", { name: "Save engine" }).click();
-  await expect(page.getByText("Engine saved")).toBeVisible();
+  await expect(dialog).not.toBeVisible();
 
-  await page
-    .locator("article")
-    .filter({ hasText: "Gateway substrate" })
-    .getByRole("button", { name: "Edit" })
-    .click();
-  const managedDialog = page.getByRole("dialog", { name: "Edit engine" });
+  const managedDialog = await openEngineEdit(
+    page,
+    engineCard(page, "Gateway substrate"),
+    "Gateway substrate",
+  );
   await managedDialog.getByLabel("Name").fill("Renamed substrate");
   await managedDialog.getByLabel("Note").fill("Managed note changed.");
   await expect(managedDialog.getByLabel("Endpoint")).toHaveCount(0);
   await managedDialog.getByRole("button", { name: "Save engine" }).click();
-  await expect(page.getByText("Engine saved")).toBeVisible();
+  await expect(managedDialog).not.toBeVisible();
 
   await page.getByRole("switch", { name: "Toggle Local chat engine" }).click();
   await page.getByRole("switch", { name: "Show not in use" }).click();
-  const imageCard = page
-    .locator("article")
-    .filter({ hasText: "Local image engine" });
-  await imageCard
-    .getByRole("button", { name: "Actions for Local image engine" })
-    .click();
+  const imageCard = engineCard(page, "Local image engine");
+  await openEngineActions(imageCard, "Local image engine");
   await page.getByRole("menuitem", { name: "Remove engine" }).click();
   await page
     .getByRole("dialog", { name: "Remove engine?", exact: true })
@@ -659,16 +676,12 @@ test("standby engines stay collapsed under primary, and presets belong to Add", 
   await expect(
     page.getByRole("heading", { name: "Backup chat engine", exact: true }),
   ).toBeVisible();
-  const backup = page
-    .locator("article")
-    .filter({ hasText: "Backup chat engine" });
+  const backup = engineCard(page, "Backup chat engine");
+  const backupSheet = await openEngineEdit(page, backup, "Backup chat engine");
   await expect(
-    backup.getByRole("button", { name: "Edit", exact: true }),
+    backupSheet.getByRole("button", { name: "Test", exact: true }),
   ).toBeVisible();
-  await backup.getByText("Connection and models", { exact: true }).click();
-  await expect(
-    backup.getByRole("button", { name: "Test", exact: true }),
-  ).toBeVisible();
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Add engine", exact: true }).click();
   const add = page.getByRole("dialog", { name: "Add engine", exact: true });
   await expect(

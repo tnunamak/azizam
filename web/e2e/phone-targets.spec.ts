@@ -203,6 +203,14 @@ async function expectNoOverlap(targets: Locator[]) {
   }
 }
 
+function engineCard(page: Page, name: string) {
+  return page.locator("article").filter({ hasText: name });
+}
+
+function engineSummaryButton(card: Locator, serviceName: string) {
+  return card.getByRole("button", { name: new RegExp(serviceName) }).first();
+}
+
 test.describe("phone target primitives", () => {
   for (const theme of ["light", "dark"] as const) {
     for (const width of [1440, 390] as const) {
@@ -216,12 +224,10 @@ test.describe("phone target primitives", () => {
           page.getByRole("heading", { name: "Engines", level: 1 }),
         ).toBeVisible();
 
-        const showDisabled = page.getByRole("switch", {
-          name: "Show disabled",
+        const showNotInUse = page.getByRole("switch", {
+          name: "Show not in use",
         });
-        const chatCard = page
-          .locator("article")
-          .filter({ hasText: "Local chat engine" });
+        const chatCard = engineCard(page, "Local chat engine");
         const engineToggle = chatCard.getByRole("switch", {
           name: "Toggle Local chat engine",
         });
@@ -233,38 +239,48 @@ test.describe("phone target primitives", () => {
           32,
           18,
         );
-        const actions = [
-          page.getByRole("button", { name: "Add engine" }).first(),
-          chatCard.getByRole("button", { name: "Test" }),
-          chatCard.getByRole("button", { name: "Detect" }),
-          chatCard.getByRole("button", { name: "Edit" }),
-        ];
+        const addEngine = page
+          .getByRole("button", { name: "Add engine" })
+          .first();
+        const summaryButton = engineSummaryButton(
+          chatCard,
+          "Local chat engine",
+        );
 
         if (width === 390) {
-          await expectMinBox(showDisabled, 44, 44);
+          await expectMinBox(showNotInUse, 44, 44);
           await expectMinBox(engineToggle, 44, 44);
-          for (const action of actions) await expectMinBox(action, 44, 44);
+          await expectMinBox(addEngine, 44, 44);
+          await expectMinBox(summaryButton, 44, 44);
           await expectMinBox(overflow, 44, 44);
-          await expectNoOverlap([engineToggle, ...actions.slice(1), overflow]);
+          await expectNoOverlap([engineToggle, summaryButton, overflow]);
 
-          const showBox = await showDisabled.boundingBox();
-          if (!showBox) throw new Error("Show disabled switch did not render");
+          const showBox = await showNotInUse.boundingBox();
+          if (!showBox)
+            throw new Error("Show not in use switch did not render");
           await page.mouse.click(showBox.x + 4, showBox.y + showBox.height / 2);
-          await expect(page.getByText("Image & Video (comfy)")).toBeVisible();
-          await showDisabled.focus();
+          await expect(page.getByText("Local image engine")).toBeVisible();
+          await showNotInUse.focus();
           await page.keyboard.press("Space");
-          await expect(page.getByText("Image & Video (comfy)")).toHaveCount(0);
+          await expect(page.getByText("Local image engine")).toHaveCount(0);
         } else {
           await expectCompactBox(engineToggle, 32, 18);
-          for (const action of actions.slice(1))
-            await expectCompactHeight(action, 32);
+          await expectMinBox(summaryButton, 44, 44);
         }
 
-        const editButton = chatCard.getByRole("button", { name: "Edit" });
-        await editButton.focus();
+        await summaryButton.focus();
         await page.keyboard.press("Enter");
         const dialog = page.getByRole("dialog", { name: "Edit engine" });
         await expect(dialog).toBeVisible();
+        const testButton = dialog.getByRole("button", { name: "Test" });
+        const detectButton = dialog.getByRole("button", { name: "Detect" });
+        if (width === 390) {
+          await expectMinBox(testButton, 44, 44);
+          await expectMinBox(detectButton, 44, 44);
+        } else {
+          await expectCompactHeight(testButton, 32);
+          await expectCompactHeight(detectButton, 32);
+        }
         await expectNoSeriousAxeOrOverflow(page);
         if (width === 390) {
           await expectMinBox(
@@ -285,8 +301,7 @@ test.describe("phone target primitives", () => {
         }
         await page.keyboard.press("Escape");
         await expect(dialog).toHaveCount(0);
-        // This page opens without DialogTrigger; its focus-return gap belongs
-        // to the page lane. The paired design dialog below verifies that path.
+        await expect(summaryButton).toBeFocused();
 
         await expectNoSeriousAxeOrOverflow(page);
         await page.screenshot({

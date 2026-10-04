@@ -69,14 +69,18 @@ describe("engine progressive disclosure", () => {
     expect(screen.queryByText("Available presets")).not.toBeInTheDocument();
     expect(presets).not.toHaveBeenCalled();
     const article = primary.closest("article")!;
-    expect(within(article).getByRole("button", { name: "Edit" })).toBeVisible();
+    const rowButton = within(article).getByRole("button", {
+      name: /^primary\b/,
+    });
+    expect(rowButton).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Test primary" })).toBeNull();
+    await user.click(rowButton);
+    const sheet = await screen.findByRole("dialog", { name: "Edit engine" });
     expect(
-      within(article).getByRole("button", { name: "Test primary" }),
-    ).not.toBeVisible();
-    await user.click(within(article).getByText("Connection and models"));
-    expect(
-      within(article).getByRole("button", { name: "Test primary" }),
+      within(sheet).getByRole("button", { name: "Test primary" }),
     ).toBeVisible();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Edit engine" })).toBeNull();
     await user.click(screen.getByText("Standby and fallback engines (1)"));
     expect(screen.getByRole("heading", { name: "standby" })).toBeVisible();
     await user.click(screen.getByRole("switch", { name: "Show not in use" }));

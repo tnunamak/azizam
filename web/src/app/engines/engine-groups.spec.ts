@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CurrentHealthService, Service } from "@/lib/api";
-import { groupEngines } from "./engine-groups";
+import { groupEngines, humanCapabilities } from "./engine-groups";
 
 function service(id: string, patch: Partial<Service> = {}): Service {
   return {
@@ -92,5 +92,32 @@ describe("engine capability groups", () => {
     expect(
       groupEngines([service("unknown")], new Map(), false, null).hiddenCount,
     ).toBe(0);
+  });
+
+  it("omits protocol tags from user-facing capability summaries and groups without changing raw data", () => {
+    const rows = [
+      service("api", {
+        capabilities: ["openai", "chat", "completions", "llm_execution"],
+      }),
+      service("protocol-only", {
+        capabilities: ["typesafe_systemone"],
+      }),
+    ];
+
+    expect(humanCapabilities(rows[0].capabilities)).toEqual(["Chat", "Text"]);
+    expect(rows[0].capabilities).toEqual([
+      "openai",
+      "chat",
+      "completions",
+      "llm_execution",
+    ]);
+
+    const { groups } = groupEngines(rows, new Map(), false, null);
+    expect(groups.map((group) => group.capability)).toEqual([
+      "Chat",
+      "Other engines",
+    ]);
+    expect(groups[0].entries[0].service.id).toBe("api");
+    expect(groups[1].entries[0].service.id).toBe("protocol-only");
   });
 });

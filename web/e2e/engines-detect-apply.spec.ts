@@ -242,30 +242,57 @@ for (const theme of ["light", "dark"]) {
       const card = page
         .locator("article")
         .filter({ hasText: `Strict engine ${suffix}` });
-      await card.getByRole("button", { name: "Detect", exact: true }).click();
-      await expect(
-        card.getByRole("heading", { name: "Preview detected models" }),
-      ).toBeVisible();
-      await card.getByLabel("Public name for strict-chat").fill(publicName);
-      await expect(
-        card.getByRole("button", { name: "Apply models" }),
-      ).toBeDisabled();
       if (width === 390) {
-        for (const label of ["Detect", "Test", "Edit"]) {
-          const box = await card
-            .getByRole("button", { name: label, exact: true })
-            .boundingBox();
-          expect(box!.height).toBeGreaterThanOrEqual(44);
-          expect(box!.width).toBeGreaterThanOrEqual(44);
-        }
+        const actionBox = await card
+          .getByRole("button", { name: /Actions|More/ })
+          .boundingBox();
+        expect(actionBox!.height).toBeGreaterThanOrEqual(44);
+        expect(actionBox!.width).toBeGreaterThanOrEqual(44);
         const labelBox = await card
           .locator(`label[for='engine-enabled-${serviceId}']`)
           .boundingBox();
         expect(labelBox!.height).toBeGreaterThanOrEqual(44);
       }
+      await card.getByRole("button", { name: /Actions|More/ }).click();
+      await page
+        .getByRole("menuitem", { name: "Detect models", exact: true })
+        .click();
+      const sheet = page.getByRole("dialog", {
+        name: "Edit engine",
+        exact: true,
+      });
+      const originalEndpoint = await sheet
+        .getByLabel("Endpoint", { exact: true })
+        .inputValue();
+      await sheet
+        .getByLabel("Endpoint", { exact: true })
+        .fill("http://127.0.0.1:18990/v1");
+      await expect(
+        sheet.getByRole("button", { name: "Test", exact: true }),
+      ).toBeDisabled();
+      await expect(
+        sheet.getByRole("button", { name: "Detect", exact: true }),
+      ).toBeDisabled();
+      await expect(
+        sheet.getByText(
+          "Save configuration changes before testing or detecting models.",
+        ),
+      ).toBeVisible();
+      await sheet
+        .getByLabel("Endpoint", { exact: true })
+        .fill(originalEndpoint);
+      await sheet.getByLabel("Note").fill("Draft retained after model apply");
+      await sheet.getByRole("button", { name: "Detect", exact: true }).click();
+      await expect(
+        sheet.getByRole("heading", { name: "Preview detected models" }),
+      ).toBeVisible();
+      await sheet.getByLabel("Public name for strict-chat").fill(publicName);
+      await expect(
+        sheet.getByRole("button", { name: "Apply models" }),
+      ).toBeDisabled();
       await checkVisuals(page, `engines-preview-${suffix}`);
       if (width === 390) {
-        const consent = card.getByLabel(
+        const consent = sheet.getByLabel(
           "Use existing access rules for these models",
         );
         await consent.evaluate((element) =>
@@ -286,17 +313,25 @@ for (const theme of ["light", "dark"]) {
           path: `test-results/screens/engines-consent-viewport-${suffix}.png`,
         });
       }
-      await card
+      await sheet
         .getByLabel("Use existing access rules for these models")
         .check();
-      await card.getByRole("button", { name: "Apply models" }).click();
-      await expect(card.getByText(`${serviceId}`, { exact: true })).toHaveCount(
-        0,
-      );
+      await sheet.getByRole("button", { name: "Apply models" }).click();
       await expect(
-        card.getByText(`${publicName}`, { exact: true }),
-      ).toBeVisible();
-      await expect(card.getByText(/models applied/)).toBeVisible();
+        sheet.getByText(`${serviceId}`, { exact: true }),
+      ).toHaveCount(0);
+      await expect(sheet.getByText(/models applied/)).toBeVisible();
+      await sheet.getByText("Advanced fields", { exact: true }).click();
+      await expect(sheet.getByLabel("Advanced JSON")).toHaveValue(
+        new RegExp(publicName),
+      );
+      await expect(sheet.getByLabel("Note")).toHaveValue(
+        "Draft retained after model apply",
+      );
+      await sheet
+        .getByRole("button", { name: "Save engine", exact: true })
+        .click();
+      await expect(sheet).not.toBeVisible();
       const registry = (
         await (
           await page.request.get("/admin/api/operator/service-registry")
@@ -315,6 +350,9 @@ for (const theme of ["light", "dark"]) {
       ).toBe(1);
       expect(registry.services[serviceId].config.custom_operator_field).toBe(
         "preserve",
+      );
+      expect(registry.services[serviceId].config.note).toBe(
+        "Draft retained after model apply",
       );
       expect(registry.services[serviceId].enabled).toBe(true);
       const unchanged = (
@@ -406,26 +444,28 @@ for (const theme of ["light", "dark"]) {
       const card = page
         .locator("article")
         .filter({ hasText: "Local test engine" });
-      await card.getByRole("button", { name: "Test", exact: true }).click();
-      await expect(card.getByRole("alert")).toContainText(
+      await card.getByRole("button", { name: /Actions|More/ }).click();
+      await page
+        .getByRole("menuitem", { name: "Test engine", exact: true })
+        .click();
+      const sheet = page.getByRole("dialog", { name: "Edit engine" });
+      await sheet.getByRole("button", { name: "Test", exact: true }).click();
+      await expect(sheet.getByRole("alert")).toContainText(
         "Local test engine: connection failed",
       );
-      await expect(card.getByRole("alert")).toContainText(
+      await expect(sheet.getByRole("alert")).toContainText(
         "http://127.0.0.1:18498/health (HTTP 503)",
       );
-      await expect(card.getByRole("alert")).toContainText(
+      await expect(sheet.getByRole("alert")).toContainText(
         "reachable from the gateway",
       );
       await checkVisuals(page, `engines-failed-${theme}-${width}`);
-      await card.getByRole("button", { name: "Edit endpoint" }).click();
-      await expect(
-        page.getByRole("dialog", { name: "Edit engine" }),
-      ).toBeVisible();
-      await page.keyboard.press("Escape");
+      await sheet.getByRole("button", { name: "Edit endpoint" }).click();
+      await expect(sheet).toBeVisible();
       failing = false;
-      await card.getByRole("button", { name: "Retry test" }).click();
-      await expect(card.getByText(/connection passed/)).toBeVisible();
-      await expect(card.getByRole("alert")).toHaveCount(0);
+      await sheet.getByRole("button", { name: "Retry test" }).click();
+      await expect(sheet.getByText(/connection passed/)).toBeVisible();
+      await expect(sheet.getByRole("alert")).toHaveCount(0);
     });
   }
 }
@@ -448,16 +488,21 @@ test("a registry conflict preserves the detected-model preview for retry", async
   });
   await page.goto("/ui/engines/?service=capture-engine");
   const card = page.locator("article").filter({ hasText: "Local test engine" });
-  await card.getByRole("button", { name: "Detect", exact: true }).click();
-  await card.getByLabel("Public name for demo-chat").fill("draft-chat");
-  await card.getByLabel("Use existing access rules for these models").check();
-  await card.getByRole("button", { name: "Apply models" }).click();
-  await expect(card.getByRole("alert")).toContainText("The registry changed");
-  await expect(card.getByLabel("Public name for demo-chat")).toHaveValue(
+  await card.getByRole("button", { name: /Actions|More/ }).click();
+  await page
+    .getByRole("menuitem", { name: "Detect models", exact: true })
+    .click();
+  const sheet = page.getByRole("dialog", { name: "Edit engine", exact: true });
+  await sheet.getByRole("button", { name: "Detect", exact: true }).click();
+  await sheet.getByLabel("Public name for demo-chat").fill("draft-chat");
+  await sheet.getByLabel("Use existing access rules for these models").check();
+  await sheet.getByRole("button", { name: "Apply models" }).click();
+  await expect(sheet.getByRole("alert")).toContainText("The registry changed");
+  await expect(sheet.getByLabel("Public name for demo-chat")).toHaveValue(
     "draft-chat",
   );
   await expect(
-    card.getByRole("button", { name: "Apply models" }),
+    sheet.getByRole("button", { name: "Apply models" }),
   ).toBeEnabled();
-  await expect(card.getByText(/models applied/)).toHaveCount(0);
+  await expect(sheet.getByText(/models applied/)).toHaveCount(0);
 });

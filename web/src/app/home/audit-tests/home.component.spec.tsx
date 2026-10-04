@@ -380,8 +380,6 @@ describe("Home audit component behavior", () => {
     expect(
       screen.getByText(/Models without an alias may still be available/),
     ).toBeVisible();
-    expect(
-      screen.queryByRole("textbox", { name: "Model", exact: true }),
-    ).toBeNull();
+    expect(screen.queryByRole("textbox", { name: /^Model$/ })).toBeNull();
   });
 });

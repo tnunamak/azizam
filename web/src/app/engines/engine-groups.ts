@@ -3,17 +3,23 @@ import type { CurrentHealthService, Service } from "@/lib/api";
 const CAPABILITY_LABELS: Record<string, string> = {
   chat: "Chat",
   completions: "Text",
+  text: "Text",
+  audio: "Audio",
+  transcriptions: "Transcription",
+  generations: "Images",
+  videos: "Video",
+  realtime: "Realtime",
   image: "Images",
   images: "Images",
   video: "Video",
   speech: "Speech",
   tts: "Speech",
-  transcribe: "Transcribe",
-  transcription: "Transcribe",
-  stt: "Transcribe",
+  transcribe: "Transcription",
+  transcription: "Transcription",
+  stt: "Transcription",
   embeddings: "Embeddings",
   embed: "Embeddings",
-  rerank: "Rerank",
+  rerank: "Reranking",
   decide: "Decisions",
   decisions: "Decisions",
 };
@@ -25,6 +31,22 @@ export function humanCapability(capability: string): string {
       .replace(/[._-]+/g, " ")
       .replace(/\b\w/g, (letter) => letter.toUpperCase())
   );
+}
+
+export function humanCapabilities(capabilities: string[]): string[] {
+  const labels: string[] = [];
+  for (const capability of capabilities) {
+    // Summaries use the stable public capability vocabulary. Custom registry
+    // tags remain available in Details and Advanced fields.
+    const label = CAPABILITY_LABELS[capability.toLowerCase()];
+    if (!label) continue;
+    if (!labels.includes(label)) labels.push(label);
+  }
+  return labels;
+}
+
+function primaryHumanCapability(capabilities: string[]): string | null {
+  return humanCapabilities(capabilities)[0] ?? null;
 }
 
 export type EngineEntry = { service: Service; alternatives: Service[] };
@@ -47,9 +69,8 @@ export function groupEngines(
   const byCapability = new Map<string, Service[]>();
   for (const service of visible) {
     // A multi-capability engine appears once, under its first declared capability.
-    const capability = service.capabilities.length
-      ? humanCapability(service.capabilities[0])
-      : "Other engines";
+    const capability =
+      primaryHumanCapability(service.capabilities) ?? "Other engines";
     const rows = byCapability.get(capability) ?? [];
     rows.push(service);
     byCapability.set(capability, rows);
