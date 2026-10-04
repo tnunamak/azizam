@@ -111,6 +111,7 @@ from gateway.admin_api import (
 )
 from gateway.admin_catalog import admin_api_surfaces, profile_policy_catalog
 from gateway.settings_api import create_settings_router, instance_settings
+from gateway.lan_auth_policy import DEFAULT_LAN_PLACEHOLDER_KEYS, lan_placeholder_keys
 from gateway.activity_api import create_activity_router
 from gateway.setup_api import build_setup_api_router
 from gateway.config_sources import KNOWN_ENV_SOURCE_NAMES, inventory_config_sources
@@ -2053,19 +2054,24 @@ def normalize_key_hash(key_hash: str) -> str:
     return runtime_normalize_key_hash(key_hash)
 
 
-def get_client_api_key_from_headers(headers) -> str:
+def get_client_api_key_from_headers(headers, *, ignored_keys: Sequence[str] = ()) -> str:
     """Extract the caller's proxy key from OpenAI-compatible auth headers."""
-    auth_header = headers.get("authorization", "")
-    if auth_header.lower().startswith("bearer "):
-        parts = auth_header.split(None, 1)
-        if len(parts) == 2:
-            return parts[1].strip()
-        return ""
+    auth_headers = headers.getlist("authorization") if ignored_keys and hasattr(headers, "getlist") else [headers.get("authorization", "")]
+    for auth_header in auth_headers:
+        if auth_header.lower().startswith("bearer "):
+            parts = auth_header.split(None, 1)
+            if len(parts) == 2:
+                key = parts[1].strip()
+                if key not in ignored_keys:
+                    return key
+            else:
+                return ""
 
     for header_name in ("x-api-key", "api-key"):
-        api_key = headers.get(header_name, "")
-        if api_key:
-            return api_key.strip()
+        values = headers.getlist(header_name) if ignored_keys and hasattr(headers, "getlist") else [headers.get(header_name, "")]
+        for api_key in values:
+            if api_key and api_key.strip() not in ignored_keys:
+                return api_key.strip()
 
     return ""
 
@@ -2316,11 +2322,16 @@ def _identity_for(name: str, marker: str):
 
 def _resolve_client_api_key(request: Request) -> str:
     """Header Bearer/x-api-key, then optional ?api_key= fallback."""
-    key = get_client_api_key_from_headers(request.headers)
+    ignored = lan_placeholder_keys(ADMIN_STORE.path) if _client_is_lan(request) else ()
+    key = get_client_api_key_from_headers(request.headers, ignored_keys=ignored)
     if key:
         return key
     if ALLOW_QUERY_PARAM_KEY:
-        return (request.query_params.get("api_key") or "").strip()
+        values = request.query_params.getlist("api_key") if ignored else [request.query_params.get("api_key") or ""]
+        for value in values:
+            key = value.strip()
+            if key and key not in ignored:
+                return key
     return ""
 
 
@@ -2377,8 +2388,8 @@ def authenticate_request(request: Request, request_path: str) -> AuthContext | R
         return NO_AUTH_CONTEXT
 
     # 1. Header Bearer / x-api-key, then optional ?api_key= query fallback.
-    # If a caller sends a credential, validate it even on LAN so member
-    # identity, ownership, and revocation are not hidden by anonymous bypass.
+    # Configured LAN placeholders are absent during credential resolution.
+    # Every other supplied key retains its identity and revocation checks.
     api_key = _resolve_client_api_key(request)
     if api_key:
         key_hash = hash_api_key(api_key)
@@ -2425,7 +2436,13 @@ def authenticate_runtime_or_litellm_request(
 
     if allow_litellm_delegation and AUTH_ENABLED:
         api_key = _resolve_client_api_key(request)
-        if api_key and _looks_like_litellm_virtual_key(api_key):
+        # Public placeholders never become delegated credentials, including
+        # sk-local when the operator removes it from LAN exemptions.
+        if (
+            api_key and _looks_like_litellm_virtual_key(api_key)
+            and api_key not in DEFAULT_LAN_PLACEHOLDER_KEYS
+            and api_key not in lan_placeholder_keys(ADMIN_STORE.path)
+        ):
             return RuntimeRouteAuth(
                 auth_context=NO_AUTH_CONTEXT,
                 delegated_litellm_api_key=api_key,
@@ -17704,8 +17721,11 @@ async def _handle_realtime(websocket: WebSocket) -> None:
     offered = [p.strip() for p in websocket.headers.get("sec-websocket-protocol", "").split(",") if p.strip()]
     subprotocol_key = realtime_proxy.key_from_subprotocols(offered)
     caller: HTTPConnection = websocket
-    if subprotocol_key and not get_client_api_key_from_headers(websocket.headers):
-        caller = HTTPConnection({**websocket.scope, "headers": [*websocket.scope["headers"], (b"authorization", f"Bearer {subprotocol_key}".encode())]})
+    ignored = lan_placeholder_keys(ADMIN_STORE.path) if _client_is_lan(websocket) else ()
+    if subprotocol_key and not get_client_api_key_from_headers(websocket.headers, ignored_keys=ignored):
+        headers = [(name, value) for name, value in websocket.scope["headers"] if name.lower() != b"authorization"]
+        headers.append((b"authorization", f"Bearer {subprotocol_key}".encode()))
+        caller = HTTPConnection({**websocket.scope, "headers": headers})
     auth_context = authenticate_request(caller, "/v1/realtime")
     if isinstance(auth_context, Response):
         return await _deny_realtime(websocket, auth_context)

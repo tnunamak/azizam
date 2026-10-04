@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 import pytest
 from starlette.requests import Request
 from starlette.responses import Response
+from starlette.testclient import WebSocketDenialResponse
 
 import proxy
 from gateway import admin_store
@@ -69,6 +70,18 @@ def test_placeholder_public_is_invalid_even_on_delegated_routes(gateway, key):
     assert delegated.status_code == 401
 
 
+def test_public_sk_local_http_request_is_denied_before_forwarding(gateway, monkeypatch):
+    async def no_execution(*args, **kwargs):
+        pytest.fail("Public placeholder reached execution")
+
+    monkeypatch.setattr(proxy, "send_llm_execution_request", no_execution)
+    client = TestClient(proxy.app, base_url="https://gateway.example", client=("203.0.113.10", 41000))
+    response = client.post("/v1/chat/completions", headers={"authorization": "Bearer sk-local"}, json={
+        "model": "placeholder-test", "messages": [{"role": "user", "content": "hello"}],
+    })
+    assert response.status_code == 401
+
+
 @pytest.mark.parametrize("forwarded", [None, "garbage", "192.168.1.25, 203.0.113.10"])
 def test_placeholder_cannot_use_unresolved_or_public_proxy_peer(gateway, forwarded):
     auth = proxy.authenticate_request(request("lan", peer="192.168.1.4", forwarded=forwarded), "/v1/models")
@@ -101,6 +114,24 @@ def test_valid_member_key_and_revocation_keep_identity_boundary(gateway):
     assert auth.identity.name != "lan-bypass"
     admin_store.revoke_credential(key["id"], path=gateway)
     revoked = proxy.authenticate_request(member, "/v1/models")
+    assert isinstance(revoked, Response)
+    assert revoked.status_code == 401
+
+
+def test_known_sk_gateway_key_cannot_delegate_after_revocation(gateway):
+    user = admin_store.upsert_oidc_user("local", "member", email="member@example.test", path=gateway)
+    app = admin_store.create_app("Legacy gateway key", kind="personal", owner_user_id=user["id"], path=gateway)
+    raw_key = "sk-gateway-regression-fixture"
+    credential = admin_store.create_credential_hash(
+        subject_kind="app", subject_id=app["id"], hash=proxy.hash_api_key(raw_key), prefix="sk-gateway", path=gateway,
+    )
+    member = request(raw_key)
+    valid = proxy.authenticate_runtime_or_litellm_request(member, "/v1/chat/completions", allow_litellm_delegation=True)
+    assert isinstance(valid, proxy.RuntimeRouteAuth)
+    assert valid.auth_context.identity.app_id == app["id"]
+    assert valid.delegated_litellm_api_key is None
+    admin_store.revoke_credential(credential["id"], path=gateway)
+    revoked = proxy.authenticate_runtime_or_litellm_request(member, "/v1/chat/completions", allow_litellm_delegation=True)
     assert isinstance(revoked, Response)
     assert revoked.status_code == 401
 
@@ -151,18 +182,23 @@ def test_public_sk_local_never_delegates_when_policy_changes(gateway, policy):
     assert auth.status_code == 401
 
 
-@pytest.mark.parametrize("source", ["x-api-key", "api-key", "query"])
+@pytest.mark.parametrize("source", ["authorization", "x-api-key", "api-key", "query", "duplicate-query"])
 def test_placeholder_does_not_hide_valid_or_revoked_member_key(gateway, monkeypatch, source):
     user = admin_store.upsert_oidc_user("local", "member", email="member@example.test", path=gateway)
     app = admin_store.create_app("Member access", kind="personal", owner_user_id=user["id"], path=gateway)
     session = AdminSession(subject=user["id"], email=user["email"], role="none", issued_at=1, expires_at=4_000_000_000)
     key = mint_user_app_key(session, app["id"], path=gateway)
     mixed = request("dummy")
-    if source == "query":
+    if source in {"query", "duplicate-query"}:
         monkeypatch.setattr(proxy, "ALLOW_QUERY_PARAM_KEY", True)
         mixed.scope["query_string"] = f"api_key={key['api_key']}".encode()
+        if source == "duplicate-query":
+            mixed.scope["query_string"] += b"&api_key=dummy"
     else:
-        mixed.scope["headers"].append((source.encode(), key["api_key"].encode()))
+        value = f"Bearer {key['api_key']}" if source == "authorization" else key["api_key"]
+        if source != "authorization":
+            mixed.scope["headers"].append((source.encode(), b"dummy"))
+        mixed.scope["headers"].append((source.encode(), value.encode()))
     auth = proxy.authenticate_request(mixed, "/v1/models")
     assert isinstance(auth, proxy.AuthContext)
     assert auth.identity.app_id == app["id"]
@@ -170,3 +206,34 @@ def test_placeholder_does_not_hide_valid_or_revoked_member_key(gateway, monkeypa
     denied = proxy.authenticate_request(mixed, "/v1/models")
     assert isinstance(denied, Response)
     assert denied.status_code == 401
+
+
+def test_realtime_placeholder_does_not_hide_valid_or_revoked_subprotocol_key(gateway, monkeypatch):
+    user = admin_store.upsert_oidc_user("local", "member", email="member@example.test", path=gateway)
+    app = admin_store.create_app("Realtime member", kind="personal", owner_user_id=user["id"], path=gateway)
+    session = AdminSession(subject=user["id"], email=user["email"], role="none", issued_at=1, expires_at=4_000_000_000)
+    key = mint_user_app_key(session, app["id"], path=gateway)
+    identities = []
+
+    def stop_after_auth(auth):
+        identities.append(auth.identity)
+        return proxy.auth_error("test policy stop", 403)
+
+    async def no_backend(*args, **kwargs):
+        pytest.fail("Denied Realtime session reached backend")
+
+    monkeypatch.setattr(proxy, "_realtime_policy_denial", stop_after_auth)
+    monkeypatch.setattr(proxy, "ws_connect", no_backend)
+    client = TestClient(proxy.app, base_url="https://gateway.example", client=("192.168.1.25", 41000))
+    protocols = ["realtime", f"openai-insecure-api-key.{key['api_key']}"]
+    with pytest.raises(WebSocketDenialResponse) as valid:
+        with client.websocket_connect("/v1/realtime", headers={"authorization": "Bearer dummy"}, subprotocols=protocols):
+            pytest.fail("Policy-denied session was accepted")
+    assert valid.value.status_code == 403
+    assert identities[0].app_id == app["id"]
+    admin_store.revoke_credential(key["id"], path=gateway)
+    with pytest.raises(WebSocketDenialResponse) as revoked:
+        with client.websocket_connect("/v1/realtime", headers={"authorization": "Bearer dummy"}, subprotocols=protocols):
+            pytest.fail("Revoked session was accepted")
+    assert revoked.value.status_code == 401
+    assert len(identities) == 1

@@ -27,8 +27,26 @@ and direct LAN requests after changing forwarding settings. See the
 Anonymous LAN access is a shared identity. Disable
 `auth.lan_bypass_enabled` if family members must keep separate access and
 ownership on the LAN, and give each member an App key. An explicit valid key
-uses that App's identity even on the LAN; an invalid or revoked explicit key
-fails. A caller on a trusted LAN can still omit the key while bypass is on.
+uses that App's identity even on the LAN; an invalid or revoked real key fails.
+The `lan_placeholder_keys` operator setting defaults to
+`["lan", "none", "sk-local", "dummy", "EMPTY", "not-needed"]`. These exact,
+case-sensitive strings count as absent credentials only for resolved clients
+allowed by enabled LAN bypass. This supports clients that require a key field.
+Other supplied credentials still take effect, so a dummy Bearer header cannot
+hide a real key in another supported header or an enabled query parameter.
+Public placeholders receive 401, including `sk-local` on delegated LLM routes.
+A caller on a trusted LAN can still omit the key while bypass is on.
+
+Owners can read the list with GET `/admin/api/settings/lan-placeholder-keys`.
+PUT the same endpoint with
+`{"lan_placeholder_keys": ["lan", "none", "sk-local", "dummy", "EMPTY", "not-needed"]}`.
+Writes use the existing admin authorization and browser CSRF guard, persist in
+`admin.db`, and apply immediately. `[]` disables exemptions. Values are trimmed;
+up to 64 nonempty strings of 128 characters are allowed, with no control
+characters or real gateway key prefixes (`opk_`, `oak_`, or `sk-` except the
+exact `sk-local` placeholder). The defaults remain excluded from delegated
+credentials even if removed from LAN exemptions. Malformed stored policy
+grants no exemptions. Audit records contain the count, not the strings.
 
 ## Claim the first owner
 

@@ -118,7 +118,7 @@ def test_lan_placeholder_keys_persist_empty_and_custom_policy_live(settings):
     assert client.get("/admin/api/settings/lan-placeholder-keys", headers=OWNER).json() == custom.json()
     assert lan_auth_policy.lan_placeholder_keys(path) == ["custom-lan", "sk-local", "EMPTY"]
     audit = admin_store.list_audit(action_prefix="operator.lan_placeholder_keys", path=path)
-    assert audit[0]["metadata"] == {"count": 3}
+    assert sorted(event["metadata"]["count"] for event in audit) == [0, 3]
     assert "custom-lan" not in json.dumps(audit)
 
 
