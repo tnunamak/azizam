@@ -136,7 +136,7 @@ def run():
                 "health_endpoint": "/health",
                 "capabilities": ["chat"], "models": [{"public": f"idle-{name}", "upstream": f"idle-{name}"}],
                 "model_policy_schema_version": 1,
-                "lifecycle": {"driver": "systemd", "service_name": f"fixture-{name}.service"},
+                "lifecycle": {"driver": "systemd", "driver_config": {"unit": f"fixture-{name}.service"}},
                 "enabled": True}, {"if-match": registry.headers["etag"]})
         post("/admin/api/config/reload", {})
         profile = post("/admin/api/profiles", {"name": "Contracts full local", "profile": {"id": "contracts-local"}})["profile"]
@@ -195,7 +195,7 @@ def run():
             json={"name": "Fixture gateway", "base_url": configured, "theme_default": "system"}))
         for endpoint in ("/.well-known/ai-gateway", "/.well-known/openai-proxy"):
             metadata = expect(client.get(endpoint, headers={"x-forwarded-host": "unrelated.test", "x-forwarded-proto": "http"})).json()
-            assert metadata["base_url"] == configured and metadata["service"]["canonical_host"] == configured
+            assert metadata["service"]["base_url"] == configured and metadata["service"]["canonical_host"] == configured
             assert "compatibility_aliases" not in metadata["service"]
         assert configured in expect(client.get("/llms.txt")).text
         print("PASS Settings origin governs both well-known documents and llms.txt", flush=True)
@@ -210,10 +210,7 @@ if __name__ == "__main__":
         from gateway import lifecycle_drivers
         async def stopped(self, service):
             return lifecycle_drivers.ProcessState.STOPPED
-        async def preflight(self, service):
-            return None
         lifecycle_drivers.SystemdDriver.status = stopped
-        lifecycle_drivers.SystemdDriver.preflight = preflight
         import uvicorn
         uvicorn.run("proxy:app", host="127.0.0.1", port=int(sys.argv[2]), log_level="warning")
     else:
