@@ -309,7 +309,8 @@ def resolve_capability_targets(capabilities: Iterable[Capability], service_recor
             if not isinstance(service, Mapping) or not service.get("enabled", True):
                 continue
             config = service.get("config") or {}
-            if any(target in {row.get("id"), row.get("model_group")} for row in service_model_records(config)):
+            if any(row.get("enabled") is not False and target in {row.get("id"), row.get("model_group")}
+                   for row in service_model_records(config)):
                 matches.append(replace(cap, backend=str(service_id)))
         backends = {candidate.backend for candidate in matches}
         if len(backends) == 1:

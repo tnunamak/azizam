@@ -118,6 +118,13 @@ def _resolved_capabilities(identity: RuntimeIdentity, provider,
         concrete = concrete or cap
         resolved = replace(cap, backend=concrete.backend, health=concrete.health,
                            lifecycle=concrete.lifecycle)
+        if "remote" in cap.tags or "remote" in concrete.tags:
+            # Remote verdicts include canonical provider grants and admin plan
+            # restrictions. The local binding check cannot reproduce those.
+            upstream = cap if cap.backend != "gateway" else concrete
+            return replace(resolved, policy_available=upstream.policy_available,
+                           policy_sources=upstream.policy_sources,
+                           policy_reasons=upstream.policy_reasons)
         return capability_with_policy_view(resolved, identity.profile, request=make_policy_request(
             protocol=_PROTOCOLS.get(_product_capability(cap.intent), "openai.chat"),
             intent=cap.intent, model=model, backend=concrete.backend,
@@ -154,7 +161,7 @@ def _resolved_capabilities(identity: RuntimeIdentity, provider,
                 if not isinstance(service, Mapping) or not service.get("enabled", True):
                     continue
                 config = service.get("config") or {}
-                if not any(target in {row.get("id"), row.get("model_group")}
+                if not any(row.get("enabled") is not False and target in {row.get("id"), row.get("model_group")}
                            for row in service_model_records(config)):
                     continue
                 generic = next((candidate for candidate in raw if candidate.backend == service_id
@@ -178,7 +185,7 @@ def _resolved_capabilities(identity: RuntimeIdentity, provider,
             service = services.get(cap.backend) or {}
             model_rows = service_model_records(service.get("config") or {})
             declared = any(target_policy(cap, row.get("model_group") or row.get("id")).policy_available
-                           for row in model_rows if (row.get("model_group") or row.get("id"))
+                           for row in model_rows if row.get("enabled") is not False and (row.get("model_group") or row.get("id"))
                            and (cap.intent, row.get("model_group") or row.get("id")) not in alias_names)
             if (cap.intent, cap.backend) not in named and not declared:
                 out[index] = replace(cap, policy_available=False)

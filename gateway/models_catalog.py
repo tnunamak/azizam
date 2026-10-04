@@ -242,9 +242,13 @@ def _rows_for_capabilities(
         workflow_metadata=workflow_metadata,
         service_model_metadata=service_model_metadata,
     )
+    concrete_by_model = {
+        model: [cap for cap in caps if "alias" not in cap.tags]
+        for model, caps in caps_by_model.items()
+    }
     models = _model_rows(
         model_entries,
-        caps_by_model=caps_by_model,
+        caps_by_model={model: caps for model, caps in concrete_by_model.items() if caps},
         service_records=service_records,
         receipt_stats=receipt_stats,
         health_evidence=health_evidence,

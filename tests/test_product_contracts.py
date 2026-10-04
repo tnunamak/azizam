@@ -108,3 +108,19 @@ def test_remote_model_price_and_alias_share_observed_availability(ready, expecte
         assert row["availability"]["status"] == expected
         assert row["availability"]["evidence"]["observed_at_s"] == evidence["cloud-service"]["observed_at_s"]
     assert len(round_trip["aliases"]) == len(round_trip["models"]) == 1
+
+
+def test_chat_alias_does_not_hide_same_named_concrete_embedding_model():
+    from gateway.availability import project_capabilities
+    from gateway.local_capabilities import build_alias_capabilities
+    views = {"chat": {"stable": [{"alias": "fast", "resolves_to": "chat-model"}]}}
+    capabilities = project_capabilities([
+        Capability(intent="chat.completions", backend="chat", model="chat-model"),
+        Capability(intent="text.embeddings", backend="embedding", model="fast"),
+        *build_alias_capabilities(views),
+    ])
+    catalog = build_models_catalog(capabilities=capabilities, alias_views=views)
+    assert [row["id"] for row in catalog["aliases"]] == ["fast"]
+    assert {row["id"] for row in catalog["models"]} == {"chat-model", "fast"}
+    embedding = next(row for row in catalog["models"] if row["id"] == "fast")
+    assert [cap["intent"] for cap in embedding["capabilities"]] == ["text.embeddings"]
