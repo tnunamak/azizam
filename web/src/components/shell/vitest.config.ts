@@ -16,7 +16,10 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
-    include: [path.join(shellDir, "app-shell.regression.spec.tsx")],
+    include: [
+      path.join(shellDir, "app-shell.regression.spec.tsx"),
+      path.join(shellDir, "owner-alert.spec.ts"),
+    ],
     setupFiles: [path.join(webRoot, "tests/vitest.setup.ts")],
     clearMocks: true,
     restoreMocks: true,

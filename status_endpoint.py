@@ -1981,6 +1981,25 @@ def _load_average() -> Optional[list[float]]:
 
 # --- disk -----------------------------------------------------------------
 
+def _disk_pressure_reason(part: dict, config: dict) -> str:
+    """Name the monitored volume from declared paths, without assuming its role."""
+    target = str(part.get("target") or "/")
+    label = str(part.get("label") or "").strip()
+    model_dir = (config.get("model_routing") or {}).get("model_dir")
+    if not label and isinstance(model_dir, str) and model_dir:
+        try:
+            if Path(model_dir).stat().st_dev == Path(target).stat().st_dev:
+                label = "models volume"
+        except OSError:
+            pass
+    subject = f"The {label}" if label else f"The disk at {target}"
+    percent = float(part.get("pct_used") or 0)
+    return (
+        f"{subject} is almost full ({percent:.0f}%). "
+        "Free space so new models and outputs can be saved."
+    )
+
+
 def _disk_partitions() -> list[dict]:
     """df for the operator-declared partitions (``AGW_DISK_PARTITIONS``, default `/`)."""
     if _HOST_TELEMETRY_DISABLED:
@@ -3854,10 +3873,10 @@ async def build_status_payload(config: dict) -> dict:
         pct = part.get("pct_used") or 0
         if pct >= 95:
             system_health = _bump(system_health, "bad")
-            sh_reasons.append(("bad", f"disk {part['target']} {pct}% full"))
+            sh_reasons.append(("bad", _disk_pressure_reason(part, config)))
         elif pct >= 85:
             system_health = _bump(system_health, "warn")
-            sh_reasons.append(("warn", f"disk {part['target']} {pct}% full"))
+            sh_reasons.append(("warn", _disk_pressure_reason(part, config)))
 
     # Thermal — CPU.
     cpu_state = thermal.get("cpu_thermal_state")

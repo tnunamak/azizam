@@ -263,6 +263,7 @@ from gateway.local_capabilities import (
     build_alias_capabilities,
     build_local_capabilities,
 )
+from gateway.service_usage import relied_on_service_ids
 from gateway.extensions import ExtensionError
 from gateway.image_extensions import (
     STANDARD_IMAGE_EDIT_FIELDS,
@@ -13440,6 +13441,11 @@ async def _status_payload_with_availability() -> Mapping[str, Any]:
         health_evidence = await _models_catalog_health_evidence(service_records, service_ids=(service_records.get("services") or {}).keys())
         return {
             **payload,
+            "_relied_on_service_ids": relied_on_service_ids(
+                registry=service_records,
+                runtime_config=config,
+                capabilities=_gateway_capabilities_for_auth_context(NO_AUTH_CONTEXT),
+            ),
             "_availability_evidence": _runtime_availability_evidence(
                 service_records,
                 status_payload=payload,
@@ -13534,6 +13540,7 @@ _SECURITY_HEADERS = {
         "script-src 'self' 'unsafe-inline'; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data:; "
+        "media-src 'self' blob: data:; "
         "frame-ancestors 'none'"
     ),
 }

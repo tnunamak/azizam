@@ -42,6 +42,9 @@ class CatalogAvailability(TypedDict):
 
 
 class CapabilitySummary(TypedDict):
+    title: NotRequired[str]
+    capability: NotRequired[str]
+    use_name: NotRequired[str]
     intent: str
     input_modalities: list[str]
     output_modalities: list[str]
@@ -135,6 +138,8 @@ class SetupEvidence(TypedDict):
     settings_copied: SetupObservation
     external_client_confirmed: SetupObservation
     receipt_viewed: SetupObservation
+    observed_external_client: NotRequired[SetupObservation]
+    checklist_dismissed: NotRequired[SetupObservation]
 
 
 class SetupStep(TypedDict):
@@ -147,6 +152,7 @@ class SetupStep(TypedDict):
 
 class SetupProgress(TypedDict):
     complete: bool
+    dismissed: NotRequired[bool]
     steps: list[SetupStep]
     evidence: SetupEvidence
 
@@ -164,6 +170,8 @@ class SetupEvidenceResponse(TypedDict):
 
 
 class MemberStatusCapability(TypedDict):
+    title: NotRequired[str]
+    use_name: NotRequired[str]
     capability: str
     intent: str
     model: str | None
@@ -172,7 +180,7 @@ class MemberStatusCapability(TypedDict):
     available: bool
     reason: str
     measured: bool
-    observed_at_s: float | None
+    observed_at_s: NotRequired[float | None]
 
 
 class MemberStatusReceipt(TypedDict):
@@ -192,6 +200,7 @@ class MemberStatus(TypedDict):
 
 
 class CatalogCapability(TypedDict):
+    capability: NotRequired[str]
     intent: str
     label: str
     input_modalities: list[str]
@@ -230,6 +239,12 @@ class CatalogUse(TypedDict):
     javascript: dict[str, str] | None
 
 
+class CatalogSummary(TypedDict, total=False):
+    typical_seconds: float
+    cost_label: str
+    price: object
+
+
 class CatalogRow(TypedDict):
     id: str
     object: Literal["model_catalog.alias", "model_catalog.model"]
@@ -244,6 +259,7 @@ class CatalogRow(TypedDict):
     engine_label: str | None
     locality: Literal["local", "remote", "unknown"]
     cost: CatalogCost
+    summary: NotRequired[CatalogSummary]
     timing: CatalogTiming
     availability: CatalogAvailability
     io: CatalogIO

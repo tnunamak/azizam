@@ -7,6 +7,7 @@ import { formatPersonName } from "@/lib/format";
 
 export interface Viewer {
   authenticated: boolean;
+  serviceAdmin?: boolean;
   name: string;
   email: string | null;
   role: string;
@@ -38,12 +39,14 @@ export async function fetchViewer(): Promise<Viewer> {
       admin: ["owner", "superadmin", "admin"].includes(role),
     };
   }
-  // Older owner sign-in cookies are admin principals, without a member row.
+  // Admin service credentials have no person or member-owned apps.
   try {
     const { actor } = await api.session();
+    const serviceAdmin = actor.kind !== "user";
     return {
       authenticated: true,
-      name: "Gateway owner",
+      serviceAdmin,
+      name: serviceAdmin ? actor.label || "Service admin" : "Gateway owner",
       email: actor.email,
       role: actor.roles[0] || "member",
       admin: actor.roles.some((role) =>

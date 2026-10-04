@@ -47,3 +47,26 @@ class RequestSourceTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             asyncio.run(RequestSourceMiddleware(fail)({"type": "http", "headers": [(b"user-agent", b"Daisy/1")]}, None, None))
         self.assertIsNone(current_client_hint())
+
+
+def test_gateway_ui_tests_keep_app_identity_and_reset_attribution():
+    from gateway.request_source import current_gateway_ui, gateway_ui_request
+    from gateway import receipt_store
+    async def run():
+        rows = []
+        async def app(scope, receive, send):
+            await asyncio.sleep(0)
+            rows.append(RouteReceipt(protocol="openai", intent="chat.generate", app_id="owned-app"))
+        middleware = RequestSourceMiddleware(app)
+        async def call(referer):
+            await middleware({"type": "http", "headers": [(b"host", b"gateway.test"), (b"referer", referer)]}, None, None)
+        await asyncio.gather(call(b"http://gateway.test/ui/try/"), call(b"http://external.test/ui/try/"), call(b"http://[malformed"))
+        assert {row.source_kind for row in rows} == {"gateway-ui", "app"}
+        assert all(row.app_id == "owned-app" for row in rows)
+        with gateway_ui_request():
+            await call(b"")
+            assert current_gateway_ui()
+        assert not current_gateway_ui()
+        assert rows[-1].source_kind == "gateway-ui"
+        assert receipt_store._with_source(rows[-1].to_dict("internal"))["source"]["app_id"] == "owned-app"
+    asyncio.run(run())

@@ -79,3 +79,77 @@ def test_normalized_service_health_is_probed_instead_of_being_reported_down():
     evidence = asyncio.run(probe_service_health({"chat": {"config": raw}}, get_json=get_json))
     assert evidence["chat"]["available"] is True
     assert evidence["chat"]["status"] == "ready"
+
+
+def test_declared_taxonomy_and_friendly_title_do_not_guess_engine_names():
+    from gateway.model_presentation import capability_presentation
+    cap = Capability(intent="audio.generate", backend="test", workflow="internal.workflow",
+                     title="Configured instrument", capability="music")
+    assert capability_presentation(cap) == {
+        "title": "Music (Configured instrument)", "capability": "music", "use_name": "internal.workflow",
+    }
+    unspecified = Capability(intent="audio.generate", backend="test", model="music-looking-name")
+    assert capability_presentation(unspecified)["capability"] == "audio"
+    assert capability_presentation(unspecified)["title"] == "Audio"
+
+
+def test_alias_hides_only_its_same_backend_and_intent_target():
+    from gateway.capabilities import caller_visible_capabilities
+    alias = Capability(intent="audio.generate", backend="test", model="music", tags=("alias", "resolves_to:actual"),
+                       resolved_workflow="internal.workflow")
+    concrete = Capability(intent="audio.generate", backend="test", model="actual", workflow="internal.workflow")
+    different_backend = Capability(intent="audio.generate", backend="other", model="actual")
+    different_intent = Capability(intent="speech.synthesis", backend="test", model="actual")
+    assert set(caller_visible_capabilities([alias, concrete, different_backend, different_intent])) == {
+        alias, different_backend, different_intent,
+    }
+    denied = Capability(intent="audio.generate", backend="test", model="music", tags=alias.tags, policy_available=False)
+    assert concrete in caller_visible_capabilities([denied, concrete])
+
+
+def test_catalog_summary_omits_unknown_metrics_but_preserves_details():
+    catalog = build_models_catalog(
+        capabilities=[Capability(intent="chat.completions", backend="test", model="demo")],
+        service_records={"test": {"name": "Internal service", "description": "Private path debug data", "config": {"base_url": "http://localhost:18001"}}},
+    )
+    row = catalog["models"][0]
+    assert row["summary"] == {"cost_label": "Local · no provider charge"}
+    assert row["timing"] == {"typical_seconds": None, "source": None}
+    assert row["description"] is None
+
+
+def test_workflow_alias_catalog_is_one_caller_entry_with_metadata():
+    catalog = build_models_catalog(
+        capabilities=[Capability(intent="audio.generate", backend="test", workflow="internal.workflow")],
+        alias_views={"audio_generate": {"stable": [{"alias": "music", "resolves_to": "internal.workflow", "display_name": "My music"}]}},
+        workflow_records=[{"id": "internal.workflow", "display_name": "Instrument", "capability": "music"}],
+    )
+    assert catalog["models"] == []
+    row = catalog["aliases"][0]
+    assert row["display_name"] == "Music (My music)"
+    assert row["capabilities"][0]["capability"] == "music"
+    assert row["resolves_to"] == {"audio_generate": "internal.workflow"}
+
+
+def test_declared_workflow_metadata_survives_alias_target_resolution():
+    from gateway.capabilities import resolve_capability_targets, summarize_capability
+    target = Capability(intent="audio.generate", backend="test", workflow="actual",
+                        title="Instrument", capability="music")
+    alias = Capability(intent="audio.generate", backend="test", model="music", tags=("alias", "resolves_to:actual"))
+    projected = resolve_capability_targets([alias, target])
+    summary = summarize_capability(next(cap for cap in projected if cap.model == "music"), "client")
+    assert summary["title"] == "Music (Instrument)"
+    assert summary["capability"] == "music"
+    assert summary["use_name"] == "music"
+
+
+@pytest.mark.parametrize("filename, taxonomy", [
+    ("ace-step-1.5-xl-turbo.yml", "music"), ("ace-step-1.5-2b-base.yml", "music"),
+    ("yue2-song.yml", "music"), ("sa3-small-sfx.yml", "sfx"), ("tangoflux.yml", "audio"),
+])
+def test_shipped_audio_taxonomy_is_data_in_valid_manifests(filename, taxonomy):
+    from pathlib import Path
+    from gateway.manifests import load_workflow_manifest
+    from gateway.model_presentation import product_capability
+    manifest = load_workflow_manifest(Path(__file__).resolve().parents[1] / "manifests/workflows" / filename)
+    assert product_capability("audio.generate", manifest) == taxonomy

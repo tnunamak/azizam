@@ -15,6 +15,7 @@ from gateway.home_api import create_home_router, _resolved_capabilities, _declar
 from gateway.local_capabilities import build_alias_capabilities
 from gateway.profiles import load_profile
 from gateway.product_contracts import HomeCapability, HomeProjection, MemberStatus, SetupEvidenceResponse, SetupProgress
+from gateway.request_source import current_gateway_ui
 from gateway.runtime_auth import RuntimeIdentity, hash_api_key, make_policy_request
 from gateway.user_runtime import UserPortalError, create_user_app, get_user_receipt
 from pydantic import TypeAdapter
@@ -82,7 +83,7 @@ def home_case(tmp_path):
         assert request.headers["authorization"] == f"Bearer {key}"
         assert not request.headers.get("cookie")
         admin_store.touch_credential_last_used(cred["id"], path=db)
-        receipt_store.record({"request_id": "real-test", "app_id": client_app["id"], "status": "succeeded", "intent": "chat.completions"}, path=receipts)
+        receipt_store.record({"request_id": "real-test", "app_id": client_app["id"], "source_kind": "gateway-ui" if current_gateway_ui() else "app", "status": "succeeded", "intent": "chat.completions"}, path=receipts)
         return JSONResponse({"choices": [{"message": {"content": "Hi"}}]}, headers={"x-ai-gateway-request-id": "real-test", "request-id": "provider-opaque-id"})
     @app.get("/v1/models")
     async def models(request: Request):
@@ -781,3 +782,82 @@ def test_service_selected_remote_alias_obeys_canonical_provider_permission(home_
         assert any(row.get("model") == "voice" for row in data["capabilities"]) is expected
         if path.endswith("home"):
             assert [row["id"] for row in data["aliases"]] == (["voice"] if expected else [])
+
+
+@pytest.mark.parametrize("source,app", [("app", True), ("local-network", False), (None, False)])
+def test_setup_successful_external_traffic_completes_app_step(home_case, source, app):
+    c = home_case
+    receipt_store.record({"request_id": "external", "status": "succeeded", "app_id": c.client_app["id"] if app else None,
+                          "source_kind": source}, created_at=123, path=c.receipts)
+    progress = c.http.get("/admin/api/setup-progress").json()
+    assert progress["complete"]
+    assert not progress["dismissed"]
+    assert progress["evidence"]["observed_external_client"] == {"recorded": True, "source": "receipt", "observed_at_s": 123}
+    assert not progress["evidence"]["external_client_confirmed"]["recorded"]
+    TypeAdapter(SetupProgress).validate_python(progress)
+
+
+@pytest.mark.parametrize("status,source,parent", [("failed", "app", None), ("succeeded", "gateway-ui", None), ("succeeded", "internal", None), ("succeeded", "app", "outer")])
+def test_setup_ui_failed_and_child_requests_do_not_prove_external_client(home_case, status, source, parent):
+    c = home_case
+    receipt_store.record({"request_id": "not-external", "status": status, "app_id": c.client_app["id"],
+                          "source_kind": source, "parent_request_id": parent}, path=c.receipts)
+    progress = c.http.get("/admin/api/setup-progress").json()
+    assert not next(step for step in progress["steps"] if step["id"] == "connect_app")["done"]
+    assert not progress["evidence"]["observed_external_client"]["recorded"]
+
+
+def test_setup_dismiss_is_owner_csrf_protected_persisted_and_not_completion(home_case):
+    c = home_case
+    assert c.http.post("/admin/api/setup-dismiss").status_code == 403
+    c.owner = False
+    assert c.http.post("/admin/api/setup-dismiss", headers=c.headers).status_code == 403
+    c.owner = True
+    response = c.http.post("/admin/api/setup-dismiss", headers=c.headers)
+    assert response.status_code == 200
+    assert response.json()["dismissed"]
+    for _ in range(2):
+        progress = c.http.get("/admin/api/setup-progress").json()
+        assert progress["dismissed"]
+        assert not progress["complete"]
+        assert progress["evidence"]["checklist_dismissed"]["source"] == "user_confirmation"
+    c.logged_in = False
+    assert c.http.post("/admin/api/setup-dismiss", headers=c.headers).status_code == 401
+
+
+def test_gateway_ui_receipt_still_belongs_to_its_app(home_case):
+    c = home_case
+    response = c.http.post("/me/api/connection-test", json={"api_key": c.key}, headers=c.headers)
+    assert response.status_code == 200 and response.json()["ok"]
+    own = get_user_receipt(c.session, "real-test", path=c.db, receipts_path=c.receipts)
+    assert own["app_id"] == c.client_app["id"]
+    assert own["source"]["kind"] == "gateway-ui"
+    member = AdminSession(subject=c.outsider["owner_user_id"], email="two@example.test", role="admin", issued_at=1, expires_at=4_000_000_000)
+    with pytest.raises(UserPortalError) as exc:
+        get_user_receipt(member, "real-test", path=c.db, receipts_path=c.receipts)
+    assert exc.value.status_code == 404
+
+
+def test_member_status_uses_friendly_audio_taxonomy_and_omits_unknown_time(home_case):
+    c = home_case
+    c.capabilities_override = lambda _identity: [Capability(intent="audio.generate", backend="service", model="sfx-alias", title="Small sound model", capability="sfx")]
+    payload = c.http.get("/me/api/status").json()
+    row = payload["capabilities"][0]
+    assert row["title"] == "Sound effects (Small sound model)"
+    assert row["capability"] == "sfx"
+    assert row["use_name"] == "sfx-alias"
+    assert row.get("observed_at_s") is not None or "observed_at_s" not in row
+    TypeAdapter(MemberStatus).validate_python(payload)
+
+
+def test_member_ready_summary_and_help_are_consistent(home_case):
+    c = home_case
+    ready = c.http.get("/me/api/status").json()
+    assert ready["status"] == {"state": "ready", "reason": "Your access is ready."}
+    assert ready["help"] == ""
+    c.capabilities_override = lambda _identity: [Capability(intent="chat.completions", backend="service", model="ready"),
+                                                Capability(intent="image.generate", backend="missing", model="unknown")]
+    partial = c.http.get("/me/api/status").json()
+    assert partial["status"]["state"] == "ready"
+    assert partial["status"]["reason"].startswith("Some capabilities are ready.")
+    assert partial["help"]

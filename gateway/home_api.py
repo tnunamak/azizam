@@ -24,7 +24,9 @@ from gateway.admin_api import AdminAuthError
 from gateway.alias_policy import service_model_records
 from gateway.availability import availability_evidence_snapshot, project_service, project_capabilities
 from gateway.capabilities import Capability, summarize_capability, capability_with_policy_view, caller_visible_capabilities
+from gateway.model_presentation import product_capability, capability_presentation
 from gateway.policy import DEFAULT_PROFILE
+from gateway.request_source import gateway_ui_request
 from gateway.profiles import ProfileLoadError, load_profile
 from gateway.runtime_auth import RuntimeIdentity, hash_api_key, make_policy_request
 from gateway.service_registry import is_remote_provider_config
@@ -60,20 +62,6 @@ def _identity(app: Mapping[str, Any], credential: Mapping[str, Any] | None,
                            profile=profile, app_id=app.get("id"))
 
 
-def _product_capability(intent: str) -> str:
-    if intent.startswith(("chat.", "text.completions", "responses.")):
-        return "chat"
-    if intent == "text.embeddings":
-        return "embed"
-    if intent.startswith(("speech.trans", "audio.trans")):
-        return "transcribe"
-    if intent.startswith(("speech.", "audio.speech")):
-        return "voice"
-    if intent.startswith(("decision", "systemone")):
-        return "decide"
-    return intent.split(".", 1)[0]
-
-
 def _availability(capability: Capability, evidence: Mapping[str, Mapping[str, Any]], registry: Mapping[str, Any] | None = None) -> tuple[str, str]:
     projection = project_service(capability.backend, service_records=registry, evidence=evidence, fallback_capability=capability)
     return projection.status, projection.reason
@@ -86,12 +74,26 @@ def _has_success(receipts_path: Path) -> bool:
                             "AND parent_request_id IS NULL)").fetchone()[0] == 1
 
 
+def _external_client_evidence(receipts_path: Path) -> dict[str, Any]:
+    # Legacy receipts predate UI attribution; their app/LAN source is inferred.
+    # New UI tests carry gateway-ui, while internal hops never qualify.
+    with sqlite3.connect(f"file:{receipts_path}?mode=ro", uri=True) as conn:
+        row = conn.execute(
+            "SELECT MAX(created_at) FROM receipts WHERE status = 'succeeded' "
+            "AND parent_request_id IS NULL AND "
+            "COALESCE(json_extract(receipt_json, '$.source_kind'), "
+            "CASE WHEN app_id IS NULL THEN 'local-network' ELSE 'app' END) "
+            "IN ('app', 'local-network')"
+        ).fetchone()
+    return {"recorded": row[0] is not None, "source": "receipt", "observed_at_s": row[0]}
+
+
 def _setup_evidence(path: Path, subject: str) -> dict[str, dict[str, Any]]:
     """Persisted acknowledgements are distinct from observed gateway traffic."""
     with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as conn:
         rows = conn.execute("SELECT action, MAX(created_at) FROM audit_events "
                             "WHERE actor_id = ? AND action IN "
-                            "('setup.settings_copied', 'setup.external_client_confirmed', 'setup.receipt_viewed') "
+                            "('setup.settings_copied', 'setup.external_client_confirmed', 'setup.receipt_viewed', 'setup.checklist_dismissed') "
                             "GROUP BY action", (subject,))
         return {action.removeprefix("setup."): {"recorded": True, "source": "user_confirmation",
                                                "observed_at_s": timestamp}
@@ -129,7 +131,7 @@ def _resolved_capabilities(identity: RuntimeIdentity, provider,
                            policy_sources=upstream.policy_sources,
                            policy_reasons=upstream.policy_reasons)
         return capability_with_policy_view(resolved, identity.profile, request=make_policy_request(
-            protocol=_PROTOCOLS.get(_product_capability(cap.intent), "openai.chat"),
+            protocol=_PROTOCOLS.get(product_capability(cap), "openai.chat"),
             intent=cap.intent, model=model, backend=concrete.backend,
             workflow=concrete.workflow, capability_exposure=concrete.exposure,
             capability_trust_tier=concrete.trust_tier,
@@ -216,7 +218,7 @@ def _declared_local_fast(cap: Capability, registry: Mapping[str, Any]) -> bool:
                 or any(row.get(flag) is True for row in models for flag in local_flags))
 
 
-def _capability_rows(capabilities, evidence, registry=None) -> list[dict[str, Any]]:
+def _capability_rows(capabilities, evidence, registry=None, alias_views=None) -> list[dict[str, Any]]:
     rows = []
     visible = caller_visible_capabilities(project_capabilities(
         capabilities, service_records=registry, evidence=evidence))
@@ -225,7 +227,9 @@ def _capability_rows(capabilities, evidence, registry=None) -> list[dict[str, An
             continue
         state, reason = _availability(cap, evidence, registry)
         projection = project_service(cap.backend, service_records=registry, evidence=evidence, fallback_capability=cap)
-        rows.append({**summarize_capability(cap, "client"), "capability": _product_capability(cap.intent),
+        metadata = next((alias for view in (alias_views or {}).values() for alias in view.get("stable", [])
+                         if alias.get("alias") == cap.model and "alias" in cap.tags), None)
+        rows.append({**summarize_capability(cap, "client"), **capability_presentation(cap, metadata),
                      "status": state, "available": state in {"ready", "idle"}, "reason": reason,
                      "availability": projection.to_public_dict()})
     return rows
@@ -238,7 +242,7 @@ def _alias_rows(rows, views) -> list[dict[str, Any]]:
             matches = [row for row in rows if row.get("model") == alias.get("alias")
                        and "alias" in row.get("tags", [])
                        and f"resolves_to:{alias.get('resolves_to')}" in row.get("tags", [])
-                       and row.get("capability") == _product_capability(_OPERATION_INTENTS.get(operation, operation))]
+                       and row.get("intent") == _OPERATION_INTENTS.get(operation, operation)]
             if matches:
                 best = next((row for row in matches if row["available"]), matches[0])
                 aliases.append({"id": alias["alias"], "operation": operation,
@@ -308,22 +312,22 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                     continue
                 scoped = _resolved_capabilities(identity, capabilities, registry)
                 if credential is not None:
-                    credential_aliases[credential["id"]] = _alias_rows(_capability_rows(scoped, availability_evidence, registry), alias_views)
+                    credential_aliases[credential["id"]] = _alias_rows(_capability_rows(scoped, availability_evidence, registry, alias_views), alias_views)
                 for cap in scoped:
                     if cap.policy_available:
                         allowed[(cap.intent, cap.model, cap.workflow, cap.backend)] = cap
         new_identity = _identity({}, None, inherited, store.path) if self_service_enabled() else None
         new_caps = _resolved_capabilities(new_identity, capabilities, registry) if new_identity else []
-        new_app_aliases = _alias_rows(_capability_rows(new_caps, availability_evidence, registry), alias_views)
+        new_app_aliases = _alias_rows(_capability_rows(new_caps, availability_evidence, registry, alias_views), alias_views)
         for cap in new_caps:
             if cap.policy_available:
                 allowed[(cap.intent, cap.model, cap.workflow, cap.backend)] = cap
-        rows = _capability_rows(allowed.values(), availability_evidence, registry)
+        rows = _capability_rows(allowed.values(), availability_evidence, registry, alias_views)
         alias_rows = _alias_rows(rows, alias_views)
         state = next((candidate for candidate in ("ready", "idle", "starting", "busy", "unknown")
                       if any(row["status"] == candidate for row in rows)), "unavailable")
         status_reason = {
-            "ready": "Some services are unavailable or not measured yet." if any(not row["available"] for row in rows) else "Your access is ready.",
+            "ready": "Some capabilities are ready. Others are unavailable or have not been measured yet." if any(not row["available"] for row in rows) else "Your access is ready.",
             "idle": "Some services are ready to start.",
             "starting": "Your service is starting.",
             "busy": "Your service is busy.",
@@ -354,16 +358,18 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
         for row in snapshot["capabilities"]:
             availability = row.get("availability") or {}
             evidence = availability.get("evidence") or {}
-            rows.append({**{key: row.get(key) for key in ("capability", "intent", "model", "workflow", "status", "available")},
+            rows.append({**{key: row.get(key) for key in ("capability", "title", "intent", "model", "workflow", "status", "available")},
                          "reason": reasons.get(row["status"], reasons["unavailable"]),
                          "measured": bool(availability.get("measured")),
-                         "observed_at_s": evidence.get("observed_at_s")})
+                         **({"use_name": row["use_name"]} if row.get("use_name") else {}),
+                         **({"observed_at_s": evidence["observed_at_s"]} if evidence.get("observed_at_s") is not None else {})})
         receipts = [{**{key: row.get(key) for key in ("request_id", "status", "intent")},
                      "created_at": row.get("created_at", row.get("_stored_at")),
                      "href": f"/ui/usage/?receipt={quote(str(row['request_id']), safe='')}"}
                     for row in snapshot["receipts"]]
         return _json({"scope": "member", "status": snapshot["status"], "capabilities": rows,
-                      "receipts": receipts, "help": "Ask the owner if an allowed capability is unavailable."})
+                      "receipts": receipts,
+                      "help": "Ask the owner if an allowed capability is unavailable." if any(not row["available"] for row in rows) else ""})
 
     @router.post("/admin/api/setup-evidence", include_in_schema=False)
     async def setup_evidence(request: Request):
@@ -436,7 +442,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                                 if row.get("alias") == "fast"), {})
         target_tag = f"resolves_to:{configured_fast.get('resolves_to')}"
         fast_allowed = any(cap.policy_available and cap.model == "fast" and "alias" in cap.tags
-                           and target_tag in cap.tags and _product_capability(cap.intent) == "chat"
+                           and target_tag in cap.tags and product_capability(cap) == "chat"
                            and _declared_local_fast(cap, registry)
                            for cap in _resolved_capabilities(identity, capabilities, registry))
         path = "/v1/chat/completions" if fast_allowed else "/v1/models"
@@ -445,13 +451,14 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
             # The public route and its middleware perform actual auth, policy,
             # routing, admission and receipt writes. No cookies or admin token.
             transport = httpx.ASGITransport(app=request.app, client=("192.0.2.1", 0), raise_app_exceptions=False)
-            async with httpx.AsyncClient(transport=transport, base_url="http://connection-test.invalid") as client:
-                async with asyncio.timeout(30):
-                    if fast_allowed:
-                        response = await client.post(path, headers={"authorization": f"Bearer {key}"},
-                                                     json={"model": "fast", "messages": [{"role": "user", "content": "Hi"}], "max_tokens": 1, "stream": False})
-                    else:
-                        response = await client.get(path, headers={"authorization": f"Bearer {key}"})
+            with gateway_ui_request():
+                async with httpx.AsyncClient(transport=transport, base_url="http://connection-test.invalid") as client:
+                    async with asyncio.timeout(30):
+                        if fast_allowed:
+                            response = await client.post(path, headers={"authorization": f"Bearer {key}"},
+                                                         json={"model": "fast", "messages": [{"role": "user", "content": "Hi"}], "max_tokens": 1, "stream": False})
+                        else:
+                            response = await client.get(path, headers={"authorization": f"Bearer {key}"})
             ok = response.is_success
             reason = ("A one-token local chat request succeeded." if fast_allowed else "Your key can reach the model catalog. Chat was not tested because a permitted local fast model was not confirmed.") if ok else f"The gateway returned HTTP {response.status_code}. Check your key's access and service status."
             request_id = response.headers.get("x-ai-gateway-request-id")
@@ -460,6 +467,23 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
         return _json({"ok": ok, "latency_ms": round((time.perf_counter() - started) * 1000),
                       "reason": reason, "path": path, "model": "fast" if fast_allowed else None,
                       "request_id": request_id})
+
+    @router.post("/admin/api/setup-dismiss", include_in_schema=False)
+    async def dismiss_setup(request: Request):
+        try:
+            context = admin_auth(request)
+            if "owner" not in context.roles:
+                raise AdminAuthError("Owner access required.", status_code=403, code="owner_required")
+            session = require_session(request)
+            action_error = require_action(request, session)
+            if action_error is not None:
+                return action_error
+            admin_store.record_audit("setup.checklist_dismissed", actor_kind="user", actor_id=context.subject,
+                                     target_kind="setup", target_id=context.subject,
+                                     metadata={"source": "user_confirmation"}, path=store.path)
+            return _json({"dismissed": True, "recorded": True, "source": "user_confirmation"})
+        except (UserPortalError, AdminAuthError) as exc:
+            return _error(exc)
 
     @router.get("/admin/api/setup-progress", include_in_schema=False)
     async def setup_progress(request: Request):
@@ -491,20 +515,24 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
         )
         succeeded = _has_success(receipts_path())
         evidence = _setup_evidence(store.path, context.subject)
-        app_confirmed = "external_client_confirmed" in evidence
+        external_client = _external_client_evidence(receipts_path())
+        app_confirmed = "external_client_confirmed" in evidence or external_client["recorded"]
         invited = _invitation_created(store.path)
         steps = [
             {"id": "claim_owner", "done": True, "optional": False, "reason": "The owner account is claimed.", "href": "/setup"},
             {"id": "connect_service", "done": connected, "optional": False, "reason": "A connected service is healthy." if connected else "Connect a service and check its health.", "href": "/ui/admin/services/"},
             {"id": "test_request", "done": succeeded, "optional": False, "reason": "A request has succeeded." if succeeded else "Run a test request with your key.", "href": "/ui/home/#connect"},
-            {"id": "connect_app", "done": app_confirmed, "optional": False, "reason": "You confirmed that your external client works. This is not an automated client test." if app_confirmed else "Use your key in an external client, then confirm that it works.", "href": "/ui/home/#connect"},
+            {"id": "connect_app", "done": app_confirmed, "optional": False, "reason": "A successful request from an app key or the local network was observed." if external_client["recorded"] else "You confirmed that your external client works. This is not an automated client test." if app_confirmed else "Use your key in an external client, then confirm that it works.", "href": "/ui/home/#connect"},
             {"id": "invite_someone", "done": invited, "optional": True, "reason": "An invitation has been created." if invited else "Invite someone to use your gateway.", "href": "/ui/people/"},
         ]
+        dismissed = "checklist_dismissed" in evidence
+        evidence["observed_external_client"] = external_client
+        evidence.setdefault("checklist_dismissed", {"recorded": False, "source": "user_confirmation", "observed_at_s": None})
         evidence["gateway_request"] = {"recorded": succeeded, "source": "receipt"}
         for event in ("settings_copied", "external_client_confirmed", "receipt_viewed"):
             evidence.setdefault(event, {"recorded": False, "source": "user_confirmation", "observed_at_s": None})
         return _json({"complete": all(step["done"] for step in steps if not step["optional"]),
-                      "steps": steps, "evidence": evidence})
+                      "dismissed": dismissed, "steps": steps, "evidence": evidence})
 
     return router
 
@@ -514,4 +542,5 @@ _OPERATION_INTENTS = {"chat": "chat.completions", "embeddings": "text.embeddings
                       "transcriptions": "speech.transcription", "audio_generate": "audio.generate", "rerank": "rerank"}
 
 _PROTOCOLS = {"chat": "openai.chat", "embed": "openai.embeddings", "image": "openai.images",
-              "video": "openai.video", "voice": "openai.audio", "transcribe": "openai.audio", "audio": "openai.audio"}
+              "video": "openai.video", "speech": "openai.audio", "transcribe": "openai.audio", "audio": "openai.audio",
+              "music": "openai.audio", "sfx": "openai.audio"}

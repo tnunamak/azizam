@@ -12,7 +12,10 @@ export function ownerEngineAlert(health?: CurrentHealth): string | null {
   if (!health?.observation_available) return null;
   const failed = health.services.find(
     (service) =>
-      service.configured && service.enabled && service.observation === "down",
+      service.configured &&
+      service.enabled &&
+      service.in_use === true &&
+      service.observation === "down",
   );
   return failed
     ? `${failed.name} is unavailable. Check its connection on Status.`

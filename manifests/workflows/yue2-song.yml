@@ -3,6 +3,7 @@ min_gateway_version: '0.1'
 version: 0.1.0
 id: audio.generate.yue2-song
 intent: audio.generate
+capability: music
 display_name: YuE2 Song
 description: 'Full song with vocals from a style prompt (tags) and lyrics (YuE2-3B int8_convrot). POST
   /v1/audio/generate with tags, lyrics, duration. duration is a MAXIMUM in seconds, not an exact length:

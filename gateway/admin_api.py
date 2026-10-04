@@ -42,6 +42,7 @@ from gateway.policy import (
 )
 from gateway.litellm_substrate import compile_litellm_substrate_config
 from gateway.availability import availability_evidence_snapshot, project_service
+from gateway.model_presentation import engine_label
 from gateway.backends.litellm_admin import LiteLLMAdminError
 from gateway.profiles import ProfileLoadError, load_profile
 from gateway import admin_catalog, admin_store, extension_packages, service_registry
@@ -504,6 +505,8 @@ def derive_admin_health_projection(
     services_raw = registry.get("services") if isinstance(registry, Mapping) else {}
     services = services_raw if isinstance(services_raw, Mapping) else {}
     payload = status_payload if isinstance(status_payload, Mapping) else {}
+    relied_on = payload.get("_relied_on_service_ids")
+    relied_on_ids = set(relied_on) if isinstance(relied_on, (list, tuple, set, frozenset)) else None
     observations: dict[str, Mapping[str, Any]] = {}
     for backend in _normalize_status_backends(payload):
         service_id = backend.get("service_id")
@@ -553,8 +556,9 @@ def derive_admin_health_projection(
             continue
         service_id = str(raw_service.get("id") or raw_id)
         configured_service_ids.add(service_id)
-        name = str(raw_service.get("name") or service_id)
+        name = engine_label(raw_service, service_id) or str(raw_service.get("name") or service_id)
         enabled = bool(raw_service.get("enabled", True))
+        in_use = service_id in relied_on_ids if relied_on_ids is not None else None
         role = str(raw_service.get("role") or "required")
         backend = observations.get(service_id)
         config = raw_service.get("config") if isinstance(raw_service.get("config"), Mapping) else {}
@@ -588,6 +592,8 @@ def derive_admin_health_projection(
             if not observation_available and service_id not in availability_evidence:
                 observation = "unavailable"
             tone = _admin_tone_from_observation(observation, role=role)
+        if in_use is False:
+            tone = "neutral"
         if rank.get(tone, 0) > rank.get(worst, 0):
             worst = tone
         if tone in {"warn", "bad"}:
@@ -598,6 +604,8 @@ def derive_admin_health_projection(
             "configured": True,
             "enabled": enabled,
             "role": role,
+            "in_use": in_use,
+            "usage_label": "Not in use" if in_use is False else None,
             "observation": observation,
             "routable": routable,
             "tone": tone,
@@ -703,7 +711,7 @@ def derive_admin_health_projection(
 
     active_rows = [
         row for row in rows
-        if row["configured"] and row["enabled"] and row["observation"] not in {"standby_stopped", "idle"}
+        if row["configured"] and row["enabled"] and row.get("in_use") is not False and row["observation"] not in {"standby_stopped", "idle"}
     ]
     if not active_rows:
         return _with_source_signals({
@@ -725,7 +733,7 @@ def derive_admin_health_projection(
             "services": rows,
         })
 
-    unobserved = [row["name"] for row in rows if row["observation"] == "unavailable"]
+    unobserved = [row["name"] for row in rows if row.get("in_use") is not False and row["observation"] == "unavailable"]
     routing_unknown = [
         row["name"]
         for row in active_rows
@@ -1726,6 +1734,8 @@ def create_admin_router(
                     "email": ctx.email,
                     "roles": sorted(ctx.roles),
                     "csrf_token": ctx.csrf_token or "",
+                    "kind": ctx.actor_kind,
+                    "label": ctx.actor_label,
                 }
             },
         )

@@ -245,13 +245,17 @@ class RouteReceipt:
     owner_key_hash: str | None = None
 
     def __post_init__(self) -> None:
-        from gateway.request_source import current_client_hint
+        from gateway.request_source import current_client_hint, current_gateway_ui
 
         if self.source_kind is not None:
             return
         if self.parent_request_id:
             self.source_kind = "internal"
             self.source_label = "Gateway internal request"
+            return
+        if current_gateway_ui():
+            self.source_kind = "gateway-ui"
+            self.source_label = "Gateway UI"
             return
         self.client_hint = self.client_hint or current_client_hint()
         if self.app_id:

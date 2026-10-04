@@ -55,6 +55,8 @@ def engine_label(service: Mapping[str, Any], service_id: str | None) -> str | No
         for field in ("display_name", "name"):
             name = str(source.get(field) or "").strip()
             if name and name != service_id:
+                if model_locality(service, None) == "local":
+                    name = name.removesuffix(" (provider)").removesuffix(" (Provider)")
                 return name
     return None
 
@@ -92,3 +94,57 @@ def model_locality(service: Mapping[str, Any], model: Mapping[str, Any] | None) 
             pass
     # A LAN host, container name, or public URL does not prove model placement.
     return "unknown"
+
+
+CAPABILITY_LABELS = {
+    "chat": "Chat", "image": "Image", "video": "Video", "speech": "Speech",
+    "transcribe": "Transcription", "music": "Music", "sfx": "Sound effects",
+    "audio": "Audio", "decide": "Decisions", "embed": "Embeddings", "rerank": "Rerank",
+}
+
+
+def product_capability(capability: Any, metadata: Mapping[str, Any] | None = None) -> str:
+    """Classify protocol shape with explicit operator taxonomy taking precedence.
+
+    Audio generation remains audio unless its manifest declares music or sfx;
+    model/engine names are never used to guess what a model can do.
+    """
+    metadata = metadata or {}
+    declared = metadata.get("capability") or getattr(capability, "capability", None)
+    if isinstance(declared, str) and declared in CAPABILITY_LABELS:
+        return str(declared)
+    tags = tuple(metadata.get("tags") or ()) + tuple(getattr(capability, "tags", ()))
+    for tag in tags:
+        value = str(tag).removeprefix("capability:")
+        if value in CAPABILITY_LABELS:
+            return value
+    intent = capability if isinstance(capability, str) else capability.intent
+    if intent.startswith(("chat.", "text.completions", "responses.")):
+        return "chat"
+    if intent == "text.embeddings":
+        return "embed"
+    if intent == "text.rerank":
+        return "rerank"
+    if intent.startswith(("speech.trans", "audio.trans")):
+        return "transcribe"
+    if intent.startswith(("speech.", "audio.speech")):
+        return "speech"
+    if intent.startswith(("decision", "systemone")):
+        return "decide"
+    return intent.split(".", 1)[0]
+
+
+def capability_presentation(capability: Any, metadata: Mapping[str, Any] | None = None) -> dict[str, str]:
+    """Friendly summary plus the exact caller name; technical ids stay separate."""
+    metadata = metadata or {}
+    kind = product_capability(capability, metadata)
+    label = CAPABILITY_LABELS.get(kind, "AI")
+    name = next((str(value).strip() for value in (
+        metadata.get("title"), metadata.get("display_name"), metadata.get("name"),
+        getattr(capability, "title", None),
+    ) if value and str(value).strip()), None)
+    out = {"capability": kind, "title": f"{label} ({name})" if name and name != label else label}
+    use_name = getattr(capability, "model", None) or getattr(capability, "workflow", None)
+    if use_name:
+        out["use_name"] = use_name
+    return out

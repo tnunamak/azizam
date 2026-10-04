@@ -37,6 +37,9 @@ export interface CatalogAvailability {
 }
 
 export interface CapabilitySummary {
+  title?: string;
+  capability?: string;
+  use_name?: string;
   intent: string;
   input_modalities: Array<string>;
   output_modalities: Array<string>;
@@ -67,6 +70,9 @@ export interface CapabilitiesResponse {
 }
 
 export interface HomeCapability {
+  title?: string;
+  capability: string;
+  use_name?: string;
   intent: string;
   input_modalities: Array<string>;
   output_modalities: Array<string>;
@@ -88,7 +94,6 @@ export interface HomeCapability {
   calibrated?: boolean;
   reason: string;
   limits?: Record<string, unknown>;
-  capability: string;
   status: "ready" | "idle" | "starting" | "busy" | "unknown" | "unavailable";
 }
 
@@ -150,6 +155,8 @@ export interface SetupEvidence {
   settings_copied: SetupObservation;
   external_client_confirmed: SetupObservation;
   receipt_viewed: SetupObservation;
+  observed_external_client?: SetupObservation;
+  checklist_dismissed?: SetupObservation;
 }
 
 export interface SetupStep {
@@ -162,6 +169,7 @@ export interface SetupStep {
 
 export interface SetupProgress {
   complete: boolean;
+  dismissed?: boolean;
   steps: Array<SetupStep>;
   evidence: SetupEvidence;
 }
@@ -179,6 +187,8 @@ export interface SetupEvidenceResponse {
 }
 
 export interface MemberStatusCapability {
+  title?: string;
+  use_name?: string;
   capability: string;
   intent: string;
   model: string | null;
@@ -187,7 +197,7 @@ export interface MemberStatusCapability {
   available: boolean;
   reason: string;
   measured: boolean;
-  observed_at_s: number | null;
+  observed_at_s?: number | null;
 }
 
 export interface MemberStatusReceipt {
@@ -207,6 +217,7 @@ export interface MemberStatus {
 }
 
 export interface CatalogCapability {
+  capability?: string;
   intent: string;
   label: string;
   input_modalities: Array<string>;
@@ -245,6 +256,12 @@ export interface CatalogUse {
   javascript: Record<string, string> | null;
 }
 
+export interface CatalogSummary {
+  typical_seconds?: number;
+  cost_label?: string;
+  price?: unknown;
+}
+
 export interface CatalogRow {
   id: string;
   object: "model_catalog.alias" | "model_catalog.model";
@@ -259,6 +276,7 @@ export interface CatalogRow {
   engine_label: string | null;
   locality: "local" | "remote" | "unknown";
   cost: CatalogCost;
+  summary?: CatalogSummary;
   timing: CatalogTiming;
   availability: CatalogAvailability;
   io: CatalogIO;

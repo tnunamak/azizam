@@ -129,6 +129,9 @@ class Capability:
     availability: Mapping[str, Any] | None = None
     # Effective workflow policy target; public alias identity stays in model.
     resolved_workflow: str | None = None
+    title: str | None = None
+    description: str | None = None
+    capability: str | None = None
 
     def __post_init__(self) -> None:
         if self.execution not in EXECUTION_MODES:
@@ -221,6 +224,7 @@ class Capability:
 def summarize_capability(capability: Capability, audience: str) -> dict[str, Any]:
     """Project a capability into an audience-scoped summary dict."""
     _check_audience(audience)
+    from gateway.model_presentation import capability_presentation
 
     summary: dict[str, Any] = {
         "intent": capability.intent,
@@ -235,6 +239,7 @@ def summarize_capability(capability: Capability, audience: str) -> dict[str, Any
         "available": capability.available,
         "caveats": list(capability.caveats),
     }
+    summary.update(capability_presentation(capability))
     if isinstance(capability.availability, dict):
         summary["availability"] = dict(capability.availability)
     else:
@@ -300,14 +305,16 @@ def resolve_capability_targets(capabilities: Iterable[Capability], service_recor
         if "alias" not in cap.tags and (cap.intent, cap.model) in alias_names:
             continue
         target = next((tag.removeprefix("resolves_to:") for tag in cap.tags if tag.startswith("resolves_to:")), None)
-        if "alias" not in cap.tags or not target or cap.backend != "gateway":
+        if "alias" not in cap.tags or not target:
             out.append(cap)
             continue
         matches = [candidate for candidate in raw if "alias" not in candidate.tags
                    and candidate.intent == cap.intent
+                   and (cap.backend == "gateway" or candidate.backend == cap.backend)
                    and (candidate.model in {target, f"role:{target}"} or candidate.workflow == target)]
         for service_id, service in services.items():
-            if not isinstance(service, Mapping) or not service.get("enabled", True):
+            if (not isinstance(service, Mapping) or not service.get("enabled", True)
+                    or cap.backend not in {"gateway", str(service_id)}):
                 continue
             config = service.get("config") or {}
             if is_remote_provider_config(config):
@@ -325,6 +332,8 @@ def resolve_capability_targets(capabilities: Iterable[Capability], service_recor
                           input_modalities=concrete.input_modalities, output_modalities=concrete.output_modalities,
                           streaming=concrete.streaming, execution=concrete.execution,
                           resolved_workflow=concrete.workflow or concrete.resolved_workflow,
+                          title=cap.title or concrete.title, description=cap.description or concrete.description,
+                          capability=cap.capability or concrete.capability,
                           tags=tuple(dict.fromkeys((*cap.tags, *concrete.tags))))
         out.append(cap)
     return out
@@ -332,9 +341,24 @@ def resolve_capability_targets(capabilities: Iterable[Capability], service_recor
 
 def caller_visible_capabilities(capabilities: Iterable[Capability]) -> list[Capability]:
     """One row per public intent and named target; retain distinct generic shapes."""
+    capabilities = list(capabilities)
+    # Suppress a concrete target only when a permitted alias exposes that same
+    # intent and backend. Distinct caller aliases remain distinct use names.
+    alias_targets = set()
+    for cap in capabilities:
+        if "alias" not in cap.tags or not cap.policy_available:
+            continue
+        targets = [tag.removeprefix("resolves_to:") for tag in cap.tags if tag.startswith("resolves_to:")]
+        targets.extend(target for target in (cap.resolved_workflow, cap.workflow) if target)
+        alias_targets.update((cap.intent, cap.backend, target) for target in targets)
     rows = {}
     rank = {"ready": 5, "idle": 4, "starting": 3, "busy": 2, "unavailable": 1, "unknown": 0}
     for cap in capabilities:
+        if "alias" not in cap.tags and any(
+            (cap.intent, cap.backend, target) in alias_targets
+            for target in (cap.model, cap.workflow) if target
+        ):
+            continue
         key = (cap.intent, cap.model, cap.workflow)
         if cap.model is None and cap.workflow is None:
             key += (cap.input_modalities, cap.output_modalities, cap.execution)
@@ -403,6 +427,9 @@ def capability_from_workflow_record(
 
     return Capability(
         intent=record.intent,
+        title=manifest.get("display_name") or manifest.get("name") or manifest.get("title"),
+        description=manifest.get("description"),
+        capability=manifest.get("capability"),
         backend=chosen_backend,
         workflow=record.id,
         input_modalities=input_modalities,

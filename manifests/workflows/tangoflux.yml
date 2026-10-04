@@ -3,6 +3,7 @@ min_gateway_version: "0.1"
 version: "0.1.0"
 id: audio.generate.tangoflux
 intent: audio.generate
+capability: audio
 display_name: TangoFlux
 description: Portable audio.generate contract bound to the TangoFlux text-to-audio ComfyUI workflow.
 source: local

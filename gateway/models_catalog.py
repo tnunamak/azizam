@@ -24,7 +24,8 @@ from fastapi.responses import JSONResponse, Response
 from gateway.capabilities import Capability
 from gateway.availability import project_service
 from gateway.local_capabilities import build_local_capabilities
-from gateway.model_presentation import declared_health_success, engine_label, model_locality, service_health_endpoint
+from gateway.model_presentation import (CAPABILITY_LABELS, capability_presentation, product_capability,
+    declared_health_success, engine_label, model_locality, service_health_endpoint)
 from gateway.provider_model_catalog import (
     remote_provider_model_capabilities,
     remote_provider_model_metadata,
@@ -32,21 +33,6 @@ from gateway.provider_model_catalog import (
 from gateway.service_registry import runtime_backend_from_service
 
 CatalogProvider = Callable[[Request], Mapping[str, Any] | Response | Awaitable[Mapping[str, Any] | Response]]
-
-
-_INTENT_LABELS = {
-    "chat.completions": "Chat",
-    "text.completions": "Text",
-    "text.embeddings": "Embeddings",
-    "image.generate": "Images",
-    "image.edit": "Image edits",
-    "speech.synthesis": "Speech",
-    "speech.transcription": "Transcribe",
-    "speech.translation": "Translate",
-    "video.generate": "Video",
-    "audio.generate": "Audio",
-    "text.rerank": "Rerank",
-}
 
 
 def create_models_catalog_router(
@@ -188,6 +174,11 @@ def build_models_catalog(
 
     aliases = _merge_rows(alias_rows)
     model_rows = _merge_rows(model_rows)
+    alias_targets = {target for row in aliases for target in row["resolves_to"].values()}
+    alias_targets.update(public_id for target in tuple(alias_targets)
+                         for public_id in _public_model_ids_for_workflow(model_entry_by_id, target))
+    # Aliases are the stable caller entry. Keep its concrete identity in details.
+    model_rows = [row for row in model_rows if row["id"] not in alias_targets]
 
     return {
         "schema_version": 1,
@@ -348,6 +339,12 @@ def _alias_rows(
                 workflow_metadata=workflow_metadata,
                 service_model_metadata=service_model_metadata,
             )
+            presentation = capability_presentation(caps[0], {"capability": operation_row["capabilities"][0]["capability"], **raw})
+            if any(raw.get(key) for key in ("title", "display_name", "name")):
+                operation_row["display_name"] = presentation["title"]
+                operation_row["name"] = presentation["title"]
+            if raw.get("description"):
+                operation_row["description"] = str(raw["description"])
             row = by_alias.setdefault(alias, operation_row)
             if row is not operation_row:
                 row["capabilities"] = _merge_capability_summaries(row.get("capabilities") or [], operation_row.get("capabilities") or [])
@@ -477,26 +474,40 @@ def _base_row(
         or (_recent_from_receipt_stats(receipt_stats.get(target)) if target else [])
         or _recent_from_receipt_stats(receipt_stats.get(workflow_id))
     )
+    presentation = capability_presentation(capabilities[0], manifest or model_mapping or model_entry) if capabilities else {}
+    locality = _locality(service, model_mapping or model_entry)
+    cost = _cost(service, model_mapping or model_entry)
+    summary = {}
+    if timing is not None:
+        summary["typical_seconds"] = timing["typical_seconds"]
+    if locality == "local":
+        summary["cost_label"] = "Local · no provider charge"
+    elif cost["kind"] == "free":
+        summary["cost_label"] = "No provider charge"
+    elif cost["price"] is not None:
+        summary["price"] = cost["price"]
     return {
         "id": row_id,
         "object": "model_catalog.alias" if is_alias else "model_catalog.model",
-        "display_name": display_name,
+        "display_name": presentation.get("title", display_name),
         "alias": is_alias,
         "operations": [],
         "resolves_to": {},
-        "description": _description(manifest, model_mapping, model_entry, service),
+        "description": _description(manifest, model_mapping, model_entry) or next((cap.description for cap in capabilities if cap.description), None),
         "name": str(
             manifest.get("name")
             or manifest.get("display_name")
             or model_mapping.get("name")
             or model_mapping.get("display_name")
+            or presentation.get("title")
             or display_name
         ),
-        "capabilities": _capability_summaries(capabilities),
+        "capabilities": _capability_summaries(capabilities, manifest),
         "provider": _provider(service, model_mapping or model_entry, service_id),
         "engine_label": engine_label(service, service_id),
-        "locality": _locality(service, model_mapping or model_entry),
-        "cost": _cost(service, model_mapping or model_entry),
+        "locality": locality,
+        "cost": cost,
+        "summary": summary,
         "timing": timing or {"typical_seconds": None, "source": None},
         "availability": _availability(
             capabilities,
@@ -512,13 +523,14 @@ def _base_row(
     }
 
 
-def _capability_summaries(capabilities: Sequence[Capability]) -> list[dict[str, Any]]:
+def _capability_summaries(capabilities: Sequence[Capability], metadata: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
     out = []
     for cap in sorted(capabilities, key=lambda c: c.sort_key):
         out.append(
             {
                 "intent": cap.intent,
-                "label": _INTENT_LABELS.get(cap.intent, cap.intent),
+                "label": CAPABILITY_LABELS.get(product_capability(cap, metadata), "AI"),
+                "capability": product_capability(cap, metadata),
                 "input_modalities": list(cap.input_modalities),
                 "output_modalities": list(cap.output_modalities),
                 "streaming": cap.streaming,

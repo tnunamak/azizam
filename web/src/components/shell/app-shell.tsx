@@ -297,8 +297,14 @@ function Nav({
             {destinations
               .filter(
                 (d) =>
-                  d.group === group ||
-                  (!viewer.admin && group === "You" && d.title === "Status"),
+                  (d.group === group ||
+                    (!viewer.admin &&
+                      group === "You" &&
+                      d.title === "Status")) &&
+                  (!viewer.serviceAdmin ||
+                    d.title === "Home" ||
+                    (d.group === "Gateway" &&
+                      !["People", "Activity"].includes(d.title))),
               )
               .map((item) => {
                 const Icon = icons[item.title];
@@ -372,12 +378,12 @@ function CommandPalette({
         apps: Array<{ id: string; name: string }>;
       }>;
     },
-    enabled: open && viewer.authenticated,
+    enabled: open && viewer.authenticated && !viewer.serviceAdmin,
   });
   const { data: peopleData } = useQuery({
     queryKey: ["foundation", "command-people"],
     queryFn: api.users.list,
-    enabled: open && viewer.admin,
+    enabled: open && viewer.admin && !viewer.serviceAdmin,
   });
   const { data: modelData } = useQuery({
     queryKey: ["foundation", "command-models"],
@@ -458,7 +464,13 @@ function CommandPalette({
               {destinations
                 .filter(
                   (d) =>
-                    d.group === "You" || d.title === "Status" || viewer.admin,
+                    (d.group === "You" ||
+                      d.title === "Status" ||
+                      viewer.admin) &&
+                    (!viewer.serviceAdmin ||
+                      d.title === "Home" ||
+                      (d.group === "Gateway" &&
+                        !["People", "Activity"].includes(d.title))),
                 )
                 .map((d) => {
                   const Icon = icons[d.title];
@@ -534,7 +546,7 @@ function CommandPalette({
             <CommandGroup heading="Actions">
               <CommandItem
                 onSelect={() => go("/apps?action=create-key")}
-                disabled={!viewer.authenticated}
+                disabled={!viewer.authenticated || viewer.serviceAdmin}
               >
                 <KeyRound />
                 Create key
@@ -637,6 +649,22 @@ function Shell({ children }: { children: React.ReactNode }) {
         }}
         retrying={sessionRefreshing}
       />
+    </>
+  ) : viewer?.serviceAdmin &&
+    destinations.some(
+      (d) =>
+        currentPath === canonicalDestinationPath(d.href) &&
+        (d.group === "You" || ["People", "Activity"].includes(d.title)),
+    ) ? (
+    <>
+      <PageHeader title="Service admin session" />
+      <p className="text-muted-foreground">
+        This session manages the gateway with a service credential. Sign in as a
+        person to use your AI, view your library and usage, or manage people.
+      </p>
+      <Button variant="outline" asChild>
+        <a href="/ui/sign-in/">Sign in as a person</a>
+      </Button>
     </>
   ) : ownerPage && !viewer?.admin ? (
     <>
@@ -754,7 +782,14 @@ function Shell({ children }: { children: React.ReactNode }) {
                   className="flex min-h-11 items-center gap-2 font-semibold"
                 >
                   <Fish className="text-primary size-5" />
-                  {PRODUCT_NAME}
+                  <span className="min-w-0">
+                    <span className="block">{PRODUCT_NAME}</span>
+                    {instanceData?.service?.name && (
+                      <span className="text-muted-foreground block max-w-44 truncate text-xs font-normal">
+                        {instanceData.service.name}
+                      </span>
+                    )}
+                  </span>
                 </Link>
                 <div className="flex items-center">
                   <HealthLink />
@@ -771,8 +806,10 @@ function Shell({ children }: { children: React.ReactNode }) {
               className="bg-background fixed inset-x-0 bottom-0 grid grid-cols-4 border-t pb-[env(safe-area-inset-bottom)] sm:hidden"
             >
               {destinations
-                .filter((d) =>
-                  ["Home", "Apps & keys", "Status"].includes(d.title),
+                .filter(
+                  (d) =>
+                    ["Home", "Apps & keys", "Status"].includes(d.title) &&
+                    (!viewer?.serviceAdmin || d.title !== "Apps & keys"),
                 )
                 .map((d) => {
                   const Icon = icons[d.title];

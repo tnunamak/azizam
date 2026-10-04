@@ -79,6 +79,8 @@ function isErrorEnvelope(value: unknown): value is ApiErrorEnvelope {
 // Contract types (verified against web-api-contract.md, 2026-06-11)
 
 export interface SessionActor {
+  kind?: "user" | "service" | string;
+  label?: string | null;
   subject: string;
   email: string | null;
   roles: string[];
@@ -577,6 +579,8 @@ export interface StatusPayload {
 }
 
 export interface CurrentHealthService {
+  in_use?: boolean | null;
+  usage_label?: string | null;
   service_id: string;
   name: string;
   configured: boolean;

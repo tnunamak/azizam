@@ -2,6 +2,20 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { axe } from "jest-axe";
 import { AppShell } from "./app-shell";
+import type { QueryClient } from "@tanstack/react-query";
+
+const clients = vi.hoisted(() => [] as QueryClient[]);
+vi.mock("@/lib/api", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api")>();
+  return {
+    ...actual,
+    createQueryClient: () => {
+      const client = actual.createQueryClient();
+      clients.push(client);
+      return client;
+    },
+  };
+});
 
 const push = vi.fn();
 let pathname = "/home";
@@ -33,6 +47,7 @@ function jsonResponse(body: unknown, init: ResponseInit = {}) {
 }
 
 beforeEach(() => {
+  clients.forEach((client) => client.clear());
   pathname = "/home";
   push.mockReset();
   localStorage.clear();
@@ -138,5 +153,43 @@ describe("AppShell accessible names", () => {
         (violation) => violation.id === "label-content-name-mismatch",
       ),
     ).toEqual([]);
+  });
+});
+
+describe("Service admin session", () => {
+  it("shows an honest state on person-only pages without rendering their API consumers", async () => {
+    const originalFetch = fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/me/api/session"))
+          return jsonResponse({ authenticated: false });
+        if (url.endsWith("/admin/api/session"))
+          return jsonResponse({
+            actor: {
+              subject: "automation",
+              roles: ["admin"],
+              kind: "service_account",
+              label: "CI admin",
+              csrf_token: "",
+            },
+          });
+        return originalFetch(input, init);
+      }),
+    );
+    render(
+      <AppShell>
+        <h1>Private library consumer</h1>
+      </AppShell>,
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Service admin session" }),
+    ).toBeVisible();
+    expect(screen.queryByText("Private library consumer")).toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Sign in as a person" }),
+    ).toHaveAttribute("href", "/ui/sign-in/");
+    expect(screen.queryByRole("link", { name: "People" })).toBeNull();
   });
 });

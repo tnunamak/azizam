@@ -3,6 +3,7 @@ min_gateway_version: "0.1"
 version: "0.1.0"
 id: audio.generate.ace-step-1.5-xl-turbo
 intent: audio.generate
+capability: music
 display_name: ACE-Step 1.5 XL Turbo
 description: Portable audio.generate contract bound to the ACE-Step 1.5 XL Turbo ComfyUI workflow.
 source: local
