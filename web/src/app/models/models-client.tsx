@@ -11,10 +11,12 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { productApi, type CatalogRow } from "@/lib/product-api";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useViewer } from "@/components/shell/session";
 import { FilterToggle } from "@/components/product/filter-toggle";
 import {
   Popover,
@@ -45,6 +47,7 @@ import {
   EmptyState,
   ErrorState,
   PageHeader,
+  RelativeTime,
   StatusPill,
 } from "@/components/product";
 
@@ -58,66 +61,6 @@ type AvailabilityState =
   | "unknown"
   | "unavailable"
   | "not_measured";
-type CostKind = "free" | "paid" | "unknown";
-type Locality = "local" | "remote" | "unknown";
-
-interface CatalogCapability {
-  intent: string;
-  label: string;
-  input_modalities: string[];
-  output_modalities: string[];
-  streaming?: boolean;
-  available?: boolean;
-}
-
-interface CatalogRow {
-  id: string;
-  object: "model_catalog.alias" | "model_catalog.model";
-  display_name: string;
-  name?: string;
-  alias: boolean;
-  operations: string[];
-  resolves_to: Record<string, string>;
-  description: string | null;
-  capabilities: CatalogCapability[];
-  provider: string | null;
-  engine_label?: string | null;
-  locality: Locality;
-  cost: { kind: CostKind; price: string | number | null };
-  timing: {
-    typical_seconds: number | null;
-    source: "configured" | "receipts" | string | null;
-    sample_count?: number;
-  };
-  availability: {
-    available: boolean;
-    reason: string;
-    measured: boolean;
-    status?: string;
-  };
-  io: { input: string[]; output: string[] };
-  examples: Array<{ kind: string; body: Record<string, unknown> }>;
-  recent_receipts: Array<{
-    request_id?: string;
-    href?: string;
-    status?: string;
-    latency_ms?: number | null;
-  }>;
-  use: {
-    model: string;
-    curl?: string;
-    python?: { path: string; model: string };
-    javascript?: { path: string; model: string };
-  };
-}
-
-interface Catalog {
-  schema_version: 1;
-  object: "models.catalog";
-  aliases: CatalogRow[];
-  models: CatalogRow[];
-  counts?: { aliases: number; models: number; capabilities: number };
-}
 
 const capabilityOrder: Capability[] = [
   "chat",
@@ -138,31 +81,6 @@ const capabilityLabels: Record<Capability, string> = {
   decide: "Decide",
   embed: "Embed",
 };
-
-async function fetchCatalog(): Promise<Catalog> {
-  const response = await fetch("/me/api/models/catalog", {
-    credentials: "same-origin",
-  });
-  if (!response.ok) {
-    throw new Error("Models catalog could not be loaded. Try again.");
-  }
-  const payload = (await response.json()) as unknown;
-  if (!isCatalog(payload)) {
-    throw new Error("Models catalog response is not in the expected shape.");
-  }
-  return payload;
-}
-
-function isCatalog(value: unknown): value is Catalog {
-  if (!value || typeof value !== "object") return false;
-  const maybe = value as Partial<Catalog>;
-  return (
-    maybe.schema_version === 1 &&
-    maybe.object === "models.catalog" &&
-    Array.isArray(maybe.aliases) &&
-    Array.isArray(maybe.models)
-  );
-}
 
 function capabilityFromIntent(intent: string | undefined): Capability {
   if (!intent) return "chat";
@@ -250,6 +168,14 @@ function timingLabel(row: CatalogRow): string {
   return `${duration} · ${source}`;
 }
 
+function readString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function readNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 function availabilityState(row: CatalogRow): AvailabilityState {
   if (row.availability.status) {
     const status = row.availability.status.toLowerCase().replaceAll("_", "-");
@@ -273,6 +199,126 @@ function availabilityState(row: CatalogRow): AvailabilityState {
   }
   if (!row.availability.measured) return "unknown";
   return row.availability.available ? "ready" : "unavailable";
+}
+
+function evidenceLabel(row: CatalogRow): string {
+  const source = row.availability.evidence?.source;
+  if (row.availability.measured) {
+    if (source === "request") return "Observed from request";
+    if (source === "health" || source === "status")
+      return "Observed from health";
+    if (source === "registry") return "From configuration";
+    return "Observed";
+  }
+  return "Not observed yet";
+}
+
+function observedAt(row: CatalogRow): number | null {
+  const value = row.availability.evidence?.observed_at_s;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function configurationLabel(row: CatalogRow): string {
+  if (row.availability.configured === false) return "Catalog only";
+  if (row.availability.configured === true) return "Configured";
+  return "Configuration not reported";
+}
+
+function enabledLabel(row: CatalogRow): string | null {
+  if (row.availability.enabled === true) return "Enabled";
+  if (row.availability.enabled === false) return "Disabled";
+  return null;
+}
+
+function availabilityAction(
+  row: CatalogRow,
+  viewerAdmin: boolean,
+): { label: string; href: string } | null {
+  const configHref =
+    row.locality === "remote" ? "/ui/providers/" : "/ui/engines/";
+  if (viewerAdmin) {
+    if (row.availability.configured === false) {
+      return {
+        label:
+          row.locality === "remote"
+            ? "Connect a provider"
+            : "Connect an engine",
+        href: configHref,
+      };
+    }
+    if (row.availability.enabled === false) {
+      return {
+        label: row.locality === "remote" ? "Review provider" : "Review engine",
+        href: configHref,
+      };
+    }
+  }
+  const state = availabilityState(row);
+  if (["unavailable", "unknown", "not_measured"].includes(state)) {
+    return { label: "Check status", href: "/ui/status/" };
+  }
+  return null;
+}
+
+function AvailabilityFacts({ row }: { row: CatalogRow }) {
+  const enabled = enabledLabel(row);
+  return (
+    <div className="flex flex-wrap gap-2 text-xs">
+      <Badge variant="secondary">Allowed by your access</Badge>
+      <Badge variant="outline">{configurationLabel(row)}</Badge>
+      <Badge variant="outline">{evidenceLabel(row)}</Badge>
+      {enabled && <Badge variant="outline">{enabled}</Badge>}
+    </div>
+  );
+}
+
+function ObservedAt({ row }: { row: CatalogRow }) {
+  const at = observedAt(row);
+  if (at === null) {
+    return (
+      <span className="text-muted-foreground text-xs">
+        Observation time not reported
+      </span>
+    );
+  }
+  return (
+    <span className="text-muted-foreground text-xs">
+      Observed: <RelativeTime ts={at} />
+    </span>
+  );
+}
+
+function TableUseCell({
+  row,
+  viewerAdmin,
+  onDetail,
+}: {
+  row: CatalogRow;
+  viewerAdmin: boolean;
+  onDetail: (row: CatalogRow) => void;
+}) {
+  const action = availabilityAction(row, viewerAdmin);
+  if (action) {
+    return (
+      <Button size="sm" asChild>
+        <a href={action.href} onClick={(event) => event.stopPropagation()}>
+          {action.label}
+        </a>
+      </Button>
+    );
+  }
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={(event) => {
+        event.stopPropagation();
+        onDetail(row);
+      }}
+    >
+      Details
+    </Button>
+  );
 }
 
 function itemMatches(row: CatalogRow, query: string): boolean {
@@ -303,7 +349,7 @@ function exampleBody(row: CatalogRow): Record<string, unknown> {
 }
 
 function snippetsFor(row: CatalogRow, origin: string) {
-  const path = row.use.python?.path ?? row.use.javascript?.path;
+  const path = row.use.path ?? row.use.python?.path ?? row.use.javascript?.path;
   if (!path || !row.examples[0]?.body) return [];
   const url = `${origin}${path}`;
   const body = exampleBody(row);
@@ -355,11 +401,14 @@ function Availability({
 function AliasCard({
   row,
   onDetail,
+  viewerAdmin,
 }: {
   row: CatalogRow;
   onDetail: (row: CatalogRow) => void;
+  viewerAdmin: boolean;
 }) {
   const [copied, setCopied] = useState(false);
+  const action = availabilityAction(row, viewerAdmin);
   async function copyAlias() {
     await navigator.clipboard.writeText(row.id);
     setCopied(true);
@@ -415,27 +464,37 @@ function AliasCard({
         </span>
       </div>
       <Availability row={row} />
+      <AvailabilityFacts row={row} />
+      <ObservedAt row={row} />
       <div className="mt-auto flex flex-wrap gap-2">
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button size="sm">Use</Button>
-          </PopoverTrigger>
-          <PopoverContent
-            align="start"
-            className="w-[min(92vw,560px)] p-0"
-            aria-label={`Use ${row.id}`}
-          >
-            <div className="border-b p-4">
-              <h4 className="font-medium">Use {row.id}</h4>
-              <p className="text-muted-foreground mt-1 text-sm">
-                Copy the alias or a starter request.
-              </p>
-            </div>
-            <div className="p-4">
-              <CodeBlock snippets={snippetsFor(row, window.location.origin)} />
-            </div>
-          </PopoverContent>
-        </Popover>
+        {action ? (
+          <Button size="sm" asChild>
+            <a href={action.href}>{action.label}</a>
+          </Button>
+        ) : (
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button size="sm">Use</Button>
+            </PopoverTrigger>
+            <PopoverContent
+              align="start"
+              className="w-[min(92vw,560px)] p-0"
+              aria-label={`Use ${row.id}`}
+            >
+              <div className="border-b p-4">
+                <h4 className="font-medium">Use {row.id}</h4>
+                <p className="text-muted-foreground mt-1 text-sm">
+                  Copy the alias or a starter request.
+                </p>
+              </div>
+              <div className="p-4">
+                <CodeBlock
+                  snippets={snippetsFor(row, window.location.origin)}
+                />
+              </div>
+            </PopoverContent>
+          </Popover>
+        )}
         <Button variant="outline" size="sm" onClick={() => onDetail(row)}>
           Details
           <ChevronRight aria-hidden="true" />
@@ -475,16 +534,19 @@ function DetailSheet({
   row,
   aliases,
   onOpenChange,
+  viewerAdmin,
 }: {
   row: CatalogRow | null;
   aliases: CatalogRow[];
   onOpenChange: (open: boolean) => void;
+  viewerAdmin: boolean;
 }) {
   const aliasesPointingHere = row
     ? aliases.filter((alias) =>
         Object.values(alias.resolves_to).includes(row.id),
       )
     : [];
+  const action = row ? availabilityAction(row, viewerAdmin) : null;
   return (
     <Sheet open={!!row} onOpenChange={onOpenChange}>
       <SheetContent className="w-[92vw] overflow-y-auto sm:max-w-xl">
@@ -521,8 +583,15 @@ function DetailSheet({
               </div>
               <div>
                 <h3 className="font-medium">Availability</h3>
-                <div className="mt-3 rounded-lg border p-3">
+                <div className="mt-3 space-y-3 rounded-lg border p-3">
                   <Availability row={row} />
+                  <AvailabilityFacts row={row} />
+                  <ObservedAt row={row} />
+                  {action && (
+                    <Button size="sm" asChild>
+                      <a href={action.href}>{action.label}</a>
+                    </Button>
+                  )}
                 </div>
               </div>
               <div>
@@ -573,17 +642,17 @@ function DetailSheet({
                   <ul className="mt-3 space-y-2 text-sm">
                     {row.recent_receipts.slice(0, 5).map((receipt, index) => (
                       <li
-                        key={receipt.request_id ?? index}
+                        key={readString(receipt.request_id) ?? index}
                         className="rounded-lg border p-3"
                       >
-                        {receipt.status ?? "Recorded request"} ·{" "}
-                        {typeof receipt.latency_ms === "number"
-                          ? `${receipt.latency_ms} ms`
+                        {readString(receipt.status) ?? "Recorded request"} ·{" "}
+                        {readNumber(receipt.latency_ms) !== null
+                          ? `${readNumber(receipt.latency_ms)} ms`
                           : "Duration not measured"}
-                        {receipt.request_id && (
+                        {readString(receipt.request_id) && (
                           <a
                             className="mt-2 block min-h-11 content-center underline underline-offset-4"
-                            href={`/r/${encodeURIComponent(receipt.request_id)}`}
+                            href={`/r/${encodeURIComponent(readString(receipt.request_id) ?? "")}`}
                           >
                             View receipt
                           </a>
@@ -606,6 +675,7 @@ function DetailSheet({
 }
 
 export default function ModelsClient() {
+  const viewer = useViewer();
   const [query, setQuery] = useState("");
   const [capability, setCapability] = useState<Capability | "all">("all");
   const [showNoProviderCharge, setShowNoProviderCharge] = useState(true);
@@ -620,7 +690,7 @@ export default function ModelsClient() {
     refetch: refetchCatalog,
   } = useQuery({
     queryKey: ["models", "catalog"],
-    queryFn: fetchCatalog,
+    queryFn: productApi.models,
   });
   const allRows = useMemo(
     () => [...(catalogData?.aliases ?? []), ...(catalogData?.models ?? [])],
@@ -762,6 +832,7 @@ export default function ModelsClient() {
             <div className="space-y-4">
               <p className="text-muted-foreground text-sm">
                 Stable aliases stay the same when the backing model changes.
+                This catalog is scoped to models your access plan allows.
               </p>
               <div
                 aria-label="Available model aliases"
@@ -798,6 +869,7 @@ export default function ModelsClient() {
                           key={row.id}
                           row={row}
                           onDetail={setDetail}
+                          viewerAdmin={viewer.admin}
                         />
                       ))}
                     </div>
@@ -834,6 +906,7 @@ export default function ModelsClient() {
                       <TableHead>Engine or provider</TableHead>
                       <TableHead>Cost</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead>Use</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -847,7 +920,10 @@ export default function ModelsClient() {
                           <Button
                             variant="ghost"
                             className="h-auto min-h-11 justify-start text-left whitespace-normal"
-                            onClick={() => setDetail(row)}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setDetail(row);
+                            }}
                           >
                             <span className="space-y-1">
                               <span className="block">{titleFor(row)}</span>
@@ -865,6 +941,17 @@ export default function ModelsClient() {
                         <TableCell>{costLabel(row)}</TableCell>
                         <TableCell>
                           <Availability row={row} showReason={false} />
+                          <div className="mt-2 space-y-2">
+                            <AvailabilityFacts row={row} />
+                            <ObservedAt row={row} />
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <TableUseCell
+                            row={row}
+                            viewerAdmin={viewer.admin}
+                            onDetail={setDetail}
+                          />
                         </TableCell>
                       </TableRow>
                     ))}
@@ -879,6 +966,7 @@ export default function ModelsClient() {
         row={detail}
         aliases={catalogData?.aliases ?? []}
         onOpenChange={(open) => !open && setDetail(null)}
+        viewerAdmin={viewer.admin}
       />
     </div>
   );
