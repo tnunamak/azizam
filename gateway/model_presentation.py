@@ -237,7 +237,7 @@ def capability_presentation(capability: Any, metadata: Mapping[str, Any] | None 
     out = {"capability": kind, "capability_title": label, "icon_key": CAPABILITY_ICON_KEYS.get(kind, "chat"),
            "title": title, "recommended_model": str(recommended), "summary": description,
            "use_names": [str(use_name)] if use_name else [],
-           "secondary_profile": bool(metadata.get("secondary_profile", kind == "chat" and use_name
+           "secondary_profile": bool(metadata.get("secondary_profile", (not remote or alias) and kind == "chat" and use_name
                                      and str(use_name).removeprefix("role:") not in PRIMARY_CHAT_NAMES))}
     if use_name:
         out["use_name"] = str(use_name)

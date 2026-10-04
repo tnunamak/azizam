@@ -436,6 +436,7 @@ def test_remote_concrete_model_id_preserves_provider_spelling_without_authored_t
     )
     assert catalog["models"][0]["title"] == "gpt-4.1-nano"
     assert catalog["models"][0]["display_name"] == "gpt-4.1-nano"
+    assert not catalog["models"][0]["secondary_profile"]
 
 
 def test_alias_keeps_target_model_specific_description():
@@ -465,3 +466,26 @@ def test_declared_role_weights_supply_recommendation_without_private_path():
     assert row["title"] == "Default"
     assert row["recommended_model"] == "Declared-Weights-Q4"
     assert "/private" not in str(row)
+
+
+@pytest.mark.parametrize("name,override,expected", [("fast", None, False), ("alternate", None, True), ("alternate", False, False)])
+def test_remote_alias_preserves_profile_disclosure_and_operator_override(name, override, expected):
+    alias = {"alias": name, "resolves_to": "gpt-4.1-nano"}
+    if override is not None:
+        alias["secondary_profile"] = override
+    catalog = build_models_catalog(
+        capabilities=[Capability(intent="chat.completions", backend="cloud", model="gpt-4.1-nano")],
+        service_records={"cloud": {"config": {"locality": "remote"}}},
+        alias_views={"chat": {"stable": [alias]}},
+    )
+    assert catalog["aliases"][0]["secondary_profile"] is expected
+
+
+
+def test_remote_concrete_profile_override_remains_operator_authored():
+    from gateway.model_presentation import capability_presentation
+    row = capability_presentation(
+        Capability(intent="chat.completions", backend="cloud", model="gpt-4.1-nano"),
+        {"locality": "remote", "secondary_profile": True},
+    )
+    assert row["secondary_profile"]
