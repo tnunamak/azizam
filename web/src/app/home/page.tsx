@@ -566,12 +566,13 @@ function Connect({
                 ) : (
                   <div className="bg-muted rounded-lg p-5 text-sm">
                     <p className="font-medium">
-                      No chat model is available to this key yet
+                      No chat alias is advertised for this key yet
                     </p>
                     <p className="text-muted-foreground mt-2">
-                      Choose a key with chat access, or ask the gateway owner to
-                      add a model to this key’s access plan. Your base URL stays
-                      the same.
+                      Choose another key, or ask the gateway owner to check this
+                      key’s access plan and chat aliases. Models without an
+                      alias may still be available. Your base URL stays the
+                      same.
                     </p>
                   </div>
                 )}

@@ -226,4 +226,45 @@ describe("Home audit component behavior", () => {
       { event: "receipt_viewed", request_id: "req-1" },
     ]);
   });
+  it("does not infer missing chat access from a missing recipe alias", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/.well-known/ai-gateway")
+          return Response.json({ service: { name: "Family gateway" } });
+        if (path === "/me/api/home")
+          return Response.json({
+            ...home,
+            user: { ...home.user, role: "member" },
+            aliases: [],
+            new_app_aliases: [],
+            credential_aliases: { "cred-browser": [] },
+            capabilities: [
+              {
+                capability: "chat",
+                intent: "chat.completions",
+                model: "declared-model",
+                available: true,
+                status: "ready",
+                reason: "Chat is ready.",
+              },
+            ],
+          });
+        if (path === "/me/api/media?limit=5")
+          return Response.json({ assets: [] });
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+    renderHome();
+    expect(
+      await screen.findByText("No chat alias is advertised for this key yet"),
+    ).toBeVisible();
+    expect(
+      screen.queryByText("No chat model is available to this key yet"),
+    ).toBeNull();
+    expect(
+      screen.getByText(/Models without an alias may still be available/),
+    ).toBeVisible();
+  });
 });
