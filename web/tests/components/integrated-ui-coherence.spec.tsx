@@ -147,6 +147,13 @@ describe("integrated UI coherence", () => {
         Response.json({
           providers: [
             {
+              id: "unchecked-remote",
+              name: "Unchecked remote",
+              enabled: true,
+              reachable: null,
+              key_status: { state: "set" },
+            },
+            {
               id: "disabled-remote",
               name: "Disabled remote",
               enabled: false,
@@ -161,6 +168,9 @@ describe("integrated UI coherence", () => {
     expect(
       await screen.findByRole("heading", { name: "Disabled remote" }),
     ).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Unchecked remote" })).toBeVisible();
+    expect(screen.getByText("Unknown")).toBeVisible();
+    expect(screen.getByText("Configured, observation unknown.")).toBeVisible();
     expect(screen.getByText("Unavailable")).toBeVisible();
     expect(screen.getByText("Configured, currently disabled.")).toBeVisible();
     expect(screen.queryByText("Starting")).toBeNull();

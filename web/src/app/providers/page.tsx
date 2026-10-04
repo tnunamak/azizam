@@ -583,7 +583,7 @@ function providerState(provider: ProviderRecord) {
   if (provider.reachable === true && provider.keyStatus === "set")
     return { status: "ready" as const, reason: "Gateway check passed." };
   return {
-    status: "starting" as const,
+    status: "unknown" as const,
     reason: "Configured, observation unknown.",
   };
 }

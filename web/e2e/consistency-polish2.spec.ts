@@ -140,6 +140,8 @@ test("unknown provider readiness stays distinct from observed unavailability", a
   await expect(
     unknown.getByText("Configured, observation unknown.", { exact: true }),
   ).toBeVisible();
+  await expect(unknown.getByText("Unknown", { exact: true })).toBeVisible();
+  await expect(unknown.getByText("Starting", { exact: true })).toHaveCount(0);
   await expect(unknown.getByText("Unavailable", { exact: true })).toHaveCount(
     0,
   );
