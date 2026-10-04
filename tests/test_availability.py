@@ -645,7 +645,7 @@ def test_alias_target_resolves_from_registry_model_group():
     assert caps[0].availability["status"] == "ready"
 
 
-def test_alias_target_does_not_resolve_from_missing_model_file():
+def test_alias_target_resolves_from_missing_model_file_as_unavailable():
     missing = str(Path(__file__).resolve().parent / "fixtures" / "missing-model.gguf")
     caps = project_capabilities([
         Capability(intent="chat.completions", backend="gateway", model="legacy", tags=("alias", "resolves_to:legacy")),
@@ -653,12 +653,14 @@ def test_alias_target_does_not_resolve_from_missing_model_file():
         "id": "legacy",
         "model_group": "legacy",
         "upstream_model": "legacy.gguf",
-        "activation_model": missing,
+        "model_path": missing,
     }]}}}},
        evidence={"svc": {"status": "ready", "available": True}})
 
-    assert caps[0].backend == "gateway"
-    assert caps[0].availability["status"] == "unknown"
+    assert caps[0].backend == "svc"
+    assert caps[0].availability["status"] == "unavailable"
+    assert caps[0].availability["reason"] == "Model file is not installed."
+    assert not caps[0].available
 
 
 def test_model_level_unavailability_wins_over_ready_service():

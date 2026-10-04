@@ -104,6 +104,7 @@ def test_unavailable_single_target_returns_503_without_substitution(model):
     assert result.body["error"]["code"] == "model_not_deployed"
     assert "No fallback is configured" in result.body["error"]["message"]
     assert result.resolved_model is None
+    assert "x-gateway-fallback" not in result.headers
 
 
 def test_missing_single_target_is_503():
@@ -234,6 +235,7 @@ def test_exhausted_fallback_retains_attempt_receipt_context():
         result = asyncio.run(rt.dispatch(None, None, {**BODY, "model": "decide-quality"}, "r"))
     assert result.status_code == 529
     assert result.fallback_reasons == ("large:overloaded", "small:overloaded")
+    assert result.headers["x-gateway-fallback"] == "large:overloaded,small:overloaded"
     assert result.backend == "small"
     assert result.engine is None and result.resolved_model is None
 

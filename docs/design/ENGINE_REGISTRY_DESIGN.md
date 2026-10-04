@@ -138,7 +138,19 @@ service:
 
 **Why one record (not engine/capability/deployment split):** the engine/model/lifecycle facts scattered today across `LLM_BACKEND_HOSTS`, `TTS_HOST`, `swap_kobold_model`, `ensure_target` all describe **one process**. Splitting them into joined tables is the indirection OpenRouter needs (it curates 300 models) and we don't. We keep the *existing* three-collection split (services / protocol_frontends / workflows) — a protocol frontend is a wire adapter, a workflow is a ComfyUI graph, neither is an engine — and make the **service** record self-sufficient, the way llama-swap's per-model record owns `cmd`+`cmdStop`+`proxy`+`ttl` in one place.
 
-### 1.2 Three concrete records
+
+### 1.2 Model file availability contract
+
+Model-file availability is a generic registry projection, not an engine adapter. The gateway checks only files that the registry declares as gateway-host files:
+
+- `model_path`, `path`, and `vivid_fish_model_path` are legacy gateway-host file fields by default.
+- `activation_model` and `activation_mmproj` are checked only when the value is absolute and the service uses a currently host-managed lifecycle driver (`systemd` or `command`), or when `model_file_scope: gateway` is declared on the model, service, or service config.
+- `required_model_files` and `required_files` declare additional gateway-host dependencies, such as companion projector files. These requirements inherit through `base_model_id`.
+- `model_file_scope: backend` (also `remote`, `container`, or `external`) means the path belongs to the backend's filesystem or naming scope, so the gateway must not classify it by calling `Path.is_file()` on the gateway host.
+
+Rows with a declared gateway-host file that is missing project as unavailable with `reason: Model file is not installed.` Rows without a declared gateway-host file remain unmeasured by this projection.
+
+### 1.3 Three concrete records
 
 #### (a) Remote always-on OpenAI-compatible endpoint — router-only (the common case)
 

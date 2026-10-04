@@ -370,11 +370,11 @@ def resolve_capability_targets(capabilities: Iterable[Capability], service_recor
             if is_remote_provider_config(config):
                 continue  # Remote aliases need a concrete capability of this intent.
             rows = service_model_records(config)
-            if any(row.get("enabled") is not False
-                   and target in {row.get("id"), row.get("model_group")}
-                   and model_file_availability(row, rows) is None
-                   for row in rows):
-                matches.append(replace(cap, backend=str(service_id)))
+            for row in rows:
+                if row.get("enabled") is False or target not in {row.get("id"), row.get("model_group")}:
+                    continue
+                availability = model_file_availability(row, rows, service=service)
+                matches.append(replace(cap, backend=str(service_id), availability=availability))
         backends = {candidate.backend for candidate in matches}
         if len(backends) == 1:
             concrete = matches[0]

@@ -875,7 +875,7 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
                 request_id=request_id,
                 path=request.url.path,
                 requested_model=body.get("model"),
-                resolved_model=result.resolved_model or str(result.body.get("model") or ""),
+                resolved_model=result.resolved_model or result.body.get("model"),
                 backend=result.backend,
                 question_count=len(body["questions"]),
                 status_code=result.status_code,

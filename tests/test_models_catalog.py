@@ -43,6 +43,7 @@ class ModelsCatalogBuildTests(unittest.TestCase):
             "capture-engine": {
                 "enabled": True,
                 "capabilities": ["chat", "completions"],
+                "lifecycle": {"driver": "systemd"},
                 "config": {
                     "models": [
                         {
@@ -70,6 +71,7 @@ class ModelsCatalogBuildTests(unittest.TestCase):
             "capture-engine": {
                 "enabled": True,
                 "capabilities": ["chat"],
+                "lifecycle": {"driver": "systemd"},
                 "config": {
                     "models": [
                         {
@@ -100,6 +102,7 @@ class ModelsCatalogBuildTests(unittest.TestCase):
             "capture-engine": {
                 "enabled": True,
                 "capabilities": ["chat"],
+                "lifecycle": {"driver": "systemd"},
                 "config": {
                     "models": [
                         {
@@ -116,6 +119,82 @@ class ModelsCatalogBuildTests(unittest.TestCase):
         self.assertTrue(capabilities[0].available)
         self.assertIsNone(capabilities[0].availability)
 
+
+
+    def test_activation_model_on_external_loader_is_not_treated_as_host_file(self) -> None:
+        missing = str(ROOT / "tests" / "fixtures" / "container-only.gguf")
+        services = {"services": {
+            "external-loader": {
+                "enabled": True,
+                "capabilities": ["chat"],
+                "lifecycle": {"driver": "http-load-unload"},
+                "config": {"models": [{"model_group": "external-chat", "activation_model": missing}]},
+            }
+        }}
+
+        capabilities = registered_model_capabilities(services)
+        self.assertTrue(capabilities[0].available)
+        self.assertIsNone(capabilities[0].availability)
+
+
+    def test_backend_model_file_scope_skips_gateway_path_fields(self) -> None:
+        missing = str(ROOT / "tests" / "fixtures" / "backend-container.gguf")
+        services = {"services": {
+            "container-loader": {
+                "enabled": True,
+                "capabilities": ["chat"],
+                "config": {
+                    "model_file_scope": "backend",
+                    "models": [{"model_group": "container-chat", "model_path": missing}],
+                },
+            }
+        }}
+
+        capabilities = registered_model_capabilities(services)
+        self.assertTrue(capabilities[0].available)
+        self.assertIsNone(capabilities[0].availability)
+
+    def test_model_file_scope_gateway_opts_activation_file_into_host_check(self) -> None:
+        missing = str(ROOT / "tests" / "fixtures" / "scoped-missing.gguf")
+        services = {"services": {
+            "scoped-loader": {
+                "enabled": True,
+                "capabilities": ["chat"],
+                "config": {
+                    "model_file_scope": "gateway",
+                    "models": [{"model_group": "scoped-chat", "activation_model": missing}],
+                },
+            }
+        }}
+
+        capabilities = registered_model_capabilities(services)
+        self.assertFalse(capabilities[0].available)
+        self.assertEqual(capabilities[0].availability["status"], "unavailable")
+
+    def test_required_companion_model_file_is_checked_and_inherited(self) -> None:
+        present = str(Path(__file__).resolve())
+        missing = str(ROOT / "tests" / "fixtures" / "missing-mmproj.gguf")
+        services = {"services": {
+            "vision-loader": {
+                "enabled": True,
+                "capabilities": ["chat"],
+                "config": {
+                    "models": [
+                        {
+                            "id": "vision-base",
+                            "model_group": "vision-base",
+                            "model_path": present,
+                            "required_model_files": [missing],
+                        },
+                        {"model_group": "vision-public", "base_model_id": "vision-base"},
+                    ],
+                },
+            }
+        }}
+
+        rows = {cap.model: cap for cap in registered_model_capabilities(services)}
+        self.assertFalse(rows["vision-base"].available)
+        self.assertFalse(rows["vision-public"].available)
 
     def test_remote_provider_models_are_visible_and_priced_from_own_rows(self) -> None:
         services = {"services": {

@@ -7,30 +7,52 @@ from pathlib import Path
 from typing import Any
 
 
-LOCAL_MODEL_FILE_FIELDS = (
-    "activation_model",
+# These field names are legacy/configured gateway-host filesystem paths by
+# contract unless the row or service explicitly scopes model files to the
+# backend. They are not engine names.
+GATEWAY_MODEL_FILE_FIELDS = (
     "model_path",
     "path",
     "vivid_fish_model_path",
 )
 
+# Activation identifiers may be logical backend ids for externally managed
+# services. Treat them as host files only when the row/service says the gateway
+# manages that host process, or when the row opts into gateway file scope.
+ACTIVATION_FILE_FIELDS = (
+    "activation_model",
+    "activation_mmproj",
+)
+
+# Generic explicit companion/dependency declarations. A multimodal projector is
+# just another required local file here; the field name remains data.
+DECLARED_REQUIRED_FILE_FIELDS = (
+    "required_model_files",
+    "required_files",
+)
+
+HOST_MANAGED_LIFECYCLE_DRIVERS = frozenset({"systemd", "command"})
+BACKEND_FILE_SCOPES = frozenset({"backend", "remote", "container", "external"})
+
 
 def model_file_availability(
     model: Mapping[str, Any],
     models: Sequence[Mapping[str, Any]] = (),
+    *,
+    service: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Return an unavailable projection when a declared local file is missing.
 
-    The check is data-driven: if a model row declares one of the generic local
-    file fields, that file must exist. Policy-only rows can inherit the
-    requirement from ``base_model_id``. Rows without an explicit local file stay
-    unmeasured here because an upstream id is not necessarily a filesystem path.
+    The check is data-driven. Gateway-host path fields, explicit required-file
+    declarations, and host-managed activation files must exist. Policy-only rows
+    can inherit requirements from ``base_model_id``. Rows without a declared
+    gateway-host file stay unmeasured here because an upstream id may be a
+    container path or logical backend id.
     """
 
-    path = _model_file_path(model, models)
-    if path is None:
-        return None
-    if path.is_file():
+    paths = _model_file_paths(model, models, service=service)
+    missing = [path for path in paths if not path.is_file()]
+    if not missing:
         return None
     return {
         "available": False,
@@ -41,36 +63,104 @@ def model_file_availability(
         "configured": True,
         "up": None,
         "idle_startable": False,
-        "evidence": {"source": "registry", "kind": "missing_model_file"},
+        "evidence": {
+            "source": "registry",
+            "kind": "missing_model_file",
+            "missing_file_count": len(missing),
+        },
     }
 
 
 def missing_model_file_caveat(
     model: Mapping[str, Any],
     models: Sequence[Mapping[str, Any]] = (),
+    *,
+    service: Mapping[str, Any] | None = None,
 ) -> str | None:
-    availability = model_file_availability(model, models)
+    availability = model_file_availability(model, models, service=service)
     if availability is None:
         return None
     return str(availability["reason"])
 
 
-def _model_file_path(
+def _model_file_paths(
     model: Mapping[str, Any],
     models: Sequence[Mapping[str, Any]],
+    *,
+    service: Mapping[str, Any] | None,
     seen: frozenset[str] = frozenset(),
-) -> Path | None:
-    for field in LOCAL_MODEL_FILE_FIELDS:
-        value = model.get(field)
-        if isinstance(value, str) and value.strip():
-            return Path(value)
+) -> tuple[Path, ...]:
+    paths: list[Path] = []
+    if not _backend_file_scope(model, service):
+        for field in GATEWAY_MODEL_FILE_FIELDS:
+            paths.extend(_paths_from_value(model.get(field)))
+
+    if _gateway_file_scope(model, service):
+        for field in ACTIVATION_FILE_FIELDS:
+            paths.extend(path for path in _paths_from_value(model.get(field)) if path.is_absolute())
+    elif _host_managed_lifecycle(service):
+        for field in ACTIVATION_FILE_FIELDS:
+            paths.extend(path for path in _paths_from_value(model.get(field)) if path.is_absolute())
+
+    if not _backend_file_scope(model, service):
+        for field in DECLARED_REQUIRED_FILE_FIELDS:
+            paths.extend(_paths_from_value(model.get(field)))
+
     base_id = model.get("base_model_id")
-    if not isinstance(base_id, str) or not base_id or base_id in seen:
-        return None
-    base = _find_model(models, base_id)
-    if base is None:
-        return None
-    return _model_file_path(base, models, seen | {base_id})
+    if isinstance(base_id, str) and base_id and base_id not in seen:
+        base = _find_model(models, base_id)
+        if base is not None:
+            paths.extend(_model_file_paths(base, models, service=service, seen=seen | {base_id}))
+
+    return tuple(dict.fromkeys(paths))
+
+
+def _paths_from_value(value: Any) -> list[Path]:
+    if isinstance(value, str):
+        stripped = value.strip()
+        return [Path(stripped)] if stripped else []
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        paths: list[Path] = []
+        for item in value:
+            paths.extend(_paths_from_value(item))
+        return paths
+    if isinstance(value, Mapping):
+        paths: list[Path] = []
+        for key in ("path", "file", "model_path"):
+            paths.extend(_paths_from_value(value.get(key)))
+        return paths
+    return []
+
+
+def _gateway_file_scope(model: Mapping[str, Any], service: Mapping[str, Any] | None) -> bool:
+    return _model_file_scope(model, service) == "gateway"
+
+
+def _backend_file_scope(model: Mapping[str, Any], service: Mapping[str, Any] | None) -> bool:
+    return _model_file_scope(model, service) in BACKEND_FILE_SCOPES
+
+
+def _model_file_scope(model: Mapping[str, Any], service: Mapping[str, Any] | None) -> str:
+    values = [model.get("model_file_scope")]
+    if isinstance(service, Mapping):
+        config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+        values.extend([service.get("model_file_scope"), config.get("model_file_scope")])
+    for value in values:
+        scope = str(value or "").strip().casefold()
+        if scope:
+            return scope
+    return ""
+
+
+def _host_managed_lifecycle(service: Mapping[str, Any] | None) -> bool:
+    if not isinstance(service, Mapping):
+        return False
+    config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
+    lifecycle = service.get("lifecycle") if isinstance(service.get("lifecycle"), Mapping) else config.get("lifecycle")
+    if not isinstance(lifecycle, Mapping):
+        return False
+    driver = str(lifecycle.get("driver") or "").strip().casefold()
+    return driver in HOST_MANAGED_LIFECYCLE_DRIVERS
 
 
 def _find_model(models: Sequence[Mapping[str, Any]], model_id: str) -> Mapping[str, Any] | None:

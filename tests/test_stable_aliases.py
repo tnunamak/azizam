@@ -433,12 +433,12 @@ class RouteTests(unittest.TestCase):
         with self.assertRaises(proxy.ModelCompatibilityError):
             proxy.resolve_model_for_operation("speech", "dall-e-3")
 
-    def test_undeployed_engine_by_name_is_a_coded_400(self):
+    def test_undeployed_engine_by_name_is_a_coded_503(self):
         with self._without_service("tts-supertonic"):
             resp = self.client.post(
                 "/v1/audio/speech", json={"model": "supertonic", "voice": "nova", "input": "hi"}
             )
-        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.status_code, 503)
         error = resp.json()["error"]
         self.assertEqual((error["code"], error["param"]), ("model_not_deployed", "model"))
 

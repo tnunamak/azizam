@@ -120,7 +120,7 @@ def registered_model_capabilities(service_records: Mapping[str, Any]) -> list[Ca
             model_id = model.get("model_group") or model.get("public") or model.get("id")
             if not model_id:
                 continue
-            availability = model_file_availability(model, model_records)
+            availability = model_file_availability(model, model_records, service=service)
             out.extend(replace(capability, model=str(model_id), availability=availability)
                        for capability in capabilities if capability.model is None)
     return out
@@ -401,6 +401,8 @@ def _alias_rows(
             operation_row["name"] = presentation["title"]
             if raw.get("description"):
                 operation_row["description"] = presentation["summary"]
+                if str(raw["description"]) != presentation["summary"]:
+                    operation_row["technical_description"] = str(raw["description"])
             operation_row["use_names"] = list(dict.fromkeys([alias, *operation_row["use_names"]]))
             row = by_alias.setdefault(alias, operation_row)
             if row is not operation_row:
