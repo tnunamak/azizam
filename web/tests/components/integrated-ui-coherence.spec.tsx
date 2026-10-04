@@ -86,6 +86,44 @@ describe("integrated UI coherence", () => {
               ],
               secret_ref: "OPENROUTER_API_KEY",
             },
+            {
+              id: "tinyspend",
+              name: "Tiny Spend",
+              enabled: true,
+              reachable: true,
+              key_status: {
+                state: "set",
+                source: "secret_store",
+                suffix: "9a11",
+              },
+              spend: {
+                daily_usd: 0,
+                monthly_usd: 0.000025368,
+                status: "measured",
+              },
+              caps: { daily_usd: 0.01, monthly_usd: 1.25 },
+              catalog: { base_url: "" },
+              models: [],
+            },
+            {
+              id: "cent",
+              name: "Cent Provider",
+              enabled: true,
+              reachable: true,
+              key_status: {
+                state: "set",
+                source: "secret_store",
+                suffix: "1c00",
+              },
+              spend: {
+                daily_usd: 0.01,
+                monthly_usd: 0.000000042,
+                status: "measured",
+              },
+              caps: { daily_usd: 1.25, monthly_usd: 10 },
+              catalog: { base_url: "" },
+              models: [],
+            },
           ],
         }),
       ),
@@ -94,9 +132,13 @@ describe("integrated UI coherence", () => {
     expect(
       await screen.findByRole("heading", { name: "OpenRouter" }),
     ).toBeVisible();
-    expect(screen.getByText("Ready")).toBeVisible();
+    expect(screen.getAllByText("Ready")).toHaveLength(3);
     expect(screen.getByText("Set · ends in 4f2a")).toBeVisible();
     expect(screen.getAllByText("$1.25 of $10.00")).toHaveLength(2);
+    expect(screen.getByText("$0.00 of $0.01")).toBeVisible();
+    expect(screen.getByText("$0.01 of $1.25")).toBeVisible();
+    expect(screen.getByText("<$0.01 of $1.25")).toBeVisible();
+    expect(screen.getByText("<$0.01 of $10.00")).toBeVisible();
     expect(screen.getByRole("cell", { name: "3" })).toBeVisible();
     expect(screen.getByRole("cell", { name: "15" })).toBeVisible();
     await waitFor(() =>
