@@ -2415,13 +2415,19 @@ def authenticate_request(request: Request, request_path: str) -> AuthContext | R
     return auth_error("Missing API key.")
 
 
-def _looks_like_litellm_virtual_key(api_key: str) -> bool:
-    return api_key.startswith("sk-")
+def _is_delegatable_litellm_key(api_key: str) -> bool:
+    """Only unknown, non-placeholder sk- credentials belong to the delegate."""
+    return (
+        api_key.startswith("sk-")
+        and api_key not in DEFAULT_LAN_PLACEHOLDER_KEYS
+        and api_key not in lan_placeholder_keys(ADMIN_STORE.path)
+        and admin_store.find_credential_by_hash(hash_api_key(api_key), path=ADMIN_STORE.path) is None
+    )
 
 
 def _request_uses_litellm_virtual_key(request: Request) -> bool:
     api_key = _resolve_client_api_key(request)
-    return bool(api_key and _looks_like_litellm_virtual_key(api_key))
+    return bool(api_key and _is_delegatable_litellm_key(api_key))
 
 
 def authenticate_runtime_or_litellm_request(
@@ -2438,11 +2444,8 @@ def authenticate_runtime_or_litellm_request(
         api_key = _resolve_client_api_key(request)
         # Public placeholders never become delegated credentials, including
         # sk-local when the operator removes it from LAN exemptions.
-        if (
-            api_key and _looks_like_litellm_virtual_key(api_key)
-            and api_key not in DEFAULT_LAN_PLACEHOLDER_KEYS
-            and api_key not in lan_placeholder_keys(ADMIN_STORE.path)
-        ):
+        # A denial for a known gateway credential is also authoritative.
+        if api_key and _is_delegatable_litellm_key(api_key):
             return RuntimeRouteAuth(
                 auth_context=NO_AUTH_CONTEXT,
                 delegated_litellm_api_key=api_key,
@@ -17719,9 +17722,10 @@ def _realtime_policy_denial(auth_context: AuthContext) -> Response | None:
 
 async def _handle_realtime(websocket: WebSocket) -> None:
     offered = [p.strip() for p in websocket.headers.get("sec-websocket-protocol", "").split(",") if p.strip()]
-    subprotocol_key = realtime_proxy.key_from_subprotocols(offered)
-    caller: HTTPConnection = websocket
     ignored = lan_placeholder_keys(ADMIN_STORE.path) if _client_is_lan(websocket) else ()
+    placeholder_protocols = {f"{realtime_proxy.KEY_SUBPROTOCOL_PREFIX}{key}" for key in ignored}
+    subprotocol_key = realtime_proxy.key_from_subprotocols([p for p in offered if p not in placeholder_protocols])
+    caller: HTTPConnection = websocket
     if subprotocol_key and not get_client_api_key_from_headers(websocket.headers, ignored_keys=ignored):
         headers = [(name, value) for name, value in websocket.scope["headers"] if name.lower() != b"authorization"]
         headers.append((b"authorization", f"Bearer {subprotocol_key}".encode()))
@@ -23607,6 +23611,19 @@ def _api_key_name(auth_context) -> Optional[str]:
         return None
 
 
+def _protocol_loopback_source_headers(request: Request) -> dict[str, str]:
+    """Carry the selected credential through adapters as one Bearer header."""
+    headers = {
+        key: value
+        for key, value in request.headers.items()
+        if key.lower() not in {"authorization", "x-api-key", "api-key"}
+    }
+    api_key = _resolve_client_api_key(request)
+    if api_key:
+        headers["authorization"] = f"Bearer {api_key}"
+    return headers
+
+
 async def _forward_chat_completions(
     request: Request,
     auth_context,
@@ -23628,7 +23645,7 @@ async def _forward_chat_completions(
     # only needs to bound the in-process round-trip (loopback is localhost
     # and proxy code is non-blocking). Match UPSTREAM_READ_TIMEOUT so this
     # never trips before the inner timeout does.
-    source_headers = dict(request.headers)
+    source_headers = _protocol_loopback_source_headers(request)
     parent_request_id = getattr(
         getattr(request, "state", None), "route_receipt_parent_request_id", ""
     )
@@ -23679,7 +23696,7 @@ async def _forward_embeddings(
         body=embeddings_body,
         internal_forward_header=_INTERNAL_PROTOCOL_FORWARD_HEADER,
         internal_forward_secret=_INTERNAL_PROTOCOL_FORWARD_SECRET,
-        source_headers=request.headers,
+        source_headers=_protocol_loopback_source_headers(request),
         read_timeout=EMBEDDINGS_TIMEOUT,
     )
     client = httpx.AsyncClient(timeout=loopback_request.timeout)

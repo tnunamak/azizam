@@ -130,10 +130,39 @@ def test_known_sk_gateway_key_cannot_delegate_after_revocation(gateway):
     assert isinstance(valid, proxy.RuntimeRouteAuth)
     assert valid.auth_context.identity.app_id == app["id"]
     assert valid.delegated_litellm_api_key is None
+    assert proxy._request_uses_litellm_virtual_key(member) is False
     admin_store.revoke_credential(credential["id"], path=gateway)
     revoked = proxy.authenticate_runtime_or_litellm_request(member, "/v1/chat/completions", allow_litellm_delegation=True)
     assert isinstance(revoked, Response)
     assert revoked.status_code == 401
+
+
+@pytest.mark.parametrize("route,body", [
+    ("/api/chat", {"model": "blocked-model", "messages": [{"role": "user", "content": "hello"}], "stream": False}),
+    ("/api/generate", {"model": "blocked-model", "prompt": "hello", "stream": False}),
+    ("/api/embed", {"model": "blocked-model", "input": "hello"}),
+])
+def test_known_sk_gateway_key_retains_ollama_profile_policy(gateway, monkeypatch, route, body):
+    user = admin_store.upsert_oidc_user("local", "member", email="member@example.test", path=gateway)
+    profile = admin_store.create_profile("OpenAI only", {"protocols": ["openai.chat"]}, path=gateway)
+    app = admin_store.create_app("Restricted member", kind="personal", owner_user_id=user["id"], default_profile_id=profile["id"], path=gateway)
+    raw_key = "sk-gateway-policy-fixture"
+    admin_store.create_credential_hash(
+        subject_kind="app", subject_id=app["id"], hash=proxy.hash_api_key(raw_key), prefix="sk-gateway", path=gateway,
+    )
+
+    async def no_execution(*args, **kwargs):
+        pytest.fail("Restricted member request reached internal forward")
+
+    monkeypatch.setattr(proxy, "_forward_chat_completions", no_execution)
+    monkeypatch.setattr(proxy, "_forward_embeddings", no_execution)
+    client = TestClient(proxy.app, base_url="https://gateway.example", client=("192.168.1.25", 41000))
+    response = client.post(route, headers={"authorization": f"Bearer {raw_key}"}, json=body)
+    assert response.status_code == 403
+
+
+def test_unknown_virtual_key_retains_delegation(gateway):
+    assert proxy._request_uses_litellm_virtual_key(request("sk-unknown-virtual-fixture")) is True
 
 
 def test_owner_edit_applies_live_to_lan_and_preserves_public_denial(gateway):
@@ -208,7 +237,8 @@ def test_placeholder_does_not_hide_valid_or_revoked_member_key(gateway, monkeypa
     assert denied.status_code == 401
 
 
-def test_realtime_placeholder_does_not_hide_valid_or_revoked_subprotocol_key(gateway, monkeypatch):
+@pytest.mark.parametrize("placeholder_source", ["header", "subprotocol"])
+def test_realtime_placeholder_does_not_hide_valid_or_revoked_subprotocol_key(gateway, monkeypatch, placeholder_source):
     user = admin_store.upsert_oidc_user("local", "member", email="member@example.test", path=gateway)
     app = admin_store.create_app("Realtime member", kind="personal", owner_user_id=user["id"], path=gateway)
     session = AdminSession(subject=user["id"], email=user["email"], role="none", issued_at=1, expires_at=4_000_000_000)
@@ -226,14 +256,17 @@ def test_realtime_placeholder_does_not_hide_valid_or_revoked_subprotocol_key(gat
     monkeypatch.setattr(proxy, "ws_connect", no_backend)
     client = TestClient(proxy.app, base_url="https://gateway.example", client=("192.168.1.25", 41000))
     protocols = ["realtime", f"openai-insecure-api-key.{key['api_key']}"]
+    headers = {"authorization": "Bearer dummy"} if placeholder_source == "header" else {}
+    if placeholder_source == "subprotocol":
+        protocols.insert(1, "openai-insecure-api-key.dummy")
     with pytest.raises(WebSocketDenialResponse) as valid:
-        with client.websocket_connect("/v1/realtime", headers={"authorization": "Bearer dummy"}, subprotocols=protocols):
+        with client.websocket_connect("/v1/realtime", headers=headers, subprotocols=protocols):
             pytest.fail("Policy-denied session was accepted")
     assert valid.value.status_code == 403
     assert identities[0].app_id == app["id"]
     admin_store.revoke_credential(key["id"], path=gateway)
     with pytest.raises(WebSocketDenialResponse) as revoked:
-        with client.websocket_connect("/v1/realtime", headers={"authorization": "Bearer dummy"}, subprotocols=protocols):
+        with client.websocket_connect("/v1/realtime", headers=headers, subprotocols=protocols):
             pytest.fail("Revoked session was accepted")
     assert revoked.value.status_code == 401
     assert len(identities) == 1
