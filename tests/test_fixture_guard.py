@@ -55,8 +55,14 @@ async def probe():
     async with httpx.AsyncClient(trust_env=False) as client:
         try:
             await client.get('http://127.0.0.1:' + sys.argv[1])
-        except RuntimeError as exc:
-            assert 'Fixture blocked' in str(exc)
+        except* RuntimeError as errors:
+            def leaves(error):
+                if isinstance(error, BaseExceptionGroup):
+                    for item in error.exceptions:
+                        yield from leaves(item)
+                else:
+                    yield error
+            assert all('Fixture blocked' in str(error) for error in leaves(errors))
             print('connection blocked')
         else:
             raise AssertionError('Forbidden connection succeeded')
