@@ -283,8 +283,6 @@ def summarize_capabilities(
     """Audience-scoped catalog payload with deterministic ordering."""
     _check_audience(audience)
     ordered = sorted(capabilities, key=lambda c: c.sort_key)
-    if audience == "client":
-        ordered = caller_visible_capabilities(ordered)
     return {
         "schema_version": 1,
         "audience": audience,

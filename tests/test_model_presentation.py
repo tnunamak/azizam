@@ -143,6 +143,17 @@ def test_declared_workflow_metadata_survives_alias_target_resolution():
     assert summary["use_name"] == "music"
 
 
+def test_technical_discovery_retains_workflow_targets_while_product_rows_dedupe():
+    from gateway.capabilities import caller_visible_capabilities, summarize_capabilities
+    target = Capability(intent="audio.generate", backend="test", workflow="actual")
+    alias = Capability(intent="audio.generate", backend="test", model="music",
+                       tags=("alias", "resolves_to:actual"))
+    discovery = summarize_capabilities([target, alias], "client")["capabilities"]
+    assert len(discovery) == 2
+    assert any(row.get("workflow") == "actual" for row in discovery)
+    assert caller_visible_capabilities([target, alias]) == [alias]
+
+
 @pytest.mark.parametrize("filename, taxonomy", [
     ("ace-step-1.5-xl-turbo.yml", "music"), ("ace-step-1.5-2b-base.yml", "music"),
     ("yue2-song.yml", "music"), ("sa3-small-sfx.yml", "sfx"), ("tangoflux.yml", "audio"),
@@ -290,3 +301,20 @@ def test_permitted_registered_public_role_hides_internal_spelling_only_same_shap
     assert summarize_capability(public, "client")["title"] == "Chat (Coding profile)"
     denied = Capability(intent=public.intent, backend=public.backend, model=public.model, policy_available=False)
     assert internal in caller_visible_capabilities([denied, internal])
+
+
+def test_catalog_direct_public_role_pair_hides_only_fully_covered_internal_row():
+    public = Capability(intent="chat.completions", backend="one", model="coder-q5", title="Coding profile")
+    internal = Capability(intent="chat.completions", backend="one", model="role:coder-q5")
+    catalog = build_models_catalog(capabilities=[public, internal])
+    assert [row["id"] for row in catalog["models"]] == ["coder-q5"]
+    assert catalog["models"][0]["display_name"] == "Chat (Coding profile)"
+    extra = Capability(intent="text.embeddings", backend="one", model="role:coder-q5")
+    catalog = build_models_catalog(capabilities=[public, internal, extra])
+    assert {row["id"] for row in catalog["models"]} == {"coder-q5", "role:coder-q5"}
+    role = next(row for row in catalog["models"] if row["id"] == "role:coder-q5")
+    assert {cap["intent"] for cap in role["capabilities"]} == {"chat.completions", "text.embeddings"}
+    other_backend = Capability(intent="chat.completions", backend="two", model="role:coder-q5")
+    assert len(build_models_catalog(capabilities=[public, other_backend])["models"]) == 2
+    denied = Capability(intent=public.intent, backend=public.backend, model=public.model, policy_available=False)
+    assert [row["id"] for row in build_models_catalog(capabilities=[denied, internal])["models"]] == ["role:coder-q5"]

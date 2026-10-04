@@ -251,6 +251,15 @@ def _rows_for_capabilities(
                     covered.add((cap.intent, backend, target))
                     if cap.model == f"role:{target}":
                         covered.add((cap.intent, backend, cap.model))
+    # A registered public role name can cover its internal spelling without
+    # an alias. Scope the proof to this policy group, intent, and backend.
+    for model, caps in concrete_by_model.items():
+        if model.startswith("role:"):
+            public_caps = concrete_by_model.get(model.removeprefix("role:"), ())
+            for cap in caps:
+                if any(public.intent == cap.intent and public.backend == cap.backend
+                       for public in public_caps):
+                    covered.add((cap.intent, cap.backend, model))
     visible_models = {}
     for model, caps in concrete_by_model.items():
         if caps and not all(any((cap.intent, cap.backend, target) in covered
