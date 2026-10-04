@@ -29,7 +29,8 @@ def _client(
 ) -> TestClient:
     app = FastAPI()
     app.include_router(
-        create_provider_admin_router(store, auth=_auth, ledger_path=ledger_path)
+        create_provider_admin_router(store, auth=_auth, ledger_path=ledger_path,
+                                     receipts_path=ledger_path.with_name("receipts.db"))
     )
     return TestClient(app, raise_server_exceptions=raise_server_exceptions)
 
