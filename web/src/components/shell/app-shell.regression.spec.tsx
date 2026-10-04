@@ -121,9 +121,15 @@ describe("AppShell accessible names", () => {
         name: "Account menu: Alex Owner",
       }),
     ).not.toHaveLength(0);
-    expect(
-      screen.getByRole("link", { name: "Vivid Fish Kitchen Gateway Home" }),
-    ).toBeVisible();
+    const brandLinks = screen.getAllByRole("link", {
+      name: "Vivid Fish Kitchen Gateway Home",
+    });
+    expect(brandLinks).toHaveLength(2);
+    for (const link of brandLinks) {
+      expect(link).toBeVisible();
+      expect(link).toHaveTextContent("Vivid Fish");
+      expect(link).toHaveTextContent("Kitchen Gateway");
+    }
     expect(screen.getByRole("button", { name: /^Search$/ })).toBeVisible();
     expect(screen.queryByRole("button", { name: /⌘K/ })).toBeNull();
   });
