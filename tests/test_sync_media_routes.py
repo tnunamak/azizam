@@ -140,13 +140,32 @@ class SyncMediaRouteTests(unittest.TestCase):
         )
 
         self.assertIsNotNone(first)
-        self.assertEqual(second.request_id, first.request_id)  # create() is idempotent by request_id.
+        self.assertIsNone(second)  # once linked to a trusted job id, indexing is executor-owned.
         assert first is not None
         self.assertEqual(receipt.job_id, first.job_id)
         rows = media_jobs.recent(path=self.media_db)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["assets"][0]["asset_id"], asset_id)
         self.assertEqual(rows[0]["app_id"], "app_1")
+
+
+    def test_index_receipt_assets_skips_when_executor_receipt_already_has_job_id(self) -> None:
+        receipt = RouteReceipt(
+            protocol="openai.images",
+            intent="image.generate",
+            request_id="req_async_attempt",
+            job_id="mj_existing",
+        )
+        asset_id = "img_" + "d" * 64
+
+        job = media_ingestion.index_receipt_assets(
+            receipt,
+            [{"asset_id": asset_id, "media_type": "image/png"}],
+        )
+
+        self.assertIsNone(job)
+        self.assertEqual(media_jobs.recent(path=self.media_db), [])
+        self.assertEqual(receipt.job_id, "mj_existing")
 
     def test_store_audio_response_stores_indexes_and_wraps_raw_pcm_as_wav(self) -> None:
         receipt = RouteReceipt(
@@ -244,6 +263,75 @@ class SyncMediaRouteTests(unittest.TestCase):
         )
         self.assertEqual(bad.status_code, 403)
 
+
+
+    def test_image_media_job_executor_uses_existing_job_without_sync_duplicate(self) -> None:
+        import anyio
+
+        body = {
+            "model": "flux2-klein-4b",
+            "prompt": "private prompt",
+            "response_format": "b64_json",
+        }
+        job = media_jobs.MediaJob(
+            intent="image.generate",
+            workflow="image.generate.flux2-klein-4b",
+            backend="comfyui",
+            request_id="req_existing_image_job",
+            status=media_jobs.STATUS_QUEUED,
+            metadata={"mode": "async_image_generation"},
+        )
+        created = media_jobs.create(job, path=self.media_db)
+
+        class PayloadRequest:
+            method = "POST"
+            query_params: dict[str, str] = {}
+            scope: dict[str, object] = {}
+            headers = {"host": "gateway.test"}
+            url = SimpleNamespace(scheme="http", netloc="gateway.test")
+
+            async def json(self):
+                return dict(body)
+
+        payload_dir = self.root / "image-payloads"
+        seen_receipt_job_ids: list[str | None] = []
+
+        async def fake_proxy_comfy_request(request, auth_context, receipt=None):
+            self.assertIsNotNone(receipt)
+            seen_receipt_job_ids.append(receipt.job_id)
+            body_seen = await request.json()
+            self.assertEqual(body_seen["response_format"], "url")
+            proxy._begin_media_delivery(auth_context, receipt)
+            return proxy._build_image_response_payload(
+                request,
+                [_png_bytes()],
+                "url",
+                {},
+                auth_context,
+            )
+
+        with patch.object(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", payload_dir), \
+             patch.object(proxy, "IMAGE_MEDIA_JOB_MAX_ATTEMPTS", 1), \
+             patch.object(proxy, "finish_image_route_receipt", lambda *_args, **_kwargs: None), \
+             patch.object(proxy, "proxy_comfy_request", fake_proxy_comfy_request):
+            proxy._persist_image_media_job_payload(
+                created.job_id,
+                body=body,
+                request=PayloadRequest(),  # type: ignore[arg-type]
+                auth_context=proxy.NO_AUTH_CONTEXT,
+            )
+            anyio.run(proxy._run_image_media_job, created.job_id)
+
+        self.assertEqual(seen_receipt_job_ids, [created.job_id])
+        rows = media_jobs.recent(path=self.media_db, audience="internal")
+        self.assertEqual(len(rows), 1)
+        stored = media_jobs.get(created.job_id, audience="internal", path=self.media_db)
+        assert stored is not None
+        self.assertEqual(stored["status"], media_jobs.STATUS_SUCCEEDED)
+        self.assertEqual(stored["progress"], 100)
+        self.assertEqual(stored["request_id"], "req_existing_image_job")
+        self.assertTrue(stored["assets"][0]["asset_id"].startswith("img_"))
+        self.assertEqual(stored["assets"][0]["media_type"], "image/png")
 
     def test_public_audio_speech_route_indexes_buffered_response_without_changing_delivered_bytes(self) -> None:
         upstream = _wav_bytes()

@@ -19890,6 +19890,7 @@ async def _run_image_media_job(job_id: str) -> None:
         max_attempts = max(1, IMAGE_MEDIA_JOB_MAX_ATTEMPTS)
         for attempt in range(1, max_attempts + 1):
             receipt = start_image_route_receipt("/v1/images/generations", auth_context)
+            receipt.job_id = job_id
             try:
                 media_jobs.append_event(
                     job_id,

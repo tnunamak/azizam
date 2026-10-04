@@ -152,6 +152,9 @@ async def _finish_streaming_iterator(source: Any, receipt: RouteReceipt, status_
 
 def index_receipt_assets(receipt: RouteReceipt, assets: Iterable[Mapping[str, Any]]) -> media_jobs.MediaJob | None:
     """Index media assets against a route receipt and attach the job id."""
+    # A linked job is updated by its executor; avoid a second completion row.
+    if receipt.job_id:
+        return None
     job = index_sync_assets(
         request_id=receipt.request_id,
         intent=receipt.intent,
