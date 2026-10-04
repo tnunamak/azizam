@@ -25,6 +25,14 @@ import {
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Switch } from "@/components/ui/switch";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { useOptionalProviderStatus } from "@/lib/provider-status";
 
@@ -96,16 +104,21 @@ function observedTone(service?: CurrentHealthService): Tone {
 }
 
 function observationLabel(service?: CurrentHealthService): string {
-  if (!service) return "Not measured yet";
+  if (!service) return "Unknown";
   if (!service.enabled || service.observation === "disabled") return "Disabled";
-  if (service.observation === "up") return "Ready";
+  if (service.observation === "up")
+    return service.tone === "bad"
+      ? "Unavailable"
+      : service.tone === "warn"
+        ? "Degraded"
+        : "Ready";
   if (service.observation === "down") return "Unavailable";
   if (service.observation === "degraded") return "Degraded";
   if (service.observation === "idle") return "Ready to start";
   if (service.observation === "busy") return "Busy";
   if (service.observation === "starting") return "Starting";
   if (service.observation === "standby_stopped") return "Standby, stopped";
-  if (service.observation === "unavailable") return "Not measured yet";
+  if (service.observation === "unavailable") return "Unknown";
   return service.observation.replace(/_/g, " ");
 }
 
@@ -138,11 +151,7 @@ function capabilityHumanName(service: Service): string {
       ? (labels[capability.toLowerCase()] ?? titleize(capability))
       : "Engine";
   }
-  const protocol =
-    typeof service.config.protocol === "string"
-      ? service.config.protocol
-      : service.kind || service.role || "service";
-  return `${label} (${titleize(protocol)})`;
+  return label;
 }
 
 function endpoint(service: Service, backend?: LiveBackend): string {
@@ -233,18 +242,17 @@ function topAnswer(
   if (hostWarning) return hostWarning;
   if (!engines.length) return "No engines are configured yet.";
   const unavailable = engines.filter(
-    (engine) => engine.service.enabled && engine.health?.observation === "down",
+    (engine) => engine.service.enabled && engine.state === "Unavailable",
   ).length;
   const degraded = engines.filter(
     (engine) => engine.service.enabled && engine.state === "Degraded",
   ).length;
   const unmeasured = engines.filter(
-    (engine) => engine.service.enabled && engine.state === "Not measured yet",
+    (engine) => engine.service.enabled && engine.state === "Unknown",
   ).length;
   if (unavailable) {
     const first = engines.find(
-      (engine) =>
-        engine.service.enabled && engine.health?.observation === "down",
+      (engine) => engine.service.enabled && engine.state === "Unavailable",
     );
     return `${unavailable} enabled engine${unavailable === 1 ? " needs" : "s need"} owner action${first?.lastError ? `: ${first.lastError}` : "."}`;
   }
@@ -254,6 +262,23 @@ function topAnswer(
     return `${unmeasured} enabled engine${unmeasured === 1 ? " has" : "s have"} no live measurement yet.`;
   if (engines.every((engine) => !engine.service.enabled))
     return "All engines are disabled; enable one on Engines to serve requests.";
+  const busy = engines.filter(
+    (engine) => engine.service.enabled && engine.state === "Busy",
+  ).length;
+  const starting = engines.filter(
+    (engine) => engine.service.enabled && engine.state === "Starting",
+  ).length;
+  if (busy || starting)
+    return (
+      [
+        busy ? `${busy} engine${busy === 1 ? " is" : "s are"} busy` : "",
+        starting
+          ? `${starting} engine${starting === 1 ? " is" : "s are"} starting`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("; ") + "."
+    );
   const ready = engines.filter(
     (engine) => engine.service.enabled && engine.state === "Ready",
   ).length;
@@ -261,7 +286,7 @@ function topAnswer(
     ? "1 enabled engine needs no action."
     : ready > 0
       ? `${ready} enabled engines need no action.`
-      : "Engines are stopped on standby; they start on demand.";
+      : "No engine is currently serving requests. Open an engine for its observed state.";
 }
 
 function StatusBadge({ tone, label }: { tone: Tone; label: string }) {
@@ -301,68 +326,98 @@ function EngineRow({
   engine: EngineView;
   selected: boolean;
 }) {
-  const [advanced, setAdvanced] = useState(false);
+  const [open, setOpen] = useState(selected);
   return (
-    <article
-      className={`border-b py-5 last:border-b-0 ${selected ? "ring-primary rounded-md px-3 ring-2" : ""}`}
+    <tr
+      className="border-b last:border-0"
       aria-current={selected ? "true" : undefined}
     >
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0 space-y-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="font-medium">{engine.label}</h3>
-            <StatusBadge tone={engine.tone} label={engine.state} />
-          </div>
-          <p className="text-muted-foreground text-sm">{engine.name}</p>
-          <div className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
-            <span>
-              <strong>Role:</strong> {engine.role}
-            </span>
-            <span className="min-w-0 break-all">
-              <strong>Endpoint:</strong> {engine.endpoint}
-            </span>
-            <span>
-              <strong>Queue:</strong> {engine.queue}
-            </span>
-            <span>
-              <strong>Loaded:</strong> Not measured yet
-            </span>
-            <span className="sm:col-span-2">
-              <strong>Served models:</strong>{" "}
-              {engine.models.length ? engine.models.join(", ") : "Not listed"}
-            </span>
-          </div>
-          {engine.lastError && (
-            <p className="bg-danger/10 text-danger rounded-md px-3 py-2 text-sm break-all">
-              {engine.lastError}
-            </p>
-          )}
-        </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => setAdvanced((open) => !open)}
-          >
-            Technical fields
-          </Button>
-          <Button type="button" variant="outline" size="sm" asChild>
-            <Link
-              href={`/engines?service=${encodeURIComponent(engine.service.id)}`}
+      <th scope="row" className="py-3 pr-3 text-left align-top font-medium">
+        <Sheet open={open} onOpenChange={setOpen}>
+          <SheetTrigger asChild>
+            <Button
+              variant="ghost"
+              className="h-auto min-h-11 max-w-full justify-start px-0 text-left break-words whitespace-normal"
             >
-              Configure
-            </Link>
-          </Button>
-        </div>
-      </div>
-      {advanced && (
-        <pre className="bg-muted text-muted-foreground mt-4 max-h-72 overflow-auto rounded-md p-3 text-xs">
-          {JSON.stringify(engine.service, null, 2)}
-        </pre>
-      )}
-    </article>
+              {engine.name}
+            </Button>
+          </SheetTrigger>
+          <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
+            <SheetHeader>
+              <SheetTitle>{engine.name}</SheetTitle>
+              <SheetDescription>
+                {engine.label} · {engine.state}
+              </SheetDescription>
+            </SheetHeader>
+            <div className="space-y-5 px-4 pb-6 font-normal">
+              <dl className="space-y-3 text-sm">
+                {[
+                  ["Role", engine.role],
+                  ["Endpoint", engine.endpoint],
+                  ["Queue", engine.queue],
+                  ["Served models", engine.models.join(", ") || "Not listed"],
+                  ["Last error", engine.lastError || "No error reported"],
+                ].map(([label, value]) => (
+                  <div key={label}>
+                    <dt className="text-muted-foreground">{label}</dt>
+                    <dd className="break-all">{value}</dd>
+                  </div>
+                ))}
+              </dl>
+              <Button variant="outline" asChild>
+                <Link
+                  href={`/engines?service=${encodeURIComponent(engine.service.id)}`}
+                >
+                  Configure engine
+                </Link>
+              </Button>
+              <details>
+                <summary className="min-h-11 cursor-pointer py-3 text-sm">
+                  Technical fields
+                </summary>
+                <pre className="bg-muted max-h-96 overflow-auto rounded-md p-3 text-xs">
+                  {JSON.stringify(engine.service, null, 2)}
+                </pre>
+              </details>
+            </div>
+          </SheetContent>
+        </Sheet>
+      </th>
+      <td className="py-3 pr-3 align-top">
+        <StatusBadge tone={engine.tone} label={engine.state} />
+      </td>
+      <td className="hidden py-3 pr-3 align-top text-sm break-words sm:table-cell">
+        {engine.models.join(", ") || engine.label}
+      </td>
+      <td className="hidden py-3 align-top text-sm break-words md:table-cell">
+        {engine.lastError ?? "—"}
+      </td>
+    </tr>
   );
+}
+
+function engineCapability(service: Service): string {
+  const labels: Record<string, string> = {
+    chat: "Chat",
+    completions: "Chat",
+    image: "Images & video",
+    images: "Images & video",
+    video: "Images & video",
+    speech: "Speech",
+    tts: "Speech",
+    audio: "Audio",
+    music: "Music",
+    sfx: "Sound effects",
+    transcribe: "Transcription",
+    transcription: "Transcription",
+    stt: "Transcription",
+    decide: "Decisions",
+    decision: "Decisions",
+    embed: "Embeddings",
+    embeddings: "Embeddings",
+    rerank: "Rerank",
+  };
+  return labels[service.capabilities[0]?.toLowerCase()] ?? "Other engines";
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -452,223 +507,158 @@ function currentDisk(
 
 function Hardware({
   status,
-  warnings: hostWarnings,
+  warnings,
 }: {
   status: StatusPayload | undefined;
   warnings: Array<{ source: string; reason: string }>;
 }) {
-  const statusRecord = status as Record<string, unknown> | undefined;
-  const budgets = asRecord(statusRecord?.budgets);
-  const attribution = asRecord(statusRecord?.ram_attribution);
-  const totalKb = asNumber(attribution?.total_kb);
-  const availableKb = asNumber(attribution?.available_kb);
-  const ramUsedPct =
-    totalKb && availableKb != null
-      ? Math.max(0, Math.min(100, ((totalKb - availableKb) / totalKb) * 100))
-      : null;
-  const gpus = currentGpus(status);
-  const disk = currentDisk(status);
+  const record = status as Record<string, unknown> | undefined;
+  const budgets = asRecord(record?.budgets);
+  const ram = asRecord(record?.ram_attribution);
+  const totalKb = asNumber(ram?.total_kb);
+  const availableKb = asNumber(ram?.available_kb);
+  const gpus = currentGpus(status).filter(
+    (gpu) =>
+      asNumber(gpu.memory_used_mb) != null &&
+      (asNumber(gpu.memory_total_mb) ?? asNumber(gpu.total_memory_mb)) != null,
+  );
+  const disk = currentDisk(status).filter((item) => item.pct != null);
   const thermals =
-    asRecord(statusRecord?.thermals) ?? asRecord(statusRecord?.thermal) ?? {};
-
+    asRecord(record?.thermals) ?? asRecord(record?.thermal) ?? {};
+  const hasThermals = Object.entries(thermals).some(
+    ([name, value]) => name.endsWith("_c") && asNumber(value) != null,
+  );
+  if (
+    !gpus.length &&
+    !totalKb &&
+    !disk.length &&
+    !warnings.length &&
+    !hasThermals
+  )
+    return null;
   return (
     <Section title="Hardware">
-      <div className="grid gap-4 lg:grid-cols-3">
-        <div className="space-y-3">
-          <div className="flex items-center gap-2 font-medium">
-            <Cpu className="size-4" /> GPU VRAM
-          </div>
-          {gpus.length ? (
-            gpus.map((gpu, index) => {
-              const gpuIndex = asNumber(gpu.index) ?? index;
-              const usedMb = asNumber(gpu.memory_used_mb);
-              const totalMb =
-                asNumber(gpu.memory_total_mb) ?? asNumber(gpu.total_memory_mb);
-              const value =
-                usedMb != null && totalMb
-                  ? Math.max(0, Math.min(100, (usedMb / totalMb) * 100))
-                  : null;
-              const budget = asRecord(budgets?.[`gpu${gpuIndex}`]);
-              const totalGb = asNumber(budget?.total_gb);
-              const headroomGb = asNumber(budget?.headroom_gb);
-              const allocatable =
-                totalGb != null && headroomGb != null
-                  ? totalGb - headroomGb
-                  : null;
-              const tone =
-                value == null
-                  ? "neutral"
-                  : value >= 95
-                    ? "bad"
-                    : value >= 85
-                      ? "warn"
-                      : "ok";
+      <div className="grid gap-6 lg:grid-cols-3">
+        {gpus.length > 0 && (
+          <div className="space-y-3">
+            <h3 className="flex items-center gap-2 text-sm font-medium">
+              <Cpu className="size-4" />
+              GPU VRAM
+            </h3>
+            {gpus.map((gpu, index) => {
+              const id = asNumber(gpu.index) ?? index;
+              const used = asNumber(gpu.memory_used_mb)!;
+              const total = (asNumber(gpu.memory_total_mb) ??
+                asNumber(gpu.total_memory_mb))!;
+              const budget = asRecord(budgets?.[`gpu${id}`]);
+              const capacity = asNumber(budget?.total_gb);
+              const headroom = asNumber(budget?.headroom_gb);
               return (
-                <div key={gpuIndex} className="space-y-1">
-                  <div className="flex justify-between text-sm">
-                    <span>GPU {gpuIndex}</span>
-                    <span>
-                      {value != null && usedMb != null && totalMb
-                        ? `${(usedMb / 1024).toFixed(1)} / ${(totalMb / 1024).toFixed(1)} GB`
-                        : "Not measured yet"}
+                <div key={id} className="space-y-2">
+                  <p className="flex justify-between gap-2 text-sm">
+                    <span>GPU {id}</span>
+                    <span className="tabular-nums">
+                      {(used / 1024).toFixed(1)} / {(total / 1024).toFixed(1)}{" "}
+                      GB
                     </span>
-                  </div>
-                  {value != null && (
+                  </p>
+                  {total > 0 && (
                     <div className="relative">
                       <Progress
-                        value={value}
-                        aria-label={`GPU ${gpuIndex} VRAM usage`}
+                        value={Math.min(100, (used / total) * 100)}
+                        aria-label={`GPU ${id} VRAM usage`}
                       />
-                      {allocatable != null &&
-                        totalMb != null &&
-                        totalMb > 0 && (
-                          <span
-                            role="img"
-                            aria-label={`GPU ${gpuIndex} budget line`}
-                            className="border-foreground absolute -top-1 h-4 border-l-2"
-                            style={{
-                              left: `${Math.max(0, Math.min(100, ((allocatable * 1024) / totalMb) * 100))}%`,
-                            }}
-                          />
-                        )}
+                      {capacity != null && headroom != null && (
+                        <span
+                          role="img"
+                          aria-label={`GPU ${id} budget line`}
+                          className="border-foreground absolute -top-1 h-4 border-l-2"
+                          style={{
+                            left: `${Math.max(0, Math.min(100, (((capacity - headroom) * 1024) / total) * 100))}%`,
+                          }}
+                        />
+                      )}
                     </div>
                   )}
-                  {allocatable != null && totalGb != null && (
-                    <div className="space-y-1">
-                      <p className="text-muted-foreground text-xs">
-                        Budget: {gb(allocatable)} allocatable from {gb(totalGb)}{" "}
-                        total.
-                      </p>
-                    </div>
-                  )}
-                  <p className="text-muted-foreground text-xs">
-                    {tone === "bad"
-                      ? "Over 95% can fail new requests. Stop work or lower admission."
-                      : tone === "warn"
-                        ? "Over 85% leaves little room for swaps."
-                        : tone === "ok"
-                          ? "Below the warning threshold."
-                          : "Current VRAM is not measured yet."}
-                  </p>
                 </div>
               );
-            })
-          ) : (
-            <p className="text-muted-foreground text-sm">
-              GPU VRAM is not measured yet.
-            </p>
-          )}
-          <p className="text-muted-foreground text-xs">
-            Open Technical details for available GPU usage by service.
-          </p>
-        </div>
-        <div className="space-y-3">
-          <div className="flex items-center gap-2 font-medium">
-            <Zap className="size-4" /> RAM
+            })}
           </div>
-          {ramUsedPct != null && totalKb != null && availableKb != null ? (
-            <>
-              <div className="flex justify-between text-sm">
-                <span>System memory</span>
-                <span>{ramUsedPct.toFixed(0)}% used</span>
-              </div>
-              <Progress value={ramUsedPct} aria-label="RAM usage" />
-              <p className="text-muted-foreground text-xs">
-                Used {gb(kbToGb(totalKb - availableKb))} of{" "}
-                {gb(kbToGb(totalKb))}. Plain threshold: sustained high memory
-                pressure means lower concurrent jobs.
-              </p>
-            </>
-          ) : (
-            <p className="text-muted-foreground text-sm">
-              RAM usage is not measured yet.
+        )}
+        {totalKb != null && totalKb > 0 && availableKb != null && (
+          <div className="space-y-3">
+            <h3 className="flex items-center gap-2 text-sm font-medium">
+              <Zap className="size-4" />
+              RAM
+            </h3>
+            <p className="text-sm tabular-nums">
+              {gb(kbToGb(totalKb - availableKb))} / {gb(kbToGb(totalKb))} used
             </p>
-          )}
-        </div>
-        <div className="space-y-3">
-          <div className="flex items-center gap-2 font-medium">
-            <HardDrive className="size-4" /> Disk
+            <Progress
+              value={Math.max(
+                0,
+                Math.min(100, ((totalKb - availableKb) / totalKb) * 100),
+              )}
+              aria-label="RAM usage"
+            />
           </div>
-          {disk.length ? (
-            disk.map(({ name, pct }) => {
-              return (
-                <div key={name} className="space-y-1">
-                  <div className="flex justify-between text-sm">
-                    <span>{name}</span>
-                    <span>
-                      {pct != null
-                        ? `${pct.toFixed(0)}% used`
-                        : "Not measured yet"}
-                    </span>
-                  </div>
-                  {pct != null && (
-                    <Progress
-                      value={Math.max(0, Math.min(100, pct))}
-                      aria-label={`${name} disk usage`}
-                    />
-                  )}
-                  <p className="text-muted-foreground text-xs">
-                    {pct == null
-                      ? "Current disk usage is not measured yet."
-                      : pct > 90
-                        ? "Above 90% full risks failed writes; clear cache or move media."
-                        : "Plain threshold: above 90% full risks failed writes."}
-                  </p>
-                </div>
-              );
-            })
-          ) : (
-            <p className="text-muted-foreground text-sm">
-              Disk usage is not measured yet.
-            </p>
-          )}
-          {Object.entries(thermals).map(([name, raw]) => {
-            const temp = asNumber(raw);
-            if (temp == null || !name.endsWith("_c")) return null;
-            const tone = thermalTone(name, temp, thermals);
-            return (
-              <p
-                key={name}
-                className={`text-xs ${tone === "bad" ? "text-danger" : tone === "warn" ? "text-warning" : "text-muted-foreground"}`}
-              >
-                {name}: {temp} °C.{" "}
-                {tone === "bad"
-                  ? "Stop heavy work and check cooling."
-                  : tone === "warn"
-                    ? "Watch cooling before long jobs."
-                    : tone === "ok"
-                      ? "Below warning threshold."
-                      : "Thermal state is not measured yet."}
-              </p>
-            );
-          })}
-        </div>
-      </div>
-      <div className="mt-6 space-y-3">
-        <h3 className="font-medium">Host warnings</h3>
-        {hostWarnings.length ? (
-          <div className="space-y-2">
-            {hostWarnings.map((warning, index) => (
-              <div
-                key={index}
-                className="flex gap-2 rounded-md border p-3 text-sm"
-              >
-                <AlertTriangle className="text-warning mt-0.5 size-4" />
-                <span>
-                  <strong>{warning.source}:</strong> {warning.reason}. Suggested
-                  action: inspect the host before starting more work.
-                </span>
+        )}
+        {disk.length > 0 && (
+          <div className="space-y-3">
+            <h3 className="flex items-center gap-2 text-sm font-medium">
+              <HardDrive className="size-4" />
+              Disk
+            </h3>
+            {disk.map(({ name, pct }) => (
+              <div key={name} className="space-y-2">
+                <p className="flex justify-between gap-2 text-sm">
+                  <span className="break-all">{name}</span>
+                  <span className="shrink-0 tabular-nums">
+                    {pct!.toFixed(0)}% used
+                  </span>
+                </p>
+                <Progress
+                  value={Math.max(0, Math.min(100, pct!))}
+                  aria-label={`${name} disk usage`}
+                />
               </div>
             ))}
           </div>
-        ) : (
-          <p className="text-muted-foreground text-sm">
-            {status
-              ? "No host warning is reported by the status API."
-              : "Host warnings are not measured yet."}
-          </p>
         )}
       </div>
+      {Object.entries(thermals).map(([name, raw]) => {
+        const temp = asNumber(raw);
+        if (temp == null || !name.endsWith("_c")) return null;
+        const tone = thermalTone(name, temp, thermals);
+        return (
+          <p
+            key={name}
+            className={`text-xs ${tone === "bad" ? "text-danger" : tone === "warn" ? "text-warning" : "text-muted-foreground"}`}
+          >
+            {name}: {temp} °C.
+            {tone === "bad"
+              ? " Check cooling before heavy work."
+              : tone === "warn"
+                ? " Watch cooling before long jobs."
+                : ""}
+          </p>
+        );
+      })}
+      {warnings.length > 0 && (
+        <details>
+          <summary className="min-h-11 cursor-pointer py-3 text-sm font-medium">
+            Host warnings
+          </summary>
+          <div className="space-y-2">
+            {warnings.map((warning, index) => (
+              <p key={index} className="flex gap-2 text-sm">
+                <AlertTriangle className="text-warning mt-0.5 size-4 shrink-0" />
+                <span>{warning.reason}</span>
+              </p>
+            ))}
+          </div>
+        </details>
+      )}
     </Section>
   );
 }
@@ -825,13 +815,51 @@ export function StatusClient() {
         {registryIsPending ? (
           <div className="text-muted-foreground text-sm">Loading engines…</div>
         ) : visibleEngines.length ? (
-          <div className="space-y-3">
-            {visibleEngines.map((engine) => (
-              <EngineRow
-                key={engine.service.id}
-                engine={engine}
-                selected={engine.service.id === selectedServiceId}
-              />
+          <div className="space-y-6">
+            {Array.from(
+              new Set(
+                visibleEngines.map((engine) =>
+                  engineCapability(engine.service),
+                ),
+              ),
+            ).map((group) => (
+              <div key={group}>
+                <h3 className="text-muted-foreground mb-2 text-sm font-medium">
+                  {group}
+                </h3>
+                <table className="w-full table-fixed text-sm">
+                  <caption className="sr-only">
+                    {group} engine status. Select an engine for details.
+                  </caption>
+                  <thead>
+                    <tr className="text-muted-foreground border-b text-left text-xs">
+                      <th className="w-3/5 py-2 font-medium sm:w-1/3">
+                        Engine
+                      </th>
+                      <th className="py-2 font-medium sm:w-1/5">State</th>
+                      <th className="hidden py-2 font-medium sm:table-cell">
+                        Serves
+                      </th>
+                      <th className="hidden py-2 font-medium md:table-cell">
+                        Last error
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleEngines
+                      .filter(
+                        (engine) => engineCapability(engine.service) === group,
+                      )
+                      .map((engine) => (
+                        <EngineRow
+                          key={engine.service.id}
+                          engine={engine}
+                          selected={engine.service.id === selectedServiceId}
+                        />
+                      ))}
+                  </tbody>
+                </table>
+              </div>
             ))}
           </div>
         ) : (
@@ -863,7 +891,7 @@ export function StatusClient() {
                           ? "Unreachable"
                           : provider.reachable === true
                             ? "Reachable"
-                            : "Not measured yet"
+                            : "Configured"
                       }
                     />
                   </div>
@@ -878,9 +906,11 @@ export function StatusClient() {
                   <p className="text-muted-foreground text-sm">
                     Key: {provider.keyState}
                   </p>
-                  <p className="text-muted-foreground text-sm">
-                    Spend: {provider.spendText}
-                  </p>
+                  {!/not measured|unknown/i.test(provider.spendText) && (
+                    <p className="text-muted-foreground text-sm">
+                      Spend: {provider.spendText}
+                    </p>
+                  )}
                 </article>
               ))}
             </div>
@@ -890,7 +920,7 @@ export function StatusClient() {
                 No remote providers are configured.
               </p>
               <Button type="button" variant="outline" size="sm" asChild>
-                <Link href="/engines">Review connections</Link>
+                <Link href="/providers">Review connections</Link>
               </Button>
             </div>
           )}

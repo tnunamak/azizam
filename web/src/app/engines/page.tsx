@@ -16,12 +16,12 @@ import {
 } from "@/lib/api";
 import { CompactTouchTargets } from "@/components/ui/compact-touch-targets";
 import { EngineChecks } from "./engine-checks";
+import { groupEngines, humanCapability } from "./engine-groups";
 import { normalizeModelConfigForPatch } from "./detected-models";
 import { AddServiceDialog } from "@/components/admin/add-service-dialog";
 import { ErrorState } from "@/components/product/error-state";
 import { useViewer } from "@/components/shell/session";
 import {
-  Badge,
   Button,
   ConfirmDialog,
   Dialog,
@@ -50,41 +50,8 @@ import { Textarea } from "@/components/ui/textarea";
 type Tone = "ok" | "warn" | "bad" | "neutral";
 type Backend = NonNullable<StatusPayload["backends"]>[number];
 
-const CAPABILITY_LABELS: Record<string, string> = {
-  chat: "Chat",
-  completions: "Text",
-  image: "Image",
-  images: "Image",
-  video: "Video",
-  speech: "Speech",
-  tts: "Speech",
-  transcribe: "Transcribe",
-  transcription: "Transcribe",
-  stt: "Transcribe",
-  embeddings: "Embeddings",
-  embed: "Embeddings",
-  rerank: "Rerank",
-  decide: "Decide",
-  decisions: "Decide",
-};
-
-function humanCapability(capability: string): string {
-  return (
-    CAPABILITY_LABELS[capability.toLowerCase()] ??
-    capability
-      .replace(/[._-]+/g, " ")
-      .replace(/\b\w/g, (letter) => letter.toUpperCase())
-  );
-}
-
 function engineName(service: Service): string {
-  const labels = Array.from(new Set(service.capabilities.map(humanCapability)));
-  const primary = labels.length > 0 ? labels.join(" & ") : "Engine";
-  const technical =
-    typeof service.config.protocol === "string" && service.config.protocol
-      ? service.config.protocol
-      : service.kind;
-  return `${primary} (${technical})`;
+  return service.name;
 }
 
 function composeBaseUrl(config: Service["config"]): string {
@@ -410,7 +377,7 @@ function EnginesContents() {
   const queryClient = useQueryClient();
   const searchParams = useSearchParams();
   const selectedServiceId = searchParams.get("service");
-  const [showDisabled, setShowDisabled] = useState(false);
+  const [showNotInUse, setShowNotInUse] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<Service | null>(null);
   const [removeTarget, setRemoveTarget] = useState<Service | null>(null);
@@ -436,25 +403,10 @@ function EnginesContents() {
     staleTime: 10_000,
     refetchInterval: 30_000,
   });
-  const { data: presetsData } = useQuery({
-    queryKey: queryKeys.servicePresets,
-    queryFn: api.services.presets,
-  });
-
   const services = servicesFromRegistry(registryData);
   const selectedService = selectedServiceId
     ? services.find((service) => service.id === selectedServiceId)
     : undefined;
-  const visibleServices = (
-    showDisabled
-      ? services
-      : services.filter(
-          (service) => service.enabled || service.id === selectedServiceId,
-        )
-  ).sort(
-    (a, b) =>
-      Number(b.id === selectedServiceId) - Number(a.id === selectedServiceId),
-  );
   const statusData = statusIsError ? undefined : rawStatusData;
   const backends = useMemo(
     () =>
@@ -477,6 +429,22 @@ function EnginesContents() {
   );
   const observationAvailable =
     statusData?.current_health?.observation_available === true;
+
+  const { groups, hiddenCount } = groupEngines(
+    services,
+    healthByService,
+    showNotInUse,
+    selectedServiceId,
+  );
+  const visibleCount = groups.reduce(
+    (count, group) =>
+      count +
+      group.entries.reduce(
+        (sum, entry) => sum + 1 + entry.alternatives.length,
+        0,
+      ),
+    0,
+  );
 
   function updateRegistry(registry: ServiceRegistry) {
     queryClient.setQueryData(queryKeys.serviceRegistry, registry);
@@ -510,6 +478,124 @@ function EnginesContents() {
         description: errorMessage(err),
       }),
   });
+
+  function renderEngine(service: Service) {
+    const backend = backends.get(service.id);
+    const health = healthByService.get(service.id);
+    const serviceState = state(service, backend, health, observationAvailable);
+    return (
+      <article
+        key={service.id}
+        className={`rounded-vf-xl border bg-[var(--vf-surface)] p-5 ${
+          service.id === selectedServiceId
+            ? "border-[var(--vf-accent)] ring-2 ring-[var(--vf-accent)]/20"
+            : "border-[var(--vf-border)]"
+        }`}
+        aria-current={service.id === selectedServiceId ? "true" : undefined}
+      >
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <h3 className="text-vf-body text-vf-text font-semibold">
+                {engineName(service)}
+              </h3>
+              <StatusDotLabel
+                tone={serviceState.tone}
+                label={serviceState.label}
+              />
+            </div>
+            <p className="text-vf-small text-vf-subtle mt-1 font-mono break-all">
+              {serviceEndpoint(service)}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <label
+              htmlFor={`engine-enabled-${service.id}`}
+              className="flex min-h-11 min-w-11 items-center gap-2 px-1 text-sm"
+            >
+              <Switch
+                id={`engine-enabled-${service.id}`}
+                checked={service.enabled}
+                aria-label={`Toggle ${service.name}`}
+                disabled={toggle.isPending}
+                onCheckedChange={(enabled) =>
+                  toggle.mutate({ service, enabled })
+                }
+              />
+              Enabled
+            </label>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => setEditTarget(service)}
+            >
+              Edit
+            </Button>
+            {service.editable !== false && (
+              <OverflowMenu label={`Actions for ${service.name}`}>
+                <OverflowMenuSeparator />
+                <OverflowMenuItem
+                  danger
+                  onSelect={() => setRemoveTarget(service)}
+                >
+                  Remove engine
+                </OverflowMenuItem>
+              </OverflowMenu>
+            )}
+          </div>
+        </div>
+        <details className="mt-2">
+          <summary className="flex min-h-11 cursor-pointer items-center text-sm font-medium">
+            Connection and models
+          </summary>
+          <dl className="mt-3 grid gap-4 md:grid-cols-3">
+            <div>
+              <dt className="text-vf-micro text-vf-subtle">Role</dt>
+              <dd className="text-vf-small text-vf-text">
+                {service.role ?? "optional"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-vf-micro text-vf-subtle">Capabilities</dt>
+              <dd className="text-vf-small text-vf-text">
+                {service.capabilities.map(humanCapability).join(", ") ||
+                  "No capabilities configured"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-vf-micro text-vf-subtle">Served models</dt>
+              <dd className="text-vf-small text-vf-text">
+                <span className="break-words">{modelNames(service)}</span>
+              </dd>
+            </div>
+          </dl>
+          <EngineChecks
+            service={service}
+            endpoint={serviceEndpoint(service)}
+            onSaved={updateRegistry}
+            onEdit={() => setEditTarget(service)}
+          />
+        </details>
+        <details className="mt-1">
+          <summary className="flex min-h-11 cursor-pointer items-center text-sm font-medium">
+            Advanced
+          </summary>
+          <pre className="text-vf-micro rounded-vf-md mt-3 max-h-72 overflow-auto bg-[var(--vf-surface-2)] p-3 font-mono">
+            {JSON.stringify(
+              {
+                id: service.id,
+                kind: service.kind,
+                source: service.source,
+                config: service.config,
+              },
+              null,
+              2,
+            )}
+          </pre>
+        </details>
+      </article>
+    );
+  }
 
   if (registryIsPending) {
     return (
@@ -560,26 +646,27 @@ function EnginesContents() {
         }
       />
 
-      <div className="rounded-vf-lg flex flex-wrap items-center justify-between gap-3 border border-[var(--vf-border)] bg-[var(--vf-surface)] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-vf-body text-vf-text font-medium">
-            {visibleServices.length} shown · {services.length} total
+            {visibleCount} shown · {services.length} total
           </p>
           <p className="text-vf-small text-vf-muted">
-            Disabled engines are hidden by default.
+            Group engines by what they serve. Standby and fallback engines sit
+            under their primary.
           </p>
         </div>
         <label
-          htmlFor="show-disabled-engines"
+          htmlFor="show-not-in-use-engines"
           className="flex min-h-11 items-center gap-3 text-sm"
         >
           <Switch
-            id="show-disabled-engines"
-            checked={showDisabled}
-            onCheckedChange={setShowDisabled}
-            aria-label="Show disabled"
+            id="show-not-in-use-engines"
+            checked={showNotInUse}
+            onCheckedChange={setShowNotInUse}
+            aria-label="Show not in use"
           />
-          Show disabled
+          Show not in use ({hiddenCount})
         </label>
       </div>
 
@@ -596,22 +683,6 @@ function EnginesContents() {
         />
       )}
 
-      {presetsData?.presets?.length ? (
-        <section className="flex flex-col gap-3">
-          <SectionActionHeader
-            title="Available presets"
-            description="Choose a preset when adding an engine."
-          />
-          <div className="flex flex-wrap gap-2">
-            {presetsData.presets.map((preset) => (
-              <Badge key={preset.id} tone="neutral">
-                {preset.label}
-              </Badge>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
       <section className="flex flex-col gap-3">
         <SectionActionHeader title="Local engines" />
         {selectedServiceId && !selectedService && (
@@ -621,17 +692,17 @@ function EnginesContents() {
             detail={`No service record has id ${selectedServiceId}.`}
           />
         )}
-        {visibleServices.length === 0 ? (
+        {visibleCount === 0 ? (
           <EmptyOperationalState
             title={
               services.length === 0
                 ? "No engines configured"
-                : "No enabled engines shown"
+                : "No engines in use"
             }
             detail={
               services.length === 0
                 ? "Add an engine from a preset, then test its connection and detect served models."
-                : "Turn on Show disabled to review disabled entries."
+                : "Turn on Show not in use to review engines that are disabled or not configured."
             }
             action={
               <Button variant="primary" onClick={() => setAddOpen(true)}>
@@ -641,134 +712,39 @@ function EnginesContents() {
           />
         ) : (
           <div className="grid gap-3">
-            {visibleServices.map((service) => {
-              const backend = backends.get(service.id);
-              const health = healthByService.get(service.id);
-              const serviceState = state(
-                service,
-                backend,
-                health,
-                observationAvailable,
-              );
-              return (
-                <article
-                  key={service.id}
-                  className={`rounded-vf-xl border bg-[var(--vf-surface)] p-5 ${
-                    service.id === selectedServiceId
-                      ? "border-[var(--vf-accent)] ring-2 ring-[var(--vf-accent)]/20"
-                      : "border-[var(--vf-border)]"
-                  }`}
-                  aria-current={
-                    service.id === selectedServiceId ? "true" : undefined
-                  }
-                >
-                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="min-w-0">
-                      <div className="mb-2 flex flex-wrap items-center gap-2">
-                        <h2 className="text-vf-title text-vf-text font-semibold">
-                          {engineName(service)}
-                        </h2>
-                        <StatusDotLabel
-                          tone={serviceState.tone}
-                          label={serviceState.label}
-                        />
-                      </div>
-                      <p className="text-vf-small text-vf-muted">
-                        {service.name}
-                      </p>
-                      <p className="text-vf-small text-vf-subtle mt-1 font-mono break-all">
-                        {serviceEndpoint(service)}
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <label
-                        htmlFor={`engine-enabled-${service.id}`}
-                        className="flex min-h-11 min-w-11 items-center gap-2 px-1 text-sm"
+            {groups.map((group) => (
+              <section
+                key={group.capability}
+                className="flex flex-col gap-3"
+                aria-label={`${group.capability} engines`}
+              >
+                <h2 className="text-vf-title font-semibold">
+                  {group.capability}
+                </h2>
+                {group.entries.map(({ service, alternatives }) => (
+                  <div key={service.id} className="min-w-0">
+                    {renderEngine(service)}
+                    {alternatives.length > 0 && (
+                      <details
+                        className="mt-2"
+                        open={
+                          alternatives.some(
+                            (engine) => engine.id === selectedServiceId,
+                          ) || undefined
+                        }
                       >
-                        <Switch
-                          id={`engine-enabled-${service.id}`}
-                          checked={service.enabled}
-                          aria-label={`Toggle ${service.name}`}
-                          disabled={toggle.isPending}
-                          onCheckedChange={(enabled) =>
-                            toggle.mutate({ service, enabled })
-                          }
-                        />
-                        Enabled
-                      </label>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setEditTarget(service)}
-                      >
-                        Edit
-                      </Button>
-                      {service.editable !== false && (
-                        <OverflowMenu label={`Actions for ${service.name}`}>
-                          <OverflowMenuSeparator />
-                          <OverflowMenuItem
-                            danger
-                            onSelect={() => setRemoveTarget(service)}
-                          >
-                            Remove engine
-                          </OverflowMenuItem>
-                        </OverflowMenu>
-                      )}
-                    </div>
+                        <summary className="flex min-h-11 cursor-pointer items-center text-sm font-medium">
+                          Standby and fallback engines ({alternatives.length})
+                        </summary>
+                        <div className="mt-2 grid gap-3">
+                          {alternatives.map(renderEngine)}
+                        </div>
+                      </details>
+                    )}
                   </div>
-                  <dl className="mt-5 grid gap-4 md:grid-cols-3">
-                    <div>
-                      <dt className="text-vf-micro text-vf-subtle">Role</dt>
-                      <dd className="text-vf-small text-vf-text">
-                        {service.role ?? "optional"}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-vf-micro text-vf-subtle">
-                        Capabilities
-                      </dt>
-                      <dd className="text-vf-small text-vf-text">
-                        {service.capabilities.map(humanCapability).join(", ") ||
-                          "No capabilities configured"}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-vf-micro text-vf-subtle">
-                        Served models
-                      </dt>
-                      <dd className="text-vf-small text-vf-text">
-                        <span className="break-words">
-                          {modelNames(service)}
-                        </span>
-                      </dd>
-                    </div>
-                  </dl>
-                  <EngineChecks
-                    service={service}
-                    endpoint={serviceEndpoint(service)}
-                    onSaved={updateRegistry}
-                    onEdit={() => setEditTarget(service)}
-                  />
-                  <details className="mt-4">
-                    <summary className="flex min-h-11 cursor-pointer items-center text-sm font-medium">
-                      Advanced
-                    </summary>
-                    <pre className="text-vf-micro rounded-vf-md mt-3 max-h-72 overflow-auto bg-[var(--vf-surface-2)] p-3 font-mono">
-                      {JSON.stringify(
-                        {
-                          id: service.id,
-                          kind: service.kind,
-                          source: service.source,
-                          config: service.config,
-                        },
-                        null,
-                        2,
-                      )}
-                    </pre>
-                  </details>
-                </article>
-              );
-            })}
+                ))}
+              </section>
+            ))}
           </div>
         )}
       </section>

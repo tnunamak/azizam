@@ -35,6 +35,8 @@ import {
   type WorkflowMedia,
   type WorkflowJob,
 } from "./workflow-media";
+import { costFrom } from "./result-cost";
+import { ReceiptLink } from "./receipt-link";
 import { accountApi, type AccountApp } from "@/lib/account-api";
 import { ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -328,27 +330,6 @@ async function verifiedReceiptId(response: Response, payload: unknown) {
   return null;
 }
 
-function costFrom(payload: unknown, response?: Response) {
-  const reported = response?.headers.get("x-litellm-response-cost");
-  if (reported !== null && reported !== undefined && reported.trim()) {
-    const amount = Number(reported);
-    if (Number.isFinite(amount) && amount >= 0)
-      return `$${amount.toFixed(amount < 0.01 && amount > 0 ? 6 : 2)}`;
-  }
-  if (typeof payload !== "object" || payload === null)
-    return "Not measured yet";
-  const object = payload as Record<string, unknown>;
-  const cost = object.cost ?? object.remote_cost ?? object.measured_cost;
-  if (typeof cost === "object" && cost !== null) {
-    const amount = (cost as { amount_usd?: unknown }).amount_usd;
-    if (typeof amount === "number")
-      return amount === 0 ? "$0.00" : `$${amount}`;
-  }
-  if (typeof cost === "number") return cost === 0 ? "$0.00" : `$${cost}`;
-  if (typeof cost === "string" && cost.trim()) return cost;
-  return "Not measured yet";
-}
-
 function codeSnippets(request: RequestInfo) {
   const origin = typeof window === "undefined" ? "" : window.location.origin;
   const url =
@@ -575,7 +556,7 @@ function groupWorkflows(payload: unknown): CatalogOption[] {
       id: workflow.id,
       label: workflow.title || workflow.id,
       capability: "workflow" as const,
-      price: "Cost not measured yet",
+      price: "",
       locality: "Workflow manifest",
       workflow,
     });
@@ -708,16 +689,13 @@ function capabilitiesFor(record: Record<string, unknown>): TryTab[] {
 }
 
 function costLabel(value: unknown) {
-  if (typeof value !== "object" || value === null)
-    return "Cost not measured yet";
+  if (typeof value !== "object" || value === null) return "";
   const cost = value as { kind?: unknown; price?: unknown };
   if (cost.kind === "free") return "No provider charge";
   if (cost.kind === "paid") {
-    return cost.price == null
-      ? "Paid · Cost not measured yet"
-      : `Paid · ${String(cost.price)}`;
+    return cost.price == null ? "Paid" : `Paid · ${String(cost.price)}`;
   }
-  return "Cost not measured yet";
+  return "";
 }
 
 function localityLabel(record: Record<string, unknown>) {
@@ -726,7 +704,7 @@ function localityLabel(record: Record<string, unknown>) {
     const provider = stringValue(record.provider);
     return provider ? `Remote · ${provider}` : "Remote";
   }
-  return "Locality not measured yet";
+  return "";
 }
 
 function workflowExampleBody(workflow: WorkflowOption) {
@@ -1008,7 +986,7 @@ export default function TryPage() {
           id,
           label: id,
           capability: "chat",
-          price: "Cost not measured yet",
+          price: "",
           locality: "Available to this Try key",
         })),
       });
@@ -1021,7 +999,7 @@ export default function TryPage() {
             id,
             label: id,
             capability: "chat" as const,
-            price: "Cost not measured yet",
+            price: "",
             locality: "Available to this Try key",
           })),
           explicitModelTabs.current.has("chat"),
@@ -1210,7 +1188,11 @@ export default function TryPage() {
           tab,
           result.payload,
           result.elapsedMs,
-          costFrom(result.payload, result.response),
+          costFrom(
+            result.payload,
+            result.response,
+            catalog[tab]?.find((option) => option.id === model[tab])?.locality,
+          ),
           receiptId,
           request,
         ),
@@ -1416,9 +1398,6 @@ export default function TryPage() {
       <PageHeader
         title="Try"
         answer="Does it work, and what does the request look like?"
-        actions={
-          key ? <Badge variant="outline">Session key ready</Badge> : undefined
-        }
       />
 
       {!key ? (
@@ -1914,34 +1893,38 @@ function ResultView({
           label={result.job ? "Request time" : "Time"}
           value={`${result.elapsedMs} ms`}
         />
-        <Fact label="Cost" value={result.cost} />
+        {result.cost !== "Not measured yet" && (
+          <Fact label="Cost" value={result.cost} />
+        )}
         <Fact
           label="Receipt"
           value={
             result.receiptId ? (
-              <a
-                className="underline underline-offset-4"
-                href={`/r/${encodeURIComponent(result.receiptId)}`}
-              >
-                {result.receiptId}
-              </a>
+              <ReceiptLink id={result.receiptId} />
             ) : (
               "Not available for this session"
             )
           }
         />
       </dl>
-      {result.technical && (
+      {(result.technical || result.cost === "Not measured yet") && (
         <details className="border-t pt-3">
           <summary className="min-h-11 cursor-pointer text-sm font-medium">
             Technical details
           </summary>
-          <pre
-            tabIndex={0}
-            className="bg-muted max-h-80 overflow-auto rounded-lg p-3 font-mono text-xs break-all whitespace-pre-wrap"
-          >
-            {result.technical}
-          </pre>
+          {result.cost === "Not measured yet" && (
+            <p className="text-muted-foreground mb-3 text-sm">
+              Cost: Not measured yet
+            </p>
+          )}
+          {result.technical && (
+            <pre
+              tabIndex={0}
+              className="bg-muted max-h-80 overflow-auto rounded-lg p-3 font-mono text-xs break-all whitespace-pre-wrap"
+            >
+              {result.technical}
+            </pre>
+          )}
         </details>
       )}
       <div className="space-y-2">
@@ -2090,7 +2073,7 @@ function ModelSelect({
           {
             id: value || fallbackLabel,
             label: `${value || fallbackLabel} · Unverified model`,
-            price: "Cost not measured yet",
+            price: "",
             locality: "Not in the catalog",
           },
         ]
@@ -2115,7 +2098,9 @@ function ModelSelect({
       <SelectContent>
         {values.map((option) => (
           <SelectItem key={option.id} value={option.id}>
-            {option.label} · {option.locality} · {option.price}
+            {[option.label, option.locality, option.price]
+              .filter(Boolean)
+              .join(" · ")}
           </SelectItem>
         ))}
       </SelectContent>
@@ -2132,7 +2117,7 @@ function CatalogNotice({
     return <Badge variant="outline">Loading model catalog</Badge>;
   }
   if (state === "ready") {
-    return <Badge variant="outline">Catalog loaded</Badge>;
+    return null;
   }
   if (state === "error") {
     return <Badge variant="outline">Catalog could not be loaded</Badge>;
@@ -2140,5 +2125,5 @@ function CatalogNotice({
   if (state === "empty") {
     return <Badge variant="outline">No catalog rows yet</Badge>;
   }
-  return <Badge variant="outline">Cost not measured yet</Badge>;
+  return null;
 }
