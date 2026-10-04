@@ -284,6 +284,7 @@ test("try query params select capability and preserve requested model", async ({
   );
   await page.goto("/ui/try/?capability=decide");
   await page.getByRole("button", { name: "Prepare Try key" }).first().click();
+  await page.getByRole("button", { name: "I’ve saved it" }).click();
   await expect(page.getByText("Catalog loaded")).toBeVisible();
   await expect(page.getByRole("tab", { name: "Decide" })).toHaveAttribute(
     "aria-selected",
@@ -294,6 +295,8 @@ test("try query params select capability and preserve requested model", async ({
   );
 
   await page.goto("/ui/try/?capability=chat&model=fast");
+  await page.getByRole("button", { name: "Prepare Try key" }).first().click();
+  await page.getByRole("button", { name: "I’ve saved it" }).click();
   await expect(page.getByText("Catalog loaded")).toBeVisible();
   await expect(page.getByRole("tab", { name: "Chat" })).toHaveAttribute(
     "aria-selected",
@@ -302,6 +305,8 @@ test("try query params select capability and preserve requested model", async ({
   await expect(page.getByLabel("Model", { exact: true })).toContainText("fast");
 
   await page.goto("/ui/try/?capability=chat&model=chat");
+  await page.getByRole("button", { name: "Prepare Try key" }).first().click();
+  await page.getByRole("button", { name: "I’ve saved it" }).click();
   await expect(page.getByText("Catalog loaded")).toBeVisible();
   await expect(page.getByLabel("Model", { exact: true })).toContainText(
     "chat model",

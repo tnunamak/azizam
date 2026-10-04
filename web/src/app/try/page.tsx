@@ -1696,7 +1696,14 @@ export default function TryPage() {
                   <Button
                     type="submit"
                     variant="outline"
-                    disabled={!key?.secret || running !== null || checkingJob}
+                    disabled={
+                      !key?.secret ||
+                      running !== null ||
+                      checkingJob ||
+                      (tab.value === "workflow" &&
+                        requestedCapabilityKey === "audio" &&
+                        !selectedWorkflow)
+                    }
                   >
                     {running === tab.value ? (
                       <Loader2 aria-hidden="true" className="animate-spin" />
