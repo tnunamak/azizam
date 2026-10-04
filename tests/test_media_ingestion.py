@@ -78,7 +78,7 @@ class SyncMediaIngestionTests(unittest.TestCase):
                 path=self.db,
             )
         )
-        self.assertEqual(media_jobs.count(path=self.db, outer_only=False), 0)
+        self.assertEqual(media_jobs.count(path=self.db), 0)
 
 
 if __name__ == "__main__":
