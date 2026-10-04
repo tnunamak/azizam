@@ -19,13 +19,15 @@ const seededSummary = {
   remote_spend: 0.023,
   spend_measured_requests: 8,
   spend_total_requests: 12,
+  paid_requests: 8,
+  unknown_paid_requests: 0,
   retention_days: 30,
   coverage_start: "2026-10-01T00:00:00Z",
   coverage_note: "Provider spend is available for matched receipts.",
   truncated: true,
   people: [{ id: "person-a", label: "Mira" }],
   sources: [{ id: "app-a", label: "Open WebUI" }],
-  by_day: [{ date: "2026-10-01", chat: 2, image: 1 }],
+  by_day: [{ date: "2026-10-01", chat: 2, image: 1, decide: 1 }],
   by_model: models,
   receipts: [
     {
@@ -74,6 +76,18 @@ for (const theme of ["light", "dark"] as const) {
       );
 
       await page.goto("/ui/usage/");
+      const decisions = page.locator('span[style*="--usage-decisions"]');
+      await expect(decisions).toBeVisible();
+      const colors = await decisions.evaluate((element) => ({
+        decisions: getComputedStyle(element).backgroundColor,
+        images: getComputedStyle(
+          document.querySelector('span[style*="--capability-image"]')!,
+        ).backgroundColor,
+      }));
+      expect(colors.decisions).toBe(
+        theme === "light" ? "rgb(180, 83, 9)" : "rgb(251, 146, 60)",
+      );
+      expect(colors.decisions).not.toBe(colors.images);
 
       await expect(
         page.getByText(
@@ -276,4 +290,52 @@ test("Usage does not invent retention when the API omits it", async ({
   await expect(page.getByText(/14 days/)).toHaveCount(0);
   await page.getByText(/Receipt coverage · retention not reported/).click();
   await expect(page.getByText(/^Retention not reported\./)).toBeVisible();
+});
+
+test("Usage labels local and unknown paid spend honestly", async ({ page }) => {
+  await page.route("**/me/api/usage/summary?**", async (route) => {
+    const url = route.request().url();
+    const unknownPaid = url.includes("source=app-a");
+    await route.fulfill({
+      json: {
+        ...seededSummary,
+        remote_spend_available: false,
+        remote_spend: 0,
+        spend_measured_requests: 0,
+        spend_total_requests: 12,
+        paid_requests: 0,
+        unknown_paid_requests: unknownPaid ? 2 : 0,
+        by_model: [
+          {
+            model: "Model not recorded · Transcription",
+            capability: "transcribe",
+            requests: 6,
+            remote_spend: null,
+          },
+          {
+            model: "default",
+            capability: "chat",
+            requests: 4,
+            remote_spend: null,
+          },
+        ],
+      },
+    });
+  });
+
+  await page.goto("/ui/usage/");
+  await expect(page.getByText("Remote spend", { exact: true })).toBeVisible();
+  await expect(page.getByText("No paid requests")).toBeVisible();
+  await expect(
+    page.getByText("Model not recorded · Transcription"),
+  ).toBeVisible();
+  await expect(page.getByText("Unknown model")).toHaveCount(0);
+  await expect(page.getByRole("table").last()).not.toContainText("$0.00");
+
+  await page.getByRole("combobox", { name: "Source" }).click();
+  await page.getByRole("option", { name: "Open WebUI" }).click();
+  await expect(page.getByText("Paid spend not measured")).toBeVisible();
+  await expect(
+    page.getByText("2 paid requests have no settled cost"),
+  ).toBeVisible();
 });

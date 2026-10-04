@@ -41,6 +41,7 @@ USAGE_RECEIPT_LIMIT = 50
 
 _KINDS_BY_PREFIX = {"img": "image", "vid": "video", "aud": "audio"}
 _CAPABILITY_BY_INTENT_PREFIX = {
+    "default": "chat",
     "chat": "chat",
     "image": "image",
     "video": "video",
@@ -1058,25 +1059,29 @@ def _usage_summary(
             _annotate_receipt_source(value, sources)
             receipts.append(value)
     by_day: dict[str, dict[str, Any]] = {}
-    by_model: dict[str, dict[str, Any]] = {}
+    by_model: dict[tuple[str, str], dict[str, Any]] = {}
     spend = 0.0
     measured = 0
+    paid_requests = 0
+    unknown_paid_requests = 0
     for receipt in receipts:
         day = datetime.fromtimestamp(receipt["_stored_at"], timezone.utc).strftime("%Y-%m-%d")
         capability = _capability(receipt)
         daily = by_day.setdefault(day, {"date": day})
         daily[capability] = daily.get(capability, 0) + 1
-        model = str(receipt.get("resolved_model") or receipt.get("requested_model") or "Unknown model")
-        row = by_model.setdefault(model, {"model": model, "requests": 0, "remote_spend": None,
+        model = _usage_model(receipt, capability)
+        row = by_model.setdefault((model, capability), {"model": model, "requests": 0, "remote_spend": None,
                                           "capability": capability})
-        if row["capability"] != capability:
-            row["capability"] = "other"
         row["requests"] += 1
         cost = _receipt_cost(receipt)
         if cost is not None:
             measured += 1
             spend += cost
             row["remote_spend"] = (row["remote_spend"] or 0) + cost
+            if _receipt_is_paid_remote(receipt) or cost > 0:
+                paid_requests += 1
+        elif _receipt_is_paid_remote(receipt):
+            unknown_paid_requests += 1
     media_scope = _MediaScope(app_ids=app_ids, user_ids=scoped_users)
     hashes = _credential_hashes_for_scope(media_scope, admin_db_path)
     made: set[str] = set()
@@ -1142,6 +1147,7 @@ def _usage_summary(
         "remote_spend_source": "receipt costs" if measured else "not_available",
         "remote_spend_coverage": "Recorded receipt costs only; provider spend ledger is not installed.",
         "spend_measured_requests": measured, "spend_total_requests": len(receipts),
+        "paid_requests": paid_requests, "unknown_paid_requests": unknown_paid_requests,
         "retention_days": receipt_store.RETAIN_S // 86400,
         "coverage_start": datetime.fromtimestamp(coverage_start, timezone.utc).isoformat(),
         "coverage_note": "Requests cover retained receipts; media totals also include retained assets.",
@@ -1279,6 +1285,42 @@ def _capability(receipt: Mapping[str, Any]) -> str:
     if "/embeddings" in path:
         return "embeddings"
     return prefix or "other"
+
+
+def _usage_model(receipt: Mapping[str, Any], capability: str) -> str:
+    model = _string_first(
+        receipt.get("resolved_model"),
+        receipt.get("requested_model"),
+        receipt.get("model"),
+        _nested(receipt, "metadata", "model"),
+    )
+    if model:
+        return model
+    if capability and capability != "other":
+        return f"Model not recorded · {_capability_label(capability)}"
+    return "Unknown model"
+
+
+def _capability_label(capability: str) -> str:
+    return {
+        "chat": "Chat",
+        "image": "Image",
+        "video": "Video",
+        "audio": "Audio",
+        "transcribe": "Transcription",
+        "embeddings": "Embeddings",
+        "rerank": "Rerank",
+        "decide": "Decisions",
+    }.get(capability, capability.title())
+
+
+def _receipt_is_paid_remote(receipt: Mapping[str, Any]) -> bool:
+    if receipt.get("remote") is True:
+        return True
+    if _nested(receipt, "cost", "cost_class") == "paid-remote":
+        return True
+    decisions = _nested(receipt, "metadata", "decisions", "remote")
+    return decisions is True
 
 
 def _audit_everyone(actor: _Actor, action: str, path: Path) -> None:

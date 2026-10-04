@@ -26,12 +26,14 @@ test("library mini audio player handles live-data audio playback", async ({
   await page.goto("/ui/library/");
   await page.getByRole("button", { name: "Audio", exact: true }).click();
 
-  const card = page.locator("article").filter({ hasText: "Audio generation" });
+  const card = page
+    .locator("article")
+    .filter({ hasText: "Audio · Prompt not recorded" });
   await expect(card).toBeVisible();
   await expect(card.getByText("voice")).toBeVisible();
 
   const playButton = card.getByRole("button", {
-    name: "Play Audio generation",
+    name: "Play Audio · Prompt not recorded",
   });
   await expect(playButton).toBeVisible();
   const buttonBox = await playButton.boundingBox();
@@ -51,7 +53,7 @@ test("library mini audio player handles live-data audio playback", async ({
   });
   await playButton.click();
   await expect(
-    card.getByRole("button", { name: "Pause Audio generation" }),
+    card.getByRole("button", { name: "Pause Audio · Prompt not recorded" }),
   ).toBeVisible();
   await expect
     .poll(() =>
@@ -59,9 +61,11 @@ test("library mini audio player handles live-data audio playback", async ({
     )
     .toBeGreaterThan(0.1);
 
-  await card.getByRole("button", { name: "Pause Audio generation" }).click();
+  await card
+    .getByRole("button", { name: "Pause Audio · Prompt not recorded" })
+    .click();
   await expect(
-    card.getByRole("button", { name: "Play Audio generation" }),
+    card.getByRole("button", { name: "Play Audio · Prompt not recorded" }),
   ).toBeVisible();
 
   await audio.evaluate((element: HTMLAudioElement) => {
@@ -73,7 +77,9 @@ test("library mini audio player handles live-data audio playback", async ({
     )
     .toBeGreaterThan(1.7);
 
-  await card.getByRole("button", { name: "Play Audio generation" }).click();
+  await card
+    .getByRole("button", { name: "Play Audio · Prompt not recorded" })
+    .click();
   await expect
     .poll(() =>
       audio.evaluate((element: HTMLAudioElement) => element.currentTime),
@@ -91,7 +97,9 @@ test("library mini audio player handles live-data audio playback", async ({
     element.load();
   });
   await expect(card.getByText("Audio unavailable")).toBeVisible();
-  await card.getByRole("button", { name: "Play Audio generation" }).click();
+  await card
+    .getByRole("button", { name: "Play Audio · Prompt not recorded" })
+    .click();
   await expect(card.getByText("Audio unavailable")).toBeVisible();
 
   const badResponse = await page.request.get(

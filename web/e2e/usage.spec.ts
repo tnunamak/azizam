@@ -6,6 +6,7 @@ const seededSummary = {
   media_count: 1,
   remote_spend: 0.023,
   remote_spend_available: true,
+  paid_requests: 3,
   spend_measured_requests: 3,
   spend_total_requests: 4,
   retention_days: 14,
@@ -63,15 +64,17 @@ test("usage lists a receipt and opens technical details", async ({ page }) => {
   );
   await page.goto("/ui/usage/");
   await expect(page.getByRole("heading", { name: "Usage" })).toBeVisible();
+  await page.getByText(/Receipt coverage · 14 days/).click();
   await expect(
     page.getByText(
-      /Receipts are retained for 14 days\s*, covering usage since Oct 1, 2026\s*\. Provider spend is available for matched receipts\./,
+      /Receipts are kept for 14 days\s*, covering usage since Oct 1, 2026\s*\. Provider spend is available for matched receipts\./,
     ),
   ).toBeVisible();
   await expect(page.getByText("demo-chat").first()).toBeVisible();
   await expect(
     page.getByRole("columnheader", { name: "Typical time" }),
   ).toHaveCount(0);
+  await page.getByRole("button", { name: "View recent requests" }).click();
   const receipt = page.getByRole("button", {
     name: /Receipt details for Chat request/,
   });
@@ -108,7 +111,7 @@ for (const theme of ["light", "dark"] as const) {
       );
       await page.goto("/ui/usage/");
       await expect(
-        page.getByText("No usage this month", { exact: true }),
+        page.getByText("No requests in this period", { exact: true }),
       ).toBeVisible();
       await expectNoHorizontalOverflow(page);
       await expectNoSeriousAxeViolations(page);
@@ -154,6 +157,7 @@ for (const theme of ["light", "dark"] as const) {
         page.locator('[aria-label="Loading your account"]'),
       ).toHaveCount(0);
       await expect(page.getByText("Remote spend")).toBeVisible();
+      await page.getByRole("button", { name: "View recent requests" }).click();
       await expect(page.getByText("Receipts", { exact: true })).toBeVisible();
       await expectNoHorizontalOverflow(page);
       await expectNoSeriousAxeViolations(page);
@@ -190,6 +194,7 @@ test("usage labels unavailable remote spend honestly", async ({ page }) => {
         ...seededSummary,
         remote_spend: 0,
         remote_spend_available: false,
+        paid_requests: 0,
         spend_measured_requests: 0,
         spend_total_requests: 4,
       },
@@ -199,7 +204,7 @@ test("usage labels unavailable remote spend honestly", async ({ page }) => {
   const remoteSpendCard = page
     .getByText("Remote spend", { exact: true })
     .locator("..");
-  await expect(remoteSpendCard).toContainText("Not measured yet");
+  await expect(remoteSpendCard).toContainText("No paid requests");
   await expect(remoteSpendCard).not.toContainText("$0");
 });
 
@@ -227,6 +232,7 @@ test("usage reads the real account summary and seeded receipt", async ({
     ),
   ).toBe(true);
   await page.goto("/ui/usage/");
+  await page.getByRole("button", { name: "View recent requests" }).click();
   await expect(
     page
       .getByRole("button", { name: /Receipt details for Chat request/ })

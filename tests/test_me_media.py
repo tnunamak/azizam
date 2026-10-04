@@ -168,21 +168,35 @@ class MeMediaRouterTests(unittest.TestCase):
             json.dumps({"asset_id": asset_id, "owner_key_hashes": owner_hashes, "updated_at": 1_700_000_000})
         )
 
-    def _receipt(self, app_id: str | None, request_id: str, *, cost: float | None = None, created_at: int | None = None) -> None:
+    def _receipt(
+        self,
+        app_id: str | None,
+        request_id: str,
+        *,
+        cost: float | None = None,
+        created_at: int | None = None,
+        intent: str = "image.generate",
+        route_path: str = "/v1/images/generations",
+        requested_model: str | None = "image",
+        resolved_model: str | None = "local-image",
+        cost_class: str | None = None,
+    ) -> None:
         receipt = RouteReceipt(
             protocol="openai.images",
-            intent="image.generate",
-            path="/v1/images/generations",
+            intent=intent,
+            path=route_path,
             request_id=request_id,
             app_id=app_id,
-            requested_model="image",
-            resolved_model="local-image",
+            requested_model=requested_model,
+            resolved_model=resolved_model,
             status="succeeded",
         )
         receipt.accepted_at_ms = 1_700_000_000_000
         receipt.updated_at_ms = 1_700_000_001_000
         if cost is not None:
             receipt.metadata["litellm"] = {"response_cost": cost}
+        if cost_class is not None:
+            receipt.cost = {"cost_class": cost_class, "usd": cost}
         receipt_store.record(receipt, created_at=int(time.time()) if created_at is None else created_at, path=self.receipts_db)
 
     def _job(self, request_id: str, asset_id: str, *, workflow: str = "wf.image", media_type: str = "image/png") -> None:
@@ -706,6 +720,70 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertIsNone(usage["receipts"][0]["remote_spend"])
         for invalid in ("NaN", "Infinity", "-1", "bad", True):
             self.assertIsNone(me_media._receipt_cost({"metadata": {"litellm": {"response_cost": invalid}}}))
+
+    def test_usage_summary_labels_blank_route_defaults_without_hiding_unknowns(self) -> None:
+        self.assertEqual(me_media._capability({"intent": "default"}), "chat")
+        self.assertEqual(me_media._capability({"intent": "stt"}), "transcribe")
+        self._receipt(
+            self.app_a["id"],
+            "req_transcribe_default",
+            intent="audio.transcriptions",
+            route_path="/v1/audio/transcriptions",
+            requested_model=None,
+            resolved_model=None,
+        )
+        self._receipt(
+            self.app_a["id"],
+            "req_chat_default",
+            intent="chat.completions",
+            route_path="/v1/chat/completions",
+            requested_model=None,
+            resolved_model=None,
+        )
+        self._receipt(
+            self.app_a["id"],
+            "req_unknown",
+            intent="",
+            route_path="/v1/unknown",
+            requested_model=None,
+            resolved_model=None,
+        )
+        self._receipt(
+            self.app_a["id"],
+            "req_paid",
+            cost=0.25,
+            intent="chat.completions",
+            route_path="/v1/chat/completions",
+            requested_model="paid-chat",
+            resolved_model="paid-chat",
+        )
+
+        usage = self.client.get("/me/api/usage/summary").json()
+        rows = {(row["capability"], row["model"]): row for row in usage["by_model"]}
+
+        self.assertEqual(rows[("transcribe", "Model not recorded · Transcription")]["requests"], 1)
+        self.assertEqual(rows[("chat", "Model not recorded · Chat")]["requests"], 1)
+        self.assertEqual(rows[("other", "Unknown model")]["requests"], 1)
+        self.assertEqual(usage["paid_requests"], 1)
+        self.assertEqual(usage["remote_spend"], 0.25)
+
+    def test_usage_summary_keeps_unknown_paid_spend_distinct_from_no_paid_requests(self) -> None:
+        self._receipt(
+            self.app_a["id"],
+            "req_unknown_paid",
+            cost=None,
+            cost_class="paid-remote",
+            intent="chat.completions",
+            route_path="/v1/chat/completions",
+            requested_model="paid-chat",
+            resolved_model="paid-chat",
+        )
+
+        usage = self.client.get("/me/api/usage/summary").json()
+
+        self.assertEqual(usage["paid_requests"], 0)
+        self.assertEqual(usage["unknown_paid_requests"], 1)
+        self.assertFalse(usage["remote_spend_available"])
 
     def test_missing_audio_job_asset_is_listed_unavailable_and_not_downloadable(self) -> None:
         asset_id = "aud_" + "0" * 64

@@ -1,6 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
+import path from "node:path";
 
 const REVIEW_DIR = "/home/tnunamak/.tmp/gw-product/ui-review/gw-copy-c";
 mkdirSync(REVIEW_DIR, { recursive: true });
@@ -261,6 +262,95 @@ test("library missing asset deep link keeps a retryable target", async ({
 });
 
 for (const width of [1440, 390] as const) {
+  test(`library video without a poster shows a playable frame ${width}`, async ({
+    page,
+  }) => {
+    await setViewportAndTheme(page, width === 390 ? "dark" : "light", width);
+    await page.route("**/me/api/media?**", (route) =>
+      route.fulfill({
+        json: {
+          assets: [
+            {
+              ...asset,
+              kind: "video",
+              prompt: "A teal launch clip",
+              download_url: "/fixture-preview.mp4",
+              poster_asset_id: null,
+            },
+          ],
+          models: ["image"],
+          next_cursor: null,
+        },
+      }),
+    );
+    await page.route("**/fixture-preview.mp4", (route) =>
+      route.fulfill({
+        path: path.join(__dirname, "preview-test.mp4"),
+        contentType: "video/mp4",
+      }),
+    );
+    await page.goto("/ui/library/");
+    const preview = page.locator("article video");
+    await expect(preview).toBeVisible();
+    await expect
+      .poll(() =>
+        preview.evaluate(
+          (element: HTMLVideoElement) =>
+            element.readyState >= 2 && element.videoWidth > 0,
+        ),
+      )
+      .toBe(true);
+    await expect(preview).not.toHaveAttribute("controls");
+    const pixel = await preview.evaluate((element: HTMLVideoElement) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = 1;
+      const context = canvas.getContext("2d")!;
+      context.drawImage(element, 0, 0, 1, 1);
+      return Array.from(context.getImageData(0, 0, 1, 1).data);
+    });
+    expect(pixel[1]).toBeGreaterThan(pixel[0]);
+    expect(pixel[2]).toBeGreaterThan(pixel[0]);
+    await auditPage(page);
+    await page.screenshot({
+      path: `${REVIEW_DIR}/library-video-frame-${width}.png`,
+    });
+    await page.getByRole("button", { name: "Open A teal launch clip" }).click();
+    await expect(
+      page.getByRole("dialog").locator("video[controls]"),
+    ).toBeVisible();
+  });
+
+  test(`library failed image preview offers clickable recovery ${width}`, async ({
+    page,
+  }) => {
+    await setViewportAndTheme(page, "light", width);
+    let requests = 0;
+    await page.route("**/me/api/media?**", (route) => {
+      requests += 1;
+      return route.fulfill({
+        json: {
+          assets: [{ ...asset, download_url: "/broken-preview.png" }],
+          models: ["image"],
+          next_cursor: null,
+        },
+      });
+    });
+    await page.route("**/broken-preview.png", (route) =>
+      route.fulfill({ status: 503, body: "Unavailable" }),
+    );
+    await page.goto("/ui/library/");
+    await expect(
+      page.getByText(
+        "Preview could not be loaded. Refresh the library to try again.",
+      ),
+    ).toBeVisible();
+    const refreshed = page.waitForEvent("load");
+    await page.getByRole("button", { name: "Refresh library" }).click();
+    await refreshed;
+    await expect.poll(() => requests).toBeGreaterThan(1);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  });
+
   test(`library missing media refresh is clickable ${width}`, async ({
     page,
   }) => {

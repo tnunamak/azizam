@@ -112,7 +112,9 @@ describe("LibraryPage batch J provenance", () => {
     renderLibrary();
 
     (
-      await screen.findByRole("button", { name: "Open Image generation" })
+      await screen.findByRole("button", {
+        name: "Open Image · Prompt not recorded",
+      })
     ).click();
     fireEvent.click(await screen.findByText("Details"));
 
@@ -165,7 +167,9 @@ describe("LibraryPage batch J provenance", () => {
     renderLibrary();
 
     (
-      await screen.findByRole("button", { name: "Open Image generation" })
+      await screen.findByRole("button", {
+        name: "Open Image · Prompt not recorded",
+      })
     ).click();
     fireEvent.click(await screen.findByText("Details"));
 
@@ -221,7 +225,9 @@ describe("LibraryPage batch J provenance", () => {
     renderLibrary();
 
     (
-      await screen.findByRole("button", { name: "Open Image generation" })
+      await screen.findByRole("button", {
+        name: "Open Image · Prompt not recorded",
+      })
     ).click();
     fireEvent.click(await screen.findByRole("link", { name: "Download" }));
 
@@ -272,9 +278,11 @@ describe("LibraryPage batch J provenance", () => {
     renderLibrary();
 
     expect(
-      await screen.findByRole("button", { name: "Open Audio generation" }),
+      await screen.findByRole("button", {
+        name: "Open Audio · Prompt not recorded",
+      }),
     ).toBeVisible();
-    expect(screen.getByText("Audio generation")).toBeVisible();
+    expect(screen.getByText("Audio · Prompt not recorded")).toBeVisible();
     expect(screen.getByText("audio.generate.test-model")).toBeVisible();
   });
 
@@ -289,9 +297,11 @@ describe("LibraryPage batch J provenance", () => {
     renderLibrary();
 
     expect(
-      await screen.findByRole("button", { name: "Open Audio generation" }),
+      await screen.findByRole("button", {
+        name: "Open Audio · Prompt not recorded",
+      }),
     ).toBeVisible();
-    expect(screen.getByText("Audio generation")).toBeVisible();
+    expect(screen.getByText("Audio · Prompt not recorded")).toBeVisible();
   });
 
   test("renders an accessible mini audio player with measured duration and retryable playback errors", async () => {

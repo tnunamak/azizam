@@ -107,7 +107,7 @@ function kindLabel(kind: MediaKind) {
 function assetTitle(asset: MediaAsset) {
   const prompt = typeof asset.prompt === "string" ? asset.prompt.trim() : "";
   if (prompt) return prompt;
-  return `${kindLabel(asset.kind)} generation`;
+  return `${kindLabel(asset.kind)} · Prompt not recorded`;
 }
 
 function formatDuration(seconds: number) {
@@ -303,6 +303,8 @@ function Preview({
 }) {
   const src = asset.download_url ?? null;
   const Icon = kindIcon(asset.kind);
+  const [failed, setFailed] = useState(false);
+  const [posterFailed, setPosterFailed] = useState(false);
   const { data: poster } = useQuery({
     queryKey: ["library", "poster", asset.poster_asset_id, everyone],
     enabled: asset.kind === "video" && !!asset.poster_asset_id,
@@ -312,11 +314,14 @@ function Preview({
       ),
     retry: false,
   });
-  if (asset.available === false)
+  if (asset.available === false || failed)
     return (
       <div className="bg-muted text-muted-foreground flex h-full min-h-32 flex-col items-center justify-center gap-3 p-4 text-center text-sm">
         <p>
-          {asset.unavailable_reason || "The media file is missing or expired."}
+          {failed
+            ? "Preview could not be loaded. Refresh the library to try again."
+            : asset.unavailable_reason ||
+              "The media file is missing or expired."}
         </p>
         <Button
           type="button"
@@ -340,23 +345,38 @@ function Preview({
         height={asset.height ?? 768}
         src={src}
         alt={assetTitle(asset)}
+        onError={() => setFailed(true)}
         className={cn(
           "h-full w-full",
           large ? "rounded-lg object-contain" : "object-cover",
         )}
       />
     );
-  if (asset.kind === "video" && src && large)
+  if (
+    asset.kind === "video" &&
+    src &&
+    (large || !poster?.download_url || posterFailed)
+  )
     return (
       <video
         src={src}
         poster={poster?.download_url}
         preload="metadata"
+        muted={!large}
+        playsInline
+        onLoadedMetadata={(event) => {
+          const video = event.currentTarget;
+          if (!large && Number.isFinite(video.duration) && video.duration > 0) {
+            video.currentTime = Math.min(0.1, video.duration / 2);
+          }
+        }}
+        onError={() => setFailed(true)}
         className={cn(
           "h-full w-full",
           large ? "rounded-lg object-contain" : "object-cover",
         )}
-        controls
+        controls={large}
+        aria-label={assetTitle(asset)}
       />
     );
   if (asset.kind === "video" && poster?.download_url)
@@ -367,6 +387,7 @@ function Preview({
         height={asset.height ?? 768}
         src={poster.download_url}
         alt={assetTitle(asset)}
+        onError={() => setPosterFailed(true)}
         className="h-full w-full object-cover"
       />
     );
@@ -419,7 +440,11 @@ function AssetCard({
         aria-label={`Open ${assetTitle(asset)}`}
       />
       <div className="bg-muted relative aspect-[4/3]">
-        <Preview asset={asset} everyone={everyone} />
+        <Preview
+          key={`preview-${asset.asset_id}-${asset.download_url}`}
+          asset={asset}
+          everyone={everyone}
+        />
         <Badge
           variant="secondary"
           className="bg-background/90 absolute top-2 left-2 gap-1 backdrop-blur"
@@ -450,10 +475,17 @@ function AssetCard({
         <p className="line-clamp-2 min-h-10 text-sm font-medium">
           {assetTitle(asset)}
         </p>
-        {asset.model || asset.created_at ? (
+        {asset.model || asset.source || asset.created_at ? (
           <div className="text-muted-foreground flex items-center justify-between gap-2 text-xs">
-            {asset.model ? (
-              <span className="truncate">{asset.model}</span>
+            {asset.model || asset.source ? (
+              <span
+                className="truncate"
+                title={[asset.model, asset.source?.label]
+                  .filter(Boolean)
+                  .join(" · ")}
+              >
+                {[asset.model, asset.source?.label].filter(Boolean).join(" · ")}
+              </span>
             ) : (
               <span aria-hidden="true" />
             )}
@@ -462,14 +494,6 @@ function AssetCard({
             ) : null}
           </div>
         ) : null}
-        {asset.source && (
-          <p
-            className="text-muted-foreground truncate text-xs"
-            title={asset.source.label}
-          >
-            {asset.source.label}
-          </p>
-        )}
       </div>
     </article>
   );
@@ -920,7 +944,12 @@ export default function LibraryPage() {
               </SheetHeader>
               <div className="space-y-5 px-4 pb-4">
                 <div className="bg-muted overflow-hidden rounded-lg border">
-                  <Preview asset={selected} large everyone={instanceView} />
+                  <Preview
+                    key={selected.download_url}
+                    asset={selected}
+                    large
+                    everyone={instanceView}
+                  />
                 </div>
                 <section>
                   <h2 className="mb-2 text-sm font-medium">Prompt</h2>

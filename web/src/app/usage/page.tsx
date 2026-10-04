@@ -115,6 +115,8 @@ interface UsageSummary {
   coverageNote: string | null;
   spendMeasuredRequests: number | null;
   spendTotalRequests: number | null;
+  paidRequests: number;
+  unknownPaidRequests: number;
   truncated: boolean;
 }
 
@@ -152,7 +154,7 @@ const chartColors: Record<UsageCapability, string> = {
   audio: "var(--capability-voice)",
   voice: "var(--capability-voice)",
   transcribe: "var(--capability-transcribe)",
-  decide: "var(--capability-decide)",
+  decide: "var(--usage-decisions)",
   embed: "var(--capability-embed)",
   embeddings: "var(--capability-embed)",
   rerank: "var(--capability-decide)",
@@ -182,7 +184,7 @@ export default function UsagePage() {
     effectivePerson !== (owner ? "all" : "self") || source !== "all";
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 [--usage-decisions:#b45309] dark:[--usage-decisions:#fb923c]">
       <PageHeader
         title="Usage"
         subtitle="Current month usage"
@@ -292,12 +294,6 @@ export default function UsagePage() {
               onSelect={setSelected}
             />
           ) : null}
-          {owner && effectivePerson === "all" ? (
-            <p className="text-muted-foreground text-sm">
-              Showing requests from all people, service apps and the local
-              network.
-            </p>
-          ) : null}
           <CoverageNote summary={data} />
           <DailyChart days={data.byDay} />
           <ModelTable
@@ -365,14 +361,20 @@ function SummaryRow({ summary }: { summary: UsageSummary }) {
         value={formatNumber(summary.requests)}
         detail="This month"
       />
-      {summary.spendMeasured ? (
-        <MetricCard
-          icon={DollarSign}
-          label="Remote spend"
-          value={<Money amount={summary.remoteSpendUsd} summary />}
-          detail={spendCoverageDetail(summary)}
-        />
-      ) : null}
+      <MetricCard
+        icon={DollarSign}
+        label="Remote spend"
+        value={
+          summary.paidRequests > 0 ? (
+            <Money amount={summary.remoteSpendUsd} summary />
+          ) : summary.unknownPaidRequests > 0 ? (
+            "Paid spend not measured"
+          ) : (
+            "No paid requests"
+          )
+        }
+        detail={spendCoverageDetail(summary)}
+      />
       <MetricCard
         icon={Image}
         label="Media made"
@@ -591,7 +593,7 @@ function ModelTable({
                       {formatNumber(row.requests)}
                     </td>
                     <td className="py-3 text-right">
-                      <Money amount={row.costUsd} summary />
+                      <SummaryCost amount={row.costUsd} />
                     </td>
                   </tr>
                 ))}
@@ -686,7 +688,7 @@ function ReceiptsList({
                 </div>
                 <StatusBadge status={receipt.status} />
                 <span className="hidden text-sm sm:block">
-                  <Money amount={receipt.costUsd} summary />
+                  <SummaryCost amount={receipt.costUsd} />
                 </span>
                 <ChevronRight
                   aria-hidden="true"
@@ -1048,6 +1050,11 @@ function normalizeSummary(raw: unknown): UsageSummary {
     spendTotalRequests: nullableNumber(
       data.spend_total_requests ?? data.spendTotalRequests,
     ),
+    paidRequests: number(data.paid_requests ?? data.paidRequests, 0),
+    unknownPaidRequests: number(
+      data.unknown_paid_requests ?? data.unknownPaidRequests,
+      0,
+    ),
     truncated: Boolean(data.truncated),
   };
 }
@@ -1139,6 +1146,8 @@ function normalizeCapabilityCounts(
 
 function normalizeCapability(value: unknown): UsageCapability {
   const text = String(value ?? "").toLowerCase();
+  if (text === "default") return "chat";
+  if (text === "stt" || text.includes("transcri")) return "transcribe";
   if (text.includes("image")) return "image";
   if (text.includes("video")) return "video";
   if (text.includes("rerank")) return "rerank";
@@ -1211,6 +1220,13 @@ function formatDuration(value: number | null) {
 }
 
 function spendCoverageDetail(summary: UsageSummary) {
+  if (summary.paidRequests > 0) {
+    return `Across ${formatNumber(summary.paidRequests)} paid ${summary.paidRequests === 1 ? "request" : "requests"}`;
+  }
+  if (summary.unknownPaidRequests > 0) {
+    return `${formatNumber(summary.unknownPaidRequests)} paid ${summary.unknownPaidRequests === 1 ? "request has" : "requests have"} no settled cost`;
+  }
+  if (summary.requests > 0) return "";
   if (
     summary.spendMeasuredRequests != null &&
     summary.spendTotalRequests != null &&
@@ -1219,6 +1235,11 @@ function spendCoverageDetail(summary: UsageSummary) {
     return `Measured for ${formatNumber(summary.spendMeasuredRequests)} of ${formatNumber(summary.spendTotalRequests)} requests`;
   }
   return "Measured from receipts";
+}
+
+function SummaryCost({ amount }: { amount: number | null }) {
+  if (amount == null || amount === 0) return null;
+  return <Money amount={amount} summary />;
 }
 
 function shortDate(value: string) {
