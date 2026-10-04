@@ -41,6 +41,10 @@ const categories = [
 ];
 
 function auditSummary(entry: AuditEntry) {
+  if (entry.action === "media.library.everyone")
+    return "Viewed everyone’s media library";
+  if (entry.action === "usage.summary.everyone")
+    return "Viewed everyone’s usage";
   if (entry.action === "operator.instance.update")
     return "Updated instance settings";
   if (entry.action === "operator.default_access_plan.update")
@@ -105,13 +109,10 @@ export default function ActivityPage() {
   );
   return (
     <div className="space-y-8">
-      <PageHeader
-        title="Activity"
-        answer="Who changed what, and how did requests go?"
-      />
+      <PageHeader title="Activity" subtitle="Changes and request outcomes" />
       <Tabs defaultValue="audit">
         <TabsList>
-          <TabsTrigger value="audit">Audit</TabsTrigger>
+          <TabsTrigger value="audit">Changes</TabsTrigger>
           <TabsTrigger value="requests">Requests</TabsTrigger>
         </TabsList>
         <TabsContent value="audit" className="mt-6 space-y-6">
@@ -125,14 +126,22 @@ export default function ActivityPage() {
               </label>
               <Select
                 value={category || "all"}
-                onValueChange={(value) => setCategory(value === "all" ? "" : value)}
+                onValueChange={(value) =>
+                  setCategory(value === "all" ? "" : value)
+                }
               >
-                <SelectTrigger id="audit-category" className="w-[180px] max-w-full">
+                <SelectTrigger
+                  id="audit-category"
+                  className="w-[180px] max-w-full"
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   {categories.map((item) => (
-                    <SelectItem key={item.value || "all"} value={item.value || "all"}>
+                    <SelectItem
+                      key={item.value || "all"}
+                      value={item.value || "all"}
+                    >
                       {item.label}
                     </SelectItem>
                   ))}
@@ -154,7 +163,10 @@ export default function ActivityPage() {
                   setActorInput(next);
                 }}
               >
-                <SelectTrigger id="audit-person" className="w-[180px] max-w-full">
+                <SelectTrigger
+                  id="audit-person"
+                  className="w-[180px] max-w-full"
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -230,7 +242,7 @@ export default function ActivityPage() {
             </div>
           ) : auditError && !entries.length ? (
             <ErrorState
-              message="Audit events could not be loaded. Try again."
+              message="Changes could not be loaded. Try again."
               onRetry={() => void refetchAudit()}
             />
           ) : !entries.length ? (
@@ -282,9 +294,6 @@ export default function ActivityPage() {
                       <p className="text-muted-foreground mt-1 text-xs break-words">
                         {row.actor_label}
                         {changedName(row) ? ` · ${changedName(row)}` : ""}
-                      </p>
-                      <p className="text-muted-foreground mt-1 text-xs break-words">
-                        {row.action}
                       </p>
                     </div>
                     <div className="text-muted-foreground shrink-0 text-xs">

@@ -26,8 +26,11 @@ import {
 } from "lucide-react";
 import { useViewer } from "@/components/shell/session";
 import { cn } from "@/lib/cn";
+import { errorCopy } from "@/lib/error-copy";
+import { capabilityLabels as sharedCapabilityLabels } from "@/lib/terms";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { CopyButton } from "@/components/ui/copy-button";
 import {
   Card,
   CardContent,
@@ -81,6 +84,9 @@ interface UsageReceipt {
   createdAt: number | string | null;
   capability: UsageCapability;
   model: string | null;
+  requestedModel: string | null;
+  servedModel: string | null;
+  fallbackModel: string | null;
   status: string | null;
   durationMs: number | null;
   costUsd: number | null;
@@ -104,7 +110,7 @@ interface UsageSummary {
   receipts: UsageReceipt[];
   people: UsagePerson[];
   sources: UsagePerson[];
-  retentionDays: number;
+  retentionDays: number | null;
   coverageStart: string | null;
   coverageNote: string | null;
   spendMeasuredRequests: number | null;
@@ -126,16 +132,16 @@ const capabilities: UsageCapability[] = [
 ];
 
 const capabilityLabels: Record<UsageCapability, string> = {
-  chat: "Chat",
-  image: "Images",
-  video: "Video",
-  audio: "Audio",
-  voice: "Voice",
-  transcribe: "Transcribe",
-  decide: "Decide",
-  embed: "Embed",
-  embeddings: "Embeddings",
-  rerank: "Rerank",
+  chat: sharedCapabilityLabels.chat,
+  image: sharedCapabilityLabels.image,
+  video: sharedCapabilityLabels.video,
+  audio: sharedCapabilityLabels.audio,
+  voice: sharedCapabilityLabels.speech,
+  transcribe: sharedCapabilityLabels.transcribe,
+  decide: sharedCapabilityLabels.decisions,
+  embed: sharedCapabilityLabels.embeddings,
+  embeddings: sharedCapabilityLabels.embeddings,
+  rerank: sharedCapabilityLabels.reranking,
   other: "Other",
 };
 
@@ -157,6 +163,8 @@ export default function UsagePage() {
   const viewer = useViewer();
   const [person, setPerson] = useState("default");
   const [source, setSource] = useState("all");
+  const [showAllModels, setShowAllModels] = useState(false);
+  const [showReceipts, setShowReceipts] = useState(false);
   const owner = ["owner", "superadmin"].includes(viewer.role);
   const effectivePerson =
     person === "default" ? (owner ? "all" : "self") : person;
@@ -170,12 +178,26 @@ export default function UsagePage() {
   const hasUsage = Boolean(
     data && (data.requests > 0 || data.mediaCount > 0 || data.receipts.length),
   );
+  const filtersActive =
+    effectivePerson !== (owner ? "all" : "self") || source !== "all";
 
   return (
     <div className="space-y-8">
       <PageHeader
         title="Usage"
-        answer="How much am I using, and what does it cost?"
+        subtitle="Current month usage"
+        primaryAction={
+          data && hasUsage ? (
+            <Button
+              variant="outline"
+              onClick={() => setShowReceipts((value) => !value)}
+              aria-expanded={showReceipts}
+              aria-controls="usage-receipts"
+            >
+              {showReceipts ? "Hide recent requests" : "View recent requests"}
+            </Button>
+          ) : undefined
+        }
         actions={
           owner ? (
             <div className="flex flex-wrap items-end gap-3">
@@ -231,39 +253,57 @@ export default function UsagePage() {
       ) : !hasUsage ? (
         <EmptyState
           icon={Activity}
-          title="No usage this month"
-          description="Requests, generated media and receipts appear here after you use a gateway app. Receipts are retained for 14 days."
+          title={
+            filtersActive
+              ? "No matching requests"
+              : "No requests in this period"
+          }
+          description={
+            data.retentionDays
+              ? `Requests, generated media and ${data.retentionDays}-day receipts appear here after a gateway app makes a request.`
+              : "Requests, generated media and receipts appear here after a gateway app makes a request."
+          }
           action={
-            <Button asChild variant="outline">
-              <a href="/ui/apps/">Connect an app</a>
-            </Button>
+            filtersActive ? (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setPerson(owner ? "all" : "self");
+                  setSource("all");
+                }}
+              >
+                Clear filters
+              </Button>
+            ) : (
+              <Button asChild variant="outline">
+                <a href="/ui/apps/">Connect an app</a>
+              </Button>
+            )
           }
         />
       ) : (
         <>
           <SummaryRow summary={data} />
+          {showReceipts ? (
+            <ReceiptsList
+              receipts={data.receipts}
+              retentionDays={data.retentionDays}
+              loading={isFetching}
+              onSelect={setSelected}
+            />
+          ) : null}
           {owner && effectivePerson === "all" ? (
             <p className="text-muted-foreground text-sm">
               Showing requests from all people, service apps and the local
               network.
             </p>
           ) : null}
-          <p className="text-muted-foreground text-sm">
-            Receipts are retained for {data.retentionDays} days
-            {data.coverageStart
-              ? `, covering usage since ${formatDate(data.coverageStart)}`
-              : ""}
-            .{data.coverageNote ? ` ${formatSentence(data.coverageNote)}` : ""}
-            {data.truncated
-              ? " This view is limited to the most recent stored receipts."
-              : ""}
-          </p>
+          <CoverageNote summary={data} />
           <DailyChart days={data.byDay} />
-          <ModelTable rows={data.byModel} />
-          <ReceiptsList
-            receipts={data.receipts}
-            loading={isFetching}
-            onSelect={setSelected}
+          <ModelTable
+            rows={data.byModel}
+            showAll={showAllModels}
+            onToggle={() => setShowAllModels((value) => !value)}
           />
         </>
       )}
@@ -317,7 +357,6 @@ function PersonFilter({
 }
 
 function SummaryRow({ summary }: { summary: UsageSummary }) {
-  const spark = capabilitySpark(summary.byDay);
   return (
     <section className="grid gap-4 md:grid-cols-3" aria-label="This month">
       <MetricCard
@@ -326,60 +365,53 @@ function SummaryRow({ summary }: { summary: UsageSummary }) {
         value={formatNumber(summary.requests)}
         detail="This month"
       />
-      <MetricCard
-        icon={DollarSign}
-        label="Remote spend"
-        value={
-          summary.spendMeasured ? (
-            <Money amount={summary.remoteSpendUsd} />
-          ) : (
-            "Not measured yet"
-          )
-        }
-        detail={
-          summary.spendMeasured
-            ? spendCoverageDetail(summary)
-            : "No recorded provider costs"
-        }
-      />
+      {summary.spendMeasured ? (
+        <MetricCard
+          icon={DollarSign}
+          label="Remote spend"
+          value={<Money amount={summary.remoteSpendUsd} summary />}
+          detail={spendCoverageDetail(summary)}
+        />
+      ) : null}
       <MetricCard
         icon={Image}
         label="Media made"
         value={formatNumber(summary.mediaCount)}
         detail="Images, video and audio"
       />
-      <Card className="border-0! bg-transparent! shadow-none! md:col-span-3">
-        <CardHeader>
-          <CardTitle>By capability</CardTitle>
-          <CardDescription>Requests by capability this month</CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {spark.length ? (
-            spark.map((item) => (
-              <div
-                key={item.capability}
-                className="bg-muted/30 min-w-0 rounded-lg p-3"
-              >
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <CapabilityLabel capability={item.capability} />
-                  <span className="text-sm tabular-nums">
-                    {formatNumber(item.total)}
-                  </span>
-                </div>
-                <MiniSparkline
-                  values={item.values}
-                  capability={item.capability}
-                />
-              </div>
-            ))
-          ) : (
-            <p className="text-muted-foreground text-sm">
-              Capability trends appear after daily totals are measured.
-            </p>
-          )}
-        </CardContent>
-      </Card>
     </section>
+  );
+}
+
+function CoverageNote({ summary }: { summary: UsageSummary }) {
+  const since = summary.coverageStart
+    ? ` · since ${formatDate(summary.coverageStart)}`
+    : "";
+  const truncated = summary.truncated ? " · truncated" : "";
+  const retention = summary.retentionDays
+    ? `${summary.retentionDays} days`
+    : "retention not reported";
+  return (
+    <details className="text-muted-foreground text-sm">
+      <summary className="min-h-11 w-fit cursor-pointer py-3">
+        Receipt coverage · {retention}
+        {summary.retentionDays ? since : ""}
+        {truncated}
+      </summary>
+      <p className="mt-1">
+        {summary.retentionDays
+          ? `Receipts are kept for ${summary.retentionDays} days`
+          : "Retention not reported"}
+        {summary.retentionDays && summary.coverageStart
+          ? `, covering usage since ${formatDate(summary.coverageStart)}`
+          : ""}
+        .
+        {summary.coverageNote ? ` ${formatSentence(summary.coverageNote)}` : ""}
+        {summary.truncated
+          ? " This view is limited to the most recent stored receipts."
+          : ""}
+      </p>
+    </details>
   );
 }
 
@@ -510,50 +542,70 @@ function DailyChart({ days }: { days: UsageDay[] }) {
   );
 }
 
-function ModelTable({ rows }: { rows: UsageModel[] }) {
+function ModelTable({
+  rows,
+  showAll,
+  onToggle,
+}: {
+  rows: UsageModel[];
+  showAll: boolean;
+  onToggle: () => void;
+}) {
+  const visibleRows = showAll ? rows : rows.slice(0, 5);
+  const hiddenCount = Math.max(0, rows.length - visibleRows.length);
   return (
     <Card className="border-0! bg-transparent! shadow-none!">
       <CardHeader>
         <CardTitle>Models</CardTitle>
-        <CardDescription>Requests and measured cost</CardDescription>
+        <CardDescription>Top models by requests</CardDescription>
       </CardHeader>
       <CardContent className="overflow-x-auto" tabIndex={0}>
         {rows.length ? (
-          <table className="w-full min-w-[420px] text-sm">
-            <thead className="text-muted-foreground border-b text-left">
-              <tr>
-                <th scope="col" className="py-3 pr-4 font-medium">
-                  Capability and model
-                </th>
-                <th scope="col" className="py-3 pr-4 text-right font-medium">
-                  Requests
-                </th>
-                <th scope="col" className="py-3 text-right font-medium">
-                  Cost
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {rows.map((row) => (
-                <tr key={`${row.model}-${row.capability}`}>
-                  <td className="max-w-[260px] py-3 pr-4">
-                    <div className="font-medium">
-                      <CapabilityLabel capability={row.capability} />
-                    </div>
-                    <code className="text-muted-foreground mt-1 block truncate text-xs">
-                      {row.model}
-                    </code>
-                  </td>
-                  <td className="py-3 pr-4 text-right tabular-nums">
-                    {formatNumber(row.requests)}
-                  </td>
-                  <td className="py-3 text-right">
-                    <Money amount={row.costUsd} />
-                  </td>
+          <div className="space-y-4">
+            <table className="w-full min-w-[420px] text-sm">
+              <thead className="text-muted-foreground border-b text-left">
+                <tr>
+                  <th scope="col" className="py-3 pr-4 font-medium">
+                    Capability and model
+                  </th>
+                  <th scope="col" className="py-3 pr-4 text-right font-medium">
+                    Requests
+                  </th>
+                  <th scope="col" className="py-3 text-right font-medium">
+                    Cost
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y">
+                {visibleRows.map((row) => (
+                  <tr key={`${row.model}-${row.capability}`}>
+                    <td className="max-w-[260px] py-3 pr-4">
+                      <div className="font-medium">
+                        <CapabilityLabel capability={row.capability} />
+                      </div>
+                      <code className="text-muted-foreground mt-1 block truncate text-xs">
+                        {row.model}
+                      </code>
+                    </td>
+                    <td className="py-3 pr-4 text-right tabular-nums">
+                      {formatNumber(row.requests)}
+                    </td>
+                    <td className="py-3 text-right">
+                      <Money amount={row.costUsd} summary />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {rows.length > 5 ? (
+              <Button variant="ghost" onClick={onToggle}>
+                {showAll ? "Show top 5" : `View all ${rows.length} models`}
+              </Button>
+            ) : null}
+            {hiddenCount ? (
+              <p className="sr-only">{hiddenCount} more models hidden.</p>
+            ) : null}
+          </div>
         ) : (
           <p className="text-muted-foreground text-sm">
             Model totals appear after requests are measured.
@@ -566,20 +618,27 @@ function ModelTable({ rows }: { rows: UsageModel[] }) {
 
 function ReceiptsList({
   receipts,
+  retentionDays,
   onSelect,
   loading,
 }: {
   receipts: UsageReceipt[];
+  retentionDays: number | null;
   onSelect: (receipt: UsageReceipt) => void;
   loading: boolean;
 }) {
   return (
-    <Card className="border-0! bg-transparent! shadow-none!">
+    <Card
+      id="usage-receipts"
+      className="border-0! bg-transparent! shadow-none!"
+    >
       <CardHeader>
         <CardTitle>Receipts</CardTitle>
         <CardDescription>
-          Receipts are retained for 14 days. Open one for the human summary and
-          raw JSON.
+          {retentionDays
+            ? `Receipts are kept for ${retentionDays} days.`
+            : "Retention not reported."}{" "}
+          Open one to see what happened to a request.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -618,15 +677,16 @@ function ReceiptsList({
                     {receipt.createdAt ? (
                       <RelativeTime ts={receipt.createdAt} />
                     ) : (
-                      "Time not measured"
+                      "Time unavailable"
                     )}
-                    {" · "}
-                    {formatDuration(receipt.durationMs)}
+                    {receipt.durationMs != null
+                      ? ` · ${formatDuration(receipt.durationMs)}`
+                      : ""}
                   </p>
                 </div>
                 <StatusBadge status={receipt.status} />
                 <span className="hidden text-sm sm:block">
-                  <Money amount={receipt.costUsd} />
+                  <Money amount={receipt.costUsd} summary />
                 </span>
                 <ChevronRight
                   aria-hidden="true"
@@ -674,12 +734,35 @@ function ReceiptSheet({
                   <CapabilityLabel capability={receipt.capability} />
                   <StatusBadge status={receipt.status} />
                 </div>
-                <p className="text-sm">{receipt.summary}</p>
+                <p className="text-sm font-medium">
+                  {receiptOutcome(receipt.status)}
+                </p>
+                <p className="text-muted-foreground mt-2 text-sm">
+                  {receiptOutcomeSummary(receipt)}
+                </p>
+                {receiptOutcomeCause(receipt) ? (
+                  <p className="text-muted-foreground mt-2 text-sm">
+                    {receiptOutcomeCause(receipt)}
+                  </p>
+                ) : null}
+                {receiptNextAction(receipt) ? (
+                  <p className="text-muted-foreground mt-2 text-sm">
+                    {receiptNextAction(receipt)}
+                  </p>
+                ) : null}
               </div>
               <dl className="grid gap-4 text-sm sm:grid-cols-2">
                 <Detail
-                  label="Model"
-                  value={receipt.model ?? "Not measured yet"}
+                  label="Requested model"
+                  value={receipt.requestedModel ?? "Not recorded"}
+                />
+                <Detail
+                  label="Served model"
+                  value={receipt.servedModel ?? "Not recorded"}
+                />
+                <Detail
+                  label="Declared fallback"
+                  value={receipt.fallbackModel ?? "Not recorded"}
                 />
                 <Detail
                   label="Duration"
@@ -699,7 +782,21 @@ function ReceiptSheet({
                     )
                   }
                 />
-                <Detail label="Request ID" value={receipt.requestId} wide />
+                <Detail
+                  label="Request ID"
+                  value={
+                    <span className="inline-flex min-w-0 items-center gap-2">
+                      <span className="min-w-0 break-all">
+                        {receipt.requestId}
+                      </span>
+                      <CopyButton
+                        value={receipt.requestId}
+                        aria-label="Copy request ID"
+                      />
+                    </span>
+                  }
+                  wide
+                />
                 {receipt.sourceLabel ? (
                   <Detail label="Source" value={receipt.sourceLabel} wide />
                 ) : null}
@@ -784,33 +881,81 @@ function StatusBadge({ status }: { status: string | null }) {
   return (
     <Badge variant={ok ? "secondary" : "outline"}>
       {ok ? <CheckCircle2 aria-hidden="true" /> : <Clock3 aria-hidden="true" />}
-      {status ?? "Unknown"}
+      {receiptOutcome(status)}
     </Badge>
   );
 }
 
-function MiniSparkline({
-  values,
-  capability,
-}: {
-  values: number[];
-  capability: UsageCapability;
-}) {
-  const max = Math.max(1, ...values);
+function receiptOutcome(status: string | null) {
   return (
-    <div className="flex h-10 items-end gap-1" aria-hidden>
-      {values.map((value, index) => (
-        <span
-          key={index}
-          className="w-full rounded-t-sm"
-          style={{
-            height: value === 0 ? 0 : `${Math.max(3, (value / max) * 40)}px`,
-            background: chartColors[capability],
-          }}
-        />
-      ))}
-    </div>
+    (
+      {
+        success: "Completed",
+        succeeded: "Completed",
+        ok: "Completed",
+        failed: "Failed",
+        error: "Failed",
+        backend_failed: "Engine or provider failed",
+        rejected: "Rejected",
+        cancelled: "Cancelled",
+        disconnected: "Disconnected",
+        timed_out: "Timed out",
+        accepted: "Accepted",
+        running: "In progress",
+        in_progress: "In progress",
+        stale_incomplete: "Outcome not recorded",
+        incomplete: "Outcome not recorded",
+      } as Record<string, string>
+    )[status ?? ""] ?? "Outcome not recorded"
   );
+}
+
+function receiptOutcomeSummary(receipt: UsageReceipt) {
+  const label = receiptOutcome(receipt.status);
+  if (label === "Completed") return "The gateway completed this request.";
+  if (label === "Rejected") return "The gateway rejected this request.";
+  if (label === "Engine or provider failed")
+    return "The selected model or provider failed before returning a result.";
+  if (label === "Failed") return "The gateway could not complete this request.";
+  if (label === "Timed out")
+    return "The request timed out before a result was recorded.";
+  if (label === "Accepted")
+    return "The gateway accepted this request for processing.";
+  if (label === "In progress")
+    return "The request was still running when this receipt was recorded.";
+  if (label === "Cancelled")
+    return "The request was cancelled before completion.";
+  if (label === "Disconnected")
+    return "The connection ended before completion was recorded.";
+  return "The receipt does not include a final outcome.";
+}
+
+function receiptOutcomeCause(receipt: UsageReceipt) {
+  const label = receiptOutcome(receipt.status);
+  if (
+    !["Failed", "Rejected", "Engine or provider failed", "Timed out"].includes(
+      label,
+    )
+  )
+    return null;
+  const raw = object(receipt.raw);
+  const metadata = object(raw.metadata);
+  const status = nullableNumber(metadata.status_code ?? raw.status_code);
+  if (status != null && status >= 400) return errorCopy({ status }).message;
+  return null;
+}
+
+function receiptNextAction(receipt: UsageReceipt) {
+  const label = receiptOutcome(receipt.status);
+  if (
+    ["Failed", "Rejected", "Engine or provider failed", "Timed out"].includes(
+      label,
+    )
+  )
+    return "Open Technical details for the recorded status and warnings.";
+  if (label === "Outcome not recorded")
+    return "Check for a newer receipt before treating this request as complete.";
+  return null;
 }
 
 function UsageSkeleton() {
@@ -894,7 +1039,7 @@ function normalizeSummary(raw: unknown): UsageSummary {
         };
       })
       .filter((item) => item.id),
-    retentionDays: number(data.retention_days, 14),
+    retentionDays: positiveNullableNumber(data.retention_days),
     coverageStart: nullableString(data.coverage_start ?? data.coverageStart),
     coverageNote: nullableString(data.coverage_note ?? data.coverageNote),
     spendMeasuredRequests: nullableNumber(
@@ -916,6 +1061,15 @@ function normalizeReceipt(raw: unknown): UsageReceipt {
   const model = nullableString(
     data.resolved_model ?? data.requested_model ?? data.model ?? metadata.model,
   );
+  const requestedModel = nullableString(
+    data.requested_model ?? metadata.requested_model,
+  );
+  const servedModel = nullableString(
+    data.resolved_model ?? data.served_model ?? metadata.resolved_model,
+  );
+  const fallbackModel = nullableString(
+    data.fallback_model ?? data.declared_fallback ?? metadata.fallback_model,
+  );
   const requestId = string(data.request_id ?? data.id, "receipt");
   const status = nullableString(data.status);
   const durationMs = nullableNumber(
@@ -934,6 +1088,9 @@ function normalizeReceipt(raw: unknown): UsageReceipt {
     ),
     capability,
     model,
+    requestedModel,
+    servedModel,
+    fallbackModel,
     status,
     durationMs,
     costUsd,
@@ -978,20 +1135,6 @@ function normalizeCapabilityCounts(
     }),
     {} as Record<UsageCapability, number>,
   );
-}
-
-function capabilitySpark(days: UsageDay[]) {
-  return capabilities
-    .map((capability) => ({
-      capability,
-      values: days.map((day) => day.byCapability[capability] ?? 0),
-      total: days.reduce(
-        (sum, day) => sum + (day.byCapability[capability] ?? 0),
-        0,
-      ),
-    }))
-    .filter((item) => item.total > 0)
-    .slice(0, 8);
 }
 
 function normalizeCapability(value: unknown): UsageCapability {
@@ -1040,6 +1183,11 @@ function nullableNumber(value: unknown): number | null {
   if (value == null || value === "") return null;
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function positiveNullableNumber(value: unknown): number | null {
+  const parsed = nullableNumber(value);
+  return parsed != null && parsed > 0 ? parsed : null;
 }
 
 function nullableDate(value: unknown): number | string | null {

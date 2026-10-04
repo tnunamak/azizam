@@ -1,6 +1,8 @@
 export interface WorkflowInput {
   name: string;
   type: string;
+  media_type?: string;
+  accepted_media_types?: string[];
   default?: unknown;
   minimum?: number;
   maximum?: number;
@@ -43,7 +45,7 @@ export interface RecentAsset {
   created_at: number | string | null;
   generation_ms?: number | null;
   download_url?: string | null;
-  receipt_id?: string | null;
+  request_id?: string | null;
 }
 
 export async function readJson<T>(path: string): Promise<T> {

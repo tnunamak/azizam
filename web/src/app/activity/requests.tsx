@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { ArrowRight, ReceiptText } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { CopyButton } from "@/components/ui/copy-button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
@@ -20,6 +21,7 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 import { EmptyState, ErrorState, RelativeTime } from "@/components/product";
+import { errorCopy } from "@/lib/error-copy";
 
 type Receipt = {
   request_id: string;
@@ -49,17 +51,23 @@ type RequestPage = {
 
 function requestSummary(receipt: Receipt) {
   const intent = receipt.intent?.replace(/[._-]/g, " ") || "AI request";
+  if (/\bspeech\b/.test(intent)) return "Speech request";
+  if (/\bimage\b/.test(intent)) return "Images request";
+  if (/\bdecision\b|\bdecide\b/.test(intent)) return "Decisions request";
+  if (/\bembedding\b|\bembed\b/.test(intent)) return "Embeddings request";
   return intent.charAt(0).toUpperCase() + intent.slice(1);
 }
 function outcome(status?: string) {
   return (
     (
       {
+        success: "Completed",
         succeeded: "Completed",
         ok: "Completed",
         failed: "Failed",
         error: "Failed",
-        rejected: "Failed",
+        backend_failed: "Engine or provider failed",
+        rejected: "Rejected",
         cancelled: "Cancelled",
         disconnected: "Disconnected",
         timed_out: "Timed out",
@@ -71,6 +79,92 @@ function outcome(status?: string) {
       } as Record<string, string>
     )[status ?? ""] ?? "Outcome not recorded"
   );
+}
+function outcomeTone(status?: string) {
+  if (
+    [
+      "success",
+      "succeeded",
+      "ok",
+      "accepted",
+      "running",
+      "in_progress",
+    ].includes(status ?? "")
+  )
+    return "text-foreground";
+  if (
+    ["failed", "error", "backend_failed", "rejected", "timed_out"].includes(
+      status ?? "",
+    )
+  )
+    return "text-destructive";
+  return "text-muted-foreground";
+}
+function outcomeNeedsAttention(status?: string) {
+  return [
+    "failed",
+    "error",
+    "backend_failed",
+    "rejected",
+    "timed_out",
+  ].includes(status ?? "");
+}
+function outcomeSummary(receipt: Receipt) {
+  const label = outcome(receipt.status);
+  if (label === "Completed") return "The gateway completed this request.";
+  if (label === "Rejected") return "The gateway rejected this request.";
+  if (label === "Engine or provider failed")
+    return "The selected model or provider failed before returning a result.";
+  if (label === "Failed") return "The gateway could not complete this request.";
+  if (label === "Timed out")
+    return "The request timed out before a result was recorded.";
+  if (label === "In progress")
+    return "The request was still running when this receipt was recorded.";
+  if (label === "Accepted")
+    return "The gateway accepted this request for processing.";
+  if (label === "Cancelled")
+    return "The request was cancelled before completion.";
+  if (label === "Disconnected")
+    return "The connection ended before completion was recorded.";
+  return "The receipt does not include a final outcome.";
+}
+function outcomeCause(receipt: Receipt) {
+  const statusLabel = outcome(receipt.status);
+  if (
+    !["Failed", "Rejected", "Engine or provider failed", "Timed out"].includes(
+      statusLabel,
+    )
+  )
+    return null;
+  const metadata = object(receipt.metadata);
+  const status = number(metadata.status_code ?? receipt.status_code);
+  if (status && status >= 400) return errorCopy({ status }).message;
+  const warning = receipt.warnings?.find((item) => item.trim());
+  return warning ?? null;
+}
+function nextAction(receipt: Receipt) {
+  const status = receipt.status ?? "";
+  if (outcomeNeedsAttention(status))
+    return "Open Technical details for the recorded status and warnings.";
+  if (["stale_incomplete", "incomplete", ""].includes(status))
+    return "Check for a newer receipt before treating this request as complete.";
+  return null;
+}
+function object(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : {};
+}
+function number(value: unknown): number | null {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+function receiptString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+function declaredFallback(receipt: Receipt) {
+  const metadata = object(receipt.metadata);
+  return receiptString(receipt.fallback_model ?? metadata.fallback_model);
 }
 function duration(ms?: number | null) {
   return typeof ms === "number"
@@ -120,8 +214,7 @@ export function Requests() {
   return (
     <div className="space-y-6">
       <p className="text-muted-foreground text-sm">
-        Request receipts for everyone in your gateway. Receipts record routing
-        and outcomes, without request bodies.
+        Receipts show outcome, route and timing without request bodies.
       </p>
       <div className="flex flex-wrap items-end gap-4">
         <div className="min-w-0 space-y-2">
@@ -198,7 +291,7 @@ export function Requests() {
           title={
             person || source !== "all"
               ? "No matching requests"
-              : "No requests yet"
+              : "No request receipts yet"
           }
           description="Requests from apps and trusted-network clients appear here."
           action={
@@ -310,7 +403,7 @@ export function Requests() {
               </Button>
             ) : (
               <p className="text-muted-foreground text-xs">
-                {person
+                {person || source !== "all"
                   ? "No more matching requests"
                   : "End of request receipts"}
               </p>
@@ -334,22 +427,61 @@ export function Requests() {
                 </SheetDescription>
               </SheetHeader>
               <div className="min-w-0 space-y-6 px-4 pb-8">
+                <div className="rounded-lg border p-4 text-sm">
+                  <p
+                    className={`font-medium ${outcomeTone(record.receipt.status)}`}
+                  >
+                    {outcome(record.receipt.status)}
+                  </p>
+                  <p className="text-muted-foreground mt-2">
+                    {outcomeSummary(record.receipt)}
+                  </p>
+                  {outcomeCause(record.receipt) ? (
+                    <p className="text-muted-foreground mt-2">
+                      {outcomeCause(record.receipt)}
+                    </p>
+                  ) : null}
+                  {nextAction(record.receipt) ? (
+                    <p className="text-muted-foreground mt-2">
+                      {nextAction(record.receipt)}
+                    </p>
+                  ) : null}
+                </div>
                 <dl className="space-y-4 text-sm">
                   {[
+                    ["Request ID", record.receipt.request_id],
                     ["Person", record.person_label],
                     ["App", record.app_label],
                     ["Source", record.source?.label ?? record.app_label],
                     [
-                      "Model",
-                      record.receipt.resolved_model ||
-                        record.receipt.requested_model ||
-                        "Not recorded",
+                      "Requested model",
+                      record.receipt.requested_model || "Not recorded",
                     ],
+                    [
+                      "Served model",
+                      record.receipt.resolved_model || "Not recorded",
+                    ],
+                    ...(declaredFallback(record.receipt)
+                      ? ([
+                          [
+                            "Declared fallback",
+                            declaredFallback(record.receipt) as string,
+                          ],
+                        ] as const)
+                      : []),
                     ["Time taken", duration(record.receipt.latency_ms)],
                   ].map(([label, value]) => (
                     <div key={label}>
                       <dt className="text-muted-foreground">{label}</dt>
-                      <dd className="mt-1 break-words">{value}</dd>
+                      <dd className="mt-1 flex min-w-0 items-center gap-2 break-words">
+                        <span className="min-w-0 break-all">{value}</span>
+                        {label === "Request ID" ? (
+                          <CopyButton
+                            value={String(value)}
+                            aria-label="Copy request ID"
+                          />
+                        ) : null}
+                      </dd>
                     </div>
                   ))}
                   <div>
@@ -359,16 +491,20 @@ export function Requests() {
                     </dd>
                   </div>
                 </dl>
-                {!!record.receipt.warnings?.length && (
-                  <div className="space-y-2 text-sm">
-                    <p className="font-medium">What to know</p>
-                    {record.receipt.warnings.map((warning, i) => (
-                      <p key={i} className="text-muted-foreground break-words">
-                        {warning}
-                      </p>
-                    ))}
-                  </div>
-                )}
+                {outcomeNeedsAttention(record.receipt.status) &&
+                  !!record.receipt.warnings?.length && (
+                    <div className="space-y-2 text-sm">
+                      <p className="font-medium">What to know</p>
+                      {record.receipt.warnings.map((warning, i) => (
+                        <p
+                          key={i}
+                          className="text-muted-foreground break-words"
+                        >
+                          {warning}
+                        </p>
+                      ))}
+                    </div>
+                  )}
                 <details>
                   <summary className="cursor-pointer text-sm font-medium">
                     Technical details

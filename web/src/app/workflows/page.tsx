@@ -5,15 +5,15 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowUpRight,
-  Check,
-  Copy,
   GitBranch,
   Search,
   SlidersHorizontal,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { capabilityLabels } from "@/lib/terms";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { CopyButton } from "@/components/ui/copy-button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -40,6 +40,7 @@ import {
   EmptyState,
   ErrorState,
   PageHeader,
+  StatusPill,
 } from "@/components/product";
 import { FilterToggle } from "@/components/product/filter-toggle";
 
@@ -52,6 +53,7 @@ import {
 } from "./workflow-api";
 import { RelativeTime } from "@/components/product";
 type WorkflowCapability = Capability | "audio" | "workflow";
+type InputFilter = "all" | "image" | "text" | "number" | "file";
 const EMPTY_WORKFLOWS: WorkflowRow[] = [];
 
 const capabilityOrder: WorkflowCapability[] = [
@@ -84,15 +86,15 @@ function isCatalog(value: unknown): value is WorkflowsCatalog {
 function capabilityLabel(value: string) {
   return (
     {
-      image: "Images",
-      video: "Video",
-      voice: "Voice",
-      audio: "Audio",
+      image: capabilityLabels.image,
+      video: capabilityLabels.video,
+      voice: capabilityLabels.speech,
+      audio: capabilityLabels.audio,
       workflow: "Workflows",
-      chat: "Chat",
-      transcribe: "Transcribe",
-      decide: "Decide",
-      embed: "Embed",
+      chat: capabilityLabels.chat,
+      transcribe: capabilityLabels.transcribe,
+      decide: capabilityLabels.decisions,
+      embed: capabilityLabels.embeddings,
     }[value as WorkflowCapability] ?? value
   );
 }
@@ -137,6 +139,80 @@ function valueLabel(value: unknown) {
   return String(value);
 }
 
+function conciseWords(value: string, maxWords = 12) {
+  const words = value.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= maxWords) return value.trim();
+  return `${words.slice(0, maxWords).join(" ")}...`;
+}
+
+function purposeFromShape(workflow: WorkflowRow) {
+  const output = outputKinds(workflow).toLowerCase();
+  const inputs = inputKinds(workflow).toLowerCase();
+  if (output.includes("image") || workflow.capability === "image") {
+    return `Images from ${inputs} inputs.`;
+  }
+  if (output.includes("video") || workflow.capability === "video") {
+    return `Videos from ${inputs} inputs.`;
+  }
+  if (output.includes("audio") || workflow.capability === "audio") {
+    return `Audio from ${inputs} inputs.`;
+  }
+  if (workflow.capability === "chat") return "Answers from text inputs.";
+  return `${capabilityLabel(workflow.capability)} from ${inputs} inputs.`;
+}
+
+function purposeLabel(workflow: WorkflowRow) {
+  const description = workflow.description.trim();
+  if (!description) return purposeFromShape(workflow);
+  const sentence = description.split(/(?<=[.!?])\s+/)[0];
+  const jargon =
+    /\b(contract|protocol|gateway-composed|engine|binding|bound|backend|schema|adapter|passthrough|checkpoint)\b|[\w.-]+\.(safetensors|ckpt|gguf)\b/i;
+  if (jargon.test(sentence)) return conciseWords(purposeFromShape(workflow));
+  return conciseWords(sentence);
+}
+
+function workflowInputKind(input: WorkflowInput): InputFilter | null {
+  const name = input.name.toLowerCase();
+  const type = input.type.toLowerCase();
+  const media = [input.media_type, ...(input.accepted_media_types ?? [])]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  const imageFieldNames = new Set([
+    "image",
+    "input_image",
+    "init_image",
+    "mask_image",
+    "source_image",
+    "reference_image",
+  ]);
+  if (media.includes("image/")) {
+    return "image";
+  }
+  if (
+    imageFieldNames.has(name) &&
+    ["image", "file", "binary", "blob", "string"].includes(type)
+  ) {
+    return "image";
+  }
+  if (
+    ["file", "upload", "blob", "binary"].includes(type) ||
+    name.endsWith("_file")
+  ) {
+    return "file";
+  }
+  if (type === "string") return "text";
+  if (type === "integer" || type === "number") return "number";
+  return null;
+}
+
+function workflowAcceptsInput(workflow: WorkflowRow, filter: InputFilter) {
+  if (filter === "all") return true;
+  return workflow.inputs
+    .filter((input) => input.accepted)
+    .some((input) => workflowInputKind(input) === filter);
+}
+
 function matches(row: WorkflowRow, query: string) {
   if (!query) return true;
   const haystack = [
@@ -162,33 +238,49 @@ function matches(row: WorkflowRow, query: string) {
   return haystack.includes(query.toLowerCase());
 }
 
-function statusClass(row: WorkflowRow) {
-  if (row.availability.status === "ready") return "bg-success";
-  if (row.availability.status === "busy") return "bg-warning";
-  if (row.availability.status === "starting") return "bg-info";
-  return "bg-muted-foreground";
-}
-
 // Types describe the manifest; they do not imply an engine is ready to run.
 function inputKinds(workflow: WorkflowRow) {
   const kinds = [
     ...new Set(
       workflow.inputs
         .filter((input) => input.accepted)
-        .map(
-          (input) =>
-            ({
-              string: "Text",
-              integer: "Number",
-              number: "Number",
-              boolean: "Toggle",
-              object: "Object",
-              array: "List",
-            })[input.type] ?? input.type,
-        ),
+        .map((input) => inputKindLabel(input)),
     ),
   ];
   return kinds.join(", ") || "Not specified";
+}
+
+function requiredInputs(workflow: WorkflowRow) {
+  return workflow.inputs.filter((input) => input.accepted && input.required);
+}
+
+function requiredInputLabel(workflow: WorkflowRow) {
+  const required = requiredInputs(workflow);
+  if (!workflow.inputs.length) return "Inputs not listed";
+  if (!required.length) return "No required inputs";
+  return required.map((input) => input.name).join(", ");
+}
+
+function inputKindLabel(input: WorkflowInput) {
+  const kind = workflowInputKind(input);
+  if (kind === "image") return "Image";
+  if (kind === "file") return "File";
+  if (kind === "text") return "Text";
+  if (kind === "number") return "Number";
+  return (
+    {
+      boolean: "Toggle",
+      object: "Object",
+      array: "List",
+    }[input.type] ?? input.type
+  );
+}
+
+function requiredInputSummary(workflow: WorkflowRow) {
+  const required = requiredInputs(workflow);
+  if (!workflow.inputs.length) return "Inputs not listed";
+  if (!required.length) return "No required inputs";
+  return [...new Set(required.map(inputKindLabel))].join(", ");
 }
 
 function outputKinds(workflow: WorkflowRow) {
@@ -207,14 +299,6 @@ function outputKinds(workflow: WorkflowRow) {
   );
 }
 
-function browseConstraint(workflow: WorkflowRow) {
-  const ranged = workflow.inputs.filter(
-    (input) => input.accepted && rangeLabel(input),
-  );
-  const input = ranged.find((input) => input.required) ?? ranged[0];
-  return input ? `${input.name}: ${rangeLabel(input)}` : null;
-}
-
 function WorkflowCard({
   workflow,
   onDetail,
@@ -222,19 +306,6 @@ function WorkflowCard({
   workflow: WorkflowRow;
   onDetail: (workflow: WorkflowRow) => void;
 }) {
-  const constraint = browseConstraint(workflow);
-  const [copied, setCopied] = useState(false);
-  const [copyError, setCopyError] = useState(false);
-  async function copyId() {
-    try {
-      await navigator.clipboard.writeText(workflow.id);
-      setCopied(true);
-      setCopyError(false);
-      window.setTimeout(() => setCopied(false), 1500);
-    } catch {
-      setCopyError(true);
-    }
-  }
   return (
     <article
       aria-label={workflow.title}
@@ -244,9 +315,18 @@ function WorkflowCard({
         <CapabilityIcon capability={iconCapability(workflow.capability)} />
         <div className="min-w-0 flex-1">
           <h3 className="font-semibold break-words">{workflow.title}</h3>
-          <dl className="text-muted-foreground mt-2 space-y-1 text-xs">
+          <p className="text-muted-foreground mt-2 line-clamp-2 text-sm">
+            {purposeLabel(workflow)}
+          </p>
+          <dl className="text-muted-foreground mt-3 space-y-1 text-xs">
             <div className="flex gap-2">
-              <dt>Input</dt>
+              <dt>Required</dt>
+              <dd className="min-w-0 break-words">
+                {requiredInputSummary(workflow)}
+              </dd>
+            </div>
+            <div className="flex gap-2">
+              <dt>Accepts</dt>
               <dd className="min-w-0 break-words">{inputKinds(workflow)}</dd>
             </div>
             <div className="flex gap-2">
@@ -257,40 +337,18 @@ function WorkflowCard({
         </div>
       </div>
       <div className="flex flex-wrap gap-2">
-        <Badge variant="outline">{timeLabel(workflow.typical_seconds)}</Badge>
-        {workflow.aliases.slice(0, 2).map((alias) => (
-          <Badge
-            key={alias}
-            variant="outline"
-            className="max-w-full break-all whitespace-normal"
-          >
-            {alias}
-          </Badge>
-        ))}
+        {workflow.typical_seconds != null && workflow.typical_seconds > 0 ? (
+          <Badge variant="outline">{timeLabel(workflow.typical_seconds)}</Badge>
+        ) : null}
       </div>
-      {constraint && (
-        <p className="text-muted-foreground text-xs break-words">
-          {constraint}
-        </p>
-      )}
-      <div className="flex min-w-0 items-start gap-2 text-sm">
-        <span
-          aria-hidden="true"
-          className={cn(
-            "mt-1.5 size-2 shrink-0 rounded-full",
-            statusClass(workflow),
-          )}
-        />
-        <div className="min-w-0">
-          <div className="font-medium">
-            {workflow.availability.status.charAt(0).toUpperCase() +
-              workflow.availability.status.slice(1).replaceAll("_", " ")}
-          </div>
-          <p className="text-muted-foreground line-clamp-2 text-xs">
-            {workflow.availability.reason}
-          </p>
-        </div>
-      </div>
+      <StatusPill
+        status={
+          workflow.availability.status === "not_configured"
+            ? "unavailable"
+            : workflow.availability.status
+        }
+        summary
+      />
       <div className="mt-auto flex flex-wrap gap-2">
         <Button asChild size="sm">
           <Link href={`/try/?workflow=${encodeURIComponent(workflow.id)}`}>
@@ -300,31 +358,6 @@ function WorkflowCard({
         <Button variant="outline" size="sm" onClick={() => onDetail(workflow)}>
           Details
         </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          aria-label={`Copy workflow id for ${workflow.title}`}
-          onClick={copyId}
-        >
-          {copied ? (
-            <>
-              <Check className="size-4 shrink-0" /> ID copied
-            </>
-          ) : (
-            <>
-              <Copy className="size-4 shrink-0" /> Copy ID
-            </>
-          )}
-        </Button>
-        {copyError && (
-          <p role="alert" className="text-destructive text-sm">
-            Copy failed. Try again or open workflow details to copy the ID.
-          </p>
-        )}
-        <span role="status" className="sr-only">
-          {copied ? "Workflow id copied" : ""}
-        </span>
       </div>
     </article>
   );
@@ -361,10 +394,23 @@ function DetailSheet({
             <SheetHeader className="border-b pr-12">
               <SheetTitle>{workflow.title}</SheetTitle>
               <SheetDescription>
-                Typed inputs, example requests and your recent outputs.
+                Inputs, example requests and recent outputs.
               </SheetDescription>
             </SheetHeader>
             <div className="space-y-6 p-4">
+              <section className="space-y-3">
+                <h3 className="font-medium">Purpose</h3>
+                <p className="text-muted-foreground text-sm break-words">
+                  {purposeLabel(workflow)}
+                </p>
+                <div className="grid gap-3 text-sm sm:grid-cols-2">
+                  <Fact
+                    label="Required inputs"
+                    value={requiredInputLabel(workflow)}
+                  />
+                  <Fact label="Output" value={outputKinds(workflow)} />
+                </div>
+              </section>
               <details className="rounded-lg border p-4">
                 <summary className="focus-visible:outline-ring min-h-11 cursor-pointer py-3 font-medium focus-visible:outline-2">
                   Technical details
@@ -377,7 +423,18 @@ function DetailSheet({
                     {workflow.availability.reason}
                   </p>
                   <div className="grid gap-4 text-sm sm:grid-cols-2">
-                    <Fact label="Workflow" value={workflow.id} />
+                    <Fact
+                      label="Workflow"
+                      value={
+                        <span className="inline-flex max-w-full items-center gap-2">
+                          <span className="break-all">{workflow.id}</span>
+                          <CopyButton
+                            value={workflow.id}
+                            aria-label="Copy workflow ID"
+                          />
+                        </span>
+                      }
+                    />
                     <Fact
                       label="Capability"
                       value={capabilityLabel(workflow.capability)}
@@ -390,7 +447,7 @@ function DetailSheet({
                       }
                     />
                     <Fact
-                      label="Typical time"
+                      label="Declared time"
                       value={timeLabel(workflow.typical_seconds)}
                     />
                     <Fact
@@ -435,19 +492,19 @@ function DetailSheet({
                 </div>
               </details>
               <div>
-                <h3 className="font-medium">Typed inputs</h3>
+                <h3 className="font-medium">Inputs</h3>
                 <p className="text-muted-foreground mt-1 text-sm">
-                  Applies inputs change the request. Ignored inputs have no
-                  effect on this route.
+                  Inputs marked Applies change the request. Ignored inputs have
+                  no effect on this route.
                 </p>
                 {workflow.inputs.length === 0 && (
                   <p className="text-muted-foreground mt-3 text-sm">
-                    No typed inputs declared. See the example request for this
-                    route.
+                    This workflow does not list its inputs. Check the example
+                    request before running it.
                   </p>
                 )}
                 <ul
-                  aria-label="Typed input summaries"
+                  aria-label="Input summaries"
                   className="mt-3 divide-y rounded-lg border px-4 sm:hidden"
                 >
                   {workflow.inputs.map((input) => (
@@ -499,7 +556,7 @@ function DetailSheet({
                 <div
                   className="mt-3 hidden max-w-full overflow-x-auto rounded-lg border sm:block [&>div]:overflow-visible"
                   tabIndex={0}
-                  aria-label="Scrollable typed controls"
+                  aria-label="Scrollable inputs"
                 >
                   <Table className="min-w-[40rem] table-fixed">
                     <TableHeader>
@@ -655,20 +712,36 @@ function RecentJobs({ workflow }: { workflow: WorkflowRow }) {
                 <dd className="break-all">
                   {asset.workflow || "Not recorded"}
                 </dd>
-                <dt>Duration</dt>
-                <dd>
-                  {asset.generation_ms == null
-                    ? "Not measured yet"
-                    : `${(asset.generation_ms / 1000).toFixed(1)} s`}
-                </dd>
+                {asset.generation_ms != null ? (
+                  <>
+                    <dt>Duration</dt>
+                    <dd>{`${(asset.generation_ms / 1000).toFixed(1)} s`}</dd>
+                  </>
+                ) : null}
               </dl>
-              {asset.download_url && (
+              <div className="flex flex-wrap gap-2">
                 <Button variant="outline" size="sm" asChild>
-                  <a href={asset.download_url} download>
-                    Download output
-                  </a>
+                  <Link
+                    href={`/library/?asset=${encodeURIComponent(asset.asset_id)}`}
+                  >
+                    Open in Library
+                  </Link>
                 </Button>
-              )}
+                {asset.request_id ? (
+                  <Button variant="outline" size="sm" asChild>
+                    <a href={`/r/${encodeURIComponent(asset.request_id)}`}>
+                      View receipt
+                    </a>
+                  </Button>
+                ) : null}
+                {asset.download_url && (
+                  <Button variant="outline" size="sm" asChild>
+                    <a href={asset.download_url} download>
+                      Download output
+                    </a>
+                  </Button>
+                )}
+              </div>
             </li>
           ))}
         </ul>
@@ -682,6 +755,7 @@ export default function WorkflowsPage() {
   const [capability, setCapability] = useState<WorkflowCapability | "all">(
     "all",
   );
+  const [inputFilter, setInputFilter] = useState<InputFilter>("all");
   const [detail, setDetail] = useState<WorkflowRow | null>(null);
   const { data, isPending, isError, isFetching, refetch } = useQuery({
     queryKey: ["workflows", "catalog"],
@@ -697,9 +771,10 @@ export default function WorkflowsPage() {
       rows.filter(
         (row) =>
           matches(row, query) &&
-          (capability === "all" || row.capability === capability),
+          (capability === "all" || row.capability === capability) &&
+          workflowAcceptsInput(row, inputFilter),
       ),
-    [rows, query, capability],
+    [rows, query, capability, inputFilter],
   );
   const grouped = capabilityOrder
     .map((cap) => ({
@@ -712,7 +787,7 @@ export default function WorkflowsPage() {
     <div className="space-y-8 [&_a[data-slot=button]]:min-h-11 [&_button]:min-h-11">
       <PageHeader
         title="Workflows"
-        answer="Which workflow should I run?"
+        subtitle="Choose by purpose and inputs."
         actions={
           isFetching ? (
             <Badge variant="outline">Refreshing</Badge>
@@ -777,6 +852,24 @@ export default function WorkflowsPage() {
                 </FilterToggle>
               ))}
             </div>
+            <div className="flex flex-wrap gap-2">
+              {[
+                { value: "all", label: "Any input" },
+                { value: "image", label: "Has image" },
+                { value: "text", label: "Has text" },
+                { value: "number", label: "Has number" },
+                { value: "file", label: "Has file" },
+              ].map((filter) => (
+                <FilterToggle
+                  key={filter.value}
+                  pressed={inputFilter === filter.value}
+                  size="sm"
+                  onClick={() => setInputFilter(filter.value as InputFilter)}
+                >
+                  {filter.label}
+                </FilterToggle>
+              ))}
+            </div>
           </div>
           {filtered.length === 0 ? (
             <EmptyState
@@ -789,9 +882,10 @@ export default function WorkflowsPage() {
                   onClick={() => {
                     setQuery("");
                     setCapability("all");
+                    setInputFilter("all");
                   }}
                 >
-                  Clear search
+                  Clear filters
                 </Button>
               }
             />

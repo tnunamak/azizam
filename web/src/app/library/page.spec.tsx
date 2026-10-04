@@ -11,6 +11,14 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import LibraryPage from "./page";
 
+const navigation = vi.hoisted(() => ({
+  searchParams: new URLSearchParams(),
+}));
+
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => navigation.searchParams,
+}));
+
 vi.mock("next/image", () => ({
   default: (props: {
     alt: string;
@@ -83,6 +91,7 @@ function renderLibrary() {
 
 describe("LibraryPage batch J provenance", () => {
   beforeEach(() => {
+    navigation.searchParams = new URLSearchParams();
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
@@ -105,17 +114,44 @@ describe("LibraryPage batch J provenance", () => {
     (
       await screen.findByRole("button", { name: "Open Image generation" })
     ).click();
+    fireEvent.click(await screen.findByText("Details"));
 
     await waitFor(() =>
       expect(
         screen.getByRole("link", { name: "View receipt req_image_123" }),
       ).toHaveAttribute("href", "/r/req_image_123"),
     );
+    expect(screen.getByText("Prompt not recorded.")).toBeVisible();
+  });
+
+  test("opens a deep-linked asset through the exact media detail endpoint", async () => {
+    navigation.searchParams = new URLSearchParams("asset=asset_deep_1");
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(
+        Response.json({
+          assets: [],
+          models: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          asset: {
+            ...assetWithReceipt,
+            asset_id: "asset_deep_1",
+            prompt: "A deep linked image",
+          },
+        }),
+      );
+
+    renderLibrary();
+
     expect(
-      screen.getByText(
-        "Not recorded. The gateway does not report whether the prompt was omitted by policy or unavailable from the backend.",
-      ),
+      await screen.findByRole("heading", { name: "A deep linked image" }),
     ).toBeVisible();
+    expect(fetch).toHaveBeenCalledWith("/me/api/media/asset_deep_1", {
+      credentials: "same-origin",
+    });
   });
 
   test("encodes receipt ids", async () => {
@@ -131,6 +167,7 @@ describe("LibraryPage batch J provenance", () => {
     (
       await screen.findByRole("button", { name: "Open Image generation" })
     ).click();
+    fireEvent.click(await screen.findByText("Details"));
 
     await waitFor(() =>
       expect(
@@ -154,6 +191,7 @@ describe("LibraryPage batch J provenance", () => {
         name: "Open A saved image with no request receipt",
       })
     ).click();
+    fireEvent.click(await screen.findByText("Details"));
 
     await waitFor(() =>
       expect(
@@ -163,6 +201,38 @@ describe("LibraryPage batch J provenance", () => {
     expect(
       screen.queryByRole("link", { name: /View receipt/ }),
     ).not.toBeInTheDocument();
+  });
+
+  test("prepares downloads through the media download endpoint", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(
+        Response.json({
+          assets: [assetWithReceipt],
+          models: ["image"],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({ download_url: "https://signed.example/media.png" }),
+      );
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(() => undefined);
+    renderLibrary();
+
+    (
+      await screen.findByRole("button", { name: "Open Image generation" })
+    ).click();
+    fireEvent.click(await screen.findByRole("link", { name: "Download" }));
+
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        "/me/api/media/asset_image_1/download?scope=me",
+        { credentials: "same-origin" },
+      ),
+    );
+    expect(click).toHaveBeenCalled();
+    click.mockRestore();
   });
 
   test("does not create its own main landmark inside the app shell", async () => {
@@ -275,6 +345,34 @@ describe("LibraryPage batch J provenance", () => {
     fireEvent.error(media!);
 
     expect(await screen.findByText("Audio unavailable")).toBeVisible();
+  });
+
+  test("distinguishes an empty filtered result from an empty library", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(
+        Response.json({
+          assets: [],
+          models: ["image"],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          assets: [],
+          models: ["image"],
+          next_cursor: null,
+        }),
+      );
+    renderLibrary();
+
+    expect(await screen.findByText("No media yet")).toBeVisible();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Images" })[0]);
+
+    expect(await screen.findByText("No matching media")).toBeVisible();
+    expect(
+      screen.getAllByRole("button", { name: "Clear filters" }).length,
+    ).toBeGreaterThan(0);
   });
 
   test("keeps mini audio player state in sync with media play and pause events", async () => {

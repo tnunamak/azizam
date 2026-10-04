@@ -63,21 +63,19 @@ for (const mode of ["light", "dark"] as const) {
 
       await expect(page.getByRole("main")).toHaveCount(1);
       await page.getByRole("button", { name: "Open Image generation" }).click();
+      const dialog = page.getByRole("dialog", { name: "Image generation" });
+      await expect(dialog.getByText("Prompt not recorded.")).toBeVisible();
+      await dialog.getByText("Details").click();
+      const details = dialog.locator("details");
       await expect(
-        page.getByRole("link", { name: `View receipt ${requestId}` }),
+        dialog.getByRole("link", { name: `View receipt ${requestId}` }),
       ).toHaveAttribute("href", `/r/${encodeURIComponent(requestId)}`);
-      await expect(
-        page.getByText(
-          "Not recorded. The gateway does not report whether the prompt was omitted by policy or unavailable from the backend.",
-        ),
-      ).toBeVisible();
+      await expect(details.getByText(requestId)).toBeVisible();
       await auditPage(page);
       expect(
-        await page
-          .getByRole("dialog")
-          .evaluate((dialog) => dialog.scrollWidth <= dialog.clientWidth),
+        await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth),
       ).toBe(true);
-      await page
+      await dialog
         .getByRole("link", { name: `View receipt ${requestId}` })
         .scrollIntoViewIfNeeded();
       await page.screenshot({
@@ -86,7 +84,7 @@ for (const mode of ["light", "dark"] as const) {
       const receiptResponse = page.waitForResponse((response) =>
         response.url().endsWith(`/me/api/receipts/${requestId}`),
       );
-      await page
+      await dialog
         .getByRole("link", { name: `View receipt ${requestId}` })
         .click();
       await expect(page).toHaveURL(new RegExp(`/r/${requestId}$`));

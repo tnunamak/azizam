@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import NextImage from "next/image";
+import { useSearchParams } from "next/navigation";
 import {
   useMutation,
   useInfiniteQuery,
@@ -34,6 +35,11 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import {
+  OverflowMenu,
+  OverflowMenuItem,
+  OverflowMenuSeparator,
+} from "@/components/ui/overflow-menu";
 import {
   Sheet,
   SheetContent,
@@ -104,10 +110,8 @@ function assetTitle(asset: MediaAsset) {
   return `${kindLabel(asset.kind)} generation`;
 }
 
-function formatDuration(seconds: number | null | undefined) {
-  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) {
-    return "Duration not measured yet";
-  }
+function formatDuration(seconds: number) {
+  if (typeof seconds !== "number") return null;
   const rounded = Math.round(seconds);
   const minutes = Math.floor(rounded / 60);
   const remainingSeconds = rounded % 60;
@@ -139,6 +143,24 @@ function buildMediaPath(filters: {
   return `/me/api/media?${params.toString()}`;
 }
 
+function hasActiveFilters(filters: {
+  kind: string;
+  model: string;
+  date: DateFilter;
+  search: string;
+  owner: string;
+  source: string;
+}) {
+  return (
+    filters.kind !== "all" ||
+    filters.model !== "all" ||
+    filters.date !== "all" ||
+    filters.search.trim() !== "" ||
+    filters.owner !== "default" ||
+    filters.source !== "all"
+  );
+}
+
 async function mediaRequest<T>(
   path: string,
   init: RequestInit = {},
@@ -150,6 +172,22 @@ async function mediaRequest<T>(
       payload?.error?.message ?? "Library data could not be loaded. Try again.",
     );
   return payload as T;
+}
+
+async function prepareDownload(asset: MediaAsset, everyone: boolean) {
+  const path = `/me/api/media/${encodeURIComponent(asset.asset_id)}/download?scope=${everyone ? "everyone" : "me"}`;
+  const response = await fetch(path, { credentials: "same-origin" });
+  if (!response.ok) {
+    throw new Error("Download could not be prepared. Try again.");
+  }
+  const payload = (await response.json()) as { download_url?: string };
+  if (!payload.download_url) {
+    throw new Error("Download could not be prepared. Try again.");
+  }
+  const link = document.createElement("a");
+  link.href = payload.download_url;
+  link.download = assetTitle(asset);
+  link.click();
 }
 
 function absolute(ts: MediaAsset["created_at"]) {
@@ -178,7 +216,11 @@ function MiniAudioPlayer({
       ? "Audio unavailable"
       : error === "playback"
         ? "Playback blocked. Try again."
-        : formatDuration(measuredDuration);
+        : measuredDuration != null &&
+            Number.isFinite(measuredDuration) &&
+            measuredDuration >= 0
+          ? formatDuration(measuredDuration)
+          : null;
 
   return (
     <div
@@ -235,14 +277,16 @@ function MiniAudioPlayer({
       </Button>
       <div className="min-w-0 flex-1">
         <p className="truncate text-xs font-medium">Audio preview</p>
-        <p
-          className={cn(
-            "text-muted-foreground text-xs",
-            error === "media" && "text-destructive",
-          )}
-        >
-          {durationLabel}
-        </p>
+        {durationLabel ? (
+          <p
+            className={cn(
+              "text-muted-foreground text-xs",
+              error === "media" && "text-destructive",
+            )}
+          >
+            {durationLabel}
+          </p>
+        ) : null}
       </div>
     </div>
   );
@@ -270,8 +314,21 @@ function Preview({
   });
   if (asset.available === false)
     return (
-      <div className="bg-muted text-muted-foreground flex h-full min-h-32 items-center justify-center p-4 text-center text-sm">
-        {asset.unavailable_reason || "The media file is missing or expired."}
+      <div className="bg-muted text-muted-foreground flex h-full min-h-32 flex-col items-center justify-center gap-3 p-4 text-center text-sm">
+        <p>
+          {asset.unavailable_reason || "The media file is missing or expired."}
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={(event) => {
+            event.stopPropagation();
+            window.location.reload();
+          }}
+        >
+          Refresh library
+        </Button>
       </div>
     );
   if (asset.kind === "image" && src)
@@ -392,10 +449,18 @@ function AssetCard({
         <p className="line-clamp-2 min-h-10 text-sm font-medium">
           {assetTitle(asset)}
         </p>
-        <div className="text-muted-foreground flex items-center justify-between gap-2 text-xs">
-          <span className="truncate">{asset.model || "Unknown model"}</span>
-          <RelativeTime ts={asset.created_at} fallback="Time not recorded" />
-        </div>
+        {asset.model || asset.created_at ? (
+          <div className="text-muted-foreground flex items-center justify-between gap-2 text-xs">
+            {asset.model ? (
+              <span className="truncate">{asset.model}</span>
+            ) : (
+              <span aria-hidden="true" />
+            )}
+            {asset.created_at ? (
+              <RelativeTime ts={asset.created_at} fallback="" />
+            ) : null}
+          </div>
+        ) : null}
         {asset.source && (
           <p
             className="text-muted-foreground truncate text-xs"
@@ -409,8 +474,148 @@ function AssetCard({
   );
 }
 
+function LibraryFilterControls({
+  kind,
+  setKind,
+  search,
+  setSearch,
+  model,
+  setModel,
+  models,
+  date,
+  setDate,
+  owner,
+  setOwner,
+  source,
+  setSource,
+  sources,
+  instanceView,
+  canChooseOwner,
+  mobileLabels = false,
+}: {
+  kind: string;
+  setKind: (value: string) => void;
+  search: string;
+  setSearch: (value: string) => void;
+  model: string;
+  setModel: (value: string) => void;
+  models: string[];
+  date: DateFilter;
+  setDate: (value: DateFilter) => void;
+  owner: string;
+  setOwner: (value: string) => void;
+  source: string;
+  setSource: (value: string) => void;
+  sources: { id: string; label: string }[];
+  instanceView: boolean;
+  canChooseOwner: boolean;
+  mobileLabels?: boolean;
+}) {
+  return (
+    <>
+      <div role="group" aria-label="Kind" className="flex flex-wrap gap-2">
+        {[
+          { value: "all", label: "All kinds" },
+          { value: "image", label: "Images" },
+          { value: "video", label: "Video" },
+          { value: "audio", label: "Audio" },
+        ].map((filter) => (
+          <FilterToggle
+            key={filter.value}
+            pressed={kind === filter.value}
+            onClick={() => setKind(filter.value)}
+            aria-label={
+              mobileLabels ? `Filter kind ${filter.label}` : undefined
+            }
+          >
+            {filter.label}
+          </FilterToggle>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="relative block min-w-0 basis-full sm:flex-1 sm:basis-48">
+          <span className="sr-only">Search prompts</span>
+          <Search
+            className="text-muted-foreground pointer-events-none absolute top-3.5 left-3 size-4"
+            aria-hidden
+          />
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search prompts"
+            className="pl-9"
+          />
+        </label>
+        <Select value={model} onValueChange={setModel}>
+          <SelectTrigger aria-label="Model" className="w-full sm:w-44">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All models</SelectItem>
+            {models.map((m) => (
+              <SelectItem key={m} value={m}>
+                {m}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select
+          value={date}
+          onValueChange={(value) => setDate(value as DateFilter)}
+        >
+          <SelectTrigger aria-label="Date" className="w-full sm:w-36">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Any time</SelectItem>
+            <SelectItem value="7d">Last 7 days</SelectItem>
+            <SelectItem value="30d">Last 30 days</SelectItem>
+            <SelectItem value="90d">Last 90 days</SelectItem>
+          </SelectContent>
+        </Select>
+        {canChooseOwner ? (
+          <Select
+            value={owner === "default" ? "everyone" : owner}
+            onValueChange={(value) => {
+              setOwner(value);
+              setSource("all");
+            }}
+          >
+            <SelectTrigger
+              aria-label={mobileLabels ? "Filter owner" : "Owner"}
+              className="w-full sm:w-40"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="mine">Mine</SelectItem>
+              <SelectItem value="everyone">Everyone&apos;s</SelectItem>
+            </SelectContent>
+          </Select>
+        ) : null}
+        {instanceView ? (
+          <Select value={source} onValueChange={setSource}>
+            <SelectTrigger aria-label="Source" className="w-full sm:w-52">
+              <SelectValue placeholder="All sources" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All sources</SelectItem>
+              {sources.map((item) => (
+                <SelectItem key={item.id} value={item.id}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
 export default function LibraryPage() {
   const viewer = useViewer();
+  const searchParams = useSearchParams();
   const queryClient = useQueryClient();
   const [kind, setKind] = useState("all");
   const [model, setModel] = useState("all");
@@ -420,10 +625,40 @@ export default function LibraryPage() {
   const [source, setSource] = useState("all");
   const [selected, setSelected] = useState<MediaAsset | null>(null);
   const [confirming, setConfirming] = useState<MediaAsset | null>(null);
+  const [downloadingAssetId, setDownloadingAssetId] = useState<string | null>(
+    null,
+  );
   const instanceView =
     ["owner", "superadmin"].includes(viewer.role) && owner !== "mine";
   const filters = { kind, model, date, search, owner, source };
+  const activeFilters = hasActiveFilters(filters);
   const mediaPath = buildMediaPath(filters);
+  const deepLinkedAssetId = searchParams?.get("asset") ?? "";
+  function clearFilters() {
+    setKind("all");
+    setModel("all");
+    setDate("all");
+    setSearch("");
+    setOwner("default");
+    setSource("all");
+  }
+  function openAsset(asset: MediaAsset) {
+    setSelected(asset);
+    const params = new URLSearchParams(window.location.search);
+    params.set("asset", asset.asset_id);
+    window.history.replaceState(null, "", `?${params.toString()}`);
+  }
+  function closeAsset() {
+    setSelected(null);
+    const params = new URLSearchParams(window.location.search);
+    params.delete("asset");
+    const query = params.toString();
+    window.history.replaceState(
+      null,
+      "",
+      query ? `?${query}` : window.location.pathname,
+    );
+  }
   const {
     data,
     isLoading,
@@ -451,6 +686,43 @@ export default function LibraryPage() {
       ),
     [data?.pages],
   );
+  const listedDeepLinkedAsset = useMemo(
+    () =>
+      deepLinkedAssetId
+        ? assets.find((asset) => asset.asset_id === deepLinkedAssetId)
+        : null,
+    [assets, deepLinkedAssetId],
+  );
+  const {
+    data: deepLinkedAsset,
+    isError: deepLinkedAssetError,
+    isFetching: deepLinkedAssetFetching,
+    refetch: refetchDeepLinkedAsset,
+  } = useQuery({
+    queryKey: ["library", "asset", deepLinkedAssetId, instanceView],
+    enabled: Boolean(deepLinkedAssetId) && !listedDeepLinkedAsset,
+    queryFn: () =>
+      mediaRequest<{ asset: MediaAsset }>(
+        `/me/api/media/${encodeURIComponent(deepLinkedAssetId)}${instanceView ? "?scope=everyone" : ""}`,
+      ),
+    retry: false,
+  });
+  useEffect(() => {
+    if (!deepLinkedAssetId || selected?.asset_id === deepLinkedAssetId) return;
+    if (listedDeepLinkedAsset) {
+      setSelected(listedDeepLinkedAsset);
+      return;
+    }
+    if (deepLinkedAsset?.asset && isMediaKind(deepLinkedAsset.asset.kind)) {
+      setSelected(deepLinkedAsset.asset);
+      return;
+    }
+  }, [
+    deepLinkedAsset,
+    deepLinkedAssetId,
+    listedDeepLinkedAsset,
+    selected?.asset_id,
+  ]);
   const models = useMemo(
     () =>
       Array.from(
@@ -479,7 +751,7 @@ export default function LibraryPage() {
     },
     onSuccess: () => {
       toast.success("Deleted from your library.");
-      setSelected(null);
+      closeAsset();
       void queryClient.invalidateQueries({ queryKey: ["library"] });
     },
     onError: (error) =>
@@ -491,110 +763,81 @@ export default function LibraryPage() {
     <div>
       <PageHeader
         title="Library"
-        answer={
+        subtitle={
           instanceView
             ? "Everything made through your gateway."
             : "Everything I’ve made."
         }
-        description="Browse your images, video and audio with provenance and download actions."
       />
-      <section aria-label="Library filters" className="mb-6 space-y-4">
-        <div role="group" aria-label="Kind" className="flex flex-wrap gap-2">
-          {[
-            { value: "all", label: "All kinds" },
-            { value: "image", label: "Images" },
-            { value: "video", label: "Video" },
-            { value: "audio", label: "Audio" },
-          ].map((filter) => (
-            <FilterToggle
-              key={filter.value}
-              pressed={kind === filter.value}
-              onClick={() => setKind(filter.value)}
-            >
-              {filter.label}
-            </FilterToggle>
-          ))}
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <label className="relative block min-w-0 basis-full sm:flex-1 sm:basis-48">
-            <span className="sr-only">Search prompts</span>
-            <Search
-              className="text-muted-foreground pointer-events-none absolute top-3.5 left-3 size-4"
-              aria-hidden
+      <section aria-label="Library filters" className="mb-6">
+        <details className="group sm:hidden">
+          <summary className="border-input bg-background hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring inline-flex min-h-11 cursor-pointer list-none items-center rounded-md border px-4 py-2 text-sm font-medium focus-visible:ring-2 focus-visible:outline-none">
+            Filter{activeFilters ? " applied" : ""}
+          </summary>
+          <div className="mt-4 space-y-4">
+            <LibraryFilterControls
+              kind={kind}
+              setKind={setKind}
+              search={search}
+              setSearch={setSearch}
+              model={model}
+              setModel={setModel}
+              models={models}
+              date={date}
+              setDate={setDate}
+              owner={owner}
+              setOwner={setOwner}
+              source={source}
+              setSource={setSource}
+              sources={data?.pages[0]?.sources ?? []}
+              instanceView={instanceView}
+              canChooseOwner={["owner", "superadmin"].includes(viewer.role)}
+              mobileLabels
             />
-            <Input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search prompts"
-              className="pl-9"
-            />
-          </label>
-          <Select value={model} onValueChange={setModel}>
-            <SelectTrigger aria-label="Model" className="w-full sm:w-44">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All models</SelectItem>
-              {models.map((m) => (
-                <SelectItem key={m} value={m}>
-                  {m}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
-            value={date}
-            onValueChange={(value) => setDate(value as DateFilter)}
-          >
-            <SelectTrigger aria-label="Date" className="w-full sm:w-36">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Any time</SelectItem>
-              <SelectItem value="7d">Last 7 days</SelectItem>
-              <SelectItem value="30d">Last 30 days</SelectItem>
-              <SelectItem value="90d">Last 90 days</SelectItem>
-            </SelectContent>
-          </Select>
-          {["owner", "superadmin"].includes(viewer.role) ? (
-            <Select
-              value={owner === "default" ? "everyone" : owner}
-              onValueChange={(value) => {
-                setOwner(value);
-                setSource("all");
-              }}
-            >
-              <SelectTrigger aria-label="Owner" className="w-full sm:w-40">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="mine">Mine</SelectItem>
-                <SelectItem value="everyone">Everyone’s</SelectItem>
-              </SelectContent>
-            </Select>
-          ) : null}
-          {instanceView ? (
-            <Select value={source} onValueChange={setSource}>
-              <SelectTrigger aria-label="Source" className="w-full sm:w-52">
-                <SelectValue placeholder="All sources" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All sources</SelectItem>
-                {(data?.pages[0]?.sources ?? []).map((item) => (
-                  <SelectItem key={item.id} value={item.id}>
-                    {item.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : null}
+          </div>
+        </details>
+        <div className="hidden space-y-4 sm:block">
+          <LibraryFilterControls
+            kind={kind}
+            setKind={setKind}
+            search={search}
+            setSearch={setSearch}
+            model={model}
+            setModel={setModel}
+            models={models}
+            date={date}
+            setDate={setDate}
+            owner={owner}
+            setOwner={setOwner}
+            source={source}
+            setSource={setSource}
+            sources={data?.pages[0]?.sources ?? []}
+            instanceView={instanceView}
+            canChooseOwner={["owner", "superadmin"].includes(viewer.role)}
+          />
         </div>
       </section>
+      {activeFilters ? (
+        <div className="mb-4">
+          <Button variant="ghost" size="sm" onClick={clearFilters}>
+            Clear filters
+          </Button>
+        </div>
+      ) : null}
       {instanceView ? (
         <p className="border-warning/30 bg-warning/10 text-muted-foreground mb-4 rounded-lg border px-3 py-2 text-sm">
           Showing media from all people, service apps and the local network.
           Access through this owner view is audited.
         </p>
+      ) : null}
+      {deepLinkedAssetError ? (
+        <div className="mb-4">
+          <ErrorState
+            message="That library item could not be loaded. Try again."
+            onRetry={() => void refetchDeepLinkedAsset()}
+            retrying={deepLinkedAssetFetching}
+          />
+        </div>
       ) : null}
       {isLoading ? (
         <div
@@ -618,16 +861,22 @@ export default function LibraryPage() {
       {!isLoading && !isError && assets.length === 0 ? (
         <EmptyState
           icon={CalendarDays}
-          title="No media yet"
+          title={activeFilters ? "No matching media" : "No media yet"}
           description={
-            kind !== "all" || model !== "all" || date !== "all" || search
-              ? "No media matches these filters. Try another kind, date or prompt."
+            activeFilters
+              ? "No media matches these filters. Clear filters or try another kind, date, model or prompt."
               : "Images, videos and audio you generate will appear here with the prompt, model, workflow and download links."
           }
           action={
-            <Button asChild variant="outline">
-              <a href="/ui/try/">Make something</a>
-            </Button>
+            activeFilters ? (
+              <Button variant="outline" onClick={clearFilters}>
+                Clear filters
+              </Button>
+            ) : (
+              <Button asChild variant="outline">
+                <a href="/ui/try/">Make something</a>
+              </Button>
+            )
           }
         />
       ) : null}
@@ -637,7 +886,7 @@ export default function LibraryPage() {
             <AssetCard
               key={asset.asset_id}
               asset={asset}
-              onOpen={setSelected}
+              onOpen={openAsset}
               everyone={instanceView}
             />
           ))}
@@ -656,7 +905,7 @@ export default function LibraryPage() {
       ) : null}
       <Sheet
         open={Boolean(selected)}
-        onOpenChange={(open) => !open && setSelected(null)}
+        onOpenChange={(open) => !open && closeAsset()}
       >
         <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
           {selected ? (
@@ -672,101 +921,47 @@ export default function LibraryPage() {
                 <div className="bg-muted overflow-hidden rounded-lg border">
                   <Preview asset={selected} large everyone={instanceView} />
                 </div>
-                <div className="grid gap-3 text-sm sm:grid-cols-2">
-                  <Detail
-                    label="Model"
-                    value={selected.model || "Not measured yet"}
-                  />
-                  <Detail
-                    label="Created"
-                    value={
-                      <RelativeTime
-                        ts={selected.created_at}
-                        fallback="Time not recorded"
-                      />
-                    }
-                    title={absolute(selected.created_at)}
-                  />
-                  <Detail
-                    label="Seed"
-                    value={selected.seed ?? "Not measured yet"}
-                  />
-                  <Detail
-                    label="Size"
-                    value={
-                      selected.width && selected.height
-                        ? `${selected.width} × ${selected.height} px`
-                        : "Not measured yet"
-                    }
-                  />
-                  <Detail
-                    label="Generation time"
-                    value={
-                      selected.generation_ms == null
-                        ? "Not measured yet"
-                        : `${(selected.generation_ms / 1000).toFixed(1)} s`
-                    }
-                  />
-                  <Detail
-                    label="Request receipt"
-                    value={
-                      selected.request_id ? (
-                        <a
-                          href={`/r/${encodeURIComponent(selected.request_id)}`}
-                          aria-label={`View receipt ${selected.request_id}`}
-                          className="text-primary focus-visible:ring-ring inline-flex min-h-11 max-w-full min-w-0 items-center gap-1 rounded-md underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:outline-none"
-                        >
-                          <span className="shrink-0">View receipt</span>
-                          <span className="text-muted-foreground truncate font-mono text-xs">
-                            {selected.request_id}
-                          </span>
-                          <ExternalLink
-                            className="size-3 shrink-0"
-                            aria-hidden
-                          />
-                        </a>
-                      ) : (
-                        "Not recorded"
-                      )
-                    }
-                    title={selected.request_id ?? undefined}
-                  />
-                  {selected.owner_name ? (
-                    <Detail label="Owner" value={selected.owner_name} />
-                  ) : null}
-                  {selected.source ? (
-                    <Detail label="Source" value={selected.source.label} />
-                  ) : null}
-                </div>
                 <section>
                   <h2 className="mb-2 text-sm font-medium">Prompt</h2>
                   <p className="bg-muted/30 rounded-lg border p-3 text-sm">
-                    {selected.prompt ||
-                      "Not recorded. The gateway does not report whether the prompt was omitted by policy or unavailable from the backend."}
+                    {selected.prompt || "Prompt not recorded."}
                   </p>
-                </section>
-                <section>
-                  <h2 className="mb-2 text-sm font-medium">Workflow</h2>
-                  <pre className="bg-muted/30 max-h-40 overflow-auto rounded-lg border p-3 text-xs whitespace-pre-wrap">
-                    {selected.workflow
-                      ? typeof selected.workflow === "string"
-                        ? selected.workflow
-                        : JSON.stringify(selected.workflow, null, 2)
-                      : "Not recorded"}
-                  </pre>
                 </section>
                 <div className="flex flex-wrap gap-2">
                   {selected.available !== false && (
-                    <Button asChild variant="outline">
+                    <Button
+                      asChild
+                      disabled={downloadingAssetId === selected.asset_id}
+                    >
                       <a
                         href={
                           selected.download_url ??
                           `/me/api/media/${encodeURIComponent(selected.asset_id)}/download`
                         }
                         download
+                        onClick={(event) => {
+                          event.preventDefault();
+                          setDownloadingAssetId(selected.asset_id);
+                          void prepareDownload(selected, instanceView).then(
+                            () => {
+                              toast.success("Download ready.");
+                              setDownloadingAssetId(null);
+                            },
+                            (error) => {
+                              toast.error(
+                                error instanceof Error
+                                  ? error.message
+                                  : "Download could not be prepared. Try again.",
+                              );
+                              setDownloadingAssetId(null);
+                            },
+                          );
+                        }}
                       >
                         <Download />
-                        Download
+                        {downloadingAssetId === selected.asset_id
+                          ? "Preparing…"
+                          : "Download"}
                       </a>
                     </Button>
                   )}
@@ -788,6 +983,16 @@ export default function LibraryPage() {
                     <Copy />
                     Copy prompt
                   </Button>
+                  {selected.request_id ? (
+                    <Button asChild variant="outline">
+                      <a
+                        href={`/r/${encodeURIComponent(selected.request_id)}`}
+                        aria-label={`Open receipt ${selected.request_id}`}
+                      >
+                        <ExternalLink /> View receipt
+                      </a>
+                    </Button>
+                  ) : null}
                   {selected.workflow_download_url ? (
                     <Button asChild variant="outline">
                       <a href={selected.workflow_download_url} download>
@@ -796,15 +1001,94 @@ export default function LibraryPage() {
                     </Button>
                   ) : null}
                   {!instanceView ? (
-                    <Button
-                      variant="outline"
-                      onClick={() => setConfirming(selected)}
-                    >
-                      <Trash2 />
-                      Delete
-                    </Button>
+                    <OverflowMenu label={`Actions for ${assetTitle(selected)}`}>
+                      <OverflowMenuSeparator />
+                      <OverflowMenuItem
+                        danger
+                        onSelect={() => setConfirming(selected)}
+                      >
+                        <Trash2 className="size-4" aria-hidden />
+                        Delete
+                      </OverflowMenuItem>
+                    </OverflowMenu>
                   ) : null}
                 </div>
+                <details className="rounded-lg border p-4">
+                  <summary className="focus-visible:outline-ring min-h-11 cursor-pointer py-3 font-medium focus-visible:outline-2">
+                    Details
+                  </summary>
+                  <div className="mt-3 space-y-5">
+                    <div className="grid gap-3 text-sm sm:grid-cols-2">
+                      <Detail
+                        label="Model"
+                        value={selected.model || "Not measured yet"}
+                      />
+                      <Detail
+                        label="Created"
+                        value={
+                          <RelativeTime
+                            ts={selected.created_at}
+                            fallback="Time not recorded"
+                          />
+                        }
+                        title={absolute(selected.created_at)}
+                      />
+                      <Detail
+                        label="Seed"
+                        value={selected.seed ?? "Not measured yet"}
+                      />
+                      <Detail
+                        label="Size"
+                        value={
+                          selected.width && selected.height
+                            ? `${selected.width} × ${selected.height} px`
+                            : "Not measured yet"
+                        }
+                      />
+                      <Detail
+                        label="Generation time"
+                        value={
+                          selected.generation_ms == null
+                            ? "Not measured yet"
+                            : `${(selected.generation_ms / 1000).toFixed(1)} s`
+                        }
+                      />
+                      <Detail
+                        label="Request receipt"
+                        value={
+                          selected.request_id ? (
+                            <a
+                              className="text-primary text-xs break-all underline-offset-4 hover:underline"
+                              href={`/r/${encodeURIComponent(selected.request_id)}`}
+                              aria-label={`View receipt ${selected.request_id}`}
+                            >
+                              {selected.request_id}
+                            </a>
+                          ) : (
+                            "Not recorded"
+                          )
+                        }
+                        title={selected.request_id ?? undefined}
+                      />
+                      {selected.owner_name ? (
+                        <Detail label="Owner" value={selected.owner_name} />
+                      ) : null}
+                      {selected.source ? (
+                        <Detail label="Source" value={selected.source.label} />
+                      ) : null}
+                    </div>
+                    <section>
+                      <h2 className="mb-2 text-sm font-medium">Workflow</h2>
+                      <pre className="bg-muted/30 max-h-40 overflow-auto rounded-lg border p-3 text-xs whitespace-pre-wrap">
+                        {selected.workflow
+                          ? typeof selected.workflow === "string"
+                            ? selected.workflow
+                            : JSON.stringify(selected.workflow, null, 2)
+                          : "Not recorded"}
+                      </pre>
+                    </section>
+                  </div>
+                </details>
               </div>
             </>
           ) : null}
@@ -813,8 +1097,8 @@ export default function LibraryPage() {
       <ConfirmDialog
         open={Boolean(confirming)}
         onOpenChange={(open) => !open && setConfirming(null)}
-        title="Delete this media item?"
-        description="This removes it from your library. Existing downloaded copies are not affected."
+        title={`Delete ${confirming ? assetTitle(confirming) : "this media item"}?`}
+        description="This removes the item from your library. Existing downloaded copies are not affected."
         confirmLabel="Delete"
         onConfirm={async () => {
           if (confirming) await deleteMutation.mutateAsync(confirming);

@@ -1,10 +1,16 @@
 import path from "node:path";
-import { defineConfig, mergeConfig } from "vitest/config";
-import shared from "../../../vitest.config";
+import { defineConfig } from "vitest/config";
 
-export default mergeConfig(
-  shared,
-  defineConfig({
-    test: { include: [path.resolve(__dirname, "*.spec.tsx")] },
-  }),
-);
+export default defineConfig({
+  esbuild: { jsx: "automatic" },
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "../.."),
+    },
+  },
+  test: {
+    environment: "jsdom",
+    setupFiles: [path.resolve(__dirname, "../../../tests/vitest.setup.ts")],
+    include: [path.resolve(__dirname, "*.spec.tsx")],
+  },
+});
