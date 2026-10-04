@@ -3058,14 +3058,18 @@ def resolve_model_for_operation(operation: str, requested_model: str) -> ModelRe
 
 
 def model_compatibility_error(error: "str | Exception") -> Response:
-    body: dict[str, Any] = {"message": str(error), "type": "invalid_request_error"}
     code = getattr(error, "code", None)
+    status_code = 503 if code == "model_not_deployed" else 400
+    body: dict[str, Any] = {
+        "message": str(error),
+        "type": "service_unavailable" if status_code == 503 else "invalid_request_error",
+    }
     if code:
         body["param"] = "model"
         body["code"] = code
     return Response(
         content=json.dumps({"error": body}),
-        status_code=400,
+        status_code=status_code,
         media_type="application/json",
     )
 
@@ -26331,11 +26335,17 @@ async def _forward_litellm_proxy_request(
     if not runtime.enabled:
         return _litellm_unconfigured_response()
 
-    receipt_requested_model = model_name
-    if model_override:
-        original_model = getattr(request.state, "provider_requested_model", None)
-        if isinstance(original_model, str) and original_model:
-            receipt_requested_model = original_model
+    fallback_reasons = [
+        str(reason)
+        for reason in getattr(request.state, "gateway_fallback_reasons", [])
+        if str(reason)
+    ]
+    original_model = getattr(request.state, "provider_requested_model", None)
+    receipt_requested_model = (
+        original_model
+        if fallback_reasons and isinstance(original_model, str) and original_model
+        else model_name
+    )
     receipt = _start_litellm_route_receipt(
         request_path=request_path,
         auth_context=auth_context,
@@ -26343,11 +26353,6 @@ async def _forward_litellm_proxy_request(
         delegated_litellm_api_key=delegated_litellm_api_key,
         parent_request_id=parent_request_id,
     )
-    fallback_reasons = [
-        str(reason)
-        for reason in getattr(request.state, "gateway_fallback_reasons", [])
-        if str(reason)
-    ]
     for reason in fallback_reasons:
         receipt.add_fallback_reason(reason)
     body_for_litellm = body_json
@@ -26484,7 +26489,7 @@ async def _forward_litellm_proxy_request(
         response_headers["X-AI-Gateway-LLM-Execution"] = "litellm"
         response_headers["X-AI-Gateway-Request-Id"] = receipt.request_id
         response_headers["X-AI-Gateway-Receipt-Id"] = receipt.request_id
-        if fallback_reasons and 200 <= resp.status_code < 300:
+        if fallback_reasons:
             response_headers["x-gateway-fallback"] = ", ".join(fallback_reasons)
         _attach_litellm_response_metadata(receipt, resp.headers)
         record_request_shape_stage(
@@ -26667,31 +26672,33 @@ async def _handle_openai_litellm_request(
         return await _handle_openai_litellm_request_once(request, request_path)
     request.state.provider_requested_model = str(body.get("model") or "")
     request.state.paid_provider_fallback = bool(alias and alias.skipped_engines)
-    request.state.gateway_fallback_reasons = []
+    request.state.gateway_fallback_reasons = [
+        f"{engine}->{alias.engine} (not_deployed)"
+        for engine in (alias.skipped_engines if alias is not None and alias.engine else ())
+    ]
     response = await _handle_openai_litellm_request_once(request, request_path)
-    if alias is None or not alias.fallbacks:
-        return response
-    engines = ((config.get("model_aliases") or {}).get(operation) or {}).get("engines") or {}
-    previous_engine = alias.engine or alias.target
-    for engine_id, service_id in alias.fallbacks:
-        if response.status_code != 429 and response.status_code < 500:
-            break
-        reason = f"http_{response.status_code}"
-        request.state.gateway_fallback_reasons = [
-            *getattr(request.state, "gateway_fallback_reasons", []),
-            f"{previous_engine}->{engine_id} ({reason})",
-        ]
-        spec = engines.get(engine_id) or {}
-        target = _provider_alias_model(engine_id, service_id, spec)
-        request.state.paid_provider_fallback = True
-        response = await _handle_openai_litellm_request_once(request, request_path, model_override=target)
-        previous_engine = engine_id
+    if alias is not None and alias.fallbacks:
+        engines = ((config.get("model_aliases") or {}).get(operation) or {}).get("engines") or {}
+        previous_engine = alias.engine or alias.target
+        for engine_id, service_id in alias.fallbacks:
+            if response.status_code != 429 and response.status_code < 500:
+                break
+            reason = f"http_{response.status_code}"
+            request.state.gateway_fallback_reasons = [
+                *getattr(request.state, "gateway_fallback_reasons", []),
+                f"{previous_engine}->{engine_id} ({reason})",
+            ]
+            spec = engines.get(engine_id) or {}
+            target = _provider_alias_model(engine_id, service_id, spec)
+            request.state.paid_provider_fallback = True
+            response = await _handle_openai_litellm_request_once(request, request_path, model_override=target)
+            previous_engine = engine_id
     fallback_reasons = [
         str(reason)
         for reason in getattr(request.state, "gateway_fallback_reasons", [])
         if str(reason)
     ]
-    if fallback_reasons and 200 <= response.status_code < 300:
+    if fallback_reasons:
         response.headers["x-gateway-fallback"] = ", ".join(fallback_reasons)
     return response
 
@@ -26740,9 +26747,7 @@ async def _handle_openai_litellm_request_once(
             parsed_body.get("model"),
         )
     except stable_aliases.AliasUnavailableError as exc:
-        return openai_error_response(
-            str(exc), status_code=400, param="model", code=exc.code,
-        )
+        return model_compatibility_error(exc)
     if model_override or chat_alias is not None:
         target = model_override or _provider_alias_model(chat_alias.target, chat_alias.service, chat_alias.engine_spec or {})
         parsed_body = {**parsed_body, "model": target}

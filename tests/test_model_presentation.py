@@ -395,6 +395,45 @@ def test_explicit_technical_chat_description_uses_plain_summary_and_keeps_detail
     assert ":5051" not in row["description"]
 
 
+def test_backend_description_without_port_uses_plain_summary_and_keeps_details():
+    catalog = build_models_catalog(
+        capabilities=[Capability(intent="chat.completions", backend="one", model="actual", title="Declared model")],
+        alias_views={"chat": {"stable": [{
+            "alias": "coder-q5",
+            "resolves_to": "actual",
+            "description": "Coding LLM (Qwen3.8-27B via local llama.cpp).",
+        }]}},
+    )
+    row = catalog["aliases"][0]
+    assert row["description"] == "Helps with coding tasks and technical questions."
+    assert row["technical_description"] == "Coding LLM (Qwen3.8-27B via local llama.cpp)."
+    assert "llama.cpp" not in row["description"]
+    assert "Qwen3.8" not in row["description"]
+
+
+def test_declared_capability_title_preserves_hardware_acronym_in_recommendation():
+    from gateway.model_presentation import capability_presentation
+    row = capability_presentation(
+        Capability(intent="speech.transcription", backend="one", model="parakeet-gpu", title="Parakeet Gpu")
+    )
+    assert row["title"] == "Parakeet (GPU)"
+    assert row["recommended_model"] == "Parakeet (GPU)"
+
+
+def test_alias_recommendation_preserves_target_metadata_hardware_acronym():
+    catalog = build_models_catalog(
+        capabilities=[
+            Capability(intent="speech.transcription", backend="one", model="parakeet-gpu", title="Parakeet Gpu")
+        ],
+        alias_views={"transcription": {"stable": [
+            {"alias": "transcribe", "resolves_to": "parakeet-gpu"},
+        ]}},
+    )
+    row = catalog["aliases"][0]
+    assert row["title"] == "Parakeet (GPU)"
+    assert row["recommended_model"] == "Parakeet (GPU)"
+
+
 def test_product_status_recommends_ready_model_once_per_taxonomy():
     from gateway.model_presentation import capability_presentation, group_product_capabilities, product_status_summary
     rows = []

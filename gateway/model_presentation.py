@@ -209,22 +209,37 @@ def _preserve_engine_acronyms(value: str) -> str:
     return " ".join(parts)
 
 
+def _presentation_label(value: Any) -> str | None:
+    if value is None:
+        return None
+    label = str(value).strip()
+    if not label:
+        return None
+    return _preserve_engine_acronyms(label)
+
+
 def capability_presentation(capability: Any, metadata: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """One product contract: taxonomy, friendly identity and safe description."""
     metadata = metadata or {}
     kind = product_capability(capability, metadata)
     label = CAPABILITY_LABELS.get(kind, "AI")
     use_name = metadata.get("alias") or getattr(capability, "model", None) or getattr(capability, "workflow", None)
-    declared_title = next((str(metadata[field]).strip() for field in ("title", "display_name", "name")
+    declared_title = next((_presentation_label(metadata[field]) for field in ("title", "display_name", "name")
                            if metadata.get(field) and str(metadata[field]).strip()), None)
+    capability_title = _presentation_label(getattr(capability, "title", None))
     # A chat alias/profile is an independent choice: its title is its name,
     # not the target's generic "Chat" or "Coding profile" label.
     remote = metadata.get("locality") == "remote" or "remote" in getattr(capability, "tags", ())
     alias = bool(metadata.get("alias") or "alias" in getattr(capability, "tags", ()))
-    title = declared_title or (str(use_name) if remote and not alias and use_name else
-                              friendly_name(str(use_name)) if kind == "chat" and use_name
-                              else getattr(capability, "title", None))
-    title = title or (friendly_name(str(use_name)) if use_name else label)
+    if declared_title:
+        title = declared_title
+    elif remote and not alias and use_name:
+        title = str(use_name)
+    elif kind == "chat" and use_name:
+        title = _presentation_label(friendly_name(str(use_name)))
+    else:
+        title = capability_title
+    title = title or (_presentation_label(friendly_name(str(use_name))) if use_name else label)
     description = metadata.get("description") or getattr(capability, "description", None)
     if description and _is_technical_description(str(description)):
         description = None
@@ -244,8 +259,8 @@ def capability_presentation(capability: Any, metadata: Mapping[str, Any] | None 
     description = description.rstrip(".") + "." if not description.endswith(("!", "?")) else description
     target = next((tag.removeprefix("resolves_to:") for tag in getattr(capability, "tags", ())
                    if tag.startswith("resolves_to:")), None)
-    recommended = metadata.get("recommended_model") or getattr(capability, "title", None) or declared_title
-    recommended = recommended or (friendly_name(target) if target else title)
+    recommended = _presentation_label(metadata.get("recommended_model")) or capability_title or declared_title
+    recommended = recommended or (_presentation_label(friendly_name(target)) if target else title)
     out = {"capability": kind, "capability_title": label, "icon_key": CAPABILITY_ICON_KEYS.get(kind, "chat"),
            "title": title, "recommended_model": str(recommended), "summary": description,
            "use_names": [str(use_name)] if use_name else [],
@@ -282,6 +297,8 @@ def _is_technical_description(value: str) -> bool:
         r"\b(?:port|host|localhost|127\.0\.0\.1)\b",
         r"\b(?:gguf|safetensors|checkpoint)\b",
         r"\bcontext (?:of|window|length)\b",
+        r"\bvia\s+(?:local\s+)?(?:llama\.cpp|llama-cpp|vllm|ollama|backend|engine|server)\b",
+        r"\b(?:served by|served via|running on)\b.*\b(?:llama\.cpp|llama-cpp|vllm|ollama|backend|engine|server)\b",
         r"[/\\][\w.-]+",
     )
     lowered = value.casefold()

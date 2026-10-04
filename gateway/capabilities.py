@@ -360,8 +360,7 @@ def resolve_capability_targets(capabilities: Iterable[Capability], service_recor
         matches = [candidate for candidate in raw if "alias" not in candidate.tags
                    and candidate.intent == cap.intent
                    and (cap.backend == "gateway" or candidate.backend == cap.backend)
-                   and (candidate.model in {target, f"role:{target}"} or candidate.workflow == target)
-                   and candidate.available]
+                   and (candidate.model in {target, f"role:{target}"} or candidate.workflow == target)]
         for service_id, service in services.items():
             if (not isinstance(service, Mapping) or not service.get("enabled", True)
                     or cap.backend not in {"gateway", str(service_id)}):

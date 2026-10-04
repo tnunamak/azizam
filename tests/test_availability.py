@@ -681,6 +681,19 @@ def test_model_level_unavailability_wins_over_ready_service():
     assert caps[0].health == "unhealthy"
 
 
+def test_alias_inherits_missing_file_reason_from_concrete_target():
+    missing = {"available": False, "status": "unavailable", "reason": "Model file is not installed.", "measured": True}
+    caps = project_capabilities([
+        Capability(intent="chat.completions", backend="gateway", model="default", tags=("alias", "resolves_to:weights")),
+        Capability(intent="chat.completions", backend="svc", model="weights", availability=missing),
+    ], service_records={"services": {"svc": {"enabled": True, "config": {"base_url": "http://svc/v1"}}}},
+       evidence={"svc": {"status": "ready", "available": True}})
+    alias = next(cap for cap in caps if cap.model == "default")
+    assert alias.backend == "svc"
+    assert alias.availability == missing
+    assert not alias.available
+
+
 @pytest.mark.parametrize("payload,expected", [({"system": {}}, "up"), ({"devices": []}, "unknown"), ({"system": {}, "ready": False}, "down")])
 def test_declared_health_success_path_does_not_mask_readiness(payload, expected):
     import asyncio

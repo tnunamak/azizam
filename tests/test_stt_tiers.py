@@ -123,10 +123,10 @@ class SttServiceSelectionTests(SttCase):
         body = self.client.get("/gateway/v1/aliases/resolve", params={"operation": "transcriptions", "model": "stt"}).json()
         self.assertEqual((body["engine"], body["fallback_engines"]), ("parakeet-gpu", ["parakeet"]))
 
-    def test_undeployed_engine_by_name_is_still_a_coded_400(self) -> None:
+    def test_undeployed_engine_by_name_is_a_coded_503(self) -> None:
         del self.cfg["backends"]["stt-canary"]
         resp = self._post([("model", "canary")])
-        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.status_code, 503)
         self.assertEqual(resp.json()["error"]["code"], "model_not_deployed")
 
 

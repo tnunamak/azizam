@@ -132,6 +132,30 @@ class ProviderRoutingTests(unittest.TestCase):
         self.assertEqual(handler.call_args.kwargs["model_override"], "openrouter/openai/gpt-4.1-mini")
         self.assertTrue(request.state.paid_provider_fallback)
 
+    def test_skipped_primary_chat_alias_is_explicit_without_remaining_fallbacks(self) -> None:
+        body = {"model": "assistant", "messages": [{"role": "user", "content": "hi"}]}
+        request = _request(body)
+        alias_config = {
+            "backends": {
+                "local": {"enabled": False},
+                "fallback": {"host": "127.0.0.1", "port": 18124, "enabled": True},
+            },
+            "model_aliases": {"chat": {
+                "stable": {"assistant": ["free", "paid"]},
+                "engines": {
+                    "free": {"service": "local", "model": "local-test"},
+                    "paid": {"service": "fallback", "model": "paid-test"},
+                },
+            }},
+        }
+        handler = AsyncMock(return_value=proxy.Response(status_code=200))
+        with patch.object(proxy, "config", alias_config), patch.object(proxy, "_handle_openai_litellm_request_once", handler):
+            response = asyncio.run(proxy._handle_openai_litellm_request(request, "/v1/chat/completions"))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["x-gateway-fallback"], "free->paid (not_deployed)")
+        self.assertEqual(getattr(request.state, "gateway_fallback_reasons"), ["free->paid (not_deployed)"])
+        self.assertEqual(handler.await_count, 1)
+
     def test_no_alias_never_attempts_paid_fallback(self) -> None:
         request = _request({"model": "local-test", "messages": []})
         handler = AsyncMock(return_value=proxy.Response(status_code=503))
@@ -139,6 +163,44 @@ class ProviderRoutingTests(unittest.TestCase):
             response = asyncio.run(proxy._handle_openai_litellm_request(request, "/v1/chat/completions"))
         self.assertEqual(response.status_code, 503)
         self.assertEqual(handler.await_count, 1)
+
+    def test_known_chat_alias_with_no_deployed_candidate_is_503(self) -> None:
+        request = _request({"model": "assistant", "messages": []})
+        alias_config = {
+            "backends": {"local": {"enabled": False}},
+            "model_aliases": {"chat": {
+                "stable": {"assistant": ["free"]},
+                "engines": {"free": {"service": "local", "model": "local-test"}},
+            }},
+        }
+        with patch.object(proxy, "config", alias_config):
+            response = asyncio.run(proxy._handle_openai_litellm_request_once(request, "/v1/chat/completions"))
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(json.loads(response.body)["error"]["code"], "model_not_deployed")
+
+    def test_failed_chat_fallback_attempt_reports_actual_substitution(self) -> None:
+        body = {"model": "assistant", "messages": [{"role": "user", "content": "hi"}]}
+        request = _request(body)
+        alias_config = {
+            "backends": {
+                "local": {"host": "127.0.0.1", "port": 18123, "enabled": True},
+                "fallback": {"host": "127.0.0.1", "port": 18124, "enabled": True},
+            },
+            "model_aliases": {"chat": {
+                "stable": {"assistant": ["free", "paid"]},
+                "engines": {
+                    "free": {"service": "local", "model": "local-test"},
+                    "paid": {"service": "fallback", "model": "paid-test"},
+                },
+            }},
+        }
+        handler = AsyncMock(side_effect=[proxy.Response(status_code=503), proxy.Response(status_code=503)])
+        with patch.object(proxy, "config", alias_config), patch.object(proxy, "_handle_openai_litellm_request_once", handler):
+            response = asyncio.run(proxy._handle_openai_litellm_request(request, "/v1/chat/completions"))
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.headers["x-gateway-fallback"], "free->paid (http_503)")
+        self.assertEqual(getattr(request.state, "gateway_fallback_reasons"), ["free->paid (http_503)"])
+        self.assertEqual(handler.await_count, 2)
 
     def setUp(self) -> None:
         self.client = TestClient(proxy.app)
@@ -367,6 +429,55 @@ class ProviderRoutingTests(unittest.TestCase):
         outbound = json.loads(client.content.decode())
         self.assertEqual(outbound["model"], "local-chat")
         self.assertNotIn("fallbacks", outbound)
+
+    def test_litellm_forward_reports_gateway_fallback_state(self) -> None:
+        import gateway.backends.llm_execution as llm_execution_module
+
+        body = {
+            "model": "paid-chat",
+            "messages": [{"role": "user", "content": "hi"}],
+        }
+        request = _request(body)
+        request.state.provider_requested_model = "assistant"
+        request.state.gateway_fallback_reasons = ["free->paid (http_503)"]
+
+        class _CapturingClient:
+            def __init__(self) -> None:
+                self.content = b""
+
+            def build_request(self, **kwargs):
+                self.content = kwargs["content"]
+                return object()
+
+            async def send(self, req, stream=True):
+                return _Response(body=b'{"ok":true}')
+
+            async def aclose(self) -> None:
+                pass
+
+        client = _CapturingClient()
+        original_async_client = llm_execution_module.httpx.AsyncClient
+        llm_execution_module.httpx.AsyncClient = lambda **kwargs: client
+        proxy.receipt_store.begin.reset_mock()
+        try:
+            response = asyncio.run(
+                proxy._forward_litellm_proxy_request(
+                    request,
+                    request_path="/v1/chat/completions",
+                    auth_context=proxy.NO_AUTH_CONTEXT,
+                    body_json=body,
+                    runtime_config=self.runtime,
+                )
+            )
+        finally:
+            llm_execution_module.httpx.AsyncClient = original_async_client
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["x-gateway-fallback"], "free->paid (http_503)")
+        receipt = proxy.receipt_store.begin.call_args.args[0]
+        self.assertEqual(receipt.requested_model, "assistant")
+        self.assertEqual(receipt.resolved_model, "paid-chat")
+        self.assertIn("free->paid (http_503)", receipt.fallback_reasons)
 
     def test_proxy_wrapper_passes_paid_fallback_flag_to_executor(self) -> None:
         execute = AsyncMock(
