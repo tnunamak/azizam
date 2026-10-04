@@ -104,6 +104,9 @@ def test_oidc_callback_returns_to_product_page_and_pins_origin(browser_gateway, 
     admin_store.put_operator_setting("instance_presentation", {"base_url": public_origin}, path=path)
     login = client.get("/login", params={"return_to": target}, follow_redirects=False)
     assert login.status_code == 302
+    if "redirect_uri=" not in login.headers["location"]:
+        login = client.get(login.headers["location"], follow_redirects=False)
+        assert login.status_code == 302
     expected = (public_origin or "https://openai.vivid.fish") + "/admin/oidc/callback"
     assert parse_qs(urlsplit(login.headers["location"]).query)["redirect_uri"] == [expected]
     state, record = next(iter(proxy.ADMIN_OIDC_STATES.items()))

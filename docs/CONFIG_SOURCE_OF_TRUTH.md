@@ -50,6 +50,11 @@ For the operator-facing first-run story this model implies, see
   incoming host does not choose it. Register the resulting exact callback URL
   with the identity provider. A pending login keeps its original callback URL
   for the token exchange even if Settings changes before it finishes.
+  Sign-in first redirects to the callback host when started through an alias,
+  then sets a separate host-only cookie for that pending login. The callback
+  requires that browser cookie before exchanging the authorization code.
+  Cookies for parallel sign-in tabs remain independent and expire after ten
+  minutes. TLS proxies do not need to rewrite the ASGI request scheme.
   The session cookie is issued on the callback host, and its configured domain
   still applies. With the default host-only cookie, the person remains signed
   in on that callback host. Relative return paths bring them to the requested

@@ -122,21 +122,19 @@ from gateway.admin_oidc import (
     StateRecord,
     access_names_from_oidc_claims,
     admin_role_from_oidc_claims,
-    authorization_url,
     bootstrap_admin_role,
-    consume_state,
     csrf_token_for_session,
     decode_session_cookie,
     encode_session_cookie,
-    generate_nonce,
-    generate_pkce_pair,
     load_oidc_config,
     oidc_config_for_public_base,
     safe_browser_return_to,
-    record_state,
     session_from_claims,
     validate_oidc_stored_override,
     validate_id_token_claims,
+)
+from gateway.oidc_browser_flow import (
+    begin_browser_login, callback_host_matches, clear_browser_binding, consume_browser_state,
 )
 from gateway.admin_render import render_admin_dashboard
 from gateway.local_owner import (
@@ -2099,9 +2097,9 @@ _OLLAMA_DISCOVERY_PUBLIC_PATHS = frozenset({
 
 
 # ---------------------------------------------------------------------------
-# Optional frictionless-auth features (all OFF by default; see proxy_config.yml
-# auth: block). With every default left off, behavior is identical to before:
-# header Bearer/x-api-key required on every non-public route.
+# Optional frictionless-auth features (see proxy_config.yml auth: block).
+# Missing settings default off; the shipped config enables LAN access.
+# With bypasses off, non-public routes require a Bearer/x-api-key credential.
 #
 # 1. LAN/localhost bypass  — clients in lan_bypass_cidrs skip the key entirely.
 # 2. ?api_key= query param — for clients that cannot set an auth header.
@@ -2111,7 +2109,8 @@ _OLLAMA_DISCOVERY_PUBLIC_PATHS = frozenset({
 # consult X-Forwarded-For when the operator has named their reverse proxy in
 # trusted_proxies (rightmost-first walk — the leftmost XFF entry is attacker-
 # controlled). Cloudflare's CF-Connecting-IP is honored only when the peer is a
-# verified Cloudflare IP. This makes LAN bypass safe behind any proxy (or none).
+# verified Cloudflare IP. Trusted peers need valid client forwarding metadata;
+# unresolved clients cannot inherit the proxy's LAN access.
 # ---------------------------------------------------------------------------
 
 LAN_BYPASS_ENABLED = bool_from_config(
@@ -2371,8 +2370,8 @@ def authenticate_request(request: Request, request_path: str) -> AuthContext | R
     """Authenticate a client-facing proxy key when auth is configured.
 
     Decision order: public path -> explicit API key -> LAN bypass ->
-    path-prefix token -> 401. All bypass mechanisms are opt-in and OFF by
-    default, so with stock config this is identical to plain Bearer auth.
+    path-prefix token -> 401. Missing bypass settings default off; the
+    shipped config opts into shared anonymous LAN access.
     """
     if not AUTH_ENABLED or is_public_path(request_path):
         return NO_AUTH_CONTEXT
@@ -15895,23 +15894,18 @@ async def _start_browser_login(request: Request, *, default_return_to: str) -> R
             await _admin_oidc_config_with_discovery(),
             instance_settings(ADMIN_STORE.path, _instance_presentation_defaults())["base_url"],
         )
-        nonce = generate_nonce()
-        pkce = generate_pkce_pair()
         return_to = _safe_admin_return_to(
             request.query_params.get("return_to"),
             default=default_return_to,
         )
-        state = record_state(
-            ADMIN_OIDC_STATES,
-            nonce=nonce,
-            pkce_verifier=pkce.verifier,
-            return_to=return_to,
-            redirect_uri=cfg.redirect_uri,
-        )
-        return RedirectResponse(
-            authorization_url(cfg, state=state.state, nonce=nonce, pkce=pkce),
-            status_code=302,
-        )
+        callback = urlsplit(cfg.redirect_uri)
+        # ASGI sees HTTP behind TLS ingress; only compare the host and port.
+        if not callback_host_matches(request, cfg.redirect_uri):
+            return RedirectResponse(
+                f"{callback.scheme}://{callback.netloc}/login?return_to={quote(return_to, safe='')}",
+                status_code=302, headers={"cache-control": "no-store"},
+            )
+        return begin_browser_login(cfg, ADMIN_OIDC_STATES, return_to=return_to)
     except Exception as e:  # noqa: BLE001
         return Response(
             content=f"OIDC login failed to start: {str(e)[:200]}",
@@ -16769,22 +16763,19 @@ async def admin_oidc_callback(request: Request):
     if not _effective_admin_oidc_config().enabled:
         return Response(status_code=404)
     error = request.query_params.get("error")
-    if error:
-        return Response(
-            content=f"OIDC provider returned error: {error}",
-            status_code=400,
-            media_type="text/plain; charset=utf-8",
-        )
     code = request.query_params.get("code")
     state_value = request.query_params.get("state")
-    if not code or not state_value:
+    if not state_value or not (code or error):
         return Response(
             content="OIDC callback missing code or state",
             status_code=400,
             media_type="text/plain; charset=utf-8",
         )
+    state = None
     try:
-        state = consume_state(ADMIN_OIDC_STATES, state_value)
+        state = consume_browser_state(request, ADMIN_OIDC_STATES, state_value)
+        if error:
+            raise ValueError("identity provider declined sign-in")
         cfg = await _admin_oidc_config_with_discovery()
         if state.redirect_uri:
             cfg = replace(cfg, redirect_uri=state.redirect_uri)
@@ -16811,7 +16802,7 @@ async def admin_oidc_callback(request: Request):
         accounts.record_oidc_verification(str(user["id"]), claims.get("email_verified") is True, path=ADMIN_STORE.path)
         account_state = accounts.access(str(user["id"]), path=ADMIN_STORE.path)
         if account_state and (account_state["disabled_at"] is not None or account_state["removed_at"] is not None):
-            return JSONResponse({"error": {"code": "account_disabled", "message": "This account is disabled."}}, status_code=403)
+            return clear_browser_binding(JSONResponse({"error": {"code": "account_disabled", "message": "This account is disabled."}}, status_code=403), state)
         oidc_access_names = access_names_from_oidc_claims(
             claims,
             client_id=cfg.client_id,
@@ -16886,13 +16877,14 @@ async def admin_oidc_callback(request: Request):
             path=cfg.cookie.path,
             domain=cfg.cookie.domain,
         )
-        return response
+        return clear_browser_binding(response, state)
     except (SessionError, IDTokenClaimsError, ValueError, httpx.HTTPError) as e:
-        return Response(
+        response = Response(
             content=f"OIDC callback failed: {str(e)[:200]}",
             status_code=400,
             media_type="text/plain; charset=utf-8",
         )
+        return clear_browser_binding(response, state) if state else response
 
 
 @app.post("/admin/logout", include_in_schema=False)

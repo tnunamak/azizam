@@ -60,6 +60,10 @@ secret environment variable.
 
 - Require TLS. Keep browser cookies `Secure`, `HttpOnly`, and `SameSite=Lax`
   or stricter. Use a strong owner password and protect account recovery links.
+- Register the exact configured OIDC callback URL with the identity provider.
+  Sign-in through an alias first redirects to the callback host, where a
+  host-only, ten-minute cookie binds that flow to its initiating browser.
+  Finish pending sign-ins before updating the gateway, or start them again.
 - Firewall the gateway's listening port so public clients cannot skip ingress.
   Keep `auth.enabled` on. Leave query credentials and path tokens off unless
   their URL disclosure risks are acceptable.

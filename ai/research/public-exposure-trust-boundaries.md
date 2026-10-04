@@ -48,6 +48,48 @@ An initial hypothesis that SDAPI and image-edit bodies were parsed before auth
 was rejected after reading their wrappers. Both authenticate before body/form
 parsing. Missing body caps remain an authenticated-member resource concern.
 
+## OIDC callback possession
+
+The local account-authentication entry did not address browser binding for
+pending OIDC callbacks. Read the existing OIDC state/nonce/PKCE implementation,
+its integration tests, and these additional primary sources:
+
+| Source read | Relevant detail | Decision |
+| --- | --- | --- |
+| [OWASP OAuth2 Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/OAuth2_Cheat_Sheet.html), Essential Basics and PKCE | State tokens must bind to the initiating user agent. Nonce or PKCE provides CSRF protection only with transaction and browser binding. PKCE also requires provider support. | Server-side nonce and verifier storage alone does not prove that the callback browser started the flow. |
+| [RFC 9700](https://www.rfc-editor.org/rfc/rfc9700.html), sections 2.1.1, 4.5.3.2 and 4.7 | Defines callback injection as causing a victim to access attacker-controlled resources. Requires transaction-specific PKCE/nonce bound to the initiating user agent. Section 4.5.3.2 explains that the nonce must connect to the browser session, not just match an ID token. | Add browser possession before code exchange; retain nonce, PKCE, JWT verification and one-time state validation. |
+
+OWASP excerpt: “securely bound to the client and the user agent in which the
+transaction was started”. RFC 9700 excerpt: “bind it to the user agent session”.
+Both sources agree; neither says a process-global state dictionary establishes
+that binding. This is an implementation inference tested against the gateway.
+
+The corrected two-client baseline returned 302 and created a session in the
+browser that did not initiate login. The first test fixture mistakenly excluded
+its fake member's email domain, causing positive cases to fail independently;
+the corrected fixture produced one attack failure and two passing controls.
+The exploit needs a valid unused code/state from the attacker's own flow, not
+knowledge of the victim's password. Its impact is session swapping: subsequent
+victim work is attributed to the attacker's account. No live IdP exchange or
+account change was attempted.
+
+Each pending flow now has an independent random cookie; its hash is stored
+with the state. Cookie names separate parallel tabs. Secure deployments use
+the `__Host-` prefix, omit Domain and use Path=/, HttpOnly and SameSite=Lax.
+The callback checks possession and its configured authority before consuming
+state or exchanging a code. Invalid possession cannot burn the real flow.
+Redeemed flows clear their cookie; other tabs retain theirs.
+
+Host-only cookies require starting on the configured callback host. Alias
+starts therefore redirect there before minting state. Independent review found
+that comparing raw authorities could loop for an explicit HTTPS port 443;
+comparison now normalizes default ports. It uses the configured callback scheme
+to interpret an omitted port because ASGI sees HTTP behind TLS termination.
+The callback URI remains pinned per flow across Settings edits. Unbounded
+server-side state retention and start throttling remain separate abuse concerns.
+External provider redirects, browser cookie-policy enforcement and Docker NAT
+behavior were not exercised against a deployment.
+
 ## Limits and capture
 
 Probes originated on the LAN but connected to public Cloudflare addresses with
