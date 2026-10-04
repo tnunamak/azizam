@@ -87,8 +87,8 @@ test("Showcase handles real structured request shapes in the browser", async ({
     page.getByText("Recorded answer", { exact: true }),
   ).toBeVisible();
   await page.getByText("Recorded input", { exact: true }).click();
-  await expect(page.locator("pre")).toContainText('"model": "fast"');
-  await expect(page.locator("pre")).toContainText('"messages": [');
+  await expect(page.locator("details pre")).toContainText('"model": "fast"');
+  await expect(page.locator("details pre")).toContainText('"messages": [');
   expect(exceptions).toEqual([]);
 });
 
