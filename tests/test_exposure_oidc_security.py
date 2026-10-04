@@ -22,7 +22,7 @@ def _oidc_config() -> OIDCConfig:
         client_secret="test-secret",
         redirect_uri=f"{BASE_URL}/admin/oidc/callback",
         scopes=("openid", "email"),
-        allowed_email_domains=frozenset(),
+        allowed_email_domains=frozenset({"example.test"}),
         admin_emails=frozenset({"owner@example.test"}),
         signing_key=SIGNING_KEY,
         cookie=CookieConfig(secure=True),
