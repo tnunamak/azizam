@@ -532,7 +532,8 @@ class ModelsCatalogBuildTests(unittest.TestCase):
         self.assertEqual([row["id"] for row in catalog["aliases"]], ["image"])
         self.assertEqual(catalog["models"], [])
         self.assertEqual(catalog["aliases"][0]["resolves_to"], {"images": "poster"})
-        self.assertEqual(catalog["aliases"][0]["description"], "Public poster workflow.")
+        self.assertEqual(catalog["aliases"][0]["description"], "Generate or edit images from your prompts.")
+        self.assertEqual(catalog["aliases"][0]["technical_description"], "Public poster workflow")
 
     def test_default_profile_fallback_is_only_for_fresh_or_default_apps(self) -> None:
         contexts = auth_contexts_from_user_snapshot(
@@ -636,7 +637,8 @@ class ModelsCatalogBuildTests(unittest.TestCase):
 
         row = next(row for row in catalog["models"] if row["id"] == "image.poster")
         self.assertEqual(row["name"], "Poster image")
-        self.assertEqual(row["description"], "A poster workflow.")
+        self.assertEqual(row["description"], "Generate or edit images from your prompts.")
+        self.assertEqual(row["technical_description"], "A poster workflow")
         self.assertEqual(row["timing"], {"typical_seconds": 12, "source": "configured"})
 
     def test_ui_source_is_not_provider_and_cost_stays_unknown_without_locality(self) -> None:
