@@ -8,8 +8,7 @@ export type SetupEvent = "settings_copied" | "external_client_confirmed" | "rece
 export interface AvailabilityEvidence {
   source?: string;
   observed_at_s?: number;
-  request_id?: string;
-  status_code?: number;
+  receipt_status?: string;
   kind?: string;
 }
 

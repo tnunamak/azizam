@@ -6,9 +6,10 @@ import pytest
 
 from pydantic import TypeAdapter
 
+from gateway.availability import project_service
 from gateway.capabilities import Capability, summarize_capabilities
 from gateway.models_catalog import build_models_catalog
-from gateway.product_contracts import CapabilitiesResponse, ModelsCatalog
+from gateway.product_contracts import Availability, CapabilitiesResponse, ModelsCatalog
 
 
 def test_generated_browser_types_are_current():
@@ -18,6 +19,24 @@ def test_generated_browser_types_are_current():
     generator = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(generator)
     assert generator.OUTPUT.read_text() == generator.render()
+
+
+def test_availability_contract_preserves_public_receipt_evidence():
+    payload = project_service(
+        "service",
+        service_records={"services": {"service": {"enabled": True}}},
+        evidence={"service": {
+            "source": "request", "status": "ready", "available": True,
+            "receipt_status": "succeeded", "observed_at_s": 123,
+            "request_id": "private-request", "status_code": 200,
+        }},
+    ).to_public_dict()
+    adapter = TypeAdapter(Availability)
+    round_trip = adapter.dump_python(adapter.validate_python(payload))
+    assert round_trip == payload
+    assert round_trip["evidence"]["receipt_status"] == "succeeded"
+    assert "request_id" not in round_trip["evidence"]
+    assert "status_code" not in round_trip["evidence"]
 
 
 def test_shared_types_describe_real_catalog_and_capability_payloads():

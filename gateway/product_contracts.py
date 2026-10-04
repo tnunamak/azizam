@@ -13,8 +13,7 @@ SetupEvent = Literal["settings_copied", "external_client_confirmed", "receipt_vi
 class AvailabilityEvidence(TypedDict, total=False):
     source: str
     observed_at_s: float
-    request_id: str
-    status_code: int
+    receipt_status: str
     kind: str
 
 
