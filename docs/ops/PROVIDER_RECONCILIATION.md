@@ -36,7 +36,7 @@ A later paid admission retries up to two pending generation IDs for that provide
 Missing IDs, unavailable metadata, malformed costs, and redirects leave the
 charge unresolved. No stats response is substituted with the request estimate.
 
-The OpenRouter seed declares this shape as data:
+The OpenRouter seed and UI catalog preset declare this shape as data:
 
 ```yaml
 generation_stats:
@@ -48,6 +48,9 @@ generation_stats:
 Existing provider records are not overwritten by a seed. Add the same field to
 an existing provider through the service registry API if you want automatic
 lookup. It uses the provider's base URL and existing credential reference.
+New providers created from the OpenRouter preset receive this metadata. Saved
+UI keys and environment references are both supported. Authentication headers
+come from provider configuration, with the legacy Bearer scheme as fallback.
 
 ## Owner reconciliation
 
@@ -61,6 +64,9 @@ Use the existing admin authentication (and CSRF header for session writes).
 - An already settled charge or a charge belonging to another provider cannot be
   reconciled by this endpoint. Normal budget checks resume after settlement; a
   charge that actually exceeds the cap continues to deny further admissions.
+- Removal is rejected while reserved or unresolved charges exist. Pending rows
+  for a provider that was already removed remain accessible through these owner
+  endpoints, so a historical removal or racing request does not strand recovery.
 
 Provider and global spend projections include `pending_reconciliation_count`
 and use status `needs_reconciliation` while unknown bills exist. The Providers

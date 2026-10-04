@@ -392,7 +392,14 @@ def _backfill_missing_records(
     seeds: Mapping[str, Any],
 ) -> None:
     for record_id, seed in seeds.items():
-        if record_id not in records and isinstance(seed, Mapping):
+        if record_id in records or not isinstance(seed, Mapping):
+            continue
+        # The DB registry is the source of truth after first seed. Do not
+        # resurrect ordinary bundled/catalog services an operator removed.
+        # The managed LiteLLM substrate is the sole exception because the
+        # gateway owns that process and remove_service_from_registry blocks its
+        # deletion in current registries; old registries may predate the row.
+        if is_litellm_service_record(record_id, seed):
             records[record_id] = copy.deepcopy(dict(seed))
 
 
@@ -752,7 +759,7 @@ def validate_provider_secret_refs(
     config: Mapping[str, Any],
     secret_refs: Mapping[str, Any],
 ) -> None:
-    """Remote providers must reference env vars; inline key placeholders fail closed."""
+    """Remote providers must reference env vars or encrypted secret-store ids."""
 
     if not is_remote_provider_config(config):
         return
@@ -768,7 +775,14 @@ def validate_provider_secret_refs(
                 if secret_field:
                     inline_keys.append(path)
                 elif is_secret_key(key) and is_secret_reference_key(key):
-                    if not key.lower().endswith("_env") or not isinstance(item, str) or not ENV_VAR_NAME_RE.fullmatch(item):
+                    suffix_ok = key.lower().endswith("_env") or key.lower().endswith("_secret_id")
+                    # Optional reference fields may be unset when the other
+                    # custody mode supplies the required credential reference.
+                    if suffix_ok and item in (None, ""):
+                        continue
+                    env_ok = key.lower().endswith("_env") and isinstance(item, str) and ENV_VAR_NAME_RE.fullmatch(item)
+                    secret_id_ok = key.lower().endswith("_secret_id") and isinstance(item, str) and item.strip()
+                    if not suffix_ok or not (env_ok or secret_id_ok):
                         inline_keys.append(path)
                 inspect_secrets(item, path)
         elif isinstance(value, list):
@@ -780,17 +794,26 @@ def validate_provider_secret_refs(
     if inline_keys:
         names = ", ".join(sorted(str(key) for key in inline_keys))
         raise ValueError(
-            f"remote provider {service_id!r} must use env-var secret references; "
+            f"remote provider {service_id!r} must use env-var or encrypted secret-store references; "
             f"inline secret fields are not allowed: {names}"
         )
-    if config.get("api_key_env") in (None, ""):
+    has_env = config.get("api_key_env") not in (None, "")
+    has_secret = config.get("api_key_secret_id") not in (None, "")
+    if has_env and has_secret:
+        raise ValueError(f"remote provider {service_id!r} must choose one credential reference")
+    if not has_env and not has_secret:
         raise ValueError(
-            f"remote provider {service_id!r} requires api_key_env"
+            f"remote provider {service_id!r} requires api_key_env or api_key_secret_id"
         )
     api_key_env = config.get("api_key_env")
-    if not isinstance(api_key_env, str) or not ENV_VAR_NAME_RE.fullmatch(api_key_env):
+    if has_env and (not isinstance(api_key_env, str) or not ENV_VAR_NAME_RE.fullmatch(api_key_env)):
         raise ValueError(
             f"remote provider {service_id!r} api_key_env must be an environment variable name"
+        )
+    api_key_secret_id = config.get("api_key_secret_id")
+    if has_secret and (not isinstance(api_key_secret_id, str) or not api_key_secret_id.strip()):
+        raise ValueError(
+            f"remote provider {service_id!r} api_key_secret_id must be a non-empty secret id"
         )
 
 
@@ -1126,6 +1149,9 @@ def service_form_to_raw(form: Mapping[str, Any]) -> dict[str, Any]:
     """
     raw: dict[str, Any] = {}
     raw.update(split_base_url(form.get("base_url")))
+    base_url = str(form.get("base_url") or "").strip().rstrip("/")
+    if base_url and is_remote_provider_config(form):
+        raw["base_url"] = base_url
 
     preset = provider_preset(form.get("preset"))
     if preset:
@@ -1523,7 +1549,12 @@ def is_secret_key(key: str) -> bool:
 
 def is_secret_reference_key(key: str) -> bool:
     lowered = key.lower()
-    return lowered.endswith("_env") or lowered.endswith("_file") or lowered.endswith("_ref")
+    return (
+        lowered.endswith("_env")
+        or lowered.endswith("_file")
+        or lowered.endswith("_ref")
+        or lowered.endswith("_secret_id")
+    )
 
 
 def normalize_id(value: Any) -> str:

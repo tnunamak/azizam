@@ -116,3 +116,13 @@ with SIGKILL and used direct source inspection. No DevSpecs state was deleted
 or reset. A bounded
 timeout or progress output would help distinguish indexing from a stalled
 command.
+
+## 2026-10-03 — Providers configuration UI lane
+
+- Useful: `ds tldr` and `ds recent` identified the recent provider admission,
+  accounting, and UI integration changes.
+- Rough edge: the three-slice task waited on another index update and returned
+  no task ID. A second bounded task with `--quick --no-refresh --index=false`
+  also returned no task output. Both task processes were terminated explicitly;
+  shared index state was left intact. The complete brief and source inspection
+  remained the working contract.

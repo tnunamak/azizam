@@ -700,6 +700,129 @@ def test_backend_response_must_match_request_shape_and_domains(env, mutate):
     assert resp.json()["error"]["code"] == "decision_backend_error"
 
 
+
+
+
+
+def test_unknown_model_selection_records_unknown_remote_context_on_dispatch_error():
+    fakes = FakeDeps()
+
+    def models_for(_auth, _profile):
+        return []
+
+    async def dispatch(_auth, _profile, _body, _request_id):
+        raise DecisionsError(403, "model_not_allowed", "Denied", param="model")
+
+    app = FastAPI()
+    register_decision_routes(
+        app,
+        DecisionsApiDeps(
+            authenticate=fakes.authenticate,
+            profile_for=fakes.profile_for,
+            models_for=models_for,
+            dispatch=dispatch,
+            record_receipt=fakes.record_receipt,
+        ),
+    )
+    body = {**_fixture("typesafe_systemone_noul.json")["request"], "model": "acme-decisions/decider"}
+
+    resp = TestClient(app).post("/v1/systemone", json=body, headers=H)
+
+    assert resp.status_code == 403
+    receipt = fakes.receipts[-1][1]
+    assert receipt.remote is None
+    assert receipt.cost_usd is None
+    assert receipt.cost_source == "unknown"
+
+
+def test_models_for_failure_records_unknown_remote_context_on_disconnect():
+    fakes = FakeDeps()
+    started = asyncio.Event()
+
+    def models_for(_auth, _profile):
+        raise RuntimeError("catalog unavailable")
+
+    async def dispatch(_auth, _profile, _body, _request_id):
+        started.set()
+        await asyncio.sleep(10)
+
+    app = FastAPI()
+    register_decision_routes(
+        app,
+        DecisionsApiDeps(
+            authenticate=fakes.authenticate,
+            profile_for=fakes.profile_for,
+            models_for=models_for,
+            dispatch=dispatch,
+            record_receipt=fakes.record_receipt,
+        ),
+    )
+    body = {**_fixture("typesafe_systemone_noul.json")["request"], "model": "acme-decisions/decider"}
+
+    raw_body = json.dumps(body).encode()
+    request_sent = False
+    sent = []
+
+    async def receive():
+        nonlocal request_sent
+        if not request_sent:
+            request_sent = True
+            return {"type": "http.request", "body": raw_body, "more_body": False}
+        await started.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        sent.append(message)
+
+    async def run_app():
+        await app({
+            "type": "http", "asgi": {"spec_version": "2.3", "version": "3.0"},
+            "http_version": "1.1", "method": "POST", "scheme": "http",
+            "path": "/v1/systemone", "raw_path": b"/v1/systemone", "query_string": b"",
+            "headers": [(b"authorization", b"Bearer good"), (b"content-type", b"application/json")],
+            "client": ("127.0.0.1", 12345), "server": ("gateway.test", 80), "root_path": "",
+        }, receive, send)
+
+    asyncio.run(asyncio.wait_for(run_app(), timeout=2))
+    assert sent == []
+    receipt = fakes.receipts[-1][1]
+    assert receipt.status_code == 499
+    assert receipt.error_code == "client_disconnected"
+    assert receipt.remote is None
+    assert receipt.cost_usd is None
+    assert receipt.cost_source == "unknown"
+
+def test_remote_error_receipt_context_comes_from_selected_model_not_name_prefix():
+    fakes = FakeDeps()
+
+    def models_for(_auth, _profile):
+        return [DecisionModel(id="acme-decisions/decider", backend="acme-decisions", backend_kind="provider", cost_class="paid-remote", remote=True)]
+
+    async def dispatch(_auth, _profile, _body, _request_id):
+        raise DecisionsError(403, "model_not_allowed", "Denied", param="model")
+
+    app = FastAPI()
+    register_decision_routes(
+        app,
+        DecisionsApiDeps(
+            authenticate=fakes.authenticate,
+            profile_for=fakes.profile_for,
+            models_for=models_for,
+            dispatch=dispatch,
+            record_receipt=fakes.record_receipt,
+        ),
+    )
+    body = _fixture("typesafe_systemone_noul.json")["request"]
+    body = {**body, "model": "acme-decisions/decider"}
+
+    resp = TestClient(app).post("/v1/systemone", json=body, headers=H)
+
+    assert resp.status_code == 403
+    receipt = fakes.receipts[-1][1]
+    assert receipt.remote is True
+    assert receipt.backend == "acme-decisions"
+    assert receipt.cost_source == "unknown"
+
 def test_sync_dependency_returning_awaitable_is_awaited(env):
     async def models_result():
         return [DecisionModel(id="decide", root="decider-2b-v11")]

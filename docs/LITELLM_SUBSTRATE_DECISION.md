@@ -144,7 +144,8 @@ The gateway owns:
 
 - setup and self-hosted product UX;
 - built-in accounts, OIDC, people, Apps, App keys, access plans, and invites;
-- provider-key custody through environment-variable references;
+- provider-key custody through an encrypted write-only gateway store, with
+  environment-variable references as an alternative;
 - spend caps, budget decisions, policy gates, and paid-call admission;
 - the local service registry, resource admission, readiness, and lifecycle or
   model swapping for mutable singleton engines;
@@ -186,6 +187,21 @@ not match the gateway's self-hosted control-plane needs:
 
 Generated `data/litellm.config.yaml` may remain as a bootstrap, migration, or
 export artifact. It must not become a hand-edited product source of truth.
+
+UI-entered provider keys are AES-GCM ciphertext in `admin.db`. A separate 0600
+key file in the data directory supplies the encryption key. Generated LiteLLM
+YAML contains only `os.environ/` references. The managed launcher decrypts keys
+into its child process environment when LiteLLM starts. Key rotation and
+deletion trigger configuration reconciliation; they must not require restarting
+the gateway. See [provider key custody and threat model](REMOTE_PROVIDERS.md)
+for backup requirements and the limits of encryption at rest.
+
+Provider endpoints remain explicit through registry persistence and generated
+`api_base`; missing remote endpoints are configuration errors. Credential
+injection checks the approved scheme, hostname, and effective port. The
+gateway uses provider-owned prices for settlement; packaged SDK vendor prices
+are a fallback only for catalog-declared official APIs whose full endpoint
+matches. A custom endpoint cannot inherit vendor prices by model name.
 
 Do not build another generic provider adapter system in the gateway. LiteLLM is
 the preferred substrate where its adapters fit. Do not delete local lifecycle,

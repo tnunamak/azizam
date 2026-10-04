@@ -37,6 +37,91 @@ class ModelsCatalogBuildTests(unittest.TestCase):
         catalog = build_models_catalog(capabilities=capabilities, service_records=services)
         self.assertEqual([row["id"] for row in catalog["models"]], ["demo-chat"])
 
+
+    def test_remote_provider_models_are_visible_and_priced_from_own_rows(self) -> None:
+        services = {"services": {
+            "openrouter": {
+                "id": "openrouter",
+                "kind": "provider",
+                "enabled": True,
+                "capabilities": ["openai"],
+                "config": {
+                    "remote_provider": True,
+                    "provider_type": "paid-remote",
+                    "provider_id": "openrouter",
+                    "protocol": "openai-compatible",
+                    "api_key_secret_id": "provider:openrouter:api_key",
+                    "models": [
+                        {"model_group": "openrouter/visible", "upstream_model": "visible-upstream"},
+                        {"model_group": "openrouter/disabled", "upstream_model": "disabled-upstream", "enabled": False},
+                        {"model_group": "openrouter/other", "upstream_model": "other-upstream"},
+                        {"model_group": "openrouter/unpriced", "upstream_model": "unpriced-upstream"},
+                    ],
+                    "price": {
+                        "models": {
+                            "openrouter/visible": {
+                                "input_usd_per_million_tokens": "3",
+                                "output_usd_per_million_tokens": "15",
+                            },
+                            "openrouter/other": {
+                                "input_usd_per_million_tokens": "0.1",
+                                "output_usd_per_million_tokens": "0.2",
+                            },
+                        }
+                    },
+                },
+            }
+        }}
+
+        capabilities = registered_model_capabilities(services)
+        self.assertEqual({cap.model for cap in capabilities}, {"openrouter/visible", "openrouter/other", "openrouter/unpriced"})
+        self.assertEqual({cap.intent for cap in capabilities}, {"chat.completions"})
+
+        catalog = build_models_catalog(capabilities=capabilities, service_records=services)
+        rows = {row["id"]: row for row in catalog["models"]}
+        self.assertEqual(set(rows), {"openrouter/visible", "openrouter/other", "openrouter/unpriced"})
+        self.assertEqual(rows["openrouter/visible"]["locality"], "remote")
+        self.assertEqual(
+            rows["openrouter/visible"]["cost"],
+            {"kind": "paid", "price": "$3 input / $15 output per 1M tokens"},
+        )
+        self.assertEqual(
+            rows["openrouter/other"]["cost"],
+            {"kind": "paid", "price": "$0.1 input / $0.2 output per 1M tokens"},
+        )
+        self.assertEqual(rows["openrouter/unpriced"]["cost"], {"kind": "paid", "price": None})
+
+    def test_typesafe_protocol_remote_provider_is_not_projected_as_chat(self) -> None:
+        services = {"services": {
+            "typesafe": {
+                "id": "typesafe",
+                "kind": "provider",
+                "enabled": True,
+                "capabilities": ["typesafe-systemone"],
+                "config": {
+                    "remote_provider": True,
+                    "provider_type": "paid-remote",
+                    "provider_id": "typesafe",
+                    "protocol": "typesafe-systemone",
+                    "api_key_secret_id": "provider:typesafe:api_key",
+                    "models": [{"model_group": "typesafe/jev"}],
+                    "price": {
+                        "models": {
+                            "typesafe/jev": {
+                                "input_usd_per_million_tokens": "0.042",
+                                "output_usd_per_million_tokens": "0",
+                            }
+                        }
+                    },
+                },
+            }
+        }}
+
+        capabilities = registered_model_capabilities(services)
+        self.assertEqual(capabilities, [])
+        catalog = build_models_catalog(capabilities=capabilities, service_records=services)
+        self.assertEqual(catalog["models"], [])
+
     def test_alias_rows_use_target_capability_and_receipt_timing(self) -> None:
         catalog = build_models_catalog(
             alias_views={

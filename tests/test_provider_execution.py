@@ -86,6 +86,7 @@ def _provider() -> ProviderRef:
             "output_usd_per_million_tokens": "2.00",
         },
         config={
+            "credential_origin": "https://openrouter.ai",
             "models": [{"id": "openai/gpt-4.1-mini"}],
             "price": {
                 "input_usd_per_million_tokens": "1.00",
@@ -139,7 +140,14 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             "max_tokens": 8,
         }
         self.receipts = []
-        self.env_patch = patch.dict(os.environ, {"OPENROUTER_API_KEY": "sk-provider"})
+        self.env_patch = patch.dict(
+            os.environ,
+            {
+                "OPENROUTER_API_KEY": "sk-provider",
+                "ANTHROPIC_API_KEY": "sk-provider",
+                "OPENAI_API_KEY": "sk-provider",
+            },
+        )
         self.begin_patch = patch.object(receipt_store, "begin", lambda _receipt: None)
         self.finalize_patch = patch.object(
             receipt_store,
@@ -341,6 +349,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 "output_usd_per_million_tokens": "10",
             },
             config={
+                "credential_origin": "https://openrouter.ai",
                 "models": [{"id": "openai/gpt-4.1-mini"}],
                 "price": {
                     "input_usd_per_million_tokens": "0",
@@ -471,6 +480,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                         "output_usd_per_million_tokens": "10.00",
                     },
                     config={
+                        "credential_origin": "https://openrouter.ai",
                         "models": [
                             {"id": "openai/gpt-4.1-mini"},
                             {"id": "openai/gpt-4o-search-preview"},
@@ -537,7 +547,10 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 "input_usd_per_million_tokens": "0",
                 "output_usd_per_million_tokens": "0",
             },
-            config={"models": [{"id": "openai/gpt-4.1-mini"}]},
+            config={
+                "credential_origin": "https://openrouter.ai",
+                "models": [{"id": "openai/gpt-4.1-mini"}],
+            },
         )
         payload = provider_execution._paid_priced_outbound_payload(
             {
@@ -608,7 +621,10 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                     "model_modifier:online": {"enabled": True},
                 },
             },
-            config={"models": [{"id": "openai/gpt-4.1-mini:online"}]},
+            config={
+                "credential_origin": "https://openrouter.ai",
+                "models": [{"id": "openai/gpt-4.1-mini:online"}],
+            },
         )
 
         payload = provider_execution._paid_priced_outbound_payload(
@@ -765,7 +781,9 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                     "config": {
                         "provider_id": "OpenRouter",
                         "provider_type": "paid-remote",
+                        "base_url": "https://openrouter.ai/api/v1",
                         "api_key_env": "OPENROUTER_API_KEY",
+                        "credential_origin": "https://openrouter.ai",
                         "models": [{"id": "openai/gpt-4.1-mini"}],
                     },
                 },
@@ -808,26 +826,29 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
     async def test_stream_cost_settlement_accounts_for_cache_write_usage(self) -> None:
         import litellm
         self.provider = ProviderRef(
-            id="openrouter",
-            base_url="https://openrouter.ai/api/v1",
-            protocols=("openai",),
-            api_key_env="OPENROUTER_API_KEY",
+            id="anthropic",
+            base_url="https://api.anthropic.com",
+            protocols=("anthropic-messages",),
+            api_key_env="ANTHROPIC_API_KEY",
             cost_class="paid-remote",
-            price={
-                "input_usd_per_million_tokens": "3",
-                "output_usd_per_million_tokens": "15",
-            },
+            price={"cost_model": "anthropic/claude-sonnet-4-5-20250929"},
             config={
+                "credential_origin": "https://api.anthropic.com",
+                "preset_id": "anthropic",
                 "models": [{"id": "anthropic/claude-sonnet-4-5-20250929"}],
                 "litellm_model": "anthropic/claude-sonnet-4-5-20250929",
-                "price": {
-                    "input_usd_per_million_tokens": "3",
-                    "output_usd_per_million_tokens": "15",
-                },
             },
         )
+        self.profile = self.profile.with_overrides(
+            remote=RemoteProviderPolicy(
+                providers=frozenset({"anthropic"}),
+                max_usd_per_request=Decimal("1.00"),
+                budget_usd_per_day=Decimal("5.00"),
+                budget_usd_per_month=Decimal("20.00"),
+            )
+        )
         self.body = {
-            "model": "openrouter/anthropic/claude-sonnet-4-5-20250929",
+            "model": "anthropic/claude-sonnet-4-5-20250929",
             "messages": [{"role": "user", "content": "hi"}],
             "max_tokens": 1,
             "stream": True,
@@ -889,32 +910,33 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         import litellm
 
         self.provider = ProviderRef(
-            id="openrouter",
-            base_url="https://openrouter.ai/api/v1",
+            id="openai",
+            base_url="https://api.openai.com/v1",
             protocols=("openai",),
-            api_key_env="OPENROUTER_API_KEY",
+            api_key_env="OPENAI_API_KEY",
             cost_class="paid-remote",
             price={
-                "input_usd_per_million_tokens": "2.50",
-                "output_usd_per_million_tokens": "10.00",
                 "cost_model": "openai/gpt-4o-search-preview",
                 "dimensions": {"search": {"enabled": True}},
             },
             config={
+                "credential_origin": "https://api.openai.com",
+                "preset_id": "openai",
                 "models": [{"id": "openai/gpt-4o-search-preview"}],
                 "litellm_model": "openai/gpt-4o-search-preview",
             },
         )
         self.profile = self.profile.with_overrides(
             remote=RemoteProviderPolicy(
-                providers=frozenset({"openrouter"}),
+                providers=frozenset({"openai"}),
                 max_usd_per_request=Decimal("1.00"),
-                budget_usd_per_day=Decimal("0.01"),
+                # One SDK-priced search fits; a second needs its full search fee.
+                budget_usd_per_day=Decimal("0.036"),
                 budget_usd_per_month=Decimal("20.00"),
             )
         )
         self.body = {
-            "model": "openrouter/openai/gpt-4o-search-preview",
+            "model": "openai/gpt-4o-search-preview",
             "messages": [{"role": "user", "content": "search"}],
             "max_tokens": 1,
             "stream": True,
@@ -1030,24 +1052,32 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_stream_search_assembly_failure_keeps_actual_cost_unknown(self) -> None:
         self.provider = ProviderRef(
-            id="openrouter",
-            base_url="https://openrouter.ai/api/v1",
+            id="openai",
+            base_url="https://api.openai.com/v1",
             protocols=("openai",),
-            api_key_env="OPENROUTER_API_KEY",
+            api_key_env="OPENAI_API_KEY",
             cost_class="paid-remote",
             price={
-                "input_usd_per_million_tokens": "2.50",
-                "output_usd_per_million_tokens": "10.00",
                 "cost_model": "openai/gpt-4o-search-preview",
                 "dimensions": {"search": {"enabled": True}},
             },
             config={
+                "credential_origin": "https://api.openai.com",
+                "preset_id": "openai",
                 "models": [{"id": "openai/gpt-4o-search-preview"}],
                 "litellm_model": "openai/gpt-4o-search-preview",
             },
         )
+        self.profile = self.profile.with_overrides(
+            remote=RemoteProviderPolicy(
+                providers=frozenset({"openai"}),
+                max_usd_per_request=Decimal("1.00"),
+                budget_usd_per_day=Decimal("5.00"),
+                budget_usd_per_month=Decimal("20.00"),
+            )
+        )
         self.body = {
-            "model": "openrouter/openai/gpt-4o-search-preview",
+            "model": "openai/gpt-4o-search-preview",
             "messages": [{"role": "user", "content": "search"}],
             "max_tokens": 1,
             "stream": True,
@@ -1156,7 +1186,10 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                     api_key_env="OPENROUTER_API_KEY",
                     cost_class="paid-remote",
                     price=price,
-                    config={"models": case["models"]},
+                    config={
+                        "credential_origin": "https://openrouter.ai",
+                        "models": case["models"],
+                    },
                 )
                 self.body = {
                     "model": case["body_model"],
@@ -1186,7 +1219,10 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 "search_context_cost_per_query": {"search_context_size_medium": 0.035},
                 "dimensions": {"search": {"enabled": True}},
             },
-            config={"models": [{"id": "openai/gpt-4o-search-preview"}]},
+            config={
+                "credential_origin": "https://openrouter.ai",
+                "models": [{"id": "openai/gpt-4o-search-preview"}],
+            },
         )
 
         payload = provider_execution._paid_priced_outbound_payload(

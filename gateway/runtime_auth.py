@@ -243,6 +243,7 @@ def make_policy_request(
     native_passthrough: bool = False,
     native_operation: str | None = None,
     native_backend: str | None = None,
+    remote_provider: str | None = None,
 ) -> PolicyRequest:
     """Construct a :class:`PolicyRequest` for a route.
 
@@ -268,6 +269,7 @@ def make_policy_request(
         native_passthrough=native_passthrough,
         native_operation=native_operation,
         native_backend=native_backend,
+        remote_provider=remote_provider,
     )
 
 

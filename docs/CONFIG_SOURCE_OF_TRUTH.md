@@ -94,8 +94,11 @@ Concretely:
    may be seeded from provisioning config, but after that one-time seed the
    DB/UI registry is authoritative.
 4. **Secret/bootstrap plane** — env, Docker secrets, and secret references for
-   values that cannot live as editable product state. The dashboard may show
-   that a secret reference exists, but never exposes or edits the secret value.
+   bootstrap secrets. Remote provider keys have a deliberate product exception:
+   owners can submit a write-only key through the Providers UI. Its ciphertext
+   lives in `admin.db`, with a separate 0600 encryption key file in the data
+   directory. The dashboard shows status, last four characters, and update time,
+   never the stored value. Environment references remain supported.
 
 Service/provider records carry a `source` value as provenance/history, not a
 permission boundary. After the one-time seed, every non-managed service row
@@ -134,8 +137,12 @@ Implications:
 - The dashboard writes all non-managed service/provider records regardless of
   `source`; source remains provenance after the one-time seed. The managed
   LiteLLM substrate has the limited fields described above.
-- The dashboard never writes downstream provider secrets or browser session
-  signing keys. OIDC `client_secret` is the single intentional exception:
+- The dashboard never writes browser session signing keys. Remote provider
+  secrets are an intentional write-only exception, encrypted in `admin.db`;
+  provider catalog YAML, registry exports, and generated LiteLLM YAML carry
+  metadata or references only. Provider catalog files are extensible provisioning
+  data; a saved provider record is dashboard-owned runtime state. OIDC
+  `client_secret` is another intentional exception:
   when configured from `/admin`, it is stored in `admin.db`, redacted in UI/API
   responses, preserved on blank updates, and audited. Operators who require an
   external secret store should use the `client_secret_env` bootstrap fallback.

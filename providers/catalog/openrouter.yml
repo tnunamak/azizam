@@ -1,0 +1,38 @@
+id: openrouter
+display_name: OpenRouter
+logo_key: openrouter
+base_url: https://openrouter.ai/api/v1
+protocol: openai-chat
+litellm_provider: openrouter
+auth:
+  header: Authorization
+  prefix: Bearer
+model_listing:
+  method: GET
+  path: /models
+  items_path: data
+  id_path: id
+  name_path: name
+  pricing_path: pricing
+  prices:
+    input_usd_per_million_tokens: {path: pricing.prompt, scale: "1000000"}
+    output_usd_per_million_tokens: {path: pricing.completion, scale: "1000000"}
+    cache_read_input_usd_per_million_tokens: {path: pricing.input_cache_read, scale: "1000000"}
+auth_test:
+  method: GET
+  path: /key
+generation_stats:
+  path: /generation
+  id_param: id
+  cost_path:
+    - data
+    - total_cost
+docs_url: https://openrouter.ai/docs
+key_url: https://openrouter.ai/settings/keys
+billing_dimensions:
+  - prompt_tokens
+  - completion_tokens
+recommendations:
+  - id: provider_key_credit_limit
+    message: Set an OpenRouter key credit limit equal to the gateway cap when supported.
+    url: https://openrouter.ai/docs/guides/best-practices/spend-controls

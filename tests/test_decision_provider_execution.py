@@ -15,7 +15,7 @@ from unittest.mock import patch
 import httpx
 from starlette.requests import Request
 
-from gateway import decision_provider_execution as execution
+from gateway import admin_store, decision_provider_execution as execution
 from gateway import receipt_store
 from gateway.policy import DEFAULT_PROFILE, RemoteProviderPolicy
 
@@ -41,11 +41,14 @@ def _registry(*, provider_id="typesafe", protocols=("typesafe-systemone",), mode
         "provider_id": provider_id,
         "base_url": f"https://{provider_id}.test",
         "api_key_env": api_key_env or f"{provider_id.upper()}_TEST_KEY",
+        "credential_origin": f"https://{provider_id}.test",
         "cost_class": "paid-remote",
         "price": price if price is not None else {"input_usd_per_million_tokens": "1.00"},
     }
     if models is not None:
         config["models"] = models
+    elif "typesafe-systemone" in protocols:
+        config["default_models"] = [f"{provider_id}/jev-latest"]
     return {
         "services": {
             provider_id: {
@@ -152,6 +155,75 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.headers["retry-after"], "2")
         self.assertEqual(result.backend, "typesafe")
 
+
+    async def test_custom_systemone_provider_id_dispatches_by_protocol_and_model_prefix(self) -> None:
+        seen = {}
+
+        async def fake_call(provider, _profile, body, **_kwargs):
+            seen["provider"] = provider.id
+            seen["model"] = body["model"]
+            reservation = execution.providers.Reservation(
+                123,
+                provider.id,
+                "paid-decisions",
+                Decimal("0"),
+                "test-estimate",
+            )
+            return {"model": "acme/decider", "answers": {}, "usage": {}}, execution.providers.Cost(None, "unknown", provider.id), execution.providers.Usage(), reservation
+
+        registry = _registry(provider_id="acme-decisions", models=[{"id": "acme-decisions/decider"}])
+        with patch.object(execution.providers, "call_typesafe_systemone", fake_call):
+            result = await execution.systemone(
+                _auth(), _profile(providers=frozenset({"acme-decisions"}), max_request=None, budget=None, monthly=None),
+                {"model": "acme-decisions/decider", "state": "x", "questions": {}},
+                "req-custom", registry, self.ledger,
+            )
+
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.backend, "acme-decisions")
+        self.assertEqual(result.reservation_id, 123)
+        self.assertEqual(result.reconciliation_status, "needs_reconciliation")
+        self.assertEqual(seen, {"provider": "acme-decisions", "model": "acme-decisions/decider"})
+
+    def test_catalog_models_filters_disabled_rows_and_prefixes_by_provider_data(self) -> None:
+        provider = execution.providers.provider_lookup(
+            _registry(
+                provider_id="acme-decisions",
+                models=[
+                    {"id": "decider"},
+                    {"id": "acme-decisions/hidden", "enabled": False},
+                    {"id": "org/model"},
+                    {"model_group": "acme-decisions/explicit"},
+                ],
+            ),
+            "acme-decisions",
+        )
+        assert provider is not None
+
+        self.assertEqual(
+            execution.catalog_models(provider),
+            ["acme-decisions/decider", "acme-decisions/org/model", "acme-decisions/explicit"],
+        )
+        self.assertFalse(execution._model_declared(provider, "acme-decisions/hidden"))
+        self.assertTrue(execution._model_declared(provider, "acme-decisions/org/model"))
+
+    def test_model_declaration_does_not_allow_disabled_suffix_collision(self) -> None:
+        provider = execution.providers.provider_lookup(
+            _registry(
+                provider_id="acme",
+                models=[
+                    {"id": "acme/foo", "enabled": False},
+                    {"id": "other/foo"},
+                ],
+            ),
+            "acme",
+        )
+        assert provider is not None
+
+        self.assertEqual(execution.catalog_models(provider), ["acme/other/foo"])
+        self.assertFalse(execution._model_declared(provider, "acme/foo"))
+        self.assertTrue(execution._model_declared(provider, "acme/other/foo"))
+
     async def test_unprefixed_jev_model_stays_local_by_returning_not_configured_without_provider_call(self) -> None:
         called = False
 
@@ -241,9 +313,9 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.body["error"]["code"], "invalid_model")
         self.assertFalse(self.ledger.exists())
 
-    async def test_typesafe_success_without_actual_cost_marks_reconciliation_and_cost_unknown(self) -> None:
+    async def test_typesafe_unpriced_usage_marks_reconciliation_and_cost_unknown(self) -> None:
         async def handler(_request: httpx.Request) -> httpx.Response:
-            return httpx.Response(200, json={"model": "jev-remote", "answers": {}, "usage": {"input_tokens": 1, "output_tokens": 0}})
+            return httpx.Response(200, json={"model": "jev-remote", "answers": {}, "usage": {"input_tokens": 1, "output_tokens": 0, "unpriced_units": 1}})
 
         real_client = httpx.AsyncClient
         transport = httpx.MockTransport(handler)
@@ -412,12 +484,12 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             rows = conn.execute("SELECT status, actual_usd FROM provider_spend").fetchall()
         self.assertEqual(rows, [("needs_reconciliation", None)])
 
-    async def test_openai_opaque_trusted_cost_header_settles_without_usage_pricing(self) -> None:
+    async def test_custom_openai_opaque_sdk_header_cannot_establish_an_actual_bill(self) -> None:
         async def handler(_request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, headers={"x-litellm-response-cost": "0.000333"}, json={"id": "dec_header", "usage": {"input_tokens": 1}})
 
         def fail_pricing(*_args, **_kwargs):
-            raise AssertionError("trusted header cost should not need usage pricing")
+            raise AssertionError("custom opaque response cannot use SDK pricing")
 
         real_client = httpx.AsyncClient
         transport = httpx.MockTransport(handler)
@@ -430,10 +502,10 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers["x-gateway-cost-usd"], "0.000333000")
+        self.assertEqual(response.headers["x-gateway-cost-usd"], "unknown")
         with sqlite3.connect(self.ledger) as conn:
             rows = conn.execute("SELECT status, actual_usd FROM provider_spend").fetchall()
-        self.assertEqual(rows, [("settled", "0.000333000")])
+        self.assertEqual(rows, [("needs_reconciliation", None)])
 
     async def test_openai_provider_hook_redacts_key_in_array_json_and_plain_text_but_preserves_safe_bytes(self) -> None:
         bodies = [
@@ -459,7 +531,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
                 api_key_env="OPENAI_TEST_KEY",
                 cost_class="paid-remote",
                 price={},
-                config={},
+                config={"credential_origin": "https://openai.test"},
             )
             async with real_client(transport=transport, timeout=1) as client:
                 payload, _cost, _usage, _headers, content, status = await execution.providers.call_openai_json(
@@ -488,11 +560,11 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             id="openai",
             base_url="https://openai.test/v1",
             protocols=("openai-compatible",),
-            api_key_env="OPENAI_TEST_KEY",
-            cost_class="paid-remote",
-            price={},
-            config={},
-        )
+                api_key_env="OPENAI_TEST_KEY",
+                cost_class="paid-remote",
+                price={},
+                config={"credential_origin": "https://openai.test"},
+            )
         raw = b'{"model":"gpt-5", "input":"spacing kept"}'
 
         async with real_client(transport=transport, timeout=1) as client:
@@ -512,6 +584,54 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json.loads(content)["debug"], "<redacted>")
         self.assertEqual(str(cost.usd), "0.000001000")
         self.assertEqual(usage.input_tokens, 1)
+
+
+    async def test_openai_decisions_uses_encrypted_provider_key(self) -> None:
+        seen = {}
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            seen["authorization"] = request.headers.get("authorization")
+            return httpx.Response(200, json={"id": "dec_1", "usage": {"input_tokens": 1, "output_tokens": 0, "cost": "0.000001"}})
+
+        admin_db = Path(self.tmp.name) / "admin.db"
+        admin_store.init_db(path=admin_db)
+        with patch.object(admin_store, "DB_PATH", admin_db):
+            execution.providers.secret_store.put_provider_secret(
+                "provider:openai:api_key",
+                "oa-stored-key",
+                db_path=admin_db,
+                approved_origin="https://openai.test/v1",
+            )
+        registry = _registry(
+            provider_id="openai",
+            protocols=("openai-compatible", "decisions"),
+            models=[{"id": "gpt-5"}],
+            api_key_env=None,
+        )
+        service = registry["services"]["openai"]
+        service["config"].pop("api_key_env", None)
+        service["config"]["api_key_secret_id"] = "provider:openai:api_key"
+        real_client = httpx.AsyncClient
+        transport = httpx.MockTransport(handler)
+        with patch.object(admin_store, "DB_PATH", admin_db), patch.object(execution.providers.httpx, "AsyncClient", lambda *a, **kw: real_client(transport=transport, timeout=kw.get("timeout"))):
+            response = await execution.openai(
+                _request({"model": "gpt-5", "input": "hi"}),
+                _auth(), _profile(max_request=None, budget=None, monthly=None), registry, self.ledger, admin_db_path=admin_db,
+            )
+
+        self.assertEqual(response.status_code, 200, await _response_body(response))
+        self.assertEqual(seen["authorization"], "Bearer oa-stored-key")
+
+    async def test_openai_decisions_ambiguous_provider_selection_fails_closed(self) -> None:
+        registry = _registry(provider_id="openai-a", protocols=("openai-compatible", "decisions"), models=[{"id": "gpt-5"}], api_key_env="OPENAI_TEST_KEY")
+        other = _registry(provider_id="openai-b", protocols=("openai-compatible", "decisions"), models=[{"id": "gpt-5"}], api_key_env="OPENAI_TEST_KEY")
+        registry["services"].update(other["services"])
+
+        response = await execution.openai(_request({"model": "gpt-5"}), _auth(), _profile(providers=frozenset({"openai-a", "openai-b"})), registry, self.ledger)
+        body = json.loads(await _response_body(response))
+
+        self.assertEqual(response.status_code, 501)
+        self.assertEqual(body["error"]["code"], "decisions_backend_unavailable")
 
     async def test_openai_unknown_cost_under_caps_fails_closed_before_forward(self) -> None:
         called = False

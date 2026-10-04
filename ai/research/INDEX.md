@@ -1,5 +1,9 @@
 # Research Index
 
+- [Provider catalog and key custody](provider-catalog-and-key-custody.md) -
+  2026-10-03 - primary provider model-listing shapes, price units, authentication
+  probes, AES-GCM custody, source failures, and sidecar environment trade-offs.
+
 - [Home client connection recipes](home-client-recipes.md) - 2026-10-03 -
   exact Home client settings, official Codex/Claude configuration checks,
   Cursor server reachability and override limits, and shell-escaping evidence.

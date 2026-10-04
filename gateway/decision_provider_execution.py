@@ -109,14 +109,14 @@ def _provider_has_capability(provider: providers.ProviderRef, registry: Mapping[
 def catalog_models(provider: providers.ProviderRef) -> list[str]:
     raw = provider.config.get("models")
     if raw is None:
-        return [f"{provider.id}/jev-latest"] if provider.id == "typesafe" else []
+        raw = provider.config.get("default_models")
     out: list[str] = []
 
     def add(value: Any) -> None:
         if not value:
             return
         item = str(value)
-        if "/" not in item and provider.id == "typesafe":
+        if not item.startswith(f"{provider.id}/"):
             item = f"{provider.id}/{item}"
         if item not in out:
             out.append(item)
@@ -124,12 +124,16 @@ def catalog_models(provider: providers.ProviderRef) -> list[str]:
     if isinstance(raw, Mapping):
         for key, value in raw.items():
             if isinstance(value, Mapping):
+                if value.get("enabled") is False:
+                    continue
                 add(value.get("id") or value.get("model_group") or value.get("model") or value.get("upstream_model") or key)
             else:
                 add(key)
     elif isinstance(raw, (list, tuple, set)):
         for item in raw:
             if isinstance(item, Mapping):
+                if item.get("enabled") is False:
+                    continue
                 add(item.get("id") or item.get("model_group") or item.get("model") or item.get("upstream_model"))
             else:
                 add(item)
@@ -138,36 +142,46 @@ def catalog_models(provider: providers.ProviderRef) -> list[str]:
 def _model_declared(provider: providers.ProviderRef, model: str) -> bool:
     raw = provider.config.get("models")
     if raw is None:
-        return True
-    candidates = {model, model.split("/", 1)[-1]}
-    declared = set(catalog_models(provider))
-    declared |= {item.split("/", 1)[-1] for item in declared}
-    return bool(candidates & declared)
+        raw = provider.config.get("default_models")
+    if raw is None:
+        return False
+    qualified = model if model.startswith(f"{provider.id}/") else f"{provider.id}/{model}"
+    return qualified in set(catalog_models(provider))
 
 
-def _typesafe_provider_for_model(registry: Mapping[str, Any], model: Any) -> providers.ProviderRef | None:
+def systemone_provider_for_model(registry: Mapping[str, Any], model: Any) -> providers.ProviderRef | None:
     if not isinstance(model, str):
         return None
     provider_id, separator, rest = model.partition("/")
-    if not separator or providers.canonical_provider_id(provider_id) != "typesafe":
+    if not separator:
         return None
-    if not rest:
-        raise PaidDecisionError(422, "invalid_model", "TypeSafe provider model must include a model name.")
     provider = providers.provider_refs(registry).get(providers.canonical_provider_id(provider_id))
     if provider is None or "typesafe-systemone" not in provider.protocols:
         return None
+    if not rest:
+        raise PaidDecisionError(422, "invalid_model", "SystemOne provider model must include a model name.")
     return provider
 
 
-def _openai_decisions_provider(registry: Mapping[str, Any]) -> providers.ProviderRef | None:
-    provider = providers.provider_refs(registry).get("openai")
-    if provider is None:
+def systemone_providers(registry: Mapping[str, Any]) -> list[providers.ProviderRef]:
+    return [
+        provider
+        for provider in providers.provider_refs(registry).values()
+        if provider.enabled and "typesafe-systemone" in provider.protocols
+    ]
+
+
+def openai_decisions_provider(registry: Mapping[str, Any]) -> providers.ProviderRef | None:
+    candidates = [
+        provider
+        for provider in providers.provider_refs(registry).values()
+        if provider.enabled
+        and ({"openai-compatible", "openai-chat"} & set(provider.protocols))
+        and _provider_has_capability(provider, registry, "decisions")
+    ]
+    if len(candidates) != 1:
         return None
-    if not ({"openai-compatible", "openai-chat"} & set(provider.protocols)):
-        return None
-    if not _provider_has_capability(provider, registry, "decisions"):
-        return None
-    return provider
+    return candidates[0]
 
 
 def _map_provider_error(error: providers.ProviderError) -> PaidDecisionError:
@@ -264,7 +278,7 @@ async def systemone(
     requested_model = str(body.get("model") or "")
     provider = None
     try:
-        provider = _typesafe_provider_for_model(registry, requested_model)
+        provider = systemone_provider_for_model(registry, requested_model)
         _require_real_app_identity(auth)
         if provider is None:
             raise PaidDecisionError(501, "provider_not_configured", "TypeSafe decision provider is not configured.")
@@ -348,7 +362,7 @@ async def openai(
     ledger_path: Path,
     admin_db_path: Path | None = None,
 ) -> Response:
-    provider = _openai_decisions_provider(registry)
+    provider = openai_decisions_provider(registry)
     if provider is None:
         return PaidDecisionError(501, "decisions_backend_unavailable", "OpenAI decisions provider is not configured.").response()
     try:
@@ -400,9 +414,6 @@ async def openai(
                 raise providers.RemoteProviderNotAllowed("; ".join(decision.reasons))
             if not _model_declared(provider, model):
                 raise providers.RemoteProviderNotAllowed("Remote model is not declared in the provider model allow-list")
-            api_key = os.environ.get(provider.api_key_env or "")
-            if not api_key:
-                raise providers.ProviderKeyMissing(f"provider {provider.id!r} key is missing")
             estimate = providers.Cost(None, "unknown", provider.id, provider.cost_class)
             reservation = providers.reserve_provider_spend(
                 profile, provider, estimate, path=ledger_path, admin_db_path=admin_db_path,
@@ -416,6 +427,7 @@ async def openai(
                     body,
                     content=raw_body,
                     timeout=DEFAULT_DECISION_TIMEOUT_S,
+                    admin_db_path=admin_db_path,
                 )
             final_cost = cost
             if reservation is not None and (cost.usd is not None or upstream_status not in {401, 429}):

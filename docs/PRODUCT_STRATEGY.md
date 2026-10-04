@@ -81,7 +81,7 @@ queues, and reachability.
 to "Engines", but the existing Services route stays unchanged for compatibility.
 
 **Providers** shows remote providers. It lets the owner enable or disable a
-provider, see whether its key is configured by environment reference, configure
+provider, enter an encrypted write-only key or use an environment reference, configure
 model allow-lists and spend caps, view spend to date, and decide which access
 plans may use it. It must state that requests go remote only when a model or
 alias names a remote provider. The gateway must never fall back from free to
@@ -123,9 +123,9 @@ Use exactly four status states in user-facing UI: Ready, Starting, Busy, and
 Unavailable. Each state needs a reason sentence. Member UI must not expose engine
 jargon.
 
-Use direct money language. Local means "Free (your hardware)." Remote calls show
+Use direct money language. Local means "Local · no provider charge." Remote calls show
 a price per request or per million tokens and a Paid badge. A paid call must not
-sit one click away from a free call without that badge.
+sit one click away from a local call without that badge.
 
 Empty states must teach. Say what the list will contain and name the one action
 that will fill it.
@@ -140,11 +140,23 @@ reduced-motion behavior.
 
 ## Architecture decisions
 
+Integration knowledge is data. Shipped provider catalog files declare endpoints,
+protocols, authentication, model listing, pricing paths, and billing dimensions.
+Operators can extend those files and configure providers through the UI. Code
+dispatches by protocol, never by vendor name.
+
 LiteLLM is the execution substrate for chat-shaped local and remote models. The
 gateway is the one control plane for keys, people, access plans, budgets, spend
-caps, provider-key custody by environment reference, and receipts. LiteLLM must
+caps, encrypted write-only provider-key custody, and receipts. Environment
+references remain an alternative to UI-entered keys. LiteLLM must
 be pinned, hash-locked, and treated as a replaceable execution dependency. The
 virtual-key bypass is to be retired for paid models.
+
+Credential approval follows the destination origin. Changing a provider or its
+endpoint requires re-entry; stored secrets cannot be sent to another origin.
+Provider-owned rates govern settlement. SDK vendor prices require explicit
+catalog approval and an exact official endpoint match; custom endpoints need
+known prices even when the owner has not set a cap.
 
 The gateway must never fall back from free to paid without an explicit alias,
 access-plan permission, and a receipt.
@@ -174,8 +186,8 @@ boundary only behind behavior-preservation tests.
 truth, route matrix, LiteLLM decision updates, OSS hygiene, depersonalized
 examples, and dependency pinning.
 
-**W1 engines and providers** covers decisions, provider registry, environment
-variable key references, LiteLLM routing, spend caps, cost receipts, policy, and
+**W1 engines and providers** covers decisions, provider registry, encrypted keys
+and environment references, LiteLLM routing, spend caps, cost receipts, policy, and
 OpenAI `/v1/decisions` passthrough reservation.
 
 **W2 accounts** covers built-in accounts, invites, cross-user isolation, and LLM

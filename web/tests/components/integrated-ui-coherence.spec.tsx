@@ -64,9 +64,26 @@ describe("integrated UI coherence", () => {
               name: "OpenRouter",
               enabled: true,
               reachable: true,
-              key_set: true,
-              spend_usd: 1.25,
-              cap_usd: 10,
+              key_status: {
+                state: "set",
+                source: "secret_store",
+                suffix: "4f2a",
+              },
+              spend: { daily_usd: 1.25, monthly_usd: 1.25, status: "measured" },
+              caps: { daily_usd: 10, monthly_usd: 10 },
+              catalog: { base_url: "" },
+              models: [
+                {
+                  model: "openrouter/anthropic/claude-sonnet-4.5",
+                  upstream_model: "anthropic/claude-sonnet-4.5",
+                  name: "Claude Sonnet 4.5",
+                  enabled: true,
+                  price: {
+                    input_usd_per_million_tokens: "3.00",
+                    output_usd_per_million_tokens: "15.00",
+                  },
+                },
+              ],
               secret_ref: "OPENROUTER_API_KEY",
             },
           ],
@@ -78,11 +95,49 @@ describe("integrated UI coherence", () => {
       await screen.findByRole("heading", { name: "OpenRouter" }),
     ).toBeVisible();
     expect(screen.getByText("Ready")).toBeVisible();
-    expect(screen.getByText("Set")).toBeVisible();
-    expect(screen.getByText("$1.25 of $10.00")).toBeVisible();
+    expect(screen.getByText("Set · ends in 4f2a")).toBeVisible();
+    expect(screen.getAllByText("$1.25 of $10.00")).toHaveLength(2);
+    expect(screen.getByRole("cell", { name: "3" })).toBeVisible();
+    expect(screen.getByRole("cell", { name: "15" })).toBeVisible();
     await waitFor(() =>
       expect(screen.queryByText("OPENROUTER_API_KEY")).toBeNull(),
     );
+  });
+
+  it("shows reconciliation state without inventing a pending count", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          providers: [
+            {
+              id: "openrouter",
+              name: "OpenRouter",
+              enabled: true,
+              reachable: true,
+              key_status: {
+                state: "set",
+                source: "secret_store",
+                suffix: "4f2a",
+              },
+              spend: {
+                daily_usd: 1.25,
+                monthly_usd: 1.25,
+                status: "needs_reconciliation",
+              },
+              caps: { daily_usd: 10, monthly_usd: 10 },
+              models: [],
+            },
+          ],
+        }),
+      ),
+    );
+    renderWithQuery(<ProvidersPage />);
+    expect(
+      await screen.findByText("Charges need reconciliation"),
+    ).toBeVisible();
+    expect(screen.queryByText("1 charge need reconciliation")).toBeNull();
+    expect(screen.getByText(/final spend is unknown/i)).toBeVisible();
   });
 
   it("does not call unknown or disabled providers Starting", async () => {
@@ -91,6 +146,13 @@ describe("integrated UI coherence", () => {
       vi.fn(async () =>
         Response.json({
           providers: [
+            {
+              id: "unchecked-remote",
+              name: "Unchecked remote",
+              enabled: true,
+              reachable: null,
+              key_status: { state: "set" },
+            },
             {
               id: "disabled-remote",
               name: "Disabled remote",
@@ -106,8 +168,11 @@ describe("integrated UI coherence", () => {
     expect(
       await screen.findByRole("heading", { name: "Disabled remote" }),
     ).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Unchecked remote" })).toBeVisible();
+    expect(screen.getByText("Unknown")).toBeVisible();
+    expect(screen.getByText("Configured, observation unknown.")).toBeVisible();
     expect(screen.getByText("Unavailable")).toBeVisible();
-    expect(screen.getByText("Provider is disabled.")).toBeVisible();
+    expect(screen.getByText("Configured, currently disabled.")).toBeVisible();
     expect(screen.queryByText("Starting")).toBeNull();
   });
 

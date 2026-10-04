@@ -328,6 +328,7 @@ from gateway.protocols import anthropic as anthropic_protocol
 from gateway.protocols import ollama as ollama_protocol
 from gateway import provider_execution, providers
 from gateway.provider_admin import create_provider_admin_router, provider_ledger_spending_snapshot
+from gateway.providers import provider_lookup
 
 # =============================================================================
 # Configuration
@@ -13197,6 +13198,15 @@ def _capability_for_profile(
     protocol: str | None = None,
 ) -> Capability:
     profile = _profile_for_auth_context(auth_context)
+    remote_provider_id = None
+    if "remote" in capability.tags:
+        provider = provider_lookup(ADMIN_STORE.get_service_registry(), capability.backend)
+        if provider is None:
+            return replace(capability, policy_available=False, policy_reasons=("Provider configuration is unavailable.",))
+        remote_provider_id = provider.id
+        provider_policy = ADMIN_STORE.get_provider_admin_state().get("providers", {}).get(provider.id, {})
+        if "allowed_plans" in provider_policy and profile.id not in (provider_policy["allowed_plans"] or []):
+            return replace(capability, policy_available=False, policy_reasons=("Provider is not allowed by this access plan.",))
     return capability_with_policy_view(
         capability,
         profile,
@@ -13210,6 +13220,7 @@ def _capability_for_profile(
             capability_trust_tier=capability.trust_tier,
             capability_resource_tier=capability.resource_tier,
             capability_tags=capability.tags,
+            remote_provider=remote_provider_id,
         ),
     )
 
@@ -13245,7 +13256,7 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
     capabilities.extend(decision_capabilities)
 
     for model in _remote_decision_models(auth_context, _profile_for_auth_context(auth_context)):
-        provider = providers.provider_refs(ADMIN_STORE.get_service_registry()).get("typesafe")
+        provider = decision_provider_execution.systemone_provider_for_model(ADMIN_STORE.get_service_registry(), model.id)
         if provider:
             capabilities.append(decision_provider_execution.capability_for(provider, model.id))
 
@@ -13744,7 +13755,10 @@ def _decision_provider_context() -> dict[str, Any]:
 
 
 async def _dispatch_decision(auth: AuthContext, profile: Any, body: Mapping[str, Any], request_id: str) -> decisions_api.DecisionDispatchResult:
-    if str(body.get("model") or "").startswith("typesafe/"):
+    try:
+        if decision_provider_execution.systemone_provider_for_model(ADMIN_STORE.get_service_registry(), body.get("model")) is not None:
+            return await decision_provider_execution.systemone(auth, profile, body, request_id, **_decision_provider_context())
+    except decision_provider_execution.PaidDecisionError:
         return await decision_provider_execution.systemone(auth, profile, body, request_id, **_decision_provider_context())
     return await DECISION_RUNTIME.dispatch(auth, profile, body, request_id)
 
@@ -13757,26 +13771,24 @@ def _remote_decision_models(auth: AuthContext, profile: Any) -> list[decisions_a
     if not auth.identity or not auth.identity.app_id:
         return []
     registry = ADMIN_STORE.get_service_registry()
-    provider = providers.provider_refs(registry).get("typesafe")
-    if not provider or not provider.enabled or "typesafe-systemone" not in provider.protocols:
-        return []
-    try:
-        providers.require_remote_allowed(profile, provider)
-    except providers.ProviderError:
-        return []
-    rows = []
-    for model in decision_provider_execution.catalog_models(provider):
-        cap = decision_provider_execution.capability_for(provider, model)
-        if _capability_for_profile(cap, auth).policy_available is False:
+    rows: list[decisions_api.DecisionModel] = []
+    for provider in decision_provider_execution.systemone_providers(registry):
+        try:
+            providers.require_remote_allowed(profile, provider)
+        except providers.ProviderError:
             continue
-        if _profile_target_visibility(auth) == "available" and not provider.configured:
-            continue
-        rows.append(decisions_api.DecisionModel(
-            id=model, root=model.partition("/")[2], backend=provider.id,
-            backend_kind="provider", cost_class=provider.cost_class, remote=True,
-            available=provider.configured, reason=None if provider.configured else "provider_key_missing",
-            capabilities={"calibrated": True},
-        ))
+        for model in decision_provider_execution.catalog_models(provider):
+            cap = decision_provider_execution.capability_for(provider, model)
+            if _capability_for_profile(cap, auth).policy_available is False:
+                continue
+            if _profile_target_visibility(auth) == "available" and not provider.configured:
+                continue
+            rows.append(decisions_api.DecisionModel(
+                id=model, root=model.partition("/")[2], backend=provider.id,
+                backend_kind="provider", cost_class=provider.cost_class, remote=True,
+                available=provider.configured, reason=None if provider.configured else "provider_key_missing",
+                capabilities={"calibrated": True},
+            ))
     return rows
 
 

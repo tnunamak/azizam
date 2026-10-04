@@ -2,8 +2,86 @@
 
 Remote providers are paid or externally hosted backends that the gateway can
 reach only when the owner configured them and the caller's access plan permits
-them.  Secrets stay outside the gateway database.  The registry stores only the
-environment variable name that holds each provider key.
+them. Owners can enter a write-only key in Providers or reference an environment
+variable. UI-entered values are encrypted in `admin.db`; the registry carries
+references, never plaintext keys.
+
+## Connect a provider
+
+Open **Providers** and select **Add provider**. Choose a shipped preset or a
+generic compatible endpoint, enter a key or environment-variable name, and
+run **Gateway check**. The check lists models; presets can also declare an
+authentication probe when model listing alone does not verify the key.
+Changing the preset or endpoint clears the pasted key, environment reference,
+and previous check results. Enter the credential again for the new destination.
+Choose models, review their input/output prices, set daily and monthly caps,
+and select the access plans that may use the provider. Missing prices require
+operator input before enabling a paid model.
+
+Saved configuration updates the registry and generated LiteLLM configuration.
+The gateway applies registry changes live. The managed LiteLLM launcher reloads
+its child when the configuration or stored credentials change. Allow the
+configured watcher interval for that reconciliation; saving a record does not
+prove that the upstream provider or execution sidecar is ready.
+
+## Catalog data
+
+`providers/catalog/*.yml` holds provider setup facts: names and logo keys, base
+URLs, protocols, authentication headers, model-list paths and price mappings,
+documentation/key URLs, supported billing dimensions, and recommendations.
+Add a catalog file to extend setup choices. Generic presets let an operator
+connect another compatible service without a vendor-specific code change.
+Catalog files are provisioning data; saved service records remain the runtime
+source of truth. Missing model-list prices mean unknown, not free.
+Authentication must match the selected execution protocol: Bearer authorization
+for OpenAI-compatible and SystemOne endpoints, or `x-api-key` for Anthropic
+messages. The catalog rejects other schemes because the execution adapters do
+not support arbitrary authentication headers.
+
+Decision providers follow the same rule. A provider with the
+`typesafe-systemone` protocol uses its configured provider prefix and enabled
+model list; it need not be named `typesafe`. There is no implicit vendor model
+default. Existing provisioning can declare `default_models` explicitly.
+OpenAI-shaped decision passthrough requires one enabled provider with the
+`decisions` capability and a compatible protocol. Ambiguous configuration
+fails closed. Both paths support encrypted key references.
+
+## Key custody and threat model
+
+The provider secret store encrypts values with AES-256-GCM and a fresh nonce
+for each write. Ciphertext is bound to its secret record identity and approved
+endpoint origin (scheme, hostname, and effective port). Dispatch, saved checks,
+and sidecar injection refuse a stored key for a different origin. Re-entering
+the key approves its current destination. A separate
+`provider-secrets.key` file in the directory containing `admin.db` supplies the
+encryption key; its permissions are 0600. APIs return only whether a key is
+set, its last four characters, and its update time. Owners can replace or
+delete a key; no API retrieves its value.
+
+Generated LiteLLM YAML contains `os.environ/` references. The managed launcher
+decrypts UI-entered keys into the sidecar's environment immediately before
+starting it. No plaintext provider key is written into YAML or command
+arguments. Environment-variable references remain an alternative and do not
+copy the environment value into the secret store.
+Environment references carry the same origin approval in the registry;
+dispatch, saved checks, and config generation reject a missing or changed
+origin. Legacy environment references without approval metadata require
+explicit operator approval in the registry or re-creation through the UI.
+
+This protects a database copy taken without its encryption key. It does not
+protect against an attacker who controls the gateway's operating-system
+account, can read both files, or can inspect gateway/sidecar process memory.
+That account and privileged processes can also inspect the child environment.
+Use HTTPS for browser-to-gateway traffic and provider endpoints, restrict
+filesystem access, and keep request-body logging disabled on credential APIs.
+Owner authentication and CSRF checks protect writes; upstream response bodies
+and authentication headers must not become logs, receipts, or API errors.
+
+Back up the database and encryption key with restricted access. Restoring only
+the database cannot restore stored provider credentials. Losing the key file
+requires entering replacement provider credentials. Rotating a provider key
+replaces that credential, not the encryption key. Deleting a secret removes
+the active record; historical backups may still contain its ciphertext.
 
 ## Service Registry Schema
 
@@ -23,6 +101,7 @@ services:
       provider_id: openrouter
       protocol: openai-compatible
       base_url: https://openrouter.ai/api/v1
+      credential_origin: https://openrouter.ai:443
       api_key_env: OPENROUTER_API_KEY
       models:
         - model_group: openrouter/anthropic/claude-sonnet
@@ -36,15 +115,22 @@ The important fields are:
 
 - `remote_provider: true`, `paid_remote: true`, or `provider_type` /
   `cost_class` set to `remote`, `paid-remote`, or `cloud`.
-- `api_key_env`: the environment variable name. The actual key value must be in
-  the process environment or deployment secret store.
+- `api_key_env`: the environment variable name supplied by deployment.
+- `api_key_secret_id`: an encrypted UI key reference. The compiler derives an
+  environment name and the launcher supplies its value to the sidecar at runtime.
 - `models`: the provider-qualified public model names the gateway may route.
-- `price`: optional cost table used for pre-call estimates. If a capped request
-  has no bounded cost estimate, the request fails closed before the provider
-  call.
+- `credential_origin`: the approved origin for a UI-created credential.
+- `price`: provider-owned rates used for pre-call estimates and settlement.
+  Generic or custom endpoints with missing model prices are denied even without
+  caps. A capped request also requires a bounded cost estimate.
 
-Inline provider keys are rejected by the service registry. Use `api_key_env`;
-do not put raw keys in YAML, `admin.db`, receipts, logs, or tests. Remote or paid
+The validated `base_url` retains its scheme, host, port, and path through
+persistence and generated `api_base`. A remote provider without an explicit
+endpoint fails configuration; the SDK cannot select a default vendor endpoint.
+
+Inline provider keys are rejected by the service registry. Use the Providers
+credential API or an `api_key_env` reference; do not put raw keys in YAML,
+registry records, receipts, or logs. Remote or paid
 providers cannot enable `native_passthrough`; their calls must use the paid
 admission and accounting path. The native handler also rejects remote records
 before injecting authentication or opening an upstream connection.
@@ -111,24 +197,51 @@ response must still provide enough information for actual-cost settlement.
 The Providers UI uses:
 
 - `GET /admin/api/providers`
+- `GET /admin/api/providers/-/catalog`
+- `POST /admin/api/providers`
+- `POST /admin/api/providers/-/test` (unsaved configuration)
 - `GET /admin/api/providers/{provider}`
+- `POST /admin/api/providers/{provider}/test` (stored configuration)
+- `PUT /admin/api/providers/{provider}/key`
+- `DELETE /admin/api/providers/{provider}/key`
+- `PUT /admin/api/providers/{provider}/models`
+- `DELETE /admin/api/providers/{provider}`
 - `PUT /admin/api/providers/{provider}/caps`
 - `DELETE /admin/api/providers/{provider}/caps`
 - `PUT /admin/api/providers/{provider}/allowed-plans`
+- `GET /admin/api/providers/{provider}/reconciliation`
+- `POST /admin/api/providers/{provider}/reconciliation/{reservation_id}`
 - `PUT /admin/api/providers/-/global-caps`
 - `DELETE /admin/api/providers/-/global-caps`
 
-`key_status` is only `set` or `missing` plus the env var name.  It never
-contains the key value.
+`key_status` reports its state and source. Stored keys include their suffix and
+update time; environment references include the variable name. It never contains
+the key value. Reachability is unknown until a check observes success or failure.
+Registry writes accept `expected_generation` for conflict detection. A stale
+generation returns HTTP 409; refresh before retrying.
 
 ## Spend Ledger And Caps
 
 Provider calls reserve spend in `provider_spend` before dispatch.  The ledger
 counts both `reserved` and `settled` rows so concurrent requests cannot exceed
 the available reservation budget by racing each other. Settlement prefers
-provider-reported `usage.cost`; otherwise LiteLLM calculates cost from the
-full typed response and usage, including cache, reasoning, and other billing
-details. Streaming settlement uses LiteLLM's complete assembled response, retaining
+provider-reported `usage.cost`; otherwise it uses the provider record's own
+rates, entered by the owner or imported from that provider's listing. Complete
+text usage and separately priced cache reads are supported. Unpriced or
+unsupported billing dimensions leave the charge unresolved rather than using
+another provider's rates.
+
+SDK pricing is allowed only when the catalog declares `sdk_pricing.api_base`
+for an official vendor API and the actual endpoint matches its normalized
+scheme, hostname, effective port, and full path. A custom URL override loses
+that authority. Provider-owned rates take precedence even on official APIs.
+The shipped OpenAI and Anthropic catalog entries declare their official APIs;
+generic presets do not. Anthropic SDK pricing is approved for the full API base
+`https://api.anthropic.com`; an Anthropic provider configured with the preset
+listing URL `https://api.anthropic.com/v1` must use provider-owned rates and
+does not automatically fall back to SDK pricing.
+
+Streaming settlement uses LiteLLM's complete assembled response, retaining
 annotations, citations, and other response metadata as well as merged provider
 usage. Missing usage or incomplete assembly leaves cost unknown; a malformed
 or oversized stream cannot settle from a partial response. The client still
@@ -136,7 +249,8 @@ receives the original stream bytes.
 Streaming headers cannot establish final cost before generation completes.
 Unknown usage extensions or missing required SDK price metadata leave cost
 unknown. The SDK catalog must include rates for reported cache reads and
-writes; its packaged offline catalog may be incomplete. An operator can set
+writes; its packaged offline catalog may be incomplete. For a declared official
+API, an operator can set
 `price.cost_model` (or a per-model `price.models` override) to the SDK pricing
 model and add `price.usage_price_requirements` rows containing `usage_path`
 and `price_keys` arrays for additional billed dimensions. These rows validate
@@ -147,15 +261,31 @@ A cap can be exceeded by at most the actual cost of requests already in flight w
 
 The Providers admin API includes this guarantee. Once settled spend reaches
 a window cap, new paid requests are denied even when their estimate is zero.
-Paid concurrency is limited per provider across all access plans and gateway
-processes sharing the ledger. The default is two open reservations; set a
+Paid concurrency is limited per provider across all access plans in the gateway
+process. Recovery follows the gateway's single-process deployment: separate
+gateway processes must not share one ledger. The default is two open reservations; set a
 positive integer `config.concurrency_limit` on the provider record to change
 it. The admin API projects the same effective value.
 
-Unknown actual cost retains the reservation and its concurrency slot until
-reconciliation. Disconnects and transport failures do not establish a zero
-bill. A successful settlement or a known pre-dispatch release frees the slot;
-an unresolved reservation cannot be replaced with another paid request.
+Unknown final cost moves the charge to `needs_reconciliation`. Disconnects and
+transport failures do not establish a zero bill. Affected provider, plan, or
+global window caps deny new admissions with HTTP 402 and
+`provider_needs_reconciliation` until the actual bill is known. The barrier
+survives restarts and window changes. Unrelated caps remain usable; uncapped
+calls retain the unknown charge without acquiring a budget barrier. Only
+in-flight `reserved` rows consume concurrency slots.
+
+The provider detail shows **Needs reconciliation** and an owner action to list
+pending charges. Enter the actual USD amount verified against the provider's
+records; a verified zero is allowed. The request estimate is shown separately
+and is never filled into the actual amount field. Settling a charge refreshes
+provider and global totals. Removal is blocked while charges remain unsettled.
+The owner API also permits reconciliation of pending ledger rows for a provider
+that was already removed. This preserves recovery for older removals or a
+request that raced with removal. Use the provider ID and reservation ID from
+the original receipt; the detail UI lists currently configured providers.
+See [Unknown provider charges](ops/PROVIDER_RECONCILIATION.md) for the API,
+crash recovery, receipt links, and automatic generation-metadata lookup.
 
 Set the OpenRouter key's own credit limit equal to the gateway cap as a
 provider-side backstop. The admin API recommends key-level credit limits for
@@ -173,7 +303,9 @@ them in the same SQLite transaction that inserts the reservation.
 
 The Providers UI spend totals are a read-only projection over `provider_spend`.
 If the ledger is absent or unreadable, the UI reports spend as unknown.  An
-empty readable ledger reports zero spend.
+empty readable ledger reports zero spend. Totals with pending reconciliation
+include estimates and are marked incomplete; they are not final bills or
+remaining-budget guarantees.
 
 Completion estimates include prompt batches and generated candidates
 (`n` and `best_of`). For paid chat execution, estimation uses the normalized
@@ -196,6 +328,8 @@ cap enforcement.
 ## Error Semantics
 
 - Missing provider key or denied access plan: fail before the provider call.
+- An unknown charge affecting a window cap: `402 provider_needs_reconciliation`;
+  the owner must reconcile the actual bill before that cap can admit again.
 - Provider 401 or 403: return gateway `502 provider_auth_failed`.
 - Provider timeout: return `504 provider_timeout`.
 - LiteLLM upstream timeout responses (HTTP 408): return `504 provider_timeout`.
@@ -205,7 +339,23 @@ cap enforcement.
 
 ## Deployment Notes
 
-Set provider keys in the gateway service environment, for example:
+The first UI key save creates `provider-secrets.key` beside the configured
+`admin.db`, with mode 0600. The gateway account must be able to write that
+directory. When moving or restoring the database, place its matching key file
+beside it before using saved credentials. A new key file cannot decrypt
+previously stored values.
+
+The secret schema lazily adds the approved origin. Stored keys from an older
+schema have no origin approval and cannot be dispatched until replaced through
+the credential API. Do not infer an approval from a mutable registry URL.
+For an existing environment reference, confirm its destination and explicitly
+set `credential_origin` to its scheme, hostname, and effective port, or remove
+and re-create the provider through the UI. The fixed bundled OpenRouter seed
+declares its official origin as data; custom endpoint overrides must receive
+their own explicit approval. Local engine and substrate environment keys are
+outside this remote-provider approval rule.
+
+Alternatively, set provider keys in the gateway service environment, for example:
 
 ```bash
 OPENROUTER_API_KEY=...

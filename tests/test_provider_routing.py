@@ -29,6 +29,7 @@ def _registry() -> dict:
                     "protocols": ["openai"],
                     "base_url": "https://openrouter.ai/api/v1",
                     "api_key_env": "OPENROUTER_API_KEY",
+                    "credential_origin": "https://openrouter.ai",
                     "models": [
                         {
                             "id": "openai/gpt-4.1-mini",

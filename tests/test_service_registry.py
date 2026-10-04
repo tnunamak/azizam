@@ -918,6 +918,34 @@ def test_added_openai_service_with_model_is_routable() -> None:
     assert entry["litellm_params"]["api_base"] == "http://127.0.0.1:7860/v1"
 
 
+def test_remote_provider_form_preserves_exact_validated_base_url() -> None:
+    raw = service_registry.service_form_to_raw(
+        {
+            "name": "OpenRouter",
+            "remote_provider": True,
+            "provider_type": "paid-remote",
+            "protocol": "openai-compatible",
+            "capabilities": ["openai"],
+            "base_url": "https://provider.test:8443/custom/v1",
+            "api_key_secret_id": "provider:openrouter:api_key",
+            "models": [{"id": "provider/model", "upstream_model": "model"}],
+        }
+    )
+
+    assert raw["base_url"] == "https://provider.test:8443/custom/v1"
+    svc = service_registry.service_from_backend_config("openrouter", raw, source="ui")
+    registry = {
+        "schema_version": 1,
+        "services": {"openrouter": svc},
+        "protocol_frontends": {},
+        "workflows": {},
+        "capabilities": {},
+    }
+    from gateway import litellm_substrate
+    compiled = litellm_substrate.compile_litellm_config_from_registry(registry)
+    assert compiled["model_list"][0]["litellm_params"]["api_base"] == "https://provider.test:8443/custom/v1"
+
+
 def test_added_service_without_models_is_inert() -> None:
     # Documents the boundary: no model mapping -> no routable model. (This is
     # the gap the form's Models section fixes; an operator must add a mapping.)
@@ -948,6 +976,7 @@ def test_remote_provider_requires_env_key_reference() -> None:
                 "provider_type": "paid-remote",
                 "protocol": "openai-compatible",
                 "base_url": "https://openrouter.ai/api/v1",
+                "credential_origin": "https://openrouter.ai:443",
                 "models": [{"id": "openai/gpt-4.1-mini"}],
             },
             source="ui",
@@ -964,6 +993,7 @@ def test_remote_provider_rejects_inline_secret_value() -> None:
                 "provider_type": "paid-remote",
                 "protocol": "openai-compatible",
                 "base_url": "https://openrouter.ai/api/v1",
+                "credential_origin": "https://openrouter.ai:443",
                 "api_key": "sk-should-not-be-stored",
                 "api_key_env": "OPENROUTER_API_KEY",
                 "models": [{"id": "openai/gpt-4.1-mini"}],
@@ -983,6 +1013,7 @@ def test_remote_provider_rejects_native_passthrough() -> None:
                 "native_passthrough": True,
                 "protocol": "openai-compatible",
                 "base_url": "https://openrouter.ai/api/v1",
+                "credential_origin": "https://openrouter.ai:443",
                 "api_key_env": "OPENROUTER_API_KEY",
                 "auth_inject": [
                     {"header": "authorization", "secret_env": "OPENROUTER_API_KEY"}
@@ -1105,6 +1136,43 @@ def test_remove_config_sourced_service_not_resurrected_on_reboot(tmp_path: Path)
     assert "my-vllm" not in registry2["services"], (
         "ensure_service_registry must not resurrect a removed service"
     )
+
+
+def test_removed_seed_catalog_service_not_resurrected_on_reboot(tmp_path: Path) -> None:
+    catalog_dir = tmp_path / "catalog"
+    catalog_dir.mkdir()
+    (catalog_dir / "services.yml").write_text(
+        """
+records:
+  - id: openrouter
+    name: OpenRouter
+    source: builtin
+    kind: provider
+    enabled: true
+    capabilities: [openai]
+    config:
+      base_url: https://openrouter.test/api/v1
+""",
+        encoding="utf-8",
+    )
+    proxy_config = {"registry": {"catalog_dir": str(catalog_dir)}, "backends": {}}
+    db = tmp_path / "admin.db"
+    admin_store.init_db(db)
+
+    registry = service_registry.ensure_service_registry(proxy_config, path=db)
+    assert "openrouter" in registry["services"]
+
+    updated = service_registry.remove_service_from_registry(registry, "openrouter")
+    write_service_registry_for_test(updated, updated_by="test", path=db)
+
+    reloaded = service_registry.ensure_service_registry(proxy_config, path=db)
+
+    assert "openrouter" not in reloaded["services"]
+    stored = admin_store.get_operator_setting(
+        service_registry.SERVICE_REGISTRY_SETTING_KEY,
+        path=db,
+    )["value"]
+    assert "openrouter" not in stored["services"]
 
 
 def test_existing_registry_model_rows_are_not_silently_upgraded_from_yaml(tmp_path: Path) -> None:

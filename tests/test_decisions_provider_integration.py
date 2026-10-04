@@ -55,6 +55,7 @@ def _provider_registry(*, provider_id="typesafe", protocols=("typesafe-systemone
                     "provider_id": provider_id,
                     "base_url": base_url,
                     "api_key_env": env_name,
+                    "credential_origin": "https://openai.test" if provider_id == "openai" else "https://api.typesafe.test",
                     "cost_class": "paid-remote",
                     "concurrency_limit": concurrency_limit,
                     "models": models if models is not None else [{"id": f"{provider_id}/jev-latest" if provider_id == "typesafe" else "gpt-5"}],
@@ -326,7 +327,7 @@ def test_typesafe_provider_unknown_actual_cost_is_projected_as_unknown_not_zero_
             json={
                 "model": "jev-latest",
                 "answers": {"is_urgent": {"type": "noul", "noul": 0.91}},
-                "usage": {"input_tokens": 1000, "output_tokens": 0},
+                "usage": {"input_tokens": 1000, "output_tokens": 0, "unpriced_usage_units": 1},
                 "echo": "ts_secret_test_key",
             },
         )

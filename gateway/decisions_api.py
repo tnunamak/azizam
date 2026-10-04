@@ -108,7 +108,7 @@ class DecisionDispatchResult:
     headers: Mapping[str, str] = field(default_factory=dict)
     backend: str | None = None
     resolved_model: str | None = None
-    remote: bool = False
+    remote: bool | None = False
     cost_usd: float | str | None = 0.0
     engine: str | None = None
     fallback_reasons: Sequence[str] = field(default_factory=tuple)
@@ -129,7 +129,7 @@ class DecisionReceipt:
     question_count: int
     latency_ms: float
     status_code: int
-    remote: bool
+    remote: bool | None
     cost_usd: float | str | None
     engine: str | None
     fallback_reasons: Sequence[str] = field(default_factory=tuple)
@@ -245,7 +245,7 @@ def _receipt(
     backend: str | None = None,
     question_count: int = 0,
     status_code: int,
-    remote: bool = False,
+    remote: bool | None = False,
     cost_usd: float | str | None = 0.0,
     engine: str | None = None,
     fallback_reasons: Sequence[str] = (),
@@ -431,6 +431,42 @@ def _loc_for_field(parent_param: str, key: Any) -> tuple[str | int, ...]:
         question_id = parent_param.removeprefix("questions.")
         return ("body", "questions", question_id, key)
     return ("body", *parent_param.split("."), key)
+
+
+def _model_paid_context(model: DecisionModel | Mapping[str, Any] | None) -> dict[str, Any]:
+    if model is None:
+        return {}
+    if isinstance(model, DecisionModel):
+        if not model.remote:
+            return {}
+        return {
+            "remote": True,
+            "backend": model.backend,
+            "cost_usd": None,
+            "cost_source": "unknown",
+        }
+    if isinstance(model, Mapping) and model.get("remote") is True:
+        return {
+            "remote": True,
+            "backend": model.get("backend"),
+            "cost_usd": None,
+            "cost_source": "unknown",
+        }
+    return {}
+
+
+async def _selected_model_paid_context(
+    deps: DecisionsApiDeps, auth: Any, profile: Any, model_id: str
+) -> dict[str, Any]:
+    try:
+        models = await _call_maybe_async(deps.models_for, auth, profile)
+    except Exception:
+        return {"remote": None, "cost_usd": None, "cost_source": "unknown"}
+    for model in models:
+        candidate = model.id if isinstance(model, DecisionModel) else model.get("id") if isinstance(model, Mapping) else None
+        if candidate == model_id:
+            return _model_paid_context(model)
+    return {"remote": None, "cost_usd": None, "cost_source": "unknown"}
 
 
 def _model_view(model: DecisionModel | Mapping[str, Any]) -> JSON:
@@ -725,7 +761,7 @@ def register_decision_routes(app: FastAPI, deps: DecisionsApiDeps) -> None:
                 headers=_request_headers(request_id),
             )
 
-        paid_context = {"remote": True, "backend": "typesafe", "cost_usd": None, "cost_source": "unknown"} if body["model"].startswith("typesafe/") else {}
+        paid_context = await _selected_model_paid_context(deps, auth, profile, body["model"])
         try:
             result = await _call_with_disconnect(request, deps.dispatch, auth, profile, body, request_id)
             if result is None:

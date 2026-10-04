@@ -74,14 +74,23 @@ if [ "${AI_GATEWAY_MANAGE_LITELLM:-true}" != "false" ]; then
     fi
 
     LITELLM_CONFIG_PATH="${AI_GATEWAY_LITELLM_CONFIG_PATH:-data/litellm.config.yaml}"
+    AI_GATEWAY_ADMIN_DB_PATH="${AI_GATEWAY_ADMIN_DB:-data/admin.db}"
     mkdir -p "$(dirname "$LITELLM_CONFIG_PATH")"
     LITELLM_PID_FILE="${AI_GATEWAY_LITELLM_PID_FILE:-data/litellm.pid}"
     LITELLM_PID=""
 
     start_litellm() {
-        litellm --config "$LITELLM_CONFIG_PATH" --host 127.0.0.1 --port 4011 &
+        python3 -m gateway.provider_sidecar run --db "$AI_GATEWAY_ADMIN_DB_PATH" -- \
+            litellm --config "$LITELLM_CONFIG_PATH" --host 127.0.0.1 --port 4011 &
         LITELLM_PID=$!
         echo "$LITELLM_PID" > "$LITELLM_PID_FILE"
+    }
+
+    litellm_runtime_hash() {
+        {
+            sha256sum "$LITELLM_CONFIG_PATH" | awk '{print $1}'
+            python3 -m gateway.provider_sidecar fingerprint --db "$AI_GATEWAY_ADMIN_DB_PATH"
+        } | sha256sum | awk '{print $1}'
     }
 
     watch_litellm_config() {
@@ -89,7 +98,7 @@ if [ "${AI_GATEWAY_MANAGE_LITELLM:-true}" != "false" ]; then
         LAST_HASH=""
         while true; do
             while [ ! -s "$LITELLM_CONFIG_PATH" ]; do sleep 1; done
-            NEXT_HASH="$(sha256sum "$LITELLM_CONFIG_PATH" | awk '{print $1}')"
+            NEXT_HASH="$(litellm_runtime_hash)"
             if [ "$NEXT_HASH" != "$LAST_HASH" ] || ! kill -0 "${LITELLM_PID:-0}" >/dev/null 2>&1; then
                 if [ -n "$LITELLM_PID" ]; then
                     kill "$LITELLM_PID" >/dev/null 2>&1 || true

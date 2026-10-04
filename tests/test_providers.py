@@ -49,6 +49,8 @@ from gateway.receipts import RouteReceipt  # noqa: E402
 
 
 def provider(**overrides: object) -> ProviderRef:
+    config = {"credential_origin": "https://api.typesafe.test:443"}
+    config.update(overrides.pop("config", {}) if isinstance(overrides.get("config"), dict) else {})
     data = {
         "id": "typesafe",
         "base_url": "https://api.typesafe.test",
@@ -56,7 +58,23 @@ def provider(**overrides: object) -> ProviderRef:
         "api_key_env": "TYPESAFE_TEST_KEY",
         "cost_class": "paid-remote",
         "price": {"input_usd_per_million_tokens": "0.10"},
-        "config": {},
+        "config": config,
+    }
+    data.update(overrides)
+    return ProviderRef(**data)  # type: ignore[arg-type]
+
+
+def anthropic_provider(**overrides: object) -> ProviderRef:
+    config = {"preset_id": "anthropic", "credential_origin": "https://api.anthropic.com:443"}
+    config.update(overrides.pop("config", {}) if isinstance(overrides.get("config"), dict) else {})
+    data = {
+        "id": "anthropic",
+        "base_url": "https://api.anthropic.com",
+        "protocols": ("anthropic-messages",),
+        "api_key_env": "ANTHROPIC_TEST_KEY",
+        "cost_class": "paid-remote",
+        "price": {},
+        "config": config,
     }
     data.update(overrides)
     return ProviderRef(**data)  # type: ignore[arg-type]
@@ -922,7 +940,7 @@ class TestCosts(unittest.TestCase):
         )
 
         self.assertIsNone(cost.usd)
-        self.assertEqual(cost.source, "unknown")
+        self.assertEqual(cost.source, "missing-provider-price")
 
     def test_chat_estimate_requires_output_limit(self) -> None:
         ref = provider(
@@ -1023,7 +1041,8 @@ class TestCosts(unittest.TestCase):
 
         self.assertEqual(reported.usd, Decimal("0.250000000"))
         self.assertEqual(reported.source, "provider-reported")
-        self.assertEqual(litellm.source, "litellm")
+        self.assertIsNone(litellm.usd)
+        self.assertEqual(litellm.source, "unknown")
         self.assertEqual(reported_with_header.usd, Decimal("0.250000000"))
         self.assertEqual(reported_with_header.source, "provider-reported")
         self.assertIsNone(priced.usd)
@@ -1055,7 +1074,9 @@ class TestCosts(unittest.TestCase):
         prompt_completion_cost = extract_provider_cost(ref, body=prompt_completion)
 
         self.assertEqual(input_output_cost.usd, Decimal("0.030015000"))
+        self.assertEqual(input_output_cost.source, "price-table")
         self.assertEqual(prompt_completion_cost.usd, Decimal("0.030015000"))
+        self.assertEqual(prompt_completion_cost.source, "price-table")
 
     def test_incomplete_sdk_cache_price_catalog_returns_unknown(self) -> None:
         fake = _fake_litellm(
@@ -1065,11 +1086,11 @@ class TestCosts(unittest.TestCase):
         previous = sys.modules.get("litellm")
         sys.modules["litellm"] = fake
         try:
-            ref = provider(id="openrouter", price={"cost_model": "anthropic/test"})
+            ref = anthropic_provider(price={"cost_model": "anthropic/test"})
             cost = extract_provider_cost(
                 ref,
                 body={
-                    "model": "openrouter/anthropic/test",
+                    "model": "anthropic/test",
                     "usage": {
                         "prompt_tokens": 10000,
                         "completion_tokens": 1,
@@ -1099,11 +1120,11 @@ class TestCosts(unittest.TestCase):
         previous = sys.modules.get("litellm")
         sys.modules["litellm"] = fake
         try:
-            ref = provider(id="openrouter", price={"cost_model": "anthropic/test"})
+            ref = anthropic_provider(price={"cost_model": "anthropic/test"})
             cost = extract_provider_cost(
                 ref,
                 body={
-                    "model": "openrouter/anthropic/test",
+                    "model": "anthropic/test",
                     "usage": {
                         "prompt_tokens": 10000,
                         "completion_tokens": 1,
@@ -1127,12 +1148,12 @@ class TestCosts(unittest.TestCase):
         self.assertEqual(cost.source, "unknown")
 
     def test_unknown_usage_extension_with_header_still_returns_unknown(self) -> None:
-        ref = provider(id="openrouter", price={"cost_model": "anthropic/test"})
+        ref = anthropic_provider(price={"cost_model": "anthropic/test"})
 
         cost = extract_provider_cost(
             ref,
             body={
-                "model": "openrouter/anthropic/test",
+                "model": "anthropic/test",
                 "usage": {
                     "input_tokens": 10,
                     "output_tokens": 1,
@@ -1158,11 +1179,11 @@ class TestCosts(unittest.TestCase):
         previous = sys.modules.get("litellm")
         sys.modules["litellm"] = fake
         try:
-            ref = provider(id="openrouter", price={"cost_model": "anthropic/test"})
+            ref = anthropic_provider(price={"cost_model": "anthropic/test"})
             cost = extract_provider_cost(
                 ref,
                 body={
-                    "model": "openrouter/anthropic/test",
+                    "model": "anthropic/test",
                     "usage": {
                         "prompt_tokens": 10000,
                         "completion_tokens": 1,

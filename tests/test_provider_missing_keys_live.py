@@ -28,6 +28,8 @@ class TemporaryProviderAdminStore:
                         "remote_provider": True,
                         "provider_type": "paid-remote",
                         "api_key_env": "OPENROUTER_API_KEY",
+                        "base_url": "https://openrouter.ai/api/v1",
+                        "credential_origin": "https://openrouter.ai:443",
                         "models": [{"model_group": "openrouter/test-model"}],
                     },
                     "secret_refs": {"api_key_env": "OPENROUTER_API_KEY"},
@@ -41,6 +43,8 @@ class TemporaryProviderAdminStore:
                         "remote_provider": True,
                         "provider_type": "paid-remote",
                         "api_key_env": "TYPESAFE_API_KEY",
+                        "base_url": "https://api.typesafe.ai/v1",
+                        "credential_origin": "https://api.typesafe.ai:443",
                         "protocol": "typesafe-systemone",
                         "models": [{"model_group": "typesafe/jev-latest"}],
                     },
@@ -144,6 +148,7 @@ def test_provider_admin_reports_missing_env_keys_over_real_tcp(
         payload = response.json()
         assert payload["provider"]["key_status"] == {
             "state": "missing",
+            "source": "env",
             "api_key_env": env_name,
         }
         assert env_name in response.text

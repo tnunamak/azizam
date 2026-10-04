@@ -56,6 +56,7 @@ def _registry(
         "provider_id": provider_id,
         "base_url": f"https://{provider_id}.test",
         "api_key_env": api_key_env or f"{provider_id.upper()}_TEST_KEY",
+        "credential_origin": f"https://{provider_id}.test",
         "cost_class": "paid-remote",
         "price": price if price is not None else {"input_usd_per_million_tokens": "1.00"},
     }
@@ -131,7 +132,7 @@ class DecisionProviderReconciliationTests(unittest.IsolatedAsyncioTestCase):
                 json={
                     "model": "jev-latest",
                     "answers": {"q": {"type": "noul", "noul": 1.0}},
-                    "usage": {"input_tokens": 1, "output_tokens": 0},
+                    "usage": {"input_tokens": 1, "output_tokens": 0, "unpriced_usage_units": 1},
                 },
             )
 
