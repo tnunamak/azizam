@@ -1,34 +1,24 @@
-import { ApiError, adminFetch } from "@/lib/api";
-import { accountApi, type AccountApp } from "@/lib/account-api";
-import type { AvailabilityStatus } from "@/components/product/status-pill";
+import { ApiError } from "@/lib/api";
+import { accountApi } from "@/lib/account-api";
+import {
+  productApi,
+  type HomeCapability as SharedHomeCapability,
+  type HomeSnapshot as SharedHomeSnapshot,
+} from "@/lib/product-api";
 
-export interface HomeCapability {
-  capability: string;
-  intent: string;
+export type { HomeAlias, HomeReceipt, SetupProgress } from "@/lib/product-api";
+// A display tile may omit a routing name; the wire contract stays generated.
+export type HomeCapability = Pick<
+  SharedHomeCapability,
+  "capability" | "intent" | "available" | "status" | "reason"
+> & {
   model?: string | null;
   workflow?: string | null;
-  available: boolean;
-  status: AvailabilityStatus;
-  reason: string;
-}
-export interface HomeAlias {
-  id: string;
-  operation: string;
-  available: boolean;
-  status: AvailabilityStatus;
-  reason: string;
-}
-export interface HomeReceipt {
-  request_id: string;
-  intent?: string;
-  path?: string;
-  requested_model?: string | null;
-  status?: string | null;
-  elapsed_ms?: number | null;
-  latency_ms?: number | null;
-  _stored_at?: number | null;
-  accepted_at_ms?: number | null;
-}
+  availability?: SharedHomeCapability["availability"];
+};
+export type HomeSnapshot = SharedHomeSnapshot & {
+  user: NonNullable<SharedHomeSnapshot["user"]>;
+};
 export interface HomeCreation {
   asset_id: string;
   kind: "image" | "video" | "audio";
@@ -40,31 +30,6 @@ export interface HomeCreation {
 }
 export interface HomeCreationsResponse {
   assets: HomeCreation[];
-}
-export interface HomeSnapshot {
-  authenticated: boolean;
-  user: { id: string; name: string; email: string | null; role: string };
-  apps: AccountApp[];
-  csrf_token: string;
-  public_base_url: string;
-  api_base_url: string;
-  capabilities: HomeCapability[];
-  aliases: HomeAlias[];
-  credential_aliases: Record<string, HomeAlias[]>;
-  new_app_aliases: HomeAlias[];
-  status: { state: AvailabilityStatus; reason: string };
-  receipts: HomeReceipt[];
-  creations: null;
-}
-export interface SetupProgress {
-  complete: boolean;
-  steps: Array<{
-    id: string;
-    done: boolean;
-    optional: boolean;
-    reason: string;
-    href: string;
-  }>;
 }
 export interface ConnectionResult {
   ok: boolean;
@@ -118,7 +83,7 @@ export const homeApi = {
     HomeSnapshot | { authenticated: false; user?: never }
   > => {
     try {
-      return await homeRequest<HomeSnapshot>("/me/api/home");
+      return (await productApi.home()) as HomeSnapshot;
     } catch (error) {
       if (error instanceof ApiError && error.status === 401)
         return { authenticated: false };
@@ -126,7 +91,7 @@ export const homeApi = {
     }
   },
   creations: () => homeRequest<HomeCreationsResponse>("/me/api/media?limit=5"),
-  setup: () => adminFetch<SetupProgress>("/admin/api/setup-progress"),
+  setup: productApi.setup,
   test: (apiKey: string, credentialId?: string) =>
     homeRequest<ConnectionResult>("/me/api/connection-test", {
       api_key: apiKey,

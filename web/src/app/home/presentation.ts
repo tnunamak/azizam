@@ -3,6 +3,7 @@ import type {
   HomeCapability,
   HomeReceipt,
   HomeSnapshot,
+  SetupProgress,
 } from "./home-api";
 
 const operations: Record<string, string[]> = {
@@ -82,6 +83,9 @@ export function capabilityTiles(
             available: alias.available,
             status: alias.status,
             reason: alias.reason,
+            availability: capabilities.find(
+              (row) => row.model === alias.id && row.capability === capability,
+            )?.availability,
           },
         ];
       const rows = capabilities.filter(
@@ -117,7 +121,7 @@ export function capabilitySummary(tiles: HomeCapability[]): string {
     audio: "audio",
   };
   const clauses = (
-    ["ready", "starting", "busy", "unavailable"] as const
+    ["ready", "idle", "starting", "busy", "unknown", "unavailable"] as const
   ).flatMap((status) => {
     const matching = tiles
       .filter((tile) => tile.status === status)
@@ -126,7 +130,13 @@ export function capabilitySummary(tiles: HomeCapability[]): string {
     const plural =
       matching.length > 1 ||
       ["images", "decisions", "embeddings"].includes(matching[0]);
-    return [`${joinNames(matching)} ${plural ? "are" : "is"} ${status}`];
+    const description =
+      status === "idle"
+        ? "ready to start"
+        : status === "unknown"
+          ? "not measured yet"
+          : status;
+    return [`${joinNames(matching)} ${plural ? "are" : "is"} ${description}`];
   });
   const summary = clauses.join(" · ");
   return summary.charAt(0).toUpperCase() + summary.slice(1);
@@ -175,4 +185,46 @@ export function requestLabel(
     audio: "Audio request",
   };
   return kind ? labels[kind] : "Request";
+}
+
+/** Server observations and explicit confirmations remain distinct milestones. */
+export function setupSteps(progress: SetupProgress) {
+  const steps = progress.steps.filter((step) => step.id !== "claim_owner");
+  if (!progress.evidence) return steps;
+  const copied = {
+    id: "copy_settings",
+    done: progress.evidence.settings_copied.recorded,
+    optional: false,
+    reason: progress.evidence.settings_copied.recorded
+      ? "You confirmed that the settings were copied."
+      : "Copy the settings into your client, then confirm below.",
+    href: "#connect",
+  };
+  const viewed = {
+    id: "view_receipt",
+    done: progress.evidence.receipt_viewed.recorded,
+    optional: false,
+    reason: progress.evidence.receipt_viewed.recorded
+      ? "You confirmed that you viewed a request receipt."
+      : "Open a request receipt, then confirm that you viewed it.",
+    href: "#setup-heading",
+  };
+  const clientConfirmed = {
+    id: "connect_app",
+    done: progress.evidence.external_client_confirmed.recorded,
+    optional: false,
+    reason: progress.evidence.external_client_confirmed.recorded
+      ? "You confirmed that your client sent a request."
+      : "Send one request from your client, then confirm below.",
+    href: "#connect",
+  };
+  return [
+    ...steps.filter(
+      (step) => !["connect_app", "invite_someone"].includes(step.id),
+    ),
+    copied,
+    clientConfirmed,
+    viewed,
+    ...steps.filter((step) => step.id === "invite_someone"),
+  ];
 }
