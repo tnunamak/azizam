@@ -304,80 +304,84 @@ async function checkPageBasics(page: Page, screenshotName: string) {
 
 for (const theme of ["light", "dark"] as const) {
   for (const width of [1440, 390]) {
-    test(`engines seeded ${theme} ${width}`, async ({ page }) => {
-      await mockEngineApis(page);
-      await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
-      await page.addInitScript(
-        (value) => localStorage.setItem("theme", value),
-        theme,
-      );
-      await page.goto("/ui/engines/");
+    for (const route of ["engines", "services"]) {
+      test(`${route} seeded ${theme} ${width}`, async ({ page }) => {
+        await mockEngineApis(page);
+        await page.setViewportSize({
+          width,
+          height: width === 390 ? 844 : 1000,
+        });
+        await page.addInitScript(
+          (value) => localStorage.setItem("theme", value),
+          theme,
+        );
+        await page.goto(`/ui/${route}/`);
 
-      await expect(
-        page.getByRole("heading", { name: "Engines", level: 1 }),
-      ).toBeVisible();
-      await expect(
-        page
+        await expect(
+          page.getByRole("heading", { name: "Engines", level: 1 }),
+        ).toBeVisible();
+        await expect(
+          page
+            .locator("article")
+            .filter({ hasText: "Local chat engine" })
+            .getByRole("heading", { name: "Chat (openai-compatible)" }),
+        ).toBeVisible();
+        await expect(
+          page.getByText("legacy-chat", { exact: true }),
+        ).toBeVisible();
+        await expect(page.getByText("Image & Video (comfy)")).toHaveCount(0);
+        await page.getByText("Show disabled").click();
+        await expect(page.getByText("Image & Video (comfy)")).toBeVisible();
+
+        const chatCard = page
           .locator("article")
-          .filter({ hasText: "Local chat engine" })
-          .getByRole("heading", { name: "Chat (openai-compatible)" }),
-      ).toBeVisible();
-      await expect(
-        page.getByText("legacy-chat", { exact: true }),
-      ).toBeVisible();
-      await expect(page.getByText("Image & Video (comfy)")).toHaveCount(0);
-      await page.getByText("Show disabled").click();
-      await expect(page.getByText("Image & Video (comfy)")).toBeVisible();
+          .filter({ hasText: "Local chat engine" });
+        await chatCard.getByRole("button", { name: "Test" }).click();
+        await expect(page.getByText("Connected to")).toBeVisible();
+        await chatCard.getByRole("button", { name: "Detect" }).click();
+        await expect(
+          page.getByText("Detected models: demo-chat"),
+        ).toBeVisible();
+        await chatCard.getByRole("button", { name: "Edit" }).click();
+        await expect(
+          page.getByRole("dialog", { name: "Edit engine" }),
+        ).toBeVisible();
+        await page.keyboard.press("Escape");
 
-      const chatCard = page
-        .locator("article")
-        .filter({ hasText: "Local chat engine" });
-      await chatCard.getByRole("button", { name: "Test" }).click();
-      await expect(page.getByText("Connected to")).toBeVisible();
-      await chatCard.getByRole("button", { name: "Detect" }).click();
-      await expect(page.getByText("Detected models: demo-chat")).toBeVisible();
-      await chatCard.getByRole("button", { name: "Edit" }).click();
-      await expect(
-        page.getByRole("dialog", { name: "Edit engine" }),
-      ).toBeVisible();
-      await page.keyboard.press("Escape");
+        await checkPageBasics(page, `status-${route}-seeded-${theme}-${width}`);
+      });
 
-      await checkPageBasics(
-        page,
-        `status-engines-services-seeded-${theme}-${width}`,
-      );
-    });
+      test(`${route} empty ${theme} ${width}`, async ({ page }) => {
+        await mockEngineApis(page, { empty: true });
+        await page.setViewportSize({
+          width,
+          height: width === 390 ? 844 : 1000,
+        });
+        await page.addInitScript(
+          (value) => localStorage.setItem("theme", value),
+          theme,
+        );
+        await page.goto(`/ui/${route}/`);
+        await expect(page.getByText("No engines configured")).toBeVisible();
+        await checkPageBasics(page, `status-${route}-empty-${theme}-${width}`);
+      });
 
-    test(`engines empty ${theme} ${width}`, async ({ page }) => {
-      await mockEngineApis(page, { empty: true });
-      await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
-      await page.addInitScript(
-        (value) => localStorage.setItem("theme", value),
-        theme,
-      );
-      await page.goto("/ui/engines/");
-      await expect(page.getByText("No engines configured")).toBeVisible();
-      await checkPageBasics(
-        page,
-        `status-engines-services-empty-${theme}-${width}`,
-      );
-    });
-
-    test(`engines error ${theme} ${width}`, async ({ page }) => {
-      await mockEngineApis(page, { registryError: true });
-      await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
-      await page.addInitScript(
-        (value) => localStorage.setItem("theme", value),
-        theme,
-      );
-      await page.goto("/ui/engines/");
-      await expect(page.getByText("Engines unavailable")).toBeVisible();
-      await expect(page.getByText("Registry offline")).toBeVisible();
-      await checkPageBasics(
-        page,
-        `status-engines-services-error-${theme}-${width}`,
-      );
-    });
+      test(`${route} error ${theme} ${width}`, async ({ page }) => {
+        await mockEngineApis(page, { registryError: true });
+        await page.setViewportSize({
+          width,
+          height: width === 390 ? 844 : 1000,
+        });
+        await page.addInitScript(
+          (value) => localStorage.setItem("theme", value),
+          theme,
+        );
+        await page.goto(`/ui/${route}/`);
+        await expect(page.getByText("Engines unavailable")).toBeVisible();
+        await expect(page.getByText("Registry offline")).toBeVisible();
+        await checkPageBasics(page, `status-${route}-error-${theme}-${width}`);
+      });
+    }
   }
 }
 
@@ -410,6 +414,9 @@ test("engines route selects a disabled service from the query string", async ({
   await mockEngineApis(page);
   await page.goto("/ui/engines/?service=image");
   await expect(page.getByText("Image & Video (comfy)")).toBeVisible();
+  await expect(page.locator("article").first()).toContainText(
+    "Local image engine",
+  );
   await expect(
     page
       .locator("article[aria-current='true']")

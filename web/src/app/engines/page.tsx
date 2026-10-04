@@ -14,6 +14,9 @@ import {
   type ServiceRegistry,
   type StatusPayload,
 } from "@/lib/api";
+import { CompactTouchTargets } from "@/components/ui/compact-touch-targets";
+import { EngineChecks } from "./engine-checks";
+import { normalizeModelConfigForPatch } from "./detected-models";
 import { AddServiceDialog } from "@/components/admin/add-service-dialog";
 import { ErrorState } from "@/components/product/error-state";
 import { useViewer } from "@/components/shell/session";
@@ -125,38 +128,6 @@ function modelNames(service: Service): string {
     return names.length ? names.join(", ") : "No served models configured";
   }
   return "No served models configured";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function normalizeModelConfigForPatch(value: unknown): unknown {
-  if (Array.isArray(value)) return value;
-  if (!isRecord(value)) return value;
-  return Object.entries(value).map(([modelName, modelConfig]) => {
-    if (isRecord(modelConfig)) {
-      const id = modelConfig.id || modelName;
-      const normalized: Record<string, unknown> = {
-        ...modelConfig,
-        id,
-        model_group: modelConfig.model_group || id,
-        upstream_model:
-          modelConfig.upstream_model ||
-          modelConfig.deployment ||
-          modelConfig.model ||
-          id,
-      };
-      delete normalized.public;
-      delete normalized.upstream;
-      return normalized;
-    }
-    return {
-      id: modelName,
-      model_group: modelName,
-      upstream_model: String(modelConfig || modelName),
-    };
-  });
 }
 
 function endpointFields(baseUrl: string): Record<string, unknown> {
@@ -398,7 +369,7 @@ function EditEngineDialog({
                 />
               </Field>
               <details>
-                <summary className="cursor-pointer text-sm font-medium">
+                <summary className="flex min-h-11 cursor-pointer items-center text-sm font-medium">
                   Advanced fields
                 </summary>
                 {service.editable === false ? (
@@ -443,7 +414,6 @@ function EnginesContents() {
   const [addOpen, setAddOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<Service | null>(null);
   const [removeTarget, setRemoveTarget] = useState<Service | null>(null);
-  const [testResult, setTestResult] = useState<string | null>(null);
 
   const {
     data: registryData,
@@ -475,11 +445,16 @@ function EnginesContents() {
   const selectedService = selectedServiceId
     ? services.find((service) => service.id === selectedServiceId)
     : undefined;
-  const visibleServices = showDisabled
-    ? services
-    : services.filter(
-        (service) => service.enabled || service.id === selectedServiceId,
-      );
+  const visibleServices = (
+    showDisabled
+      ? services
+      : services.filter(
+          (service) => service.enabled || service.id === selectedServiceId,
+        )
+  ).sort(
+    (a, b) =>
+      Number(b.id === selectedServiceId) - Number(a.id === selectedServiceId),
+  );
   const statusData = statusIsError ? undefined : rawStatusData;
   const backends = useMemo(
     () =>
@@ -534,43 +509,6 @@ function EnginesContents() {
       toast.error("Engine could not be removed", {
         description: errorMessage(err),
       }),
-  });
-
-  const test = useMutation({
-    mutationFn: (service: Service) =>
-      api.services.testConnection({
-        base_url: service.config.base_url,
-        host: service.config.host,
-        port: service.config.port,
-        base_path: service.config.base_path,
-        health_endpoint: service.config.health_endpoint,
-      }),
-    onSuccess: (probe) =>
-      setTestResult(
-        probe.ok
-          ? `Connected to ${probe.url} (${probe.status ?? "ok"}).`
-          : probe.error || "Connection failed.",
-      ),
-    onError: (err) => setTestResult(errorMessage(err)),
-  });
-
-  const detect = useMutation({
-    mutationFn: (service: Service) =>
-      api.services.detectModels({
-        base_url: service.config.base_url,
-        host: service.config.host,
-        port: service.config.port,
-        base_path: service.config.base_path,
-      }),
-    onSuccess: (detected) =>
-      setTestResult(
-        detected.ok
-          ? `Detected models: ${
-              detected.models.length ? detected.models.join(", ") : "none"
-            }`
-          : detected.error || "No models detected.",
-      ),
-    onError: (err) => setTestResult(errorMessage(err)),
   });
 
   if (registryIsPending) {
@@ -644,15 +582,6 @@ function EnginesContents() {
           Show disabled
         </label>
       </div>
-
-      {testResult && (
-        <IncidentBanner
-          tone="info"
-          title="Engine check complete"
-          detail={testResult}
-          onDismiss={() => setTestResult(null)}
-        />
-      )}
 
       {statusIsError && (
         <IncidentBanner
@@ -752,31 +681,21 @@ function EnginesContents() {
                       </p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <Switch
-                        id={`engine-enabled-${service.id}`}
-                        checked={service.enabled}
-                        aria-label={`Toggle ${service.name}`}
-                        disabled={toggle.isPending}
-                        onCheckedChange={(enabled) =>
-                          toggle.mutate({ service, enabled })
-                        }
-                      />
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        loading={test.isPending}
-                        onClick={() => test.mutate(service)}
+                      <label
+                        htmlFor={`engine-enabled-${service.id}`}
+                        className="flex min-h-11 min-w-11 items-center gap-2 px-1 text-sm"
                       >
-                        Test
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        loading={detect.isPending}
-                        onClick={() => detect.mutate(service)}
-                      >
-                        Detect
-                      </Button>
+                        <Switch
+                          id={`engine-enabled-${service.id}`}
+                          checked={service.enabled}
+                          aria-label={`Toggle ${service.name}`}
+                          disabled={toggle.isPending}
+                          onCheckedChange={(enabled) =>
+                            toggle.mutate({ service, enabled })
+                          }
+                        />
+                        Enabled
+                      </label>
                       <Button
                         size="sm"
                         variant="ghost"
@@ -818,12 +737,20 @@ function EnginesContents() {
                         Served models
                       </dt>
                       <dd className="text-vf-small text-vf-text">
-                        {modelNames(service)}
+                        <span className="break-words">
+                          {modelNames(service)}
+                        </span>
                       </dd>
                     </div>
                   </dl>
+                  <EngineChecks
+                    service={service}
+                    endpoint={serviceEndpoint(service)}
+                    onSaved={updateRegistry}
+                    onEdit={() => setEditTarget(service)}
+                  />
                   <details className="mt-4">
-                    <summary className="cursor-pointer text-sm font-medium">
+                    <summary className="flex min-h-11 cursor-pointer items-center text-sm font-medium">
                       Advanced
                     </summary>
                     <pre className="text-vf-micro rounded-vf-md mt-3 max-h-72 overflow-auto bg-[var(--vf-surface-2)] p-3 font-mono">
@@ -908,7 +835,9 @@ export default function Page() {
         </div>
       }
     >
-      <EnginesContents />
+      <CompactTouchTargets>
+        <EnginesContents />
+      </CompactTouchTargets>
     </Suspense>
   );
 }
