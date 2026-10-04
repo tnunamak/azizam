@@ -243,12 +243,14 @@ def _rows_for_capabilities(
             if not isinstance(raw, Mapping) or raw.get("alias") not in visible_alias_ids:
                 continue
             target = str(raw.get("resolves_to") or "")
-            caps = (_capabilities_for_operation(caps_by_model.get(target, ()), str(operation))
+            caps = (_capabilities_for_operation(caps_by_model.get(target, ()) or caps_by_model.get(f"role:{target}", ()), str(operation))
                     or _capabilities_for_operation(caps_by_model.get(str(raw["alias"]), ()), str(operation)))
             backend = str(raw.get("service") or _first_backend(caps) or "")
             for cap in caps:
                 if cap.backend == backend:
                     covered.add((cap.intent, backend, target))
+                    if cap.model == f"role:{target}":
+                        covered.add((cap.intent, backend, cap.model))
     visible_models = {}
     for model, caps in concrete_by_model.items():
         if caps and not all(any((cap.intent, cap.backend, target) in covered
@@ -336,7 +338,7 @@ def _alias_rows(
                 continue
             alias = str(raw["alias"])
             target = str(raw.get("resolves_to") or "")
-            target_caps = _capabilities_for_operation(caps_by_model.get(target, ()), str(operation)) if target else []
+            target_caps = _capabilities_for_operation(caps_by_model.get(target, ()) or caps_by_model.get(f"role:{target}", ()), str(operation)) if target else []
             alias_caps = _capabilities_for_operation(caps_by_model.get(alias, ()), str(operation))
             if target and not target_caps and target in denied_targets:
                 continue

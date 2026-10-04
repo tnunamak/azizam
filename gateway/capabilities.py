@@ -346,11 +346,11 @@ def resolve_capability_targets(capabilities: Iterable[Capability], service_recor
     from gateway.service_registry import is_remote_provider_config
 
     raw = list(capabilities)
-    alias_names = {(cap.intent, cap.model) for cap in raw if "alias" in cap.tags}
+    alias_names = {(cap.intent, cap.backend, cap.model) for cap in raw if "alias" in cap.tags}
     services = (service_records or {}).get("services", service_records or {})
     out = []
     for cap in raw:
-        if "alias" not in cap.tags and (cap.intent, cap.model) in alias_names:
+        if "alias" not in cap.tags and (cap.intent, cap.backend, cap.model) in alias_names:
             continue
         target = next((tag.removeprefix("resolves_to:") for tag in cap.tags if tag.startswith("resolves_to:")), None)
         if "alias" not in cap.tags or not target:
@@ -377,6 +377,7 @@ def resolve_capability_targets(capabilities: Iterable[Capability], service_recor
                           health=concrete.health, availability=concrete.availability,
                           exposure=concrete.exposure, trust_tier=concrete.trust_tier,
                           resource_tier=concrete.resource_tier, resources=concrete.resources,
+                          limits=cap.limits or concrete.limits,
                           input_modalities=concrete.input_modalities, output_modalities=concrete.output_modalities,
                           streaming=concrete.streaming, execution=concrete.execution,
                           resolved_workflow=concrete.workflow or concrete.resolved_workflow,
@@ -399,6 +400,14 @@ def caller_visible_capabilities(capabilities: Iterable[Capability]) -> list[Capa
         targets = [tag.removeprefix("resolves_to:") for tag in cap.tags if tag.startswith("resolves_to:")]
         targets.extend(target for target in (cap.resolved_workflow, cap.workflow) if target)
         alias_targets.update((cap.intent, cap.backend, target) for target in targets)
+        # Logical roles have an internal role: id, while aliases expose the
+        # unprefixed caller name. Prove the pair in this exact serving shape.
+        for target in targets:
+            role_target = f"role:{target}"
+            if any(candidate.intent == cap.intent and candidate.backend == cap.backend
+                   and candidate.model == role_target and "alias" not in candidate.tags
+                   for candidate in capabilities):
+                alias_targets.add((cap.intent, cap.backend, role_target))
     rows = {}
     rank = {"ready": 5, "idle": 4, "starting": 3, "busy": 2, "unavailable": 1, "unknown": 0}
     for cap in capabilities:

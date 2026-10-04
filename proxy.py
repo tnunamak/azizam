@@ -13365,8 +13365,8 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
 
     published_video_limits = video_limits(config.get("videos"))
     capabilities = [
-        replace(capability, limits=tuple(limits_for_workflow(published_video_limits, capability.workflow).items()))
-        if capability.intent == INTENT_VIDEO_GENERATE and limits_for_workflow(published_video_limits, capability.workflow)
+        replace(capability, limits=tuple(limits_for_workflow(published_video_limits, capability.workflow or capability.resolved_workflow).items()))
+        if capability.intent == INTENT_VIDEO_GENERATE and limits_for_workflow(published_video_limits, capability.workflow or capability.resolved_workflow)
         else capability
         for capability in resolve_capability_targets(
             canonicalize_workflow_capabilities(capabilities, _build_workflow_model_entries()), live_registry
@@ -13441,6 +13441,7 @@ async def _status_payload_with_availability() -> Mapping[str, Any]:
     payload = await status_endpoint.get_cached_status(config)
     try:
         service_records = ADMIN_STORE.get_service_registry()
+        execution_runtime = litellm_runtime_from_registry(service_records, env=os.environ)
         health_evidence = await _models_catalog_health_evidence(service_records, service_ids=(service_records.get("services") or {}).keys())
         return {
             **payload,
@@ -13448,6 +13449,8 @@ async def _status_payload_with_availability() -> Mapping[str, Any]:
                 registry=service_records,
                 runtime_config=config,
                 capabilities=_gateway_capabilities_for_auth_context(NO_AUTH_CONTEXT),
+                selected_execution_dependencies=[execution_runtime.service_id]
+                if execution_runtime.enabled and execution_runtime.service_id else [],
                 selected_defaults=[
                     selected[0]
                     for capability in ("audio.speech", "audio.transcriptions", "audio.translations", "embeddings")

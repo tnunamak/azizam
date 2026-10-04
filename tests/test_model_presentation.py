@@ -229,3 +229,50 @@ def test_ambiguous_workflow_mapping_does_not_invent_a_target():
                 "vivid_fish_intent": "audio.generate", "vivid_fish_backend": "test"}
                for workflow in ("audio.one", "audio.two")]
     assert canonicalize_workflow_capabilities([raw], entries) == [raw]
+
+
+def test_role_target_alias_has_one_caller_entry_without_hiding_other_shapes():
+    from gateway.capabilities import caller_visible_capabilities, resolve_capability_targets, summarize_capability
+    role = Capability(intent="chat.completions", backend="one", model="role:coder", title="Coding profile")
+    alias = Capability(intent="chat.completions", backend="gateway", model="coder", tags=("alias", "resolves_to:coder"))
+    other_backend = Capability(intent="chat.completions", backend="two", model="role:coder")
+    other_intent = Capability(intent="text.embeddings", backend="one", model="role:coder")
+    # Explicit alias backend proves which of the identically named roles serves it.
+    alias = Capability(intent=alias.intent, backend="one", model=alias.model, tags=alias.tags)
+    rows = caller_visible_capabilities(resolve_capability_targets([role, alias, other_backend, other_intent]))
+    assert len(rows) == 3
+    assert role not in rows
+    assert other_backend in rows and other_intent in rows
+    caller = summarize_capability(next(cap for cap in rows if cap.model == "coder"), "client")
+    assert caller["use_name"] == "coder"
+    assert caller["title"] == "Chat (Coding profile)"
+
+
+def test_unrelated_role_ids_and_unresolved_aliases_remain_visible():
+    from gateway.capabilities import caller_visible_capabilities
+    role = Capability(intent="chat.completions", backend="one", model="role:other")
+    alias = Capability(intent="chat.completions", backend="one", model="coder", tags=("alias", "resolves_to:coder"))
+    unresolved_role = Capability(intent="chat.completions", backend="two", model="role:coder")
+    assert len(caller_visible_capabilities([role, alias, unresolved_role])) == 3
+
+
+def test_catalog_logical_role_alias_dedupes_only_covered_chat_role():
+    catalog = build_models_catalog(
+        alias_views={"chat": {"stable": [{"alias": "coder", "resolves_to": "coder", "service": "one"}]}},
+        capabilities=[Capability(intent="chat.completions", backend="one", model="role:coder", title="Coding profile")],
+    )
+    assert catalog["models"] == []
+    assert catalog["aliases"][0]["id"] == "coder"
+    assert catalog["aliases"][0]["display_name"] == "Chat (Coding profile)"
+
+
+def test_alias_resolution_carries_target_limits_and_preserves_alias_override():
+    from gateway.capabilities import resolve_capability_targets
+    target = Capability(intent="video.generate", backend="one", workflow="canonical",
+                        limits=(("max_total_seconds", 120), ("segment_seconds", 10)))
+    alias = Capability(intent="video.generate", backend="one", model="video", tags=("alias", "resolves_to:canonical"))
+    resolved = next(cap for cap in resolve_capability_targets([alias, target]) if cap.model == "video")
+    assert dict(resolved.limits) == {"max_total_seconds": 120, "segment_seconds": 10}
+    override = Capability(intent=alias.intent, backend=alias.backend, model=alias.model,
+                          tags=alias.tags, limits=(("max_total_seconds", 60),))
+    assert next(cap for cap in resolve_capability_targets([override, target]) if cap.model == "video").limits == override.limits

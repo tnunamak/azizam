@@ -107,7 +107,17 @@ def test_remote_model_price_and_alias_share_observed_availability(ready, expecte
         assert row["cost"] == {"kind": "paid", "price": "$3 input / $15 output per 1M tokens"}
         assert row["availability"]["status"] == expected
         assert row["availability"]["evidence"]["observed_at_s"] == evidence["cloud-service"]["observed_at_s"]
-    assert len(round_trip["aliases"]) == len(round_trip["models"]) == 1
+    assert [row["id"] for row in round_trip["aliases"]] == ["fast"]
+    assert round_trip["models"] == []
+    alias = round_trip["aliases"][0]
+    assert alias["resolves_to"] == {"chat": "openrouter/visible"}
+    # The stable alias retains the exact target's observed price and availability
+    # while presenting only one caller entry. Compare the unaliased catalog too.
+    concrete = build_models_catalog(capabilities=capabilities, service_records=registry,
+                                   health_evidence=evidence)["models"][0]
+    assert concrete["id"] == "openrouter/visible"
+    assert alias["cost"] == concrete["cost"]
+    assert alias["availability"] == concrete["availability"]
 
 
 def test_chat_alias_does_not_hide_same_named_concrete_embedding_model():
@@ -121,6 +131,7 @@ def test_chat_alias_does_not_hide_same_named_concrete_embedding_model():
     ])
     catalog = build_models_catalog(capabilities=capabilities, alias_views=views)
     assert [row["id"] for row in catalog["aliases"]] == ["fast"]
-    assert {row["id"] for row in catalog["models"]} == {"chat-model", "fast"}
+    assert {row["id"] for row in catalog["models"]} == {"fast"}
+    assert catalog["aliases"][0]["resolves_to"] == {"chat": "chat-model"}
     embedding = next(row for row in catalog["models"] if row["id"] == "fast")
     assert [cap["intent"] for cap in embedding["capabilities"]] == ["text.embeddings"]

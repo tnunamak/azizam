@@ -78,14 +78,28 @@ class VideoLimitsDiscoveryTests(unittest.TestCase):
         with patch.object(proxy, "_capabilities_availability_evidence", new=AsyncMock(return_value={})):
             rows = self.client.get("/gateway/v1/capabilities").json()["capabilities"]
         by_workflow = {r["workflow"]: r for r in rows if r.get("intent") == "video.generate" and r.get("workflow")}
-        long = by_workflow["video-ltx-2.5-long"]["limits"]
+        # Config and manifest entries now share the canonical workflow id.
+        # Every public entry still publishes the limits that execution enforces.
+        long = by_workflow["video.generate.ltx-2.5-long"]["limits"]
         self.assertEqual(long["max_total_seconds"], 33)
         self.assertEqual(long["segment_seconds"], 8)
-        self.assertEqual(by_workflow["video-minimax-h3-long"]["limits"]["segment_seconds"], 10)
-        # The registry-derived rows (workflow = registry id) carry them too.
-        self.assertEqual(by_workflow["video.generate.ltx-2.5-long"]["limits"]["max_total_seconds"], 33)
+        self.assertEqual(by_workflow["video.generate.minimax-h3-long"]["limits"]["segment_seconds"], 10)
+        self.assertNotIn("video-ltx-2.5-long", by_workflow)
+        self.assertEqual(sum(row.get("workflow") == "video.generate.ltx-2.5-long" for row in rows), 1)
         # A model that cannot chain publishes no cap.
-        self.assertNotIn("max_total_seconds", by_workflow["video-wan-2.2-ti2v-5b-q8"]["limits"])
+        self.assertNotIn("max_total_seconds", by_workflow["video.generate.wan-2.2-ti2v-5b-q8"]["limits"])
+
+    def test_video_alias_carries_the_same_published_limits_as_its_target(self) -> None:
+        with patch.object(proxy, "_gateway_aliases_provider", return_value={
+            "videos": {"stable": [{"alias": "long-video", "resolves_to": "video-ltx-2.5-long"}]},
+        }), patch.object(proxy, "_capabilities_availability_evidence", new=AsyncMock(return_value={})):
+            response = self.client.get("/gateway/v1/capabilities")
+        self.assertEqual(response.status_code, 200, response.text)
+        matches = [row for row in response.json()["capabilities"]
+                   if row.get("intent") == "video.generate" and row.get("model") == "long-video"]
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0]["limits"]["max_total_seconds"], 33)
+        self.assertEqual(matches[0]["limits"]["segment_seconds"], 8)
 
     def test_workflow_catalog_carries_the_same_limits(self) -> None:
         catalog = {w["id"]: w for w in self.client.get("/openapi.json").json()[ROOT_EXTENSION]}
