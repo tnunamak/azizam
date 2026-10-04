@@ -318,3 +318,18 @@ def test_catalog_direct_public_role_pair_hides_only_fully_covered_internal_row()
     assert len(build_models_catalog(capabilities=[public, other_backend])["models"]) == 2
     denied = Capability(intent=public.intent, backend=public.backend, model=public.model, policy_available=False)
     assert [row["id"] for row in build_models_catalog(capabilities=[denied, internal])["models"]] == ["role:coder-q5"]
+
+
+def test_technical_summary_dedupes_exact_entries_and_keeps_alias_target_details():
+    from gateway.capabilities import caller_visible_capabilities, summarize_capabilities
+    alias = Capability(intent="chat.completions", backend="one", model="fast", tags=("alias", "resolves_to:actual"))
+    unknown = Capability(intent="chat.completions", backend="one", model="actual")
+    ready = Capability(intent="chat.completions", backend="two", model="actual",
+                       availability={"status": "ready", "available": True})
+    rows = summarize_capabilities([alias, unknown, ready], "client")["capabilities"]
+    assert {row["model"] for row in rows} == {"fast", "actual"}
+    assert len(rows) == 2
+    assert next(row for row in rows if row["model"] == "actual")["availability"]["status"] == "ready"
+    # Product suppression stays backend-scoped even though exact identity
+    # preference chooses the best observed target from the remaining entries.
+    assert {cap.model for cap in caller_visible_capabilities([alias, unknown, ready])} == {"fast", "actual"}

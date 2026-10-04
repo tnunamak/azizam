@@ -40,7 +40,14 @@ test("remove an app through Apps & keys and invalidate its key", async ({
   await expect(card).toBeVisible();
   await card.getByRole("button", { name: `Actions for ${name}` }).click();
   await page.getByRole("menuitem", { name: "Remove app" }).click();
+  const deletedResponse = page.waitForResponse(
+    (response) =>
+      /\/me\/api\/apps\/[^/]+$/.test(new URL(response.url()).pathname) &&
+      response.request().method() === "DELETE",
+  );
   await confirmation.getByRole("button", { name: "Remove app" }).click();
+  expect((await deletedResponse).ok()).toBe(true);
+  await expect(confirmation).toHaveCount(0);
   await expect(page.getByRole("heading", { name, exact: true })).toHaveCount(0);
   await page.reload();
   await expect(page.getByRole("heading", { name, exact: true })).toHaveCount(0);

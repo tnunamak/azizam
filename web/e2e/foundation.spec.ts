@@ -59,6 +59,18 @@ for (const theme of ["light", "dark"] as const) {
           ).toBeVisible();
           await expect(page.getByLabel("Loading audit events")).toHaveCount(0);
         }
+        if (name === "people") {
+          // The seeded plans enable this action after loading. Inspect its
+          // settled color rather than the disabled-to-enabled transition.
+          const invite = page.getByRole("button", {
+            name: "Invite someone",
+            exact: true,
+          }).first();
+          await expect(invite).toBeEnabled();
+          await expect.poll(() =>
+            invite.evaluate((element) => getComputedStyle(element).opacity),
+          ).toBe("1");
+        }
         if (name !== "design") {
           // Design examples intentionally show error states; axe still checks them.
           await expect(

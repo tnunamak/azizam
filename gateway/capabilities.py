@@ -283,6 +283,8 @@ def summarize_capabilities(
     """Audience-scoped catalog payload with deterministic ordering."""
     _check_audience(audience)
     ordered = sorted(capabilities, key=lambda c: c.sort_key)
+    if audience == "client":
+        ordered = _deduplicate_visible_entries(ordered)
     return {
         "schema_version": 1,
         "audience": audience,
@@ -344,11 +346,11 @@ def resolve_capability_targets(capabilities: Iterable[Capability], service_recor
     from gateway.service_registry import is_remote_provider_config
 
     raw = list(capabilities)
-    alias_names = {(cap.intent, cap.backend, cap.model) for cap in raw if "alias" in cap.tags}
+    alias_names = {(cap.intent, cap.model) for cap in raw if "alias" in cap.tags}
     services = (service_records or {}).get("services", service_records or {})
     out = []
     for cap in raw:
-        if "alias" not in cap.tags and (cap.intent, cap.backend, cap.model) in alias_names:
+        if "alias" not in cap.tags and (cap.intent, cap.model) in alias_names:
             continue
         target = next((tag.removeprefix("resolves_to:") for tag in cap.tags if tag.startswith("resolves_to:")), None)
         if "alias" not in cap.tags or not target:
@@ -411,8 +413,7 @@ def caller_visible_capabilities(capabilities: Iterable[Capability]) -> list[Capa
     # actually permitted on the same serving backend and intent.
     public_roles = {(cap.intent, cap.backend, cap.model) for cap in capabilities
                     if cap.policy_available and "alias" not in cap.tags and cap.model and not cap.model.startswith("role:")}
-    rows = {}
-    rank = {"ready": 5, "idle": 4, "starting": 3, "busy": 2, "unavailable": 1, "unknown": 0}
+    visible = []
     for cap in capabilities:
         if (cap.model and cap.model.startswith("role:")
                 and (cap.intent, cap.backend, cap.model.removeprefix("role:")) in public_roles):
@@ -422,6 +423,19 @@ def caller_visible_capabilities(capabilities: Iterable[Capability]) -> list[Capa
             for target in (cap.model, cap.workflow) if target
         ):
             continue
+        visible.append(cap)
+    return _deduplicate_visible_entries(visible)
+
+
+def _deduplicate_visible_entries(capabilities: Iterable[Capability]) -> list[Capability]:
+    """Collapse exact caller identities; aliases own their name across backends.
+
+    Technical discovery retains distinct alias and target identities. Product
+    surfaces suppress covered targets before applying this shared preference.
+    """
+    rows = {}
+    rank = {"ready": 5, "idle": 4, "starting": 3, "busy": 2, "unavailable": 1, "unknown": 0}
+    for cap in capabilities:
         key = (cap.intent, cap.model, cap.workflow)
         if cap.model is None and cap.workflow is None:
             key += (cap.input_modalities, cap.output_modalities, cap.execution)
