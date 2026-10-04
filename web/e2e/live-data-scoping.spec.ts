@@ -69,13 +69,9 @@ test("owner sees keyless LAN and service app media and usage", async ({
   await expect(page.getByRole("heading", { name: "Library" })).toBeVisible();
   await expect(page.getByText("No media yet")).toHaveCount(0);
   await page.getByRole("combobox", { name: "Source", exact: true }).click();
-  await page
-    .getByRole("option", { name: "Daisy", exact: true })
-    .click();
+  await page.getByRole("option", { name: "Daisy", exact: true }).click();
   await expect(page.locator("article")).toHaveCount(1);
-  await expect(
-    page.locator("article").getByText("Daisy"),
-  ).toBeVisible();
+  await expect(page.locator("article").getByText("Daisy")).toBeVisible();
   await page.getByRole("combobox", { name: "Owner", exact: true }).click();
   await page.getByRole("option", { name: "Mine", exact: true }).click();
   await expect(page.getByText("No media yet")).toBeVisible();

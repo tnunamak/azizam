@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
+from gateway import media_jobs, receipt_store  # noqa: E402
 
 
 @contextmanager
@@ -88,6 +89,14 @@ class _FakeSTTAsyncClient:
 
 class OpenAICompatValidationTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.state = Path(self.tmp.name)
+        self.receipts_db = self.state / "receipts.db"
+        self.media_jobs_db = self.state / "media_jobs.db"
+        self.cache_dir = self.state / "cache"
+        receipt_store.init_db(self.receipts_db)
+        media_jobs.init_db(self.media_jobs_db)
         self.client = TestClient(proxy.app)
         _FakeTTSAsyncClient.requests = []
         _FakeSTTAsyncClient.requests = []
@@ -97,6 +106,10 @@ class OpenAICompatValidationTests(unittest.TestCase):
             patch.object(proxy, "_current_loaded_model_policy_decision", return_value=None),
             # tts-1 resolves to an on-demand engine; never start a real unit from a test.
             patch.object(proxy, "_ensure_speech_service_ready", AsyncMock(return_value=None)),
+            patch.object(receipt_store, "DB_PATH", self.receipts_db),
+            patch.object(media_jobs, "DB_PATH", self.media_jobs_db),
+            patch.object(proxy, "IMAGE_CACHE_DIR", self.cache_dir),
+            patch.object(proxy, "_image_url_signing_secret", b"test-secret"),
         ]
         for patcher in self.patches:
             patcher.start()

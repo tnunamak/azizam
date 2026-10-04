@@ -249,6 +249,9 @@ test("library filters dates and everyone, pages forward and preserves prior item
   await page.getByRole("option", { name: "Last 7 days" }).click();
   await expect.poll(() => requests.at(-1) ?? "").toContain("start=");
   await page.getByLabel("Owner", { exact: true }).click();
+  await page.getByRole("option", { name: "Mine", exact: true }).click();
+  await expect.poll(() => requests.at(-1) ?? "").toContain("scope=me");
+  await page.getByLabel("Owner", { exact: true }).click();
   await page.getByRole("option", { name: "Everyone’s" }).click();
   await expect.poll(() => requests.at(-1) ?? "").toContain("scope=everyone");
   await page
@@ -317,10 +320,17 @@ test("library audio plays independently and video uses its recorded poster", asy
     page.getByRole("img", { name: mediaFixture.assets[1].prompt }),
   ).toHaveAttribute("src", posterUrl);
   await expect(page.locator("article video")).toHaveCount(0);
+  await expect
+    .poll(() => posterRequests.at(-1) ?? "")
+    .toContain("scope=everyone");
+  await page.getByLabel("Owner", { exact: true }).click();
+  await page.getByRole("option", { name: "Mine", exact: true }).click();
+  await expect.poll(() => posterRequests.at(-1) ?? "").toContain("scope=me");
   await page.getByLabel("Owner", { exact: true }).click();
   await page.getByRole("option", { name: "Everyone’s" }).click();
   await expect
     .poll(() => posterRequests.at(-1) ?? "")
     .toContain("scope=everyone");
+  await expect(page.getByRole("listbox")).toHaveCount(0);
   await auditPage(page);
 });
