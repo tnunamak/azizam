@@ -2351,37 +2351,39 @@ def auth_error(message: str, status_code: int = 401) -> Response:
 def authenticate_request(request: Request, request_path: str) -> AuthContext | Response:
     """Authenticate a client-facing proxy key when auth is configured.
 
-    Decision order: public path -> LAN bypass -> path-prefix token ->
-    header/query API key -> 401. All bypass mechanisms are opt-in and OFF by
+    Decision order: public path -> explicit API key -> LAN bypass ->
+    path-prefix token -> 401. All bypass mechanisms are opt-in and OFF by
     default, so with stock config this is identical to plain Bearer auth.
     """
     if not AUTH_ENABLED or is_public_path(request_path):
         return NO_AUTH_CONTEXT
 
-    # 1. Trusted LAN/localhost client (opt-in via auth.lan_bypass_*).
+    # 1. Header Bearer / x-api-key, then optional ?api_key= query fallback.
+    # If a caller sends a credential, validate it even on LAN so member
+    # identity, ownership, and revocation are not hidden by anonymous bypass.
+    api_key = _resolve_client_api_key(request)
+    if api_key:
+        key_hash = hash_api_key(api_key)
+        identity = runtime_identity_for_app_credential_hash(
+            key_hash,
+            inherited_profile_id_for_app=_inherited_profile_id_for_app,
+            path=ADMIN_STORE.path,
+        )
+        if not identity:
+            return auth_error("Invalid API key.")
+
+        return AuthContext(identity=identity)
+
+    # 2. Trusted LAN/localhost client (opt-in via auth.lan_bypass_*).
     if _client_is_lan(request):
         return AuthContext(identity=_identity_for("lan-bypass", "lan"))
 
-    # 2. Per-device path-prefix token (opt-in via auth.path_tokens).
+    # 3. Per-device path-prefix token (opt-in via auth.path_tokens).
     token = _path_token_from_request(request_path)
     if token is not None:
         return AuthContext(identity=_identity_for(str(PATH_TOKENS[token]), "path-token"))
 
-    # 3. Header Bearer / x-api-key, then optional ?api_key= query fallback.
-    api_key = _resolve_client_api_key(request)
-    if not api_key:
-        return auth_error("Missing API key.")
-
-    key_hash = hash_api_key(api_key)
-    identity = runtime_identity_for_app_credential_hash(
-        key_hash,
-        inherited_profile_id_for_app=_inherited_profile_id_for_app,
-        path=ADMIN_STORE.path,
-    )
-    if not identity:
-        return auth_error("Invalid API key.")
-
-    return AuthContext(identity=identity)
+    return auth_error("Missing API key.")
 
 
 def _looks_like_litellm_virtual_key(api_key: str) -> bool:
