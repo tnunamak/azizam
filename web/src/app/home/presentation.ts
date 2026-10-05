@@ -129,7 +129,7 @@ export function capabilityTiles(
             model: alias.id,
             available: alias.available,
             status: alias.status,
-            reason: alias.reason,
+            reason_code: alias.reason_code,
             availability: capabilities.find(
               (row) => row.model === alias.id && row.capability === capability,
             )?.availability,

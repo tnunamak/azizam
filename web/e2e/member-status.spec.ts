@@ -82,10 +82,14 @@ for (const theme of ["light", "dark"] as const) {
                   scope: "member",
                   status: {
                     state: "unavailable",
-                    reason:
+                    reason_code:
+                      state === "empty" ? "no_capabilities" : "unavailable",
+                    affected_capability_ids:
+                      state === "empty" ? [] : ["image"],
+                    counts:
                       state === "empty"
-                        ? "No service has been measured as ready yet."
-                        : "Images are unavailable right now.",
+                        ? { total: 0, available: 0, affected: 0 }
+                        : { total: 1, available: 0, affected: 1 },
                   },
                   capabilities:
                     state === "empty"
@@ -104,7 +108,7 @@ for (const theme of ["light", "dark"] as const) {
                             workflow: null,
                             available: false,
                             status: "unavailable",
-                            reason: "The image model is unavailable right now.",
+                            reason_code: "unavailable",
                             measured: true,
                             observed_at_s: 1790870400,
                           },
@@ -132,13 +136,17 @@ for (const theme of ["light", "dark"] as const) {
           ).toBeVisible();
         else if (state === "empty")
           await expect(
-            page.getByText("No models are available to your account yet", {
+            page.getByText("No capabilities are available to your account yet.", {
               exact: true,
             }),
           ).toBeVisible();
         else
           await expect(
             page.getByRole("heading", { name: "Images" }),
+          ).toBeVisible();
+        if (state === "seeded")
+          await expect(
+            page.getByText("Images are unavailable.", { exact: true }),
           ).toBeVisible();
         await expect(page.locator('[aria-busy="true"]:visible')).toHaveCount(0);
         await page.evaluate(() => document.fonts.ready);
@@ -157,7 +165,7 @@ for (const theme of ["light", "dark"] as const) {
         ).toHaveCount(0);
         await page.screenshot({
           path: `test-results/screens/member-status-${state}-${theme}-${width}.png`,
-          fullPage: true,
+          fullPage: width !== 390,
         });
         if (state === "error") {
           failed = false;

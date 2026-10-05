@@ -172,7 +172,7 @@ def _workflow_row(
             "available": any(cap.available for cap in capability_rows),
             "status": availability["status"],
             "measured": availability["measured"],
-            "reason": availability["reason"],
+            "reason_code": availability["reason_code"],
         },
         "availability": availability,
         "typical_seconds": summary.get("typical_seconds"),
@@ -607,13 +607,13 @@ def _capability_from_intent(intent: str) -> str:
     return "workflow"
 
 
-def _availability_reason(capabilities: list[Capability]) -> str:
+def _availability_reason_code(capabilities: list[Capability]) -> str:
     if not capabilities:
-        return "Not available to this access plan."
+        return "not_available"
     if any(cap.available for cap in capabilities):
-        return "Allowed by your access plan; live backend state is not measured here."
+        return "configured"
     caveats = [caveat for cap in capabilities for caveat in cap.caveats]
-    return caveats[0] if caveats else "Unavailable under the current policy view."
+    return "policy_denied" if caveats else "unavailable"
 
 
 def _availability(capabilities: list[Capability]) -> dict[str, Any]:
@@ -621,7 +621,15 @@ def _availability(capabilities: list[Capability]) -> dict[str, Any]:
     if projected:
         rank = {"ready": 5, "idle": 4, "starting": 3, "busy": 2, "unknown": 1, "unavailable": 0}
         selected = max(projected, key=lambda cap: rank.get(str(cap.availability.get("status")), 0))
-        return dict(selected.availability)
+        result = dict(selected.availability)
+        status = str(result.get("status") or "unknown")
+        evidence = result.get("evidence") or {}
+        result.pop("reason", None)
+        result["reason_code"] = {
+            ("unavailable", "disabled"): "unavailable_disabled",
+            ("unavailable", "unconfigured"): "unavailable_unconfigured",
+        }.get((status, evidence.get("kind")), status)
+        return result
     measured_caps = [cap for cap in capabilities if cap.health != "unknown" or cap.lifecycle != "unknown"]
     ready_caps = [
         cap for cap in measured_caps
@@ -635,7 +643,7 @@ def _availability(capabilities: list[Capability]) -> dict[str, Any]:
             "status": "ready",
             "available": True,
             "measured": True,
-            "reason": "Backend is measured available for this access plan.",
+            "reason_code": "ready",
         }
     starting_caps = [
         cap for cap in measured_caps
@@ -646,7 +654,7 @@ def _availability(capabilities: list[Capability]) -> dict[str, Any]:
             "status": "starting",
             "available": True,
             "measured": True,
-            "reason": "Backend is starting for this access plan.",
+            "reason_code": "starting",
         }
     if capabilities:
         unknown_eligible = [
@@ -658,7 +666,7 @@ def _availability(capabilities: list[Capability]) -> dict[str, Any]:
                 "status": "configured",
                 "available": True,
                 "measured": False,
-                "reason": "Allowed by your access plan; live backend state is not measured yet.",
+                "reason_code": "configured",
             }
         measured_available = [cap for cap in measured_caps if cap.available]
         if measured_available:
@@ -666,20 +674,20 @@ def _availability(capabilities: list[Capability]) -> dict[str, Any]:
                 "status": "configured",
                 "available": True,
                 "measured": True,
-                "reason": "Backend is measured but not ready.",
+                "reason_code": "configured",
             }
         if measured_caps:
             return {
                 "status": "unavailable",
                 "available": False,
                 "measured": True,
-                "reason": _availability_reason(capabilities),
+                "reason_code": _availability_reason_code(capabilities),
             }
     return {
         "status": "not_available",
         "available": False,
         "measured": False,
-        "reason": _availability_reason(capabilities),
+        "reason_code": _availability_reason_code(capabilities),
     }
 
 

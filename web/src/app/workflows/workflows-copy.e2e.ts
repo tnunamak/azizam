@@ -2,7 +2,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 
-const REVIEW_DIR = "/home/tnunamak/.tmp/gw-product/ui-review/gw-copy-c";
+const REVIEW_DIR = "/home/tnunamak/.tmp/gw-product/ui-review/gw-r2a";
 mkdirSync(REVIEW_DIR, { recursive: true });
 
 const workflow = {
@@ -29,7 +29,7 @@ const workflow = {
   ],
   outputs: [{ name: "image", media_type: "image/png" }],
   engine_binding: "image-engine",
-  availability: { status: "ready", reason: "Ready to run." },
+  availability: { status: "ready", reason_code: "ready" },
   typical_seconds: null,
   aliases: ["image/upscale"],
   examples: {
@@ -102,10 +102,11 @@ for (const mode of ["light", "dark"] as const) {
       await expect(
         page.getByText("Choose by purpose and inputs."),
       ).toBeVisible();
-      await page.getByRole("button", { name: "Has image" }).click();
+      await page.getByRole("button", { name: "Images", exact: true }).click();
       await expect(page.getByText("Upscale image")).toBeVisible();
-      await expect(page.getByText("Required")).toBeVisible();
-      await expect(page.getByText("Accepts")).toBeVisible();
+      await expect(page.getByText("Needs an image")).toBeVisible();
+      await expect(page.getByText("Required", { exact: true })).toHaveCount(0);
+      await expect(page.getByText("Accepts", { exact: true })).toHaveCount(0);
       await expect(page.getByText("Not measured yet")).toHaveCount(0);
       await page.getByRole("button", { name: "Details" }).click();
       const dialog = page.getByRole("dialog", { name: "Upscale image" });

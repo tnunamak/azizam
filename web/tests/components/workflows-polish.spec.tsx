@@ -90,17 +90,18 @@ function renderWorkflows() {
   );
 }
 
-it("keeps browsing cards compact while showing typed input kinds and one accepted range", async () => {
+it("keeps browsing cards compact and leaves manifest facts in the detail view", async () => {
   renderWorkflows();
   const card = within(
     await screen.findByRole("article", { name: "Product render" }),
   );
 
-  expect(card.getByText("Input")).toBeVisible();
-  expect(card.getByText("Text, Number")).toBeVisible();
-  expect(card.getByText("Output")).toBeVisible();
-  expect(card.getByText("image/png")).toBeVisible();
-  expect(card.getByText("seed: 0 to 65535")).toBeVisible();
+  expect(card.getByRole("img", { name: "Text input" })).toBeVisible();
+  expect(card.getByRole("img", { name: "Number input" })).toBeVisible();
+  expect(card.getByText(/Create a clean product render/)).toBeVisible();
+  expect(card.queryByText("Output")).toBeNull();
+  expect(card.queryByText("image/png")).toBeNull();
+  expect(card.queryByText("seed: 0 to 65535")).toBeNull();
   expect(card.queryByText(/full manifest note/)).toBeNull();
   expect(card.queryByText("studio, flatlay")).toBeNull();
 });
@@ -139,10 +140,8 @@ it("renders mobile input summaries beside the desktop table", async () => {
   renderWorkflows();
   await user.click(await screen.findByRole("button", { name: "Details" }));
   const sheet = within(screen.getByRole("dialog", { name: "Product render" }));
-  const mobileSummaries = sheet.getByRole("list", {
-    name: "Typed input summaries",
-  });
-  const tableScrollport = sheet.getByLabelText("Scrollable typed controls");
+  const mobileSummaries = sheet.getByRole("list", { name: "Input summaries" });
+  const tableScrollport = sheet.getByLabelText("Scrollable inputs");
 
   expect(mobileSummaries).toHaveClass("sm:hidden");
   expect(tableScrollport).toHaveClass("sm:block");

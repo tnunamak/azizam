@@ -70,13 +70,8 @@ async function routeCatalogs(page: Page, workflows = workflowCatalog) {
 async function prepareWorkflowTry(page: Page, workflows = workflowCatalog) {
   await routeCatalogs(page, workflows);
   await page.goto("/ui/try/?workflow=image.generate.poster");
-  await expect(
-    page.getByText(
-      workflows.workflows.length
-        ? "Run creates a Try key for your access plan."
-        : "No models are listed for your key",
-    ),
-  ).toBeVisible();
+  if (!workflows.workflows.length)
+    await expect(page.getByText("No models are listed for your key")).toBeVisible();
   await expect(
     page.getByRole("tab", { name: "Workflow", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
@@ -141,7 +136,7 @@ for (const theme of ["light", "dark"] as const) {
       ).toBeVisible();
       await expect(
         page.getByRole("combobox", { name: "Model", exact: true }),
-      ).toContainText("Not in the catalog");
+      ).toContainText("Unverified model");
       await checkState(page, `workflow-try-empty-${theme}-${width}.png`);
     });
   }

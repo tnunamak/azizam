@@ -3,11 +3,6 @@ import AxeBuilder from "@axe-core/playwright";
 
 async function prepareTryKey(page: import("@playwright/test").Page) {
   await page.goto("/ui/try/");
-  await expect(
-    page.getByText("Run creates a Try key for your access plan.", {
-      exact: true,
-    }),
-  ).toBeVisible();
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Using a Try key")).toBeVisible();
 }
@@ -25,11 +20,6 @@ test("try creates a session key, runs public chat, and links a receipt", async (
     response.url().includes("/me/api/models/catalog"),
   );
   await page.goto("/ui/try/");
-  await expect(
-    page.getByText("Run creates a Try key for your access plan.", {
-      exact: true,
-    }),
-  ).toBeVisible();
   const chatResponse = page.waitForResponse(
     (response) =>
       response.url().includes("/openai/v1/chat/completions") &&
@@ -62,11 +52,6 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   page,
 }) => {
   await page.goto("/ui/try/");
-  await expect(
-    page.getByText("Run creates a Try key for your access plan.", {
-      exact: true,
-    }),
-  ).toBeVisible();
   await prepareTryKey(page);
   await waitForCatalog(page);
 
@@ -239,7 +224,7 @@ test("try catalog maps exact capability intents to the right tabs", async ({
   );
   await prepareTryKey(page);
   await expect(page.getByRole("combobox").first()).toContainText(
-    "Remote · OpenRouter · Paid · $0.01/request",
+    "chat model · Paid · $0.01/request",
   );
   await expect(page.getByRole("combobox").first()).not.toContainText(
     "completion-only",
@@ -433,11 +418,6 @@ for (const theme of ["light", "dark"] as const) {
       await expect(
         page.getByRole("heading", { name: "Try", exact: true }),
       ).toBeVisible();
-      await expect(
-        page.getByText("Run creates a Try key for your access plan.", {
-          exact: true,
-        }),
-      ).toBeVisible();
       await checkState(page, `try-empty-${theme}-${width}.png`);
 
       await prepareTryKey(page);
@@ -463,6 +443,9 @@ for (const theme of ["light", "dark"] as const) {
 }
 
 async function checkState(page: import("@playwright/test").Page, file: string) {
+  if (file.includes("try-result-") && page.viewportSize()?.width === 390) {
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  }
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,
@@ -470,7 +453,7 @@ async function checkState(page: import("@playwright/test").Page, file: string) {
   ).toBe(true);
   await page.screenshot({
     path: `test-results/screens/${file}`,
-    fullPage: true,
+    fullPage: page.viewportSize()?.width !== 390,
   });
   const violations = (await new AxeBuilder({ page }).analyze()).violations
     .filter((violation) =>

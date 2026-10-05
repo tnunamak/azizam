@@ -13,8 +13,7 @@ export function costFrom(
     }
   }
   if (locality === "Local") return "Local · no provider charge";
-  if (typeof payload !== "object" || payload === null)
-    return "Not measured yet";
+  if (typeof payload !== "object" || payload === null) return undefined;
   const object = payload as Record<string, unknown>;
   const cost = object.cost ?? object.remote_cost ?? object.measured_cost;
   if (typeof cost === "object" && cost !== null) {
@@ -24,5 +23,5 @@ export function costFrom(
   }
   if (typeof cost === "number") return cost === 0 ? "$0.00" : `$${cost}`;
   if (typeof cost === "string" && cost.trim()) return cost;
-  return "Not measured yet";
+  return undefined;
 }

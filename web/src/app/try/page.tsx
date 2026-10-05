@@ -79,6 +79,7 @@ type WorkflowExampleFile = {
 type CatalogOption = {
   id: string;
   label: string;
+  recommended?: boolean;
   capability: TryTab;
   price: string;
   locality: string;
@@ -112,7 +113,7 @@ type Result = {
   title: string;
   body: string;
   elapsedMs: number;
-  cost: string;
+  cost?: string;
   receiptId: string | null;
   request: RequestInfo;
   imageUrl?: string;
@@ -155,7 +156,7 @@ const TAB_ITEMS: Array<{
     value: "chat",
     label: "Chat",
     icon: MessageSquare,
-    help: "Send one message and read one answer.",
+    help: "",
   },
   {
     value: "image",
@@ -500,6 +501,7 @@ function groupCatalog(payload: unknown) {
         id,
         label:
           stringValue(record.name) ?? stringValue(record.display_name) ?? id,
+        recommended: record.recommended === true,
         capability,
         price: costLabel(record.cost),
         locality: localityLabel(record),
@@ -508,6 +510,27 @@ function groupCatalog(payload: unknown) {
         grouped[capability] = [...(grouped[capability] ?? []), option];
       }
     }
+  }
+  for (const capability of Object.keys(grouped) as TryTab[]) {
+    const seenLabels = new Set<string>();
+    grouped[capability] = [...(grouped[capability] ?? [])]
+      .sort((a, b) => {
+        const rank = (option: CatalogOption) =>
+          option.recommended
+            ? 0
+            : option.locality === "Local"
+              ? 1
+              : option.price.startsWith("Paid")
+                ? 2
+                : 3;
+        return rank(a) - rank(b);
+      })
+      .filter((option) => {
+        const label = option.label.trim().toLocaleLowerCase();
+        if (seenLabels.has(label)) return false;
+        seenLabels.add(label);
+        return true;
+      });
   }
   return grouped;
 }
@@ -686,7 +709,7 @@ function capabilitiesFor(record: Record<string, unknown>): TryTab[] {
 function costLabel(value: unknown) {
   if (typeof value !== "object" || value === null) return "";
   const cost = value as { kind?: unknown; price?: unknown };
-  if (cost.kind === "free") return "No provider charge";
+  if (cost.kind === "free") return "";
   if (cost.kind === "paid") {
     return cost.price == null ? "Paid" : `Paid · ${String(cost.price)}`;
   }
@@ -1304,7 +1327,7 @@ export default function TryPage() {
           media: workflowOutputMedia(payload),
           technical:
             payload instanceof Blob
-              ? `${payload.type || "Unknown media type"} · ${payload.size} bytes`
+              ? `${payload.type ? `${payload.type} · ` : ""}${payload.size} bytes`
               : JSON.stringify(payload, null, 2),
           receiptId,
         },
@@ -1343,7 +1366,7 @@ export default function TryPage() {
     tab: TryTab,
     payload: unknown,
     elapsedMs: number,
-    cost: string,
+    cost: string | undefined,
     receiptId: string | null,
     request: RequestInfo,
   ): Result {
@@ -1423,7 +1446,7 @@ export default function TryPage() {
         job,
         technical:
           payload instanceof Blob
-            ? `${payload.type || "Unknown media type"} · ${payload.size} bytes`
+            ? `${payload.type ? `${payload.type} · ` : ""}${payload.size} bytes`
             : JSON.stringify(payload, null, 2),
         elapsedMs,
         cost,
@@ -1445,7 +1468,7 @@ export default function TryPage() {
 
   return (
     <div className="space-y-8">
-      <PageHeader title="Try" answer="Run a request and see what happened." />
+      <PageHeader title="Try" />
 
       <section className="text-muted-foreground text-sm">
         {keyError && (
@@ -1458,7 +1481,6 @@ export default function TryPage() {
         )}
         {!key ? (
           <div className="flex flex-wrap items-center gap-3">
-            <p>Run creates a Try key for your access plan.</p>
             {keyBusy && (
               <span
                 aria-busy="true"
@@ -1521,9 +1543,11 @@ export default function TryPage() {
                       <tab.icon aria-hidden="true" className="size-4" />
                       {tab.label}
                     </h2>
-                    <p className="text-muted-foreground mt-1 text-sm">
-                      {tab.help}
-                    </p>
+                    {tab.help && (
+                      <p className="text-muted-foreground mt-1 text-sm">
+                        {tab.help}
+                      </p>
+                    )}
                   </div>
                   <label className="block space-y-2">
                     <span className="text-sm font-medium">Model name</span>
@@ -1538,11 +1562,6 @@ export default function TryPage() {
                         }))
                       }
                     />
-                    <span className="text-muted-foreground text-xs">
-                      {tab.value === "workflow"
-                        ? "Workflow choices come from your access plan."
-                        : "Use this exact name in your app. Your access plan still applies."}
-                    </span>
                   </label>
                   {tab.value === activeTab && (
                     <CatalogNotice state={catalogState} />
@@ -1745,7 +1764,6 @@ export default function TryPage() {
                     <EmptyState
                       icon={tab.icon}
                       title={`Run ${tab.label.toLowerCase()}`}
-                      description="The last result for this tab will appear here with timing, cost and code."
                     />
                   )}
                 </section>
@@ -1769,6 +1787,10 @@ function ResultView({
   checkingJob: boolean;
   jobError: string | null;
 }) {
+  const probabilityRows = result.probabilities?.filter(
+    (row): row is { option: string; probability: number } =>
+      row.probability !== null,
+  );
   return (
     <div className="min-w-0 space-y-5">
       <div className="space-y-2">
@@ -1809,7 +1831,7 @@ function ResultView({
             <Fact label="Mean" value={result.vector.mean.toFixed(3)} />
           </dl>
         )}
-        {result.probabilities && (
+        {probabilityRows?.length ? (
           <div className="overflow-x-auto rounded-lg border">
             <table className="w-full text-sm">
               <thead>
@@ -1819,20 +1841,18 @@ function ResultView({
                 </tr>
               </thead>
               <tbody>
-                {result.probabilities.map((row) => (
+                {probabilityRows.map((row) => (
                   <tr key={row.option} className="border-b last:border-0">
                     <td className="p-3">{row.option}</td>
                     <td className="p-3">
-                      {row.probability === null
-                        ? "Not measured yet"
-                        : `${Math.round(row.probability * 100)}%`}
+                      {`${Math.round(row.probability * 100)}%`}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        )}
+        ) : null}
         {result.media?.map((item, index) => (
           <div key={`${item.url}-${index}`} className="space-y-2">
             {item.kind === "image" && (
@@ -1920,7 +1940,7 @@ function ResultView({
           label={result.job ? "Request time" : "Time"}
           value={`${result.elapsedMs} ms`}
         />
-        {result.cost !== "Not measured yet" && (
+        {result.cost && (
           <Fact label="Cost" value={result.cost} />
         )}
         <Fact
@@ -1934,24 +1954,17 @@ function ResultView({
           }
         />
       </dl>
-      {(result.technical || result.cost === "Not measured yet") && (
+      {result.technical && (
         <details className="border-t pt-3">
           <summary className="min-h-11 cursor-pointer text-sm font-medium">
             Technical details
           </summary>
-          {result.cost === "Not measured yet" && (
-            <p className="text-muted-foreground mb-3 text-sm">
-              Cost: Not measured yet
-            </p>
-          )}
-          {result.technical && (
-            <pre
-              tabIndex={0}
-              className="bg-muted max-h-80 overflow-auto rounded-lg p-3 font-mono text-xs break-all whitespace-pre-wrap"
-            >
-              {result.technical}
-            </pre>
-          )}
+          <pre
+            tabIndex={0}
+            className="bg-muted max-h-80 overflow-auto rounded-lg p-3 font-mono text-xs break-all whitespace-pre-wrap"
+          >
+            {result.technical}
+          </pre>
         </details>
       )}
       <details className="space-y-2 border-t pt-3">
@@ -2125,7 +2138,7 @@ function ModelSelect({
       <SelectContent>
         {values.map((option) => (
           <SelectItem key={option.id} value={option.id}>
-            {[option.label, option.locality, option.price]
+            {[option.label, option.price.startsWith("Paid") ? option.price : ""]
               .filter(Boolean)
               .join(" · ")}
           </SelectItem>

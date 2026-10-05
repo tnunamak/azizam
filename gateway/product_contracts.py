@@ -21,7 +21,8 @@ class AvailabilityEvidence(TypedDict, total=False):
 class Availability(TypedDict):
     available: bool
     status: AvailabilityStatus
-    reason: str
+    reason: NotRequired[str]
+    reason_code: NotRequired[str]
     measured: bool
     enabled: bool
     configured: bool
@@ -33,7 +34,8 @@ class Availability(TypedDict):
 class CatalogAvailability(TypedDict):
     available: bool
     status: AvailabilityStatus
-    reason: str
+    reason: NotRequired[str]
+    reason_code: NotRequired[str]
     measured: bool
     enabled: NotRequired[bool]
     configured: NotRequired[bool]
@@ -84,7 +86,7 @@ class CapabilitiesResponse(TypedDict):
 class HomeCapability(CapabilitySummary):
     capability: str
     status: AvailabilityStatus
-    reason: str
+    reason_code: str
 
 
 class HomeAlias(TypedDict):
@@ -92,12 +94,14 @@ class HomeAlias(TypedDict):
     operation: str
     available: bool
     status: AvailabilityStatus
-    reason: str
+    reason_code: str
 
 
 class StatusSummary(TypedDict):
     state: AvailabilityStatus
-    reason: str
+    reason_code: str
+    affected_capability_ids: list[str]
+    counts: dict[str, int]
 
 
 class HomeReceiptSource(TypedDict):
@@ -191,7 +195,7 @@ class MemberStatusCapability(TypedDict):
     workflow: str | None
     status: AvailabilityStatus
     available: bool
-    reason: str
+    reason_code: str
     measured: bool
     observed_at_s: NotRequired[float | None]
 

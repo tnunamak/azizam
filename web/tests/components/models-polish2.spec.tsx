@@ -109,7 +109,7 @@ it("distinguishes configured typical speed from measured requests", async () => 
   expect(screen.queryByText(/Measured/)).toBeNull();
 });
 
-it("keeps absent timing honest and does not expose service ids as engine names", async () => {
+it("omits absent timing and does not expose service ids as engine names", async () => {
   renderCatalog([
     row({
       engine_label: undefined,
@@ -121,8 +121,11 @@ it("keeps absent timing honest and does not expose service ids as engine names",
   fireEvent.click(screen.getByRole("button", { name: "Details" }));
   expect(screen.getByText("Configured engine")).toBeVisible();
   expect(
-    within(screen.getByRole("dialog")).getByText("Not measured yet"),
-  ).toBeVisible();
+    within(screen.getByRole("dialog")).queryByText("Not measured yet"),
+  ).toBeNull();
+  expect(
+    within(screen.getByRole("dialog")).queryByText("Typical time"),
+  ).toBeNull();
   expect(screen.queryByText(/capture-engine/)).toBeNull();
   expect(screen.queryByText(/Location not measured yet/)).toBeNull();
 });
@@ -137,8 +140,11 @@ it("does not display invalid negative duration as a measured speed", async () =>
   expect(screen.queryByText(/-1000 ms/)).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Details" }));
   expect(
-    within(screen.getByRole("dialog")).getByText("Not measured yet"),
-  ).toBeVisible();
+    within(screen.getByRole("dialog")).queryByText("Not measured yet"),
+  ).toBeNull();
+  expect(
+    within(screen.getByRole("dialog")).queryByText("Measured time"),
+  ).toBeNull();
 });
 
 it("provides actions for the initial empty catalog and filtered empty catalog", async () => {

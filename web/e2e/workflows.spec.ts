@@ -45,8 +45,7 @@ const seededCatalog = {
       engine_binding: "image-local",
       availability: {
         status: "configured",
-        reason:
-          "Configured for this access plan; live availability is not measured yet.",
+        reason_code: "configured",
         available: true,
         measured: false,
       },
@@ -79,8 +78,8 @@ const seededCatalog = {
       outputs: [],
       engine_binding: null,
       availability: {
-        status: "not_configured",
-        reason: "No speech service is enabled.",
+        status: "unavailable",
+        reason_code: "unavailable_unconfigured",
         available: false,
         measured: false,
       },
@@ -270,7 +269,7 @@ test("typed input table fits desktop and mobile summaries expose Range on a narr
     const columnNames = ["Name", "Type", "Default", "Range", "Applies"];
 
     if (width === 1440) {
-      const scrollport = sheet.getByLabel("Scrollable typed controls");
+      const scrollport = sheet.getByLabel("Scrollable inputs");
       const bounds = await scrollport.evaluate((element) => {
         const viewport = element.getBoundingClientRect();
         const columns = Array.from(
@@ -322,7 +321,7 @@ test("typed input table fits desktop and mobile summaries expose Range on a narr
       await expect(scrollport.getByText("Not specified")).toHaveCount(0);
     } else {
       const summaries = sheet.getByRole("list", {
-        name: "Typed input summaries",
+        name: "Input summaries",
       });
       await expect(summaries.getByText("seed")).toBeVisible();
       await expect(summaries.getByText("integer · Optional")).toBeVisible();
@@ -337,7 +336,7 @@ test("typed input table fits desktop and mobile summaries expose Range on a narr
   }
 });
 
-test("missing input details stay quiet while unknown time remains explicit", async ({
+test("missing input and time details stay quiet", async ({
   page,
 }) => {
   await setSurface(page, "light", 390);
@@ -347,7 +346,7 @@ test("missing input details stay quiet while unknown time remains explicit", asy
   await page.getByRole("button", { name: "Details" }).nth(1).click();
   const sheet = page.getByRole("dialog", { name: "Voiceover" });
   await sheet.getByText("Technical details", { exact: true }).click();
-  await expect(sheet.getByText("Not measured yet")).toBeVisible();
+  await expect(sheet.getByText("Not measured yet")).toHaveCount(0);
   await expect(sheet.getByText("Not specified")).toHaveCount(0);
 });
 
@@ -356,7 +355,8 @@ async function checkState(page: Page, screenshotName: string) {
   await assertNoSeriousAxe(page);
   await page.screenshot({
     path: `test-results/screens/${screenshotName}`,
-    fullPage: !screenshotName.includes("sheet"),
+    fullPage:
+      !screenshotName.includes("sheet") && page.viewportSize()?.width !== 390,
   });
 }
 
@@ -395,11 +395,9 @@ for (const theme of ["light", "dark"] as const) {
       await expect(
         page.getByText(/Long manifest guidance stays searchable/),
       ).toHaveCount(0);
-      await expect(page.getByText("image/png")).toBeVisible();
-      await expect(page.getByText("product-shot")).toBeVisible();
-      await expect(
-        page.getByText("No speech service is enabled."),
-      ).toBeVisible();
+      await expect(page.getByText("image/png")).toHaveCount(0);
+      await expect(page.getByText("product-shot", { exact: true })).toHaveCount(0);
+      await expect(page.getByText("Unavailable", { exact: true })).toBeVisible();
       await expect(page.getByRole("button", { name: "Details" })).toHaveCount(
         2,
       );
@@ -551,11 +549,6 @@ test("workflow sheet shows controls, code, links and seeded recent jobs", async 
     details.getByText("image.product-render", { exact: true }),
   ).toBeVisible();
   await expect(details.getByText("image-local", { exact: true })).toBeVisible();
-  await expect(
-    details.getByText(
-      "Configured for this access plan; live availability is not measured yet.",
-    ),
-  ).toBeVisible();
   await expect(
     details.getByText("/v1/workflows/image.product-render/run", {
       exact: true,

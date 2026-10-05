@@ -198,10 +198,10 @@ for (const theme of ["light", "dark"])
         page
           .getByRole("dialog")
           .getByText("Price not provided", { exact: true }),
-      ).toBeVisible();
+      ).toHaveCount(0);
       await expect(
         page.getByRole("dialog").getByText("Unknown", { exact: true }),
-      ).toBeVisible();
+      ).toHaveCount(0);
       await page.keyboard.press("Escape");
       await verify(page, `states-${theme}-${width}`);
       await page.getByRole("button", { name: /All models/ }).click();

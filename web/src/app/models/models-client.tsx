@@ -23,6 +23,7 @@ import {
 import { cn } from "@/lib/cn";
 import { productApi, type CatalogRow } from "@/lib/product-api";
 import { preferredTerms } from "@/lib/terms";
+import { availabilityReason } from "@/lib/status-copy";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -49,7 +50,6 @@ import {
   EmptyState,
   ErrorState,
   PageHeader,
-  RelativeTime,
   StatusPill,
 } from "@/components/product";
 
@@ -184,21 +184,19 @@ function hasNoProviderCharge(row: CatalogRow): boolean {
   return row.locality === "local" || row.cost.kind === "free";
 }
 
-function costLabel(row: CatalogRow): string {
+function costLabel(row: CatalogRow): string | undefined {
   if (row.locality === "local") return "No provider charge";
   if (hasNoProviderCharge(row)) return "No provider charge";
   if (row.cost.kind === "paid") {
-    return row.cost.price === null
-      ? "Paid · Price not provided"
-      : `Paid · ${String(row.cost.price)}`;
+    return row.cost.price === null ? undefined : `Paid · ${String(row.cost.price)}`;
   }
-  return "Price not provided";
+  return undefined;
 }
 
-function localityLabel(row: CatalogRow): string {
+function localityLabel(row: CatalogRow): string | undefined {
   if (row.locality === "local") return "Local";
   if (row.locality === "remote") return "Remote";
-  return "Placement not configured";
+  return undefined;
 }
 
 function engineLabel(row: CatalogRow): string {
@@ -215,10 +213,10 @@ function summaryEngineLabel(row: CatalogRow): string {
   return "Configured service";
 }
 
-function timingLabel(row: CatalogRow): string {
+function timingLabel(row: CatalogRow): string | undefined {
   const value = row.timing.typical_seconds;
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-    return "Not measured yet";
+    return undefined;
   }
   const duration =
     value < 1
@@ -229,8 +227,8 @@ function timingLabel(row: CatalogRow): string {
       ? "Measured"
       : row.timing.source === "configured"
         ? "Typical"
-        : "Source not provided";
-  return `${duration} · ${source}`;
+        : undefined;
+  return source ? `${duration} · ${source}` : duration;
 }
 
 function readString(value: unknown): string | null {
@@ -266,27 +264,18 @@ function availabilityState(row: CatalogRow): AvailabilityState {
   return row.availability.available ? "ready" : "unavailable";
 }
 
-function evidenceLabel(row: CatalogRow): string {
+function evidenceLabel(row: CatalogRow): string | undefined {
   const source = row.availability.evidence?.source;
   if (row.availability.measured) {
-    if (source === "request") return "Observed from request";
-    if (source === "health" || source === "status")
-      return "Observed from health";
     if (source === "registry") return "From configuration";
-    return "Observed";
   }
-  return "Not observed yet";
+  return undefined;
 }
 
-function observedAt(row: CatalogRow): number | null {
-  const value = row.availability.evidence?.observed_at_s;
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function configurationLabel(row: CatalogRow): string {
+function configurationLabel(row: CatalogRow): string | undefined {
   if (row.availability.configured === false) return "Catalog only";
   if (row.availability.configured === true) return "Configured";
-  return "Configuration not reported";
+  return undefined;
 }
 
 function enabledLabel(row: CatalogRow): string | null {
@@ -330,26 +319,14 @@ function AvailabilityFacts({ row }: { row: CatalogRow }) {
   return (
     <div className="flex flex-wrap gap-2 text-xs">
       <Badge variant="secondary">Allowed by your access</Badge>
-      <Badge variant="outline">{configurationLabel(row)}</Badge>
-      <Badge variant="outline">{evidenceLabel(row)}</Badge>
+      {configurationLabel(row) && (
+        <Badge variant="outline">{configurationLabel(row)}</Badge>
+      )}
+      {evidenceLabel(row) && (
+        <Badge variant="outline">{evidenceLabel(row)}</Badge>
+      )}
       {enabled && <Badge variant="outline">{enabled}</Badge>}
     </div>
-  );
-}
-
-function ObservedAt({ row }: { row: CatalogRow }) {
-  const at = observedAt(row);
-  if (at === null) {
-    return (
-      <span className="text-muted-foreground text-xs">
-        Observation time not reported
-      </span>
-    );
-  }
-  return (
-    <span className="text-muted-foreground text-xs">
-      Observed: <RelativeTime ts={at} />
-    </span>
   );
 }
 
@@ -454,8 +431,12 @@ function Availability({
   return (
     <StatusPill
       status={state}
-      reason={showReason ? row.availability.reason : undefined}
-      summary={!showReason}
+      reason={
+        showReason
+          ? availabilityReason(state, row.availability.reason_code ?? state)
+          : undefined
+      }
+      summary={!showReason || state === "unknown" || state === "not_measured"}
     />
   );
 }
@@ -614,6 +595,9 @@ function DetailSheet({
   viewerAdmin: boolean;
 }) {
   const action = row ? availabilityAction(row, viewerAdmin) : null;
+  const timing = row ? timingLabel(row) : undefined;
+  const locality = row ? localityLabel(row) : undefined;
+  const cost = row ? costLabel(row) : undefined;
   return (
     <Sheet open={!!row} onOpenChange={onOpenChange}>
       <SheetContent className="w-[92vw] overflow-y-auto sm:max-w-xl">
@@ -629,40 +613,39 @@ function DetailSheet({
                   label={row.alias ? "Model name" : "Exact model"}
                   value={row.id}
                 />
-                <Fact
-                  label="Resolves to"
-                  value={
-                    Object.keys(row.resolves_to).length
-                      ? Object.entries(row.resolves_to)
-                          .map(([op, target]) => `${op}: ${target}`)
-                          .join(", ")
-                      : "Not reported"
-                  }
-                />
+                {Object.keys(row.resolves_to).length > 0 && (
+                  <Fact
+                    label="Resolves to"
+                    value={Object.entries(row.resolves_to)
+                      .map(([op, target]) => `${op}: ${target}`)
+                      .join(", ")}
+                  />
+                )}
                 <Fact label="Engine or provider" value={engineLabel(row)} />
-                <Fact label="Location" value={localityLabel(row)} />
-                <Fact label="Cost" value={costLabel(row)} />
+                {locality && <Fact label="Location" value={locality} />}
+                {cost && <Fact label="Cost" value={cost} />}
                 {row.technical_description && (
                   <Fact
                     label="Technical description"
                     value={row.technical_description}
                   />
                 )}
-                <Fact
-                  label={
-                    row.timing.source === "receipts"
-                      ? "Measured time"
-                      : "Typical time"
-                  }
-                  value={timingLabel(row)}
-                />
+                {timing && (
+                  <Fact
+                    label={
+                      row.timing.source === "receipts"
+                        ? "Measured time"
+                        : "Typical time"
+                    }
+                    value={timing}
+                  />
+                )}
               </div>
               <div>
                 <h3 className="font-medium">Availability</h3>
                 <div className="mt-3 space-y-3 rounded-lg border p-3">
                   <Availability row={row} />
                   <AvailabilityFacts row={row} />
-                  <ObservedAt row={row} />
                   {action && (
                     <Button variant="outline" size="sm" asChild>
                       <a href={action.href}>{action.label}</a>
@@ -686,17 +669,22 @@ function DetailSheet({
               </div>
               <div>
                 <h3 className="font-medium">Inputs and outputs</h3>
-                <p className="text-muted-foreground mt-2 text-sm">
-                  Inputs:{" "}
-                  {row.io.input.length
-                    ? row.io.input.join(", ")
-                    : "Not reported"}
-                  . Outputs:{" "}
-                  {row.io.output.length
-                    ? row.io.output.join(", ")
-                    : "Not reported"}
-                  .
-                </p>
+                {(row.io.input.length > 0 || row.io.output.length > 0) && (
+                  <dl className="text-muted-foreground mt-2 space-y-1 text-sm">
+                    {row.io.input.length > 0 && (
+                      <div>
+                        <dt className="inline">Inputs: </dt>
+                        <dd className="inline">{row.io.input.join(", ")}</dd>
+                      </div>
+                    )}
+                    {row.io.output.length > 0 && (
+                      <div>
+                        <dt className="inline">Outputs: </dt>
+                        <dd className="inline">{row.io.output.join(", ")}</dd>
+                      </div>
+                    )}
+                  </dl>
+                )}
               </div>
               <div>
                 <h3 className="font-medium">Example request</h3>
@@ -715,10 +703,16 @@ function DetailSheet({
                         key={readString(receipt.request_id) ?? index}
                         className="rounded-lg border p-3"
                       >
-                        {readString(receipt.status) ?? "Recorded request"} ·{" "}
-                        {readNumber(receipt.latency_ms) !== null
-                          ? `${readNumber(receipt.latency_ms)} ms`
-                          : "Duration not measured"}
+                        {[
+                          readString(receipt.status)?.toLowerCase() === "unknown"
+                            ? undefined
+                            : readString(receipt.status),
+                          readNumber(receipt.latency_ms) !== null
+                            ? `${readNumber(receipt.latency_ms)} ms`
+                            : undefined,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
                         {readString(receipt.request_id) && (
                           <a
                             className="mt-2 block min-h-11 content-center underline underline-offset-4"

@@ -17,8 +17,12 @@ export type SetupProgress = SharedSetupProgress & {
 // A display tile may omit a routing name; the wire contract stays generated.
 export type HomeCapability = Pick<
   SharedHomeCapability,
-  "capability" | "intent" | "available" | "status" | "reason"
+  "capability" | "intent" | "available" | "status" | "reason_code"
 > & {
+  capability: string;
+  intent: string;
+  available: boolean;
+  status: SharedHomeCapability["status"];
   model?: string | null;
   workflow?: string | null;
   availability?: SharedHomeCapability["availability"];
@@ -32,6 +36,7 @@ export type HomeCapability = Pick<
 };
 export type HomeSnapshot = SharedHomeSnapshot & {
   user: NonNullable<SharedHomeSnapshot["user"]>;
+  capabilities: HomeCapability[];
 };
 export interface HomeCreation {
   asset_id: string;

@@ -101,7 +101,7 @@ async function installStatusSnapshot(
             measured: availability !== "unknown",
             observed_at_s:
               availability === "unknown" ? null : 1790870400 + index,
-            reason: `${availability} evidence is visible to the member.`,
+            reason_code: availability,
           }));
     return route.fulfill({
       json: {
@@ -111,10 +111,11 @@ async function installStatusSnapshot(
             state === "empty"
               ? "unavailable"
               : ("unavailable" satisfies MemberStatusState),
-          reason:
-            state === "empty"
-              ? "No service has been measured as ready yet."
-              : "Embeddings are unavailable: the engine is offline.",
+          reason_code: state === "empty" ? "no_capabilities" : "unavailable",
+          affected_capability_ids: state === "empty" ? [] : ["embed"],
+          counts: state === "empty"
+            ? { total: 0, available: 0, affected: 0 }
+            : { total: 6, available: 2, affected: 4 },
         },
         capabilities,
         receipts:
@@ -210,22 +211,7 @@ for (const theme of ["light", "dark"] as const) {
             await expect(
               capability.getByText(labels[availability], { exact: true }),
             ).toBeVisible();
-            if (availability === "unknown") {
-              await expect(capability.locator("time")).toHaveCount(0);
-            } else {
-              await expect(capability.locator("time")).toHaveAttribute(
-                "datetime",
-                new Date(
-                  (1790870400 + allStates.indexOf(availability)) * 1000,
-                ).toISOString(),
-              );
-            }
-            await expect(
-              capability.getByText(
-                `${availability} evidence is visible to the member.`,
-                { exact: true },
-              ),
-            ).toBeVisible();
+            await expect(capability.locator("time")).toHaveCount(0);
           }
           await expect(
             page.getByRole("link", { name: "View receipt failed-request" }),
@@ -235,10 +221,7 @@ for (const theme of ["light", "dark"] as const) {
             page.getByText("Ask the owner", { exact: true }),
           ).toHaveCount(0);
           await expect(
-            page.getByText(
-              "Embeddings are unavailable: the engine is offline.",
-              { exact: true },
-            ),
+            page.getByText(/Embeddings and 3 more capabilities are unavailable/),
           ).toBeVisible();
           const unknown = page.locator("li").filter({
             has: page.getByRole("heading", {
@@ -251,7 +234,7 @@ for (const theme of ["light", "dark"] as const) {
           await expect(
             unknown.getByText("unknown-alias, unknown-model", { exact: true }),
           ).toBeVisible();
-          await expect(unknown.getByText("Not measured yet")).toBeVisible();
+          await expect(unknown.getByText("Not measured yet")).toBeHidden();
           await unknown.getByText("Names you can use", { exact: true }).click();
         } else if (state === "empty") {
           await expect(

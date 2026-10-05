@@ -19,10 +19,7 @@ const row = (
   workflow: model,
   status,
   available: status === "ready",
-  reason:
-    status === "ready"
-      ? "The service is available."
-      : "The service is disabled.",
+  reason_code: status === "ready" ? "ready" : "unavailable_disabled",
 });
 const alias = (
   id: string,
@@ -33,10 +30,7 @@ const alias = (
   operation,
   status,
   available: status === "ready",
-  reason:
-    status === "ready"
-      ? "The service is available."
-      : "The service is disabled.",
+  reason_code: status === "ready" ? "ready" : "unavailable_disabled",
 });
 
 describe("Home presentation", () => {

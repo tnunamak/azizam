@@ -34,7 +34,7 @@ const workflows = [
     ],
     outputs: [{ name: "image", media_type: "image/png" }],
     engine_binding: null,
-    availability: { status: "ready", reason: "Ready to run." },
+    availability: { status: "ready", reason_code: "ready" },
     typical_seconds: null,
     aliases: ["image/upscale"],
     examples: { curl: "curl /workflow", python: "run()", javascript: "run()" },
@@ -56,7 +56,7 @@ const workflows = [
     ],
     outputs: [{ name: "text", media_type: "text/plain" }],
     engine_binding: null,
-    availability: { status: "ready", reason: "Ready to run." },
+    availability: { status: "ready", reason_code: "ready" },
     typical_seconds: 2,
     aliases: [],
     examples: { curl: "curl /workflow", python: "run()", javascript: "run()" },
@@ -92,18 +92,23 @@ describe("WorkflowsPage empathy copy", () => {
     vi.restoreAllMocks();
   });
 
-  test("filters workflows by accepted image input and hides unmeasured speed on summary cards", async () => {
+  test("cards show input icons, hide technical rows and filter by capability", async () => {
     renderWorkflows();
 
     expect(await screen.findByText("Upscale image")).toBeVisible();
     expect(screen.getByText("Clean text")).toBeVisible();
+    expect(screen.getByLabelText("Image input")).toBeVisible();
+    expect(screen.getByText("Needs an image")).toBeVisible();
+    expect(screen.getByLabelText("Text input")).toBeVisible();
+    expect(screen.queryByText("image/png")).not.toBeInTheDocument();
+    expect(screen.queryByText("2.0 s")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Has image" })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Has image" }));
+    fireEvent.click(screen.getByRole("button", { name: "Images" }));
 
     expect(screen.getByText("Upscale image")).toBeVisible();
     expect(screen.queryByText("Clean text")).not.toBeInTheDocument();
-    expect(screen.getByText("Image")).toBeVisible();
-    expect(screen.queryByText("Not measured yet")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Image input")).toBeVisible();
   });
 
   test("detail sheet uses plain input copy and preserves exact workflow values", async () => {

@@ -67,7 +67,7 @@ describe("Home audit presentation contract", () => {
         intent: kind === "speech" ? "speech.synthesis" : "audio.generate",
         available: true,
         status: "ready",
-        reason: "Ready.",
+        reason_code: "ready",
       }),
     );
     expect(capabilityTiles(rows, []).map((row) => row.capability)).toEqual([
@@ -118,7 +118,7 @@ describe("Home audit presentation contract", () => {
         model: "fast",
         available: false,
         status: "idle",
-        reason: "The model can be started.",
+        reason_code: "ready_on_request",
       },
       {
         capability: "image",
@@ -126,7 +126,7 @@ describe("Home audit presentation contract", () => {
         model: "image",
         available: false,
         status: "unknown",
-        reason: "Not measured yet.",
+        reason_code: "unknown",
       },
     ];
     expect(capabilitySummary(tiles)).toBe("Chat is ready to start");
@@ -139,14 +139,14 @@ describe("Home audit presentation contract", () => {
         operation: "chat.completions",
         available: true,
         status: "ready",
-        reason: "Utility model.",
+        reason_code: "ready",
       },
       {
         id: "default",
         operation: "chat.completions",
         available: true,
         status: "ready",
-        reason: "Ready.",
+        reason_code: "ready",
       },
     ];
     const tiles = capabilityTiles([], aliases);
@@ -167,7 +167,7 @@ describe("Home audit presentation contract", () => {
           model: "utility-check",
           available: true,
           status: "ready",
-          reason: "Utility model.",
+          reason_code: "ready",
         },
         {
           capability: "chat",
@@ -177,7 +177,7 @@ describe("Home audit presentation contract", () => {
           model: "default",
           available: false,
           status: "idle",
-          reason: "Ready to start.",
+          reason_code: "ready_on_request",
         },
       ],
       [],

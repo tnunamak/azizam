@@ -153,7 +153,7 @@ for (const width of [390, 1440]) {
     ).toBeVisible();
     await expect(
       page.getByRole("dialog").getByText("Not measured yet", { exact: true }),
-    ).toBeVisible();
+    ).toHaveCount(0);
   });
 }
 

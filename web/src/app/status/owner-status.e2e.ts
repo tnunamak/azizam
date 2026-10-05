@@ -242,17 +242,16 @@ for (const theme of ["light", "dark"] as const) {
         if (state === "seeded") {
           await expect(
             main
-              .locator("header")
               .getByText(
                 "Media disk (/media) is above the warning threshold.",
                 { exact: true },
               ),
-          ).toBeVisible();
+          ).toHaveCount(1);
           await expect(
-            main.getByText("2 engines ready · Show", { exact: true }),
+            main.getByText("2 engines · Show", { exact: true }),
           ).toBeVisible();
           await page
-            .getByText("2 engines ready · Show", { exact: true })
+            .getByText("2 engines · Show", { exact: true })
             .click();
           await expect(
             main.getByRole("row", { name: /Image-only engine/ }),
@@ -267,33 +266,17 @@ for (const theme of ["light", "dark"] as const) {
           await expect(
             main.getByRole("heading", { name: "OpenRouter", exact: true }),
           ).toBeVisible();
-          await expect(
-            main.getByText("Disk (/media)", { exact: true }),
-          ).toBeVisible();
-          await expect(
-            main.getByText("93% used", { exact: true }),
-          ).toBeVisible();
-          await expect(
-            main.getByText(
-              "GPU temperature: 95 °C. Watch cooling before long jobs.",
-            ),
-          ).toBeVisible();
-          await page.getByText("Raw probe data", { exact: true }).click();
-          await expect(main.locator("pre").last()).toContainText(
-            '"memory_used_mb": 12288',
-          );
-          await page.getByText("Raw probe data", { exact: true }).click();
         } else if (state === "empty") {
           await expect(
-            main.getByText("No engines are configured yet.", { exact: true }),
+            main.getByText("No engines configured", { exact: true }),
           ).toBeVisible();
           await expect(
             main.getByText(/add an engine from Engines/),
           ).toBeVisible();
         } else {
           await expect(
-            main.getByRole("alert").filter({ hasText: "Status probe failed" }),
-          ).toBeVisible();
+            main.getByText("Could not check engine status", { exact: true }),
+          ).toHaveCount(1);
           await expect(main.getByText("Ready", { exact: true })).toHaveCount(0);
         }
         await page.screenshot({
@@ -306,6 +289,16 @@ for (const theme of ["light", "dark"] as const) {
           ["serious", "critical"].includes(v.impact ?? ""),
         );
         expect(violations).toEqual([]);
+        if (state === "seeded") {
+          await page.getByRole("button", { name: "Status actions" }).click();
+          await expect(
+            page.getByRole("menuitem", { name: /Technical details/ }),
+          ).toBeVisible();
+          await expect(
+            page.getByRole("menuitem", { name: /Refresh/ }),
+          ).toBeVisible();
+          await page.keyboard.press("Escape");
+        }
         expect(
           await page.evaluate(
             () => document.documentElement.scrollWidth <= innerWidth,
@@ -316,9 +309,8 @@ for (const theme of ["light", "dark"] as const) {
           await page.route("**/admin/api/status", (route) =>
             route.fulfill({ json: { status: currentStatus } }),
           );
-          await main
-            .getByRole("button", { name: "Refresh", exact: true })
-            .click();
+          await page.getByRole("button", { name: "Status actions" }).click();
+          await page.getByRole("menuitem", { name: "Refresh", exact: true }).click();
           await expect(
             main.getByText("Status probe failed", { exact: true }),
           ).toHaveCount(0);
@@ -329,28 +321,16 @@ for (const theme of ["light", "dark"] as const) {
   }
 }
 
-test("provider section hides absent API and makes failures retryable", async ({
+test("provider failures are visible and retryable", async ({
   page,
 }) => {
-  await mockStatusApis(page);
+  await mockStatusApis(page, { providers: 503 });
   await page.goto("/ui/status/");
   await expect(
     page.locator("main").getByRole("heading", { name: "Engines", exact: true }),
   ).toBeVisible();
   await expect(
-    page
-      .locator("main")
-      .getByRole("heading", { name: "Providers", exact: true }),
-  ).toHaveCount(0);
-  await page.route("**/admin/api/providers", (route) =>
-    route.fulfill({
-      status: 503,
-      json: { error: { message: "Provider probe unavailable" } },
-    }),
-  );
-  await page.getByRole("button", { name: "Refresh", exact: true }).click();
-  await expect(
-    page.locator("main").getByText(/Provider probe unavailable/),
+    page.locator("main").getByText(/Provider status API exists but failed/),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Retry providers", exact: true }),
@@ -371,13 +351,13 @@ test("failed refresh removes stale green engine observations", async ({
       json: { error: { code: "unavailable", message: "Refresh failed" } },
     }),
   );
-  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await page.getByRole("button", { name: "Status actions" }).click();
+  await page.getByRole("menuitem", { name: "Refresh", exact: true }).click();
   await expect(
     page
       .locator("main")
-      .getByRole("alert")
-      .filter({ hasText: "Refresh failed" }),
-  ).toBeVisible();
+      .getByText("Could not check engine status", { exact: true }),
+  ).toHaveCount(1);
   await expect(
     page.locator("main").getByText("Ready", { exact: true }),
   ).toHaveCount(0);

@@ -531,7 +531,10 @@ def test_product_status_recommends_ready_model_once_per_taxonomy():
     assert len(grouped) == 1
     assert grouped[0]["available"]
     assert set(grouped[0]["use_names"]) == {"music", "song", "instrument"}
-    assert product_status_summary(grouped) == {"state": "ready", "reason": "Everything you can use is ready."}
+    assert product_status_summary(grouped) == {
+        "state": "ready", "reason_code": "ready", "affected_capability_ids": [],
+        "counts": {"total": 1, "available": 1, "affected": 0},
+    }
 
 
 def test_partial_summary_names_unavailable_capability_and_safe_reason():
@@ -539,10 +542,14 @@ def test_partial_summary_names_unavailable_capability_and_safe_reason():
     rows = [{"capability": "chat", "capability_title": "Chat", "status": "ready", "available": True},
             {"capability": "image", "capability_title": "Images", "status": "unavailable", "available": False,
              "reason": "secret backend diagnostic", "availability": {"evidence": {"kind": "disabled"}}}]
-    assert product_status_summary(rows) == {
-        "state": "unavailable", "reason": "Images are unavailable: the service is disabled."}
-    assert "secret" not in product_status_summary(rows)["reason"]
-    assert product_status_summary([])["state"] == "unavailable"
+    summary = product_status_summary(rows)
+    assert summary == {
+        "state": "unavailable", "reason_code": "unavailable_disabled",
+        "affected_capability_ids": ["image"],
+        "counts": {"total": 2, "available": 1, "affected": 1},
+    }
+    assert "secret" not in str(summary)
+    assert product_status_summary([])["reason_code"] == "no_capabilities"
 
 
 def test_owner_transcription_uses_same_taxonomy_even_without_live_observation():

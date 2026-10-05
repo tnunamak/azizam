@@ -45,7 +45,7 @@ const home = {
       operation: "chat.completions",
       available: true,
       status: "ready",
-      reason: "Chat is ready.",
+      reason_code: "ready",
     },
   ],
   credential_aliases: {
@@ -55,7 +55,7 @@ const home = {
         operation: "chat.completions",
         available: true,
         status: "ready",
-        reason: "Chat is ready.",
+        reason_code: "ready",
       },
     ],
   },
@@ -65,10 +65,10 @@ const home = {
       operation: "chat.completions",
       available: true,
       status: "ready",
-      reason: "Chat is ready.",
+      reason_code: "ready",
     },
   ],
-  status: { state: "ready", reason: "Ready." },
+  status: { state: "ready", reason_code: "ready", affected_capability_ids: [], counts: { total: 1, available: 1, affected: 0 } },
   receipts: [
     {
       request_id: "req-1",
@@ -206,7 +206,7 @@ describe("Home audit component behavior", () => {
   it("uses server capability names, model recommendations, icons and summary", async () => {
     const serverHome = {
       ...home,
-      status: { state: "ready", reason: "Everything you can use is ready." },
+      status: { state: "ready", reason_code: "ready", affected_capability_ids: [], counts: { total: 1, available: 1, affected: 0 } },
       capabilities: [
         {
           capability: "music",
@@ -220,7 +220,7 @@ describe("Home audit component behavior", () => {
           use_names: ["music", "song"],
           available: true,
           status: "ready",
-          reason: "Ready.",
+          reason_code: "ready",
         },
         {
           capability: "sfx",
@@ -233,7 +233,7 @@ describe("Home audit component behavior", () => {
           use_name: "sfx",
           available: true,
           status: "ready",
-          reason: "Ready.",
+          reason_code: "ready",
         },
       ],
     };
@@ -383,7 +383,7 @@ describe("Home audit component behavior", () => {
                 model: "declared-model",
                 available: true,
                 status: "ready",
-                reason: "Chat is ready.",
+                reason_code: "ready",
               },
             ],
           });

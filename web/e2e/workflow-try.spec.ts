@@ -305,11 +305,6 @@ async function routeCatalogs(page: Page) {
 async function prepareTryKey(page: Page, workflowId: string) {
   await routeCatalogs(page);
   await page.goto(`/ui/try/?workflow=${encodeURIComponent(workflowId)}`);
-  await expect(
-    page.getByText("Run creates a Try key for your access plan.", {
-      exact: true,
-    }),
-  ).toBeVisible();
   await expect(page.getByRole("tab", { name: "Workflow" })).toHaveAttribute(
     "aria-selected",
     "true",

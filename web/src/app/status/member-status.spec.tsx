@@ -18,7 +18,9 @@ const snapshot: Snapshot = {
   scope: "member",
   status: {
     state: "unknown",
-    reason: "Availability has not been measured yet.",
+    reason_code: "unknown",
+    affected_capability_ids: ["image"],
+    counts: { total: 1, available: 0, affected: 1 },
   },
   capabilities: [
     {
@@ -37,7 +39,7 @@ const snapshot: Snapshot = {
       available: false,
       measured: false,
       observed_at_s: null,
-      reason: "Availability has not been measured yet.",
+      reason_code: "unknown",
     },
   ],
   receipts: [
@@ -81,7 +83,7 @@ describe("member Status diagnosis", () => {
     expect(
       screen.queryByText("Ask the owner", { exact: true }),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("Not measured yet")).not.toBeVisible();
+    expect(screen.queryByText("Not measured yet")).not.toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "View receipt my-failed-request" }),
     ).toHaveAttribute("href", snapshot.receipts[0].href);
@@ -91,7 +93,7 @@ describe("member Status diagnosis", () => {
     ).toBeVisible();
     expect(screen.getByText("image, flux-dev", { exact: true })).toBeVisible();
     expect(screen.queryByText("image, flux-dev, image")).toBeNull();
-    expect(screen.getByText("Not measured yet")).toBeVisible();
+    expect(screen.queryByText("Not measured yet")).not.toBeInTheDocument();
     expect(
       screen.queryByText(/GPU|VRAM|Raw probe data/),
     ).not.toBeInTheDocument();
@@ -101,7 +103,9 @@ describe("member Status diagnosis", () => {
       ...snapshot,
       status: {
         state: "unavailable",
-        reason: "Images are unavailable: the engine is offline.",
+        reason_code: "unavailable",
+        affected_capability_ids: ["image"],
+        counts: { total: 1, available: 0, affected: 1 },
       },
       capabilities: [
         {
@@ -142,7 +146,7 @@ describe("member Status diagnosis", () => {
       screen.getByRole("img", { name: "Sound effects" }).querySelector("svg"),
     ).toHaveClass("lucide-waves");
     expect(
-      screen.getByText("Images are unavailable: the engine is offline."),
+      screen.getByText("Images are unavailable."),
     ).toBeVisible();
     expect(screen.getByText("Unavailable", { exact: true })).toBeVisible();
   });
@@ -170,7 +174,7 @@ describe("member Status diagnosis", () => {
           status: "unknown",
           available: false,
           measured: false,
-          reason: "Availability has not been measured.",
+          reason_code: "unknown",
         },
       ],
     });

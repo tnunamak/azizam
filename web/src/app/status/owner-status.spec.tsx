@@ -51,8 +51,8 @@ const registry: ServiceRegistry = {
     },
   },
 };
-function mount(status?: StatusPayload) {
-  vi.spyOn(api.services, "registry").mockResolvedValue(registry);
+function mount(status?: StatusPayload, serviceRegistry = registry) {
+  vi.spyOn(api.services, "registry").mockResolvedValue(serviceRegistry);
   vi.spyOn(api, "status").mockResolvedValue(
     status ?? {
       current_health: {
@@ -96,11 +96,12 @@ function mount(status?: StatusPayload) {
 it("shows compact grouped engine rows and moves configuration and unknown metrics into a sheet", async () => {
   const user = userEvent.setup();
   mount();
-  await user.click(await screen.findByText("1 engine ready · Show"));
+  await user.click(await screen.findByText("1 engine · Show"));
   const engine = await screen.findByRole("button", { name: "Local chat" });
   expect(
-    screen.getByRole("table", { name: /Chat engine status/ }),
+    screen.getByRole("table", { name: "Engine status" }),
   ).toBeVisible();
+  expect(screen.queryByRole("columnheader", { name: "Last error" })).toBeNull();
   expect(screen.queryByText("Not measured yet")).not.toBeInTheDocument();
   expect(screen.queryByText("Loaded:")).not.toBeInTheDocument();
   expect(
@@ -109,8 +110,8 @@ it("shows compact grouped engine rows and moves configuration and unknown metric
   expect(screen.queryByText("fast")).not.toBeInTheDocument();
   await user.click(engine);
   const sheet = screen.getByRole("dialog", { name: "Local chat" });
-  expect(within(sheet).getByText("Queue")).toBeVisible();
-  expect(within(sheet).getByText("Not measured yet")).toBeVisible();
+  expect(within(sheet).queryByText("Queue")).not.toBeInTheDocument();
+  expect(within(sheet).queryByText("Not measured yet")).not.toBeInTheDocument();
   expect(
     within(sheet).getByRole("link", { name: "Configure engine" }),
   ).toHaveAttribute("href", "/engines?service=chat");
@@ -121,7 +122,7 @@ it("shows compact grouped engine rows and moves configuration and unknown metric
 it("reveals disabled engines only on request", async () => {
   const user = userEvent.setup();
   mount();
-  await user.click(await screen.findByText("1 engine ready · Show"));
+  await user.click(await screen.findByText("1 engine · Show"));
   await screen.findByRole("button", { name: "Local chat" });
   await user.click(screen.getByRole("switch"));
   expect(screen.getByRole("button", { name: "Image engine" })).toBeVisible();
@@ -169,24 +170,27 @@ it("uses server engine names and transcription taxonomy and preserves an exact d
       ],
     },
   });
-  await user.click(await screen.findByText("1 engine ready · Show"));
+  expect(await screen.findByText("1 problem needs you")).toBeVisible();
+  await user.click(await screen.findByText("1 engine · Show"));
   expect(
     await screen.findByRole("button", { name: "Canary (transcription)" }),
   ).toBeVisible();
   expect(
-    screen.getByRole("table", { name: /Transcription engine status/ }),
+    screen.getByRole("table", { name: "Engine status" }),
   ).toBeVisible();
   expect(screen.getByRole("cell", { name: "Transcription" })).toBeVisible();
-  expect(screen.getByText("System disk (/)", { exact: true })).toBeVisible();
   expect(
     within(
       screen
         .getByRole("heading", { name: "Status", level: 1 })
         .closest("header")!,
-    ).getByText("System disk (/) is almost full (96%). Remove unused files.", {
+    ).getByText("1 problem needs you", { exact: true }),
+  ).toBeVisible();
+  expect(
+    screen.getAllByText("System disk (/) is almost full (96%). Remove unused files.", {
       exact: true,
     }),
-  ).toBeVisible();
+  ).toHaveLength(1);
   expect(
     screen.queryByText(/host needs owner action|files\.\./),
   ).not.toBeInTheDocument();
@@ -253,15 +257,24 @@ it("summarizes connection failures without putting raw transport text in the ans
     },
   });
   expect(
-    await screen.findAllByText(
+    await screen.findByText("1 problem needs you", { exact: true }),
+  ).toBeVisible();
+  expect(
+    screen.getAllByText(
       "Chat is not accepting connections. Check the engine address or start the engine.",
     ),
-  ).toHaveLength(3);
+  ).toHaveLength(1);
   const header = screen
     .getByRole("heading", { name: "Status", level: 1 })
     .closest("header")!;
   expect(
     within(header).queryByText("Connection refused", { exact: true }),
+  ).not.toBeInTheDocument();
+  expect(
+    within(header).queryByText(
+      "Chat is not accepting connections. Check the engine address or start the engine.",
+      { exact: true },
+    ),
   ).not.toBeInTheDocument();
   await userEvent.click(screen.getByRole("button", { name: "Local chat" }));
   expect(
@@ -270,4 +283,61 @@ it("summarizes connection failures without putting raw transport text in the ans
       { exact: true },
     ),
   ).toBeVisible();
+});
+
+it("groups engines with the same problem into one action row", async () => {
+  const secondChat = {
+    ...registry.services.chat,
+    id: "chat-copy",
+    name: "Second chat",
+  };
+  const serviceRegistry: ServiceRegistry = {
+    ...registry,
+    services: { ...registry.services, secondChat },
+  };
+  const downService = (serviceId: string, name: string) => ({
+    service_id: serviceId,
+    name,
+    engine_label: "Chat",
+    capability_title: "Chat",
+    capability_labels: ["Chat"],
+    icon_key: "chat" as const,
+    configured: true,
+    enabled: true,
+    role: "primary",
+    routable: true,
+    observation: "down",
+    tone: "bad",
+    last_error: "Connection refused",
+  });
+  mount(
+    {
+      current_health: {
+        state: "bad",
+        tone: "bad",
+        label: "Needs attention",
+        detail: "Chat is unavailable.",
+        observation_available: true,
+        services: [
+          downService("chat", "Local chat"),
+          downService("chat-copy", "Second chat"),
+        ],
+      },
+    },
+    serviceRegistry,
+  );
+  expect(
+    await screen.findByText("1 problem needs you", { exact: true }),
+  ).toBeVisible();
+  expect(
+    screen.getAllByText(
+      "Chat is not accepting connections. Check the engine address or start the engine.",
+      { exact: true },
+    ),
+  ).toHaveLength(1);
+  expect(screen.getByText("2 engines affected.", { exact: true })).toBeVisible();
+  expect(screen.getByRole("link", { name: "Open" })).toHaveAttribute(
+    "href",
+    "/engines",
+  );
 });

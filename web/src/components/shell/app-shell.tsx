@@ -111,6 +111,22 @@ const icons: Record<string, LucideIcon> = {
 const queryClient = createQueryClient();
 const publicPages = ["/sign-in", "/setup", "/invite", "/showcase"];
 
+function signInReturnPath(pathname: string, search: string): string {
+  if (typeof window !== "undefined") {
+    const current = `${window.location.pathname}${window.location.search}`;
+    if (current.startsWith("/ui/")) return current;
+  }
+  const normalizedPath = pathname.startsWith("/") ? pathname : `/${pathname}`;
+  const uiPath = normalizedPath.startsWith("/ui/")
+    ? normalizedPath
+    : `/ui${normalizedPath}`;
+  return `${uiPath}${search ? `?${search}` : ""}`;
+}
+
+function signInHref(returnPath: string): string {
+  return `/ui/sign-in/?return_to=${encodeURIComponent(returnPath)}`;
+}
+
 function ThemeToggle() {
   const { resolvedTheme, setTheme } = useTheme();
   return (
@@ -745,6 +761,8 @@ function Shell({ children }: { children: React.ReactNode }) {
   }, []);
   const publicPage = publicPages.some((route) => pathname.startsWith(route));
   const currentPath = canonicalDestinationPath(pathname);
+  const returnPath = signInReturnPath(pathname, "");
+  const privateSignInHref = signInHref(returnPath);
   const ownerPage = destinations.some(
     (d) =>
       d.group === "Gateway" &&
@@ -782,6 +800,24 @@ function Shell({ children }: { children: React.ReactNode }) {
         retrying={sessionRefreshing}
       />
     </>
+  ) : !viewer?.authenticated ? (
+    <>
+      <PageHeader
+        title={
+          destinations.find(
+            (d) => currentPath === canonicalDestinationPath(d.href),
+          )?.title ?? "Your gateway"
+        }
+      />
+      <ErrorState
+        heading="Sign in to continue"
+        message="Sign in to view this page."
+        action={{
+          label: "Sign in",
+          href: privateSignInHref,
+        }}
+      />
+    </>
   ) : viewer?.serviceAdmin &&
     destinations.some(
       (d) =>
@@ -795,7 +831,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         use your AI, view your library and usage, or manage people.
       </p>
       <Button variant="outline" asChild>
-        <a href="/ui/sign-in/">Sign in as a person</a>
+        <a href={privateSignInHref}>Sign in as a person</a>
       </Button>
     </>
   ) : ownerPage && !viewer?.admin ? (
@@ -812,7 +848,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         message="This page is available to gateway owners and admins."
         action={{
           label: "Sign in with an owner account",
-          href: "/ui/sign-in/",
+          href: privateSignInHref,
         }}
       />
     </>

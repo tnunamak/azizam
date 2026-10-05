@@ -20,7 +20,7 @@ export interface Workflow {
   inputs: WorkflowInput[];
   outputs?: { name: string; media_type?: string; description?: string }[];
   engine_binding: string | null;
-  availability: { status: string; reason: string; available?: boolean };
+  availability: { status: string; reason_code: string; available?: boolean };
   typical_seconds: number | null;
   aliases: string[];
   examples: { curl: string; python: string; javascript: string };

@@ -28,9 +28,9 @@ const seededCatalog = {
       cost: { kind: "free", price: null },
       timing: { typical_seconds: 0.8, source: "receipts", sample_count: 2 },
       availability: {
+        status: "configured",
         available: true,
-        reason:
-          "Allowed by your access plan; live availability is not measured yet",
+        reason_code: "configured",
         measured: false,
       },
       io: { input: ["text"], output: ["text"] },
@@ -123,7 +123,7 @@ const seededCatalog = {
       timing: { typical_seconds: null, source: null },
       availability: {
         available: true,
-        reason: "Starts when you send a request.",
+        reason_code: "ready_on_request",
         measured: false,
         status: "idle_startable",
       },
@@ -159,7 +159,7 @@ const seededCatalog = {
       timing: { typical_seconds: null, source: null },
       availability: {
         available: true,
-        reason: "No health endpoint is configured.",
+        reason_code: "unknown",
         measured: true,
         status: "unknown",
       },
@@ -197,9 +197,9 @@ const seededCatalog = {
       cost: { kind: "free", price: null },
       timing: { typical_seconds: 0.8, source: "receipts", sample_count: 2 },
       availability: {
+        status: "configured",
         available: true,
-        reason:
-          "Allowed by your access plan; live availability is not measured yet",
+        reason_code: "configured",
         measured: false,
       },
       io: { input: ["text"], output: ["text"] },
@@ -345,17 +345,19 @@ for (const theme of ["light", "dark"] as const) {
       ).toBeVisible();
       await expect(page.getByText("Unknown", { exact: true })).toHaveCount(0);
       await expect(
-        page.getByText("Starts when you send a request."),
+        page.getByText("Ready to start when you make a request."),
       ).toHaveCount(0);
       await expect(
-        page.getByText("No health endpoint is configured."),
+        page.getByText("Unknown", { exact: true }),
       ).toHaveCount(0);
       const decision = page.locator("section").filter({
         has: page.getByRole("heading", { name: "Decide", exact: true }),
       });
       await decision.getByRole("button", { name: "Details" }).click();
       await expect(
-        page.getByRole("dialog").getByText("Starts when you send a request."),
+        page
+          .getByRole("dialog")
+          .getByText("Ready to start when you make a request."),
       ).toBeVisible();
       await page.keyboard.press("Escape");
       const speech = page.locator("section").filter({
@@ -363,8 +365,8 @@ for (const theme of ["light", "dark"] as const) {
       });
       await speech.getByRole("button", { name: "Details" }).click();
       await expect(
-        page.getByRole("dialog").getByText("No health endpoint is configured."),
-      ).toBeVisible();
+        page.getByRole("dialog").getByText("Unknown", { exact: true }),
+      ).toHaveCount(0);
       await page.keyboard.press("Escape");
       await expect(
         page.getByText("Paid · $0.04 per image", { exact: true }),
@@ -373,7 +375,7 @@ for (const theme of ["light", "dark"] as const) {
       await assertNoSeriousAxe(page);
       await page.screenshot({
         path: `test-results/screens/models-seeded-${theme}-${width}.png`,
-        fullPage: true,
+        fullPage: width !== 390,
       });
     });
 
@@ -384,7 +386,7 @@ for (const theme of ["light", "dark"] as const) {
       await assertNoSeriousAxe(page);
       await page.screenshot({
         path: `test-results/screens/models-empty-${theme}-${width}.png`,
-        fullPage: true,
+        fullPage: width !== 390,
       });
     });
 
@@ -446,6 +448,6 @@ test("models filters, snippets, table and detail sheet work", async ({
   await page.getByRole("button", { name: "Details" }).first().click();
   const sheet = page.getByRole("dialog");
   await expect(sheet).toBeVisible();
-  await expect(sheet).toContainText("Typical time");
-  await expect(sheet).toContainText("Not measured yet");
+  await expect(sheet).not.toContainText("Typical time");
+  await expect(sheet).not.toContainText("Not measured yet");
 });

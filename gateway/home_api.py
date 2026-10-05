@@ -65,7 +65,12 @@ def _identity(app: Mapping[str, Any], credential: Mapping[str, Any] | None,
 
 def _availability(capability: Capability, evidence: Mapping[str, Mapping[str, Any]], registry: Mapping[str, Any] | None = None) -> tuple[str, str]:
     projection = project_service(capability.backend, service_records=registry, evidence=evidence, fallback_capability=capability)
-    return projection.status, projection.reason
+    evidence_kind = (projection.evidence or {}).get("kind")
+    code = {
+        ("unavailable", "disabled"): "unavailable_disabled",
+        ("unavailable", "unconfigured"): "unavailable_unconfigured",
+    }.get((projection.status, evidence_kind), projection.status)
+    return projection.status, code
 
 
 def _has_success(receipts_path: Path) -> bool:
@@ -229,9 +234,14 @@ def _capability_rows(capabilities, evidence, registry=None, alias_views=None) ->
         projection = project_service(cap.backend, service_records=registry, evidence=evidence, fallback_capability=cap)
         metadata = next((alias for view in (alias_views or {}).values() for alias in view.get("stable", [])
                          if alias.get("alias") == cap.model and "alias" in cap.tags), None)
-        rows.append({**summarize_capability(cap, "client"), **capability_presentation(cap, metadata),
-                     "status": state, "available": state in {"ready", "idle"}, "reason": reason,
-                     "availability": projection.to_public_dict()})
+        summary = summarize_capability(cap, "client")
+        summary.pop("reason", None)
+        product_availability = projection.to_public_dict()
+        product_availability.pop("reason", None)
+        product_availability["reason_code"] = reason
+        rows.append({**summary, **capability_presentation(cap, metadata),
+                     "status": state, "available": state in {"ready", "idle"}, "reason_code": reason,
+                     "availability": product_availability})
     return rows
 
 
@@ -246,7 +256,7 @@ def _alias_rows(rows, views) -> list[dict[str, Any]]:
             if matches:
                 best = next((row for row in matches if row["available"]), matches[0])
                 aliases.append({"id": alias["alias"], "operation": operation,
-                                "available": best["available"], "status": best["status"], "reason": best["reason"]})
+                                "available": best["available"], "status": best["status"], "reason_code": best["reason_code"]})
     return aliases
 
 
@@ -342,16 +352,12 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
         # Explicit allowlists keep host telemetry, service identities and raw
         # backend error messages outside this member contract.
         snapshot = json.loads(response.body)
-        reasons = {"ready": "Ready to use.", "idle": "Ready to start when you make a request.",
-                   "starting": "Starting. Try again shortly.", "busy": "Busy. Try again shortly.",
-                   "unknown": "Availability has not been measured yet.",
-                   "unavailable": "Unavailable. Ask the owner for help."}
         rows = []
         for row in snapshot["capabilities"]:
             availability = row.get("availability") or {}
             evidence = availability.get("evidence") or {}
             rows.append({**{key: row.get(key) for key in ("capability", "capability_title", "icon_key", "title", "recommended_model", "use_names", "summary", "intent", "model", "workflow", "status", "available")},
-                         "reason": reasons.get(row["status"], reasons["unavailable"]),
+                         "reason_code": row["reason_code"],
                          "measured": bool(availability.get("measured")),
                          **({"use_name": row["use_name"]} if row.get("use_name") else {}),
                          **({"observed_at_s": evidence["observed_at_s"]} if evidence.get("observed_at_s") is not None else {})})

@@ -188,7 +188,10 @@ test("models polish 2 absent telemetry stays honest without exposing service ids
   await page.getByRole("button", { name: "Details" }).click();
   await expect(
     page.getByRole("dialog").getByText("Not measured yet", { exact: true }),
-  ).toBeVisible();
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("dialog").getByText("Typical time", { exact: true }),
+  ).toHaveCount(0);
   await expect(
     page.getByText(/capture-engine|Location not measured yet/),
   ).toHaveCount(0);

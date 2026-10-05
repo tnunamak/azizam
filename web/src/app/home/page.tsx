@@ -18,6 +18,8 @@ import {
   ListFilter,
 } from "lucide-react";
 import { formatAppName } from "@/lib/format";
+import { availabilityReason, statusSummaryCopy } from "@/lib/status-copy";
+import { useOwnerAlertTarget } from "@/components/shell/use-owner-alert";
 import { accountApi, type AccountApp } from "@/lib/account-api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -622,16 +624,13 @@ function Capabilities({
             const copy = capabilityCopy[capability.capability];
             if (!copy) return null;
             const label = capability.capability_title ?? copy.label;
+            const reason = availabilityReason(capability.status, capability.reason_code);
             return (
               <Link
                 key={capability.capability}
                 href={capabilityHref(capability.capability)}
-                title={capability.available ? label : capability.reason}
-                aria-label={
-                  capability.available
-                    ? label
-                    : `${label}: ${capability.reason}`
-                }
+                title={capability.available ? undefined : reason}
+                aria-label={reason && !capability.available ? `${label}: ${reason}` : label}
                 className={`hover:border-primary/50 focus-visible:ring-ring inline-flex min-h-11 max-w-full min-w-0 items-center gap-2 rounded-full border px-3 py-1.5 transition-colors focus-visible:ring-2 ${capability.available ? capabilityTint[copy.icon] : "border-border bg-muted/30 text-muted-foreground"}`}
               >
                 <HomeCapabilityIcon row={capability} />
@@ -837,6 +836,10 @@ export default function HomePage() {
     isFetching: homeFetching,
   } = useQuery({ queryKey: homeKey, queryFn: homeApi.home });
   const isOwner = home?.authenticated && home.user.role === "owner";
+  const ownerAlert = useOwnerAlertTarget(Boolean(isOwner));
+  const statusCopy = home && "status" in home && home.status.state === "unavailable"
+    ? statusSummaryCopy(home.status)
+    : undefined;
   return (
     <div className="min-w-0 space-y-4 sm:space-y-6">
       {homePending ? (
@@ -863,16 +866,12 @@ export default function HomePage() {
         />
       ) : (
         <>
-          {isOwner &&
-            home.status.state !== "ready" &&
-            !["unknown", "not_measured", "not measured yet"].includes(
-              String(home.status.state),
-            ) && (
+          {isOwner && statusCopy && !ownerAlert && (
               <div
                 role="status"
                 className="text-muted-foreground flex flex-wrap items-center gap-2 text-sm"
               >
-                <span>{home.status.reason}</span>
+                <span>{statusCopy}</span>
                 <Link
                   className="text-primary underline underline-offset-4"
                   href="/status/"

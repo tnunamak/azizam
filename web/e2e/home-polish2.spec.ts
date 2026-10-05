@@ -43,28 +43,28 @@ async function fixture(
       operation: "chat",
       available: true,
       status: "ready",
-      reason: "Chat is available.",
+      reason_code: "ready",
     },
     {
       id: "image",
       operation: "images",
       available: false,
       status: "unavailable",
-      reason: "The image service is disabled.",
+      reason_code: "unavailable_disabled",
     },
     {
       id: "video",
       operation: "videos",
       available: false,
       status: "unavailable",
-      reason: "The video service is unavailable.",
+      reason_code: "unavailable",
     },
     {
       id: "tts",
       operation: "speech",
       available: true,
       status: "ready",
-      reason: "Voice is available.",
+      reason_code: "ready",
     },
   ];
   await page.route("**/me/api/home", (route) =>
@@ -118,7 +118,7 @@ async function fixture(
             use_names: [alias.id],
             available: alias.available,
             status: alias.status,
-            reason: alias.reason,
+            reason_code: alias.reason_code,
           };
         }),
         new_app_aliases: aliases.filter((alias) => alias.operation === "chat"),
@@ -153,8 +153,9 @@ async function fixture(
         },
         status: {
           state: "unavailable",
-          reason:
-            "Images are unavailable: the service is disabled, with 1 other capability affected.",
+          reason_code: "unavailable_disabled",
+          affected_capability_ids: ["image", "video"],
+          counts: { total: 3, available: 1, affected: 2 },
         },
         receipts: [],
       },
@@ -185,10 +186,7 @@ for (const theme of ["light", "dark"] as const) {
       await page.goto("/ui/home/");
       await expect(page.locator("main")).not.toContainText("Hello,");
       await expect(
-        page.getByText(
-          "Images are unavailable: the service is disabled, with 1 other capability affected.",
-          { exact: true },
-        ),
+        page.getByText("Images and video are disabled.", { exact: true }),
       ).toBeVisible();
       await expect(
         page.getByText("Some services are unavailable or not measured yet.", {

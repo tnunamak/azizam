@@ -35,7 +35,7 @@ const chatAlias = {
   operation: "chat.completions",
   available: true,
   status: "ready",
-  reason: "Chat is ready.",
+  reason_code: "ready",
 };
 
 function home(role: "owner" | "member" = "owner", empty = false) {
@@ -60,15 +60,15 @@ function home(role: "owner" | "member" = "owner", empty = false) {
             model: "image",
             available: false,
             status: "unknown",
-            reason: "Not measured yet.",
+            reason_code: "unknown",
           },
         ],
     aliases: empty ? [] : [chatAlias],
     credential_aliases: empty ? {} : { "cred-browser": [chatAlias] },
     new_app_aliases: empty ? [] : [chatAlias],
     status: empty
-      ? { state: "unavailable", reason: "No models are available yet." }
-      : { state: "ready", reason: "Ready." },
+      ? { state: "unavailable", reason_code: "no_capabilities", affected_capability_ids: [], counts: { total: 0, available: 0, affected: 0 } }
+      : { state: "ready", reason_code: "ready", affected_capability_ids: [], counts: { total: 1, available: 1, affected: 0 } },
     receipts: empty
       ? []
       : [

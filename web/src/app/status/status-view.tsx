@@ -27,6 +27,7 @@ import {
 } from "@/components/product";
 import { ApiError } from "@/lib/api";
 import { productApi, type MemberStatusCapability } from "@/lib/product-api";
+import { availabilityReason, statusSummaryCopy } from "@/lib/status-copy";
 import { StatusClient } from "./status-client";
 
 const capabilityIcons = {
@@ -100,12 +101,7 @@ function MemberCapability({
             capability.title ??
             "Model details unavailable"}
         </p>
-        <StatusPill status={capability.status} reason={capability.reason} />
-        {capability.measured && capability.observed_at_s != null && (
-          <p className="text-muted-foreground text-xs">
-            Observed <RelativeTime ts={capability.observed_at_s} />
-          </p>
-        )}
+        <StatusPill status={capability.status} reason={availabilityReason(capability.status, capability.reason_code)} />
         {(usableNames.length > 0 || capability.summary) && (
           <details className="text-sm">
             <summary className="focus-visible:outline-ring text-muted-foreground flex min-h-11 cursor-pointer items-center focus-visible:outline focus-visible:outline-2">
@@ -121,9 +117,6 @@ function MemberCapability({
                 </>
               )}
               {capability.summary && <p>{capability.summary}</p>}
-              {!capability.measured && (
-                <p className="text-xs">Not measured yet</p>
-              )}
             </div>
           </details>
         )}
@@ -187,7 +180,7 @@ export function MemberStatus() {
           <div className="border-b pb-6">
             <StatusPill
               status={data.status.state}
-              reason={data.status.reason}
+              reason={statusSummaryCopy(data.status)}
             />
           </div>
           <section aria-labelledby="status-help-heading" className="space-y-4">
@@ -248,15 +241,15 @@ export function MemberStatus() {
                     className="flex min-w-0 flex-wrap items-center justify-between gap-3 py-3"
                   >
                     <div className="min-w-0 space-y-1">
-                      <p className="text-sm break-all">
-                        {receipt.intent ?? "Request"} ·{" "}
-                        {receipt.status ?? "Unknown result"}
-                      </p>
+                      {(receipt.intent || receipt.status) && (
+                        <p className="text-sm break-all">
+                          {[receipt.intent, receipt.status]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </p>
+                      )}
                       <p className="text-muted-foreground text-xs">
-                        <RelativeTime
-                          ts={receipt.created_at}
-                          fallback="Time not recorded"
-                        />
+                        <RelativeTime ts={receipt.created_at} fallback="" />
                       </p>
                     </div>
                     <Button variant="outline" asChild>

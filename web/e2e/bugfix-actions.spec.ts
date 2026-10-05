@@ -123,11 +123,6 @@ test("audio capability never selects an image-only workflow", async ({
   );
   await page.goto("/ui/try/?capability=audio&model=audio");
   await expect(
-    page.getByText("Run creates a Try key for your access plan.", {
-      exact: true,
-    }),
-  ).toBeVisible();
-  await expect(
     page.getByRole("tab", { name: "Workflow", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
   await expect(

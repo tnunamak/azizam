@@ -348,32 +348,29 @@ def group_product_capabilities(rows: list[dict[str, Any]]) -> list[dict[str, Any
     return sorted(result, key=lambda row: order.index(row["capability"]) if row["capability"] in order else len(order))
 
 
-def product_status_summary(rows: list[Mapping[str, Any]]) -> dict[str, str]:
-    """Report the unavailable part, even when another capability is ready."""
-    if not rows:
-        return {"state": "unavailable", "reason": "No capabilities are available to your account yet."}
+def product_status_summary(rows: list[Mapping[str, Any]]) -> dict[str, Any]:
+    """Return status facts for the client presentation layer to phrase."""
     issues = [row for row in rows if not row.get("available")]
-    if not issues:
-        if any(row.get("status") == "idle" for row in rows):
-            return {"state": "ready", "reason": "Everything you can use is ready, including services that start on request."}
-        return {"state": "ready", "reason": "Everything you can use is ready."}
-    state = next((status for status in ("unavailable", "unknown", "busy", "starting")
-                  if any(row["status"] == status for row in issues)), "unavailable")
-    row = next(row for row in issues if row["status"] == state)
-    states = {"unavailable": "unavailable", "unknown": "not measured yet", "starting": "starting", "busy": "busy"}
-    verb = "are" if row["capability"] in {"image", "decide", "embed", "sfx"} else "is"
-    # Evidence can contain private backend diagnostics. Member explanations use
-    # declared public states; registry disablement/configuration is safe detail.
-    availability = row.get("availability") or {}
-    evidence = availability.get("evidence") or {}
-    detail = {
-        "disabled": "the service is disabled", "unconfigured": "the service has not been configured",
-    }.get(evidence.get("kind"))
-    detail = detail or {
-        "unavailable": "the service is not responding", "unknown": "no current health observation is available",
-        "starting": "the service is warming up", "busy": "the service is handling other requests",
-    }[state]
-    other_count = len(issues) - 1
-    noun = "capability" if other_count == 1 else "capabilities"
-    extra = f", with {other_count} other {noun} affected" if other_count else ""
-    return {"state": state, "reason": f"{row['capability_title']} {verb} {states[state]}: {detail}{extra}."}
+    if not rows:
+        reason_code = "no_capabilities"
+        state = "unavailable"
+    elif not issues:
+        state = "ready"
+        reason_code = "ready_on_request" if any(row.get("status") == "idle" for row in rows) else "ready"
+    else:
+        state = next((status for status in ("unavailable", "unknown", "busy", "starting")
+                      if any(row["status"] == status for row in issues)), "unavailable")
+        selected = next(row for row in issues if row["status"] == state)
+        evidence = (selected.get("availability") or {}).get("evidence") or {}
+        reason_code = {
+            ("unavailable", "disabled"): "unavailable_disabled",
+            ("unavailable", "unconfigured"): "unavailable_unconfigured",
+        }.get((state, evidence.get("kind")), state)
+    return {
+        "state": state,
+        "reason_code": reason_code,
+        "affected_capability_ids": list(dict.fromkeys(
+            str(row["capability"]) for row in issues if row.get("capability")
+        )),
+        "counts": {"total": len(rows), "available": len(rows) - len(issues), "affected": len(issues)},
+    }

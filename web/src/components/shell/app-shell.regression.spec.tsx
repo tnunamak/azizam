@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { axe } from "jest-axe";
 import { AppShell } from "./app-shell";
 import type { QueryClient } from "@tanstack/react-query";
+import { resetSessionCache } from "@/lib/api";
 
 const clients = vi.hoisted(() => [] as QueryClient[]);
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -19,9 +20,11 @@ vi.mock("@/lib/api", async (importOriginal) => {
 
 const push = vi.fn();
 let pathname = "/home";
+let search = "";
 
 vi.mock("next/navigation", () => ({
   usePathname: () => pathname,
+  useSearchParams: () => new URLSearchParams(search),
   useRouter: () => ({ push }),
 }));
 
@@ -48,7 +51,10 @@ function jsonResponse(body: unknown, init: ResponseInit = {}) {
 
 beforeEach(() => {
   clients.forEach((client) => client.clear());
+  resetSessionCache();
   pathname = "/home";
+  search = "";
+  window.history.replaceState(null, "", "/ui/home/");
   push.mockReset();
   localStorage.clear();
   Object.defineProperty(window, "matchMedia", {
@@ -195,7 +201,48 @@ describe("Service admin session", () => {
     expect(screen.queryByText("Private library consumer")).toBeNull();
     expect(
       screen.getByRole("link", { name: "Sign in as a person" }),
-    ).toHaveAttribute("href", "/ui/sign-in/");
+    ).toHaveAttribute("href", "/ui/sign-in/?return_to=%2Fui%2Fhome%2F");
     expect(screen.queryByRole("link", { name: "People" })).toBeNull();
+  });
+});
+
+describe("Signed-out private pages", () => {
+  it("shows the shared sign-in recovery and returns to the current page", async () => {
+    pathname = "/models";
+    search = "capability=chat";
+    window.history.replaceState(null, "", "/ui/models/?capability=chat");
+    const originalFetch = fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/me/api/session"))
+          return jsonResponse({ authenticated: false });
+        if (url.endsWith("/admin/api/session"))
+          return jsonResponse(
+            {
+              error: {
+                code: "authentication_required",
+                message: "Authentication required",
+              },
+            },
+            { status: 401 },
+          );
+        return originalFetch(input, init);
+      }),
+    );
+
+    render(
+      <AppShell>
+        <h1>Models consumer</h1>
+      </AppShell>,
+    );
+
+    expect(await screen.findByText("Sign in to continue")).toBeVisible();
+    expect(screen.queryByText("Models consumer")).toBeNull();
+    expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute(
+      "href",
+      "/ui/sign-in/?return_to=%2Fui%2Fmodels%2F%3Fcapability%3Dchat",
+    );
   });
 });

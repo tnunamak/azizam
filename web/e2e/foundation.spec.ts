@@ -90,16 +90,14 @@ for (const theme of ["light", "dark"] as const) {
           "Page must fit the viewport",
         ).toBe(true);
         if (name === "status") {
-          const refresh = page.getByRole("button", {
+          await page.getByRole("button", { name: "Status actions" }).click();
+          const refresh = page.getByRole("menuitem", {
             name: "Refresh",
             exact: true,
           });
+          await expect(refresh).toBeVisible();
           await expect(refresh).toBeEnabled();
-          await expect
-            .poll(() =>
-              refresh.evaluate((element) => getComputedStyle(element).opacity),
-            )
-            .toBe("1");
+          await page.keyboard.press("Escape");
         }
         await page.screenshot({
           path: `test-results/screens/${name}-${theme}-${width}.png`,

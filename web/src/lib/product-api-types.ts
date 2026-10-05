@@ -17,7 +17,8 @@ export interface AvailabilityEvidence {
 export interface Availability {
   available: boolean;
   status: "ready" | "idle" | "starting" | "busy" | "unknown" | "unavailable";
-  reason: string;
+  reason?: string;
+  reason_code?: string;
   measured: boolean;
   enabled: boolean;
   configured: boolean;
@@ -29,7 +30,8 @@ export interface Availability {
 export interface CatalogAvailability {
   available: boolean;
   status: "ready" | "idle" | "starting" | "busy" | "unknown" | "unavailable";
-  reason: string;
+  reason?: string;
+  reason_code?: string;
   measured: boolean;
   enabled?: boolean;
   configured?: boolean;
@@ -85,7 +87,7 @@ export interface HomeCapability {
   summary?: string;
   secondary_profile?: boolean;
   title?: string;
-  capability: string;
+  capability?: string;
   use_name?: string;
   intent: string;
   input_modalities: Array<string>;
@@ -106,9 +108,10 @@ export interface HomeCapability {
   engine?: string;
   latency_class?: string;
   calibrated?: boolean;
-  reason: string;
+  reason?: string;
   limits?: Record<string, unknown>;
   status: "ready" | "idle" | "starting" | "busy" | "unknown" | "unavailable";
+  reason_code: string;
 }
 
 export interface HomeAlias {
@@ -116,12 +119,14 @@ export interface HomeAlias {
   operation: string;
   available: boolean;
   status: "ready" | "idle" | "starting" | "busy" | "unknown" | "unavailable";
-  reason: string;
+  reason_code: string;
 }
 
 export interface StatusSummary {
   state: "ready" | "idle" | "starting" | "busy" | "unknown" | "unavailable";
-  reason: string;
+  reason_code: string;
+  affected_capability_ids: Array<string>;
+  counts: Record<string, number>;
 }
 
 export interface HomeReceiptSource {
@@ -215,7 +220,7 @@ export interface MemberStatusCapability {
   workflow: string | null;
   status: "ready" | "idle" | "starting" | "busy" | "unknown" | "unavailable";
   available: boolean;
-  reason: string;
+  reason_code: string;
   measured: boolean;
   observed_at_s?: number | null;
 }

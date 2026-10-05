@@ -107,7 +107,8 @@ describe("catalog polish", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Details" })[0]);
     const detail = screen.getByRole("dialog");
     expect(within(detail).getByText("Typical time")).toBeVisible();
-    expect(within(detail).getByText("Not measured yet")).toBeVisible();
+    expect(within(detail).queryByText("Not measured yet")).toBeNull();
+    expect(within(detail).queryByText("Typical time")).toBeNull();
   });
 
   it("preserves independent no-provider-charge and paid filter choices", async () => {

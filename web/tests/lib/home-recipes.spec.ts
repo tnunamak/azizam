@@ -27,14 +27,14 @@ describe("Home client recipes", () => {
           operation: "chat",
           available: true,
           status: "ready",
-          reason: "Utility check is ready.",
+          reason_code: "ready",
         },
         {
           id: "default",
           operation: "chat",
           available: true,
           status: "ready",
-          reason: "Recommended chat is ready.",
+          reason_code: "ready",
         },
       ]),
     ).toBe("default");
@@ -45,7 +45,7 @@ describe("Home client recipes", () => {
           operation: "chat",
           available: true,
           status: "ready",
-          reason: "Utility check is ready.",
+          reason_code: "ready",
         },
       ]),
     ).toBeNull();

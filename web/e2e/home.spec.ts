@@ -41,7 +41,7 @@ async function inspectHome(page: Page, name: string) {
   ).toBe(true);
   await page.screenshot({
     path: `test-results/screens/home/${name}.png`,
-    fullPage: true,
+    fullPage: page.viewportSize()?.width !== 390,
   });
   const result = await new AxeBuilder({ page }).analyze();
   const serious = result.violations
@@ -96,7 +96,9 @@ for (const theme of ["light", "dark"] as const) {
                 creations: null,
                 status: {
                   state: "unavailable",
-                  reason: "No tasks are available to your account yet.",
+                  reason_code: "no_capabilities",
+                  affected_capability_ids: [],
+                  counts: { total: 0, available: 0, affected: 0 },
                 },
               },
             });
@@ -209,7 +211,9 @@ for (const theme of ["light", "dark"] as const) {
           await expect(page.getByLabel("Loading Home")).toHaveCount(0);
           if (state === "empty") {
             await expect(
-              page.getByText(/No tasks are available to your account yet/),
+              page.getByText("No capabilities are available to your account yet.", {
+                exact: true,
+              }),
             ).toHaveCount(1);
             await expect(
               page.getByRole("heading", {

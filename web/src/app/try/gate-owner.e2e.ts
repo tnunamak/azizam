@@ -98,12 +98,6 @@ for (const theme of ["light", "dark"]) {
               page.getByText("Your access plan does not allow decisions."),
             ).toBeVisible();
           }
-        } else {
-          await expect(
-            page.getByText("Run creates a Try key for your access plan.", {
-              exact: true,
-            }),
-          ).toBeVisible();
         }
         await expect(
           page.getByText("Catalog loaded", { exact: true }),
@@ -135,11 +129,6 @@ test("Try prepares a key and links a real public chat receipt", async ({
   page,
 }) => {
   await page.goto("/ui/try/");
-  await expect(
-    page.getByText("Run creates a Try key for your access plan.", {
-      exact: true,
-    }),
-  ).toBeVisible();
   const chatResponse = page.waitForResponse(
     (response) =>
       response.url().includes("/openai/v1/chat/completions") &&
