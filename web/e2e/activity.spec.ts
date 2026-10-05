@@ -208,7 +208,7 @@ for (const theme of ["light", "dark"] as const) {
             page.getByText(
               state === "empty"
                 ? "No changes yet"
-                : "Audit events could not be loaded. Try again.",
+                : "Changes could not be loaded. Try again.",
               { exact: true },
             ),
           ).toBeVisible();
