@@ -254,7 +254,7 @@ def test_technical_discovery_retains_workflow_targets_while_product_rows_dedupe(
 
 @pytest.mark.parametrize("filename, taxonomy", [
     ("ace-step-1.5-xl-turbo.yml", "music"), ("ace-step-1.5-2b-base.yml", "music"),
-    ("yue2-song.yml", "music"), ("sa3-small-sfx.yml", "sfx"), ("tangoflux.yml", "audio"),
+    ("yue2-song.yml", "music"), ("sa3-small-sfx.yml", "sfx"), ("tangoflux.yml", "sfx"),
 ])
 def test_shipped_audio_taxonomy_is_data_in_valid_manifests(filename, taxonomy):
     from pathlib import Path

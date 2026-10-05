@@ -156,3 +156,7 @@ I continued from the supplied brief and checked source files directly. The
 process later disappeared; I did not capture an exit status, so I cannot say
 whether task creation failed or finished. A task ID at start and visible
 progress would make this workflow easier to observe. No index state was reset.
+
+## 2026-10-05 — Try, Workflows, Library, Activity and Home Recent lane
+
+`ds tldr` and `ds recent` completed and supplied useful task-flow and recent-change context. `ds map` produced no output in its 30-second command window, and the multi-slice `ds task` waited on another index update without returning a task ID. The command ended before I captured an exit status. I continued from the binding lane brief and direct source inspection; shared DevSpecs state was not reset. A bounded wait with visible lock owner/progress would help identify whether the index is working or stalled.

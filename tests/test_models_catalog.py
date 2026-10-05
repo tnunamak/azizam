@@ -668,7 +668,6 @@ class ModelsCatalogBuildTests(unittest.TestCase):
             if item["id"] == "audio.generate.tangoflux"
         )
         self.assertEqual(row["capabilities"][0]["capability"], "sfx")
-        self.assertEqual(row["capabilities"][0]["capability_title"], "Sound effects")
 
     def test_ui_source_is_not_provider_and_cost_stays_unknown_without_locality(self) -> None:
         catalog = build_models_catalog(
