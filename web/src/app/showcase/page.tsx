@@ -127,7 +127,13 @@ function RecordedOutput({
     );
   if (typeof output.text === "string")
     return (
-      <pre className="bg-muted max-h-96 overflow-y-auto rounded-md p-4 font-sans text-sm [overflow-wrap:anywhere] whitespace-pre-wrap">
+      // Long outputs scroll, so keyboard users must be able to focus the region to scroll it.
+      <pre
+        tabIndex={0}
+        role="region"
+        aria-label="Output text"
+        className="bg-muted focus-visible:ring-ring max-h-96 overflow-y-auto rounded-md p-4 font-sans text-sm [overflow-wrap:anywhere] whitespace-pre-wrap focus-visible:ring-2 focus-visible:outline-none"
+      >
         {output.text}
       </pre>
     );

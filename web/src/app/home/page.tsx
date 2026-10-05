@@ -821,6 +821,8 @@ export default function HomePage() {
     : undefined;
   return (
     <div className="min-w-0 space-y-4 sm:space-y-6">
+      {/* The visible page starts with "Connect an app"; the h1 keeps the page outline for assistive technology. */}
+      <h1 className="sr-only">Home</h1>
       {homePending ? (
         <HomeLoading />
       ) : homeError ? (
