@@ -145,9 +145,7 @@ test("audit has a useful empty filter state and recovers after an API error", as
   page,
 }) => {
   await page.goto("/ui/activity/");
-  await page
-    .getByText("Filter by a person not in the recent events", { exact: true })
-    .click();
+  await page.getByText("Find a person", { exact: true }).click();
   await page
     .getByRole("textbox", { name: "Person ID" })
     .fill("no-such-test-actor");
@@ -163,7 +161,7 @@ test("audit has a useful empty filter state and recovers after an API error", as
   );
   await page.reload();
   await expect(
-    page.getByText("Audit events could not be loaded. Try again."),
+    page.getByText("Changes could not be loaded. Try again."),
   ).toBeVisible();
   await page.unroute("**/admin/api/audit?**");
   await page.getByRole("button", { name: /try again|retry/i }).click();

@@ -63,7 +63,9 @@ async function inspect(page: Page, name: string) {
   await expect(
     name.startsWith("workflows-detail-")
       ? page.getByRole("dialog", { name: "Product render" })
-      : page.getByRole("heading", { level: 1 }),
+      : name.startsWith("home-")
+        ? page.getByRole("heading", { name: "Connect an app", level: 2 })
+        : page.getByRole("heading", { level: 1 }),
   ).toBeVisible();
   await page.waitForLoadState("networkidle");
   await expect(page.locator('[aria-busy="true"]:visible')).toHaveCount(0);

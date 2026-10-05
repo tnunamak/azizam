@@ -100,7 +100,7 @@ it("distinguishes configured typical speed from measured requests", async () => 
   ]);
   await screen.findByRole("button", { name: "Copy model name chat" });
   expect(screen.queryByText("Remote", { exact: true })).toBeNull();
-  expect(screen.queryByText("Paid · $0.02 per request")).toBeNull();
+  expect(screen.getByText("Paid · $0.02 per request")).toBeVisible();
   expect(screen.queryByText("~1.2 s · Typical")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Details" }));
   expect(

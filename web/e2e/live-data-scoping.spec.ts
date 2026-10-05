@@ -5,6 +5,7 @@ type Manifest = {
   service_asset: string;
   local_asset: string;
   member_asset: string;
+  owner_asset: string;
   service_app_id: string;
   member_app_id: string;
 };
@@ -38,7 +39,13 @@ test("owner sees keyless LAN and service app media and usage", async ({
   );
   expect(
     media.assets.map((asset: { asset_id: string }) => asset.asset_id),
-  ).toEqual(expect.arrayContaining([data.service_asset, data.local_asset]));
+  ).toEqual(
+    expect.arrayContaining([
+      data.service_asset,
+      data.owner_asset,
+      data.local_asset,
+    ]),
+  );
 
   const serviceMedia = await (
     await page.request.get(`/me/api/media?source=app:${data.service_app_id}`)
@@ -71,14 +78,24 @@ test("owner sees keyless LAN and service app media and usage", async ({
   await page.getByRole("combobox", { name: "Source", exact: true }).click();
   await page.getByRole("option", { name: "Daisy", exact: true }).click();
   await expect(page.locator("article")).toHaveCount(1);
-  await expect(page.locator("article").getByText("Daisy")).toBeVisible();
+  await page.getByRole("button", { name: "Open Image", exact: true }).click();
+  await page.getByText("Details", { exact: true }).click();
+  await expect(
+    page.getByRole("dialog").getByText("Daisy", { exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
   await page.getByRole("combobox", { name: "Owner", exact: true }).click();
   await page.getByRole("option", { name: "Mine", exact: true }).click();
-  await expect(page.getByText("No media yet")).toBeVisible();
+  await expect(page.locator("article")).toHaveCount(1);
+  const mine = await (await page.request.get("/me/api/media?scope=me")).json();
+  expect(
+    mine.assets.map((asset: { asset_id: string }) => asset.asset_id),
+  ).toEqual([data.owner_asset]);
+  await expect(page.getByText("No media yet")).toHaveCount(0);
   await expect(page.getByText("Library could not be loaded")).toHaveCount(0);
   await page.goto("/ui/usage/");
   await expect(page.getByRole("heading", { name: "Usage" })).toBeVisible();
-  await expect(page.getByText("Local network · no key").first()).toBeVisible();
+  await expect(page.getByRole("row", { name: /Audio voice 1/ })).toBeVisible();
 });
 
 test("member cannot see local/service media or mint signed URLs for them", async ({

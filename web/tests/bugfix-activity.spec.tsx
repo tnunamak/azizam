@@ -11,7 +11,7 @@ afterEach(() => {
 describe("recorded decision outcomes", () => {
   it.each([
     ["error", "Failed"],
-    ["rejected", "Failed"],
+    ["rejected", "Rejected"],
     ["failed", "Failed"],
     ["ok", "Completed"],
     ["succeeded", "Completed"],

@@ -103,10 +103,11 @@ class AudioMediaJobIntegrationTests(unittest.IsolatedAsyncioTestCase):
         )
 
         assert response is not None
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 404)
         body = json.loads(response.body.decode("utf-8"))
         self.assertEqual(body["error"]["type"], "invalid_request_error")
-        self.assertIn("Unknown audio model", body["error"]["message"])
+        self.assertEqual(body["error"]["code"], "model_not_found")
+        self.assertEqual(body["error"]["param"], "model")
 
     async def test_direct_audio_submit_uses_resource_admission(self) -> None:
         body = {

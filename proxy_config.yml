@@ -1190,7 +1190,6 @@ model_aliases:
       - {match: "tts-1", to: tts}
       - {match: "tts-1-hd", to: tts-quality}
       - {match: "gpt-4o*-tts*", to: tts}
-      - {match: "tts-*", to: tts}
   transcriptions:
     engines:
       parakeet:

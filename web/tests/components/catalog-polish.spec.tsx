@@ -16,20 +16,37 @@ afterEach(() => {
 });
 
 function row(id: string, intent: string, paid = false) {
+  const capability = intent.startsWith("speech.trans")
+    ? "transcribe"
+    : intent.startsWith("speech.")
+      ? "speech"
+      : intent === "text.embeddings"
+        ? "embed"
+        : intent.startsWith("image.")
+          ? "image"
+          : "chat";
+  const label = {
+    chat: "Chat",
+    image: "Images",
+    speech: "Speech",
+    transcribe: "Transcription",
+    embed: "Embeddings",
+  }[capability];
   return {
     id,
     object: "model_catalog.alias",
     display_name: id,
     title: id === "fast" ? "Fast" : intent === "image.generate" ? "Images" : id,
     alias: true,
+    recommended: false,
     operations: [],
     resolves_to: {},
     description: "A configured model.",
     capabilities: [
       {
         intent,
-        label: intent,
-        capability: intent.split(".")[0] === "image" ? "image" : "chat",
+        label,
+        capability,
       },
     ],
     provider: paid ? "Example provider" : "Local engine",
@@ -93,22 +110,55 @@ describe("catalog polish", () => {
     ]);
     expect(await screen.findByRole("heading", { name: "Fast" })).toBeVisible();
     expect(
-      screen.getByRole("heading", { name: "Images", level: 3 }),
+      screen.getByRole("heading", { name: "Images", level: 2 }),
     ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "Images", level: 3 }),
+    ).toBeNull();
     expect(
       screen.getByRole("button", { name: "Copy model name fast" }),
     ).toHaveTextContent("fast");
     expect(screen.getByText("Paid · $0.04 per image")).toBeVisible();
-    expect(screen.getByText("Local · no provider charge")).toBeVisible();
-    expect(screen.queryByText(/Free/)).toBeNull();
+    expect(screen.getByText("Free (your hardware)")).toBeVisible();
     expect(screen.queryByText("Not measured yet")).toBeNull();
     expect(screen.queryByTitle("Typical time")).toBeNull();
     expect(screen.queryByText(/Two requests are ahead of yours/)).toBeNull();
-    fireEvent.click(screen.getAllByRole("button", { name: "Details" })[0]);
+    const image = screen
+      .getByRole("button", { name: "Copy model name image" })
+      .closest("article");
+    fireEvent.click(within(image!).getByRole("button", { name: "Details" }));
     const detail = screen.getByRole("dialog");
-    expect(within(detail).getByText("Typical time")).toBeVisible();
+    expect(within(detail).getByText("Paid · $0.04 per image")).toBeVisible();
+    expect(within(detail).queryByText("Typical time")).toBeNull();
     expect(within(detail).queryByText("Not measured yet")).toBeNull();
     expect(within(detail).queryByText("Typical time")).toBeNull();
+  });
+
+  it("uses engine titles when a model title only repeats its capability", async () => {
+    renderCatalog([
+      {
+        ...row("speech-model", "speech.synthesis"),
+        title: "Speech",
+        engine_label: "Chatterbox Turbo",
+      } as ReturnType<typeof row> & { engine_label: string },
+      {
+        ...row("transcription-model", "speech.transcription"),
+        title: "Transcription",
+        engine_label: "Parakeet v3",
+      } as ReturnType<typeof row> & { engine_label: string },
+      {
+        ...row("embedding-model", "text.embeddings"),
+        title: "Embeddings · Embed",
+      },
+    ]);
+
+    expect(
+      await screen.findByRole("heading", { name: "Chatterbox Turbo" }),
+    ).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Parakeet v3" })).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "Embeddings · Embed" }),
+    ).toBeNull();
   });
 
   it("preserves independent no-provider-charge and paid filter choices", async () => {
@@ -153,12 +203,15 @@ describe("catalog polish", () => {
         status: "unknown",
         reason: "No health endpoint is configured.",
       }),
-      rowWithAvailability("on-demand", "decision.systemone", {
-        available: true,
-        measured: false,
-        status: "idle_startable",
-        reason: "Starts when you send a request.",
-      }),
+      {
+        ...rowWithAvailability("on-demand", "speech.synthesis", {
+          available: true,
+          measured: false,
+          status: "idle_startable",
+          reason: "Starts when you send a request.",
+        }),
+        recommended: true,
+      },
       rowWithAvailability("unmeasured", "chat.completions", {
         available: true,
         measured: false,
@@ -177,6 +230,43 @@ describe("catalog polish", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText(/Starts when you send a request/)).toBeNull();
     expect(screen.queryByText("Unavailable")).toBeNull();
+  });
+
+  it("uses friendly catalog titles when the display name repeats a capability", async () => {
+    const speech = {
+      ...row("speech-model", "speech.synthesis"),
+      title: "Speech · Speech",
+      display_name: "Speech · Speech",
+      engine_label: "Chatterbox Turbo",
+    };
+    const transcription = {
+      ...row("transcription-model", "speech.transcription"),
+      title: "Transcription · Transcription",
+      display_name: "Transcription · Transcription",
+      engine_label: "Parakeet v3",
+    };
+    const embedding = {
+      ...row("embedding-model", "text.embeddings"),
+      title: "Embeddings · Embed",
+      display_name: "Embeddings · Embed",
+      engine_label: "Nomic Embed",
+    };
+    renderCatalog([speech, transcription, embedding]);
+
+    expect(
+      await screen.findByRole("heading", { name: "Chatterbox Turbo" }),
+    ).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Parakeet v3" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Nomic Embed" })).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "Speech · Speech" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "Transcription · Transcription" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "Embeddings · Embed" }),
+    ).toBeNull();
   });
 
   it("provides a pressed state without the primary action style", () => {

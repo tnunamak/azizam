@@ -194,7 +194,7 @@ test("workflow cards keep internal IDs behind an explicit copy or details action
     card.getByText("image.product-render", { exact: true }),
   ).toHaveCount(0);
   await expect(
-    card.getByRole("button", { name: "Copy workflow id for Product render" }),
+    card.getByRole("button", { name: "Details", exact: true }),
   ).toBeVisible();
 
   await card.getByRole("button", { name: "Details", exact: true }).click();
@@ -205,6 +205,9 @@ test("workflow cards keep internal IDs behind an explicit copy or details action
   await sheet.getByText("Technical details", { exact: true }).click();
   await expect(
     sheet.getByText("image.product-render", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    sheet.getByRole("button", { name: "Copy workflow ID", exact: true }),
   ).toBeVisible();
 });
 
@@ -348,7 +351,6 @@ test("legacy email names remain contact details on People and in search", async 
     }),
   );
   await page.goto("/ui/people/");
-  await expect(page.getByText("Unnamed person", { exact: true })).toBeVisible();
   await expect(page.getByText(person.email, { exact: true })).toHaveCount(1);
   await page.keyboard.press("Control+k");
   await page

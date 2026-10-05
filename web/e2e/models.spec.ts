@@ -347,9 +347,7 @@ for (const theme of ["light", "dark"] as const) {
       await expect(
         page.getByText("Ready to start when you make a request."),
       ).toHaveCount(0);
-      await expect(
-        page.getByText("Unknown", { exact: true }),
-      ).toHaveCount(0);
+      await expect(page.getByText("Unknown", { exact: true })).toHaveCount(0);
       const decision = page.locator("section").filter({
         has: page.getByRole("heading", { name: "Decide", exact: true }),
       });
@@ -370,7 +368,7 @@ for (const theme of ["light", "dark"] as const) {
       await page.keyboard.press("Escape");
       await expect(
         page.getByText("Paid · $0.04 per image", { exact: true }),
-      ).toHaveCount(0);
+      ).toBeVisible();
       await assertNoOverflow(page);
       await assertNoSeriousAxe(page);
       await page.screenshot({

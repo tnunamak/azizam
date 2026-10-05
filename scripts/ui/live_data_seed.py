@@ -17,6 +17,7 @@ import tempfile
 import time
 import urllib.request
 import wave
+import zlib
 
 REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:
@@ -103,6 +104,19 @@ def _sha_asset(cache: Path, content: bytes, suffix: str, owner_hashes: list[str]
     return asset_id
 
 
+def _png_rgb(red: int, green: int, blue: int) -> bytes:
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        body = kind + payload
+        return struct.pack(">I", len(payload)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(bytes([0, red, green, blue])))
+        + chunk(b"IEND", b"")
+    )
+
+
 def _wav_bytes(seconds: float = 3.0, rate: int = 8000) -> bytes:
     buffer = io.BytesIO()
     with wave.open(buffer, "wb") as wav:
@@ -157,12 +171,14 @@ def seed(state: Path, port: int) -> dict[str, object]:
 
     cache = state / "images"
     service_asset = _sha_asset(cache, PNG_1X1, ".png", [], "req_service_media")
+    owner_asset = _sha_asset(cache, _png_rgb(50, 120, 200), ".png", [owner_hash], "req_owner_media")
     local_asset = _sha_asset(cache, _wav_bytes(), ".wav", [], "req_local_media")
     member_asset = _sha_asset(cache, PNG_1X1 + b"member", ".png", [member_hash], "req_member_media")
 
     now_ms = int(time.time() * 1000)
     for request_id, app_id, intent, path, model in [
         ("req_service_media", service_app["id"], "image.generate", "/v1/images/generations", "image"),
+        ("req_owner_media", owner_app["id"], "image.generate", "/v1/images/generations", "image"),
         ("req_local_media", None, "audio.speech", "/v1/audio/speech", "voice"),
         ("req_member_media", member_app["id"], "image.generate", "/v1/images/generations", "image"),
     ]:
@@ -175,6 +191,7 @@ def seed(state: Path, port: int) -> dict[str, object]:
             receipt.client_hint = "Open WebUI"
         receipt_store.record(receipt, created_at=now_ms // 1000, path=receipts_path)
     media_jobs.create(media_jobs.MediaJob(request_id="req_service_media", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100, assets=[{"asset_id": service_asset, "media_type": "image/png"}], app_id=service_app["id"]), path=jobs_path)
+    media_jobs.create(media_jobs.MediaJob(request_id="req_owner_media", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100, assets=[{"asset_id": owner_asset, "media_type": "image/png"}], app_id=owner_app["id"]), path=jobs_path)
     media_jobs.create(media_jobs.MediaJob(request_id="req_local_media", intent="audio.speech", status=media_jobs.STATUS_SUCCEEDED, progress=100, assets=[{"asset_id": local_asset, "media_type": "audio/wav"}]), path=jobs_path)
     media_jobs.create(media_jobs.MediaJob(request_id="req_member_media", intent="image.generate", status=media_jobs.STATUS_SUCCEEDED, progress=100, assets=[{"asset_id": member_asset, "media_type": "image/png"}], app_id=member_app["id"]), path=jobs_path)
 
@@ -184,6 +201,7 @@ def seed(state: Path, port: int) -> dict[str, object]:
         "member_email": MEMBER_EMAIL,
         "password": PASSWORD,
         "service_asset": service_asset,
+        "owner_asset": owner_asset,
         "local_asset": local_asset,
         "member_asset": member_asset,
         "service_app_id": service_app["id"],

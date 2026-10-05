@@ -118,6 +118,16 @@ class VideoCreateGraphTests(unittest.IsolatedAsyncioTestCase):
         payload = json.loads(response.body)
         return response.status_code, payload, (submitted[0] if submitted else None)
 
+    async def test_unknown_video_model_returns_model_not_found(self) -> None:
+        status, payload, submitted = await self._create(
+            {"model": "no-such-video-model", "prompt": "x"}
+        )
+
+        self.assertEqual(status, 404)
+        self.assertEqual(payload["error"]["code"], "model_not_found")
+        self.assertEqual(payload["error"]["param"], "model")
+        self.assertIsNone(submitted)
+
     def test_ltx25_is_the_default_video_model(self) -> None:
         self.assertEqual(proxy._resolve_video_workflow("")[0], "video-ltx-2.5-t2v")
         self.assertEqual(proxy._resolve_video_workflow("default")[0], "video-ltx-2.5-t2v")

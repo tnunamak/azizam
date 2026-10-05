@@ -40,10 +40,13 @@ class SttServiceSelectionTests(SttCase):
                 self.assertEqual(resp.status_code, 200, resp.text)
                 self.assertEqual(seen[-1].url.port, port)
 
-    def test_unknown_model_uses_the_default_service(self) -> None:
+    def test_unknown_model_is_not_silently_routed_to_the_default_service(self) -> None:
         seen = self._json_upstream()
-        self.assertEqual(self._post([("model", "some-other-model")]).status_code, 200)
-        self.assertEqual(seen[0].url.port, 5092)
+        response = self._post([("model", "some-other-model")])
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["error"]["code"], "model_not_found")
+        self.assertEqual(response.json()["error"]["param"], "model")
+        self.assertEqual(seen, [])
 
     def test_gpu_parakeet_gets_its_own_model_id_and_chunk_limits(self) -> None:
         seen = self._json_upstream()

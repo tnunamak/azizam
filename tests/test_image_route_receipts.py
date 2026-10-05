@@ -1056,15 +1056,15 @@ class TestProxyComfyRequestReceipt(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(receipt.requested_model, "flux2-klein-4b")
         self.assertEqual(receipt.resolved_model, "flux2-klein-4b")
 
-    async def test_unknown_model_records_fallback(self) -> None:
+    async def test_unknown_model_returns_model_not_found(self) -> None:
         receipt, response = await self._run_with_json_body(
             {"prompt": "x", "model": "no-such-model-anywhere"}
         )
-        self.assertEqual(response.status_code, 400)
-        self.assertTrue(
-            any("unknown_model" in r for r in receipt.fallback_reasons),
-            receipt.fallback_reasons,
-        )
+        self.assertEqual(response.status_code, 404)
+        error = json.loads(response.body)["error"]
+        self.assertEqual(error["code"], "model_not_found")
+        self.assertEqual(error["param"], "model")
+        self.assertFalse(receipt.fallback_reasons)
 
     async def test_bad_output_format_records_rejection(self) -> None:
         receipt, response = await self._run_with_json_body(
@@ -1113,13 +1113,12 @@ class TestProxyComfyRequestReceipt(unittest.IsolatedAsyncioTestCase):
                 "model": "no-such-model-anywhere",
             }
         )
-        # Falls through to the (expected) unknown-model 400, not a background/
-        # output_format conflict -- proves the combo itself was accepted.
+        # Falls through to the unknown-model 404, not a background/output_format
+        # conflict, proving the combination itself was accepted.
         self.assertNotEqual(receipt.rejected_inputs.get("background"), "conflicts_with_output_format")
-        self.assertTrue(
-            any("unknown_model" in r for r in receipt.fallback_reasons),
-            receipt.fallback_reasons,
-        )
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(json.loads(response.body)["error"]["code"], "model_not_found")
+        self.assertFalse(receipt.fallback_reasons)
 
 
 class _MultipartUpload:
@@ -1258,6 +1257,29 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(captured["image_transform"])
         self.assertEqual(captured["image_response_headers"]["X-Image-Mask"], "workflow")
         self.assertNotIn("mask_mode:post_composite", captured.get("warnings", []))
+
+    async def test_unknown_edit_model_returns_model_not_found(self) -> None:
+        request = _MultipartRequest(
+            [
+                ("prompt", "edit this image"),
+                ("model", "no-such-edit-model"),
+                (
+                    "image",
+                    _MultipartUpload("source.png", _png_bytes((0, 0, 0, 255))),
+                ),
+            ]
+        )
+        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+            proxy, "_service_availability_response", return_value=None
+        ):
+            response = await proxy.proxy_comfy_edit_request(
+                request, proxy.NO_AUTH_CONTEXT  # type: ignore[arg-type]
+            )
+
+        self.assertEqual(response.status_code, 404)
+        error = json.loads(response.body)["error"]
+        self.assertEqual(error["code"], "model_not_found")
+        self.assertEqual(error["param"], "model")
 
     def _conditioning_manifest(
         self,

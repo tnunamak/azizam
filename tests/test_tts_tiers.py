@@ -48,6 +48,26 @@ class TtsLifecycleTests(RouteCase):
         self.health.assert_not_awaited()
         self.ensure.assert_not_awaited()
 
+    def test_unknown_model_is_not_silently_routed_to_default_engine(self) -> None:
+        seen = self.use_upstream(lambda r: httpx.Response(200, content=b"RIFFwav"))
+        response = self.client.post(
+            "/v1/audio/speech",
+            json={"model": "tts-omnivoice", "voice": "alloy", "input": "hello"},
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["error"]["code"], "model_not_found")
+        self.assertEqual(response.json()["error"]["param"], "model")
+        self.assertEqual(seen, [])
+
+    def test_documented_openai_speech_model_alias_still_routes(self) -> None:
+        seen = self.use_upstream(lambda r: httpx.Response(200, content=b"RIFFwav"))
+        response = self.client.post(
+            "/v1/audio/speech",
+            json={"model": "tts-1", "voice": "alloy", "input": "hello"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(seen[0].content)["model"], "chatterbox-turbo")
+
 
 class TtsRuntimeFallbackTests(RouteCase):
     """The TTS tiers fall back by the same rules as STT."""

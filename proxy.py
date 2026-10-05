@@ -3021,6 +3021,14 @@ def resolve_model_for_operation(operation: str, requested_model: str) -> ModelRe
             is_openai_alias=True,
             alias=alias,
         )
+    # Speech only accepts names declared by the alias data above. Passing an
+    # unknown name through here used to select the configured default engine,
+    # which made a typo look like a successful request to a different model.
+    if operation in {"speech", "transcriptions", "translations"}:
+        raise ModelCompatibilityError(
+            f"Model '{requested_model}' is not available for {operation} requests.",
+            code="model_not_found",
+        )
     if not MODEL_COMPAT_ENABLED or not requested_model:
         return ModelResolution(
             requested_model=requested_model,
@@ -3059,7 +3067,7 @@ def resolve_model_for_operation(operation: str, requested_model: str) -> ModelRe
 
 def model_compatibility_error(error: "str | Exception") -> Response:
     code = getattr(error, "code", None)
-    status_code = 503 if code == "model_not_deployed" else 400
+    status_code = 503 if code == "model_not_deployed" else 404 if code == "model_not_found" else 400
     body: dict[str, Any] = {
         "message": str(error),
         "type": "service_unavailable" if status_code == 503 else "invalid_request_error",
@@ -7883,12 +7891,11 @@ async def proxy_comfy_request(
 
     workflow = load_comfy_workflow(model)
     if not workflow:
-        if receipt is not None:
-            receipt.add_fallback_reason(f"unknown_model:{model}")
-        return Response(
-            content=json.dumps({"error": {"message": f"Unknown model: {model}", "type": "invalid_request_error"}}),
-            status_code=400,
-            media_type="application/json"
+        return model_compatibility_error(
+            ModelCompatibilityError(
+                f"Model '{model}' is not available for image generation.",
+                code="model_not_found",
+            )
         )
 
     workflow = copy.deepcopy(workflow)
@@ -8314,12 +8321,11 @@ async def proxy_comfy_edit_request(
 
     workflow = load_comfy_workflow(model)
     if not workflow:
-        if receipt is not None:
-            receipt.add_fallback_reason(f"unknown_edit_model:{model}")
-        return Response(
-            content=json.dumps({"error": {"message": f"Unknown edit model: {model}", "type": "invalid_request_error"}}),
-            status_code=400,
-            media_type="application/json"
+        return model_compatibility_error(
+            ModelCompatibilityError(
+                f"Model '{model}' is not available for image editing.",
+                code="model_not_found",
+            )
         )
     manifest = _find_image_manifest("image.edit", str(model))
     prompt_ignored_by_workflow = _manifest_ignores_prompt(manifest)
@@ -10504,10 +10510,11 @@ async def proxy_comfy_video_create(
 
     workflow_name, workflow_cfg = _resolve_video_workflow(requested_model)
     if not workflow_cfg:
-        return Response(
-            content=json.dumps({"error": {"message": f"Unknown video model/workflow: {requested_model}", "type": "invalid_request_error"}}),
-            status_code=400,
-            media_type="application/json"
+        return model_compatibility_error(
+            ModelCompatibilityError(
+                f"Model '{requested_model}' is not available for video generation.",
+                code="model_not_found",
+            )
         )
     # Some models ship separate text-to-video and image-to-video graphs (LTX-2.5,
     # MiniMax H3). `i2v_workflow` on the t2v entry names the image variant; it
@@ -20551,15 +20558,12 @@ async def _submit_audio_media_job(
     request_id = f"audjob_{uuid.uuid4().hex}"
     workflow_name, _workflow_cfg = _resolve_audio_workflow(str(body.get("model", AUDIO_DEFAULT_WORKFLOW)))
     if not workflow_name:
-        return Response(
-            content=json.dumps({
-                "error": {
-                    "message": f"Unknown audio model: {body.get('model', AUDIO_DEFAULT_WORKFLOW)}",
-                    "type": "invalid_request_error",
-                }
-            }),
-            status_code=400,
-            media_type="application/json",
+        requested_model = str(body.get("model", AUDIO_DEFAULT_WORKFLOW))
+        return model_compatibility_error(
+            ModelCompatibilityError(
+                f"Model '{requested_model}' is not available for audio generation.",
+                code="model_not_found",
+            )
         )
     requested_model = body.get("model", AUDIO_DEFAULT_WORKFLOW)
     manifest = _load_audio_workflow_manifest(workflow_name)
@@ -20719,15 +20723,11 @@ def _validate_video_media_job_body(body: Mapping[str, Any]) -> tuple[str | None,
     )
     workflow_name, workflow_cfg = _resolve_video_workflow(workflow_candidate)
     if not workflow_cfg:
-        return None, Response(
-            content=json.dumps({
-                "error": {
-                    "message": f"Unknown video model/workflow: {workflow_candidate}",
-                    "type": "invalid_request_error",
-                }
-            }),
-            status_code=400,
-            media_type="application/json",
+        return None, model_compatibility_error(
+            ModelCompatibilityError(
+                f"Model '{workflow_candidate}' is not available for video generation.",
+                code="model_not_found",
+            )
         )
     return str(workflow_name), None
 
@@ -22364,10 +22364,11 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
 
     workflow_name, workflow_cfg = _resolve_audio_workflow(model)
     if not workflow_cfg:
-        return Response(
-            content=json.dumps({"error": {"message": f"Unknown audio model: {model}", "type": "invalid_request_error"}}),
-            status_code=400,
-            media_type="application/json"
+        return model_compatibility_error(
+            ModelCompatibilityError(
+                f"Model '{model}' is not available for audio generation.",
+                code="model_not_found",
+            )
         )
     if duration is None:
         duration = workflow_cfg.get("default_duration", 30)

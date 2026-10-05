@@ -21,8 +21,11 @@ test("anonymous front door signs in and returns to Home", async ({
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect(page).toHaveURL(/\/ui\/home\/\?connect=phone$/);
     await expect(
-      page.getByRole("heading", { level: 1, name: "Hello, there.", exact: true }),
+      page.getByRole("heading", { name: "Connect an app", level: 2 }),
     ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Hello, there.", exact: true }),
+    ).toHaveCount(0);
     await expect(
       page
         .getByRole("navigation", { name: "Main navigation" })
@@ -39,8 +42,11 @@ test("owner admin bookmark opens Home with Gateway navigation", async ({
   await page.goto("/admin?from=bookmark");
   await expect(page).toHaveURL(/\/ui\/home\/\?from=bookmark$/);
   await expect(
-    page.getByRole("heading", { level: 1, name: "Hello, there.", exact: true }),
+    page.getByRole("heading", { name: "Connect an app", level: 2 }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Hello, there.", exact: true }),
+  ).toHaveCount(0);
   const nav = page.getByRole("navigation", { name: "Main navigation" });
   await expect(nav.getByText("Gateway", { exact: true })).toBeVisible();
   await expect(
@@ -77,8 +83,9 @@ test("local sign-in returns to the new page and keeps its filters", async ({
 
 test("Status links to the owner technical dashboard", async ({ page }) => {
   await page.goto("/ui/status/");
+  await page.getByRole("button", { name: "Status actions" }).click();
   await page
-    .getByRole("link", { name: "Technical details", exact: true })
+    .getByRole("menuitem", { name: "Technical details", exact: true })
     .click();
   await expect(page).toHaveURL(/\/status\/raw$/);
   await expect(page.locator("body")).toContainText("Status");

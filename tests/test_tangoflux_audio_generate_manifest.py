@@ -566,6 +566,20 @@ class TestAceStepAudioGenerateRoute(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(workflow["10"]["inputs"]["seconds"], 12.0)
         self.assertEqual(workflow["20"]["inputs"]["seed"], 1234)
 
+    async def test_unknown_audio_model_returns_model_not_found(self) -> None:
+        with patch.object(proxy, "COMFY_ENABLED", True), patch.object(
+            proxy, "_resolve_audio_workflow", return_value=(None, None)
+        ):
+            response = await proxy.proxy_audio_generate(
+                _JsonRequest({"model": "no-such-audio-model", "prompt": "x"}),  # type: ignore[arg-type]
+                proxy.NO_AUTH_CONTEXT,
+            )
+
+        self.assertEqual(response.status_code, 404)
+        error = json.loads(response.body.decode("utf-8"))["error"]
+        self.assertEqual(error["code"], "model_not_found")
+        self.assertEqual(error["param"], "model")
+
     async def test_prompt_falls_back_to_ace_step_tags(self) -> None:
         response, captured = await self._call(
             {

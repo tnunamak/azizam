@@ -128,7 +128,7 @@ for (const width of [390, 1440]) {
     await expect(page.getByText("2 more", { exact: true })).toBeVisible();
     await expect(
       cards.first().getByText(`Paid · ${price}`, { exact: true }),
-    ).toHaveCount(0);
+    ).toBeVisible();
     await expect(
       cards.first().getByText("Not measured yet", { exact: true }),
     ).toHaveCount(0);

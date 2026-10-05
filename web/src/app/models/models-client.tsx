@@ -176,8 +176,32 @@ function descriptionFor(row: CatalogRow): string {
   return row.description ?? "";
 }
 
-function titleFor(row: CatalogRow): string {
-  return row.title ?? row.display_name;
+function titleFor(row: CatalogRow): string | undefined {
+  const capability = primaryCapabilityLabel(row);
+  const repeatsCapability = (value: string) => {
+    const normalize = (part: string) => {
+      const word = part
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z]/g, "");
+      return word === "embed" || word === "embedding" ? "embeddings" : word;
+    };
+    const parts = value.split("·").map(normalize).filter(Boolean);
+    return (
+      parts.length > 0 && parts.every((part) => part === normalize(capability))
+    );
+  };
+
+  const title = row.title ?? row.display_name;
+  if (title && !repeatsCapability(title)) return title;
+  if (
+    row.locality === "local" &&
+    row.engine_label &&
+    !repeatsCapability(row.engine_label)
+  ) {
+    return row.engine_label;
+  }
+  return undefined;
 }
 
 function hasNoProviderCharge(row: CatalogRow): boolean {
@@ -185,10 +209,12 @@ function hasNoProviderCharge(row: CatalogRow): boolean {
 }
 
 function costLabel(row: CatalogRow): string | undefined {
-  if (row.locality === "local") return "No provider charge";
+  if (row.locality === "local") return "Free (your hardware)";
   if (hasNoProviderCharge(row)) return "No provider charge";
   if (row.cost.kind === "paid") {
-    return row.cost.price === null ? undefined : `Paid · ${String(row.cost.price)}`;
+    return row.cost.price === null
+      ? undefined
+      : `Paid · ${String(row.cost.price)}`;
   }
   return undefined;
 }
@@ -454,10 +480,15 @@ function AliasOptionRow({
       onClick={() => onDetail(row)}
     >
       <div className="min-w-0 flex-1 basis-40">
-        <h3 className="truncate text-sm font-medium">{titleFor(row)}</h3>
+        {titleFor(row) && (
+          <h3 className="truncate text-sm font-medium">{titleFor(row)}</h3>
+        )}
         <p className="text-muted-foreground truncate text-xs">
           {descriptionFor(row)}
         </p>
+        {costLabel(row) && (
+          <p className="text-muted-foreground text-xs">{costLabel(row)}</p>
+        )}
       </div>
       <CopyModelName row={row} />
       {availabilityState(row) !== "ready" && (
@@ -506,8 +537,13 @@ function CapabilityRow({
         <h3 className="col-start-2 row-start-2 min-w-0 truncate text-sm xl:col-start-auto xl:row-start-auto">
           {titleFor(primary)}
         </h3>
-        <div className="col-start-2 row-start-3 min-w-0 xl:col-start-auto xl:row-start-auto">
+        <div className="col-start-2 row-start-3 flex min-w-0 flex-wrap items-center gap-2 xl:col-start-auto xl:row-start-auto">
           <CopyModelName row={primary} />
+          {costLabel(primary) && (
+            <span className="text-muted-foreground text-xs">
+              {costLabel(primary)}
+            </span>
+          )}
         </div>
         <div className="col-start-3 row-start-2 xl:col-start-auto xl:row-start-auto">
           {availabilityState(primary) !== "ready" && (
@@ -604,7 +640,9 @@ function DetailSheet({
         {row && (
           <>
             <SheetHeader className="border-b pr-12">
-              <SheetTitle>{titleFor(row)}</SheetTitle>
+              <SheetTitle>
+                {titleFor(row) ?? primaryCapabilityLabel(row)}
+              </SheetTitle>
               <SheetDescription>{descriptionFor(row)}</SheetDescription>
             </SheetHeader>
             <div className="space-y-6 p-4">
@@ -621,7 +659,9 @@ function DetailSheet({
                       .join(", ")}
                   />
                 )}
-                <Fact label="Engine or provider" value={engineLabel(row)} />
+                {engineLabel(row) !== titleFor(row) && (
+                  <Fact label="Engine or provider" value={engineLabel(row)} />
+                )}
                 {locality && <Fact label="Location" value={locality} />}
                 {cost && <Fact label="Cost" value={cost} />}
                 {row.technical_description && (
@@ -704,7 +744,8 @@ function DetailSheet({
                         className="rounded-lg border p-3"
                       >
                         {[
-                          readString(receipt.status)?.toLowerCase() === "unknown"
+                          readString(receipt.status)?.toLowerCase() ===
+                          "unknown"
                             ? undefined
                             : readString(receipt.status),
                           readNumber(receipt.latency_ms) !== null
@@ -957,7 +998,9 @@ export default function ModelsClient() {
                         onClick={() => setDetail(row)}
                       >
                         <TableCell className="font-medium">
-                          <span className="mb-1 block">{titleFor(row)}</span>
+                          {titleFor(row) && (
+                            <span className="mb-1 block">{titleFor(row)}</span>
+                          )}
                           <CopyModelName row={row} />
                         </TableCell>
                         <TableCell>{primaryCapabilityLabel(row)}</TableCell>
