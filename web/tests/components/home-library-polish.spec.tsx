@@ -1,11 +1,16 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import HomePage from "@/app/home/page";
 import LibraryPage from "@/app/library/page";
 import { ViewerContext } from "@/components/shell/session";
-import { PRODUCT_NAME } from "@/lib/product";
 
 function renderPage(page: React.ReactElement, owner = false) {
   const client = new QueryClient({
@@ -83,16 +88,14 @@ const assets = [
   },
 ];
 describe("Home and Library polish", () => {
-  it("uses the configured instance name and real recent image URL", async () => {
+  it("omits greetings and shows connection steps, capability chips, and recent media", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         switch (String(input)) {
-          case "/.well-known/ai-gateway":
-            return Response.json({ service: { name: "Family gateway" } });
           case "/me/api/home":
             return Response.json(home);
-          case "/me/api/media?limit=5":
+          case "/me/api/media?limit=4":
             return Response.json({ assets: [assets[0]] });
           default:
             throw new Error(`Unexpected request: ${input}`);
@@ -101,37 +104,47 @@ describe("Home and Library polish", () => {
     );
     const { container } = renderPage(<HomePage />);
     expect(
-      await screen.findByText(`Welcome to ${PRODUCT_NAME}. Family gateway`),
+      await screen.findByRole("heading", { name: "Connect an app" }),
     ).toBeVisible();
-    expect(
-      screen.getByRole("heading", { level: 1, name: "Hello, Alex." }),
-    ).toBeVisible();
+    expect(screen.queryByText(/^(Welcome to|Hello,)/)).toBeNull();
     expect(screen.queryByRole("heading", { name: "Home" })).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: "Open WebUI" }));
-    expect(screen.getByText("App setup: not verified")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Gateway check" })).toBeVisible();
+    const connect = screen.getByRole("region", { name: "Connect an app" });
     expect(
-      screen.queryByRole("button", { name: "Test connection" }),
+      within(connect).getByText("One address. A key for each app."),
+    ).toBeVisible();
+    expect(
+      within(connect).queryByRole("button", { name: "Check connection" }),
     ).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Open WebUI" }));
+    expect(within(connect).getByLabelText("Base URL")).toBeVisible();
+    expect(within(connect).getByText("API key", { exact: true })).toBeVisible();
+    expect(
+      within(connect).getByRole("button", {
+        name: "Create key for Open WebUI",
+      }),
+    ).toBeVisible();
+    expect(
+      within(connect).getByRole("button", { name: "Check connection" }),
+    ).toBeVisible();
+    expect(
+      within(connect).getByRole("button", { name: "Setup notes" }),
+    ).toBeVisible();
     expect(await screen.findByText("An ocean")).toBeVisible();
     expect(
       container.querySelector('img[src="/signed/image1"]'),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "Images" }).closest("article"),
-    ).toHaveClass("bg-capability-image/5");
+    expect(screen.getByRole("link", { name: "Images" })).toHaveClass(
+      "bg-capability-image/5",
+    );
   });
-  it("does not infer client setup from a used key or a completed gateway checklist", async () => {
+  it("keeps setup notes and key checks inside the selected app flow", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         switch (String(input)) {
-          case "/.well-known/ai-gateway":
-            return Response.json({ service: { name: "Family gateway" } });
           case "/me/api/home":
             return Response.json({
               ...home,
-              user: { ...home.user, role: "owner" },
               receipts: [
                 {
                   request_id: "real-request",
@@ -141,67 +154,50 @@ describe("Home and Library polish", () => {
                 },
               ],
             });
-          case "/me/api/media?limit=5":
+          case "/me/api/media?limit=4":
             return Response.json({ assets: [assets[0]] });
-          case "/admin/api/setup-progress":
-            return Response.json({
-              complete: true,
-              steps: [
-                {
-                  id: "connect_service",
-                  done: true,
-                  reason: "A connected service is healthy.",
-                  href: "",
-                  optional: false,
-                },
-                {
-                  id: "test_request",
-                  done: true,
-                  reason: "A request has succeeded.",
-                  href: "",
-                  optional: false,
-                },
-                {
-                  id: "connect_app",
-                  done: true,
-                  reason: "An app key has been used.",
-                  href: "",
-                  optional: false,
-                },
-              ],
-            });
           default:
             throw new Error(`Unexpected request: ${input}`);
         }
       }),
     );
     renderPage(<HomePage />);
+    const connect = await screen.findByRole("region", {
+      name: "Connect an app",
+    });
     await userEvent.click(
-      await screen.findByRole("button", { name: "Open WebUI" }),
+      await within(connect).findByRole("button", { name: "Open WebUI" }),
     );
-    const summary = await screen.findByText("App setup: not verified");
     expect(
-      await screen.findByRole("heading", { name: "What you can use" }),
+      within(connect).getByRole("button", {
+        name: "Create key for Open WebUI",
+      }),
     ).toBeVisible();
+    expect(
+      within(connect).getByRole("button", { name: "Check connection" }),
+    ).toBeVisible();
+    expect(
+      within(connect).getByRole("button", { name: "Setup notes" }),
+    ).toBeVisible();
+    expect(screen.queryByText(/App setup:/)).toBeNull();
+    expect(screen.queryByText(/Confirm only what you did/)).toBeNull();
     expect(await screen.findByText("An ocean")).toBeVisible();
-    await userEvent.click(summary);
+    await userEvent.click(
+      within(connect).getByRole("button", { name: "Setup notes" }),
+    );
     expect(
-      screen.getByText(
-        /Copy these settings into Open WebUI\. The gateway check verifies the route and key/,
-      ),
+      await screen.findByRole("dialog", { name: "Setup notes" }),
     ).toBeVisible();
-    expect(screen.queryByText("An app key has been used.")).toBeNull();
     expect(
-      screen.getByRole("link", { name: /Image request.*Succeeded/ }),
-    ).toHaveAttribute("href", "/r/real-request");
+      screen.queryByRole("heading", { name: "Recent requests" }),
+    ).toBeNull();
+    expect(screen.queryByText("real-request")).toBeNull();
   });
-  it("shows unknown and ready-to-start capability states without calling them unavailable", async () => {
+  it("shows capability chips without readiness labels and gives unusable chips a reason", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         switch (String(input)) {
-          case "/.well-known/ai-gateway":
-            return Response.json({ service: { name: "Family gateway" } });
           case "/me/api/home":
             return Response.json({
               ...home,
@@ -210,7 +206,7 @@ describe("Home and Library polish", () => {
                   capability: "image",
                   intent: "image.generate",
                   model: "image",
-                  available: true,
+                  available: false,
                   status: "unknown",
                   reason: "No health endpoint is configured.",
                 },
@@ -224,7 +220,7 @@ describe("Home and Library polish", () => {
                 },
               ],
             });
-          case "/me/api/media?limit=5":
+          case "/me/api/media?limit=4":
             return Response.json({ assets: [] });
           default:
             throw new Error(`Unexpected request: ${input}`);
@@ -232,13 +228,16 @@ describe("Home and Library polish", () => {
       }),
     );
     renderPage(<HomePage />);
-    await screen.findByRole("heading", { name: "Images" });
+    await screen.findByRole("heading", { name: "What you can use" });
+    expect(
+      screen.getByRole("link", {
+        name: "Images: No health endpoint is configured.",
+      }),
+    ).toHaveAttribute("title", "No health endpoint is configured.");
+    expect(screen.getByRole("link", { name: "Decisions" })).toBeVisible();
     expect(screen.queryByText("Unknown")).toBeNull();
-    await userEvent.click(screen.getAllByText("Details")[0]);
-    expect(screen.getByText("No health endpoint is configured.")).toBeVisible();
-    expect(screen.getByText("Ready to start")).toBeVisible();
-    await userEvent.click(screen.getAllByText("Details")[1]);
-    expect(screen.getByText("Starts when you send a request.")).toBeVisible();
+    expect(screen.queryByText("Ready to start")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Details" })).toBeNull();
     expect(screen.queryByText("Unavailable right now")).toBeNull();
   });
   it("keeps audio controls outside the open action and uses a duration fallback for video", async () => {

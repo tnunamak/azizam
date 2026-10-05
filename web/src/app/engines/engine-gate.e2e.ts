@@ -41,7 +41,7 @@ const registry = {
       source: "builtin",
       enabled: true,
       editable: false,
-      capabilities: ["chat"],
+      capabilities: [],
       role: "required",
       config: {
         base_url: "http://litellm:4000",
@@ -356,10 +356,9 @@ for (const theme of ["light", "dark"] as const) {
         await expect(
           initialChat.getByRole("heading", { name: "Local chat engine" }),
         ).toBeVisible();
-        await initialChat.getByText("Details", { exact: true }).click();
         await expect(
           initialChat.getByText("legacy-chat", { exact: true }),
-        ).toBeVisible();
+        ).toHaveCount(0);
         await expect(page.getByText("Local image engine")).toHaveCount(0);
         await page.getByRole("switch", { name: "Show not in use" }).click();
         await expect(page.getByText("Local image engine")).toBeVisible();
@@ -371,6 +370,12 @@ for (const theme of ["light", "dark"] as const) {
           "Local chat engine",
         );
         await expect(editSheet).toBeVisible();
+        await editSheet
+          .getByText("Connection and models", { exact: true })
+          .click();
+        await expect(
+          editSheet.getByText("legacy-chat", { exact: true }),
+        ).toBeVisible();
         await editSheet.getByRole("button", { name: "Test" }).click();
         await expect(editSheet.getByText("Connected to")).toBeVisible();
         await editSheet.getByRole("button", { name: "Detect" }).click();
@@ -433,9 +438,9 @@ test("engines do not infer green state when observations are unavailable", async
     },
   });
   await page.goto("/ui/engines/");
-  await expect(
-    page.locator("main").getByText("Not measured yet").first(),
-  ).toBeVisible();
+  await expect(page.locator("main").getByText("Not measured yet")).toHaveCount(
+    0,
+  );
   await expect(page.getByText("Ready")).toHaveCount(0);
 });
 
@@ -459,9 +464,9 @@ test("engines clear live projection when status refresh fails", async ({
   await page.goto("/ui/engines/");
   await expect(page.getByText("Live status unavailable")).toBeVisible();
   await expect(page.getByText("Status refresh failed")).toBeVisible();
-  await expect(
-    page.locator("main").getByText("Not measured yet").first(),
-  ).toBeVisible();
+  await expect(page.locator("main").getByText("Not measured yet")).toHaveCount(
+    0,
+  );
   await expect(page.getByText("Ready")).toHaveCount(0);
 });
 
@@ -503,6 +508,7 @@ test("engines add, edit, toggle, and remove use existing APIs safely", async ({
   await dialog.getByRole("button", { name: "Save engine" }).click();
   await expect(dialog).not.toBeVisible();
 
+  await page.getByText("Show infrastructure", { exact: true }).click();
   const managedDialog = await openEngineEdit(
     page,
     engineCard(page, "Gateway substrate"),
@@ -514,7 +520,16 @@ test("engines add, edit, toggle, and remove use existing APIs safely", async ({
   await managedDialog.getByRole("button", { name: "Save engine" }).click();
   await expect(managedDialog).not.toBeVisible();
 
-  await page.getByRole("switch", { name: "Toggle Local chat engine" }).click();
+  const toggleSheet = await openEngineEdit(
+    page,
+    engineCard(page, "Local chat engine"),
+    "Local chat engine",
+  );
+  await toggleSheet
+    .getByRole("switch", { name: "Toggle Local chat engine" })
+    .click();
+  await page.keyboard.press("Escape");
+  await expect(toggleSheet).not.toBeVisible();
   await page.getByRole("switch", { name: "Show not in use" }).click();
   const imageCard = engineCard(page, "Local image engine");
   await openEngineActions(imageCard, "Local image engine");
@@ -605,9 +620,7 @@ test("engines label degraded and standby states honestly", async ({ page }) => {
     },
   });
   await page.goto("/ui/engines/");
-  await expect(
-    page.getByText("Unavailable: probe reports degraded"),
-  ).toBeVisible();
+  await expect(page.getByText("Unavailable", { exact: true })).toBeVisible();
   await expect(page.getByText("Idle", { exact: true })).toBeVisible();
   await expect(page.getByText("Busy")).toHaveCount(0);
   await expect(page.getByText("Starting")).toHaveCount(0);

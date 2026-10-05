@@ -18,19 +18,37 @@ describe("Home client recipes", () => {
     }
   });
 
-  it("does not invent an alias when discovery has no chat models", () => {
+  it("uses only the recommended default chat alias for recipes", () => {
     expect(chatAlias([])).toBeNull();
     expect(
       chatAlias([
         {
-          id: "advertised-alias",
+          id: "utility-check",
           operation: "chat",
           available: true,
           status: "ready",
-          reason: "Measured as ready.",
+          reason: "Utility check is ready.",
+        },
+        {
+          id: "default",
+          operation: "chat",
+          available: true,
+          status: "ready",
+          reason: "Recommended chat is ready.",
         },
       ]),
-    ).toBe("advertised-alias");
+    ).toBe("default");
+    expect(
+      chatAlias([
+        {
+          id: "utility-check",
+          operation: "chat",
+          available: true,
+          status: "ready",
+          reason: "Utility check is ready.",
+        },
+      ]),
+    ).toBeNull();
   });
 });
 

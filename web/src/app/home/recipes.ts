@@ -24,9 +24,8 @@ export function chatAlias(aliases: HomeAlias[]): string | null {
     ["chat.generate", "chat", "chat.completions"].includes(alias.operation),
   );
   return (
-    chat.find((alias) => alias.id === "fast" && alias.available)?.id ??
-    chat.find((alias) => alias.available)?.id ??
-    chat[0]?.id ??
+    chat.find((alias) => alias.id === "default" && alias.available)?.id ??
+    chat.find((alias) => alias.id === "default")?.id ??
     null
   );
 }
@@ -49,8 +48,7 @@ export function recipeFor(
   switch (client) {
     case "Open WebUI":
       return {
-        description:
-          "Add an OpenAI connection, paste these settings, then send a message.",
+        description: "Add an OpenAI connection and paste these settings.",
         fields: openAiFields,
         keyLabel: "API key",
         language: "Settings",
@@ -60,7 +58,7 @@ export function recipeFor(
     case "LibreChat":
       return {
         description:
-          "Add this custom endpoint to librechat.yaml, set GATEWAY_API_KEY, then restart LibreChat.",
+          "Add this endpoint to librechat.yaml, then restart LibreChat.",
         fields: [
           { label: "baseURL", value: baseUrl },
           { label: "models.default", value: model },
@@ -73,7 +71,7 @@ export function recipeFor(
     case "SillyTavern":
       return {
         description:
-          "Choose Custom (OpenAI-compatible), then paste these settings.",
+          "Choose Custom OpenAI-compatible, then paste these settings.",
         fields: [
           { label: "Custom endpoint", value: baseUrl },
           { label: "Custom model", value: model },
@@ -85,8 +83,7 @@ export function recipeFor(
       };
     case "Cursor":
       return {
-        description:
-          "In Cursor Settings → Models, add an OpenAI key and the model below.",
+        description: "Add an OpenAI key and this model in Cursor Settings.",
         fields: [
           { label: "Override OpenAI Base URL", value: baseUrl },
           { label: "Add model", value: model },
@@ -99,7 +96,7 @@ export function recipeFor(
     case "Codex":
       return {
         description:
-          "Add this to ~/.codex/config.toml, then set GATEWAY_API_KEY before starting codex.",
+          "Add this config, then set GATEWAY_API_KEY before starting Codex.",
         fields: [
           { label: "base_url", value: baseUrl },
           { label: "model", value: model },
@@ -123,8 +120,7 @@ export function recipeFor(
       };
     case "Python":
       return {
-        description:
-          "Install openai, set GATEWAY_API_KEY, then run this example.",
+        description: "Install openai, set GATEWAY_API_KEY, then run this.",
         fields: [
           { label: "base_url", value: baseUrl },
           { label: "model", value: model },
@@ -137,7 +133,7 @@ export function recipeFor(
     case "JavaScript":
       return {
         description:
-          "Install openai, set GATEWAY_API_KEY on your server, then run this example.",
+          "Install openai, set GATEWAY_API_KEY, then run this server-side.",
         fields: [
           { label: "baseURL", value: baseUrl },
           { label: "model", value: model },
@@ -149,8 +145,7 @@ export function recipeFor(
       };
     case "curl":
       return {
-        description:
-          "Set GATEWAY_API_KEY in your shell. This sends one chat request.",
+        description: "Set GATEWAY_API_KEY. This sends one chat request.",
         fields: [
           { label: "URL", value: `${baseUrl}/chat/completions` },
           { label: "model", value: model },

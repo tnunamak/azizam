@@ -100,7 +100,9 @@ test("real registry journey preserves disabled state and unknown config through 
   );
   expect(legacySeeded.ok()).toBe(true);
   await page.reload();
-  let card = page.locator("article").filter({ hasText: "Journey engine" });
+  let card = page.locator(`article[data-engine-id="${record.id}"]`);
+  await page.getByRole("switch", { name: "Show not in use" }).click();
+  await expect(card).toBeVisible();
   await card.getByRole("button", { name: /Actions|More/ }).click();
   await page
     .getByRole("menuitem", { name: "Test engine", exact: true })
@@ -117,12 +119,15 @@ test("real registry journey preserves disabled state and unknown config through 
   await sheet.getByRole("button", { name: "Detect", exact: true }).click();
   await expect(sheet.getByText(/Detected models:/).first()).toBeVisible();
   await page.keyboard.press("Escape");
-  await card
-    .getByRole("switch", { name: "Toggle Journey engine", exact: true })
+  await card.getByRole("button", { name: /Actions|More/ }).click();
+  await page
+    .getByRole("menuitem", { name: "Edit engine", exact: true })
     .click();
-  await expect(card).toHaveCount(0);
-  await page.getByRole("switch", { name: "Show not in use" }).click();
+  sheet = page.getByRole("dialog", { name: "Edit engine", exact: true });
+  await sheet.getByRole("switch", { name: /Toggle / }).click();
+  await page.keyboard.press("Escape");
   await expect(card).toBeVisible();
+  await expect(card.getByText("Disabled", { exact: true })).toBeVisible();
   await card.getByRole("button", { name: /Actions|More/ }).click();
   await page
     .getByRole("menuitem", { name: "Edit engine", exact: true })
@@ -156,7 +161,7 @@ test("real registry journey preserves disabled state and unknown config through 
       routing_hint: "keep-slot",
     }),
   ]);
-  card = page.locator("article").filter({ hasText: "Renamed journey engine" });
+  card = page.locator(`article[data-engine-id="${record.id}"]`);
   await card.getByRole("button", { name: /Actions|More/ }).click();
   await page
     .getByRole("menuitem", { name: "Remove engine", exact: true })

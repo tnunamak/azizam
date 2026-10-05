@@ -80,14 +80,18 @@ describe("Home audit presentation contract", () => {
     );
   });
 
-  it("keeps gateway requests separate from external client setup evidence", () => {
+  it("does not add manual client setup evidence steps", () => {
     const steps = setupSteps(progress());
-    expect(steps.find((step) => step.id === "connect_app")?.done).toBe(false);
-    expect(steps.find((step) => step.id === "copy_settings")?.done).toBe(false);
-    expect(steps.find((step) => step.id === "view_receipt")?.done).toBe(false);
+    expect(steps.map((step) => step.id)).toEqual([
+      "connect_service",
+      "test_request",
+      "connect_app",
+    ]);
+    expect(steps.find((step) => step.id === "copy_settings")).toBeUndefined();
+    expect(steps.find((step) => step.id === "view_receipt")).toBeUndefined();
   });
 
-  it("reflects explicit setup evidence without inferring from receipt existence", () => {
+  it("leaves setup evidence in the progress payload instead of rendering confirmation steps", () => {
     const steps = setupSteps(
       progress({
         evidence: {
@@ -101,9 +105,9 @@ describe("Home audit presentation contract", () => {
         },
       }),
     );
-    expect(steps.find((step) => step.id === "copy_settings")?.done).toBe(true);
+    expect(steps.find((step) => step.id === "copy_settings")).toBeUndefined();
+    expect(steps.find((step) => step.id === "view_receipt")).toBeUndefined();
     expect(steps.find((step) => step.id === "connect_app")?.done).toBe(true);
-    expect(steps.find((step) => step.id === "view_receipt")?.done).toBe(true);
   });
 
   it("summarizes idle and unknown availability honestly", () => {
@@ -131,7 +135,14 @@ describe("Home audit presentation contract", () => {
   it("projects scoped chat aliases into Home tiles", () => {
     const aliases: HomeAlias[] = [
       {
-        id: "fast",
+        id: "utility-check",
+        operation: "chat.completions",
+        available: true,
+        status: "ready",
+        reason: "Utility model.",
+      },
+      {
+        id: "default",
         operation: "chat.completions",
         available: true,
         status: "ready",
@@ -140,7 +151,37 @@ describe("Home audit presentation contract", () => {
     ];
     const tiles = capabilityTiles([], aliases);
     expect(tiles).toMatchObject([
-      { capability: "chat", model: "fast", status: "ready" },
+      { capability: "chat", model: "default", status: "ready" },
     ]);
+    expect(capabilityTiles([], [aliases[0]])).toEqual([]);
+  });
+
+  it("uses representative rows instead of first available titled rows", () => {
+    const tiles = capabilityTiles(
+      [
+        {
+          capability: "chat",
+          title: "Utility check",
+          use_name: "utility-check",
+          intent: "chat.completions",
+          model: "utility-check",
+          available: true,
+          status: "ready",
+          reason: "Utility model.",
+        },
+        {
+          capability: "chat",
+          title: "Recommended chat",
+          use_name: "default",
+          intent: "chat.completions",
+          model: "default",
+          available: false,
+          status: "idle",
+          reason: "Ready to start.",
+        },
+      ],
+      [],
+    );
+    expect(tiles).toMatchObject([{ capability: "chat", model: "default" }]);
   });
 });

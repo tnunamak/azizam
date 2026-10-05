@@ -256,7 +256,7 @@ describe("integrated UI coherence", () => {
             creations: null,
           });
         }
-        if (url === "/me/api/media?limit=5") {
+        if (url === "/me/api/media?limit=4") {
           return Response.json({
             assets: [
               {
@@ -276,13 +276,13 @@ describe("integrated UI coherence", () => {
     );
     renderWithQuery(<HomePage />);
     expect(
-      await screen.findByRole("heading", { name: "Recent creations" }),
+      await screen.findByRole("heading", { name: "Recent" }),
     ).toBeVisible();
     expect(await screen.findByText("A quiet gateway")).toBeVisible();
     expect(
-      screen.getByRole("link", { name: /Image A quiet gateway/ }),
+      screen.getByRole("link", { name: /A quiet gateway/ }),
     ).toHaveAttribute("href", "/library");
-    expect(requested).toContain("/me/api/media?limit=5");
+    expect(requested).toContain("/me/api/media?limit=4");
     expect(requested.some((url) => url.includes("scope=everyone"))).toBe(false);
   });
 
@@ -315,7 +315,7 @@ describe("integrated UI coherence", () => {
             creations: null,
           });
         }
-        if (url === "/me/api/media?limit=5") {
+        if (url === "/me/api/media?limit=4") {
           return Response.json(
             { error: { message: "Library unavailable" } },
             { status: 503 },
@@ -331,7 +331,7 @@ describe("integrated UI coherence", () => {
       ),
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
-    expect(requested).toContain("/me/api/media?limit=5");
+    expect(requested).toContain("/me/api/media?limit=4");
     expect(requested.some((url) => url.includes("scope=everyone"))).toBe(false);
   });
 });

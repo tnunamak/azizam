@@ -144,7 +144,7 @@ function state(
 ): { label: string; tone: Tone } {
   if (!service.enabled) return { label: "Disabled", tone: "neutral" };
   if (!observationAvailable) {
-    return { label: "Not measured yet", tone: "neutral" };
+    return { label: "", tone: "neutral" };
   }
   if (health) {
     if (health.observation === "up") {
@@ -157,7 +157,7 @@ function state(
     }
     if (health.observation === "degraded") {
       return {
-        label: "Unavailable: probe reports degraded",
+        label: "Unavailable",
         tone: observedTone(health.tone, "warn"),
       };
     }
@@ -180,17 +180,16 @@ function state(
       return { label: "Starting", tone: "neutral" };
     }
     if (health.observation === "unavailable") {
-      return { label: "Not measured yet", tone: "neutral" };
+      return { label: "", tone: "neutral" };
     }
   }
   const status = String(
     backend?.live_status ?? backend?.status ?? "",
   ).toLowerCase();
   if (status === "up") return { label: "Ready", tone: "ok" };
-  if (status === "degraded")
-    return { label: "Unavailable: probe reports degraded", tone: "warn" };
+  if (status === "degraded") return { label: "Unavailable", tone: "warn" };
   if (status === "down") return { label: "Unavailable", tone: "bad" };
-  return { label: "Not measured yet", tone: "neutral" };
+  return { label: "", tone: "neutral" };
 }
 
 function servicesFromRegistry(
@@ -273,11 +272,17 @@ function EditEngineDialog({
   onClose,
   onSaved,
   returnFocus,
+  displayName,
+  onToggle,
+  toggling,
 }: {
   service: Service;
   onClose: () => void;
   onSaved: (registry: ServiceRegistry, options?: { close?: boolean }) => void;
   returnFocus: HTMLElement | null;
+  displayName: string;
+  onToggle: (enabled: boolean) => void;
+  toggling: boolean;
 }) {
   const [name, setName] = useState(service.name);
   const [baseUrl, setBaseUrl] = useState(composeBaseUrl(service.config));
@@ -317,11 +322,22 @@ function EditEngineDialog({
       >
         <SheetHeader className="pr-14">
           <SheetTitle>Edit engine</SheetTitle>
-          <SheetDescription>
-            Edit configuration, test the endpoint, and detect served models.
-          </SheetDescription>
+          <SheetDescription>{displayName}</SheetDescription>
         </SheetHeader>
         <div ref={formRef} className="space-y-6 px-4 pb-4">
+          <label
+            htmlFor={`engine-enabled-${service.id}`}
+            className="flex min-h-11 items-center gap-3 text-sm"
+          >
+            <Switch
+              id={`engine-enabled-${service.id}`}
+              checked={service.enabled}
+              aria-label={`Toggle ${displayName}`}
+              disabled={toggling}
+              onCheckedChange={onToggle}
+            />
+            Enabled
+          </label>
           {connectionChanged && (
             <p role="status" className="text-vf-small text-vf-muted">
               Save configuration changes before testing or detecting models.
@@ -329,7 +345,7 @@ function EditEngineDialog({
           )}
           <fieldset disabled={connectionChanged} className="min-w-0">
             <EngineChecks
-              service={service}
+              service={{ ...service, name: displayName }}
               endpoint={serviceEndpoint(service)}
               onSaved={(registry) => {
                 const next = registry.services[service.id];
@@ -379,6 +395,25 @@ function EditEngineDialog({
                 onChange={(event) => setNote(event.target.value)}
               />
             </Field>
+            <details>
+              <summary className="flex min-h-11 cursor-pointer items-center text-sm font-medium">
+                Connection and models
+              </summary>
+              <dl className="grid gap-3 py-2">
+                <div>
+                  <dt className="text-vf-micro text-vf-subtle">
+                    Models served
+                  </dt>
+                  <dd className="text-vf-small">{modelNames(service)}</dd>
+                </div>
+                <div>
+                  <dt className="text-vf-micro text-vf-subtle">Capabilities</dt>
+                  <dd className="text-vf-small">
+                    {service.capabilities.map(humanCapability).join(", ")}
+                  </dd>
+                </div>
+              </dl>
+            </details>
             <details>
               <summary className="flex min-h-11 cursor-pointer items-center text-sm font-medium">
                 Advanced fields
@@ -488,24 +523,34 @@ function EnginesContents() {
   const observationAvailable =
     statusData?.current_health?.observation_available === true;
 
+  const infrastructure = services.filter(
+    (service) =>
+      (service.editable === false || service.source === "provisioned") &&
+      humanCapabilities(service.capabilities).length === 0,
+  );
+  const infrastructureIds = new Set(
+    infrastructure.map((service) => service.id),
+  );
   const { groups, hiddenCount } = groupEngines(
-    services,
+    services.filter((service) => !infrastructureIds.has(service.id)),
     healthByService,
     showNotInUse,
     selectedServiceId,
   );
   const visibleCount = groups.reduce(
-    (count, group) =>
-      count +
-      group.entries.reduce(
-        (sum, entry) => sum + 1 + entry.alternatives.length,
-        0,
-      ),
+    (count, group) => count + group.entries.length,
     0,
   );
 
+  function displayName(service: Service) {
+    return healthByService.get(service.id)?.engine_label || service.name;
+  }
+
   function updateRegistry(registry: ServiceRegistry) {
     queryClient.setQueryData(queryKeys.serviceRegistry, registry);
+    setEditTarget((current) =>
+      current ? (registry.services[current.id] ?? null) : null,
+    );
     void queryClient.invalidateQueries({ queryKey: queryKeys.status });
   }
 
@@ -541,9 +586,10 @@ function EnginesContents() {
     const backend = backends.get(service.id);
     const health = healthByService.get(service.id);
     const serviceState = state(service, backend, health, observationAvailable);
-    const serves =
-      humanCapabilities(service.capabilities).join(", ") ||
-      (service.capabilities.length ? "Other capabilities" : "Not assigned");
+    const serves = (
+      health?.capability_labels ?? humanCapabilities(service.capabilities)
+    ).join(", ");
+    const title = displayName(service);
     return (
       <article
         key={service.id}
@@ -555,39 +601,30 @@ function EnginesContents() {
         }`}
         aria-current={service.id === selectedServiceId ? "true" : undefined}
       >
-        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-3">
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
           <button
             type="button"
-            className="min-w-0 text-left"
+            className="min-h-11 min-w-0 text-left"
             onClick={() => openEditor(service)}
           >
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <h3 className="text-vf-body text-vf-text truncate font-semibold">
-                {engineName(service)}
+                {title}
               </h3>
-              <StatusDotLabel
-                tone={serviceState.tone}
-                label={serviceState.label}
-              />
+              {serviceState.label && serviceState.label !== "Ready" && (
+                <StatusDotLabel
+                  tone={serviceState.tone}
+                  label={serviceState.label}
+                />
+              )}
             </div>
-            <p className="text-vf-small text-vf-muted mt-1 truncate">
-              Serves {serves}
-            </p>
+            {serves && (
+              <p className="text-vf-small text-vf-muted mt-1 truncate">
+                {serves}
+              </p>
+            )}
           </button>
-          <label
-            htmlFor={`engine-enabled-${service.id}`}
-            className="flex min-h-11 min-w-11 items-center gap-2 px-1 text-sm"
-          >
-            <Switch
-              id={`engine-enabled-${service.id}`}
-              checked={service.enabled}
-              aria-label={`Toggle ${service.name}`}
-              disabled={toggle.isPending}
-              onCheckedChange={(enabled) => toggle.mutate({ service, enabled })}
-            />
-            <span className="sr-only sm:not-sr-only">Enabled</span>
-          </label>
-          <OverflowMenu label={`Actions for ${service.name}`}>
+          <OverflowMenu label={`Actions for ${title}`}>
             <OverflowMenuItem onSelect={() => openEditor(service)}>
               Edit engine
             </OverflowMenuItem>
@@ -610,38 +647,6 @@ function EnginesContents() {
             )}
           </OverflowMenu>
         </div>
-        <details className="mt-1">
-          <summary className="text-vf-small text-vf-muted flex min-h-11 cursor-pointer items-center">
-            Details
-          </summary>
-          <dl className="grid gap-3 pb-2 md:grid-cols-3">
-            <div>
-              <dt className="text-vf-micro text-vf-subtle">Endpoint</dt>
-              <dd className="text-vf-small text-vf-text">
-                <span className="break-all">{serviceEndpoint(service)}</span>
-              </dd>
-            </div>
-            <div>
-              <dt className="text-vf-micro text-vf-subtle">Models served</dt>
-              <dd className="text-vf-small text-vf-text">
-                <span className="break-words">{modelNames(service)}</span>
-              </dd>
-            </div>
-            <div>
-              <dt className="text-vf-micro text-vf-subtle">Capabilities</dt>
-              <dd className="text-vf-small text-vf-text">
-                {service.capabilities.map(humanCapability).join(", ") ||
-                  "Not assigned"}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-vf-micro text-vf-subtle">Role</dt>
-              <dd className="text-vf-small text-vf-text">
-                {service.role ?? "optional"}
-              </dd>
-            </div>
-          </dl>
-        </details>
       </article>
     );
   }
@@ -649,11 +654,7 @@ function EnginesContents() {
   if (registryIsPending) {
     return (
       <div className="flex flex-col gap-6" aria-busy="true">
-        <SectionActionHeader
-          as="h1"
-          title="Engines"
-          description="Loading local engines."
-        />
+        <SectionActionHeader as="h1" title="Engines" />
         <Skeleton className="h-20 w-full" />
         <Skeleton className="h-72 w-full" />
       </div>
@@ -663,11 +664,7 @@ function EnginesContents() {
   if (registryIsError) {
     return (
       <div className="flex flex-col gap-6">
-        <SectionActionHeader
-          as="h1"
-          title="Engines"
-          description="The local engines that power your AI."
-        />
+        <SectionActionHeader as="h1" title="Engines" />
         <IncidentBanner
           tone="bad"
           title="Engines unavailable"
@@ -687,7 +684,6 @@ function EnginesContents() {
       <SectionActionHeader
         as="h1"
         title="Engines"
-        description="Connect or fix local engines."
         action={
           <Button variant="primary" onClick={() => setAddOpen(true)}>
             Add engine
@@ -696,11 +692,6 @@ function EnginesContents() {
       />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="text-vf-body text-vf-text font-medium">
-            {visibleCount} shown · {services.length} total
-          </p>
-        </div>
         <label
           htmlFor="show-not-in-use-engines"
           className="flex min-h-11 items-center gap-3 text-sm"
@@ -729,7 +720,6 @@ function EnginesContents() {
       )}
 
       <section className="flex flex-col gap-3">
-        <SectionActionHeader title="Local engines" />
         {selectedServiceId && !selectedService && (
           <IncidentBanner
             tone="warn"
@@ -737,7 +727,7 @@ function EnginesContents() {
             detail={`No service record has id ${selectedServiceId}.`}
           />
         )}
-        {visibleCount === 0 ? (
+        {visibleCount === 0 && infrastructure.length === 0 ? (
           <EmptyOperationalState
             title={
               services.length === 0
@@ -794,6 +784,18 @@ function EnginesContents() {
         )}
       </section>
 
+      {infrastructure.length > 0 && (
+        <details
+          open={infrastructureIds.has(selectedServiceId ?? "") || undefined}
+        >
+          <summary className="flex min-h-11 cursor-pointer items-center text-sm">
+            Show infrastructure
+          </summary>
+          <div className="grid gap-3 pt-2">
+            {infrastructure.map(renderEngine)}
+          </div>
+        </details>
+      )}
       <AddServiceDialog
         open={addOpen}
         onOpenChange={setAddOpen}
@@ -807,6 +809,11 @@ function EnginesContents() {
         <EditEngineDialog
           service={editTarget}
           returnFocus={editInvoker.current}
+          displayName={displayName(editTarget)}
+          toggling={toggle.isPending}
+          onToggle={(enabled) =>
+            toggle.mutate({ service: editTarget, enabled })
+          }
           onClose={() => setEditTarget(null)}
           onSaved={(registry, options) => {
             updateRegistry(registry);
@@ -849,11 +856,7 @@ export default function Page() {
     <Suspense
       fallback={
         <div className="flex flex-col gap-6" aria-busy="true">
-          <SectionActionHeader
-            as="h1"
-            title="Engines"
-            description="Loading local engines."
-          />
+          <SectionActionHeader as="h1" title="Engines" />
           <Skeleton className="h-20 w-full" />
           <Skeleton className="h-72 w-full" />
         </div>

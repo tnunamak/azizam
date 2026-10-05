@@ -39,7 +39,7 @@ async function fixture(
   const user = { ...home.user, name };
   const aliases: HomeSnapshot["aliases"] = [
     {
-      id: "fast",
+      id: "default",
       operation: "chat",
       available: true,
       status: "ready",
@@ -163,7 +163,7 @@ async function fixture(
   await page.route("**/admin/api/setup-progress", (route) =>
     route.fulfill({ json: { complete: true, steps: [] } }),
   );
-  await page.route("**/me/api/media?limit=5", (route) =>
+  await page.route("**/me/api/media?limit=4", (route) =>
     route.fulfill({ json: { assets: [] } }),
   );
   return home;
@@ -183,10 +183,7 @@ for (const theme of ["light", "dark"] as const) {
       );
       await fixture(page, request);
       await page.goto("/ui/home/");
-      await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-        "Hello, Tim.",
-      );
-      await page.getByText("Needs attention", { exact: true }).click();
+      await expect(page.locator("main")).not.toContainText("Hello,");
       await expect(
         page.getByText(
           "Images are unavailable: the service is disabled, with 1 other capability affected.",
@@ -201,27 +198,24 @@ for (const theme of ["light", "dark"] as const) {
       await expect(
         page.getByText("Here’s how to use your AI.", { exact: true }),
       ).toHaveCount(0);
-      await expect(page.locator("main article code")).toHaveText([
-        "fast",
-        "image",
-        "video",
-        "tts",
-      ]);
+      await expect(page.locator('a[href*="/models/?capability="]')).toHaveCount(
+        4,
+      );
       await expect(
         page.getByText("Unavailable right now", { exact: true }),
       ).toHaveCount(0);
       await expect(page.locator("main")).not.toContainText("face-likeness");
       await expect(page.locator("main")).not.toContainText("bernini-r-remix");
-      await expect(page.getByRole("combobox", { name: "App key" })).toHaveCount(
+      await expect(page.getByRole("combobox", { name: "API key" })).toHaveCount(
         0,
       );
       await page.getByRole("button", { name: "Open WebUI" }).click();
-      await expect(page.getByRole("combobox", { name: "App key" })).toHaveCount(
+      await expect(page.getByRole("combobox", { name: "API key" })).toHaveCount(
         1,
       );
-      await expect(page.getByRole("tabpanel").locator("summary")).toHaveText(
-        "App setup: not verified",
-      );
+      await expect(
+        page.getByRole("button", { name: "Setup notes", exact: true }),
+      ).toBeVisible();
       await expect(page.locator("main > div > details")).toHaveCount(0);
       expect(
         await page.evaluate(
@@ -242,15 +236,13 @@ for (const theme of ["light", "dark"] as const) {
   }
 }
 
-test("Home uses a neutral greeting when the API display name is an email", async ({
+test("Home omits greeting when the API display name is an email", async ({
   page,
   request,
 }) => {
   await fixture(page, request, "tim@example.test");
   await page.goto("/ui/home/");
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-    "Hello, there.",
-  );
+  await expect(page.locator("main")).not.toContainText("Hello,");
 });
 
 test("one selected and pasted app key scopes all recipes and the gateway check", async ({
@@ -274,7 +266,7 @@ test("one selected and pasted app key scopes all recipes and the gateway check",
   });
   await page.goto("/ui/home/");
   await page.getByRole("button", { name: "Open WebUI", exact: true }).click();
-  const select = page.getByRole("combobox", { name: "App key" });
+  const select = page.getByRole("combobox", { name: "API key" });
   await select.click();
   await page
     .getByRole("option", { name: "Test client · Chat access", exact: true })
@@ -282,14 +274,15 @@ test("one selected and pasted app key scopes all recipes and the gateway check",
   const paste = page.getByLabel(/^Paste your /);
   await expect(paste).toHaveCount(1);
   await paste.fill("fixture-chat-secret");
-  await expect(page.getByRole("tabpanel").locator("pre")).toContainText("fast");
-  await page.getByRole("tab", { name: "Python", exact: true }).click();
-  await expect(page.getByRole("tabpanel").locator("pre")).toContainText(
-    'model="fast"',
-  );
+  await expect(
+    page.getByRole("textbox", { name: "Model", exact: true }),
+  ).toHaveValue("default");
+  await page.getByRole("button", { name: "Setup notes", exact: true }).click();
+  await expect(page.locator("pre code:visible")).toContainText("default");
+  await page.keyboard.press("Escape");
   await expect(paste).toHaveValue("fixture-chat-secret");
   await page
-    .getByRole("button", { name: "Gateway check", exact: true })
+    .getByRole("button", { name: "Check connection", exact: true })
     .click();
   await expect(
     page.getByText(/^Gateway responded with this key · 25 ms$/),
@@ -302,18 +295,15 @@ test("one selected and pasted app key scopes all recipes and the gateway check",
     .getByRole("option", { name: "Test client · Images only", exact: true })
     .click();
   await expect(paste).toHaveValue("");
-  await expect(page.getByRole("tabpanel").locator("pre")).toHaveCount(0);
   await expect(
-    page.getByText("No chat alias is listed for this key", {
-      exact: true,
-    }),
-  ).toBeVisible();
+    page.getByRole("textbox", { name: "Model", exact: true }),
+  ).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "Gateway check", exact: true }),
+    page.getByRole("button", { name: "Check connection", exact: true }),
   ).toBeDisabled();
   await paste.fill("fixture-image-secret");
   await page
-    .getByRole("button", { name: "Gateway check", exact: true })
+    .getByRole("button", { name: "Check connection", exact: true })
     .click();
   await expect.poll(() => checks.length).toBe(2);
   expect(checks[1]).toEqual({
@@ -331,7 +321,7 @@ test("one selected and pasted app key scopes all recipes and the gateway check",
   await expect(page.getByLabel(/^Paste your /)).toHaveCount(0);
 });
 
-test("recent work uses human labels with routing IDs kept as receipt detail", async ({
+test("Home recent media carries content while requests stay in receipts", async ({
   page,
   request,
 }) => {
@@ -351,7 +341,7 @@ test("recent work uses human labels with routing IDs kept as receipt detail", as
       },
     }),
   );
-  await page.route("**/me/api/media?limit=5", (route) =>
+  await page.route("**/me/api/media?limit=4", (route) =>
     route.fulfill({
       json: {
         assets: [
@@ -359,21 +349,29 @@ test("recent work uses human labels with routing IDs kept as receipt detail", as
             asset_id: "polish-audio",
             kind: "audio",
             model: "audio.generate.ace-step-1.5-2b-base",
-            prompt: null,
+            prompt: "A river moves beneath the willow trees",
+            download_url: "/signed/polish-audio",
           },
         ],
       },
     }),
   );
   await page.goto("/ui/home/");
-  const receipt = page.locator('a[href="/r/polish-image-receipt"]');
-  await expect(receipt.locator("p").first()).toHaveText("Image request");
-  await expect(receipt.locator("code")).toHaveText(
-    "image.analyze.face-likeness",
+  await expect(
+    page.getByRole("heading", { name: "Recent", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("Recent requests", { exact: true })).toHaveCount(
+    0,
+  );
+  await expect(page.locator('a[href="/r/polish-image-receipt"]')).toHaveCount(
+    0,
   );
   await expect(
-    page.getByText("Audio created by your gateway", { exact: true }),
+    page.getByText("A river moves beneath the willow trees"),
   ).toBeVisible();
+  await expect(
+    page.getByLabel("Play A river moves beneath the willow trees"),
+  ).toHaveAttribute("controls");
   await expect(page.locator("main")).not.toContainText(
     "audio.generate.ace-step-1.5-2b-base",
   );

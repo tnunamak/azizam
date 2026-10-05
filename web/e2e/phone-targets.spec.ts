@@ -46,7 +46,7 @@ const serviceRegistry = {
       source: "builtin",
       enabled: true,
       editable: false,
-      capabilities: ["chat"],
+      capabilities: [],
       role: "required",
       config: {
         base_url: "http://litellm:4000",
@@ -228,17 +228,9 @@ test.describe("phone target primitives", () => {
           name: "Show not in use",
         });
         const chatCard = engineCard(page, "Local chat engine");
-        const engineToggle = chatCard.getByRole("switch", {
-          name: "Toggle Local chat engine",
-        });
         const overflow = chatCard.getByRole("button", {
           name: "Actions for Local chat engine",
         });
-        await expectCompactBox(
-          engineToggle.locator('[data-slot="switch-track"]'),
-          32,
-          18,
-        );
         const addEngine = page
           .getByRole("button", { name: "Add engine" })
           .first();
@@ -249,11 +241,10 @@ test.describe("phone target primitives", () => {
 
         if (width === 390) {
           await expectMinBox(showNotInUse, 44, 44);
-          await expectMinBox(engineToggle, 44, 44);
           await expectMinBox(addEngine, 44, 44);
           await expectMinBox(summaryButton, 44, 44);
           await expectMinBox(overflow, 44, 44);
-          await expectNoOverlap([engineToggle, summaryButton, overflow]);
+          await expectNoOverlap([summaryButton, overflow]);
 
           const showBox = await showNotInUse.boundingBox();
           if (!showBox)
@@ -264,7 +255,6 @@ test.describe("phone target primitives", () => {
           await page.keyboard.press("Space");
           await expect(page.getByText("Local image engine")).toHaveCount(0);
         } else {
-          await expectCompactBox(engineToggle, 32, 18);
           await expectMinBox(summaryButton, 44, 44);
         }
 
@@ -272,9 +262,18 @@ test.describe("phone target primitives", () => {
         await page.keyboard.press("Enter");
         const dialog = page.getByRole("dialog", { name: "Edit engine" });
         await expect(dialog).toBeVisible();
+        const engineToggle = dialog.getByRole("switch", {
+          name: "Toggle Local chat engine",
+        });
+        await expectCompactBox(
+          engineToggle.locator('[data-slot="switch-track"]'),
+          32,
+          18,
+        );
         const testButton = dialog.getByRole("button", { name: "Test" });
         const detectButton = dialog.getByRole("button", { name: "Detect" });
         if (width === 390) {
+          await expectMinBox(engineToggle, 44, 44);
           await expectMinBox(testButton, 44, 44);
           await expectMinBox(detectButton, 44, 44);
         } else {

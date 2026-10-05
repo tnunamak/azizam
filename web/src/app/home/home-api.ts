@@ -41,6 +41,7 @@ export interface HomeCreation {
   created_at?: number | string | null;
   download_url?: string | null;
   media_type?: string | null;
+  poster_asset_id?: string | null;
 }
 export interface HomeCreationsResponse {
   assets: HomeCreation[];
@@ -104,7 +105,11 @@ export const homeApi = {
       throw error;
     }
   },
-  creations: () => homeRequest<HomeCreationsResponse>("/me/api/media?limit=5"),
+  creations: () => homeRequest<HomeCreationsResponse>("/me/api/media?limit=4"),
+  mediaDownload: (assetId: string) =>
+    homeRequest<{ download_url?: string }>(
+      `/me/api/media/${encodeURIComponent(assetId)}/download?scope=me`,
+    ),
   setup: productApi.setup,
   dismissSetup: () =>
     homeRequest<{ dismissed: boolean }>("/admin/api/setup-dismiss", {}),

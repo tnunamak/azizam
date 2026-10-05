@@ -57,9 +57,7 @@ type Reveal = { secret: string; app: string; client: string; oldIds: string[] };
 type KeyAction = { kind: "rotate" | "revoke" | "remove"; app: AccountApp };
 
 function accessPlanSummary(app: AccountApp): string {
-  return app.profile?.name
-    ? `${preferredTerms.permissionSet}: ${app.profile.name}`
-    : `${preferredTerms.permissionSet}: unavailable`;
+  return app.profile?.name ?? "";
 }
 
 function AppsContents() {
@@ -234,11 +232,23 @@ function AppsContents() {
   const actionAppName = action
     ? formatAppName(action.app.name, accountData?.user?.email)
     : "";
+  const actionDescription = action
+    ? [
+        accessPlanSummary(action.app),
+        action.kind === "rotate"
+          ? "Save the replacement key first. Old keys stop after you confirm."
+          : action.kind === "remove"
+            ? "This removes the app and its keys."
+            : "Apps using these keys will stop connecting.",
+      ]
+        .filter(Boolean)
+        .join(". ")
+    : "";
   return (
     <div className="space-y-8">
       <PageHeader
         title="Apps & keys"
-        subtitle="Which apps can use my account?"
+        subtitle="Apps that use your gateway"
         primaryAction={
           <Button
             onClick={() => {
@@ -317,13 +327,14 @@ function AppsContents() {
                   </h2>
                   <p className="text-muted-foreground mt-1 text-sm">
                     {app.credentials.length}{" "}
-                    {app.credentials.length === 1 ? "key" : "keys"} ·{" "}
-                    {accessPlanSummary(app)}
+                    {app.credentials.length === 1 ? "key" : "keys"}
+                    {accessPlanSummary(app) && <> · {accessPlanSummary(app)}</>}
                   </p>
-                  <p className="text-muted-foreground mt-2 text-xs">
-                    Last used:{" "}
-                    <RelativeTime ts={lastUsed} fallback="Not used yet" />
-                  </p>
+                  {lastUsed !== null && (
+                    <p className="text-muted-foreground mt-2 text-xs">
+                      Last used · <RelativeTime ts={lastUsed} />
+                    </p>
+                  )}
                 </div>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -492,15 +503,7 @@ function AppsContents() {
                 : `keys for ${actionAppName}`}
               ?
             </DialogTitle>
-            <DialogDescription>
-              {action
-                ? action.kind === "rotate"
-                  ? `${accessPlanSummary(action.app)}. Save the replacement key first. Old keys stop after you confirm.`
-                  : action.kind === "remove"
-                    ? `${accessPlanSummary(action.app)}. This removes the app and its keys.`
-                    : `${accessPlanSummary(action.app)}. Apps using these keys will stop connecting.`
-                : ""}
-            </DialogDescription>
+            <DialogDescription>{actionDescription}</DialogDescription>
           </DialogHeader>
           {error && (
             <p role="alert" className="text-destructive text-sm">

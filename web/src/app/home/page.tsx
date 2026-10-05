@@ -6,7 +6,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUpRight,
   AudioLines,
-  Check,
   Circle,
   ImageIcon,
   KeyRound,
@@ -30,39 +29,32 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   CapabilityIcon,
   CodeBlock,
   CopyField,
   EmptyState,
   ErrorState,
-  RelativeTime,
   SecretReveal,
-  StatusPill,
 } from "@/components/product";
 import type { Capability } from "@/components/product/capability-icon";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import {
   homeApi,
   type ConnectionResult,
   type HomeCapability,
-  type HomeAlias,
   type HomeCreation,
   type HomeSnapshot,
-  type SetupProgress,
 } from "./home-api";
-import { chatAlias, clients, recipeFor, type Client } from "./recipes";
-import { productApi, type SetupEvent } from "@/lib/product-api";
-import { PRODUCT_NAME } from "@/lib/product";
+import { chatAlias, recipeFor, type Client } from "./recipes";
 import { capabilityLabels } from "@/lib/terms";
-import {
-  capabilityTiles,
-  greetingName,
-  needsSetup,
-  requestLabel,
-  setupSteps,
-  shouldShowSetup,
-} from "./presentation";
+import { capabilityTiles } from "./presentation";
 
 const homeKey = ["account", "home"];
 const setupKey = ["gateway", "setup-progress"];
@@ -150,6 +142,21 @@ const capabilityTint: Record<Capability, string> = {
   embed: "bg-capability-embed/5 border-capability-embed/20",
 };
 
+function formatMilliseconds(ms: number): string {
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`;
+}
+
+function capabilityHref(capability: string): string {
+  const filter = ["music", "sfx"].includes(capability) ? "audio" : capability;
+  return `/models/?capability=${encodeURIComponent(filter)}`;
+}
+
+function firstWords(value?: string | null): string | null {
+  const words = value?.trim().split(/\s+/).filter(Boolean) ?? [];
+  if (!words.length) return null;
+  return words.slice(0, 12).join(" ");
+}
+
 function HomeCapabilityIcon({ row }: { row: HomeCapability }) {
   const key = row.icon_key ?? row.capability;
   const special = { music: Music2, sfx: Waves, rerank: ListFilter };
@@ -173,14 +180,6 @@ function HomeCapabilityIcon({ row }: { row: HomeCapability }) {
     />
   );
 }
-const stepLabels: Record<string, string> = {
-  connect_service: "Connect an engine or provider",
-  test_request: "Make a real request",
-  copy_settings: "Copy settings into your app",
-  connect_app: "Confirm your app works",
-  view_receipt: "See the request receipt",
-  invite_someone: "Invite someone",
-};
 
 function HomeLoading() {
   return (
@@ -206,19 +205,12 @@ function HomeLoading() {
   );
 }
 
-function Connect({
-  home,
-  progress,
-}: {
-  home: HomeSnapshot;
-  progress?: SetupProgress;
-}) {
+function Connect({ home }: { home: HomeSnapshot }) {
   const queryClient = useQueryClient();
-  const [savingEvidence, setSavingEvidence] = useState(false);
-  const [evidenceError, setEvidenceError] = useState<string | null>(null);
   const [appChoice, setAppChoice] = useState<AppChoice | null>(null);
   const [client, setClient] = useState<Client>("Open WebUI");
   const [selectedCredentialId, setSelectedCredentialId] = useState("new");
+  const [notesOpen, setNotesOpen] = useState(false);
   const [reveal, setReveal] = useState<{ secret: string; id: string } | null>(
     null,
   );
@@ -263,26 +255,6 @@ function Connect({
     model ?? "",
   );
 
-  async function confirmClient(event: SetupEvent) {
-    const app = home.apps.find((item) =>
-      item.credentials.some((key) => key.id === selectedCredentialId),
-    );
-    if (savingEvidence) return;
-    if (!app) {
-      setEvidenceError("Choose an app key before saving your confirmation.");
-      return;
-    }
-    setSavingEvidence(true);
-    setEvidenceError(null);
-    try {
-      await productApi.recordSetupEvidence({ event, app_id: app.id });
-      await queryClient.invalidateQueries({ queryKey: setupKey });
-    } catch {
-      setEvidenceError("Your confirmation could not be saved. Try again.");
-    } finally {
-      setSavingEvidence(false);
-    }
-  }
   async function createKey() {
     if (createLock.current) return;
     createLock.current = true;
@@ -337,7 +309,7 @@ function Connect({
       aria-labelledby="connect-heading"
       className="border-primary/20 bg-card overflow-hidden rounded-xl border"
     >
-      <div className="border-border border-b p-4 sm:p-6">
+      <div className="p-4 sm:p-6">
         <div className="mb-4 flex items-start gap-3">
           <span className="bg-primary/10 text-primary flex size-11 shrink-0 items-center justify-center rounded-lg">
             <PlugZap aria-hidden="true" className="size-5" />
@@ -347,13 +319,12 @@ function Connect({
               Connect an app
             </h2>
             <p className="text-muted-foreground mt-1 text-sm">
-              One address. A key for each app you use.
+              One address. A key for each app.
             </p>
           </div>
         </div>
-        <div className="mb-5 space-y-3">
-          <h3 className="text-sm font-medium">Choose your app</h3>
-          <div className="grid grid-cols-2 gap-2 lg:grid-cols-7">
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
             {([...primaryAppChoices, "Other"] as AppChoice[]).map((name) => (
               <button
                 key={name}
@@ -373,96 +344,109 @@ function Connect({
             ))}
           </div>
         </div>
-        {appChoice ? (
-          <div className="grid min-w-0 gap-3 lg:grid-cols-3">
-            {selectedRecipe.fields
-              .filter((field) => field.value)
-              .map((field) => (
-                <CopyField
-                  key={field.label}
-                  label={field.label}
-                  value={field.value}
-                />
-              ))}
-            <div className="min-w-0 space-y-3">
-              <label htmlFor="app-key" className="text-sm font-medium">
-                App key
-              </label>
-              <Select
-                value={selectedCredentialId}
-                disabled={creating || !!reveal || testing}
-                onValueChange={(value) => {
-                  setSelectedCredentialId(value);
-                  setTestResult(null);
-                  setTestError(null);
-                  setPastedKey("");
-                  setSaved(false);
-                }}
-              >
-                <SelectTrigger id="app-key" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="new">New app · default access</SelectItem>
-                  {selectedCredentialId !== "new" &&
-                    !keys.some((key) => key.id === selectedCredentialId) && (
-                      <SelectItem value={selectedCredentialId}>
-                        New key · loading access
-                      </SelectItem>
-                    )}
-                  {keys.map((key) => (
-                    <SelectItem key={key.id} value={key.id}>
-                      {key.appName} · {key.display_name || "Key"}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {reveal ? (
-                <SecretReveal
-                  key={reveal.id}
-                  secret={reveal.secret}
-                  onSaved={() => {
-                    setReveal(null);
-                    setSaved(true);
+        {appChoice && (
+          <div className="mt-5 space-y-4">
+            <div className="grid min-w-0 gap-3 lg:grid-cols-3">
+              <CopyField
+                label="Base URL"
+                value={selectedRecipe.fields[0]?.value ?? home.api_base_url}
+              />
+              {model && <CopyField label="Model" value={model} />}
+            </div>
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
+              <div className="min-w-0 space-y-3">
+                <label htmlFor="app-key" className="text-sm font-medium">
+                  API key
+                </label>
+                <Select
+                  value={selectedCredentialId}
+                  disabled={creating || !!reveal || testing}
+                  onValueChange={(value) => {
+                    setSelectedCredentialId(value);
+                    setTestResult(null);
+                    setTestError(null);
+                    setPastedKey("");
+                    setSaved(false);
                   }}
-                />
-              ) : selectedCredentialId !== "new" ? (
-                <div className="space-y-2">
-                  <label
-                    htmlFor="pasted-app-key"
-                    className="text-sm font-medium"
-                  >
-                    Paste your {selectedRecipe.keyLabel}
-                  </label>
-                  <Input
-                    id="pasted-app-key"
-                    type="password"
-                    value={pastedKey}
-                    autoComplete="off"
-                    spellCheck={false}
-                    onChange={(event) => {
-                      setPastedKey(event.target.value);
-                      setTestResult(null);
-                      setTestError(null);
+                >
+                  <SelectTrigger id="app-key" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="new">
+                      New app · default access
+                    </SelectItem>
+                    {selectedCredentialId !== "new" &&
+                      !keys.some((key) => key.id === selectedCredentialId) && (
+                        <SelectItem value={selectedCredentialId}>
+                          New key · loading access
+                        </SelectItem>
+                      )}
+                    {keys.map((key) => (
+                      <SelectItem key={key.id} value={key.id}>
+                        {key.appName} · {key.display_name || "Key"}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {reveal ? (
+                  <SecretReveal
+                    key={reveal.id}
+                    secret={reveal.secret}
+                    onSaved={() => {
+                      setReveal(null);
+                      setSaved(true);
                     }}
-                    placeholder="Paste the selected app key"
-                    disabled={testing}
                   />
-                  <p className="text-muted-foreground text-xs">
-                    {saved
-                      ? "Key saved. Paste it here to check the connection. "
-                      : ""}
-                    Kept only while this page is open; never saved in your
-                    browser.
+                ) : selectedCredentialId !== "new" ? (
+                  <div className="space-y-2">
+                    <label
+                      htmlFor="pasted-app-key"
+                      className="text-sm font-medium"
+                    >
+                      Paste your {selectedRecipe.keyLabel}
+                    </label>
+                    <Input
+                      id="pasted-app-key"
+                      type="password"
+                      value={pastedKey}
+                      autoComplete="off"
+                      spellCheck={false}
+                      onChange={(event) => {
+                        setPastedKey(event.target.value);
+                        setTestResult(null);
+                        setTestError(null);
+                      }}
+                      placeholder="Paste the selected app key"
+                      disabled={testing}
+                    />
+                    <p className="text-muted-foreground text-xs">
+                      {saved
+                        ? "Key saved. Paste it here to check the connection. "
+                        : ""}
+                      Kept only while this page is open.
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-muted-foreground text-sm">
+                    Create a key, then copy it to your app. It appears only
+                    once.
                   </p>
-                </div>
-              ) : (
-                <p className="text-muted-foreground text-sm">
-                  Create a key, then copy it to your app. It appears only once.
-                </p>
-              )}
-              {!reveal && (
-                <div className="flex flex-wrap items-center gap-3">
+                )}
+                {!canCreate && (
+                  <p className="text-muted-foreground text-sm">
+                    Your access plan does not let you create keys. Ask the
+                    gateway owner for access.
+                  </p>
+                )}
+                {keyError && (
+                  <p role="alert" className="text-destructive text-sm">
+                    {keyError}
+                  </p>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {!reveal && (
                   <Button
                     variant={
                       selectedCredentialId === "new" ? "default" : "outline"
@@ -481,445 +465,128 @@ function Connect({
                         ? "Retry key creation"
                         : `Create key for ${chosenAppName}`}
                   </Button>
-                  <Link
-                    className="text-primary text-sm underline underline-offset-4"
-                    href="/apps/"
-                  >
-                    Manage keys
-                  </Link>
-                </div>
-              )}
-              {!canCreate && (
-                <p className="text-muted-foreground text-sm">
-                  Your access plan does not let you create keys. Ask the gateway
-                  owner for access.
-                </p>
-              )}
-              {keyError && (
-                <p role="alert" className="text-destructive text-sm">
-                  {keyError}
-                </p>
-              )}
-            </div>
-          </div>
-        ) : (
-          <p className="text-muted-foreground text-sm">
-            Pick an app to see its address, model name and key action.
-          </p>
-        )}
-      </div>
-      {appChoice && (
-        <div className="border-border space-y-3 px-4 py-3 sm:px-6">
-          <div className="flex flex-wrap items-center gap-4">
-            <Button
-              variant={
-                selectedCredentialId !== "new" && !reveal && pastedKey.trim()
-                  ? "default"
-                  : "outline"
-              }
-              disabled={
-                testing ||
-                selectedCredentialId === "new" ||
-                !(reveal?.secret || pastedKey.trim())
-              }
-              onClick={() => void testConnection()}
-            >
-              {testing ? (
-                <Loader2 aria-hidden="true" className="animate-spin" />
-              ) : (
-                <PlugZap aria-hidden="true" />
-              )}
-              {testing ? "Checking…" : "Gateway check"}
-            </Button>
-            <p className="text-muted-foreground text-xs">
-              Checks the gateway route with this key. It does not test the app.
-            </p>
-          </div>
-          {testResult && (
-            <div role="status" className="space-y-2">
-              <p
-                className={`flex items-center gap-2 text-sm ${testResult.ok ? "text-success" : "text-destructive"}`}
-              >
-                {testResult.ok ? (
-                  <ShieldCheck aria-hidden="true" className="size-4" />
-                ) : (
-                  <Circle aria-hidden="true" className="size-4" />
                 )}
-                {testResult.ok
-                  ? "Gateway responded with this key"
-                  : "Gateway check failed"}
-                {testResult.latency_ms != null
-                  ? ` · ${Math.round(testResult.latency_ms)} ms`
-                  : ""}
-              </p>
-              <p className="text-muted-foreground text-sm">
-                {testResult.reason}
-              </p>
-              {testResult.request_id && (
-                <a
-                  className="text-primary inline-flex min-h-11 items-center text-sm underline underline-offset-4"
-                  href={`/r/${encodeURIComponent(testResult.request_id)}`}
-                >
-                  View request receipt
-                </a>
-              )}
-            </div>
-          )}
-          {testError && (
-            <p role="alert" className="text-destructive text-sm">
-              {testError}
-            </p>
-          )}
-        </div>
-      )}
-      {appChoice && (
-        <>
-          <div className="border-border border-t px-4 sm:px-6">
-            <h3 className="min-h-11 content-center text-sm font-medium">
-              App instructions
-            </h3>
-            <p className="text-muted-foreground py-2 text-xs">
-              Every recipe and the gateway check use this app key’s access plan.
-              A new app uses your default access.
-            </p>
-            <Tabs
-              value={client.replaceAll(" ", "-")}
-              onValueChange={(value) => {
-                const selected = clients.find(
-                  (name) => name.replaceAll(" ", "-") === value,
-                );
-                if (selected) {
-                  setClient(selected);
-                  setAppChoice(selected);
-                }
-              }}
-              className="min-w-0 gap-0"
-            >
-              <div className="border-border overflow-x-auto border-b px-4 pt-2 sm:px-6">
-                <TabsList
-                  variant="line"
-                  aria-label="App recipes"
-                  className="gap-3"
-                >
-                  {clients.map((name) => (
-                    <TabsTrigger
-                      value={name.replaceAll(" ", "-")}
-                      key={name}
-                      className="min-h-11 px-1"
-                      disabled={choiceLocked}
-                    >
-                      {name}
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-              </div>
-              {clients.map((name) => {
-                const recipe = recipeFor(
-                  name,
-                  home.api_base_url,
-                  home.public_base_url,
-                  model ?? "",
-                );
-                return (
-                  <TabsContent
-                    value={name.replaceAll(" ", "-")}
-                    key={name}
-                    className="min-w-0 py-4"
-                  >
-                    <div className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
-                      <div className="flex flex-wrap items-center gap-3">
-                        <h3 className="text-base font-semibold">
-                          Connect {client}
-                        </h3>
-                        <details className="text-muted-foreground text-xs">
-                          <summary className="min-h-11 cursor-pointer content-center">
-                            {progress?.evidence?.external_client_confirmed
-                              .recorded
-                              ? "App setup: confirmed by you"
-                              : "App setup: not verified"}
-                          </summary>
-                          <p className="max-w-md pb-2 leading-relaxed">
-                            Copy these settings into {client}. The gateway check
-                            verifies the route and key; it cannot verify the
-                            app.
-                          </p>
-                          <p className="max-w-md pb-2 leading-relaxed">
-                            {name === "Open WebUI"
-                              ? "Tested with Open WebUI v0.11.4 using host networking and non-streaming."
-                              : "This recipe has not been tested end to end."}
-                          </p>
-                        </details>
-                      </div>
-                      <a
-                        className="text-primary inline-flex min-h-11 items-center gap-1 text-sm underline underline-offset-4"
-                        href={recipe.docs}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        {client} docs
-                        <ArrowUpRight aria-hidden="true" className="size-3.5" />
-                      </a>
-                    </div>
-                    <p className="text-muted-foreground mb-5 max-w-3xl text-sm leading-relaxed">
-                      {recipe.description}
-                    </p>
-                    {loadingKeyAccess ? (
-                      <div
-                        role="status"
-                        aria-label="Loading key access"
-                        aria-busy="true"
-                      >
-                        <Skeleton className="h-24 w-full" />
-                      </div>
-                    ) : model ? (
-                      <div className="[&_pre]:overflow-x-visible [&_pre]:break-words [&_pre]:whitespace-pre-wrap">
-                        <CodeBlock
-                          language={recipe.language}
-                          code={recipe.code}
-                        />
-                      </div>
-                    ) : (
-                      <div className="bg-muted rounded-lg p-5 text-sm">
-                        <p className="font-medium">
-                          No chat alias is listed for this key
-                        </p>
-                        <p className="text-muted-foreground mt-2">
-                          Choose another key, or ask the owner to check this
-                          access plan. Models without an alias may still be
-                          available. The gateway address stays the same.
-                        </p>
-                      </div>
-                    )}
-                  </TabsContent>
-                );
-              })}
-            </Tabs>
-          </div>
-          {progress && (
-            <div className="border-border space-y-2 border-t p-4 sm:px-6">
-              <p className="text-muted-foreground text-xs">
-                Confirm only what you did in your app. These are your
-                confirmations, not automated tests.
-              </p>
-              <div className="flex flex-wrap gap-2">
                 <Button
-                  variant="outline"
-                  className="min-h-11"
+                  variant={
+                    selectedCredentialId !== "new" &&
+                    !reveal &&
+                    pastedKey.trim()
+                      ? "default"
+                      : "outline"
+                  }
                   disabled={
-                    savingEvidence ||
-                    creating ||
-                    !home.apps.some((app) =>
-                      app.credentials.some(
-                        (key) => key.id === selectedCredentialId,
-                      ),
-                    ) ||
+                    testing ||
                     selectedCredentialId === "new" ||
-                    !!progress.evidence?.settings_copied.recorded
+                    !(reveal?.secret || pastedKey.trim())
                   }
-                  onClick={() => void confirmClient("settings_copied")}
+                  onClick={() => void testConnection()}
                 >
-                  I copied the settings
-                </Button>
-                <Button
-                  variant="outline"
-                  className="min-h-11"
-                  disabled={
-                    savingEvidence ||
-                    creating ||
-                    !home.apps.some((app) =>
-                      app.credentials.some(
-                        (key) => key.id === selectedCredentialId,
-                      ),
-                    ) ||
-                    selectedCredentialId === "new" ||
-                    !!progress.evidence?.external_client_confirmed.recorded
-                  }
-                  onClick={() =>
-                    void confirmClient("external_client_confirmed")
-                  }
-                >
-                  My app sent a request
-                </Button>
-              </div>
-              {savingEvidence && (
-                <p role="status" className="text-sm">
-                  Saving confirmation…
-                </p>
-              )}
-              {evidenceError && (
-                <p role="alert" className="text-destructive text-sm">
-                  {evidenceError}
-                </p>
-              )}
-            </div>
-          )}
-        </>
-      )}
-    </section>
-  );
-}
-
-function SetupChecklist({
-  progress,
-  home,
-}: {
-  progress: SetupProgress;
-  home: HomeSnapshot;
-}) {
-  const queryClient = useQueryClient();
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const steps = setupSteps(progress);
-  const next = steps.find((step) => !step.optional && !step.done);
-  const receipt = home.receipts.find(
-    (item) => item.status === "succeeded" || item.status === "completed",
-  );
-  async function confirmViewed() {
-    if (!receipt || saving) return;
-    setSaving(true);
-    setError(null);
-    try {
-      await productApi.recordSetupEvidence({
-        event: "receipt_viewed",
-        request_id: receipt.request_id,
-      });
-      await queryClient.invalidateQueries({ queryKey: setupKey });
-    } catch {
-      setError("Your receipt confirmation could not be saved. Try again.");
-    } finally {
-      setSaving(false);
-    }
-  }
-  async function dismiss() {
-    if (saving) return;
-    setSaving(true);
-    setError(null);
-    try {
-      await homeApi.dismissSetup();
-      await queryClient.invalidateQueries({ queryKey: setupKey });
-    } catch {
-      setError("Setup could not be dismissed. Try again.");
-    } finally {
-      setSaving(false);
-    }
-  }
-  return (
-    <section
-      aria-labelledby="setup-heading"
-      className="border-primary/20 bg-primary/5 rounded-xl border p-4"
-    >
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <h2 id="setup-heading" className="text-sm font-semibold">
-            Finish setting up
-          </h2>
-          <p className="mt-1 text-sm font-medium">
-            Next:{" "}
-            {next
-              ? next.id === "view_receipt" && !receipt
-                ? "Make a request with your app key"
-                : (stepLabels[next.id] ?? next.id)
-              : "Invite someone (optional)"}
-          </p>
-        </div>
-        {next?.href && (
-          <Button className="min-h-11" variant="outline" asChild>
-            <a
-              href={
-                next.id === "view_receipt"
-                  ? receipt
-                    ? `/r/${encodeURIComponent(receipt.request_id)}`
-                    : "#connect"
-                  : next.id === "test_request" ||
-                      next.id === "copy_settings" ||
-                      next.id === "connect_app"
-                    ? "#connect"
-                    : next.href
-              }
-            >
-              <span className="sr-only sm:not-sr-only">Continue</span>
-              <ArrowUpRight aria-hidden="true" />
-            </a>
-          </Button>
-        )}
-      </div>
-      {typeof progress.dismissed === "boolean" && (
-        <Button
-          variant="ghost"
-          disabled={saving}
-          onClick={() => void dismiss()}
-        >
-          Dismiss setup
-        </Button>
-      )}
-      <details className="mt-2">
-        <summary className="text-muted-foreground min-h-11 cursor-pointer content-center text-sm">
-          Setup details
-        </summary>
-        <ol className="divide-border divide-y">
-          {steps.map((step) => (
-            <li key={step.id} className="flex items-start gap-3 py-3">
-              <span className="text-muted-foreground mt-1">
-                {step.done ? (
-                  <Check aria-hidden="true" className="text-success size-4" />
-                ) : (
-                  <Circle aria-hidden="true" className="size-4" />
-                )}
-                <span className="sr-only">
-                  {step.done ? "Complete" : "Incomplete"}
-                </span>
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium">
-                  {stepLabels[step.id] ?? step.id}
-                  {step.optional && (
-                    <span className="text-muted-foreground ml-2 text-xs">
-                      Optional
-                    </span>
+                  {testing ? (
+                    <Loader2 aria-hidden="true" className="animate-spin" />
+                  ) : (
+                    <PlugZap aria-hidden="true" />
                   )}
+                  {testing ? "Checking…" : "Check connection"}
+                </Button>
+                <Button variant="ghost" onClick={() => setNotesOpen(true)}>
+                  Setup notes
+                </Button>
+              </div>
+            </div>
+            {loadingKeyAccess ? (
+              <div
+                role="status"
+                aria-label="Loading key access"
+                aria-busy="true"
+              >
+                <Skeleton className="h-16 w-full" />
+              </div>
+            ) : !model ? (
+              <div className="bg-muted rounded-lg p-5 text-sm">
+                <p className="font-medium">
+                  This key does not include the default model
                 </p>
-                <p className="text-muted-foreground mt-1 text-sm">
-                  {step.reason}
+                <p className="text-muted-foreground mt-2">
+                  Choose another key, or ask the owner to update this app’s
+                  access.
                 </p>
-                {step.id === "view_receipt" && receipt && !step.done && (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <Button variant="ghost" asChild>
-                      <a
-                        href={`/r/${encodeURIComponent(receipt.request_id)}`}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Open receipt
-                        <ArrowUpRight aria-hidden="true" />
-                      </a>
-                    </Button>
-                    <Button
-                      variant="outline"
-                      disabled={saving}
-                      onClick={() => void confirmViewed()}
-                    >
-                      I viewed this receipt
-                    </Button>
-                  </div>
-                )}
-                {step.optional && !step.done && step.href && (
-                  <Button variant="ghost" asChild>
-                    <a href={step.href}>
-                      Invite someone
-                      <ArrowUpRight aria-hidden="true" />
-                    </a>
-                  </Button>
+              </div>
+            ) : null}
+            {testResult && (
+              <div role="status" className="space-y-2">
+                <p
+                  className={`flex items-center gap-2 text-sm ${testResult.ok ? "text-success" : "text-destructive"}`}
+                >
+                  {testResult.ok ? (
+                    <ShieldCheck aria-hidden="true" className="size-4" />
+                  ) : (
+                    <Circle aria-hidden="true" className="size-4" />
+                  )}
+                  {testResult.ok
+                    ? "Gateway responded with this key"
+                    : "Connection check failed"}
+                  {testResult.latency_ms != null
+                    ? ` · ${formatMilliseconds(testResult.latency_ms)}`
+                    : ""}
+                </p>
+                <p className="text-muted-foreground text-sm">
+                  {testResult.reason}
+                </p>
+                {testResult.request_id && (
+                  <a
+                    className="text-primary inline-flex min-h-11 items-center text-sm underline underline-offset-4"
+                    href={`/r/${encodeURIComponent(testResult.request_id)}`}
+                  >
+                    View request receipt
+                  </a>
                 )}
               </div>
-            </li>
-          ))}
-        </ol>
-      </details>
-      {error && (
-        <p role="alert" className="text-destructive text-sm">
-          {error}
-        </p>
-      )}
+            )}
+            {testError && (
+              <p role="alert" className="text-destructive text-sm">
+                {testError}
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+      <Sheet open={notesOpen} onOpenChange={setNotesOpen}>
+        <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
+          <SheetHeader>
+            <SheetTitle>Setup notes</SheetTitle>
+            <SheetDescription>
+              Version notes and network caveats for {chosenAppName}.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="space-y-4 px-4 pb-4">
+            <p className="text-sm">{selectedRecipe.description}</p>
+            <p className="text-muted-foreground text-sm">
+              The gateway check verifies the route and key. It does not verify
+              the app.
+            </p>
+            <p className="text-muted-foreground text-sm">
+              {client === "Open WebUI"
+                ? "Tested with Open WebUI v0.11.4 using host networking and non-streaming."
+                : "Check your app version and network path before testing."}
+            </p>
+            {model ? (
+              <CodeBlock
+                language={selectedRecipe.language}
+                code={selectedRecipe.code}
+              />
+            ) : null}
+            <a
+              className="text-primary inline-flex min-h-11 items-center gap-1 text-sm underline underline-offset-4"
+              href={selectedRecipe.docs}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {chosenAppName} docs
+              <ArrowUpRight aria-hidden="true" className="size-3.5" />
+            </a>
+          </div>
+        </SheetContent>
+      </Sheet>
     </section>
   );
 }
@@ -929,22 +596,15 @@ function Capabilities({
   aliases,
 }: {
   capabilities: HomeCapability[];
-  aliases: HomeAlias[];
+  aliases: HomeSnapshot["aliases"];
 }) {
   const tiles = capabilityTiles(capabilities, aliases);
-  const [showAll, setShowAll] = useState(false);
-  const visibleTiles = showAll ? tiles : tiles.slice(0, 6);
   return (
     <section aria-labelledby="capabilities-heading">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 id="capabilities-heading" className="text-lg font-semibold">
           What you can use
         </h2>
-        {tiles.length > visibleTiles.length && (
-          <Button variant="ghost" onClick={() => setShowAll(true)}>
-            View all capabilities
-          </Button>
-        )}
       </div>
       {!tiles.length ? (
         <EmptyState
@@ -958,68 +618,25 @@ function Capabilities({
         />
       ) : (
         <div className="mt-4 flex flex-wrap gap-2">
-          {visibleTiles.map((capability) => {
+          {tiles.map((capability) => {
             const copy = capabilityCopy[capability.capability];
             if (!copy) return null;
+            const label = capability.capability_title ?? copy.label;
             return (
-              <article
+              <Link
                 key={capability.capability}
-                className={`inline-flex min-h-11 max-w-full min-w-0 items-center gap-2 rounded-full border px-3 py-1.5 ${capability.available ? capabilityTint[copy.icon] : "border-border bg-muted/30 text-muted-foreground"}`}
+                href={capabilityHref(capability.capability)}
+                title={capability.available ? label : capability.reason}
+                aria-label={
+                  capability.available
+                    ? label
+                    : `${label}: ${capability.reason}`
+                }
+                className={`hover:border-primary/50 focus-visible:ring-ring inline-flex min-h-11 max-w-full min-w-0 items-center gap-2 rounded-full border px-3 py-1.5 transition-colors focus-visible:ring-2 ${capability.available ? capabilityTint[copy.icon] : "border-border bg-muted/30 text-muted-foreground"}`}
               >
                 <HomeCapabilityIcon row={capability} />
-                <div className="min-w-0 shrink-0">
-                  <h3 className="text-sm font-medium">
-                    {capability.capability_title ?? copy.label}
-                  </h3>
-                </div>
-                <StatusPill status={capability.status} summary />
-                <details className="max-w-full text-xs">
-                  <summary className="text-muted-foreground min-h-11 cursor-pointer content-center">
-                    Details
-                  </summary>
-                  <div className="text-muted-foreground mt-2 max-w-full space-y-2 rounded-lg">
-                    {(capability.use_name ?? capability.model) && (
-                      <code className="block break-all">
-                        {capability.use_name ?? capability.model}
-                      </code>
-                    )}
-                    <p>{capability.summary ?? copy.description}</p>
-                    <p>{capability.reason}</p>
-                    {capability.recommended_model && (
-                      <p>{capability.recommended_model}</p>
-                    )}
-                    {capability.availability?.evidence.observed_at_s !=
-                      null && (
-                      <p>
-                        {capability.availability.evidence.source === "request"
-                          ? "Last request observation: "
-                          : "Health observation: "}
-                        <RelativeTime
-                          ts={
-                            capability.availability.evidence.observed_at_s ??
-                            null
-                          }
-                          fallback="Not measured yet"
-                        />
-                      </p>
-                    )}
-                  </div>
-                </details>
-                {capability.available ? (
-                  <Button variant="ghost" size="sm" asChild>
-                    <Link
-                      href={
-                        capability.capability === "rerank"
-                          ? "/models/"
-                          : `/try/?capability=${encodeURIComponent(["music", "sfx"].includes(capability.capability) ? "audio" : capability.capability)}${capability.workflow ? `&workflow=${encodeURIComponent(capability.workflow)}` : capability.model ? `&model=${encodeURIComponent(capability.model)}` : ""}`
-                      }
-                    >
-                      {capability.capability === "rerank" ? "Models" : "Try"}
-                      <ArrowUpRight aria-hidden="true" />
-                    </Link>
-                  </Button>
-                ) : null}
-              </article>
+                <span className="truncate text-sm font-medium">{label}</span>
+              </Link>
             );
           })}
         </div>
@@ -1027,6 +644,94 @@ function Capabilities({
     </section>
   );
 }
+
+function CreationMedia({
+  creation,
+  title,
+}: {
+  creation: HomeCreation;
+  title: string;
+}) {
+  const Icon =
+    creation.kind === "video"
+      ? Video
+      : creation.kind === "audio"
+        ? AudioLines
+        : ImageIcon;
+  const { data: poster } = useQuery({
+    queryKey: ["library", "home-recent-poster", creation.poster_asset_id],
+    enabled: creation.kind === "video" && !!creation.poster_asset_id,
+    queryFn: () => homeApi.mediaDownload(creation.poster_asset_id!),
+    retry: false,
+  });
+  const posterUrl = poster?.download_url;
+
+  if (creation.kind === "image" && creation.download_url) {
+    return (
+      // Recent uses the Library API's signed thumbnail-capable download URL.
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={creation.download_url}
+        alt=""
+        loading="lazy"
+        className="size-full object-cover transition-transform group-hover:scale-[1.02] motion-reduce:transform-none"
+      />
+    );
+  }
+
+  if (creation.kind === "video" && posterUrl) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={posterUrl}
+        alt=""
+        loading="lazy"
+        className="size-full object-cover transition-transform group-hover:scale-[1.02] motion-reduce:transform-none"
+      />
+    );
+  }
+
+  if (creation.kind === "video" && creation.download_url) {
+    return (
+      <video
+        src={creation.download_url}
+        poster={posterUrl}
+        preload="metadata"
+        muted
+        playsInline
+        aria-label={title}
+        className="size-full object-cover transition-transform group-hover:scale-[1.02] motion-reduce:transform-none"
+        onLoadedMetadata={(event) => {
+          const video = event.currentTarget;
+          if (Number.isFinite(video.duration) && video.duration > 0) {
+            video.currentTime = Math.min(0.1, video.duration / 2);
+          }
+        }}
+      />
+    );
+  }
+
+  if (creation.kind === "audio" && creation.download_url) {
+    return (
+      <div className="flex size-full items-center justify-center p-4">
+        <audio
+          controls
+          preload="metadata"
+          src={creation.download_url}
+          aria-label={`Play ${title}`}
+          className="w-full max-w-xs"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex size-full flex-col items-center justify-center gap-2 p-4 text-center">
+      <Icon aria-hidden="true" className="size-8" />
+    </div>
+  );
+}
+
 function CreationPreview({ creation }: { creation: HomeCreation }) {
   const label =
     creation.kind === "video"
@@ -1034,50 +739,33 @@ function CreationPreview({ creation }: { creation: HomeCreation }) {
       : creation.kind === "audio"
         ? "Audio"
         : "Image";
-  const Icon =
-    creation.kind === "video"
-      ? Video
-      : creation.kind === "audio"
-        ? AudioLines
-        : ImageIcon;
-  return (
-    <Link
-      href="/library/"
-      className="border-border bg-card hover:border-primary/40 focus-visible:ring-ring group flex min-w-0 flex-col overflow-hidden rounded-xl border focus-visible:ring-2"
-    >
+  const prompt = firstWords(creation.prompt);
+  const title = prompt ?? label;
+  const cardClass =
+    "border-border bg-card hover:border-primary/40 focus-visible:ring-ring group flex min-w-0 flex-col overflow-hidden rounded-xl border focus-visible:ring-2";
+  const body = (
+    <>
       <div
         className={`flex aspect-[4/3] w-full items-center justify-center overflow-hidden ${creation.kind === "video" ? "bg-capability-video/10 text-capability-video" : creation.kind === "audio" ? "bg-capability-voice/10 text-capability-voice" : "bg-capability-image/10 text-capability-image"}`}
       >
-        {creation.kind === "image" && creation.download_url ? (
-          // Recent uses the Library API's signed thumbnail-capable download URL.
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={creation.download_url}
-            alt=""
-            loading="lazy"
-            className="size-full object-cover transition-transform group-hover:scale-[1.02] motion-reduce:transform-none"
-          />
-        ) : (
-          <Icon aria-hidden="true" className="size-8" />
-        )}
+        <CreationMedia creation={creation} title={title} />
       </div>
       <div className="min-w-0 p-3">
-        <p className="text-sm font-medium">{label}</p>
-        <p className="text-muted-foreground mt-1 line-clamp-2 text-xs">
-          {creation.prompt || `${label} created by your gateway`}
-        </p>
-        <p className="text-muted-foreground mt-1 text-xs">
-          <RelativeTime
-            ts={creation.created_at ?? null}
-            fallback="Time not recorded"
-          />
-        </p>
+        {prompt && <p className="text-sm font-medium">{prompt}</p>}
       </div>
+    </>
+  );
+  if (creation.kind === "audio") {
+    return <article className={cardClass}>{body}</article>;
+  }
+  return (
+    <Link href="/library/" className={cardClass}>
+      {body}
     </Link>
   );
 }
 
-function Recent({ home }: { home: HomeSnapshot }) {
+function Recent() {
   const {
     data: creations,
     isPending: creationsPending,
@@ -1090,158 +778,57 @@ function Recent({ home }: { home: HomeSnapshot }) {
   });
   const recentCreations = (creations?.assets ?? []).slice(0, 4);
   return (
-    <section aria-labelledby="recent-heading" className="space-y-6">
+    <section aria-labelledby="recent-heading" className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 id="recent-heading" className="text-lg font-semibold">
-            Recent
-          </h2>
-          <p className="text-muted-foreground mt-1 text-sm">
-            {["owner", "superadmin"].includes(home.user.role)
-              ? "The gateway’s latest creations and requests."
-              : "Your latest creations and requests."}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-3">
-          <Link
-            className="text-primary inline-flex min-h-11 items-center text-sm underline underline-offset-4"
-            href="/library/"
-          >
-            View library
-          </Link>
-          <Link
-            className="text-primary inline-flex min-h-11 items-center text-sm underline underline-offset-4"
-            href="/usage/"
-          >
-            View usage
-          </Link>
-        </div>
+        <h2 id="recent-heading" className="text-lg font-semibold">
+          Recent
+        </h2>
+        <Link
+          className="text-primary inline-flex min-h-11 items-center text-sm underline underline-offset-4"
+          href="/library/"
+        >
+          View library
+        </Link>
       </div>
-      <section aria-labelledby="recent-creations-heading" className="space-y-3">
-        <h3 id="recent-creations-heading" className="text-base font-semibold">
-          Recent creations
-        </h3>
-        {creationsPending ? (
-          <div
-            role="status"
-            aria-label="Loading recent creations"
-            aria-busy="true"
-            className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
-          >
-            {[0, 1, 2, 3].map((item) => (
-              <Skeleton key={item} className="h-48 w-full rounded-xl" />
-            ))}
-          </div>
-        ) : creationsError ? (
-          <ErrorState
-            message="Recent creations could not be loaded. Try again."
-            onRetry={() => void refetchCreations()}
-            retrying={creationsFetching}
-          />
-        ) : recentCreations.length ? (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {recentCreations.map((creation) => (
-              <CreationPreview key={creation.asset_id} creation={creation} />
-            ))}
-          </div>
-        ) : (
-          <EmptyState
-            title="Your creations start here"
-            description="Images, videos and audio you make through the gateway will appear here."
-            action={
-              <Button variant="outline" asChild>
-                <Link href="/try/">Create something</Link>
-              </Button>
-            }
-          />
-        )}
-      </section>
-      <section aria-labelledby="recent-requests-heading" className="space-y-3">
-        <h3 id="recent-requests-heading" className="text-base font-semibold">
-          Recent requests
-        </h3>
-        {!home.receipts.length ? (
-          <EmptyState
-            title="Your first request starts here"
-            description="Your apps’ requests appear here with their results."
-            action={
-              <Button variant="outline" asChild>
-                <Link href="/try/">Try a request</Link>
-              </Button>
-            }
-          />
-        ) : (
-          <ul className="divide-border divide-y">
-            {home.receipts.slice(0, 5).map((receipt) => {
-              const duration = receipt.latency_ms ?? receipt.elapsed_ms;
-              return (
-                <li key={receipt.request_id}>
-                  <a
-                    href={`/r/${encodeURIComponent(receipt.request_id)}`}
-                    className="hover:bg-muted focus-visible:ring-ring flex min-h-16 flex-wrap items-center justify-between gap-3 rounded-lg px-1 py-4 focus-visible:ring-2"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium break-words">
-                        {requestLabel(receipt, home.aliases)}
-                      </p>
-                      {receipt.requested_model && (
-                        <code className="text-muted-foreground mt-1 block text-xs break-all">
-                          {receipt.requested_model}
-                        </code>
-                      )}
-                      {receipt.source?.label || receipt.source_label ? (
-                        <p className="text-muted-foreground mt-1 text-xs">
-                          {receipt.source?.label ?? receipt.source_label}
-                        </p>
-                      ) : null}
-                      <p className="text-muted-foreground mt-1 text-xs">
-                        <RelativeTime
-                          ts={
-                            receipt._stored_at ??
-                            (receipt.accepted_at_ms != null
-                              ? receipt.accepted_at_ms / 1000
-                              : null)
-                          }
-                          fallback="Time not recorded"
-                        />
-                      </p>
-                    </div>
-                    <div className="text-muted-foreground flex flex-wrap gap-3 text-xs">
-                      <span>
-                        {receipt.status === "succeeded" ||
-                        receipt.status === "completed"
-                          ? "Succeeded"
-                          : receipt.status === "failed"
-                            ? "Failed"
-                            : (receipt.status ?? "Result not recorded")}
-                      </span>
-                      {duration != null && (
-                        <span className="tabular-nums">
-                          {Math.round(duration)} ms
-                        </span>
-                      )}
-                      <ArrowUpRight aria-hidden="true" className="size-4" />
-                    </div>
-                  </a>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
+      {creationsPending ? (
+        <div
+          role="status"
+          aria-label="Loading recent creations"
+          aria-busy="true"
+          className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
+        >
+          {[0, 1, 2, 3].map((item) => (
+            <Skeleton key={item} className="h-48 w-full rounded-xl" />
+          ))}
+        </div>
+      ) : creationsError ? (
+        <ErrorState
+          message="Recent creations could not be loaded. Try again."
+          onRetry={() => void refetchCreations()}
+          retrying={creationsFetching}
+        />
+      ) : recentCreations.length ? (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {recentCreations.map((creation) => (
+            <CreationPreview key={creation.asset_id} creation={creation} />
+          ))}
+        </div>
+      ) : (
+        <EmptyState
+          title="Your creations start here"
+          description="Images, videos and audio you make through the gateway will appear here."
+          action={
+            <Button variant="outline" asChild>
+              <Link href="/try/">Create something</Link>
+            </Button>
+          }
+        />
+      )}
     </section>
   );
 }
 
 export default function HomePage() {
-  const { data: instance } = useQuery({
-    queryKey: ["foundation", "instance"],
-    queryFn: async () => {
-      const response = await fetch("/.well-known/ai-gateway");
-      if (!response.ok) throw new Error("Instance details are unavailable");
-      return response.json() as Promise<{ service?: { name?: string } }>;
-    },
-  });
   const {
     data: home,
     isPending: homePending,
@@ -1249,22 +836,7 @@ export default function HomePage() {
     refetch: refetchHome,
     isFetching: homeFetching,
   } = useQuery({ queryKey: homeKey, queryFn: homeApi.home });
-  const isOwner = home?.user?.role === "owner";
-  const {
-    data: setup,
-    isPending: setupPending,
-    isError: setupError,
-    refetch: refetchSetup,
-    isFetching: setupFetching,
-  } = useQuery({
-    queryKey: setupKey,
-    queryFn: homeApi.setup,
-    enabled: !!isOwner,
-  });
-  const showSetup =
-    home?.authenticated && isOwner && setup
-      ? shouldShowSetup(setup, home)
-      : false;
+  const isOwner = home?.authenticated && home.user.role === "owner";
   return (
     <div className="min-w-0 space-y-4 sm:space-y-6">
       {homePending ? (
@@ -1291,87 +863,30 @@ export default function HomePage() {
         />
       ) : (
         <>
-          <div className="border-primary/25 flex items-start justify-between gap-3 border-b pb-4">
-            <div className="min-w-0">
-              <h1 className="font-display text-2xl font-medium tracking-tight break-words sm:text-4xl">
-                Hello, {greetingName(home.user)}.
-              </h1>
-              <p className="text-muted-foreground mt-1 hidden text-xs sm:block">
-                Welcome to {PRODUCT_NAME}.
-                {instance?.service?.name &&
-                instance.service.name !== PRODUCT_NAME
-                  ? ` ${instance.service.name}`
-                  : ""}
-              </p>
-              <div role="status" className="mt-2 text-sm">
-                {home.status.state === "ready" ? (
-                  <StatusPill status="ready" summary />
-                ) : (
-                  <details>
-                    <summary className="text-muted-foreground min-h-11 cursor-pointer content-center">
-                      {["unknown", "not_measured", "not measured yet"].includes(
-                        String(home.status.state),
-                      )
-                        ? "Status details"
-                        : "Needs attention"}
-                    </summary>
-                    <p className="text-muted-foreground mt-1">
-                      {home.status.reason}
-                    </p>
-                  </details>
-                )}
+          {isOwner &&
+            home.status.state !== "ready" &&
+            !["unknown", "not_measured", "not measured yet"].includes(
+              String(home.status.state),
+            ) && (
+              <div
+                role="status"
+                className="text-muted-foreground flex flex-wrap items-center gap-2 text-sm"
+              >
+                <span>{home.status.reason}</span>
+                <Link
+                  className="text-primary underline underline-offset-4"
+                  href="/status/"
+                >
+                  Fix in Status
+                </Link>
               </div>
-            </div>
-            <svg
-              viewBox="0 0 40 32"
-              aria-hidden="true"
-              className="text-primary w-10 shrink-0 sm:w-16"
-            >
-              <path
-                d="M9 16c8-12 19-12 26 0-7 12-18 12-26 0Z"
-                fill="currentColor"
-              />
-              <path d="m9 16-6-7v14Z" fill="currentColor" />
-              <circle cx="28" cy="14" r="2" className="fill-background" />
-            </svg>
-          </div>
-          {isOwner && setupPending ? (
-            <div
-              role="status"
-              aria-label="Loading setup progress"
-              aria-busy="true"
-              className="space-y-3"
-            >
-              <Skeleton className="h-6 w-48" />
-              <Skeleton className="h-48 w-full" />
-            </div>
-          ) : isOwner && setupError ? (
-            <ErrorState
-              message="Setup progress could not be loaded. Try again."
-              onRetry={() => void refetchSetup()}
-              retrying={setupFetching}
-            />
-          ) : showSetup && setup ? (
-            <SetupChecklist progress={setup} home={home} />
-          ) : null}
-          <Connect home={home} progress={isOwner ? setup : undefined} />
-          {!showSetup && isOwner && setup && needsSetup(setup) && (
-            <details>
-              <summary className="text-muted-foreground min-h-11 cursor-pointer content-center text-sm">
-                Setup progress
-              </summary>
-              <SetupChecklist progress={setup} home={home} />
-            </details>
-          )}
-          {!showSetup && (
-            <>
-              <Capabilities
-                capabilities={home.capabilities}
-                aliases={home.aliases}
-              />
-              <Recent home={home} />
-            </>
-          )}
+            )}
+          <Connect home={home} />
+          <Capabilities
+            capabilities={home.capabilities}
+            aliases={home.aliases}
+          />
+          <Recent />
         </>
       )}
     </div>

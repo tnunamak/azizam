@@ -1,26 +1,24 @@
 import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
-import identity from "../../gateway/product_identity.json";
 
 const homePath = "/ui/home/";
 const homeApi = "**/me/api/home";
-const mediaApi = "**/me/api/media?limit=5";
+const mediaApi = "**/me/api/media?limit=4";
 const setupApi = "**/admin/api/setup-progress";
 
 async function chooseRecipeKey(page: Page, optionName: string | RegExp) {
-  await page.getByRole("combobox", { name: "App key" }).click();
+  await page.getByRole("combobox", { name: "API key" }).click();
   await page.getByRole("option", { name: optionName }).click();
 }
 
-async function openClientInstructionsOnPhone(page: Page, width: number) {
-  if ((await page.getByRole("textbox", { name: "Base URL" }).count()) === 0) {
-    const picker = page.getByRole("button", { name: "Open WebUI" });
-    await expect(picker).toBeVisible();
+async function openClientInstructionsOnPhone(page: Page, _width: number) {
+  const picker = page.getByRole("button", {
+    name: "Open WebUI",
+    exact: true,
+  });
+  await expect(picker).toBeVisible();
+  if ((await picker.getAttribute("aria-pressed")) !== "true") {
     await picker.click();
-  }
-  if (width !== 390) return;
-  if ((await page.getByRole("tabpanel").count()) === 0) {
-    await page.getByText("App instructions", { exact: true }).click();
   }
 }
 
@@ -146,44 +144,12 @@ for (const theme of ["light", "dark"] as const) {
         expect(response?.status()).toBe(200);
         if (state !== "error") {
           await expect(
-            page.getByRole("heading", { level: 1, name: /^Hello,/ }),
+            page.getByRole("heading", { name: "Connect an app", exact: true }),
           ).toBeVisible();
+          await expect(page.locator("main")).not.toContainText("Hello,");
+          await expect(page.locator("main")).not.toContainText("Welcome to");
         }
         if (state === "seeded") {
-          const instance = await (
-            await request.get("/.well-known/ai-gateway")
-          ).json();
-          const subtitle =
-            instance.service.name && instance.service.name !== identity.name
-              ? ` ${instance.service.name}`
-              : "";
-          const welcome = page.getByText(
-            `Welcome to ${identity.name}.${subtitle}`,
-            {
-              exact: true,
-            },
-          );
-          if (width === 390) {
-            await expect(welcome).toBeHidden();
-            const greeting = page.getByRole("heading", { name: /^Hello,/ });
-            const layout = await greeting.evaluate((element) => ({
-              width: element.getBoundingClientRect().width,
-              available: element.parentElement!.getBoundingClientRect().width,
-              lines:
-                element.getBoundingClientRect().height /
-                parseFloat(getComputedStyle(element).lineHeight),
-            }));
-            expect(
-              layout.width,
-              "The greeting gets the full text column width",
-            ).toBeGreaterThanOrEqual(layout.available - 1);
-            expect(
-              layout.lines,
-              "A seeded greeting fits within two lines",
-            ).toBeLessThanOrEqual(2.1);
-          } else {
-            await expect(welcome).toBeVisible();
-          }
           const snapshot = await (await request.get("/me/api/home")).json();
           const media = snapshot.capabilities.filter(
             (cap: { capability: string }) =>
@@ -213,9 +179,17 @@ for (const theme of ["light", "dark"] as const) {
             .toBeGreaterThan(0);
           await openClientInstructionsOnPhone(page, width);
           await chooseRecipeKey(page, /Browser test app/);
-          await expect(page.getByRole("tabpanel").locator("pre")).toContainText(
-            "fast",
-          );
+          const selected = seededApp.credentials[0];
+          const aliases = snapshot.credential_aliases?.[selected.id] ?? [];
+          const model = page.getByRole("textbox", {
+            name: "Model",
+            exact: true,
+          });
+          if (aliases.some((alias: { id: string }) => alias.id === "default")) {
+            await expect(model).toHaveValue("default");
+          } else {
+            await expect(model).toHaveCount(0);
+          }
         }
         if (state === "error") {
           await expect(
@@ -227,10 +201,10 @@ for (const theme of ["light", "dark"] as const) {
         } else {
           await openClientInstructionsOnPhone(page, width);
           await expect(
-            page.getByRole("tab", { name: "Open WebUI", exact: true }),
+            page.getByRole("button", { name: "Open WebUI", exact: true }),
           ).toBeVisible();
           await expect(
-            page.getByRole("button", { name: "Gateway check", exact: true }),
+            page.getByRole("button", { name: "Check connection", exact: true }),
           ).toBeVisible();
           await expect(page.getByLabel("Loading Home")).toHaveCount(0);
           if (state === "empty") {
@@ -254,12 +228,6 @@ for (const theme of ["light", "dark"] as const) {
               page.getByRole("heading", { name: "Recent", exact: true }),
             ).toBeVisible();
           }
-          await expect(
-            page.getByRole("heading", {
-              name: "Recent creations",
-              exact: true,
-            }),
-          ).toBeVisible();
           if (state === "seeded") {
             await expect(
               page.getByText("A recorded image from your gateway", {
@@ -267,7 +235,7 @@ for (const theme of ["light", "dark"] as const) {
               }),
             ).toBeVisible();
             await expect(
-              page.locator('a[href*="/try/?capability=chat&model=fast"]'),
+              page.locator('a[href*="/models/?capability=chat"]'),
             ).toHaveCount(1);
           }
         }
@@ -280,7 +248,7 @@ for (const theme of ["light", "dark"] as const) {
             .click();
           await openClientInstructionsOnPhone(page, width);
           await expect(
-            page.getByRole("tab", { name: "Open WebUI", exact: true }),
+            page.getByRole("button", { name: "Open WebUI", exact: true }),
           ).toBeVisible();
           await expect(
             page.getByRole("alert").filter({ hasText: /could not|try again/i }),
@@ -291,7 +259,7 @@ for (const theme of ["light", "dark"] as const) {
   }
 }
 
-test("all ten client recipes fit a phone and remain accessible", async ({
+test("Home setup notes fit a phone and remain accessible", async ({
   page,
   context,
   request,
@@ -313,53 +281,20 @@ test("all ten client recipes fit a phone and remain accessible", async ({
   expect(seededApp?.credentials.length).toBeGreaterThan(0);
   await openClientInstructionsOnPhone(page, 390);
   await chooseRecipeKey(page, /Browser test app/);
-  await expect(page.getByRole("tabpanel").locator("pre")).toContainText("fast");
-  for (const name of [
-    "Open WebUI",
-    "LibreChat",
-    "SillyTavern",
-    "Cursor",
-    "Codex",
-    "Claude Code",
-    "Python",
-    "JavaScript",
-    "curl",
-    "Phone",
-  ]) {
-    await page.getByRole("tab", { name, exact: true }).click();
-    await expect(
-      page
-        .getByRole("tabpanel")
-        .getByText("App setup: not verified", { exact: true }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("heading", { name: `Connect ${name}`, exact: true }),
-    ).toBeVisible();
-    await expect(
-      page
-        .getByRole("tabpanel")
-        .getByText("App setup: not verified", { exact: true }),
-    ).toBeVisible();
-    expect(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth <= window.innerWidth,
-      ),
-    ).toBe(true);
-    const serious = (
-      await new AxeBuilder({ page }).analyze()
-    ).violations.filter((v) =>
-      ["serious", "critical"].includes(v.impact ?? ""),
-    );
-    expect(serious, `${name} accessibility`).toEqual([]);
-    const code = page.locator("pre code:visible");
-    if (await code.count()) {
-      const expected = await code.textContent();
-      await page.getByRole("button", { name: /^Copy .* code$/ }).click();
-      await expect
-        .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-        .toBe(expected);
-    }
-  }
+  await page.getByRole("button", { name: "Setup notes", exact: true }).click();
+  await expect(page.getByRole("dialog")).toContainText("Open WebUI");
+  await expect(page.getByRole("dialog")).toContainText(
+    "gateway check verifies the route and key",
+  );
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  const serious = (await new AxeBuilder({ page }).analyze()).violations.filter(
+    (v) => ["serious", "critical"].includes(v.impact ?? ""),
+  );
+  expect(serious, "Setup notes accessibility").toEqual([]);
 });
 
 test("Home shows a loading skeleton until the real snapshot arrives", async ({
@@ -484,7 +419,7 @@ test("superadmin Home does not request the owner-only setup API", async ({
 
 for (const theme of ["light", "dark"] as const) {
   for (const width of [1440, 390]) {
-    test(`owner first-run checklist: ${theme} at ${width}px`, async ({
+    test(`Home keeps setup progress out of the arrival screen: ${theme} at ${width}px`, async ({
       page,
     }) => {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
@@ -493,50 +428,30 @@ for (const theme of ["light", "dark"] as const) {
         (value) => localStorage.setItem("theme", value),
         theme,
       );
-      await page.route(homeApi, async (route) => {
-        const response = await route.fetch();
-        const actual = await response.json();
-        await route.fulfill({ response, json: { ...actual, receipts: [] } });
-      });
-      await page.route(setupApi, async (route) => {
-        const response = await route.fetch();
-        const actual = await response.json();
-        await route.fulfill({
-          response,
-          json: {
-            ...actual,
-            complete: false,
-            steps: actual.steps.map((step: { id: string }) => ({
-              ...step,
-              done: step.id === "claim_owner",
-              reason:
-                (
-                  {
-                    connect_service: "Connect a service and check its health.",
-                    test_request: "Run a test request with your key.",
-                    connect_app: "Create an app key and use it in your client.",
-                  } as Record<string, string>
-                )[step.id] ?? (step as { reason?: string }).reason,
-            })),
-          },
-        });
+      const setupCalls: string[] = [];
+      page.on("request", (request) => {
+        if (new URL(request.url()).pathname === "/admin/api/setup-progress") {
+          setupCalls.push(request.url());
+        }
       });
       await page.goto(homePath);
       await expect(
-        page.getByRole("heading", { name: "Finish setting up", exact: true }),
+        page.getByRole("heading", { name: "Connect an app", exact: true }),
       ).toBeVisible();
       await expect(
         page.getByRole("heading", { name: "What you can use", exact: true }),
-      ).toHaveCount(0);
+      ).toBeVisible();
       await expect(
         page.getByRole("heading", { name: "Recent", exact: true }),
-      ).toHaveCount(0);
-      await page.getByText("Setup details", { exact: true }).click();
-      await expect(page.getByText("Optional", { exact: true })).toBeVisible();
+      ).toBeVisible();
       await expect(
-        page.getByRole("link", { name: /Invite someone/ }),
-      ).toHaveAttribute("href", /people/);
-      await inspectHome(page, `first-run-${theme}-${width}`);
+        page.getByRole("heading", { name: "Finish setting up", exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        page.getByText("Recent requests", { exact: true }),
+      ).toHaveCount(0);
+      expect(setupCalls).toEqual([]);
+      await inspectHome(page, `arrival-${theme}-${width}`);
     });
   }
 }
@@ -615,12 +530,12 @@ test("inline reveal-once key tests a real chat request and produces one owned re
         secret,
       "Minted key is shown once",
     ).toBe(true);
-    await expect(page.getByRole("combobox", { name: "App key" })).toContainText(
+    await expect(page.getByRole("combobox", { name: "API key" })).toContainText(
       "New key",
     );
-    await expect(page.getByRole("tabpanel").locator("pre")).toContainText(
-      "fast",
-    );
+    await expect(
+      page.getByRole("textbox", { name: "Model", exact: true }),
+    ).toHaveCount(0);
     await page
       .getByRole("button", { name: "I’ve saved it", exact: true })
       .click();
@@ -661,7 +576,7 @@ test("inline reveal-once key tests a real chat request and produces one owned re
         new URL(response.url()).pathname === "/me/api/connection-test",
     );
     await page
-      .getByRole("button", { name: "Gateway check", exact: true })
+      .getByRole("button", { name: "Check connection", exact: true })
       .click();
     const tested = await testedResponse;
     expect(tested.ok()).toBe(true);
@@ -725,7 +640,7 @@ test("inline reveal-once key tests a real chat request and produces one owned re
     );
     expect(progress.complete).toBe(true);
     await expect(
-      page.getByText("App setup: not verified", { exact: true }),
+      page.getByRole("button", { name: "Setup notes", exact: true }),
     ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "What you can use", exact: true }),
@@ -806,16 +721,12 @@ test("a new inherited key cannot borrow a broader existing app's recipe", async 
     await page.goto(homePath);
     await page.getByRole("button", { name: "Open WebUI", exact: true }).click();
     const selector = page.getByRole("combobox", {
-      name: "App key",
+      name: "API key",
     });
     await expect(selector).toContainText("New app");
-    await expect(
-      page.getByText("No chat alias is listed for this key", { exact: true }),
-    ).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Model" })).toHaveCount(0);
     await chooseRecipeKey(page, /Browser test app/);
-    await expect(page.getByRole("tabpanel").locator("pre")).toContainText(
-      "fast",
-    );
+    await expect(page.getByRole("textbox", { name: "Model" })).toHaveCount(0);
 
     const mintedResponse = page.waitForResponse(
       (response) =>
@@ -830,12 +741,7 @@ test("a new inherited key cannot borrow a broader existing app's recipe", async 
     expect(minted.status()).toBe(201);
     const { credential } = await minted.json();
     await expect(selector).toContainText("New key");
-    await expect(
-      page.getByText("No chat alias is listed for this key", {
-        exact: true,
-      }),
-    ).toBeVisible();
-    await expect(page.getByRole("tabpanel").locator("pre")).toHaveCount(0);
+    await expect(page.getByRole("textbox", { name: "Model" })).toHaveCount(0);
     const catalog = await request.get("/v1/models", {
       headers: { authorization: `Bearer ${credential.api_key}` },
     });
@@ -850,7 +756,7 @@ test("a new inherited key cannot borrow a broader existing app's recipe", async 
         new URL(response.url()).pathname === "/me/api/connection-test",
     );
     await page
-      .getByRole("button", { name: "Gateway check", exact: true })
+      .getByRole("button", { name: "Check connection", exact: true })
       .click();
     const tested = await testedResponse;
     expect(tested.ok()).toBe(true);
@@ -866,12 +772,7 @@ test("a new inherited key cannot borrow a broader existing app's recipe", async 
     await page
       .getByRole("button", { name: "I’ve saved it", exact: true })
       .click();
-    await expect(
-      page.getByText("No chat alias is listed for this key", {
-        exact: true,
-      }),
-    ).toBeVisible();
-    await expect(page.getByRole("tabpanel").locator("pre")).toHaveCount(0);
+    await expect(page.getByRole("textbox", { name: "Model" })).toHaveCount(0);
   } finally {
     expect(
       (

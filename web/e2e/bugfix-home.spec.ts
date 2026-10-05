@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 const homeApi = "**/me/api/home";
 const setupApi = "**/admin/api/setup-progress";
-const mediaApi = "**/me/api/media?limit=5";
+const mediaApi = "**/me/api/media?limit=4";
 
 async function routeFocusedHome(page: Page) {
   await page.route(homeApi, (route) =>
@@ -15,7 +15,7 @@ async function routeFocusedHome(page: Page) {
         apps: [],
         aliases: [
           {
-            id: "fast",
+            id: "default",
             operation: "chat.completions",
             available: true,
             status: "ready",
@@ -50,7 +50,7 @@ async function routeFocusedHome(page: Page) {
         credential_aliases: {},
         new_app_aliases: [
           {
-            id: "fast",
+            id: "default",
             operation: "chat.completions",
             available: true,
             status: "ready",
@@ -90,9 +90,7 @@ async function routeTryCatalog(page: Page) {
   );
 }
 
-test("Home capability Try link carries chat and fast into Try", async ({
-  page,
-}) => {
+test("Home capability link carries chat into Models", async ({ page }) => {
   await routeFocusedHome(page);
   await routeTryCatalog(page);
 
@@ -100,31 +98,14 @@ test("Home capability Try link carries chat and fast into Try", async ({
   await expect(
     page.getByRole("heading", { name: "What you can use", exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Reranking" })).toHaveCount(0);
-  await page
-    .getByRole("button", { name: "View all capabilities", exact: true })
-    .click();
-  await expect(page.getByRole("heading", { name: "Reranking" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Reranking" })).toBeVisible();
 
-  const tryLink = page
-    .locator('a[href*="/try/?capability=chat&model=fast"]')
+  const modelsLink = page
+    .locator('a[href*="/models"][href*="capability=chat"]')
     .first();
-  await expect(tryLink).toHaveCount(1);
-  await tryLink.click();
-  await expect(page).toHaveURL(/\/ui\/try\/\?capability=chat&model=fast$/);
-
-  await expect(
-    page.getByText("Run creates a Try key for your access plan.", {
-      exact: true,
-    }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("tab", { name: "Chat", exact: true }),
-  ).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByRole("combobox").first()).toContainText("fast model");
-  await expect(page.getByRole("combobox").first()).not.toContainText(
-    "coder model",
-  );
+  await expect(modelsLink).toHaveCount(1);
+  await modelsLink.click();
+  await expect(page).toHaveURL(/\/ui\/models\/\?capability=chat$/);
 });
 
 test("Home picks the app recipe before creating a key", async ({ page }) => {
@@ -136,9 +117,9 @@ test("Home picks the app recipe before creating a key", async ({ page }) => {
   await expect(
     page.getByRole("button", { name: "Create key for Open WebUI" }),
   ).toBeVisible();
-  await page.getByRole("tab", { name: "Phone", exact: true }).click();
+  await page.getByRole("button", { name: "Other", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "Create key for Phone" }),
+    page.getByRole("button", { name: "Create key for Python" }),
   ).toBeVisible();
 });
 

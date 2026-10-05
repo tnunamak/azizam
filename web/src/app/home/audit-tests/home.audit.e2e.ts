@@ -127,7 +127,7 @@ async function setupRoutes(
   await page.route("**/.well-known/ai-gateway", (route) =>
     route.fulfill({ json: { service: { name: "Family gateway" } } }),
   );
-  await page.route("**/me/api/media?limit=5", (route) =>
+  await page.route("**/me/api/media?limit=4", (route) =>
     route.fulfill({ json: { assets: [], next_cursor: null } }),
   );
   await page.route("**/me/api/session", (route) =>
@@ -193,14 +193,14 @@ for (const state of ["seeded", "empty", "error"] as const) {
           ).toBeVisible();
         } else {
           await expect(
-            page.getByRole("heading", { name: /^Hello,/ }),
+            page.getByRole("heading", { name: "Connect an app", exact: true }),
           ).toBeVisible();
           await page.getByRole("button", { name: "Open WebUI" }).click();
           await expect(
             page.getByText("Base URL", { exact: true }),
           ).toBeVisible();
           await expect(
-            page.getByRole("button", { name: "Gateway check" }),
+            page.getByRole("button", { name: "Check connection" }),
           ).toBeVisible();
         }
         await inspect(page, `${state}-${theme}-${width}`);
@@ -209,24 +209,33 @@ for (const state of ["seeded", "empty", "error"] as const) {
   }
 }
 
-test("fresh owner sees setup and connection task in the first viewport", async ({
+test("fresh owner sees connection and media without setup progress", async ({
   page,
 }) => {
+  let setupCalls = 0;
   await page.setViewportSize({ width: 390, height: 844 });
   await setupRoutes(page, "seeded", "owner");
-  await page.route("**/me/api/home", (route) =>
-    route.fulfill({ json: { ...home("owner"), receipts: [] } }),
-  );
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/admin/api/setup-progress") {
+      setupCalls += 1;
+    }
+  });
   await page.goto("/ui/home/");
-  await page.getByRole("button", { name: "Open WebUI" }).click();
-  for (const locator of [
-    page.getByRole("heading", { name: "Finish setting up" }),
-    page.getByText("Base URL", { exact: true }),
-  ]) {
-    const box = await locator.boundingBox();
-    expect(box).not.toBeNull();
-    expect(box!.y).toBeLessThan(844);
-  }
+  await expect(
+    page.getByRole("heading", { name: "Connect an app", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "What you can use", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Recent", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Finish setting up", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Open WebUI", exact: true }).click();
+  await expect(page.getByText("Base URL", { exact: true })).toBeVisible();
+  expect(setupCalls).toBe(0);
 });
 
 test("member Home keeps owner setup API out and connection task in the first viewport", async ({
@@ -252,64 +261,22 @@ test("member Home keeps owner setup API out and connection task in the first vie
   expect(setupCalls).toBe(0);
 });
 
-test("setup evidence posts only after explicit owner confirmations", async ({
-  page,
-}) => {
+test("setup evidence buttons are not shown on Home", async ({ page }) => {
   const posts: unknown[] = [];
   await setupRoutes(page, "seeded", "owner");
-  await page.route("**/me/api/connection-test", (route) =>
-    route.fulfill({
-      json: {
-        ok: true,
-        latency_ms: 12,
-        reason: "Gateway responded with this key",
-        path: "/openai/v1/chat/completions",
-        model: "fast",
-        request_id: "req-1",
-      },
-    }),
-  );
   await page.route("**/admin/api/setup-evidence", async (route) => {
-    const body = route.request().postDataJSON() as {
-      event?: string;
-      app_id?: string;
-      request_id?: string;
-    };
-    posts.push(body);
-    await route.fulfill({
-      json: {
-        event: body.event,
-        recorded: true,
-        source: "user_confirmation",
-      },
-    });
+    posts.push(route.request().postDataJSON());
+    await route.fulfill({ json: { recorded: true } });
   });
   await page.goto("/ui/home/");
-  expect(posts).toEqual([]);
   await page.getByRole("button", { name: "Open WebUI" }).click();
-  await page.getByRole("combobox", { name: "App key" }).click();
-  await page.getByRole("option", { name: /Browser test app/ }).click();
-  await page
-    .getByLabel("Paste your API key", { exact: true })
-    .fill("opk_test_secret");
-  await page.getByRole("button", { name: "Gateway check" }).click();
   await expect(
-    page.getByText("Gateway responded with this key", { exact: true }),
-  ).toBeVisible();
+    page.getByRole("button", { name: "I copied the settings" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "My app sent a request" }),
+  ).toHaveCount(0);
   expect(posts).toEqual([]);
-  await page.getByRole("button", { name: "I copied the settings" }).click();
-  await expect.poll(() => posts.length).toBe(1);
-  await page.getByRole("button", { name: "My app sent a request" }).click();
-  await expect.poll(() => posts.length).toBe(2);
-  await page.getByText("Setup progress", { exact: true }).click();
-  await page.getByText("Setup details").click();
-  await page.getByRole("button", { name: "I viewed this receipt" }).click();
-  await expect.poll(() => posts.length).toBe(3);
-  expect(posts).toEqual([
-    { event: "settings_copied", app_id: "app-browser" },
-    { event: "external_client_confirmed", app_id: "app-browser" },
-    { event: "receipt_viewed", request_id: "req-1" },
-  ]);
 });
 
 test("real gateway setup evidence stays separate from gateway check", async ({
@@ -351,7 +318,7 @@ test("real gateway setup evidence stays separate from gateway check", async ({
 
   await page.goto("/ui/home/");
   await page.getByRole("button", { name: "Open WebUI" }).click();
-  await page.getByRole("combobox", { name: "App key" }).click();
+  await page.getByRole("combobox", { name: "API key" }).click();
   await page.getByRole("option", { name: /Home audit evidence key/ }).click();
   await page.getByLabel("Paste your API key", { exact: true }).fill(secret);
 
@@ -360,7 +327,7 @@ test("real gateway setup evidence stays separate from gateway check", async ({
       new URL(response.url()).pathname === "/me/api/connection-test" &&
       response.request().method() === "POST",
   );
-  await page.getByRole("button", { name: "Gateway check" }).click();
+  await page.getByRole("button", { name: "Check connection" }).click();
   const checked = await checkResponse;
   expect(checked.ok()).toBe(true);
   const connection = await checked.json();
@@ -384,23 +351,12 @@ test("real gateway setup evidence stays separate from gateway check", async ({
     page.getByRole("heading", { name: "Finish setting up" }),
   ).toHaveCount(0);
 
-  await page.getByRole("button", { name: "I copied the settings" }).click();
-  await expect
-    .poll(
-      async () =>
-        (await (await request.get("/admin/api/setup-progress")).json()).evidence
-          .settings_copied.recorded,
-    )
-    .toBe(true);
-
-  await page.getByRole("button", { name: "My app sent a request" }).click();
-  await expect
-    .poll(
-      async () =>
-        (await (await request.get("/admin/api/setup-progress")).json()).evidence
-          .external_client_confirmed.recorded,
-    )
-    .toBe(true);
+  await expect(
+    page.getByRole("button", { name: "I copied the settings" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "My app sent a request" }),
+  ).toHaveCount(0);
 
   const receiptResponse = await request.get(
     `/me/api/receipts/${connection.request_id}`,

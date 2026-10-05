@@ -76,7 +76,7 @@ describe("Home presentation", () => {
     expect(tiles.every((tile) => !tile.workflow)).toBe(true);
   });
 
-  it("prefers ready generation aliases and supports operator-authored names", () => {
+  it("uses the recommended generation alias instead of a faster alternate", () => {
     const tiles = capabilityTiles(
       [],
       [
@@ -86,8 +86,8 @@ describe("Home presentation", () => {
       ],
     );
     expect(tiles).toHaveLength(1);
-    expect(tiles[0].model).toBe("drawings");
-    expect(tiles[0].status).toBe("ready");
+    expect(tiles[0].model).toBe("image");
+    expect(tiles[0].status).toBe("unavailable");
   });
 
   it("does not expose workflow IDs when no generation alias exists", () => {

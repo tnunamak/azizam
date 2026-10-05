@@ -14,7 +14,7 @@ import path from "node:path";
 let engine: ChildProcess;
 let enginePort: number;
 let registryApi: APIRequestContext;
-let originalSubstrates: Record<string, unknown> = {};
+const originalSubstrates: Record<string, unknown> = {};
 let registryHeaders: Record<string, string>;
 
 test.beforeAll(async ({ baseURL }) => {
@@ -239,19 +239,13 @@ for (const theme of ["light", "dark"]) {
       await page.goto(
         `/ui/${width === 390 ? "services" : "engines"}/?service=${serviceId}`,
       );
-      const card = page
-        .locator("article")
-        .filter({ hasText: `Strict engine ${suffix}` });
+      const card = page.locator(`article[data-engine-id="${serviceId}"]`);
       if (width === 390) {
         const actionBox = await card
           .getByRole("button", { name: /Actions|More/ })
           .boundingBox();
         expect(actionBox!.height).toBeGreaterThanOrEqual(44);
         expect(actionBox!.width).toBeGreaterThanOrEqual(44);
-        const labelBox = await card
-          .locator(`label[for='engine-enabled-${serviceId}']`)
-          .boundingBox();
-        expect(labelBox!.height).toBeGreaterThanOrEqual(44);
       }
       await card.getByRole("button", { name: /Actions|More/ }).click();
       await page
@@ -261,6 +255,13 @@ for (const theme of ["light", "dark"]) {
         name: "Edit engine",
         exact: true,
       });
+      if (width === 390) {
+        const toggleBox = await sheet
+          .getByRole("switch", { name: new RegExp("Toggle Strict engine") })
+          .boundingBox();
+        expect(toggleBox!.height).toBeGreaterThanOrEqual(44);
+        expect(toggleBox!.width).toBeGreaterThanOrEqual(44);
+      }
       const originalEndpoint = await sheet
         .getByLabel("Endpoint", { exact: true })
         .inputValue();
@@ -441,18 +442,19 @@ for (const theme of ["light", "dark"]) {
         }),
       );
       await page.goto("/ui/engines/?service=capture-engine");
-      const card = page
-        .locator("article")
-        .filter({ hasText: "Local test engine" });
+      const card = page.locator('article[data-engine-id="capture-engine"]');
       await card.getByRole("button", { name: /Actions|More/ }).click();
       await page
         .getByRole("menuitem", { name: "Test engine", exact: true })
         .click();
       const sheet = page.getByRole("dialog", { name: "Edit engine" });
       await sheet.getByRole("button", { name: "Test", exact: true }).click();
-      await expect(sheet.getByRole("alert")).toContainText(
-        "Local test engine: connection failed",
-      );
+      const alert = sheet.getByRole("alert");
+      await expect(alert).toBeVisible();
+      const friendlyName = (await sheet
+        .locator("[data-slot='sheet-description']")
+        .textContent())!;
+      await expect(alert).toContainText(`${friendlyName}: connection failed`);
       await expect(sheet.getByRole("alert")).toContainText(
         "http://127.0.0.1:18498/health (HTTP 503)",
       );
@@ -487,7 +489,7 @@ test("a registry conflict preserves the detected-model preview for retry", async
     });
   });
   await page.goto("/ui/engines/?service=capture-engine");
-  const card = page.locator("article").filter({ hasText: "Local test engine" });
+  const card = page.locator('article[data-engine-id="capture-engine"]');
   await card.getByRole("button", { name: /Actions|More/ }).click();
   await page
     .getByRole("menuitem", { name: "Detect models", exact: true })

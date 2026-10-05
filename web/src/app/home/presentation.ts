@@ -37,17 +37,44 @@ const operations: Record<string, string[]> = {
   rerank: ["rerank", "text.rerank"],
   audio: ["audio_generate", "audio", "audio.generate"],
 };
-const preferredAliases: Record<string, string[]> = {
-  chat: ["fast", "chat", "smart"],
+const representativeUseNames: Record<string, string[]> = {
+  chat: ["default"],
   image: ["image"],
   video: ["video"],
-  voice: ["speech", "tts", "voice"],
+  voice: ["speech", "tts"],
+  speech: ["speech", "tts"],
+  music: ["music"],
+  sfx: ["sfx"],
   transcribe: ["transcribe", "stt"],
-  decide: ["decide", "decision"],
-  embed: ["embed", "embedding"],
+  decide: ["decide"],
+  embed: ["embed"],
   rerank: ["rerank"],
   audio: ["audio"],
 };
+
+function representativeRank(capability: string, row: HomeCapability): number {
+  const names = representativeUseNames[capability] ?? [];
+  const useNames = [row.use_name, row.model, ...(row.use_names ?? [])].filter(
+    Boolean,
+  );
+  const index = useNames.reduce((best, name) => {
+    const current = names.indexOf(String(name));
+    return current < 0 ? best : Math.min(best, current);
+  }, Number.POSITIVE_INFINITY);
+  return index;
+}
+
+function representativeAlias(capability: string, aliases: HomeAlias[]) {
+  const names = representativeUseNames[capability] ?? [];
+  for (const name of names) {
+    const alias = aliases.find(
+      (item) =>
+        item.id === name && operations[capability]?.includes(item.operation),
+    );
+    if (alias) return alias;
+  }
+  return null;
+}
 
 export function greetingName(user: HomeSnapshot["user"]): string {
   const name = user.name?.trim();
@@ -81,28 +108,19 @@ export function capabilityTiles(
     const kinds = [
       ...new Set(capabilities.map((row) => row.capability)),
     ].toSorted((a, b) => order.indexOf(a) - order.indexOf(b));
-    return kinds.map((kind) => {
+    return kinds.flatMap((kind) => {
       const rows = capabilities.filter((row) => row.capability === kind);
-      const rank = (row: HomeCapability) =>
-        (row.available ? 0 : 100) +
-        (aliases.some((alias) => alias.id === row.model) ? 0 : 10);
-      const row = rows.toSorted((a, b) => rank(a) - rank(b))[0];
-      return { ...row, model: row.use_name ?? row.model };
+      const row = rows.toSorted(
+        (a, b) => representativeRank(kind, a) - representativeRank(kind, b),
+      )[0];
+      return Number.isFinite(representativeRank(kind, row))
+        ? [{ ...row, model: row.use_name ?? row.model }]
+        : [];
     });
   }
   return Object.entries(operations).flatMap<HomeCapability>(
     ([capability, intents]) => {
-      const candidates = aliases.filter((alias) =>
-        intents.includes(alias.operation),
-      );
-      const ordered = candidates.toSorted((a, b) => {
-        const rank = (alias: HomeAlias) => {
-          const preferred = preferredAliases[capability].indexOf(alias.id);
-          return (alias.available ? 0 : 100) + (preferred < 0 ? 50 : preferred);
-        };
-        return rank(a) - rank(b) || a.id.localeCompare(b.id);
-      });
-      const alias = ordered[0];
+      const alias = representativeAlias(capability, aliases);
       if (alias)
         return [
           {
@@ -216,44 +234,7 @@ export function requestLabel(
 /** Server observations and explicit confirmations remain distinct milestones. */
 export function setupSteps(progress: SetupProgress) {
   const steps = progress.steps.filter((step) => step.id !== "claim_owner");
-  if (!progress.evidence) return steps;
-  if (progress.evidence.observed_external_client?.recorded) return steps;
-  const copied = {
-    id: "copy_settings",
-    done: progress.evidence.settings_copied.recorded,
-    optional: false,
-    reason: progress.evidence.settings_copied.recorded
-      ? "You confirmed that the settings were copied."
-      : "Copy the settings into your app, then confirm below.",
-    href: "#connect",
-  };
-  const viewed = {
-    id: "view_receipt",
-    done: progress.evidence.receipt_viewed.recorded,
-    optional: false,
-    reason: progress.evidence.receipt_viewed.recorded
-      ? "You confirmed that you viewed a request receipt."
-      : "Open a request receipt, then confirm that you viewed it.",
-    href: "#setup-heading",
-  };
-  const clientConfirmed = {
-    id: "connect_app",
-    done: progress.evidence.external_client_confirmed.recorded,
-    optional: false,
-    reason: progress.evidence.external_client_confirmed.recorded
-      ? "You confirmed that your app sent a request."
-      : "Send one request from your app, then confirm below.",
-    href: "#connect",
-  };
-  return [
-    ...steps.filter(
-      (step) => !["connect_app", "invite_someone"].includes(step.id),
-    ),
-    copied,
-    clientConfirmed,
-    viewed,
-    ...steps.filter((step) => step.id === "invite_someone"),
-  ];
+  return steps;
 }
 
 export function hasEstablishedTraffic(home: HomeSnapshot): boolean {

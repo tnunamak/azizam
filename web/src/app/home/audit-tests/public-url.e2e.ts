@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("Home and client recipes use the saved public URL on a different request host", async ({
+test("Home uses the saved public URL without assuming every key can call Chat", async ({
   page,
   request,
 }) => {
@@ -27,24 +27,32 @@ test("Home and client recipes use the saved public URL on a different request ho
     expect(home.public_base_url).toBe(publicUrl);
     expect(home.api_base_url).toBe(`${publicUrl}/v1`);
     await page.goto("/ui/home/");
-    await page.getByRole("button", { name: "Open WebUI" }).click();
+    await page.getByRole("button", { name: "Open WebUI", exact: true }).click();
     await expect(
       page.getByRole("textbox", { name: "Base URL", exact: true }),
     ).toHaveValue(`${publicUrl}/v1`);
-    await page.getByRole("combobox", { name: "App key", exact: true }).click();
+    await page.getByRole("combobox", { name: "API key", exact: true }).click();
     await page
       .getByRole("option", {
         name: "Browser test app · Seeded desktop key",
         exact: true,
       })
       .click();
-    await expect(page.getByRole("tabpanel").locator("pre")).toContainText(
-      `${publicUrl}/v1`,
-    );
-    await page.getByRole("tab", { name: "Claude Code", exact: true }).click();
-    await expect(page.getByRole("tabpanel").locator("pre")).toContainText(
-      `ANTHROPIC_BASE_URL='${publicUrl}'`,
-    );
+    await page
+      .getByRole("button", { name: "Setup notes", exact: true })
+      .click();
+    await expect(
+      page.getByRole("dialog", { name: "Setup notes" }),
+    ).toContainText("gateway check verifies the route and key");
+    const model = page.getByRole("textbox", { name: "Model", exact: true });
+    if (await model.count()) {
+      await expect(model).toHaveValue("default");
+      await expect(page.locator("pre code:visible")).toContainText(
+        `${publicUrl}/v1`,
+      );
+    } else {
+      await expect(page.locator("pre code:visible")).toHaveCount(0);
+    }
     expect(new URL(page.url()).origin).not.toBe(publicUrl);
   } finally {
     expect((await request.put(path, { headers, data: instance })).ok()).toBe(

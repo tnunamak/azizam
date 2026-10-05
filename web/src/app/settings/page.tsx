@@ -88,15 +88,16 @@ const split = (value: string) =>
     .split(",")
     .map((part) => part.trim())
     .filter(Boolean);
+const LEGACY_ACCESS_PLAN_NAMES = new Set(["legacy simon", "legacy daisy"]);
+const isLegacyAccessPlan = (name: string) =>
+  LEGACY_ACCESS_PLAN_NAMES.has(name.trim().toLowerCase());
 
 function Section({
   title,
-  description,
   summary,
   children,
 }: {
   title: string;
-  description: string;
   summary?: ReactNode;
   children: ReactNode;
 }) {
@@ -108,12 +109,7 @@ function Section({
       aria-label={title}
       className="grid min-w-0 gap-5 border-t py-8 xl:grid-cols-[220px_minmax(0,1fr)] xl:gap-10"
     >
-      <div>
-        <h2 className="text-base font-semibold">{title}</h2>
-        <p className="text-muted-foreground mt-2 text-sm leading-relaxed">
-          {description}
-        </p>
-      </div>
+      <h2 className="text-base font-semibold">{title}</h2>
       <div className="max-w-2xl min-w-0">
         {showSummary ? (
           <div className="flex flex-wrap items-start justify-between gap-4">
@@ -238,20 +234,26 @@ function InstanceSection() {
     queryFn: () =>
       adminFetch<{ instance: Instance }>("/admin/api/settings/instance"),
   });
+  const theme =
+    data?.instance.theme_default === "system"
+      ? "Follows device theme"
+      : ["light", "dark"].includes(data?.instance.theme_default ?? "")
+        ? `${data?.instance.theme_default} theme`
+        : null;
   return (
     <Section
       title="Instance"
-      description="The name, public address and default appearance of your gateway."
       summary={
         data ? (
           <>
-            <p>{data.instance.name || "Unnamed gateway"}</p>
-            <p className="text-muted-foreground">
-              {data.instance.base_url || "No public address set"} ·{" "}
-              {data.instance.theme_default === "system"
-                ? "Follows device theme"
-                : `${data.instance.theme_default} theme`}
-            </p>
+            {data.instance.name && <p>{data.instance.name}</p>}
+            {(data.instance.base_url || theme) && (
+              <p className="text-muted-foreground">
+                {data.instance.base_url}
+                {data.instance.base_url && theme && " · "}
+                {theme}
+              </p>
+            )}
           </>
         ) : undefined
       }
@@ -368,7 +370,6 @@ function SignInSection() {
   return (
     <Section
       title="Sign-in"
-      description="Manage built-in accounts and identity provider sign-in."
       summary={
         oidcData && signInData ? (
           <>
@@ -653,18 +654,22 @@ function DefaultsSection() {
   return (
     <Section
       title="Defaults"
-      description="The default access plan and personal app options."
       summary={
         data ? (
           <>
-            <p>
-              {data.defaults.profile_id
-                ? `Default plan: ${
+            {data.defaults.profile_id ? (
+              data.profiles.find((p) => p.id === data.defaults.profile_id)
+                ?.name && (
+                <p>
+                  {
                     data.profiles.find((p) => p.id === data.defaults.profile_id)
-                      ?.name ?? "Access plan unavailable"
-                  }`
-                : "No default access plan"}
-            </p>
+                      ?.name
+                  }
+                </p>
+              )
+            ) : (
+              <p>No default access plan</p>
+            )}
             <p className="text-muted-foreground">
               {data.access.self_service_apps
                 ? "People can create apps"
@@ -701,6 +706,9 @@ function DefaultsForm({
 }) {
   const client = useQueryClient();
   const [plan, setPlan] = useState(data.defaults.profile_id ?? "none");
+  const selectedPlan = data.profiles.find((profile) => profile.id === plan);
+  const selectedPlanIsLegacy =
+    selectedPlan !== undefined && isLegacyAccessPlan(selectedPlan.name);
   const [access, setAccess] = useState(data.access);
   // Different authorities have separate saves: a failed app-options write cannot claim a plan was saved.
   const planSave = useMutation({
@@ -753,16 +761,16 @@ function DefaultsForm({
               )}
               {plan !== "none" &&
                 !["default", "default-local"].includes(plan) &&
-                !data.profiles.some((p) => p.id === plan) && (
-                  <SelectItem value={plan}>
-                    Current plan (unavailable)
-                  </SelectItem>
+                (selectedPlanIsLegacy || !selectedPlan) && (
+                  <SelectItem value={plan}>Current plan</SelectItem>
                 )}
-              {data.profiles.map((p) => (
-                <SelectItem key={p.id} value={p.id}>
-                  {p.name}
-                </SelectItem>
-              ))}
+              {data.profiles
+                .filter((p) => !isLegacyAccessPlan(p.name))
+                .map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name}
+                  </SelectItem>
+                ))}
             </SelectContent>
           </Select>
         </Field>
@@ -835,7 +843,6 @@ function MediaSection() {
   return (
     <Section
       title="Media admission"
-      description="Set media queue limits and paused job types."
       summary={
         data ? (
           <>
@@ -1040,7 +1047,6 @@ function ExtensionsSection() {
   return (
     <Section
       title="Extensions"
-      description="Add services and capabilities from packages you trust."
       summary={
         data ? (
           <>
@@ -1251,7 +1257,6 @@ function AdvancedSection() {
   return (
     <Section
       title="Advanced"
-      description="Inspect the effective configuration. Secrets are redacted."
       summary={
         <>
           <p>Redacted configuration snapshot</p>
@@ -1312,7 +1317,7 @@ export default function SettingsPage() {
   ];
   return (
     <div className="max-w-5xl">
-      <PageHeader title="Settings" subtitle="Change one thing at a time." />
+      <PageHeader title="Settings" />
       <nav
         aria-label="Settings sections"
         className="mb-2 flex gap-2 overflow-x-auto pb-3"

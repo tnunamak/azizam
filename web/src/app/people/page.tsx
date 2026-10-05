@@ -238,11 +238,13 @@ export default function PeoplePage() {
         </DropdownMenuContent>
       </DropdownMenu>
     );
+  const hasUsageMeasurement = (peopleData?.people ?? []).some(
+    (person) => person.requests_this_month != null,
+  );
   return (
     <div>
       <PageHeader
         title="People"
-        subtitle="Give someone the right access."
         primaryAction={
           <Button
             onClick={() => setInviteOpen(true)}
@@ -292,23 +294,27 @@ export default function PeoplePage() {
             />
           ) : (
             <div className="divide-y">
-              <div className="text-muted-foreground hidden grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_44px] gap-4 pb-3 text-xs md:grid">
+              <div
+                className={`text-muted-foreground hidden gap-4 pb-3 text-xs md:grid ${hasUsageMeasurement ? "grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_44px]" : "grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_44px]"}`}
+              >
                 <span>Person</span>
                 <span>Access plan</span>
                 <span>Last active</span>
-                <span>This month</span>
+                {hasUsageMeasurement && <span>This month</span>}
                 <span />
               </div>
               {peopleData.people.map((person) => (
                 <div
                   key={person.id}
-                  className="grid grid-cols-[minmax(0,1fr)_44px] gap-4 py-4 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_44px] md:items-center"
+                  className={`grid grid-cols-[minmax(0,1fr)_44px] gap-4 py-4 md:items-center ${hasUsageMeasurement ? "md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_44px]" : "md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_44px]"}`}
                 >
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium break-words">
-                        {formatPersonName(person.name, "Unnamed person")}
-                      </span>
+                      {formatPersonName(person.name, "") && (
+                        <span className="font-medium break-words">
+                          {formatPersonName(person.name, "")}
+                        </span>
+                      )}
                       {person.disabled && (
                         <Badge variant="secondary">Disabled</Badge>
                       )}
@@ -322,9 +328,11 @@ export default function PeoplePage() {
                         </Badge>
                       )}
                     </div>
-                    <p className="text-muted-foreground text-sm break-all">
-                      {person.email || "No email provided"}
-                    </p>
+                    {person.email && (
+                      <p className="text-muted-foreground text-sm break-all">
+                        {person.email}
+                      </p>
+                    )}
                   </div>
                   <div className="col-start-1 text-sm md:col-auto">
                     <span className="text-muted-foreground md:hidden">
@@ -332,25 +340,23 @@ export default function PeoplePage() {
                     </span>
                     {person.plan_name || "Gateway default"}
                   </div>
-                  <div className="text-muted-foreground col-start-1 text-sm md:col-auto">
-                    <span className="md:hidden">Last active · </span>
-                    {person.last_active ? (
-                      <RelativeTime ts={person.last_active} />
-                    ) : (
-                      "Not measured yet"
-                    )}
-                  </div>
-                  {person.requests_this_month === null ? (
-                    <div
-                      aria-hidden="true"
-                      className="hidden md:col-auto md:block"
-                    />
-                  ) : (
+                  {person.last_active ? (
                     <div className="text-muted-foreground col-start-1 text-sm md:col-auto">
-                      <span className="md:hidden">This month · </span>
-                      {`${person.requests_this_month.toLocaleString()} requests`}
+                      <span className="md:hidden">Last active · </span>
+                      <RelativeTime ts={person.last_active} />
                     </div>
+                  ) : (
+                    <div aria-hidden="true" className="hidden md:block" />
                   )}
+                  {hasUsageMeasurement &&
+                    (person.requests_this_month == null ? (
+                      <div aria-hidden="true" className="hidden md:block" />
+                    ) : (
+                      <div className="text-muted-foreground col-start-1 text-sm md:col-auto">
+                        <span className="md:hidden">This month · </span>
+                        {`${person.requests_this_month.toLocaleString()} requests`}
+                      </div>
+                    ))}
                   <div className="col-start-2 row-start-1 md:col-auto md:row-auto">
                     {actions(person)}
                   </div>

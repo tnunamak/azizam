@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import HomePage from "../page";
@@ -41,7 +41,7 @@ const home = {
   capabilities: [],
   aliases: [
     {
-      id: "fast",
+      id: "default",
       operation: "chat.completions",
       available: true,
       status: "ready",
@@ -51,7 +51,7 @@ const home = {
   credential_aliases: {
     "cred-browser": [
       {
-        id: "fast",
+        id: "default",
         operation: "chat.completions",
         available: true,
         status: "ready",
@@ -61,7 +61,7 @@ const home = {
   },
   new_app_aliases: [
     {
-      id: "fast",
+      id: "default",
       operation: "chat.completions",
       available: true,
       status: "ready",
@@ -73,7 +73,7 @@ const home = {
     {
       request_id: "req-1",
       status: "succeeded",
-      requested_model: "fast",
+      requested_model: "default",
       intent: "chat.completions",
       _stored_at: 1700000000,
     },
@@ -151,6 +151,58 @@ beforeAll(() => {
 });
 
 describe("Home audit component behavior", () => {
+  it("renders recent audio controls and video poster previews with prompts", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/.well-known/ai-gateway")
+          return Response.json({ service: { name: "Family gateway" } });
+        if (path === "/me/api/home") return Response.json(home);
+        if (path === "/admin/api/setup-progress")
+          return Response.json({ ...progress(), complete: true });
+        if (path === "/me/api/media?limit=4")
+          return Response.json({
+            assets: [
+              {
+                asset_id: "audio-1",
+                kind: "audio",
+                prompt: "gentle rain over a quiet porch",
+                model: "audio-local",
+                created_at: 1,
+                download_url: "https://media.example/audio.wav",
+              },
+              {
+                asset_id: "video-1",
+                kind: "video",
+                prompt: "a fox walking through snow",
+                model: "video-local",
+                created_at: 1,
+                download_url: "https://media.example/video.mp4",
+                poster_asset_id: "poster-1",
+              },
+            ],
+          });
+        if (path === "/me/api/media/poster-1/download?scope=me")
+          return Response.json({ download_url: "https://media.example/poster.jpg" });
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+
+    renderHome();
+    expect(
+      await screen.findByText("gentle rain over a quiet porch"),
+    ).toBeVisible();
+    const audio = document.querySelector("audio");
+    expect(audio).toHaveAttribute("controls");
+    expect(audio).toHaveAttribute("src", "https://media.example/audio.wav");
+    expect(
+      await screen.findByText("a fox walking through snow"),
+    ).toBeVisible();
+    const poster = document.querySelector('img[src="https://media.example/poster.jpg"]');
+    expect(poster).not.toBeNull();
+    expect(screen.queryByText("Video preview unavailable")).toBeNull();
+  });
   it("uses server capability names, model recommendations, icons and summary", async () => {
     const serverHome = {
       ...home,
@@ -190,7 +242,7 @@ describe("Home audit component behavior", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const route = String(input);
         if (route === "/me/api/home") return Response.json(serverHome);
-        if (route === "/me/api/media?limit=5")
+        if (route === "/me/api/media?limit=4")
           return Response.json({ assets: [] });
         if (route === "/admin/api/setup-progress")
           return Response.json({
@@ -202,67 +254,49 @@ describe("Home audit component behavior", () => {
       }),
     );
     renderHome();
-    expect((await screen.findAllByText("Ready")).length).toBeGreaterThan(0);
-    for (const details of screen.getAllByText("Details")) {
-      await userEvent.click(details);
-    }
-    await waitFor(() =>
-      expect(screen.getByText("ACE-Step XL Turbo")).toBeVisible(),
-    );
+    await screen.findByRole("link", { name: "Music" });
+    expect(screen.queryByText("Ready")).toBeNull();
+    expect(screen.queryByText("Details")).toBeNull();
     expect(screen.getByRole("img", { name: "Music" })).toBeVisible();
     expect(screen.getByRole("img", { name: "Sound effects" })).toBeVisible();
-    expect(screen.getByText("song")).toBeVisible();
-    expect(screen.getByText("Create music from a prompt.")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Music" })).toHaveAttribute(
+      "href",
+      "/models?capability=audio",
+    );
+    expect(screen.queryByText("ACE-Step XL Turbo")).toBeNull();
+    expect(screen.queryByText("song")).toBeNull();
     expect(
-      screen.getByText("Create sound effects from a prompt."),
-    ).toBeVisible();
+      screen.queryByText("Create sound effects from a prompt."),
+    ).toBeNull();
   });
-  it("lets the owner dismiss setup and shows capabilities after the saved dismissal", async () => {
-    let dismissed = false;
+  it("shows capabilities without setup controls on Home", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      vi.fn(async (input: RequestInfo | URL) => {
         const path = String(input);
         if (path === "/.well-known/ai-gateway")
           return Response.json({ service: { name: "Family gateway" } });
         if (path === "/me/api/home")
           return Response.json({ ...home, receipts: [] });
-        if (path === "/me/api/media?limit=5")
+        if (path === "/me/api/media?limit=4")
           return Response.json({ assets: [] });
-        if (path === "/me/api/session")
-          return Response.json({ authenticated: true, csrf_token: "csrf" });
         if (path === "/admin/api/setup-progress")
-          return Response.json({ ...progress(), dismissed });
-        if (path === "/admin/api/setup-dismiss") {
-          expect(init?.method).toBe("POST");
-          expect(new Headers(init?.headers).get("x-ai-gateway-csrf")).toBe(
-            "csrf",
-          );
-          expect(
-            new Headers(init?.headers).get("x-ai-gateway-user-action"),
-          ).toBe("1");
-          dismissed = true;
-          return Response.json({ dismissed: true });
-        }
+          return Response.json(progress());
         throw new Error(`Unexpected request: ${path}`);
       }),
     );
     renderHome();
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Dismiss setup" }),
-    );
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("heading", { name: "Finish setting up" }),
-      ).toBeNull(),
-    );
     expect(
-      screen.getByRole("heading", { name: "What you can use" }),
+      await screen.findByRole("heading", { name: "What you can use" }),
     ).toBeVisible();
-    expect(dismissed).toBe(true);
+    expect(screen.queryByRole("button", { name: "Dismiss setup" })).toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "Finish setting up" }),
+    ).toBeNull();
   });
 
-  it("keeps setup evidence explicit and posts only when confirmation buttons are clicked", async () => {
+
+  it("does not show manual setup evidence confirmation buttons", async () => {
     const evidencePosts: unknown[] = [];
     vi.stubGlobal(
       "fetch",
@@ -272,7 +306,7 @@ describe("Home audit component behavior", () => {
           return Response.json({ service: { name: "Family gateway" } });
         if (path === "/me/api/home")
           return Response.json({ ...home, receipts: [] });
-        if (path === "/me/api/media?limit=5")
+        if (path === "/me/api/media?limit=4")
           return Response.json({ assets: [] });
         if (path === "/me/api/session")
           return Response.json({ authenticated: true, csrf_token: "csrf" });
@@ -284,7 +318,7 @@ describe("Home audit component behavior", () => {
             latency_ms: 12,
             reason: "Gateway responded with this key",
             path: "/openai/v1/chat/completions",
-            model: "fast",
+            model: "default",
             request_id: "req-1",
           });
         if (path === "/admin/api/setup-evidence") {
@@ -302,12 +336,12 @@ describe("Home audit component behavior", () => {
 
     renderHome();
     expect(
-      await screen.findByText("Next: Copy settings into your app"),
+      await screen.findByRole("heading", { name: "Connect an app" }),
     ).toBeVisible();
     expect(evidencePosts).toEqual([]);
 
     await userEvent.click(screen.getByRole("button", { name: "Open WebUI" }));
-    await userEvent.click(screen.getByRole("combobox", { name: "App key" }));
+    await userEvent.click(screen.getByRole("combobox", { name: "API key" }));
     await userEvent.click(
       await screen.findByRole("option", { name: /Browser test app/ }),
     );
@@ -316,26 +350,17 @@ describe("Home audit component behavior", () => {
       "opk_test_secret",
     );
     await userEvent.click(
-      screen.getByRole("button", { name: "Gateway check" }),
+      screen.getByRole("button", { name: "Check connection" }),
     );
     await screen.findByText("Gateway responded with this key");
     expect(evidencePosts).toEqual([]);
-    await userEvent.click(
-      screen.getByRole("button", { name: "I copied the settings" }),
-    );
-    await waitFor(() => expect(evidencePosts).toHaveLength(1));
-    await userEvent.click(
-      screen.getByRole("button", { name: "My app sent a request" }),
-    );
-    await waitFor(() => expect(evidencePosts).toHaveLength(2));
-    await userEvent.click(screen.getByText("Setup details"));
     expect(
-      screen.queryByRole("button", { name: "I viewed this receipt" }),
+      screen.queryByRole("button", { name: "I copied the settings" }),
     ).toBeNull();
-    expect(evidencePosts).toEqual([
-      { event: "settings_copied", app_id: "app-browser" },
-      { event: "external_client_confirmed", app_id: "app-browser" },
-    ]);
+    expect(
+      screen.queryByRole("button", { name: "My app sent a request" }),
+    ).toBeNull();
+    expect(evidencePosts).toEqual([]);
   });
   it("does not infer missing chat access from a missing recipe alias", async () => {
     vi.stubGlobal(
@@ -362,7 +387,7 @@ describe("Home audit component behavior", () => {
               },
             ],
           });
-        if (path === "/me/api/media?limit=5")
+        if (path === "/me/api/media?limit=4")
           return Response.json({ assets: [] });
         throw new Error(`Unexpected request: ${path}`);
       }),
@@ -371,15 +396,10 @@ describe("Home audit component behavior", () => {
     await userEvent.click(
       await screen.findByRole("button", { name: "Open WebUI" }),
     );
-    expect(
-      await screen.findByText("No chat alias is listed for this key"),
-    ).toBeVisible();
+    await screen.findByText("This key does not include the default model");
+    expect(screen.queryByRole("textbox", { name: "Model" })).toBeNull();
     expect(
       screen.queryByText("No chat model is available to this key yet"),
     ).toBeNull();
-    expect(
-      screen.getByText(/Models without an alias may still be available/),
-    ).toBeVisible();
-    expect(screen.queryByRole("textbox", { name: /^Model$/ })).toBeNull();
   });
 });
