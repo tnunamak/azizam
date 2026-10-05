@@ -112,7 +112,7 @@ for (const theme of ["light", "dark"] as const) {
           await expect(
             page.getByText(
               state === "empty"
-                ? "No requests yet"
+                ? "No request receipts yet"
                 : "Requests could not be loaded. Try again.",
               { exact: true },
             ),
