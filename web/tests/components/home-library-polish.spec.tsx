@@ -107,7 +107,8 @@ describe("Home and Library polish", () => {
       await screen.findByRole("heading", { name: "Connect an app" }),
     ).toBeVisible();
     expect(screen.queryByText(/^(Welcome to|Hello,)/)).toBeNull();
-    expect(screen.queryByRole("heading", { name: "Home" })).toBeNull();
+    // The page outline keeps an h1, but no visible title repeats the navigation.
+    expect(screen.getByRole("heading", { level: 1, name: "Home" })).toHaveClass("sr-only");
     const connect = screen.getByRole("region", { name: "Connect an app" });
     expect(
       within(connect).getByText("One address. A key for each app."),
