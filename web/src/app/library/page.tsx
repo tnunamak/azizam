@@ -196,10 +196,7 @@ function absolute(ts: MediaAsset["created_at"]) {
   return ts ? formatAbsoluteUTC(ts) : undefined;
 }
 
-function modelDisplayName(
-  model: string,
-  catalog?: ModelCatalog,
-) {
+function modelDisplayName(model: string, catalog?: ModelCatalog) {
   const row = [...(catalog?.aliases ?? []), ...(catalog?.models ?? [])].find(
     (item) => item.id === model,
   );
@@ -326,9 +323,16 @@ function Preview({
       ),
     retry: false,
   });
-  if (asset.available === false || failed)
+  if (
+    asset.available === false ||
+    (failed && !(asset.kind === "video" && poster?.download_url))
+  )
     return (
-      <div role="img" className="bg-muted text-muted-foreground flex h-full min-h-32 items-center justify-center" aria-label={`${kindLabel(asset.kind)} preview unavailable`}>
+      <div
+        role="img"
+        className="bg-muted text-muted-foreground flex h-full min-h-32 items-center justify-center"
+        aria-label={`${kindLabel(asset.kind)} preview unavailable`}
+      >
         <Icon aria-hidden="true" className="size-8" />
       </div>
     );
@@ -645,6 +649,7 @@ export default function LibraryPage() {
   const [owner, setOwner] = useState("default");
   const [source, setSource] = useState("all");
   const [selected, setSelected] = useState<MediaAsset | null>(null);
+  const closedDeepLinkId = useRef<string | null>(null);
   const [confirming, setConfirming] = useState<MediaAsset | null>(null);
   const [downloadingAssetId, setDownloadingAssetId] = useState<string | null>(
     null,
@@ -664,12 +669,14 @@ export default function LibraryPage() {
     setSource("all");
   }
   function openAsset(asset: MediaAsset) {
+    closedDeepLinkId.current = null;
     setSelected(asset);
     const params = new URLSearchParams(window.location.search);
     params.set("asset", asset.asset_id);
     window.history.replaceState(null, "", `?${params.toString()}`);
   }
   function closeAsset() {
+    if (selected) closedDeepLinkId.current = selected.asset_id;
     setSelected(null);
     const params = new URLSearchParams(window.location.search);
     params.delete("asset");
@@ -707,7 +714,9 @@ export default function LibraryPage() {
       ),
     [data?.pages],
   );
-  const unavailableAssets = assets.filter((asset) => asset.available === false).length;
+  const unavailableAssets = assets.filter(
+    (asset) => asset.available === false,
+  ).length;
   const listedDeepLinkedAsset = useMemo(
     () =>
       deepLinkedAssetId
@@ -730,7 +739,12 @@ export default function LibraryPage() {
     retry: false,
   });
   useEffect(() => {
-    if (!deepLinkedAssetId || selected?.asset_id === deepLinkedAssetId) return;
+    if (!deepLinkedAssetId) {
+      closedDeepLinkId.current = null;
+      return;
+    }
+    if (closedDeepLinkId.current === deepLinkedAssetId) return;
+    if (selected?.asset_id === deepLinkedAssetId) return;
     if (listedDeepLinkedAsset) {
       setSelected(listedDeepLinkedAsset);
       return;
@@ -856,7 +870,10 @@ export default function LibraryPage() {
         </div>
       ) : null}
       {unavailableAssets > 1 ? (
-        <div className="mb-4 flex flex-wrap items-center gap-3 text-sm" role="status">
+        <div
+          className="mb-4 flex flex-wrap items-center gap-3 text-sm"
+          role="status"
+        >
           <span>Some media items are unavailable.</span>
           <Button variant="outline" size="sm" onClick={() => void refetch()}>
             Refresh library
@@ -939,7 +956,8 @@ export default function LibraryPage() {
                 <SheetTitle>{assetTitle(selected)}</SheetTitle>
                 <SheetDescription>
                   {kindLabel(selected.kind)}
-                  {selected.model && modelDisplayName(selected.model, modelCatalog)
+                  {selected.model &&
+                  modelDisplayName(selected.model, modelCatalog)
                     ? ` · ${modelDisplayName(selected.model, modelCatalog)}`
                     : ""}
                 </SheetDescription>
@@ -953,12 +971,14 @@ export default function LibraryPage() {
                     everyone={instanceView}
                   />
                 </div>
-                {selected.prompt ? <section>
-                  <h2 className="mb-2 text-sm font-medium">Prompt</h2>
-                  <p className="bg-muted/30 rounded-lg border p-3 text-sm">
-                    {selected.prompt}
-                  </p>
-                </section> : null}
+                {selected.prompt ? (
+                  <section>
+                    <h2 className="mb-2 text-sm font-medium">Prompt</h2>
+                    <p className="bg-muted/30 rounded-lg border p-3 text-sm">
+                      {selected.prompt}
+                    </p>
+                  </section>
+                ) : null}
                 <div className="flex flex-wrap gap-2">
                   {selected.available !== false && (
                     <Button
@@ -1053,22 +1073,20 @@ export default function LibraryPage() {
                     <div className="grid gap-3 text-sm sm:grid-cols-2">
                       <Detail
                         label="Model"
-                        value={selected.model ? modelDisplayName(selected.model, modelCatalog) : ""}
+                        value={
+                          selected.model
+                            ? modelDisplayName(selected.model, modelCatalog)
+                            : ""
+                        }
                       />
                       <Detail
                         label="Created"
                         value={
-                          <RelativeTime
-                            ts={selected.created_at}
-                            fallback=""
-                          />
+                          <RelativeTime ts={selected.created_at} fallback="" />
                         }
                         title={absolute(selected.created_at)}
                       />
-                      <Detail
-                        label="Seed"
-                        value={selected.seed ?? ""}
-                      />
+                      <Detail label="Seed" value={selected.seed ?? ""} />
                       <Detail
                         label="Size"
                         value={

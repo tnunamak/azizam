@@ -30,6 +30,67 @@ test("requests refresh on focus and keep metadata on one line", async ({
   await expect(row).toBeVisible();
 });
 
+test("owner access audit rows stay hidden until the filter is enabled", async ({
+  page,
+}) => {
+  const requestedFilters: string[] = [];
+  const rows = [
+    {
+      id: "setting-change",
+      action: "operator.instance.update",
+      actor_id: "owner-user",
+      actor_label: "owner@example.test",
+      target_kind: "operator_setting",
+      target_id: "instance",
+      metadata: {},
+      created_at: 1_760_000_000,
+    },
+    {
+      id: "usage-view",
+      action: "usage.summary.everyone",
+      actor_id: "owner-user",
+      actor_label: "owner@example.test",
+      target_kind: "usage",
+      target_id: "everyone",
+      metadata: {},
+      created_at: 1_760_000_001,
+    },
+  ];
+  await page.route("**/admin/api/audit?*", (route) => {
+    const url = new URL(route.request().url());
+    const excluded = url.searchParams.get("exclude_access_audit") === "true";
+    requestedFilters.push(url.searchParams.get("exclude_access_audit") ?? "");
+    return route.fulfill({
+      json: {
+        records: excluded ? rows.slice(0, 1) : rows,
+        next_cursor: null,
+      },
+    });
+  });
+
+  await page.goto("/ui/activity/");
+  await expect(
+    page.getByRole("button", { name: /Updated instance settings/ }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /Viewed everyone’s usage/ }),
+  ).toHaveCount(0);
+  expect(requestedFilters).toContain("true");
+  await expect(
+    page.getByText("owner@example.test", { exact: true }),
+  ).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Show access audit" }).click();
+  await expect(
+    page.getByRole("button", { name: /Viewed everyone’s usage/ }),
+  ).toBeVisible();
+  expect(requestedFilters).toContain("false");
+  await page.getByRole("button", { name: "Hide access audit" }).click();
+  await expect(
+    page.getByRole("button", { name: /Viewed everyone’s usage/ }),
+  ).toHaveCount(0);
+});
+
 for (const theme of ["light", "dark"] as const) {
   for (const width of [1440, 390]) {
     for (const state of ["seeded", "empty", "error"] as const) {

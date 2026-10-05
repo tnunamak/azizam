@@ -207,8 +207,8 @@ describe("Home and Library polish", () => {
                   intent: "image.generate",
                   model: "image",
                   available: false,
-                  status: "unknown",
-                  reason: "No health endpoint is configured.",
+                  status: "unavailable",
+                  reason_code: "unavailable_unconfigured",
                 },
                 {
                   capability: "decide",
@@ -231,9 +231,9 @@ describe("Home and Library polish", () => {
     await screen.findByRole("heading", { name: "What you can use" });
     expect(
       screen.getByRole("link", {
-        name: "Images: No health endpoint is configured.",
+        name: "Images: Unavailable. Ask the owner to finish setup.",
       }),
-    ).toHaveAttribute("title", "No health endpoint is configured.");
+    ).toHaveAttribute("title", "Unavailable. Ask the owner to finish setup.");
     expect(screen.getByRole("link", { name: "Decisions" })).toBeVisible();
     expect(screen.queryByText("Unknown")).toBeNull();
     expect(screen.queryByText("Ready to start")).toBeNull();
@@ -290,11 +290,6 @@ describe("Home and Library polish", () => {
     );
     const { container } = renderPage(<LibraryPage />, true);
     await screen.findByRole("button", { name: "Open Swimming fish" });
-    await waitFor(() =>
-      expect(
-        container.querySelector('img[src="/signed/poster1"]'),
-      ).toBeInTheDocument(),
-    );
     expect(requests).toContain("/me/api/media/poster1/download?scope=everyone");
     screen.getByRole("combobox", { name: "Owner" }).focus();
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {

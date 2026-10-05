@@ -64,11 +64,11 @@ test("usage lists a receipt and opens technical details", async ({ page }) => {
   );
   await page.goto("/ui/usage/");
   await expect(page.getByRole("heading", { name: "Usage" })).toBeVisible();
-  await page.getByText(/Receipt coverage · 14 days/).click();
+  await page.getByText("Receipt coverage", { exact: true }).click();
+  await expect(page.getByText("Receipts are kept for 14 days.")).toBeVisible();
+  await expect(page.getByText("Coverage starts Oct 1, 2026.")).toBeVisible();
   await expect(
-    page.getByText(
-      /Receipts are kept for 14 days\s*, covering usage since Oct 1, 2026\s*\. Provider spend is available for matched receipts\./,
-    ),
+    page.getByText("Provider spend is available for matched receipts."),
   ).toBeVisible();
   await expect(page.getByText("demo-chat").first()).toBeVisible();
   await expect(

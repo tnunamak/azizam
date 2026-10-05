@@ -211,9 +211,12 @@ for (const theme of ["light", "dark"] as const) {
           await expect(page.getByLabel("Loading Home")).toHaveCount(0);
           if (state === "empty") {
             await expect(
-              page.getByText("No capabilities are available to your account yet.", {
-                exact: true,
-              }),
+              page.getByText(
+                "No capabilities are available to your account yet.",
+                {
+                  exact: true,
+                },
+              ),
             ).toHaveCount(1);
             await expect(
               page.getByRole("heading", {
@@ -415,7 +418,7 @@ test("superadmin Home does not request the owner-only setup API", async ({
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Recent", exact: true }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   await expect(
     page.getByRole("heading", { name: "Finish setting up", exact: true }),
   ).toHaveCount(0);
@@ -451,7 +454,7 @@ for (const theme of ["light", "dark"] as const) {
       ).toBeVisible();
       await expect(
         page.getByRole("heading", { name: "Recent", exact: true }),
-      ).toBeVisible();
+      ).toHaveCount(0);
       await expect(
         page.getByRole("heading", { name: "Finish setting up", exact: true }),
       ).toHaveCount(0);

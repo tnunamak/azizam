@@ -106,12 +106,25 @@ for (const mode of ["light", "dark"] as const) {
         path: `test-results/screens/library-grid-${mode}-${width}.png`,
         fullPage: true,
       });
-      await page.getByRole("button", { name: "Images", exact: true }).click();
+      if (width === 390) {
+        await page.getByText("Filter", { exact: true }).click();
+      }
+      await page
+        .getByRole("button", {
+          name: width === 390 ? "Filter kind Images" : "Images",
+          exact: true,
+        })
+        .click();
       await expect(
-        page.getByRole("button", { name: "Images", exact: true }),
+        page.getByRole("button", {
+          name: width === 390 ? "Filter kind Images" : "Images",
+          exact: true,
+        }),
       ).toHaveAttribute("aria-pressed", "true");
       expect(mediaRequests.at(-1)).toContain("kind=image");
-      await page.getByLabel("Search prompts").fill("desk");
+      await page
+        .locator('input[placeholder="Search prompts"]:visible')
+        .fill("desk");
       await expect.poll(() => mediaRequests.at(-1) ?? "").toContain("q=desk");
       await page
         .getByRole("button", { name: /A clean product render/ })
@@ -195,16 +208,22 @@ test("library delete confirms before mutation", async ({ page }) => {
     return route.fulfill({ json: { ok: true } });
   });
   await page.goto("/ui/library/");
-  await page.getByLabel("Owner", { exact: true }).click();
+  await page
+    .getByLabel("Owner", { exact: true })
+    .filter({ visible: true })
+    .click();
   await page.getByRole("option", { name: "Mine", exact: true }).click();
   await page.getByRole("button", { name: /A clean product render/ }).click();
-  await page.getByRole("button", { name: "Delete" }).click();
+  await page
+    .getByRole("button", { name: /Actions for A clean product render/ })
+    .click();
+  await page.getByRole("menuitem", { name: "Delete" }).click();
   await expect(
-    page.getByRole("dialog", { name: "Delete this media item?" }),
+    page.getByRole("dialog", { name: /Delete A clean product render/ }),
   ).toBeVisible();
   expect(deleted).toBe(false);
   await page
-    .getByRole("dialog", { name: "Delete this media item?" })
+    .getByRole("dialog", { name: /Delete A clean product render/ })
     .getByRole("button", { name: "Delete" })
     .click();
   await expect.poll(() => deleted).toBe(true);
@@ -245,14 +264,23 @@ test("library filters dates and everyone, pages forward and preserves prior item
     page.getByRole("button", { name: /Open A clean product render/ }),
   ).toBeVisible();
   expect(requests.at(-1)).toContain("cursor=cursor_next");
-  await page.getByLabel("Date", { exact: true }).click();
+  await page
+    .getByLabel("Date", { exact: true })
+    .filter({ visible: true })
+    .click();
   await page.getByRole("option", { name: "Last 7 days" }).click();
   await expect.poll(() => requests.at(-1) ?? "").toContain("start=");
-  await page.getByLabel("Owner", { exact: true }).click();
+  await page
+    .getByLabel("Owner", { exact: true })
+    .filter({ visible: true })
+    .click();
   await page.getByRole("option", { name: "Mine", exact: true }).click();
   await expect.poll(() => requests.at(-1) ?? "").toContain("scope=me");
-  await page.getByLabel("Owner", { exact: true }).click();
-  await page.getByRole("option", { name: "Everyone’s" }).click();
+  await page
+    .getByLabel("Owner", { exact: true })
+    .filter({ visible: true })
+    .click();
+  await page.getByRole("option", { name: "Everyone's" }).click();
   await expect.poll(() => requests.at(-1) ?? "").toContain("scope=everyone");
   await page
     .getByRole("button", { name: /Open A clean product render/ })
@@ -339,18 +367,25 @@ test("library audio plays independently and video uses its recorded poster", asy
     "",
   );
   await detail.getByRole("button", { name: "Close", exact: true }).click();
-  await expect(detail).toHaveCount(0);
+  await expect(page).not.toHaveURL(/asset=/);
+  await expect(detail).toBeHidden();
   await expect
     .poll(() => posterRequests.at(-1) ?? "")
     .toContain("scope=everyone");
-  await page.getByLabel("Owner", { exact: true }).click();
+  await page
+    .getByLabel("Owner", { exact: true })
+    .filter({ visible: true })
+    .click();
   await page.getByRole("option", { name: "Mine", exact: true }).click();
   await expect.poll(() => posterRequests.at(-1) ?? "").toContain("scope=me");
-  await page.getByLabel("Owner", { exact: true }).click();
-  await page.getByRole("option", { name: "Everyone’s" }).click();
-  await expect(page.getByLabel("Owner", { exact: true })).toContainText(
-    "Everyone’s",
-  );
+  await page
+    .getByLabel("Owner", { exact: true })
+    .filter({ visible: true })
+    .click();
+  await page.getByRole("option", { name: "Everyone's" }).click();
+  await expect(
+    page.getByLabel("Owner", { exact: true }).filter({ visible: true }),
+  ).toContainText("Everyone's");
   // The instance poster is already cached from the default owner view.
   expect(posterRequests.some((url) => url.includes("scope=everyone"))).toBe(
     true,
