@@ -164,7 +164,7 @@ def test_home_unknown_health_is_not_green(home_case):
     data = home_case.http.get("/me/api/home").json()
     assert data["status"]["state"] == "unknown"
     assert not data["aliases"][0]["available"]
-    assert "Not measured yet" in data["capabilities"][0]["reason"]
+    assert data["capabilities"][0]["reason_code"] == "unknown"
 
 
 @pytest.mark.parametrize("state", ["busy", "starting"])
@@ -459,8 +459,8 @@ def test_alias_cannot_use_a_forbidden_resolved_backend():
 def test_declared_healthy_capability_without_measured_service_is_unknown():
     from gateway.home_api import _availability
     cap = Capability(intent="image.generate", backend="not-running", health="healthy")
-    state, reason = _availability(cap, {})
-    assert state == "unknown" and "Not measured yet" in reason
+    state, reason_code = _availability(cap, {})
+    assert state == "unknown" and reason_code == "unknown"
 
 
 def test_alias_resolves_registry_models_when_catalog_only_has_generic_endpoint():

@@ -87,7 +87,7 @@ export interface HomeCapability {
   summary?: string;
   secondary_profile?: boolean;
   title?: string;
-  capability?: string;
+  capability: string;
   use_name?: string;
   intent: string;
   input_modalities: Array<string>;
