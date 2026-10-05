@@ -249,6 +249,7 @@ class AdminStore(Protocol):
         limit: int = 50,
         actor_id: str | None = None,
         action_prefix: str | None = None,
+        exclude_access_audit: bool = False,
         before_created_at: int | None = None,
         before_id: str | None = None,
         target_kind: str | None = None,
@@ -3026,6 +3027,7 @@ def create_admin_router(
         )
         actor_id = request.query_params.get("actor_id") or None
         action_prefix = request.query_params.get("action_prefix") or None
+        exclude_access_audit = request.query_params.get("exclude_access_audit") == "true"
         before_created_at: int | None = None
         before_id: str | None = None
         before_raw = request.query_params.get("before") or None
@@ -3055,12 +3057,14 @@ def create_admin_router(
                         }
                     },
                 )
+        page_filters = {"exclude_access_audit": True} if exclude_access_audit else {}
         page = store.list_audit_page(
             limit=limit,
             actor_id=actor_id,
             action_prefix=action_prefix,
             before_created_at=before_created_at,
             before_id=before_id,
+            **page_filters,
         )
         return JSONResponse(
             status_code=status.HTTP_200_OK,

@@ -36,6 +36,22 @@ vi.mock("@/components/shell/session", () => ({
   useViewer: () => ({ role: "member" }),
 }));
 
+vi.mock("@/lib/product-api", () => ({
+  productApi: {
+    models: async () => ({
+      aliases: [],
+      models: [
+        { id: "image", title: "Image model", display_name: "Image model" },
+        {
+          id: "audio.generate.test-model",
+          title: "Sound model",
+          display_name: "Sound model",
+        },
+      ],
+    }),
+  },
+}));
+
 vi.mock("sonner", () => ({
   toast: {
     error: vi.fn(),
@@ -108,12 +124,12 @@ describe("LibraryPage batch J provenance", () => {
     cleanup();
   });
 
-  test("links the request receipt and explains absent prompt provenance honestly", async () => {
+  test("links the request receipt and omits an absent prompt", async () => {
     renderLibrary();
 
     (
       await screen.findByRole("button", {
-        name: "Open Image · Prompt not recorded",
+        name: "Open Image",
       })
     ).click();
     fireEvent.click(await screen.findByText("Details"));
@@ -123,7 +139,7 @@ describe("LibraryPage batch J provenance", () => {
         screen.getByRole("link", { name: "View receipt req_image_123" }),
       ).toHaveAttribute("href", "/r/req_image_123"),
     );
-    expect(screen.getByText("Prompt not recorded.")).toBeVisible();
+    expect(screen.queryByText("Prompt not recorded.")).toBeNull();
   });
 
   test("opens a deep-linked asset through the exact media detail endpoint", async () => {
@@ -168,7 +184,7 @@ describe("LibraryPage batch J provenance", () => {
 
     (
       await screen.findByRole("button", {
-        name: "Open Image · Prompt not recorded",
+        name: "Open Image",
       })
     ).click();
     fireEvent.click(await screen.findByText("Details"));
@@ -226,7 +242,7 @@ describe("LibraryPage batch J provenance", () => {
 
     (
       await screen.findByRole("button", {
-        name: "Open Image · Prompt not recorded",
+        name: "Open Image",
       })
     ).click();
     fireEvent.click(await screen.findByRole("link", { name: "Download" }));
@@ -263,11 +279,11 @@ describe("LibraryPage batch J provenance", () => {
     renderLibrary();
 
     expect(await screen.findByText(audioAsset.prompt)).toBeVisible();
-    expect(screen.getByText("audio.generate.test-model")).toBeVisible();
+    expect(screen.getByText("Sound model")).toBeVisible();
     expect(screen.queryByText("Untitled generation")).not.toBeInTheDocument();
   });
 
-  test("falls back to a kind-specific title when the prompt is not recorded", async () => {
+  test("omits the caption when the prompt is absent", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       Response.json({
         assets: [{ ...audioAsset, prompt: "" }],
@@ -279,11 +295,11 @@ describe("LibraryPage batch J provenance", () => {
 
     expect(
       await screen.findByRole("button", {
-        name: "Open Audio · Prompt not recorded",
+        name: "Open Audio",
       }),
     ).toBeVisible();
-    expect(screen.getByText("Audio · Prompt not recorded")).toBeVisible();
-    expect(screen.getByText("audio.generate.test-model")).toBeVisible();
+    expect(screen.queryByText("Prompt not recorded")).toBeNull();
+    expect(screen.getByText("Sound model")).toBeVisible();
   });
 
   test("falls back when the API returns a null prompt", async () => {
@@ -298,10 +314,10 @@ describe("LibraryPage batch J provenance", () => {
 
     expect(
       await screen.findByRole("button", {
-        name: "Open Audio · Prompt not recorded",
+        name: "Open Audio",
       }),
     ).toBeVisible();
-    expect(screen.getByText("Audio · Prompt not recorded")).toBeVisible();
+    expect(screen.queryByText("Prompt not recorded")).toBeNull();
   });
 
   test("renders an accessible mini audio player with measured duration and retryable playback errors", async () => {

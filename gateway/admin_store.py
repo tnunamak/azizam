@@ -1633,6 +1633,7 @@ def list_audit(
     target_id: str | None = None,
     actor_id: str | None = None,
     action_prefix: str | None = None,
+    exclude_access_audit: bool = False,
     before_created_at: int | None = None,
     before_id: str | None = None,
     limit: int = 100,
@@ -1668,6 +1669,9 @@ def list_audit(
     if action_prefix is not None:
         clauses.append("action LIKE ?")
         params.append(action_prefix + "%")
+    if exclude_access_audit:
+        clauses.append("action NOT IN (?, ?)")
+        params.extend(("media.library.everyone", "usage.summary.everyone"))
     if before_created_at is not None and before_id is not None:
         # Composite keyset: (created_at, id) < (before_created_at, before_id)
         # This is correct for ORDER BY created_at DESC, id DESC because we

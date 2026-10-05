@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import HomePage from "../page";
@@ -161,7 +161,7 @@ describe("Home audit component behavior", () => {
         if (path === "/me/api/home") return Response.json(home);
         if (path === "/admin/api/setup-progress")
           return Response.json({ ...progress(), complete: true });
-        if (path === "/me/api/media?limit=4")
+        if (path === "/me/api/media?limit=50")
           return Response.json({
             assets: [
               {
@@ -203,6 +203,37 @@ describe("Home audit component behavior", () => {
     expect(poster).not.toBeNull();
     expect(screen.queryByText("Video preview unavailable")).toBeNull();
   });
+
+  it("hides Recent when no item includes useful media content", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/.well-known/ai-gateway")
+          return Response.json({ service: { name: "Family gateway" } });
+        if (path === "/me/api/home") return Response.json(home);
+        if (path === "/admin/api/setup-progress")
+          return Response.json({ ...progress(), complete: true });
+        if (path === "/me/api/media?limit=50")
+          return Response.json({
+            assets: [
+              { asset_id: "audio-no-prompt", kind: "audio", download_url: "/audio.wav" },
+              { asset_id: "image-no-content", kind: "image" },
+              { asset_id: "video-no-poster", kind: "video", download_url: "/video.mp4" },
+            ],
+          });
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+
+    renderHome();
+    await screen.findByRole("button", { name: "Open WebUI" });
+    await waitFor(() =>
+      expect(screen.queryByLabelText("Loading recent creations")).toBeNull(),
+    );
+    expect(screen.queryByRole("heading", { name: "Recent" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Play/ })).toBeNull();
+  });
   it("uses server capability names, model recommendations, icons and summary", async () => {
     const serverHome = {
       ...home,
@@ -242,7 +273,7 @@ describe("Home audit component behavior", () => {
       vi.fn(async (input: RequestInfo | URL) => {
         const route = String(input);
         if (route === "/me/api/home") return Response.json(serverHome);
-        if (route === "/me/api/media?limit=4")
+        if (route === "/me/api/media?limit=50")
           return Response.json({ assets: [] });
         if (route === "/admin/api/setup-progress")
           return Response.json({
@@ -278,7 +309,7 @@ describe("Home audit component behavior", () => {
           return Response.json({ service: { name: "Family gateway" } });
         if (path === "/me/api/home")
           return Response.json({ ...home, receipts: [] });
-        if (path === "/me/api/media?limit=4")
+        if (path === "/me/api/media?limit=50")
           return Response.json({ assets: [] });
         if (path === "/admin/api/setup-progress")
           return Response.json(progress());
@@ -306,7 +337,7 @@ describe("Home audit component behavior", () => {
           return Response.json({ service: { name: "Family gateway" } });
         if (path === "/me/api/home")
           return Response.json({ ...home, receipts: [] });
-        if (path === "/me/api/media?limit=4")
+        if (path === "/me/api/media?limit=50")
           return Response.json({ assets: [] });
         if (path === "/me/api/session")
           return Response.json({ authenticated: true, csrf_token: "csrf" });
@@ -387,7 +418,7 @@ describe("Home audit component behavior", () => {
               },
             ],
           });
-        if (path === "/me/api/media?limit=4")
+        if (path === "/me/api/media?limit=50")
           return Response.json({ assets: [] });
         throw new Error(`Unexpected request: ${path}`);
       }),

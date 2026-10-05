@@ -127,7 +127,7 @@ async function setupRoutes(
   await page.route("**/.well-known/ai-gateway", (route) =>
     route.fulfill({ json: { service: { name: "Family gateway" } } }),
   );
-  await page.route("**/me/api/media?limit=4", (route) =>
+  await page.route("**/me/api/media?limit=50", (route) =>
     route.fulfill({ json: { assets: [], next_cursor: null } }),
   );
   await page.route("**/me/api/session", (route) =>

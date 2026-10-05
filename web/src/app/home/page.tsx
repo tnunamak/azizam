@@ -690,26 +690,6 @@ function CreationMedia({
     );
   }
 
-  if (creation.kind === "video" && creation.download_url) {
-    return (
-      <video
-        src={creation.download_url}
-        poster={posterUrl}
-        preload="metadata"
-        muted
-        playsInline
-        aria-label={title}
-        className="size-full object-cover transition-transform group-hover:scale-[1.02] motion-reduce:transform-none"
-        onLoadedMetadata={(event) => {
-          const video = event.currentTarget;
-          if (Number.isFinite(video.duration) && video.duration > 0) {
-            video.currentTime = Math.min(0.1, video.duration / 2);
-          }
-        }}
-      />
-    );
-  }
-
   if (creation.kind === "audio" && creation.download_url) {
     return (
       <div className="flex size-full items-center justify-center p-4">
@@ -775,7 +755,16 @@ function Recent() {
     queryKey: ["library", "home-recent-creations"],
     queryFn: homeApi.creations,
   });
-  const recentCreations = (creations?.assets ?? []).slice(0, 4);
+  const recentCreations = (creations?.assets ?? [])
+    .filter((creation) => {
+      if (creation.kind === "image") return Boolean(creation.download_url);
+      if (creation.kind === "video") return Boolean(creation.poster_asset_id);
+      return Boolean(creation.download_url && creation.prompt?.trim());
+    })
+    .slice(0, 4);
+  if (!creationsPending && !creationsError && recentCreations.length === 0) {
+    return null;
+  }
   return (
     <section aria-labelledby="recent-heading" className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -806,22 +795,12 @@ function Recent() {
           onRetry={() => void refetchCreations()}
           retrying={creationsFetching}
         />
-      ) : recentCreations.length ? (
+      ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {recentCreations.map((creation) => (
             <CreationPreview key={creation.asset_id} creation={creation} />
           ))}
         </div>
-      ) : (
-        <EmptyState
-          title="Your creations start here"
-          description="Images, videos and audio you make through the gateway will appear here."
-          action={
-            <Button variant="outline" asChild>
-              <Link href="/try/">Create something</Link>
-            </Button>
-          }
-        />
       )}
     </section>
   );

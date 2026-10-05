@@ -641,6 +641,35 @@ class ModelsCatalogBuildTests(unittest.TestCase):
         self.assertEqual(row["technical_description"], "A poster workflow")
         self.assertEqual(row["timing"], {"typical_seconds": 12, "source": "configured"})
 
+    def test_declared_audio_subtype_is_used_for_models_catalog(self) -> None:
+        catalog = build_models_catalog(
+            capabilities=[
+                Capability(
+                    intent="audio.generate",
+                    backend="comfyui",
+                    workflow="audio.generate.tangoflux",
+                )
+            ],
+            workflow_records=[
+                {
+                    "id": "audio.generate.tangoflux",
+                    "manifest": {
+                        "id": "audio.generate.tangoflux",
+                        "capability": "sfx",
+                        "display_name": "TangoFlux",
+                        "description": "Create a sound effect from a text prompt.",
+                    },
+                }
+            ],
+        )
+
+        row = next(
+            item for item in catalog["models"]
+            if item["id"] == "audio.generate.tangoflux"
+        )
+        self.assertEqual(row["capabilities"][0]["capability"], "sfx")
+        self.assertEqual(row["capabilities"][0]["capability_title"], "Sound effects")
+
     def test_ui_source_is_not_provider_and_cost_stays_unknown_without_locality(self) -> None:
         catalog = build_models_catalog(
             capabilities=[

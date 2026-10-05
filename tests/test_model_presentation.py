@@ -128,6 +128,13 @@ def test_engine_label_never_falls_back_to_registry_id():
     assert engine_label({"name": "capture-engine", "config": {"display_name": "Chat engine"}}, "capture-engine") == "Chat engine"
 
 
+def test_engine_display_name_is_data_driven():
+    assert engine_label(
+        {"name": "speech-to-speech", "display_name": "Realtime voice"},
+        "realtime",
+    ) == "Realtime voice"
+
+
 def test_catalog_preserves_keyed_substrate_identity_without_claiming_local_cost():
     catalog = build_models_catalog(
         capabilities=[Capability(intent="chat.completions", backend="litellm", model="demo")],

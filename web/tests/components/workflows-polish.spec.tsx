@@ -97,7 +97,7 @@ it("keeps browsing cards compact and leaves manifest facts in the detail view", 
   );
 
   expect(card.getByRole("img", { name: "Text input" })).toBeVisible();
-  expect(card.getByRole("img", { name: "Number input" })).toBeVisible();
+  expect(card.queryByRole("img", { name: "Number input" })).toBeNull();
   expect(card.getByText(/Create a clean product render/)).toBeVisible();
   expect(card.queryByText("Output")).toBeNull();
   expect(card.queryByText("image/png")).toBeNull();

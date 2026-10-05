@@ -16,6 +16,12 @@ const auditRecord = {
   created_at: 1790870400,
   metadata: { name: "Open WebUI" },
 };
+const accessAuditRecord = {
+  ...auditRecord,
+  id: "aud-access-view",
+  actor_label: "owner@example.test",
+  action: "usage.summary.everyone",
+};
 
 function requestRecord(status: string, extra: Record<string, unknown> = {}) {
   return {
@@ -35,6 +41,32 @@ function requestRecord(status: string, extra: Record<string, unknown> = {}) {
     source: { label: "Open WebUI", kind: "app" },
   };
 }
+
+test("owner access views stay out of Activity until revealed", async ({
+  page,
+}) => {
+  const auditUrls: string[] = [];
+  await page.route("**/admin/api/audit?*", (route) => {
+    const url = route.request().url();
+    auditUrls.push(url);
+    const includeAccess = !url.includes("exclude_access_audit=true");
+    return route.fulfill({
+      json: {
+        records: includeAccess ? [accessAuditRecord, auditRecord] : [auditRecord],
+        next_cursor: null,
+      },
+    });
+  });
+  await page.goto("/ui/activity/");
+  await expect(page.getByText("Viewed everyone’s usage")).toHaveCount(0);
+  await expect(page.getByText("owner@example.test")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Show access audit" })).toBeVisible();
+  await page.getByRole("button", { name: "Show access audit" }).click();
+  await expect(page.getByText("Viewed everyone’s usage")).toBeVisible();
+  await expect(page.getByText("owner@example.test")).toHaveCount(0);
+  expect(auditUrls.some((url) => url.includes("exclude_access_audit=true"))).toBe(true);
+  expect(auditUrls.some((url) => !url.includes("exclude_access_audit=true"))).toBe(true);
+});
 
 async function setDisplay(page: Page, theme: "light" | "dark", width: number) {
   await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });

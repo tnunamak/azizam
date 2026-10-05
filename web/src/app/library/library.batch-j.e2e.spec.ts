@@ -63,12 +63,12 @@ for (const mode of ["light", "dark"] as const) {
 
       await expect(page.getByRole("main")).toHaveCount(1);
       await page
-        .getByRole("button", { name: "Open Image · Prompt not recorded" })
+        .getByRole("button", { name: "Open Image" })
         .click();
       const dialog = page.getByRole("dialog", {
-        name: "Image · Prompt not recorded",
+        name: "Image",
       });
-      await expect(dialog.getByText("Prompt not recorded.")).toBeVisible();
+      await expect(dialog.getByText("Prompt not recorded.")).toHaveCount(0);
       await dialog.getByText("Details").click();
       const details = dialog.locator("details");
       await expect(

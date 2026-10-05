@@ -1158,6 +1158,7 @@ class FakeAdminStore:
         limit: int = 50,
         actor_id: str | None = None,
         action_prefix: str | None = None,
+        exclude_access_audit: bool = False,
         before_created_at: int | None = None,
         before_id: str | None = None,
         target_kind: str | None = None,
@@ -1183,6 +1184,8 @@ class FakeAdminStore:
             rows = [r for r in rows if r.get("actor_id") == actor_id or r.get("actor") == actor_id]
         if action_prefix is not None:
             rows = [r for r in rows if str(r.get("action", "")).startswith(action_prefix)]
+        if exclude_access_audit:
+            rows = [r for r in rows if r.get("action") not in {"media.library.everyone", "usage.summary.everyone"}]
         if target_kind is not None:
             rows = [r for r in rows if r.get("target_kind") == target_kind]
         if target_id is not None:
@@ -2374,6 +2377,24 @@ class AdminAuditTests(unittest.TestCase):
         self.assertIn("app.create", actions)
         self.assertIn("app.disable", actions)
         self.assertNotIn("service.update", actions)
+
+    def test_audit_can_hide_owner_access_views_without_breaking_pagination(self) -> None:
+        client, store = _make_client()
+        store.audit.extend([
+            {"action": "media.library.everyone", "created_at": 3, "id": "access-media"},
+            {"action": "usage.summary.everyone", "created_at": 2, "id": "access-usage"},
+            {"action": "app.create", "created_at": 1, "id": "app-create"},
+        ])
+        default = client.get("/admin/api/audit?limit=10&exclude_access_audit=true", headers=_auth())
+        self.assertEqual(default.status_code, 200, default.text)
+        self.assertEqual([row["action"] for row in default.json()["records"]], ["app.create"])
+        self.assertIsNone(default.json()["next_cursor"])
+
+        revealed = client.get("/admin/api/audit?limit=10", headers=_auth())
+        self.assertEqual(
+            [row["action"] for row in revealed.json()["records"][:2]],
+            ["media.library.everyone", "usage.summary.everyone"],
+        )
 
     def test_audit_next_cursor_null_at_exhaustion(self) -> None:
         client, store = _make_client()

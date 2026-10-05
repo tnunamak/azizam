@@ -56,6 +56,9 @@ import {
 } from "@/components/ui/select";
 import { useViewer } from "@/components/shell/session";
 import { FilterToggle } from "@/components/product/filter-toggle";
+import { productApi } from "@/lib/product-api";
+
+type ModelCatalog = Awaited<ReturnType<typeof productApi.models>>;
 
 type MediaKind = "image" | "video" | "audio";
 type DateFilter = "all" | "7d" | "30d" | "90d";
@@ -106,8 +109,7 @@ function kindLabel(kind: MediaKind) {
 
 function assetTitle(asset: MediaAsset) {
   const prompt = typeof asset.prompt === "string" ? asset.prompt.trim() : "";
-  if (prompt) return prompt;
-  return `${kindLabel(asset.kind)} · Prompt not recorded`;
+  return prompt || kindLabel(asset.kind);
 }
 
 function formatDuration(seconds: number) {
@@ -192,6 +194,16 @@ async function prepareDownload(asset: MediaAsset, everyone: boolean) {
 
 function absolute(ts: MediaAsset["created_at"]) {
   return ts ? formatAbsoluteUTC(ts) : undefined;
+}
+
+function modelDisplayName(
+  model: string,
+  catalog?: ModelCatalog,
+) {
+  const row = [...(catalog?.aliases ?? []), ...(catalog?.models ?? [])].find(
+    (item) => item.id === model,
+  );
+  return row?.title ?? row?.display_name ?? "";
 }
 
 function MiniAudioPlayer({
@@ -316,25 +328,8 @@ function Preview({
   });
   if (asset.available === false || failed)
     return (
-      <div className="bg-muted text-muted-foreground flex h-full min-h-32 flex-col items-center justify-center gap-3 p-4 text-center text-sm">
-        <p>
-          {failed
-            ? "Preview could not be loaded. Refresh the library to try again."
-            : asset.unavailable_reason ||
-              "The media file is missing or expired."}
-        </p>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="relative z-20"
-          onClick={(event) => {
-            event.stopPropagation();
-            window.location.reload();
-          }}
-        >
-          Refresh library
-        </Button>
+      <div role="img" className="bg-muted text-muted-foreground flex h-full min-h-32 items-center justify-center" aria-label={`${kindLabel(asset.kind)} preview unavailable`}>
+        <Icon aria-hidden="true" className="size-8" />
       </div>
     );
   if (asset.kind === "image" && src)
@@ -425,10 +420,12 @@ function AssetCard({
   asset,
   onOpen,
   everyone,
+  modelCatalog,
 }: {
   asset: MediaAsset;
   onOpen: (asset: MediaAsset) => void;
   everyone: boolean;
+  modelCatalog?: ModelCatalog;
 }) {
   const Icon = kindIcon(asset.kind);
   return (
@@ -471,24 +468,19 @@ function AssetCard({
           />
         )}
       </div>
-      <div className="space-y-2 p-3">
-        <p className="line-clamp-2 min-h-10 text-sm font-medium">
-          {assetTitle(asset)}
-        </p>
-        {asset.model || asset.source || asset.created_at ? (
+      <div className="space-y-1 p-3">
+        {asset.prompt?.trim() ? (
+          <p className="line-clamp-2 min-h-10 text-sm font-medium">
+            {asset.prompt.trim()}
+          </p>
+        ) : null}
+        {asset.model || asset.created_at ? (
           <div className="text-muted-foreground flex items-center justify-between gap-2 text-xs">
-            {asset.model || asset.source ? (
-              <span
-                className="truncate"
-                title={[asset.model, asset.source?.label]
-                  .filter(Boolean)
-                  .join(" · ")}
-              >
-                {[asset.model, asset.source?.label].filter(Boolean).join(" · ")}
+            {asset.model && modelDisplayName(asset.model, modelCatalog) ? (
+              <span className="truncate">
+                {modelDisplayName(asset.model, modelCatalog)}
               </span>
-            ) : (
-              <span aria-hidden="true" />
-            )}
+            ) : null}
             {asset.created_at ? (
               <RelativeTime ts={asset.created_at} fallback="" />
             ) : null}
@@ -642,6 +634,10 @@ export default function LibraryPage() {
   const viewer = useViewer();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
+  const { data: modelCatalog } = useQuery({
+    queryKey: ["models", "catalog"],
+    queryFn: productApi.models,
+  });
   const [kind, setKind] = useState("all");
   const [model, setModel] = useState("all");
   const [date, setDate] = useState<DateFilter>("all");
@@ -711,6 +707,7 @@ export default function LibraryPage() {
       ),
     [data?.pages],
   );
+  const unavailableAssets = assets.filter((asset) => asset.available === false).length;
   const listedDeepLinkedAsset = useMemo(
     () =>
       deepLinkedAssetId
@@ -849,12 +846,6 @@ export default function LibraryPage() {
           </Button>
         </div>
       ) : null}
-      {instanceView ? (
-        <p className="border-warning/30 bg-warning/10 text-muted-foreground mb-4 rounded-lg border px-3 py-2 text-sm">
-          Showing media from all people, service apps and the local network.
-          Access through this owner view is audited.
-        </p>
-      ) : null}
       {deepLinkedAssetError ? (
         <div className="mb-4">
           <ErrorState
@@ -862,6 +853,14 @@ export default function LibraryPage() {
             onRetry={() => void refetchDeepLinkedAsset()}
             retrying={deepLinkedAssetFetching}
           />
+        </div>
+      ) : null}
+      {unavailableAssets > 1 ? (
+        <div className="mb-4 flex flex-wrap items-center gap-3 text-sm" role="status">
+          <span>Some media items are unavailable.</span>
+          <Button variant="outline" size="sm" onClick={() => void refetch()}>
+            Refresh library
+          </Button>
         </div>
       ) : null}
       {isLoading ? (
@@ -913,6 +912,7 @@ export default function LibraryPage() {
               asset={asset}
               onOpen={openAsset}
               everyone={instanceView}
+              modelCatalog={modelCatalog}
             />
           ))}
         </div>
@@ -938,8 +938,10 @@ export default function LibraryPage() {
               <SheetHeader>
                 <SheetTitle>{assetTitle(selected)}</SheetTitle>
                 <SheetDescription>
-                  {kindLabel(selected.kind)} made with{" "}
-                  {selected.model || "an unknown model"}
+                  {kindLabel(selected.kind)}
+                  {selected.model && modelDisplayName(selected.model, modelCatalog)
+                    ? ` · ${modelDisplayName(selected.model, modelCatalog)}`
+                    : ""}
                 </SheetDescription>
               </SheetHeader>
               <div className="space-y-5 px-4 pb-4">
@@ -951,12 +953,12 @@ export default function LibraryPage() {
                     everyone={instanceView}
                   />
                 </div>
-                <section>
+                {selected.prompt ? <section>
                   <h2 className="mb-2 text-sm font-medium">Prompt</h2>
                   <p className="bg-muted/30 rounded-lg border p-3 text-sm">
-                    {selected.prompt || "Prompt not recorded."}
+                    {selected.prompt}
                   </p>
-                </section>
+                </section> : null}
                 <div className="flex flex-wrap gap-2">
                   {selected.available !== false && (
                     <Button
@@ -1051,35 +1053,35 @@ export default function LibraryPage() {
                     <div className="grid gap-3 text-sm sm:grid-cols-2">
                       <Detail
                         label="Model"
-                        value={selected.model || "Not measured yet"}
+                        value={selected.model ? modelDisplayName(selected.model, modelCatalog) : ""}
                       />
                       <Detail
                         label="Created"
                         value={
                           <RelativeTime
                             ts={selected.created_at}
-                            fallback="Time not recorded"
+                            fallback=""
                           />
                         }
                         title={absolute(selected.created_at)}
                       />
                       <Detail
                         label="Seed"
-                        value={selected.seed ?? "Not measured yet"}
+                        value={selected.seed ?? ""}
                       />
                       <Detail
                         label="Size"
                         value={
                           selected.width && selected.height
                             ? `${selected.width} × ${selected.height} px`
-                            : "Not measured yet"
+                            : ""
                         }
                       />
                       <Detail
                         label="Generation time"
                         value={
                           selected.generation_ms == null
-                            ? "Not measured yet"
+                            ? ""
                             : `${(selected.generation_ms / 1000).toFixed(1)} s`
                         }
                       />
@@ -1147,6 +1149,7 @@ function Detail({
   value: React.ReactNode;
   title?: string;
 }) {
+  if (value == null || value === "") return null;
   return (
     <dl className="min-w-0 rounded-lg border p-3">
       <dt className="text-muted-foreground text-xs">{label}</dt>

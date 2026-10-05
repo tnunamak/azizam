@@ -110,7 +110,7 @@ export const homeApi = {
       throw error;
     }
   },
-  creations: () => homeRequest<HomeCreationsResponse>("/me/api/media?limit=4"),
+  creations: () => homeRequest<HomeCreationsResponse>("/me/api/media?limit=50"),
   mediaDownload: (assetId: string) =>
     homeRequest<{ download_url?: string }>(
       `/me/api/media/${encodeURIComponent(assetId)}/download?scope=me`,

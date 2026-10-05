@@ -550,6 +550,7 @@ backends:
         health_timeout_s: 90
   realtime:
     name: speech-to-speech
+    display_name: Realtime voice
     host: 127.0.0.1
     port: 8022
     health_endpoint: /v1/pool

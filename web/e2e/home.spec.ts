@@ -3,7 +3,7 @@ import AxeBuilder from "@axe-core/playwright";
 
 const homePath = "/ui/home/";
 const homeApi = "**/me/api/home";
-const mediaApi = "**/me/api/media?limit=4";
+const mediaApi = "**/me/api/media?limit=50";
 const setupApi = "**/admin/api/setup-progress";
 
 async function chooseRecipeKey(page: Page, optionName: string | RegExp) {
@@ -221,7 +221,7 @@ for (const theme of ["light", "dark"] as const) {
                 exact: true,
               }),
             ).toHaveCount(0);
-          } else {
+          } else if (state === "seeded") {
             await expect(
               page.getByRole("heading", {
                 name: "What you can use",
@@ -231,6 +231,10 @@ for (const theme of ["light", "dark"] as const) {
             await expect(
               page.getByRole("heading", { name: "Recent", exact: true }),
             ).toBeVisible();
+          } else {
+            await expect(
+              page.getByRole("heading", { name: "Recent", exact: true }),
+            ).toHaveCount(0);
           }
           if (state === "seeded") {
             await expect(

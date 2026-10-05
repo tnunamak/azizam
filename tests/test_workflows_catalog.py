@@ -166,7 +166,9 @@ AUDIO_MANIFEST = textwrap.dedent(
     version: "0.1.0"
     id: audio.generate.sfx
     intent: audio.generate
+    capability: sfx
     display_name: SFX
+    description: Test audio workflow.
     source: local
     trusted: true
     typical_seconds: 2
@@ -238,6 +240,24 @@ def _aliases() -> dict:
 
 
 class WorkflowsCatalogTests(unittest.TestCase):
+    def test_manifest_capability_controls_audio_workflow_group(self) -> None:
+        payload = build_workflows_catalog(
+            records=_registry().records(),
+            capabilities=[
+                Capability(
+                    intent="audio.generate",
+                    backend="comfyui",
+                    workflow="audio.generate.sfx",
+                    output_modalities=("audio",),
+                    health="healthy",
+                    lifecycle="warm",
+                )
+            ],
+        )
+        workflow = next(row for row in payload["workflows"] if row["id"] == "audio.generate.sfx")
+        self.assertEqual(workflow["capability"], "sfx")
+        self.assertEqual(workflow["description"], "Test audio workflow.")
+
     def test_catalog_includes_ui_contract_fields(self) -> None:
         payload = build_workflows_catalog(
             records=_registry().records(),

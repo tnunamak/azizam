@@ -5,10 +5,8 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import {
   AudioLines,
-  File,
   ArrowUpRight,
   GitBranch,
-  Hash,
   Image as ImageInputIcon,
   Search,
   SlidersHorizontal,
@@ -58,13 +56,15 @@ import {
   type WorkflowCatalog as WorkflowsCatalog,
 } from "./workflow-api";
 import { RelativeTime } from "@/components/product";
-type WorkflowCapability = Capability | "audio" | "workflow";
-type InputKind = "image" | "text" | "number" | "file" | "audio";
+type WorkflowCapability = Capability | "audio" | "music" | "sfx" | "workflow";
+type InputKind = "image" | "text" | "audio";
 const EMPTY_WORKFLOWS: WorkflowRow[] = [];
 
 const capabilityOrder: WorkflowCapability[] = [
   "image",
   "video",
+  "music",
+  "sfx",
   "audio",
   "workflow",
 ];
@@ -95,6 +95,8 @@ function capabilityLabel(value: string) {
       image: capabilityLabels.image,
       video: capabilityLabels.video,
       voice: capabilityLabels.speech,
+      music: capabilityLabels.music,
+      sfx: capabilityLabels.sound_effects,
       audio: capabilityLabels.audio,
       workflow: "Workflows",
       chat: capabilityLabels.chat,
@@ -106,7 +108,7 @@ function capabilityLabel(value: string) {
 }
 
 function iconCapability(value: string): Capability {
-  return value === "audio"
+  return ["audio", "music", "sfx"].includes(value)
     ? "voice"
     : [
           "image",
@@ -190,10 +192,9 @@ function workflowInputKind(input: WorkflowInput): InputKind | null {
     ["file", "upload", "blob", "binary"].includes(type) ||
     name.endsWith("_file")
   ) {
-    return "file";
+    return null;
   }
   if (type === "string") return "text";
-  if (type === "integer" || type === "number") return "number";
   return null;
 }
 
@@ -263,8 +264,6 @@ function WorkflowInputIcons({ workflow }: { workflow: WorkflowRow }) {
     image: [ImageInputIcon, "Image"],
     text: [Type, "Text"],
     audio: [AudioLines, "Audio"],
-    file: [File, "File"],
-    number: [Hash, "Number"],
   };
   const needsImage = requiredInputs(workflow).some(
     (input) => workflowInputKind(input) === "image",

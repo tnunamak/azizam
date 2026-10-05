@@ -289,7 +289,6 @@ export default function UsagePage() {
           {showReceipts ? (
             <ReceiptsList
               receipts={data.receipts}
-              retentionDays={data.retentionDays}
               loading={isFetching}
               onSelect={setSelected}
             />
@@ -353,6 +352,8 @@ function PersonFilter({
 }
 
 function SummaryRow({ summary }: { summary: UsageSummary }) {
+  const showSpend =
+    summary.paidRequests === 0 || summary.remoteSpendUsd !== null;
   return (
     <section className="grid gap-4 md:grid-cols-3" aria-label="This month">
       <MetricCard
@@ -361,20 +362,18 @@ function SummaryRow({ summary }: { summary: UsageSummary }) {
         value={formatNumber(summary.requests)}
         detail="This month"
       />
-      <MetricCard
+      {showSpend ? <MetricCard
         icon={DollarSign}
         label="Remote spend"
         value={
           summary.paidRequests > 0 ? (
             <Money amount={summary.remoteSpendUsd} summary />
-          ) : summary.unknownPaidRequests > 0 ? (
-            "Paid spend not measured"
           ) : (
             "No paid requests"
           )
         }
         detail={spendCoverageDetail(summary)}
-      />
+      /> : null}
       <MetricCard
         icon={Image}
         label="Media made"
@@ -386,33 +385,19 @@ function SummaryRow({ summary }: { summary: UsageSummary }) {
 }
 
 function CoverageNote({ summary }: { summary: UsageSummary }) {
-  const since = summary.coverageStart
-    ? ` · since ${formatDate(summary.coverageStart)}`
-    : "";
-  const truncated = summary.truncated ? " · truncated" : "";
-  const retention = summary.retentionDays
-    ? `${summary.retentionDays} days`
-    : "retention not reported";
+  const facts = [
+    summary.retentionDays ? `Receipts are kept for ${summary.retentionDays} days.` : "",
+    summary.coverageStart ? `Coverage starts ${formatDate(summary.coverageStart)}.` : "",
+    summary.coverageNote ? formatSentence(summary.coverageNote) : "",
+    summary.truncated ? "This view is limited to the most recent stored receipts." : "",
+  ].filter(Boolean);
+  if (!facts.length) return null;
   return (
     <details className="text-muted-foreground text-sm">
       <summary className="min-h-11 w-fit cursor-pointer py-3">
-        Receipt coverage · {retention}
-        {summary.retentionDays ? since : ""}
-        {truncated}
+        Receipt coverage
       </summary>
-      <p className="mt-1">
-        {summary.retentionDays
-          ? `Receipts are kept for ${summary.retentionDays} days`
-          : "Retention not reported"}
-        {summary.retentionDays && summary.coverageStart
-          ? `, covering usage since ${formatDate(summary.coverageStart)}`
-          : ""}
-        .
-        {summary.coverageNote ? ` ${formatSentence(summary.coverageNote)}` : ""}
-        {summary.truncated
-          ? " This view is limited to the most recent stored receipts."
-          : ""}
-      </p>
+      <ul className="mt-1 list-inside list-disc">{facts.map((fact) => <li key={fact}>{fact}</li>)}</ul>
     </details>
   );
 }
@@ -463,7 +448,7 @@ function DailyChart({ days }: { days: UsageDay[] }) {
       <CardContent>
         {rows.length < 1 ? (
           <div className="text-muted-foreground flex min-h-40 items-center justify-center rounded-lg border text-sm">
-            Daily history appears after requests are measured.
+            Daily request history will appear here.
           </div>
         ) : (
           <>
@@ -610,7 +595,7 @@ function ModelTable({
           </div>
         ) : (
           <p className="text-muted-foreground text-sm">
-            Model totals appear after requests are measured.
+            Model totals will appear here after your first request.
           </p>
         )}
       </CardContent>
@@ -620,12 +605,10 @@ function ModelTable({
 
 function ReceiptsList({
   receipts,
-  retentionDays,
   onSelect,
   loading,
 }: {
   receipts: UsageReceipt[];
-  retentionDays: number | null;
   onSelect: (receipt: UsageReceipt) => void;
   loading: boolean;
 }) {
@@ -637,9 +620,6 @@ function ReceiptsList({
       <CardHeader>
         <CardTitle>Receipts</CardTitle>
         <CardDescription>
-          {retentionDays
-            ? `Receipts are kept for ${retentionDays} days.`
-            : "Retention not reported."}{" "}
           Open one to see what happened to a request.
         </CardDescription>
       </CardHeader>
@@ -675,16 +655,14 @@ function ReceiptsList({
                       {receipt.sourceLabel}
                     </p>
                   ) : null}
-                  <p className="text-muted-foreground mt-1 text-xs">
-                    {receipt.createdAt ? (
-                      <RelativeTime ts={receipt.createdAt} />
-                    ) : (
-                      "Time unavailable"
-                    )}
-                    {receipt.durationMs != null
-                      ? ` · ${formatDuration(receipt.durationMs)}`
-                      : ""}
-                  </p>
+                  {(receipt.createdAt || receipt.durationMs != null) ? (
+                    <p className="text-muted-foreground mt-1 text-xs">
+                      {[receipt.createdAt ? <RelativeTime key="time" ts={receipt.createdAt} /> : null,
+                        receipt.durationMs != null ? formatDuration(receipt.durationMs) : null]
+                        .filter(Boolean)
+                        .map((part, index) => <span key={index}>{index ? " · " : ""}{part}</span>)}
+                    </p>
+                  ) : null}
                 </div>
                 <StatusBadge status={receipt.status} />
                 <span className="hidden text-sm sm:block">
@@ -756,15 +734,15 @@ function ReceiptSheet({
               <dl className="grid gap-4 text-sm sm:grid-cols-2">
                 <Detail
                   label="Requested model"
-                  value={receipt.requestedModel ?? "Not recorded"}
+                  value={receipt.requestedModel}
                 />
                 <Detail
                   label="Served model"
-                  value={receipt.servedModel ?? "Not recorded"}
+                  value={receipt.servedModel}
                 />
                 <Detail
                   label="Declared fallback"
-                  value={receipt.fallbackModel ?? "Not recorded"}
+                  value={receipt.fallbackModel}
                 />
                 <Detail
                   label="Duration"
@@ -772,7 +750,7 @@ function ReceiptSheet({
                 />
                 <Detail
                   label="Cost"
-                  value={<Money amount={receipt.costUsd} />}
+                  value={receipt.costUsd == null ? null : <Money amount={receipt.costUsd} />}
                 />
                 <Detail
                   label="When"
@@ -780,7 +758,7 @@ function ReceiptSheet({
                     receipt.createdAt ? (
                       <RelativeTime ts={receipt.createdAt} />
                     ) : (
-                      "Not measured yet"
+                      null
                     )
                   }
                 />
@@ -831,6 +809,7 @@ function Detail({
   value: ReactNode;
   wide?: boolean;
 }) {
+  if (value == null || value === "") return null;
   return (
     <div className={cn(wide && "sm:col-span-2")}>
       <dt className="text-muted-foreground">{label}</dt>
@@ -1214,7 +1193,7 @@ function formatNumber(value: number) {
 }
 
 function formatDuration(value: number | null) {
-  if (value == null) return "Not measured yet";
+  if (value == null) return "";
   if (value < 1000) return `${Math.round(value)} ms`;
   return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)} s`;
 }
@@ -1223,22 +1202,12 @@ function spendCoverageDetail(summary: UsageSummary) {
   if (summary.paidRequests > 0) {
     return `Across ${formatNumber(summary.paidRequests)} paid ${summary.paidRequests === 1 ? "request" : "requests"}`;
   }
-  if (summary.unknownPaidRequests > 0) {
-    return `${formatNumber(summary.unknownPaidRequests)} paid ${summary.unknownPaidRequests === 1 ? "request has" : "requests have"} no settled cost`;
-  }
   if (summary.requests > 0) return "";
-  if (
-    summary.spendMeasuredRequests != null &&
-    summary.spendTotalRequests != null &&
-    summary.spendTotalRequests > 0
-  ) {
-    return `Measured for ${formatNumber(summary.spendMeasuredRequests)} of ${formatNumber(summary.spendTotalRequests)} requests`;
-  }
-  return "Measured from receipts";
+  return "";
 }
 
 function SummaryCost({ amount }: { amount: number | null }) {
-  if (amount == null || amount === 0) return null;
+  if (amount == null) return null;
   return <Money amount={amount} summary />;
 }
 

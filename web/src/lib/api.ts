@@ -472,6 +472,7 @@ export interface AuditQueryParams {
   limit?: number;
   actor_id?: string;
   action_prefix?: string;
+  exclude_access_audit?: boolean;
   /** Keyset cursor from a prior next_cursor. */
   before?: string;
 }
@@ -1041,6 +1042,7 @@ export const api = {
       if (params.limit !== undefined) q.set("limit", String(params.limit));
       if (params.actor_id) q.set("actor_id", params.actor_id);
       if (params.action_prefix) q.set("action_prefix", params.action_prefix);
+      if (params.exclude_access_audit) q.set("exclude_access_audit", "true");
       if (params.before) q.set("before", params.before);
       const qs = q.toString();
       return adminFetch<AuditPage>(`/admin/api/audit${qs ? `?${qs}` : ""}`);

@@ -275,7 +275,7 @@ for (const [status, expected, summary, extra] of [
   });
 }
 
-test("Usage does not invent retention when the API omits it", async ({
+test("Usage omits unavailable retention details", async ({
   page,
 }) => {
   const withoutRetention: Record<string, unknown> = { ...seededSummary };
@@ -284,12 +284,10 @@ test("Usage does not invent retention when the API omits it", async ({
     route.fulfill({ json: withoutRetention }),
   );
   await page.goto("/ui/usage/");
-  await expect(
-    page.getByText(/Receipt coverage · retention not reported/),
-  ).toBeVisible();
+  await expect(page.getByText("Receipt coverage", { exact: true })).toBeVisible();
   await expect(page.getByText(/14 days/)).toHaveCount(0);
-  await page.getByText(/Receipt coverage · retention not reported/).click();
-  await expect(page.getByText(/^Retention not reported\./)).toBeVisible();
+  await page.getByText("Receipt coverage", { exact: true }).click();
+  await expect(page.getByText(/retention not reported/i)).toHaveCount(0);
 });
 
 test("Usage labels local and unknown paid spend honestly", async ({ page }) => {
@@ -334,8 +332,8 @@ test("Usage labels local and unknown paid spend honestly", async ({ page }) => {
 
   await page.getByRole("combobox", { name: "Source" }).click();
   await page.getByRole("option", { name: "Open WebUI" }).click();
-  await expect(page.getByText("Paid spend not measured")).toBeVisible();
+  await expect(page.getByText("Remote spend", { exact: true })).toHaveCount(0);
   await expect(
     page.getByText("2 paid requests have no settled cost"),
-  ).toBeVisible();
+  ).toHaveCount(0);
 });

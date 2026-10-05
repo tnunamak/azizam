@@ -65,16 +65,21 @@ function changedName(entry: AuditEntry) {
   return labels[entry.target_kind ?? ""] ?? auditTargetName(entry);
 }
 
+function activityActorName(label: string) {
+  return label.includes("@") ? "Person" : label;
+}
+
 export default function ActivityPage() {
   const [category, setCategory] = useState("");
+  const [showAccessAudit, setShowAccessAudit] = useState(false);
   const [actor, setActor] = useState("");
   const [actorInput, setActorInput] = useState("");
   const [entry, setEntry] = useState<AuditEntry | null>(null);
   // Filter choices come from an unfiltered page; labels never infer identity
   // from an opaque actor ID. The filter itself is applied by the server.
   const { data: optionsData } = useQuery({
-    queryKey: ["activity", "actors"],
-    queryFn: () => api.audit.list({ limit: 100 }),
+    queryKey: ["activity", "actors", showAccessAudit],
+    queryFn: () => api.audit.list({ limit: 100, exclude_access_audit: !showAccessAudit }),
   });
   const {
     data: auditData,
@@ -87,13 +92,14 @@ export default function ActivityPage() {
     hasNextPage,
     isFetchingNextPage: fetchingNextPage,
   } = useInfiniteQuery({
-    queryKey: ["activity", "audit", category, actor],
+    queryKey: ["activity", "audit", category, actor, showAccessAudit],
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
       api.audit.list({
         limit: 50,
         action_prefix: category || undefined,
         actor_id: actor || undefined,
+        exclude_access_audit: !showAccessAudit,
         before: pageParam,
       }),
     getNextPageParam: (page) => page.next_cursor ?? undefined,
@@ -103,7 +109,7 @@ export default function ActivityPage() {
     new Map(
       (optionsData?.records ?? []).map((row) => [
         row.actor_id,
-        row.actor_label,
+        activityActorName(row.actor_label),
       ]),
     ),
   );
@@ -202,10 +208,16 @@ export default function ActivityPage() {
               </Button>
             )}
           </div>
-          <details className="text-muted-foreground text-sm">
-            <summary className="cursor-pointer">
-              Filter by a person not in the recent events
-            </summary>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              variant="outline"
+              aria-pressed={showAccessAudit}
+              onClick={() => setShowAccessAudit((value) => !value)}
+            >
+              {showAccessAudit ? "Hide access audit" : "Show access audit"}
+            </Button>
+            <details className="text-muted-foreground text-sm">
+              <summary className="cursor-pointer">Find a person</summary>
             <form
               className="mt-3 flex max-w-md gap-2"
               onSubmit={(e) => {
@@ -223,7 +235,8 @@ export default function ActivityPage() {
                 Apply
               </Button>
             </form>
-          </details>
+            </details>
+          </div>
           {auditError && entries.length > 0 && !nextPageError && (
             <ErrorState
               message="These events could not be refreshed. Try again."
@@ -279,7 +292,7 @@ export default function ActivityPage() {
                   <button
                     type="button"
                     key={row.id}
-                    aria-label={`Details: ${auditSummary(row)} by ${row.actor_label}`}
+                    aria-label={`Details: ${auditSummary(row)} by ${activityActorName(row.actor_label)}`}
                     onClick={() => setEntry(row)}
                     className="group hover:bg-muted/40 focus-visible:outline-ring flex w-full items-center gap-4 py-4 text-left transition-colors focus-visible:outline-2"
                   >
@@ -292,7 +305,7 @@ export default function ActivityPage() {
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium">{auditSummary(row)}</p>
                       <p className="text-muted-foreground mt-1 text-xs break-words">
-                        {row.actor_label}
+                        {activityActorName(row.actor_label)}
                         {changedName(row) ? ` · ${changedName(row)}` : ""}
                       </p>
                     </div>
@@ -348,14 +361,14 @@ export default function ActivityPage() {
               <SheetHeader className="pr-14">
                 <SheetTitle>{auditSummary(entry)}</SheetTitle>
                 <SheetDescription>
-                  {entry.actor_label} · <RelativeTime ts={entry.created_at} />
+                  {activityActorName(entry.actor_label)} · <RelativeTime ts={entry.created_at} />
                 </SheetDescription>
               </SheetHeader>
               <div className="min-w-0 space-y-6 px-4 pb-8">
                 <dl className="space-y-4 text-sm">
                   <div>
                     <dt className="text-muted-foreground">Person</dt>
-                    <dd className="mt-1">{entry.actor_label}</dd>
+                    <dd className="mt-1">{activityActorName(entry.actor_label)}</dd>
                   </div>
                   {changedName(entry) && (
                     <div>

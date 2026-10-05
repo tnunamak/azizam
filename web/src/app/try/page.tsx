@@ -222,6 +222,8 @@ const CAPABILITY_TABS: Record<string, TryTab> = {
   embed: "embed",
   embeddings: "embed",
   audio: "workflow",
+  music: "workflow",
+  sfx: "workflow",
   workflow: "workflow",
 };
 
@@ -700,7 +702,7 @@ function capabilitiesFor(record: Record<string, unknown>): TryTab[] {
     .filter(Boolean);
   const tabs = new Set<TryTab>();
   for (const intent of intents) {
-    const tab = INTENT_TABS[intent];
+    const tab = CAPABILITY_TABS[intent] ?? INTENT_TABS[intent];
     if (tab) tabs.add(tab);
   }
   return [...tabs];
@@ -745,9 +747,15 @@ function selectedOrDefaultModel(
 ) {
   if (!options.length) return current;
   if (explicit) return current;
-  if (current && options.some((option) => option.id === current))
+  const recommended = options.find((option) => option.recommended);
+  if (
+    current &&
+    current !== DEFAULTS[tab].model &&
+    options.some((option) => option.id === current)
+  )
     return current;
-  if (!current || current === DEFAULTS[tab].model) return options[0].id;
+  if (!current || current === DEFAULTS[tab].model || !options.some((option) => option.id === current))
+    return recommended?.id ?? options[0].id;
   return current;
 }
 

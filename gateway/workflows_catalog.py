@@ -160,7 +160,9 @@ def _workflow_row(
     return {
         "id": record.id,
         "short_id": short,
-        "capability": _capability_from_intent(record.intent),
+        "capability": _capability_from_intent(
+            record.intent, record.manifest.get("capability")
+        ),
         "intent": record.intent,
         "title": summary.get("display_name") or record.id,
         "description": summary.get("description") or "",
@@ -597,7 +599,11 @@ def _aliases_for(workflow_id: str, aliases: Mapping[str, Any] | None) -> list[st
     return out
 
 
-def _capability_from_intent(intent: str) -> str:
+def _capability_from_intent(intent: str, declared: Any = None) -> str:
+    if isinstance(declared, str) and declared in {
+        "image", "video", "speech", "transcribe", "music", "sfx", "audio"
+    }:
+        return declared
     if intent.startswith("image."):
         return "image"
     if intent.startswith("video."):

@@ -167,11 +167,8 @@ function declaredFallback(receipt: Receipt) {
   return receiptString(receipt.fallback_model ?? metadata.fallback_model);
 }
 function duration(ms?: number | null) {
-  return typeof ms === "number"
-    ? ms < 1000
-      ? `${Math.round(ms)} ms`
-      : `${(ms / 1000).toFixed(1)} s`
-    : "Not measured yet";
+  if (typeof ms !== "number" || !Number.isFinite(ms)) return "";
+  return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
 
 export function Requests() {
@@ -346,23 +343,15 @@ export function Requests() {
                   </p>
                   <p className="text-muted-foreground truncate text-xs">
                     <span title={`${row.person_label} · ${row.app_label}`}>
-                      {row.source?.label ??
-                        `${row.person_label} · ${row.app_label}`}
+                      {row.source?.label ?? `${row.person_label} · ${row.app_label}`}
                     </span>
-                    {" · "}
-                    <span
-                      title={
-                        row.receipt.resolved_model ||
-                        row.receipt.requested_model ||
-                        "Model not recorded"
-                      }
-                    >
-                      {row.receipt.resolved_model ||
-                        row.receipt.requested_model ||
-                        "Model not recorded"}
-                    </span>
-                    {" · "}
-                    <RelativeTime ts={row.created_at} />
+                    {row.receipt.resolved_model || row.receipt.requested_model ? (
+                      <>
+                        {" · "}
+                        {row.receipt.resolved_model || row.receipt.requested_model}
+                      </>
+                    ) : null}
+                    {row.created_at ? <> · <RelativeTime ts={row.created_at} /></> : null}
                   </p>
                 </div>
                 <div className="shrink-0 space-y-1 text-right text-xs">
@@ -455,11 +444,11 @@ export function Requests() {
                     ["Source", record.source?.label ?? record.app_label],
                     [
                       "Requested model",
-                      record.receipt.requested_model || "Not recorded",
+                      record.receipt.requested_model || "",
                     ],
                     [
                       "Served model",
-                      record.receipt.resolved_model || "Not recorded",
+                      record.receipt.resolved_model || "",
                     ],
                     ...(declaredFallback(record.receipt)
                       ? ([
@@ -470,7 +459,7 @@ export function Requests() {
                         ] as const)
                       : []),
                     ["Time taken", duration(record.receipt.latency_ms)],
-                  ].map(([label, value]) => (
+                  ].filter(([, value]) => value != null && value !== "").map(([label, value]) => (
                     <div key={label}>
                       <dt className="text-muted-foreground">{label}</dt>
                       <dd className="mt-1 flex min-w-0 items-center gap-2 break-words">
