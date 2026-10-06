@@ -1573,10 +1573,11 @@ API key deletes its voices and consents. Files live under `data/voices/<owner>/`
 **Streaming transcription.** Send `stream=true` on
 `POST /v1/audio/transcriptions` to get `transcript.text.delta` events followed by
 `transcript.text.done`. Streaming engines (Nemotron) send deltas while decoding;
-other engines send the whole text in one delta. The gateway reads the `model`
-field before the file to choose the service, so send `model` first (OpenAI SDKs
-do); a request whose `model` names an engine on another service but arrives after
-more than 8 MiB of audio gets `400 stt_model_field_order`.
+other engines send the whole text in one delta. Multipart fields can arrive in
+any order for transcriptions and translations. When `model` arrives first, the
+gateway selects its service immediately. When the model cannot be peeked before
+the file, the gateway parses the upload once and sends it to the model's service
+after checking that service's policy, availability, and execution limits.
 
 **Speaker diarization.** `model: "gpt-4o-transcribe-diarize"` (or `stt-diarize`) on
 `POST /v1/audio/transcriptions` follows OpenAI's request and response shape, so
