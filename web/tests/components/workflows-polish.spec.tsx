@@ -11,7 +11,8 @@ const catalog = {
       id: "image.product-render",
       capability: "image",
       title: "Product render",
-      description:
+      description: "Create product renders.",
+      technical_notes:
         "Create a clean product render with the local image workflow. This full manifest note stays in technical details so browsing cards remain compact.",
       inputs: [
         {
@@ -98,7 +99,7 @@ it("keeps browsing cards compact and leaves manifest facts in the detail view", 
 
   expect(card.getByRole("img", { name: "Text input" })).toBeVisible();
   expect(card.queryByRole("img", { name: "Number input" })).toBeNull();
-  expect(card.getByText(/Create a clean product render/)).toBeVisible();
+  expect(card.getByText("Create product renders.")).toBeVisible();
   expect(card.queryByText("Output")).toBeNull();
   expect(card.queryByText("image/png")).toBeNull();
   expect(card.queryByText("seed: 0 to 65535")).toBeNull();

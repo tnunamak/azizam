@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import re
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from typing import Any
 
@@ -18,6 +19,7 @@ from fastapi.responses import JSONResponse, Response
 
 from gateway.capabilities import Capability, summarize_capability
 from gateway.discovery import WorkflowRecord, summarize_workflow
+from gateway.model_presentation import CAPABILITY_DESCRIPTIONS
 from gateway.workflow_openapi import (
     _execution,
     gateway_route,
@@ -157,16 +159,17 @@ def _workflow_row(
     example = _example_request(record, effective_inputs, preferred or sync_route or async_route, base_url)
     engine_binding = _engine_binding_label(summary.get("supported_backends") or [], capability_rows)
     availability = _availability(capability_rows)
+    capability = _capability_from_intent(record.intent, record.manifest.get("capability"))
+    description = _workflow_description(summary.get("description"), capability)
+    technical_notes = _workflow_technical_notes(summary.get("description"), description)
 
-    return {
+    row = {
         "id": record.id,
         "short_id": short,
-        "capability": _capability_from_intent(
-            record.intent, record.manifest.get("capability")
-        ),
+        "capability": capability,
         "intent": record.intent,
         "title": summary.get("display_name") or record.id,
-        "description": summary.get("description") or "",
+        "description": description,
         "inputs": effective_inputs,
         "outputs": summary.get("outputs") or [],
         "engine_binding": engine_binding,
@@ -201,6 +204,48 @@ def _workflow_row(
             "execution": openapi_row.get("execution") or routes,
         },
     }
+    if technical_notes:
+        row["technical_notes"] = technical_notes
+    return row
+
+
+def _workflow_description(value: Any, capability: str) -> str:
+    raw = _first_sentence(value)
+    if raw and len(raw.split()) <= 8 and not _is_technical_workflow_note(raw):
+        return _sentence(raw)
+    return CAPABILITY_DESCRIPTIONS.get(capability, "Run this configured workflow.")
+
+
+def _workflow_technical_notes(value: Any, public_description: str) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    return raw if raw != public_description else None
+
+
+def _first_sentence(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0]
+
+
+def _sentence(value: str) -> str:
+    text = value.strip()
+    if not text:
+        return ""
+    return text if text.endswith((".", "!", "?")) else f"{text}."
+
+
+def _is_technical_workflow_note(value: str) -> bool:
+    patterns = (
+        r"\b(?:contract|protocol|gateway-composed|engine|binding|bound|backend|schema|adapter|passthrough|checkpoint|workflow)\b",
+        r"\b(?:comfyui|localhost|port|khz|flac|gguf|safetensors|ckpt)\b",
+        r"[/:]",
+        r"\b\w+\.\w+\b",
+    )
+    lowered = value.casefold()
+    return any(re.search(pattern, lowered) for pattern in patterns)
 
 
 def _input_rows(record: WorkflowRecord, routes: Mapping[str, Any]) -> list[dict[str, Any]]:

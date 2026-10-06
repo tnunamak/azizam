@@ -401,14 +401,20 @@ function DetailSheet({
                   Technical details
                 </summary>
                 <div className="mt-3 space-y-4">
-                {workflow.description && (
-                  <p className="text-muted-foreground text-sm break-words whitespace-pre-wrap">
-                    {workflow.description}
-                  </p>
-                )}
-                  {availabilityReason(workflow.availability.status, workflow.availability.reason_code) && (
+                  {workflow.technical_notes && (
+                    <p className="text-muted-foreground text-sm break-words whitespace-pre-wrap">
+                      {workflow.technical_notes}
+                    </p>
+                  )}
+                  {availabilityReason(
+                    workflow.availability.status,
+                    workflow.availability.reason_code,
+                  ) && (
                     <p className="text-muted-foreground text-sm break-words">
-                      {availabilityReason(workflow.availability.status, workflow.availability.reason_code)}
+                      {availabilityReason(
+                        workflow.availability.status,
+                        workflow.availability.reason_code,
+                      )}
                     </p>
                   )}
                   <div className="grid gap-4 text-sm sm:grid-cols-2">

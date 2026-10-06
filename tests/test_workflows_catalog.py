@@ -256,7 +256,25 @@ class WorkflowsCatalogTests(unittest.TestCase):
         )
         workflow = next(row for row in payload["workflows"] if row["id"] == "audio.generate.sfx")
         self.assertEqual(workflow["capability"], "sfx")
-        self.assertEqual(workflow["description"], "Test audio workflow.")
+        self.assertEqual(workflow["description"], "Sound effects from a description.")
+        self.assertEqual(workflow["technical_notes"], "Test audio workflow.")
+
+    def test_catalog_descriptions_stay_browseable_and_preserve_manifest_notes(self) -> None:
+        payload = build_workflows_catalog(
+            records=_registry().records(),
+            capabilities=[
+                Capability(intent="image.generate", backend="comfyui", workflow="image.generate.simple"),
+                Capability(intent="audio.generate", backend="comfyui", workflow="audio.generate.sfx"),
+                Capability(intent="video.generate", backend="comfyui", workflow="video.generate.simple"),
+            ],
+        )
+
+        for workflow in payload["workflows"]:
+            self.assertLessEqual(len(workflow["description"].split()), 8, workflow["id"])
+
+        image = next(row for row in payload["workflows"] if row["id"] == "image.generate.simple")
+        self.assertEqual(image["description"], "Generate or edit images from your prompts.")
+        self.assertEqual(image["technical_notes"], "Test image workflow.")
 
     def test_catalog_includes_ui_contract_fields(self) -> None:
         payload = build_workflows_catalog(

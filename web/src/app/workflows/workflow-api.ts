@@ -17,6 +17,7 @@ export interface Workflow {
   capability: string;
   title: string;
   description: string;
+  technical_notes?: string;
   inputs: WorkflowInput[];
   outputs?: { name: string; media_type?: string; description?: string }[];
   engine_binding: string | null;
