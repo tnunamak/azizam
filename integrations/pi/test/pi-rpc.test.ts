@@ -46,6 +46,19 @@ const waitForStoredCatalog = async (agentDir: string, count: number, timeoutMs =
 	}
 };
 
+/**
+ * Wait until Pi's background refresh has hit the gateway (past request index `from`) and got `status`, then give Pi
+ * a moment to record the outcome. Callers keep the forced failure active until their catalog check is done.
+ */
+const waitForRefreshFailure = async (mock: MockGateway, from: number, status: number, timeoutMs = 10000) => {
+	const deadline = Date.now() + timeoutMs;
+	while (!mock.requests.slice(from).some((r) => r.url === "/v1/models" && r.status === status)) {
+		assert.ok(Date.now() < deadline, `no /v1/models request answered with ${status}`);
+		await new Promise((resolve) => setTimeout(resolve, 25));
+	}
+	await new Promise((resolve) => setTimeout(resolve, 300));
+};
+
 before(async () => { gateway = await startMockGateway({ apiKey: KEY }); });
 after(async () => {
 	await gateway.close();
@@ -129,18 +142,21 @@ test("catalog persists for offline start and survives a failed refresh", { skip:
 		assert.equal(gateway.requests.length, before, "offline start must not call the gateway");
 	} finally { await offline.close(); }
 
-	// Online but the gateway fails (503): last good catalog stays.
+	// Online but the gateway fails (503): last good catalog stays. The failure stays forced until the refresh has
+	// hit the gateway and Pi has had time to report its outcome; only then is the catalog checked.
 	gateway.setStatus(503);
 	const failing = startPi({ agentDir, env });
 	try {
+		await waitForRefreshFailure(gateway, before, 503);
 		assert.deepEqual((await azizamModels(failing)).map((m) => m.id).sort(), ["chat-small", "coder"]);
-		assert.ok(gateway.requests.length > before, "online start should have attempted a refresh");
 		assert.ok(!failing.stderr().includes(KEY), "key leaked to stderr");
 	} finally { gateway.setStatus(200); await failing.close(); }
 
 	// A wrong key (401) also keeps the last catalog.
+	const beforeWrong = gateway.requests.length;
 	const wrongKey = startPi({ agentDir, env: { ...env, AZIZAM_API_KEY: "wrong-key-abc" } });
 	try {
+		await waitForRefreshFailure(gateway, beforeWrong, 401);
 		assert.deepEqual((await azizamModels(wrongKey)).map((m) => m.id).sort(), ["chat-small", "coder"]);
 		assert.ok(!wrongKey.stderr().includes("wrong-key-abc"), "key leaked to stderr");
 	} finally { await wrongKey.close(); }
@@ -257,7 +273,9 @@ test("cold start resolves even when the model store cannot be read", { skip: !pi
 	} finally { await session.close(); }
 });
 
-test("cold start resolves even when the agent dir is read-only", { skip: !piAvailable || process.getuid?.() === 0 }, async () => {
+// Supported claim: model discovery only. Pi reads auth.json again when it lists and authenticates, so a read-only
+// agent dir cannot prompt; the README requires a usable credential store for that. Asserting more would overclaim.
+test("cold start discovers the model when the agent dir is read-only (discovery only, not prompting)", { skip: !piAvailable || process.getuid?.() === 0 }, async () => {
 	const agentDir = freshAgentDir();
 	chmodSync(agentDir, 0o555);
 	const session = startPi({
@@ -269,6 +287,31 @@ test("cold start resolves even when the agent dir is read-only", { skip: !piAvai
 		const state = await session.send({ type: "get_state" });
 		assert.equal(state.data.model?.id, "chat-small", session.stderr());
 	} finally { await session.close(); chmodSync(agentDir, 0o755); }
+});
+
+// The normal writable case, end to end: cold start with the key only in auth.json, then list and prompt.
+test("cold start with a writable auth.json lists the models and completes a prompt", { skip: !piAvailable }, async () => {
+	const agentDir = freshAgentDir();
+	writeFileSync(join(agentDir, "auth.json"), JSON.stringify({ azizam: { type: "api_key", key: KEY } }));
+	const session = startPi({
+		agentDir,
+		env: { AZIZAM_BASE_URL: gateway.baseUrl, AZIZAM_API_KEY: "" },
+		args: ["--provider", "azizam", "--model", "coder"],
+	});
+	try {
+		const listed = await azizamModels(session, (m) => m.length === 2);
+		assert.deepEqual(listed.map((m) => m.id).sort(), ["chat-small", "coder"]);
+		const started = await session.send({ type: "prompt", message: "Say hello" });
+		assert.equal(started.success, true, JSON.stringify(started));
+		await session.waitFor((e) => e.type === "agent_settled" || e.type === "agent_end");
+		const text = session.events
+			.filter((e) => e.type === "message_update").map((e) => e.assistantMessageEvent)
+			.filter((u) => u.type === "text_delta").map((u) => u.delta).join("");
+		assert.equal(text, "Hello from Azizam", session.stderr());
+		const chat = gateway.requests.filter((r) => r.url === "/v1/chat/completions").at(-1)!;
+		assert.equal(chat.authorization, `Bearer ${KEY}`);
+		assert.ok(!session.stderr().includes(KEY), "key leaked to stderr");
+	} finally { await session.close(); }
 });
 
 // Credential commands of unrelated providers (password managers) must not run because this extension is loaded.

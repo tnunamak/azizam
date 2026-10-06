@@ -25,7 +25,7 @@ export const CONTRACT_LIST = {
 export interface MockGateway {
 	url: string;
 	baseUrl: string;
-	requests: { method: string; url: string; authorization?: string; body?: string }[];
+	requests: { method: string; url: string; authorization?: string; body?: string; status?: number }[];
 	setModels(list: unknown): void;
 	setStatus(status: number): void;
 	close(): Promise<void>;
@@ -41,7 +41,9 @@ export async function startMockGateway(options: { apiKey?: string } = {}): Promi
 	const server: Server = createServer(async (req: IncomingMessage, res) => {
 		let body = "";
 		for await (const chunk of req) body += chunk;
-		requests.push({ method: req.method ?? "", url: req.url ?? "", authorization: req.headers.authorization, body });
+		const entry: MockGateway["requests"][number] = { method: req.method ?? "", url: req.url ?? "", authorization: req.headers.authorization, body };
+		requests.push(entry);
+		res.once("finish", () => { entry.status = res.statusCode; });
 		if (options.apiKey && req.headers.authorization !== `Bearer ${options.apiKey}`) {
 			res.writeHead(401, { "content-type": "application/json" }).end(JSON.stringify({ error: { message: "bad key" } }));
 			return;

@@ -236,21 +236,38 @@ const within = async (limitMs: number, work: Promise<unknown>) => {
 	assert.ok(took < limitMs, `took ${took} ms, limit ${limitMs} ms`);
 };
 
-test("prefetch is bounded when the stored-catalog restore hangs", { skip }, async () => {
+const stalledCredentials = {
+	read: () => never(),
+	list: async () => [],
+	modify: async () => undefined,
+	delete: async () => {},
+};
+
+test("a stalled model store cannot starve discovery: the key still resolves and the fetch runs", { skip }, async () => {
 	const store = await piAiStore({ read: never });
-	const { models, provider, calls } = await setup(() => json(CONTRACT_LIST), {}, { store, prefetchTimeoutMs: 300 });
+	const { models, provider, calls } = await setup(() => json(CONTRACT_LIST), {}, { store, prefetchTimeoutMs: 400 });
 	await within(900, provider.prefetch(models));
-	assert.equal(calls.length, 0, "a spent budget skips the fetch");
+	assert.equal(calls.length, 1);
+	assert.deepEqual(ids(provider.getModels()), ["chat-small", "coder"]);
 });
 
-test("prefetch is bounded when credential resolution is slow, and does not fetch afterwards", { skip }, async () => {
-	const credentials = {
-		read: () => never(),
-		list: async () => [],
-		modify: async () => undefined,
-		delete: async () => {},
-	};
-	const { models, provider, calls } = await setup(() => json(CONTRACT_LIST), {}, { credentials, prefetchTimeoutMs: 300 });
+test("a stalled credential store plus a valid AZIZAM_API_KEY still discovers models", { skip }, async () => {
+	const { models, provider, calls } = await setup(() => json(CONTRACT_LIST), { AZIZAM_API_KEY: "env-key-2" }, { credentials: stalledCredentials, prefetchTimeoutMs: 400 });
+	await within(900, provider.prefetch(models));
+	assert.equal(calls[0]?.authorization, "Bearer env-key-2");
+	assert.deepEqual(ids(provider.getModels()), ["chat-small", "coder"]);
+});
+
+test("stalled model store and stalled credential store together still discover with the env key", { skip }, async () => {
+	const store = await piAiStore({ read: never });
+	const { models, provider, calls } = await setup(() => json(CONTRACT_LIST), { AZIZAM_API_KEY: "env-key-3" }, { store, credentials: stalledCredentials, prefetchTimeoutMs: 400 });
+	await within(900, provider.prefetch(models));
+	assert.equal(calls[0]?.authorization, "Bearer env-key-3");
+	assert.deepEqual(ids(provider.getModels()), ["chat-small", "coder"]);
+});
+
+test("a stalled credential store without an env key is bounded and does not fetch", { skip }, async () => {
+	const { models, provider, calls } = await setup(() => json(CONTRACT_LIST), {}, { credentials: stalledCredentials, prefetchTimeoutMs: 300 });
 	await within(900, provider.prefetch(models));
 	assert.equal(calls.length, 0);
 });

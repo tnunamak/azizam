@@ -24,10 +24,12 @@ export const DEFAULT_COMPAT = {
 
 /**
  * How long the cold-start prefetch may delay Pi startup, as one budget shared by the stored-catalog restore, the
- * credential lookup and the network fetch. A spent budget skips the remaining steps. One step cannot be bounded: Pi
- * resolves a `models.json` `!command` key with a blocking `spawnSync` (10 s cap) that no signal can interrupt.
+ * credential lookup and the network fetch. The restore and the lookup each get a quarter of it, so a stalled store
+ * cannot starve the fetch, which keeps at least half. One step cannot be bounded: Pi resolves a `models.json`
+ * `!command` key with a blocking `spawnSync` (10 s cap) that no signal can interrupt.
  */
 export const PREFETCH_TIMEOUT_MS = 3_000;
+const PHASE_SHARE = 0.25;
 
 export interface AzizamProviderOptions {
 	/** Environment to read `AZIZAM_*` settings from. Defaults to `process.env`. */
@@ -48,7 +50,8 @@ export interface AzizamProvider extends Provider {
 	 * including `!command`, `AZIZAM_API_KEY`). Restores the persisted catalog; if none is usable for the configured
 	 * base URL, resolves this provider's credential and fetches once, so `--provider azizam --model <id>` resolves on
 	 * the very first run. A failed restore is a cache miss, and the fetched models are served from memory even when
-	 * Pi cannot persist them. Bounded by one shared budget; never throws. Skipped when offline.
+	 * Pi cannot persist them. Bounded by one shared budget with a short deadline per store phase; never throws.
+	 * Skipped when offline.
 	 */
 	prefetch(models: PrefetchModels): Promise<void>;
 }
@@ -125,13 +128,17 @@ export function azizamProvider(options: AzizamProviderOptions = {}): AzizamProvi
 		getAllModels: () => rebased(latest ?? piAllModels()),
 		prefetch: async (models) => {
 			if (env().PI_OFFLINE || process.argv.includes("--offline")) return;
-			const signal = AbortSignal.timeout(options.prefetchTimeoutMs ?? PREFETCH_TIMEOUT_MS);
+			const budgetMs = options.prefetchTimeoutMs ?? PREFETCH_TIMEOUT_MS;
+			const signal = AbortSignal.timeout(budgetMs);
+			const phase = () => AbortSignal.any([signal, AbortSignal.timeout(budgetMs * PHASE_SHARE)]);
 			try {
-				// A restore failure (locked, unreadable or malformed store) counts as a miss.
-				await untilAborted(models.refresh({ allowNetwork: false, providers: [PROVIDER_ID], signal }), signal);
+				// A restore failure or stall (locked, unreadable or malformed store) counts as a miss.
+				const restore = phase();
+				await untilAborted(models.refresh({ allowNetwork: false, providers: [PROVIDER_ID], signal: restore }), restore);
 				if (signal.aborted || hasUsablePersistedCatalog()) return;
 				// Pi's credential store needs a writable agent dir even to read; the environment key needs nothing.
-				const resolved = await untilAborted(models.getAuth(PROVIDER_ID, { signal }), signal);
+				const lookup = phase();
+				const resolved = await untilAborted(models.getAuth(PROVIDER_ID, { signal: lookup }), lookup);
 				const apiKey = resolved?.auth.apiKey ?? (env().AZIZAM_API_KEY || undefined);
 				if (!apiKey || signal.aborted) return;
 				await discover(apiKey, signal);

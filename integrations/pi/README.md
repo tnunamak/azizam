@@ -62,8 +62,9 @@ Override any of them, or any other model field, per model with Pi's normal `~/.p
 
 **Cold start.** Pi refreshes in the background, but `--provider azizam --model <id>` is resolved before that refresh finishes. So at load the extension builds a short-lived Pi `ModelRuntime` on the same agent dir. It restores the saved catalog and, only if no saved catalog exists for the configured `AZIZAM_BASE_URL`, resolves the key exactly as Pi does (`auth.json` from `/login`, `apiKey` in `models.json` including `!command`, or `AZIZAM_API_KEY`) and fetches once. A usable saved catalog means no extra request at start, so a gateway that is down adds no delay. Pi's normal background refresh still runs afterwards. Nothing is fetched when Pi is offline or no key resolves.
 
-- **Storage is optional.** An unreadable, locked or corrupt `models-store.json` counts as "no saved catalog". If Pi cannot save the catalog, the fetched models are still served from memory for that run. If Pi cannot read `auth.json` (for example a read-only agent dir), `AZIZAM_API_KEY` is used. An empty list from the gateway stays empty.
-- **Time limit.** Restore, key lookup and fetch share one 3 second budget. When it runs out, the remaining steps are skipped and Pi starts without waiting. One step has no limit we can set: Pi runs a `models.json` `!command` key with a blocking call (Pi caps it at 10 seconds), and nothing can interrupt that. A slow password-manager command can therefore delay the first start by up to 10 seconds. Use `auth.json` (`/login azizam`) or `AZIZAM_API_KEY` to avoid it.
+- **Model storage is optional.** An unreadable, locked or corrupt `models-store.json` counts as "no saved catalog". If Pi cannot save the catalog, the fetched models are still served from memory for that run. An empty list from the gateway stays empty.
+- **Credential storage is required for prompting.** If Pi cannot read `auth.json` (for example a read-only agent dir), the early fetch falls back to `AZIZAM_API_KEY`, so the models are still discovered and `--provider azizam --model <id>` resolves. That is all this guarantees: Pi reads the same store again to list available models and to authenticate each request, so prompting fails (`Credential store read failed`) until the store is readable.
+- **Time limit.** Restore, key lookup and fetch share one 3 second budget. Restore and key lookup get a quarter each, so a stalled store cannot starve the fetch, and the `AZIZAM_API_KEY` fallback always has at least half of the budget. When the budget runs out, the remaining steps are skipped and Pi starts without waiting. One step has no limit we can set: Pi runs a `models.json` `!command` key with a blocking call (Pi caps it at 10 seconds), and nothing can interrupt that. A slow password-manager command can therefore delay the first start by up to 10 seconds. Use `auth.json` (`/login azizam`) or `AZIZAM_API_KEY` to avoid it.
 - **Other providers are not touched.** Registering a provider in Pi's `ModelRuntime` normally starts a refresh that checks credentials for every provider, including `!command` keys of unrelated providers. The extension suppresses that one call, so only Azizam's key is resolved. This relies on Pi 1.0.x calling it synchronously inside `registerNativeProvider`; Pi has no scoped registration API.
 - **Cost.** On the very first run (no saved catalog), a `models.json` `!command` key for Azizam runs up to twice: once here and once in Pi's own refresh. Later starts use the saved catalog and run it once.
 
@@ -145,7 +146,17 @@ npm test          # unit + real-Pi RPC tests (+ opt-in live smoke test)
 
 Requires Node ≥ 22.18 and an installed `pi` (`PI_BIN` overrides its location). Tests start a mock gateway on a random port and run `pi --mode rpc --no-session` in a temporary agent dir. The live smoke test is opt-in: it runs only with `AZIZAM_LIVE_TEST=1` (gateway from `AZIZAM_LIVE_BASE_URL`, default `http://127.0.0.1:5000/v1`; key from `AZIZAM_API_KEY`) and skips itself when the gateway or key is unavailable. Without the variable it contacts nothing.
 
-Before publishing, replace the `OWNER/REPO` placeholders in `package.json` (`repository`, `homepage`, `bugs`).
+See [Before publishing](#before-publishing) for the release checklist.
+
+## Compatibility
+
+Tested with Pi 1.0.4. The peer range is `>=1.0.4 <2` for `@earendil-works/pi-ai` and `@earendil-works/pi-coding-agent`. The cold start uses Pi's `ModelRuntime` and relies on `registerNativeProvider` calling `refresh()` synchronously. The real-runtime control test (`test/runtime-isolation.test.ts`) is the upgrade gate: run `npm test` against a new Pi version before you widen the range.
+
+## Before publishing
+
+- [ ] Replace the `OWNER/REPO` placeholders in `package.json` (`repository.url`, `homepage`, `bugs.url`) with the real repository URL.
+- [ ] Confirm that you own the npm name `pi-provider-azizam` (or choose another and update the install commands above).
+- [ ] Run `npm test` against the newest Pi in the supported range.
 
 ## License
 
