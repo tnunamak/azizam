@@ -21917,14 +21917,15 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
         _begin_media_delivery(auth_context)
         metadata_field = f"extensions[{WORKFLOW_EXTENSION_NAMESPACE}][{provenance.METADATA_CONTROL}]"
         legacy_metadata_field = f"extensions[{JSON_OLD_NAMES[WORKFLOW_EXTENSION_NAMESPACE]}][{provenance.METADATA_CONTROL}]"
-        metadata_value = form.get(metadata_field) if metadata_field in form else form.get(legacy_metadata_field)
+        form_fields = set(form.keys())
+        metadata_value = form.get(metadata_field) if metadata_field in form_fields else form.get(legacy_metadata_field)
         if metadata_value is not None:
             metadata_error = _note_media_metadata_body({
                 "extensions": {WORKFLOW_EXTENSION_NAMESPACE: {provenance.METADATA_CONTROL: metadata_value}}
             })
             if metadata_error is not None:
                 return metadata_error
-        unknown_fields = set(form.keys()) - set(input_specs) - {metadata_field, legacy_metadata_field}
+        unknown_fields = form_fields - set(input_specs) - {metadata_field, legacy_metadata_field}
         if unknown_fields:
             raise ValueError(f"unknown workflow input: {sorted(unknown_fields)[0]}")
         supplied: dict[str, Any] = {}

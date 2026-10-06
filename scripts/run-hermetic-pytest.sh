@@ -64,14 +64,15 @@ declare -a bwrap_args=(
   --setenv TMPDIR "$state_dir/tmp" --setenv TMP "$state_dir/tmp" --setenv TEMP "$state_dir/tmp"
   --setenv XDG_CACHE_HOME "$state_dir/cache" --setenv XDG_CONFIG_HOME "$state_dir/home/.config" --setenv XDG_RUNTIME_DIR /run/user/0
   --setenv PYTHONNOUSERSITE 1 --setenv PYTHONDONTWRITEBYTECODE 1 --setenv PYTEST_DISABLE_PLUGIN_AUTOLOAD 1
-  --setenv AZIZAM_TEST_STATE_DIR "$state_dir" --setenv AZIZAM_CONFIG_PATH "$state_dir/proxy_config.yml"
-  --setenv AZIZAM_HERMETIC_TEST_NAMESPACE 1 --setenv AZIZAM_HERMETIC_STATE_DIR "$state_dir"
-  --setenv AZIZAM_HERMETIC_FORBIDDEN_PRODUCTION_PATH "$forbidden_production_path"
-  --setenv AZIZAM_HERMETIC_LEGACY_PRODUCTION_PATH "$legacy_production_path"
-  --setenv AZIZAM_HERMETIC_HOST_RUNNER_PID "$host_runner_pid"
-  --setenv AZIZAM_HERMETIC_HOST_PID_NAMESPACE "$host_pid_namespace" --setenv AZIZAM_HERMETIC_HOST_IPC_NAMESPACE "$host_ipc_namespace"
-  --setenv AZIZAM_HERMETIC_TEST_ENV_ROOT /venv --setenv AZIZAM_HERMETIC_REPO_ROOT "$checkout_root"
-  --setenv AZIZAM_HERMETIC_PYTHON_ROOT "$python_root"
+  --setenv HERMETIC_TEST_STATE_DIR "$state_dir" --setenv AZIZAM_CONFIG_PATH "$state_dir/proxy_config.yml"
+  --setenv HERMETIC_ADMIN_DB "$state_dir/admin.db"
+  --setenv HERMETIC_TEST_NAMESPACE 1 --setenv HERMETIC_STATE_DIR "$state_dir"
+  --setenv HERMETIC_FORBIDDEN_PRODUCTION_PATH "$forbidden_production_path"
+  --setenv HERMETIC_LEGACY_PRODUCTION_PATH "$legacy_production_path"
+  --setenv HERMETIC_HOST_RUNNER_PID "$host_runner_pid"
+  --setenv HERMETIC_HOST_PID_NAMESPACE "$host_pid_namespace" --setenv HERMETIC_HOST_IPC_NAMESPACE "$host_ipc_namespace"
+  --setenv HERMETIC_TEST_ENV_ROOT /venv --setenv HERMETIC_REPO_ROOT "$checkout_root"
+  --setenv HERMETIC_PYTHON_ROOT "$python_root"
 )
 
 declare -A sandbox_dirs=(['/usr']=1 ['/etc']=1 ['/home']=1 ['/var']=1 ['/run']=1 ['/run/user']=1 ['/run/user/0']=1)
@@ -106,8 +107,8 @@ namespace_command='if ! ip -o link show dev lo | grep -q "UP"; then echo "error:
 if [[ $(ip -o link show | wc -l) -ne 1 ]] || tail -n +2 /proc/net/route | grep -q .; then echo "error: namespace exposes host interfaces or routes" >&2; exit 1; fi
 read -r _ _ _ _ _ _ tty_number _ < /proc/self/stat
 if [[ $tty_number != 0 ]] || ( : </dev/tty ) 2>/dev/null; then echo "error: sandbox retained a controlling terminal" >&2; exit 1; fi
-if [[ -e "/proc/$AZIZAM_HERMETIC_HOST_RUNNER_PID" ]] || [[ $(readlink /proc/1/ns/pid) == "$AZIZAM_HERMETIC_HOST_PID_NAMESPACE" ]] || [[ $(readlink /proc/1/ns/ipc) == "$AZIZAM_HERMETIC_HOST_IPC_NAMESPACE" ]]; then echo "error: sandbox exposes host process or IPC state" >&2; exit 1; fi
-if [[ -e "$AZIZAM_HERMETIC_FORBIDDEN_PRODUCTION_PATH" ]] || [[ -e "$AZIZAM_HERMETIC_LEGACY_PRODUCTION_PATH" ]] || [[ -e /run/docker.sock ]] || [[ -e /var/run/docker.sock ]]; then echo "error: sandbox exposes forbidden production or Unix-socket path" >&2; exit 1; fi
+if [[ -e "/proc/$HERMETIC_HOST_RUNNER_PID" ]] || [[ $(readlink /proc/1/ns/pid) == "$HERMETIC_HOST_PID_NAMESPACE" ]] || [[ $(readlink /proc/1/ns/ipc) == "$HERMETIC_HOST_IPC_NAMESPACE" ]]; then echo "error: sandbox exposes host process or IPC state" >&2; exit 1; fi
+if [[ -e "$HERMETIC_FORBIDDEN_PRODUCTION_PATH" ]] || [[ -e "$HERMETIC_LEGACY_PRODUCTION_PATH" ]] || [[ -e /run/docker.sock ]] || [[ -e /var/run/docker.sock ]]; then echo "error: sandbox exposes forbidden production or Unix-socket path" >&2; exit 1; fi
 exec "$@"'
 
 if [[ ${1:-} == "--check" ]]; then

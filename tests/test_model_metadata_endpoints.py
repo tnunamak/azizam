@@ -22,6 +22,7 @@ import proxy  # noqa: E402
 from gateway import model_metadata as mm  # noqa: E402
 from gateway.models_catalog import build_models_catalog  # noqa: E402
 from gateway.capabilities import Capability  # noqa: E402
+from gateway.compat import emit_aliases  # noqa: E402
 
 SNAPSHOT = json.loads((ROOT / "tests" / "fixtures" / "models-list-snapshot-2026-10.json").read_text(encoding="utf-8"))
 
@@ -410,9 +411,15 @@ class RequestLoadedMetadataTests(unittest.TestCase):
             exec(compile(fixture.read_text(), str(fixture), "exec"), namespace)
 
             async def main_filter(data, auth_context, **_kwargs):
-                return await namespace["_filter_model_list_for_profile"](data, auth_context)
+                # Main's frozen readers use the old gateway fields. Supply
+                # their compatibility aliases before comparing behavior.
+                aliased = [emit_aliases(item) if isinstance(item, dict) else item for item in data]
+                return await namespace["_filter_model_list_for_profile"](aliased, auth_context)
 
             async def main_windows(data, **_kwargs):
+                for item in data:
+                    if isinstance(item, dict):
+                        item.update(emit_aliases(item))
                 await namespace["_annotate_model_context_windows"](data)
 
             with patch.object(proxy, "_filter_model_list_for_profile", main_filter), \

@@ -15,13 +15,16 @@ from _hermetic import validate_test_environment
 
 
 def test_state_config_and_environment_are_private_to_this_run(gateway_test_state_dir: Path) -> None:
-    assert gateway_test_state_dir.is_relative_to(Path(os.environ["AZIZAM_HERMETIC_STATE_DIR"]))
+    assert gateway_test_state_dir.is_relative_to(Path(os.environ["HERMETIC_STATE_DIR"]))
     assert "/.tmp/" in f"{gateway_test_state_dir}/"
     config_path = Path(os.environ["AZIZAM_CONFIG_PATH"])
-    assert config_path.parent.is_relative_to(Path(os.environ["AZIZAM_HERMETIC_STATE_DIR"]))
+    assert config_path.parent.is_relative_to(Path(os.environ["HERMETIC_STATE_DIR"]))
     assert config_path.is_file()
     assert os.environ.get("OPENAI_API_KEY") is None
-    assert os.environ.get("AZIZAM_ADMIN_DB") is None
+    assert Path(os.environ["HERMETIC_ADMIN_DB"]) == gateway_test_state_dir / "admin.db"
+    assert os.environ["AZIZAM_ADMIN_DB"] == os.environ["HERMETIC_ADMIN_DB"]
+    assert os.environ.get("AI_GATEWAY_ADMIN_DB") is None
+    assert os.environ.get("OPENAI_PROXY_ADMIN_DB") is None
     assert os.environ.get("PYTHONDONTWRITEBYTECODE") == "1"
 
 
@@ -33,12 +36,11 @@ def test_production_environment_names_cannot_leak_into_the_suite() -> None:
         "AZIZAM_METRICS_DB",
         "AZIZAM_RECEIPTS_DB",
         "AZIZAM_RESPONSES_DB",
-        "AZIZAM_TEST_STATE_DIR",
     }
     leaked = {
         name
         for name in os.environ
-        if name.startswith(("OPENAI_", "ANTHROPIC_", "AWS_", "DATABASE_"))
+        if name.startswith(("OPENAI_", "AI_GATEWAY_", "VIVID_", "ANTHROPIC_", "AWS_", "DATABASE_"))
         or (name.startswith("AZIZAM_") and name not in allowed_gateway_names)
     }
     assert leaked == set()
@@ -68,7 +70,7 @@ def test_live_and_egress_destinations_are_rejected_before_connect(
 
 
 def test_production_checkout_path_is_not_visible() -> None:
-    production_root = Path(os.environ["AZIZAM_HERMETIC_FORBIDDEN_PRODUCTION_PATH"])
+    production_root = Path(os.environ["HERMETIC_FORBIDDEN_PRODUCTION_PATH"])
     assert not production_root.exists()
     with pytest.raises(FileNotFoundError):
         (production_root / "data" / "admin.db").read_bytes()
@@ -77,9 +79,9 @@ def test_production_checkout_path_is_not_visible() -> None:
 
 
 def test_host_pid_and_ipc_namespaces_are_not_visible() -> None:
-    assert not Path(f"/proc/{os.environ['AZIZAM_HERMETIC_HOST_RUNNER_PID']}").exists()
-    assert os.readlink("/proc/1/ns/pid") != os.environ["AZIZAM_HERMETIC_HOST_PID_NAMESPACE"]
-    assert os.readlink("/proc/1/ns/ipc") != os.environ["AZIZAM_HERMETIC_HOST_IPC_NAMESPACE"]
+    assert not Path(f"/proc/{os.environ['HERMETIC_HOST_RUNNER_PID']}").exists()
+    assert os.readlink("/proc/1/ns/pid") != os.environ["HERMETIC_HOST_PID_NAMESPACE"]
+    assert os.readlink("/proc/1/ns/ipc") != os.environ["HERMETIC_HOST_IPC_NAMESPACE"]
 
 
 def test_interpreter_and_imports_are_inside_fresh_environment() -> None:

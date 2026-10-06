@@ -8,6 +8,7 @@ from pathlib import Path
 import runpy
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -173,7 +174,8 @@ class RenameReviewTests(unittest.TestCase):
 
     def test_smoke_direct_print_config(self):
         env = {k: v for k, v in os.environ.items() if k != 'PYTHONPATH' and not k.startswith(('AZIZAM_', 'OPENAI_PROXY_', 'AI_GATEWAY_', 'VIVID_'))}
-        result = subprocess.run([sys.executable, str(ROOT / 'scripts/compat/smoke_protocol_frontends.py'), '--print-config'], cwd='/tmp', env=env, capture_output=True, text=True)
+        with tempfile.TemporaryDirectory() as working_dir:
+            result = subprocess.run([sys.executable, str(ROOT / 'scripts/compat/smoke_protocol_frontends.py'), '--print-config'], cwd=working_dir, env=env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
 

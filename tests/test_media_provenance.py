@@ -903,6 +903,18 @@ class NativeWorkflowRunTests(unittest.IsolatedAsyncioTestCase):
         response, _ = await self._run({self.FIELD: "maybe"})
         self.assertEqual(response.status_code, 400)
 
+    async def test_legacy_metadata_control_and_new_name_precedence(self) -> None:
+        legacy_field = "extensions[com.vividfish.workflow][metadata]"
+        invalid, _ = await self._run({legacy_field: "maybe"})
+        self.assertEqual(invalid.status_code, 400)
+        stripped, _ = await self._run({legacy_field: "none"})
+        self.assertEqual(stripped.status_code, 200, stripped.body)
+        self.assertNotIn("azizam_provenance", self._blob(stripped.body))
+        full, _ = await self._run({legacy_field: "none", self.FIELD: "full"})
+        self.assertEqual(full.status_code, 200, full.body)
+        self.assertIn("azizam_provenance", self._blob(full.body))
+        self.assertNotIn("vividfish_provenance", self._blob(full.body))
+
 
 class MetadataOnlyExtensionTests(unittest.TestCase):
     def test_metadata_alone_is_not_a_workflow_extension(self) -> None:
