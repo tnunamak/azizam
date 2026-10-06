@@ -86,19 +86,19 @@ Notes:
   A manifest that takes assets of different media (for example `video-scail-2-replace`: a reference
   image and a source video) must declare `media_type` on each one.
 - Output modalities come from the manifest's `outputs.*.media_type` when present.
-- Alias targets resolve against the whole catalog before profile filtering, so a caller's profile never
-  changes what an alias reports.
+- Alias targets resolve against the whole catalog before profile filtering, so visibility does not
+  change how static alias targets resolve. Dynamic aliases inherit only when this request already
+  observes a loaded identity for filtering.
 - Context windows keep their existing lookup (`_annotate_model_context_windows`); this contract only
   passes them through.
 
 ## Dynamic aliases (`current`, `current-fast`)
 
-These aliases send requests to whichever local LLM is loaded. Chat routing publishes its active
-backend and that backend's own loaded identity to a five-second snapshot. At list time the gateway
-reads this snapshot without health or loaded-state probes, and resolves it against `roles:`, `models:`
-and service records' activation models. A cold or expired snapshot uses the conservative fallback
-until routing observes the loaded model again. Runtime configuration reloads also invalidate the
-snapshot.
+These aliases send requests to whichever local LLM is loaded. When profile filtering already
+observes the loaded identity in this model-list request, metadata uses that same observation.
+Declared service models match through chat execution's activation resolver. Metadata adds no
+health or loaded-state probes and no cache. Profiles that do not need loaded-state filtering,
+and catalog consumers without that observation, use the conservative fallback.
 
 - The aliases inherit `type`, `architecture`, `tags` and `max_tokens` from the `model_metadata`
   declarations of those ids. Only declared ids count. When several are declared, the aliases claim
@@ -116,7 +116,9 @@ snapshot.
 - Clients may cache `/v1/models`. After a model swap, a client can see the previous model's values
   until it lists the models again.
 
-The same values appear on every endpoint in "Endpoints that agree".
+List and retrieve endpoints use the same request policy. The member catalog has no loaded-state
+filtering observation, so its dynamic aliases use the conservative fallback. Model-ID lists in
+response metadata and alias target maps include only IDs visible in `data` under the caller's profile.
 
 ## Operator declarations (`model_metadata`)
 
@@ -196,7 +198,7 @@ callers override, not a cap. The `vision` and `fast` aliases inherit from `defau
 |---|---|
 | `GET /v1/models`, `GET /openai/v1/models` | Annotated as above. |
 | `GET /v1/models/{id}` | Returns the same entry as the list. |
-| `GET /me/api/models/catalog` (member Models page) | Alias and model rows carry the same `type`, `architecture`, `max_tokens` and `tags` as `/v1/models` for the same id. The row's `capability`, `icon_key` and `io` come from those fields, see "Models page classification". |
+| `GET /me/api/models/catalog` (member Models page) | Alias and model rows carry the same metadata contract. Dynamic aliases use the conservative fallback because this request has no loaded identity. The row's `capability`, `icon_key` and `io` come from those fields, see "Models page classification". |
 | `GET /anthropic/v1/models[/{id}]`, or `/v1/models` with `anthropic-version` | Anthropic shape, unchanged; none of these fields are added. |
 | Ollama `GET /api/tags` | Ollama shape, unchanged. |
 | `GET /v1/models` with a LiteLLM virtual key (delegated) | **Gap:** returns LiteLLM's raw payload unchanged, without these fields. Delegated keys are scoped by LiteLLM itself, and LiteLLM's `/v1/models` does not emit `model_info`, so the gateway does not rewrite that payload. Clients that need the metadata should use a gateway key. |

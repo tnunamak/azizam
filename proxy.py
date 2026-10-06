@@ -1093,13 +1093,6 @@ TTS_PATHS = [
 # Model routing - detect backend from filesystem
 # =============================================================================
 
-# Routing publishes these observations; metadata readers never refresh them.
-# A short TTL bounds staleness after an out-of-band model/backend change.
-_LOADED_LLM_SNAPSHOT_TTL_S = 5.0
-_active_backend_snapshot: tuple[str | None, float, object] = (None, 0.0, None)
-_loaded_llm_snapshot: dict[str, tuple[str, str | None, float, object]] = {}
-
-
 async def get_active_backend() -> Optional[str]:
     """Check which LLM backend is currently running.
 
@@ -1107,9 +1100,7 @@ async def get_active_backend() -> Optional[str]:
     order and returns the id of the first one that answers healthy.  For the
     current deployment this resolves to 'tabby' or 'kobold' exactly as before.
     """
-    global _active_backend_snapshot
-    observed_config = config
-    backends = observed_config.get("backends") or {}
+    backends = config.get("backends") or {}
     # Sort by priority (lower = higher priority) so the preferred backend wins.
     candidates = sorted(
         LLM_BACKEND_HOSTS.keys(),
@@ -1117,9 +1108,7 @@ async def get_active_backend() -> Optional[str]:
     )
     for bid in candidates:
         if await check_service_health(bid):
-            _active_backend_snapshot = (bid, time.monotonic(), observed_config)
             return bid
-    _active_backend_snapshot = (None, time.monotonic(), observed_config)
     return None
 
 
@@ -3517,18 +3506,6 @@ def _is_use_loaded_model_alias(value: Any) -> bool:
 
 
 async def current_llm_model_for_backend(backend: str) -> str:
-    """Read routing state and publish the same identity for catalog readers."""
-    observed_config = config
-    model = await _probe_current_llm_model_for_backend(backend)
-    loaded_path = (
-        currently_loaded_kobold_model()
-        if model and engine_quarantine.loaded_model_is_path(backend) else None
-    )
-    _loaded_llm_snapshot[backend] = (model, loaded_path, time.monotonic(), observed_config)
-    return model
-
-
-async def _probe_current_llm_model_for_backend(backend: str) -> str:
     """Return the model actually loaded on a backend, never a configured fallback."""
     backend = str(backend or "").strip()
     if engine_quarantine.loaded_model_is_path(backend):
@@ -13195,53 +13172,72 @@ def _role_catalog_ids_for_loaded_path(
     return ids
 
 
-async def _current_loaded_llm_model_ids(
-    active_backend: str | None = None, *, cached_only: bool = False,
-) -> set[str]:
-    """Resolve the routing backend's own loaded state to declared public ids.
-
-    Catalog callers only consume routing observations. Cold, expired or
-    config-reloaded snapshots return no ids, without any health/state probes.
-    """
-    if cached_only:
-        active, observed_at, observed_config = _active_backend_snapshot
-        if (observed_config is not config
-                or time.monotonic() - observed_at >= _LOADED_LLM_SNAPSHOT_TTL_S):
-            return set()
-        snapshot = _loaded_llm_snapshot.get(active or "")
-        if not snapshot:
-            return set()
-        loaded, loaded_path, observed_at, observed_config = snapshot
-        if (observed_config is not config
-                or time.monotonic() - observed_at >= _LOADED_LLM_SNAPSHOT_TTL_S):
-            return set()
-    else:
-        active = active_backend or await get_active_backend()
-        if not active:
-            return set()
-        loaded = await current_llm_model_for_backend(active)
-        snapshot = _loaded_llm_snapshot.get(active)
-        loaded_path = snapshot[1] if snapshot and snapshot[0] == loaded else None
-    if not active or not loaded:
+def _declarations_for_loaded_model(backend: str, loaded_model: str) -> set[str]:
+    """Match declarations using chat execution's activation resolver, without I/O."""
+    service_cfg = (config.get("backends") or {}).get(backend, {})
+    if not isinstance(service_cfg, Mapping):
         return set()
-    ids = {*USE_LOADED_MODEL_ALIASES, loaded}
+    names = {
+        str(record.get("model_group") or record.get("id") or record.get("upstream_model") or "")
+        for record in _service_model_records(service_cfg)
+    }
+    if service_cfg.get("model_id"):
+        names.add(str(service_cfg["model_id"]))
+    ids: set[str] = set()
+    for name in names - USE_LOADED_MODEL_ALIASES - {""}:
+        target = _configured_litellm_local_model_target(name, service_id=backend)
+        if target and target.model and normalize_model_id(target.model) == normalize_model_id(loaded_model):
+            ids.add(name)
+    return ids
+
+
+async def _current_loaded_llm_model_ids(
+    active_backend: str | None = None, *, metadata_ids: set[str] | None = None,
+) -> set[str]:
+    """Return main's availability ids; optionally pass declaration ids to metadata.
+
+    Metadata uses the identity observed here, without another loaded-state read.
+    Its declaration matching must not expand the availability ids.
+    """
+    try:
+        active = active_backend or await get_active_backend()
+    except Exception:
+        active = None
+
+    ids: set[str] = set()
+    if active and engine_quarantine.loaded_model_is_http_id(active):
+        loaded = await get_tabby_loaded_model_id()
+        if loaded:
+            ids.update(USE_LOADED_MODEL_ALIASES)
+            ids.add(loaded)
+            ids.update(
+                _role_catalog_ids_for_loaded_path(
+                    backend=active,
+                    loaded_path=None,
+                    loaded_model_id=loaded,
+                )
+            )
+        if loaded and metadata_ids is not None:
+            metadata_ids.update(_declarations_for_loaded_model(active, loaded))
+        return {item for item in ids if item}
+
+    loaded_path = currently_loaded_kobold_model()
     if loaded_path:
-        ids.update({loaded_path, os.path.basename(loaded_path)})
-    ids.update(_role_catalog_ids_for_loaded_path(
-        backend=active, loaded_path=loaded_path, loaded_model_id=loaded,
-    ))
-    # Activation identity belongs to registry data, independent of role aliases.
-    backend_cfg = (config.get("backends") or {}).get(active, {})
-    identities = {normalize_model_id(value) for value in ids if value not in USE_LOADED_MODEL_ALIASES}
-    identities.update(normalize_model_id(os.path.basename(value)) for value in list(identities))
-    for record in _service_model_records(backend_cfg):
-        activation = str(
-            record.get("activation_model") or record.get("model_path") or record.get("path")
-            or record.get("model") or record.get("upstream_model") or ""
+        ids.update(USE_LOADED_MODEL_ALIASES)
+        ids.add(loaded_path)
+        basename = os.path.basename(loaded_path)
+        if basename:
+            ids.add(basename)
+        ids.update(
+            _role_catalog_ids_for_loaded_path(
+                backend="kobold",
+                loaded_path=loaded_path,
+                loaded_model_id=basename,
+            )
         )
-        if activation and (normalize_model_id(activation) in identities
-                           or normalize_model_id(os.path.basename(activation)) in identities):
-            ids.update(str(record[key]) for key in ("id", "model_group", "public_name") if record.get(key))
+    if (loaded_path and active and engine_quarantine.loaded_model_is_path(active)
+            and metadata_ids is not None):
+        metadata_ids.update(_declarations_for_loaded_model(active, loaded_path))
     return {item for item in ids if item}
 
 
@@ -13264,7 +13260,7 @@ async def _filter_model_list_for_profile(
     data: list[Any],
     auth_context: AuthContext,
     *,
-    loaded_ids: set[str] | None = None,
+    metadata_ids: set[str] | None = None,
 ) -> tuple[list[Any], dict[str, Any]]:
     metadata: dict[str, Any] = {}
     filtered = [item for item in data if isinstance(item, dict)]
@@ -13295,11 +13291,9 @@ async def _filter_model_list_for_profile(
             for item in filtered
             if normalize_model_id(str(item.get("id") or "")) in allowed_ids
         ]
-        metadata["vivid_fish_profile_model_allowlist"] = sorted(allowlist)
 
     if _profile_target_visibility(auth_context) == "available":
-        if loaded_ids is None:
-            loaded_ids = await _current_loaded_llm_model_ids()
+        loaded_ids = await _current_loaded_llm_model_ids(metadata_ids=metadata_ids)
         loaded_norm = {normalize_model_id(item) for item in loaded_ids}
         comfy_available = _comfy_target_available()
         filtered = [
@@ -13326,9 +13320,16 @@ async def _filter_model_list_for_profile(
         metadata["vivid_fish_target_activation"] = _profile_target_activation(auth_context)
         metadata["vivid_fish_model_access"] = "current_loaded"
         metadata["vivid_fish_current_model_ids"] = sorted(
-            item for item in loaded_ids if item and not item.startswith("/")
+            str(item["id"]) for item in filtered
+            if item.get("id") and not str(item["id"]).startswith("/")
+            and normalize_model_id(str(item["id"])) in loaded_norm
         )
 
+    if allowlist is not None:
+        visible_norm = {normalize_model_id(str(item.get("id") or "")) for item in filtered}
+        metadata["vivid_fish_profile_model_allowlist"] = sorted(
+            item for item in allowlist if normalize_model_id(item) in visible_norm
+        )
     return filtered, metadata
 
 
@@ -14950,7 +14951,7 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
         *_current_loaded_model_entries(),
     ]
     return build_models_catalog(
-        model_metadata=await _catalog_model_metadata(model_entries, service_records, capability_sets),
+        model_metadata=_catalog_model_metadata(model_entries, service_records, capability_sets),
         alias_views=_gateway_aliases_provider(),
         capability_sets=capability_sets,
         model_entries=model_entries,
@@ -14964,7 +14965,7 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
     )
 
 
-async def _catalog_model_metadata(
+def _catalog_model_metadata(
     model_entries: list[dict[str, Any]],
     service_records: Mapping[str, Any],
     capability_sets: list[list[Any]],
@@ -14986,11 +14987,7 @@ async def _catalog_model_metadata(
         if capability.model and str(capability.intent).startswith("decision.")
     })
     entries = [*model_entries, *({"id": model_id} for model_id in origins)]
-    sources, _ = _with_loaded_model_inheritance(
-        _model_metadata_sources(origins, service_records),
-        await _loaded_llm_model_ids_or_none(),
-    )
-    return model_metadata.metadata_index(entries, sources)
+    return model_metadata.metadata_index(entries, _model_metadata_sources(origins, service_records))
 
 
 app.include_router(create_models_catalog_router(_user_models_catalog_payload))
@@ -22950,8 +22947,6 @@ async def _context_window_for_model_id(
     found = _configured_context_window_for_backend(backend)
     if found is not None:
         return found
-    if model_id in USE_LOADED_MODEL_ALIASES and backend != _active_backend_snapshot[0]:
-        return None  # An alias must not observe another backend's live window.
     if engine_quarantine.context_window_from_live_probe(backend):
         found = await _kobold_context_window()
         if found is not None and observed_windows is not None:
@@ -23103,21 +23098,14 @@ def _policy_turns_reasoning_off(model_id: str) -> bool:
     return body.get("reasoning_effort") == "none"
 
 
-async def _loaded_llm_model_ids_or_none() -> set[str]:
-    try:
-        return await _current_loaded_llm_model_ids(cached_only=True)
-    except Exception:  # noqa: BLE001
-        return set()
-
-
 def _with_loaded_model_inheritance(
     sources: model_metadata.MetadataSources,
     loaded_ids: Iterable[str],
 ) -> tuple[model_metadata.MetadataSources, dict[str, int]]:
     """Let `current` / `current-fast` inherit the loaded model's declared metadata.
 
-    `loaded_ids` are `_current_loaded_llm_model_ids()`, looked up once per
-    request by the caller. Returns the sources with `inherited` set
+    `loaded_ids` are declaration names resolved from the identity already
+    observed during profile filtering in this request. Returns the sources with `inherited` set
     and {alias id: context window} from the loaded model's configured records
     (the smallest, as the records can use different context profiles). With
     nothing loaded, or no declaration for the loaded model, both are empty
@@ -23665,10 +23653,12 @@ async def list_models(request: Request):
             item["created"] = 0
 
     # Alias targets resolve against the whole catalog, so a caller's profile
-    # cannot change what an alias reports.
+    # does not change how static alias targets resolve.
     metadata_catalog = list(data)
-    loaded_ids = await _loaded_llm_model_ids_or_none()
-    data, policy_metadata = await _filter_model_list_for_profile(data, auth_context, loaded_ids=loaded_ids)
+    metadata_ids: set[str] = set()
+    data, policy_metadata = await _filter_model_list_for_profile(
+        data, auth_context, metadata_ids=metadata_ids,
+    )
 
     # Annotate each model entry with a description sourced from roles: or
     # models: in proxy_config.yml. Non-standard field — ignored by spec-
@@ -23711,12 +23701,22 @@ async def list_models(request: Request):
         **{model_id: model_metadata.ORIGIN_LLM_CATALOG for model_id in llm_catalog_ids},
         **{model_id: model_metadata.ORIGIN_DECISION for model_id in decision_ids},
     }
-    sources, inherited_windows = _with_loaded_model_inheritance(_model_metadata_sources(origins), loaded_ids)
+    sources, inherited_windows = _with_loaded_model_inheritance(_model_metadata_sources(origins), metadata_ids)
     # A live-observed context window is more exact than a declared one.
     for item in data:
         if isinstance(item, dict) and item.get("id") in inherited_windows:
             item["context_window"] = observed_alias_windows.get(item["id"], inherited_windows[item["id"]])
     model_metadata.annotate_entries(data, sources, catalog=metadata_catalog)
+
+    # Resolve metadata against the full catalog, then hide target IDs that the
+    # caller cannot see. This does not change which alias entries are listed.
+    visible_ids = {normalize_model_id(str(item.get("id") or "")) for item in data if isinstance(item, dict)}
+    for item in data:
+        if isinstance(item, dict) and isinstance(item.get("vivid_fish_resolves_to"), Mapping):
+            item["vivid_fish_resolves_to"] = {
+                operation: target for operation, target in item["vivid_fish_resolves_to"].items()
+                if target and normalize_model_id(str(target)) in visible_ids
+            }
 
     upstream_payload.update(policy_metadata)
     upstream_payload["data"] = data
