@@ -23,6 +23,30 @@ from gateway.models_catalog import (  # noqa: E402
 
 
 class ModelsCatalogBuildTests(unittest.TestCase):
+    def test_catalog_titles_are_data_driven_and_override_repeated_capability_titles(self) -> None:
+        model_ids = (
+            ("chatterbox-turbo", "speech.synthesis"),
+            ("parakeet-tdt-0.6b-v3", "speech.transcription"),
+            ("nomic-embed-text-v1.5", "text.embeddings"),
+        )
+        catalog = build_models_catalog(
+            capabilities=[
+                Capability(intent=intent, model=model_id, backend="local")
+                for model_id, intent in model_ids
+            ],
+            model_entries=[{"id": model_id} for model_id, _ in model_ids],
+            service_records={"services": {"local": {"id": "local", "locality": "local"}}},
+        )
+
+        self.assertEqual(
+            {row["id"]: row["title"] for row in catalog["models"]},
+            {
+                "chatterbox-turbo": "Chatterbox Turbo",
+                "parakeet-tdt-0.6b-v3": "Parakeet v3",
+                "nomic-embed-text-v1.5": "Nomic Embed",
+            },
+        )
+
     def test_registered_models_bind_generic_capabilities_without_legacy_engines(self) -> None:
         services = {"services": {
             "capture-engine": {"enabled": True, "capabilities": ["chat", "completions"],

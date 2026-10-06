@@ -228,13 +228,6 @@ function titleFor(row: CatalogRow): string | undefined {
 
   const title = row.title ?? row.display_name;
   if (title && !repeatsCapability(title)) return title;
-  if (
-    row.locality === "local" &&
-    row.engine_label &&
-    !repeatsCapability(row.engine_label)
-  ) {
-    return row.engine_label;
-  }
   return undefined;
 }
 
@@ -243,8 +236,6 @@ function hasNoProviderCharge(row: CatalogRow): boolean {
 }
 
 function costLabel(row: CatalogRow): string | undefined {
-  if (row.locality === "local") return "Free (your hardware)";
-  if (hasNoProviderCharge(row)) return "No provider charge";
   if (row.cost.kind === "paid") {
     return row.cost.price === null
       ? undefined
@@ -514,15 +505,15 @@ function AliasOptionRow({
       onClick={() => onDetail(row)}
     >
       <div className="min-w-0 flex-1 basis-40">
-        {titleFor(row) && (
-          <h3 className="truncate text-sm font-medium">{titleFor(row)}</h3>
-        )}
-        <p className="text-muted-foreground truncate text-xs">
+        <h3 className="min-h-5 truncate text-sm font-medium">
+          {titleFor(row) ?? ""}
+        </h3>
+        <p className="text-muted-foreground line-clamp-1 min-h-4 text-xs">
           {descriptionFor(row)}
         </p>
-        {costLabel(row) && (
-          <p className="text-muted-foreground text-xs">{costLabel(row)}</p>
-        )}
+        <p className="text-muted-foreground min-h-4 text-xs">
+          {costLabel(row) ?? ""}
+        </p>
         <ModelFacts row={row} className="mt-1" />
       </div>
       <CopyModelName row={row} />

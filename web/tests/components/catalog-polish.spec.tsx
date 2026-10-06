@@ -119,7 +119,11 @@ describe("catalog polish", () => {
       screen.getByRole("button", { name: "Copy model name fast" }),
     ).toHaveTextContent("fast");
     expect(screen.getByText("Paid · $0.04 per image")).toBeVisible();
-    expect(screen.getByText("Free (your hardware)")).toBeVisible();
+    const fastCard = screen
+      .getByRole("button", { name: "Copy model name fast" })
+      .closest("article");
+    expect(within(fastCard!).queryByText("Free (your hardware)")).toBeNull();
+    expect(within(fastCard!).queryByText("No provider charge")).toBeNull();
     expect(screen.queryByText("Not measured yet")).toBeNull();
     expect(screen.queryByTitle("Typical time")).toBeNull();
     expect(screen.queryByText(/Two requests are ahead of yours/)).toBeNull();
@@ -134,17 +138,17 @@ describe("catalog polish", () => {
     expect(within(detail).queryByText("Typical time")).toBeNull();
   });
 
-  it("uses engine titles when a model title only repeats its capability", async () => {
+  it("uses model titles and does not use engine labels as model names", async () => {
     renderCatalog([
       {
         ...row("speech-model", "speech.synthesis"),
-        title: "Speech",
-        engine_label: "Chatterbox Turbo",
+        title: "Chatterbox Turbo",
+        engine_label: "Chatterbox (speech)",
       } as ReturnType<typeof row> & { engine_label: string },
       {
         ...row("transcription-model", "speech.transcription"),
-        title: "Transcription",
-        engine_label: "Parakeet v3",
+        title: "Parakeet v3",
+        engine_label: "Parakeet (GPU)",
       } as ReturnType<typeof row> & { engine_label: string },
       {
         ...row("embedding-model", "text.embeddings"),
@@ -232,41 +236,13 @@ describe("catalog polish", () => {
     expect(screen.queryByText("Unavailable")).toBeNull();
   });
 
-  it("uses friendly catalog titles when the display name repeats a capability", async () => {
-    const speech = {
-      ...row("speech-model", "speech.synthesis"),
-      title: "Speech · Speech",
-      display_name: "Speech · Speech",
-      engine_label: "Chatterbox Turbo",
-    };
-    const transcription = {
-      ...row("transcription-model", "speech.transcription"),
-      title: "Transcription · Transcription",
-      display_name: "Transcription · Transcription",
-      engine_label: "Parakeet v3",
-    };
-    const embedding = {
-      ...row("embedding-model", "text.embeddings"),
-      title: "Embeddings · Embed",
-      display_name: "Embeddings · Embed",
-      engine_label: "Nomic Embed",
-    };
-    renderCatalog([speech, transcription, embedding]);
+  it("omits a cost line for local catalog rows", async () => {
+    renderCatalog([row("local-image", "image.generate")]);
 
-    expect(
-      await screen.findByRole("heading", { name: "Chatterbox Turbo" }),
-    ).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Parakeet v3" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Nomic Embed" })).toBeVisible();
-    expect(
-      screen.queryByRole("heading", { name: "Speech · Speech" }),
-    ).toBeNull();
-    expect(
-      screen.queryByRole("heading", { name: "Transcription · Transcription" }),
-    ).toBeNull();
-    expect(
-      screen.queryByRole("heading", { name: "Embeddings · Embed" }),
-    ).toBeNull();
+    const card = await screen.findByRole("heading", { name: "Images", level: 2 });
+    const rowArticle = card.closest("article");
+    expect(within(rowArticle!).queryByText("Free (your hardware)")).toBeNull();
+    expect(within(rowArticle!).queryByText("No provider charge")).toBeNull();
   });
 
   it("provides a pressed state without the primary action style", () => {

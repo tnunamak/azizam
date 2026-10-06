@@ -15,6 +15,7 @@ import copy
 import json
 import statistics
 import inspect
+from pathlib import Path
 import time
 from dataclasses import replace
 from collections import defaultdict
@@ -37,6 +38,9 @@ from gateway.provider_model_catalog import (
 from gateway.service_registry import runtime_backend_from_service
 
 CatalogProvider = Callable[[Request], Mapping[str, Any] | Response | Awaitable[Mapping[str, Any] | Response]]
+MODEL_DISPLAY_NAMES: Mapping[str, str] = json.loads(
+    Path(__file__).with_name("model_display_names.json").read_text(encoding="utf-8")
+)
 
 
 def create_models_catalog_router(
@@ -566,6 +570,16 @@ def _base_row(
     locality = _locality(service, model_mapping or model_entry)
     presentation_metadata = {**(model_entry or {}), **model_mapping, **manifest, "locality": locality,
                              LISTED_METADATA_KEY: listed}
+    has_declared_title = any(
+        isinstance(presentation_metadata.get(field), str)
+        and presentation_metadata[field].strip()
+        for field in ("title", "display_name", "name")
+    )
+    catalog_title = MODEL_DISPLAY_NAMES.get(row_id) or (
+        MODEL_DISPLAY_NAMES.get(str(target)) if target else None
+    )
+    if not has_declared_title and catalog_title:
+        presentation_metadata["title"] = catalog_title
     raw_description = _description(presentation_metadata)
     if is_alias:
         presentation_metadata["alias"] = row_id
