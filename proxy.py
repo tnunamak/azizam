@@ -13229,6 +13229,8 @@ async def _current_loaded_model_policy_decision(
 async def _filter_model_list_for_profile(
     data: list[Any],
     auth_context: AuthContext,
+    *,
+    loaded_ids: set[str] | None = None,
 ) -> tuple[list[Any], dict[str, Any]]:
     metadata: dict[str, Any] = {}
     filtered = [item for item in data if isinstance(item, dict)]
@@ -13262,7 +13264,8 @@ async def _filter_model_list_for_profile(
         metadata["vivid_fish_profile_model_allowlist"] = sorted(allowlist)
 
     if _profile_target_visibility(auth_context) == "available":
-        loaded_ids = await _current_loaded_llm_model_ids()
+        if loaded_ids is None:
+            loaded_ids = await _current_loaded_llm_model_ids()
         loaded_norm = {normalize_model_id(item) for item in loaded_ids}
         comfy_available = _comfy_target_available()
         filtered = [
@@ -14913,7 +14916,7 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
         *_current_loaded_model_entries(),
     ]
     return build_models_catalog(
-        model_metadata=_catalog_model_metadata(model_entries, service_records, capability_sets),
+        model_metadata=await _catalog_model_metadata(model_entries, service_records, capability_sets),
         alias_views=_gateway_aliases_provider(),
         capability_sets=capability_sets,
         model_entries=model_entries,
@@ -14927,7 +14930,7 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
     )
 
 
-def _catalog_model_metadata(
+async def _catalog_model_metadata(
     model_entries: list[dict[str, Any]],
     service_records: Mapping[str, Any],
     capability_sets: list[list[Any]],
@@ -14949,7 +14952,11 @@ def _catalog_model_metadata(
         if capability.model and str(capability.intent).startswith("decision.")
     })
     entries = [*model_entries, *({"id": model_id} for model_id in origins)]
-    return model_metadata.metadata_index(entries, _model_metadata_sources(origins, service_records))
+    sources, _ = _with_loaded_model_inheritance(
+        _model_metadata_sources(origins, service_records),
+        await _loaded_llm_model_ids_or_none(),
+    )
+    return model_metadata.metadata_index(entries, sources)
 
 
 app.include_router(create_models_catalog_router(_user_models_catalog_payload))
@@ -23033,6 +23040,72 @@ def _model_metadata_sources(
     )
 
 
+def _policy_turns_reasoning_off(model_id: str) -> bool:
+    """True when the model's own request policy defaults `reasoning_effort` to `none`.
+
+    Reads the declared base transforms and alias overlay (data such as a
+    `default-params` overlay) by running them on an empty request.
+    """
+    try:
+        target = _resolve_request_target(model_id)
+        if target is None:
+            return False
+        body = _run_request_pipeline(
+            [*target.base_transform_specs, *target.alias_overlay_specs],
+            {},
+            _TransformContext(),
+            _TRANSFORM_REGISTRY,
+        )
+    except Exception:  # noqa: BLE001
+        return False
+    return body.get("reasoning_effort") == "none"
+
+
+async def _loaded_llm_model_ids_or_none() -> set[str]:
+    try:
+        return await _current_loaded_llm_model_ids()
+    except Exception:  # noqa: BLE001
+        return set()
+
+
+def _with_loaded_model_inheritance(
+    sources: model_metadata.MetadataSources,
+    loaded_ids: Iterable[str],
+) -> tuple[model_metadata.MetadataSources, dict[str, int]]:
+    """Let `current` / `current-fast` inherit the loaded model's declared metadata.
+
+    `loaded_ids` are `_current_loaded_llm_model_ids()`, looked up once per
+    request by the caller. Returns the sources with `inherited` set
+    and {alias id: context window} from the loaded model's configured records
+    (the smallest, as the records can use different context profiles). With
+    nothing loaded, or no declaration for the loaded model, both are empty
+    and the aliases keep their own conservative declaration.
+    """
+    declared_ids = sorted(
+        model_id for model_id in loaded_ids
+        if model_id not in USE_LOADED_MODEL_ALIASES and sources.declared(model_id) is not None
+    )
+    # A record whose own policy turns thinking off omits `reasoning` for that
+    # policy, not because the loaded weights cannot think.
+    thinking_ids = [model_id for model_id in declared_ids if not _policy_turns_reasoning_off(model_id)]
+    loaded = model_metadata.loaded_model_metadata(thinking_ids or declared_ids, sources)
+    if loaded is None:
+        return sources, {}
+    inherited = {
+        alias: model_metadata.without_reasoning(loaded) if _policy_turns_reasoning_off(alias) else loaded
+        for alias in sorted(USE_LOADED_MODEL_ALIASES)
+    }
+    windows = [
+        window for window in (
+            _context_window_from_mapping(_configured_model_record_for_id(model_id)[1])
+            for model_id in declared_ids
+        )
+        if window is not None
+    ]
+    context_windows = {alias: min(windows) for alias in inherited} if windows else {}
+    return replace(sources, inherited=inherited), context_windows
+
+
 def _build_role_catalog_entries() -> list[dict]:
     """Return configured LLM role handles for admin inventory and policy checks.
 
@@ -23552,7 +23625,8 @@ async def list_models(request: Request):
     # Alias targets resolve against the whole catalog, so a caller's profile
     # cannot change what an alias reports.
     metadata_catalog = list(data)
-    data, policy_metadata = await _filter_model_list_for_profile(data, auth_context)
+    loaded_ids = await _loaded_llm_model_ids_or_none()
+    data, policy_metadata = await _filter_model_list_for_profile(data, auth_context, loaded_ids=loaded_ids)
 
     # Annotate each model entry with a description sourced from roles: or
     # models: in proxy_config.yml. Non-standard field — ignored by spec-
@@ -23588,7 +23662,12 @@ async def list_models(request: Request):
         **{model_id: model_metadata.ORIGIN_LLM_CATALOG for model_id in llm_catalog_ids},
         **{model_id: model_metadata.ORIGIN_DECISION for model_id in decision_ids},
     }
-    model_metadata.annotate_entries(data, _model_metadata_sources(origins), catalog=metadata_catalog)
+    sources, inherited_windows = _with_loaded_model_inheritance(_model_metadata_sources(origins), loaded_ids)
+    # A live-observed context window is more exact than a declared one.
+    for item in data:
+        if isinstance(item, dict) and item.get("id") in inherited_windows:
+            item.setdefault("context_window", inherited_windows[item["id"]])
+    model_metadata.annotate_entries(data, sources, catalog=metadata_catalog)
 
     upstream_payload.update(policy_metadata)
     upstream_payload["data"] = data

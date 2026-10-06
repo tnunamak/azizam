@@ -7,7 +7,7 @@ import tempfile
 import unittest
 import re
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -918,6 +918,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 401, response.text)
         self.assertEqual(response.json()["error"]["code"], "not_authenticated")
 
+    @patch.object(proxy, "_current_loaded_llm_model_ids", AsyncMock(return_value=set()))
     def test_user_models_catalog_uses_app_profile_and_own_receipts(self) -> None:
         from gateway import receipt_store
         from gateway.capabilities import Capability

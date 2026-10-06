@@ -192,6 +192,50 @@ def merge(parts: Iterable[ModelMetadata | None]) -> ModelMetadata | None:
     )
 
 
+def common(parts: Iterable[ModelMetadata | None]) -> ModelMetadata | None:
+    """What every part claims: their shared type, and only the modalities and
+    tags all of them have. max_tokens survives only when every part agrees.
+    """
+    known = [p for p in parts if p is not None and p.type]
+    if not known or len({p.type for p in known}) != 1:
+        return None
+    caps = {p.max_tokens for p in known}
+
+    def shared(attr: str, vocabulary: tuple[str, ...]) -> tuple[str, ...]:
+        sets = [set(getattr(p, attr)) for p in known]
+        return _ordered(set.intersection(*sets), vocabulary)
+
+    return ModelMetadata(
+        type=known[0].type,
+        input_modalities=shared("input_modalities", INPUT_MODALITIES),
+        output_modalities=shared("output_modalities", OUTPUT_MODALITIES),
+        max_tokens=caps.pop() if len(caps) == 1 else None,
+        tags=shared("tags", TAGS),
+    )
+
+
+def loaded_model_metadata(loaded_ids: Iterable[str], sources: MetadataSources) -> ModelMetadata | None:
+    """Metadata of the loaded LLM, from the declarations of the ids it is served under.
+
+    Only ids with an operator declaration count; with several, the result is
+    what they all claim. None when no loaded id is declared, so callers keep
+    their conservative default rather than guess.
+    """
+    parts = []
+    for model_id in sorted({str(i) for i in loaded_ids if i}):
+        declared = sources.declared(model_id)
+        if declared is None:
+            continue
+        derived = from_service_capabilities(sources.service_capabilities(model_id)) or _LANGUAGE
+        parts.append(apply_declared(derived, declared))
+    return common(parts)
+
+
+def without_reasoning(metadata: ModelMetadata) -> ModelMetadata:
+    """For a route whose request policy turns thinking off."""
+    return replace(metadata, tags=tuple(t for t in metadata.tags if t != "reasoning"))
+
+
 def apply_declared(derived: ModelMetadata | None, declared: Mapping[str, Any] | None) -> ModelMetadata | None:
     """Overlay operator-declared values on derived ones. Declared wins per field.
 
@@ -232,11 +276,17 @@ class MetadataSources:
     # list does not carry as entries (e.g. video.edit workflows).
     workflow_for_model: Callable[[str], Mapping[str, Any] | None] = lambda _model_id: None
     origins: Mapping[str, str] = field(default_factory=dict)
+    # What a dynamic alias (`current`, `current-fast`) inherits from the loaded
+    # model, keyed by alias id. It wins over the alias's own declaration, which
+    # stays the fallback for when nothing declared is loaded.
+    inherited: Mapping[str, ModelMetadata] = field(default_factory=dict)
 
 
 def base_metadata(entry: Mapping[str, Any], sources: MetadataSources) -> ModelMetadata | None:
     """Metadata for an entry from its own signals plus its declaration, ignoring alias targets."""
     model_id = str(entry.get("id") or "")
+    if model_id in sources.inherited:
+        return sources.inherited[model_id]
     intent = entry.get("vivid_fish_intent")
     derived = None
     if intent:

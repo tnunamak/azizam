@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 import sys
@@ -49,6 +50,23 @@ async def _no_context_probe(*_args, **_kwargs):
     return None
 
 
+QWEN_PATH = "/media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
+
+
+def _loaded(path: str | None):
+    """A fake `_current_loaded_llm_model_ids` for the kobold file at `path` (None: nothing loaded)."""
+    ids: set[str] = set()
+    if path:
+        name = Path(path).name
+        ids = {*proxy.USE_LOADED_MODEL_ALIASES, path, name}
+        ids |= proxy._role_catalog_ids_for_loaded_path(backend="kobold", loaded_path=path, loaded_model_id=name)
+
+    async def fake(*_args, **_kwargs):
+        return set(ids)
+
+    return fake
+
+
 def _strip_contract_fields(payload: dict) -> dict:
     out = copy.deepcopy(payload)
     for entry in out.get("data", []):
@@ -68,6 +86,7 @@ class ModelListEndpointTests(unittest.TestCase):
             patch.object(proxy, "_litellm_models_payload", _fake_litellm_payload),
             patch.object(proxy, "_decision_models_for", _fake_decision_models),
             patch.object(proxy, "_kobold_context_window", _no_context_probe),
+            patch.object(proxy, "_current_loaded_llm_model_ids", _loaded(None)),
         ]
         for patcher in patches:
             patcher.start()
@@ -148,6 +167,73 @@ class ModelListEndpointTests(unittest.TestCase):
                 self.assertNotIn("tags", entry)
                 self.assertNotIn("max_tokens", entry)
 
+    def _with_loaded(self, path: str | None) -> None:
+        patcher = patch.object(proxy, "_current_loaded_llm_model_ids", _loaded(path))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_dynamic_current_aliases_inherit_the_loaded_model(self) -> None:
+        self._with_loaded(QWEN_PATH)
+        listed = self._list()
+        by_id = {entry["id"]: entry for entry in listed["data"]}
+        for model_id in DYNAMIC:
+            with self.subTest(model=model_id):
+                entry = by_id[model_id]
+                self.assertEqual(entry["type"], "language")
+                self.assertEqual(entry["architecture"]["input_modalities"], ["text", "image"])
+                self.assertIn("tool-use", entry["tags"])
+                self.assertIn("vision", entry["tags"])
+                self.assertEqual("reasoning" in entry["tags"], model_id == "current")
+                self.assertNotIn("max_tokens", entry)
+                # Every endpoint serving the same metadata agrees.
+                self.assertEqual(self.client.get(f"/v1/models/{model_id}").json(), entry)
+        self.assertEqual(self._list("/openai/v1/models")["data"], listed["data"])
+
+    def test_dynamic_aliases_fall_back_when_the_loaded_model_is_undeclared(self) -> None:
+        cydonia = next(m for m in proxy.config["models"] if m["id"] == "cydonia-24b")
+        self._with_loaded(cydonia["path"])
+        by_id = {entry["id"]: entry for entry in self._list()["data"]}
+        for model_id in DYNAMIC:
+            with self.subTest(model=model_id):
+                self.assertEqual(by_id[model_id]["architecture"]["input_modalities"], ["text"])
+                self.assertNotIn("tags", by_id[model_id])
+
+    def test_fast_alias_drops_reasoning_because_of_its_policy_data(self) -> None:
+        # Remove the `reasoning_effort: none` overlay from the current-fast
+        # record: the alias then inherits `reasoning` like `current`.
+        backends = copy.deepcopy(proxy.config["backends"])
+        for service in backends.values():
+            for record in service.get("models") or []:
+                if isinstance(record, dict) and record.get("id") == "current-fast":
+                    record.pop("policy_overlay", None)
+        self._with_loaded(QWEN_PATH)
+        with patch.dict(proxy.config, {"backends": backends}):
+            by_id = {entry["id"]: entry for entry in self._list()["data"]}
+        self.assertIn("reasoning", by_id["current-fast"]["tags"])
+
+    def test_dynamic_aliases_inherit_a_declared_context_window_when_none_is_observed(self) -> None:
+        async def no_litellm(*_args, **_kwargs):
+            return None  # LiteLLM down: the gateway lists its own current entries.
+
+        self._with_loaded(QWEN_PATH)
+        with patch.object(proxy, "_litellm_models_payload", no_litellm):
+            by_id = {entry["id"]: entry for entry in self._list()["data"]}
+        # The loaded file serves several records; the smallest declared window is claimed.
+        self.assertEqual(by_id["current"]["context_window"], 145408)
+        self.assertEqual(by_id["current-fast"]["context_window"], 145408)
+
+    def test_one_loaded_model_lookup_per_list(self) -> None:
+        calls = {"n": 0}
+        inner = _loaded(QWEN_PATH)
+
+        async def counting(*args, **kwargs):
+            calls["n"] += 1
+            return await inner(*args, **kwargs)
+
+        with patch.object(proxy, "_current_loaded_llm_model_ids", counting):
+            self._list()
+        self.assertEqual(calls["n"], 1)
+
     def test_openai_sdk_parses_the_payload(self) -> None:
         try:
             from openai.types import Model
@@ -167,12 +253,19 @@ class ModelListEndpointTests(unittest.TestCase):
             *proxy._build_workflow_model_entries(),
             *proxy._current_loaded_model_entries(),
         ]
-        index = proxy._catalog_model_metadata(model_entries, proxy.ADMIN_STORE.get_service_registry(), [])
+        index = asyncio.run(proxy._catalog_model_metadata(model_entries, proxy.ADMIN_STORE.get_service_registry(), []))
         shared = set(index) & set(listed)
         self.assertGreater(len(shared), 20)
         for model_id in shared:
             with self.subTest(model=model_id):
                 self.assertEqual(index[model_id], {k: listed[model_id][k] for k in mm.OUTPUT_FIELDS if k in listed[model_id]})
+
+    def test_member_catalog_reports_inherited_values(self) -> None:
+        self._with_loaded(QWEN_PATH)
+        self.test_member_catalog_reports_the_same_values()
+        index = asyncio.run(proxy._catalog_model_metadata(proxy._current_loaded_model_entries(), proxy.ADMIN_STORE.get_service_registry(), []))
+        self.assertIn("reasoning", index["current"]["tags"])
+        self.assertNotIn("reasoning", index["current-fast"]["tags"])
 
 
 def _remote_registry(model_count: int = 1) -> dict:

@@ -104,6 +104,7 @@ class OpenAISchemaConformanceTests(unittest.TestCase):
                     SPEC["components"]["schemas"][schema_name]
                 )
 
+    @patch.object(proxy, "_current_loaded_llm_model_ids", AsyncMock(return_value=set()))
     def test_models_route_response_conforms(self) -> None:
         with patch.object(
             proxy, "_litellm_runtime_config", return_value=SimpleNamespace(enabled=False)

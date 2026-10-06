@@ -7,7 +7,7 @@ Gateway `type`/`tags`/`context_window`/`max_tokens` names and OpenRouter's `arch
 invent only `audio` and `decision`.
 
 Code: `gateway/model_metadata.py` (pure derivation), wired in `proxy.py` (`list_models`,
-`_model_metadata_sources`, `_service_model_index`, `_declared_model_metadata_index`,
+`_model_metadata_sources`, `_service_model_index`, `_declared_model_metadata_index`, `_with_loaded_model_inheritance`,
 `_catalog_model_metadata`).
 
 ## Fields
@@ -39,8 +39,8 @@ Semantics:
 - An alias (`coder`, `image`, `tts`, ...) is typed by what it resolves to. An alias with several
   operations (`image` -> `images` + `image_edits`) takes the type they share and the union of their
   modalities and tags.
-- A dynamic alias (`current`, `current-fast`: whatever local LLM is loaded) claims only what every
-  model it can resolve to has. See "This machine's declarations".
+- A dynamic alias (`current`, `current-fast`: whatever local LLM is loaded) inherits the metadata of
+  the loaded model. See "Dynamic aliases".
 - No new field uses a `vivid_fish` name.
 
 Example:
@@ -75,7 +75,8 @@ operator declaration then overrides it field by field.
 | Decision models | `decision` | text -> text |
 | Registry service capability `chat`/`completions` | `language` | text -> text (+ image when the service lists `vision`) |
 | Registry service capability `embeddings` / `rerank` / `decisions` | `embedding` / `reranking` / `decision` | |
-| LLM catalog (LiteLLM-backed) entries, `current`, `current-fast` | `language` unless the serving registry service says otherwise | text -> text |
+| LLM catalog (LiteLLM-backed) entries | `language` unless the serving registry service says otherwise | text -> text |
+| `current`, `current-fast` | the loaded model's, see "Dynamic aliases" | the loaded model's |
 
 Notes:
 
@@ -89,6 +90,31 @@ Notes:
   changes what an alias reports.
 - Context windows keep their existing lookup (`_annotate_model_context_windows`); this contract only
   passes them through.
+
+## Dynamic aliases (`current`, `current-fast`)
+
+These aliases send requests to whichever local LLM is loaded. At list time the gateway asks once per
+request which public ids serve the loaded model (`_current_loaded_llm_model_ids` in `proxy.py`: the
+loaded file, plus every `roles:`, `models:` and service record that points at it). It makes no other
+network call for this.
+
+- The aliases inherit `type`, `architecture`, `tags` and `max_tokens` from the `model_metadata`
+  declarations of those ids. Only declared ids count. When several are declared, the aliases claim
+  only what all of them claim. A record whose own request policy turns thinking off (it defaults
+  `reasoning_effort` to `none`, for example with a `default-params` policy overlay) does not count
+  against the `reasoning` tag.
+- An alias whose own request policy turns thinking off drops the `reasoning` tag. On this machine that
+  is `current-fast`, through its `reasoning_effort: none` overlay. The gateway reads this from the
+  policy data, not from the alias name.
+- `context_window`: a value observed from the running engine wins. Without one, the aliases take the
+  smallest `context_window` configured on the loaded model's records.
+- When nothing is loaded, or no id of the loaded model is declared (for example `cydonia-24b`), the
+  aliases keep their own declaration: text in, text out, no tags.
+- The inherited values win over the aliases' own `model_metadata`, which is only the fallback.
+- Clients may cache `/v1/models`. After a model swap, a client can see the previous model's values
+  until it lists the models again.
+
+The same values appear on every endpoint in "Endpoints that agree".
 
 ## Operator declarations (`model_metadata`)
 
@@ -157,7 +183,7 @@ start it again. `roles:` and `models:` declarations are read from `proxy_config.
 |---|---|---|---|
 | `default`, `coder`, `coder-q5`, `coder-q8`, `coder-unchained`, `rp` | text, image | reasoning, tool-use, vision | Every record loads the mmproj (image input); llama-bee runs with `--jinja` (native tool calls) and `--reasoning on`, and the gateway maps `reasoning_effort` to a thinking budget. |
 | `default-fast` | text, image | tool-use, vision | Same weights; the record's `reasoning_effort: none` overlay turns thinking off, so clients should not send an effort. |
-| `current`, `current-fast` | text | none | They resolve to whichever local LLM is loaded, which can be a text-only model such as `cydonia-24b` (`models:`, no mmproj) whose tool-call and reasoning support is not declared. Clients also cache `/v1/models` across model swaps, so a value read from the loaded model at list time could be wrong at request time. The records declare `input_modalities: [text]` and `tags: []` so a sync also overwrites older declarations. |
+| `current`, `current-fast` | text | none | The fallback only (see "Dynamic aliases"): the values when nothing declared is loaded, for example the text-only `cydonia-24b` (`models:`, no mmproj, no declaration). With a Qwen record loaded they inherit text, image and tool-use, vision, plus reasoning for `current`. |
 
 No `max_tokens` is declared: the `max_tokens: 16384` on `default` is a `default-params` default that
 callers override, not a cap. The `vision` and `fast` aliases inherit from `default` and `default-fast`.

@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from decimal import Decimal
 from threading import Event
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -162,6 +163,7 @@ def _mock_openai_http(handler):
         yield
 
 
+@patch.object(proxy, "_current_loaded_llm_model_ids", AsyncMock(return_value=set()))
 def test_remote_decision_models_are_listed_without_paid_http(tmp_path):
     called = False
 

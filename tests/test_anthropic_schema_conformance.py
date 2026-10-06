@@ -14,7 +14,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 from fastapi.testclient import TestClient
@@ -429,6 +429,7 @@ class AnthropicConformanceTests(unittest.TestCase):
                 validate("ErrorResponse", r.json())
                 self.assertEqual(r.json()["error"]["type"], "not_found_error")
 
+    @patch.object(proxy, "_current_loaded_llm_model_ids", AsyncMock(return_value=set()))
     def test_openai_clients_still_get_openai_model_list(self) -> None:
         with litellm_catalog(["claude-local"]):
             r = self.client.get("/v1/models")

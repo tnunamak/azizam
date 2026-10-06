@@ -1298,6 +1298,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertEqual(error["param"], "model")
         self.assertEqual(error["code"], "model_not_found")
 
+    @patch.object(proxy, "_current_loaded_llm_model_ids", AsyncMock(return_value=set()))
     def test_litellm_service_owns_openai_model_list_for_llm_models(self) -> None:
         calls: list[Any] = []
 
@@ -1349,6 +1350,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertEqual(payload["x_ai_gateway_llm_execution"], "litellm")
         self.assertEqual(calls[0].url, "http://127.0.0.1:4011/v1/models")
 
+    @patch.object(proxy, "_current_loaded_llm_model_ids", AsyncMock(return_value=set()))
     def test_litellm_model_catalog_failures_are_protocol_shaped(self) -> None:
         async def fake_send(_execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
             raise httpx.ConnectError("litellm unavailable")
