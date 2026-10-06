@@ -243,6 +243,9 @@ def _is_technical_workflow_note(value: str) -> bool:
         r"\b(?:comfyui|localhost|port|khz|flac|gguf|safetensors|ckpt)\b",
         r"[/:]",
         r"\b\w+\.\w+\b",
+        r"[_`]",
+        r"\b[\w-]+\.(?:png|jpe?g|webp|mp4|mov|wav|mp3|safetensors|ckpt|gguf)\b",
+        r"\([^)]*\b(?:v?\d+(?:\.\d+)+|license|apache|mit|gpl|bsd|iclr)\b",
     )
     lowered = value.casefold()
     return any(re.search(pattern, lowered) for pattern in patterns)

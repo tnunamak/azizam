@@ -16,7 +16,11 @@ from gateway import media_jobs
 from gateway.capabilities import Capability, unavailable_capability
 from gateway.discovery import WorkflowRegistry
 from gateway.user_runtime import UserPortalError
-from gateway.workflows_catalog import build_workflows_catalog, create_workflows_catalog_router
+from gateway.workflows_catalog import (
+    _workflow_description,
+    build_workflows_catalog,
+    create_workflows_catalog_router,
+)
 
 
 IMAGE_MANIFEST = textwrap.dedent(
@@ -275,6 +279,20 @@ class WorkflowsCatalogTests(unittest.TestCase):
         image = next(row for row in payload["workflows"] if row["id"] == "image.generate.simple")
         self.assertEqual(image["description"], "Generate or edit images from your prompts.")
         self.assertEqual(image["technical_notes"], "Test image workflow.")
+
+    def test_catalog_description_rejects_internal_tokens_files_and_license_notes(self) -> None:
+        for description in (
+            "Edit int8_convrot images for this request.",
+            "Render with `TextEncode` and an image input.",
+            "Use the weights stored in model.safetensors.",
+            "Render this with Apache-2.0 and version v2.1.",
+            "Create a simple image from an instruction with a clear and colorful scene for the user.",
+        ):
+            with self.subTest(description=description):
+                self.assertEqual(
+                    _workflow_description(description, "image"),
+                    "Generate or edit images from your prompts.",
+                )
 
     def test_catalog_includes_ui_contract_fields(self) -> None:
         payload = build_workflows_catalog(
