@@ -436,7 +436,10 @@ class AnthropicConformanceTests(unittest.TestCase):
             missing = self.client.get("/v1/models/nope")
         self.assertEqual(r.status_code, 200, r.text)
         entry = next(m for m in r.json()["data"] if m["id"] == "claude-local")
-        self.assertNotIn("type", entry)
+        # OpenAI shape: `object: model` plus the model-metadata `type`
+        # (docs/api/MODEL_METADATA.md), never Anthropic's `type: model`.
+        self.assertEqual(entry["type"], "language")
+        self.assertNotIn("display_name", entry)
         self.assertEqual(entry["object"], "model")
         self.assertEqual(one.status_code, 200, one.text)
         self.assertEqual(one.json()["id"], "claude-local")

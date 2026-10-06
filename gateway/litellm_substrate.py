@@ -139,6 +139,26 @@ def litellm_provider_model_lookup(registry: Mapping[str, Any]) -> dict[str, dict
     return lookup
 
 
+def litellm_public_model_records(
+    registry: Mapping[str, Any],
+) -> dict[str, tuple[dict[str, Any], dict[str, Any]]]:
+    """Return ``{public model name: (service, model record)}`` for every LiteLLM-routable model.
+
+    The public name is the ``model_name`` LiteLLM serves, so a remote provider's
+    record is keyed by its provider-prefixed name, not its raw registry id.
+    """
+
+    services = registry.get("services") if isinstance(registry, Mapping) else {}
+    service_records = _normalize_services(services if isinstance(services, Mapping) else {})
+    out: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+    for service in sorted(service_records, key=lambda row: (row["priority"], row["id"])):
+        if not service.get("enabled", True) or not _is_openai_compatible(service):
+            continue
+        for deployment in _deployment_records(service):
+            out.setdefault(str(deployment["model_group"]), (service, deployment["record"]))
+    return out
+
+
 def litellm_provider_key_statuses(
     registry: Mapping[str, Any],
     *,
@@ -317,6 +337,7 @@ def _deployment_records(service: Mapping[str, Any]) -> list[dict[str, Any]]:
                     or item.get("service_id")
                     or service["id"]
                 ),
+                "record": item,
             }
         )
     return out

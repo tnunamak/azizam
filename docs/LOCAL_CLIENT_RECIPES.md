@@ -87,7 +87,7 @@ The proxy currently exposes (live, mounted in `proxy.py`):
 | `POST /openai/v1/chat/completions` | OpenAI Chat | Streaming + non-streaming; `/v1/chat/completions` remains a convenience route. |
 | `POST /openai/v1/completions` | OpenAI Completions | Legacy, supported. |
 | `POST /openai/v1/embeddings` | OpenAI Embeddings | CPU `nomic-embed-text-v1.5` backend; no GPU budget claim. |
-| `GET /openai/v1/models` | OpenAI Models | Aliases + backend models. |
+| `GET /openai/v1/models` | OpenAI Models | Aliases + backend models. Each entry carries `type`, `architecture`, and when known `tags`/`max_tokens`/`context_window`: see [MODEL_METADATA.md](api/MODEL_METADATA.md). |
 | `POST /openai/v1/responses` | OpenAI Responses | Translator over chat completions; durable store. |
 | `GET /openai/v1/responses/{id}` | OpenAI Responses | Read back. |
 | `DELETE /openai/v1/responses/{id}` | OpenAI Responses | |
@@ -1611,7 +1611,7 @@ for s in r.segments:            # s.speaker is "A", "B", ... in order of first a
 Discovery and dry run (no model is loaded or run):
 
 ```bash
-curl -s localhost:5000/v1/models -H "Authorization: Bearer $KEY"      # alias entries carry vivid_fish_resolves_to
+curl -s localhost:5000/v1/models -H "Authorization: Bearer $KEY"      # alias entries carry vivid_fish_resolves_to; every entry a type (docs/api/MODEL_METADATA.md)
 curl -s localhost:5000/gateway/v1/aliases -H "Authorization: Bearer $KEY"   # stable + OpenAI rules + engines (deployed or not)
 curl -s "localhost:5000/gateway/v1/aliases/resolve?operation=chat&model=gpt-4o" -H "Authorization: Bearer $KEY"
 ```

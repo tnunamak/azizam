@@ -16,6 +16,7 @@ typical_seconds: 4
 inputs:
   source_video:
     type: asset
+    media_type: video/*
     required: true
   multiplier:
     type: integer
