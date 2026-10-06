@@ -1820,21 +1820,24 @@ class OperatorSettingsGenerationConflict(ValueError):
 
 def get_service_registry_with_generation(*, path: Path = DB_PATH) -> dict[str, Any] | None:
     """Return the one active registry document and its server-owned CAS value."""
+    # One statement, so the document and its CAS generation come from the same
+    # snapshot. Two SELECTs could straddle a concurrent commit and pair stale
+    # JSON with the new generation, letting a later CAS write overwrite it.
     with _conn(path) as conn:
         row = conn.execute(
-            "SELECT value_json, updated_at, updated_by FROM operator_settings WHERE key = 'service_registry'"
+            "SELECT s.value_json, s.updated_at, s.updated_by, g.operator_settings_generation "
+            "FROM operator_settings AS s "
+            "LEFT JOIN operator_settings_generations AS g ON g.setting_key = s.key "
+            "WHERE s.key = 'service_registry'"
         ).fetchone()
-        if row is None:
-            return None
-        generation = conn.execute(
-            "SELECT operator_settings_generation FROM operator_settings_generations "
-            "WHERE setting_key = 'service_registry'"
-        ).fetchone()
+    if row is None:
+        return None
     value = json.loads(row["value_json"])
+    generation = row["operator_settings_generation"]
     return {
         "key": "service_registry", "value": value, "updated_at": row["updated_at"],
         "updated_by": row["updated_by"],
-        "operator_settings_generation": int(generation[0]) if generation else 0,
+        "operator_settings_generation": int(generation) if generation is not None else 0,
     }
 
 

@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
 import sqlite3
 import sys
 import time
@@ -38,7 +39,10 @@ from gateway.model_metadata import DECLARATION_KEY  # noqa: E402
 
 
 def _backup(db: Path) -> Path:
-    target = db.with_name(f"{db.name}.bak.pre-model-metadata-{int(time.time())}")
+    """Copy the database to a new file that is never reused, readable only by the owner."""
+    target = db.with_name(f"{db.name}.bak.pre-model-metadata-{time.time_ns()}")
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    os.close(fd)
     with sqlite3.connect(db) as source, sqlite3.connect(target) as dest:
         source.backup(dest)
     return target

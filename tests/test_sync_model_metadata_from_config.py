@@ -118,6 +118,38 @@ class SyncModelMetadataTests(unittest.TestCase):
             compile_litellm_config_from_registry(before),
         )
 
+    def test_registry_and_generation_are_read_in_one_statement(self) -> None:
+        """One SELECT reads one snapshot; two could straddle a concurrent commit and
+        pair stale JSON with the new generation, letting the CAS write clobber it."""
+        original_conn = admin_store._conn
+        statements: list[str] = []
+        from contextlib import contextmanager
+
+        @contextmanager
+        def tracing_conn(path=admin_store.DB_PATH):
+            with original_conn(path) as conn:
+                conn.set_trace_callback(statements.append)
+                yield conn
+
+        admin_store._conn = tracing_conn
+        try:
+            read = admin_store.get_service_registry_with_generation(path=self.db)
+        finally:
+            admin_store._conn = original_conn
+        assert read is not None
+        selects = [s for s in statements if s.lstrip().upper().startswith("SELECT")]
+        self.assertEqual(len(selects), 1, selects)
+        self.assertIn("operator_settings_generations", selects[0])
+        self.assertEqual(read, self._state())
+
+    def test_backups_never_collide_and_are_owner_only(self) -> None:
+        first = sync._backup(self.db)
+        second = sync._backup(self.db)
+        self.assertNotEqual(first, second)
+        for backup in (first, second):
+            self.assertEqual(backup.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(admin_store.get_service_registry_with_generation(path=backup), self._state())
+
 
 if __name__ == "__main__":
     unittest.main()
