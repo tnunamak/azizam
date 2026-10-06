@@ -13319,11 +13319,11 @@ async def _filter_model_list_for_profile(
         metadata["vivid_fish_target_visibility"] = "available"
         metadata["vivid_fish_target_activation"] = _profile_target_activation(auth_context)
         metadata["vivid_fish_model_access"] = "current_loaded"
-        metadata["vivid_fish_current_model_ids"] = sorted(
+        metadata["vivid_fish_current_model_ids"] = sorted({
             str(item["id"]) for item in filtered
             if item.get("id") and not str(item["id"]).startswith("/")
             and normalize_model_id(str(item["id"])) in loaded_norm
-        )
+        })
 
     if allowlist is not None:
         visible_norm = {normalize_model_id(str(item.get("id") or "")) for item in filtered}
