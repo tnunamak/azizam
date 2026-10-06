@@ -36,7 +36,7 @@ test.beforeAll(async ({ baseURL }) => {
   const fixtureHome = path.resolve("../.ui-e2e-state/strict-home");
   await mkdir(fixtureHome, { recursive: true });
   engine = spawn(
-    path.resolve("../venv/bin/python"),
+    process.env.UI_E2E_PYTHON ?? path.resolve("../venv/bin/python"),
     [
       "-m",
       "uvicorn",

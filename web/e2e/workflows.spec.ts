@@ -9,8 +9,9 @@ const seededCatalog = {
       id: "image.product-render",
       capability: "image",
       title: "Product render",
-      description:
-        "Create a clean product render with the local image workflow. Long manifest guidance stays searchable and available inside Technical details without turning browse cards into documentation blocks.",
+      description: "Create a clean product render.",
+      technical_notes:
+        "Long manifest guidance stays searchable and available inside Technical details without turning browse cards into documentation blocks.",
       inputs: [
         {
           name: "prompt",
