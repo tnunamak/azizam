@@ -1,0 +1,52 @@
+{
+  "name": "pi-provider-azizam",
+  "version": "0.1.0",
+  "description": "Pi provider that discovers chat models live from an Azizam gateway's /v1/models",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi-provider",
+    "azizam",
+    "openai-compatible",
+    "t3-code"
+  ],
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OWNER/REPO.git",
+    "directory": "integrations/pi"
+  },
+  "homepage": "https://github.com/OWNER/REPO/tree/main/integrations/pi#readme",
+  "bugs": {
+    "url": "https://github.com/OWNER/REPO/issues"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/azizam.ts"
+    ]
+  },
+  "files": [
+    "extensions",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "tsc --noEmit && node --test \"test/*.test.ts\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": ">=1.0.4 <2",
+    "@earendil-works/pi-coding-agent": ">=1.0.4 <2"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "^1.0.4",
+    "@earendil-works/pi-coding-agent": "^1.0.4",
+    "@types/node": "^26.6.4",
+    "typescript": "^7.0.2"
+  }
+}
