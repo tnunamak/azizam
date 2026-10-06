@@ -290,14 +290,16 @@ class ModelListEndpointTests(unittest.TestCase):
             with self.subTest(model=model_id):
                 self.assertEqual(index[model_id], {k: listed[model_id][k] for k in mm.OUTPUT_FIELDS if k in listed[model_id]})
 
-    def test_member_catalog_uses_conservative_current_metadata(self) -> None:
+    def test_member_catalog_uses_declared_current_metadata(self) -> None:
+        # Without a loaded observation the dynamic aliases report the operator's
+        # declaration for the slot (proxy_config.yml), and no extra lookup runs.
         with patch.object(proxy, "_current_loaded_llm_model_ids", side_effect=AssertionError("extra loaded-state lookup")) as lookup:
             index = proxy._catalog_model_metadata(proxy._current_loaded_model_entries(), proxy.ADMIN_STORE.get_service_registry(), [])
         lookup.assert_not_called()
-        self.assertEqual(index["current"]["architecture"]["input_modalities"], ["text"])
-        self.assertNotIn("tags", index["current"])
-        self.assertEqual(index["current-fast"]["architecture"]["input_modalities"], ["text"])
-        self.assertNotIn("tags", index["current-fast"])
+        self.assertEqual(index["current"]["architecture"]["input_modalities"], ["text", "image"])
+        self.assertEqual(set(index["current"]["tags"]), {"reasoning", "tool-use", "vision"})
+        self.assertEqual(index["current-fast"]["architecture"]["input_modalities"], ["text", "image"])
+        self.assertEqual(set(index["current-fast"]["tags"]), {"tool-use", "vision"})
 
 
 class RequestLoadedMetadataTests(unittest.TestCase):
