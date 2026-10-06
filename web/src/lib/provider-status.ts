@@ -12,6 +12,7 @@ export interface ProviderStatusView {
   enabled: boolean | null;
   reachable: boolean | null;
   keyState: ProviderKeyState;
+  keySuffix: string | null;
   spendText: string;
   tone: ProviderTone;
 }
@@ -141,6 +142,8 @@ export function providerViews(raw: unknown): ProviderStatusView[] {
     const enabled = bool(obj.enabled);
     const reachable = bool(obj.reachable);
     const keyState = keyStateValue(obj);
+    const keyStatus = objectValue(obj.key_status);
+    const keySuffix = keyState === "set" ? stringValue(keyStatus?.suffix) : null;
     const tone: ProviderTone =
       enabled === true && (reachable === false || keyState === "missing")
         ? "bad"
@@ -153,6 +156,7 @@ export function providerViews(raw: unknown): ProviderStatusView[] {
       enabled,
       reachable,
       keyState,
+      keySuffix,
       spendText: normalizedSpend(obj),
       tone,
     };

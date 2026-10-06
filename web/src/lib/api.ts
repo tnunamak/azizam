@@ -276,6 +276,7 @@ export type ServiceSource =
 export interface Service {
   id: string;
   name: string;
+  display_name?: string | null;
   kind: string;
   source: ServiceSource;
   enabled: boolean;

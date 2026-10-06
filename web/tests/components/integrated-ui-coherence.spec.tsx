@@ -135,7 +135,7 @@ describe("integrated UI coherence", () => {
       await screen.findByRole("heading", { name: "OpenRouter" }),
     ).toBeVisible();
     expect(screen.getAllByText("Ready")).toHaveLength(3);
-    expect(screen.getByText("Set · ends in 4f2a")).toBeVisible();
+    expect(screen.getByText("Key ends in 4f2a")).toBeVisible();
     for (const manage of screen.getAllByText("Manage", { exact: true })) {
       await user.click(manage);
     }

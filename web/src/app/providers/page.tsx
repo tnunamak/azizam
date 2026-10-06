@@ -576,7 +576,7 @@ function ProviderKeySummary({ provider }: { provider: ProviderRecord }) {
     provider.keySource === "env" && provider.apiKeyEnv
       ? `Set via ${provider.apiKeyEnv}`
       : provider.keySuffix
-        ? `Set · ends in ${provider.keySuffix}`
+        ? `Key ends in ${provider.keySuffix}`
         : "Key set";
   return (
     <>
@@ -676,9 +676,9 @@ function DetailCard({
                 <h2 className="truncate text-base font-semibold">
                   {provider.name}
                 </h2>
-                <p className="text-muted-foreground mt-1 text-sm">
+                <span className="border-border bg-muted text-muted-foreground mt-1 inline-flex min-h-6 items-center rounded-full border px-2 text-xs">
                   <ProviderKeySummary provider={provider} />
-                </p>
+                </span>
               </div>
             </div>
             <StatusPill status={state.status} reason={state.reason} summary />

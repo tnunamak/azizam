@@ -49,6 +49,27 @@ const registry: ServiceRegistry = {
       role: "optional",
       config: {},
     },
+    realtime: {
+      id: "realtime",
+      name: "Speech To Speech",
+      display_name: "Realtime voice",
+      kind: "generic",
+      source: "ui",
+      enabled: true,
+      editable: true,
+      capabilities: ["speech", "transcriptions"],
+      config: {},
+    },
+    remote: {
+      id: "remote",
+      name: "Remote provider",
+      kind: "provider",
+      source: "ui",
+      enabled: true,
+      editable: true,
+      capabilities: ["chat"],
+      config: {},
+    },
   },
 };
 function mount(status?: StatusPayload, serviceRegistry = registry) {
@@ -127,6 +148,15 @@ it("reveals disabled engines only on request", async () => {
   await user.click(screen.getByRole("switch"));
   expect(screen.getByRole("button", { name: "Image engine" })).toBeVisible();
   expect(screen.getByText("Disabled")).toBeVisible();
+});
+
+it("uses the registry display name and excludes providers from the engine table", async () => {
+  mount();
+  expect(await screen.findByRole("button", { name: "Realtime voice" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Speech To Speech" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Remote provider" })).toBeNull();
+  expect(screen.queryByText("Capabilities unavailable")).toBeNull();
+  expect(screen.queryByText("Unknown")).toBeNull();
 });
 it("uses server engine names and transcription taxonomy and preserves an exact disk warning sentence", async () => {
   const user = userEvent.setup();

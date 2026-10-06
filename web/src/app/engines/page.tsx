@@ -543,7 +543,7 @@ function EnginesContents() {
   );
 
   function displayName(service: Service) {
-    return healthByService.get(service.id)?.engine_label || service.name;
+    return service.display_name || healthByService.get(service.id)?.engine_label || service.name;
   }
 
   function updateRegistry(registry: ServiceRegistry) {

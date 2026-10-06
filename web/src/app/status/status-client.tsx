@@ -110,7 +110,7 @@ function observedTone(service?: CurrentHealthService): Tone {
 }
 
 function observationLabel(service?: CurrentHealthService): string {
-  if (!service) return "Unknown";
+  if (!service) return "";
   if (!service.enabled || service.observation === "disabled") return "Disabled";
   if (service.observation === "up")
     return service.tone === "bad"
@@ -124,7 +124,7 @@ function observationLabel(service?: CurrentHealthService): string {
   if (service.observation === "busy") return "Busy";
   if (service.observation === "starting") return "Starting";
   if (service.observation === "standby_stopped") return "Standby, stopped";
-  if (service.observation === "unavailable") return "Unknown";
+  if (service.observation === "unavailable") return "";
   return service.observation.replace(/_/g, " ");
 }
 
@@ -190,9 +190,9 @@ function enginesFrom(
         service,
         health: h,
         backend,
-        name: display?.engine_label || service.name || "Engine",
+        name: service.display_name || display?.engine_label || service.name || "Engine",
         label:
-          display?.capability_labels?.join(", ") || "Capabilities unavailable",
+          display?.capability_labels?.filter((label) => !/\((?:speech|transcription)\)/i.test(label)).join(", ") || "",
         group: display?.capability_title || "Engines",
         role: service.role || h?.role || titleize(service.kind || "engine"),
         state: !service.enabled
@@ -204,7 +204,13 @@ function enginesFrom(
                 observation: service.enabled ? "unavailable" : "disabled",
               },
             ),
-        tone: service.enabled ? observedTone(h) : "neutral",
+        tone: !service.enabled
+          ? "neutral"
+          : !h || h.observation === "idle" || h.observation === "standby_stopped"
+            ? "neutral"
+            : observationLabel(h) === "Ready"
+              ? "ok"
+              : observedTone(h),
         endpoint: endpoint(service, backend),
         models: serviceModels(service),
         queue: valueText(backendExtras?.queue ?? backendExtras?.queue_depth),
@@ -219,7 +225,7 @@ function plainEngineProblem(
   state: "Unavailable" | "Degraded" = "Unavailable",
 ): string {
   const labels =
-    engine.label && engine.label !== "Capabilities unavailable"
+    engine.label
       ? engine.label.split(", ")
       : [];
   const source = labels.length
@@ -324,7 +330,7 @@ function EngineRow({
             <SheetHeader>
               <SheetTitle>{engine.name}</SheetTitle>
               <SheetDescription>
-                {engine.label} · {engine.state}
+        {[engine.label, engine.state].filter(Boolean).join(" · ")}
               </SheetDescription>
             </SheetHeader>
             <div className="space-y-5 px-4 pb-6 font-normal">
@@ -363,11 +369,13 @@ function EngineRow({
           </SheetContent>
         </Sheet>
       </th>
-      <td className="py-3 pr-3 align-top">
-        <StatusBadge tone={engine.tone} label={engine.state} />
+      <td className="py-3 pr-3 align-middle">
+        {engine.state && engine.state !== "Unknown" && (
+          <StatusBadge tone={engine.tone} label={engine.state} />
+        )}
       </td>
-      <td className="hidden py-3 pr-3 align-top text-sm break-words sm:table-cell">
-        {engine.label}
+      <td className="hidden py-3 pr-3 align-middle text-sm break-words sm:table-cell">
+        {engine.label || null}
       </td>
     </tr>
   );
@@ -377,6 +385,7 @@ export function StatusClient() {
   const searchParams = useSearchParams();
   const selectedServiceId = searchParams.get("service");
   const [showDisabled, setShowDisabled] = useState(false);
+  const [diskHelpOpen, setDiskHelpOpen] = useState(false);
   const {
     data: statusData,
     isError: statusIsError,
@@ -410,9 +419,11 @@ export function StatusClient() {
   );
   const visibleEngines = engines.filter(
     (engine) =>
-      showDisabled ||
-      engine.service.enabled ||
-      engine.service.id === selectedServiceId,
+      !["provider", "gateway"].includes(engine.service.kind.toLowerCase()) &&
+      !["provider", "gateway"].includes((engine.service.role || "").toLowerCase()) &&
+      (showDisabled ||
+        engine.service.enabled ||
+        engine.service.id === selectedServiceId),
   );
   const hostWarnings = (
     statusIsError ? [] : (statusData?.current_health?.signals ?? [])
@@ -508,11 +519,11 @@ export function StatusClient() {
           ? "1 problem needs you"
           : `${actionRows.length} problems need you`
         : "All systems normal";
-  const startingOnRequest = engines.filter(
+  const startingOnRequest = visibleEngines.filter(
     (engine) => engine.service.enabled && engine.state === "Ready to start",
   ).length;
   const engineSummary = allVisibleEnginesHealthy
-    ? `${enabledEngineCount} engine${enabledEngineCount === 1 ? "" : "s"}${startingOnRequest ? ` · ${startingOnRequest} starting on request` : ""} · Show`
+    ? `${visibleEngines.length} engine${visibleEngines.length === 1 ? "" : "s"}${startingOnRequest ? ` · ${startingOnRequest} on standby` : ""} · Show`
     : `${visibleEngines.length} engine${visibleEngines.length === 1 ? "" : "s"}`;
 
   if (statusIsPending && registryIsPending)
@@ -576,6 +587,11 @@ export function StatusClient() {
                     <Link href={row.href}>Open</Link>
                   </Button>
                 )}
+                {row.key === "hardware" && hostWarnings.some(({ source }) => /disk/i.test(source)) && (
+                  <Button variant="outline" size="sm" onClick={() => setDiskHelpOpen(true)}>
+                    Free disk space
+                  </Button>
+                )}
               </div>
             ))}
           </div>
@@ -598,7 +614,7 @@ export function StatusClient() {
               />{" "}
               Show disabled
             </label>
-            <Button type="button" asChild>
+            <Button type="button" variant="outline" asChild>
               <Link href="/engines">Open engines</Link>
             </Button>
           </div>
@@ -666,17 +682,24 @@ export function StatusClient() {
                       }
                     />
                   </div>
-                  <p className="text-muted-foreground mt-2 text-sm">
-                    Enabled:{" "}
-                    {provider.enabled === true
-                      ? "yes"
-                      : provider.enabled === false
-                        ? "no"
-                        : "unknown"}
-                  </p>
-                  <p className="text-muted-foreground text-sm">
-                    Key: {provider.keyState}
-                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {provider.enabled !== null && provider.enabled !== undefined && (
+                      <StatusBadge
+                        tone={provider.enabled ? "ok" : "neutral"}
+                        label={provider.enabled ? "Enabled" : "Disabled"}
+                      />
+                    )}
+                    {provider.keyState !== "unknown" && (
+                      <StatusBadge
+                        tone={provider.keyState === "set" ? "ok" : "warn"}
+                        label={provider.keyState === "set"
+                          ? provider.keySuffix
+                            ? `Key ends in ${provider.keySuffix}`
+                            : "Key set"
+                          : "Key missing"}
+                      />
+                    )}
+                  </div>
                   {!/not measured|unknown/i.test(provider.spendText) && (
                     <p className="text-muted-foreground text-sm">
                       Spend: {provider.spendText}
@@ -716,6 +739,19 @@ export function StatusClient() {
           </Button>
         </Section>
       )}
+      <Sheet open={diskHelpOpen} onOpenChange={setDiskHelpOpen}>
+        <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-lg">
+          <SheetHeader>
+            <SheetTitle>Free disk space</SheetTitle>
+            <SheetDescription>Check the largest storage areas first.</SheetDescription>
+          </SheetHeader>
+          <ul className="list-disc space-y-3 px-8 py-4 text-sm">
+            <li>Review old filesystem snapshots and remove only snapshots you no longer need.</li>
+            <li>Check unused Docker images, containers, and volumes before removing them.</li>
+            <li>Clear regenerable model, build, and application caches that you recognize.</li>
+          </ul>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
