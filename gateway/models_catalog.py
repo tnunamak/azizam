@@ -25,7 +25,7 @@ from fastapi.responses import JSONResponse, Response
 from gateway.capabilities import Capability
 from gateway.availability import project_service
 from gateway.local_capabilities import build_local_capabilities
-from gateway.model_presentation import (CAPABILITY_LABELS, RECOMMENDED_ALIASES, capability_presentation, product_capability,
+from gateway.model_presentation import (CAPABILITY_LABELS, LISTED_METADATA_KEY, RECOMMENDED_ALIASES, capability_presentation, product_capability,
     declared_health_success, engine_label, model_locality, service_health_endpoint, CAPABILITY_ICON_KEYS)
 from gateway.model_files import model_file_availability
 from gateway.provider_model_catalog import (
@@ -146,6 +146,7 @@ def build_models_catalog(
     explicit manifest/config facts; otherwise it is reported as unknown.
     ``model_metadata`` maps a row id to the `/v1/models` contract fields
     (``type``, ``architecture``, ``max_tokens``, ``tags``) so both lists agree.
+    Those fields also decide the row's ``capability``, ``icon_key`` and ``io``.
     """
 
     capability_groups = [list(group) for group in capability_sets] if capability_sets is not None else [list(capabilities)]
@@ -160,6 +161,7 @@ def build_models_catalog(
     workflow_metadata = _workflow_metadata(workflow_records)
     service_model_metadata = _service_model_metadata(service_records)
     receipt_stats = _receipt_stats(recent_receipts)
+    listed_metadata = model_metadata or {}
 
     alias_rows: list[dict[str, Any]] = []
     model_rows: list[dict[str, Any]] = []
@@ -174,6 +176,7 @@ def build_models_catalog(
             health_evidence=health_evidence,
             workflow_metadata=workflow_metadata,
             service_model_metadata=service_model_metadata,
+            listed_metadata=listed_metadata,
         )
         alias_rows.extend(aliases)
         model_rows.extend(models)
@@ -182,7 +185,12 @@ def build_models_catalog(
     aliases = _dedupe_alias_targets(_merge_rows(alias_rows))
     model_rows = _merge_rows(model_rows)
     for row in (*aliases, *model_rows):
-        row.update(copy.deepcopy(dict((model_metadata or {}).get(row["id"]) or {})))
+        listed = listed_metadata.get(row["id"])
+        if listed:
+            row.update(copy.deepcopy(dict(listed)))
+            architecture = listed.get("architecture") or {}
+            row["io"] = {"input": list(architecture.get("input_modalities") or ()),
+                         "output": list(architecture.get("output_modalities") or ())}
 
     return {
         "schema_version": 1,
@@ -207,6 +215,7 @@ def _rows_for_capabilities(
     health_evidence: Mapping[str, Mapping[str, Any]],
     workflow_metadata: Mapping[str, Mapping[str, Any]],
     service_model_metadata: Mapping[str, Mapping[str, Any]],
+    listed_metadata: Mapping[str, Mapping[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
     allowed_caps = [cap for cap in capabilities if cap.policy_available is not False]
     denied_targets: set[str] = set()
@@ -236,6 +245,7 @@ def _rows_for_capabilities(
         health_evidence=health_evidence,
         workflow_metadata=workflow_metadata,
         service_model_metadata=service_model_metadata,
+        listed_metadata=listed_metadata,
     )
     concrete_by_model = {
         model: [cap for cap in caps if "alias" not in cap.tags]
@@ -283,6 +293,7 @@ def _rows_for_capabilities(
         health_evidence=health_evidence,
         workflow_metadata=workflow_metadata,
         service_model_metadata=service_model_metadata,
+        listed_metadata=listed_metadata,
     )
     return aliases, models, len(allowed_caps)
 
@@ -367,6 +378,7 @@ def _alias_rows(
     health_evidence: Mapping[str, Mapping[str, Any]],
     workflow_metadata: Mapping[str, Mapping[str, Any]],
     service_model_metadata: Mapping[str, Mapping[str, Any]],
+    listed_metadata: Mapping[str, Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
     by_alias: dict[str, dict[str, Any]] = {}
     for operation, view in alias_views.items():
@@ -401,12 +413,14 @@ def _alias_rows(
                 health_evidence=health_evidence,
                 workflow_metadata=workflow_metadata,
                 service_model_metadata=service_model_metadata,
+                listed=listed_metadata.get(alias),
             )
             operation_row["_serving_backend"] = str(raw.get("service") or _first_backend(caps) or "")
             presentation = capability_presentation(caps[0], {
-                "capability": operation_row["capabilities"][0]["capability"], **raw})
+                "capability": operation_row["capabilities"][0]["capability"], **raw,
+                LISTED_METADATA_KEY: listed_metadata.get(alias)})
             operation_row.update({key: presentation[key] for key in
-                                 ("title", "capability_title", "icon_key", "secondary_profile")})
+                                 ("capability", "title", "capability_title", "icon_key", "secondary_profile")})
             operation_row["recommended"] = alias == RECOMMENDED_ALIASES.get(presentation["capability"])
             operation_row["display_name"] = presentation["title"]
             operation_row["name"] = presentation["title"]
@@ -483,6 +497,7 @@ def _model_rows(
     health_evidence: Mapping[str, Mapping[str, Any]],
     workflow_metadata: Mapping[str, Mapping[str, Any]],
     service_model_metadata: Mapping[str, Mapping[str, Any]],
+    listed_metadata: Mapping[str, Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
     ids = set(caps_by_model)
     rows = [
@@ -499,6 +514,7 @@ def _model_rows(
             health_evidence=health_evidence,
             workflow_metadata=workflow_metadata,
             service_model_metadata=service_model_metadata,
+            listed=listed_metadata.get(model_id),
         )
         for model_id in ids
     ]
@@ -519,6 +535,7 @@ def _base_row(
     health_evidence: Mapping[str, Mapping[str, Any]],
     workflow_metadata: Mapping[str, Mapping[str, Any]],
     service_model_metadata: Mapping[str, Mapping[str, Any]],
+    listed: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     service = {"id": service_id, **_service_record(service_records, service_id)}
     workflow_id = str((model_entry or {}).get("vivid_fish_workflow_id") or next(
@@ -545,7 +562,8 @@ def _base_row(
         or _recent_from_receipt_stats(receipt_stats.get(workflow_id))
     )
     locality = _locality(service, model_mapping or model_entry)
-    presentation_metadata = {**(model_entry or {}), **model_mapping, **manifest, "locality": locality}
+    presentation_metadata = {**(model_entry or {}), **model_mapping, **manifest, "locality": locality,
+                             LISTED_METADATA_KEY: listed}
     raw_description = _description(presentation_metadata)
     if is_alias:
         presentation_metadata["alias"] = row_id
@@ -568,7 +586,7 @@ def _base_row(
         "object": "model_catalog.alias" if is_alias else "model_catalog.model",
         "display_name": presentation.get("title", display_name),
         "recommended": row_id == RECOMMENDED_ALIASES.get(presentation.get("capability")),
-        **{key: presentation[key] for key in ("title", "capability_title", "icon_key", "recommended_model", "secondary_profile") if key in presentation},
+        **{key: presentation[key] for key in ("capability", "title", "capability_title", "icon_key", "recommended_model", "secondary_profile") if key in presentation},
         "use_names": list(dict.fromkeys([row_id, *([target] if target and not target.startswith("role:") else [])])),
         "alias": is_alias,
         "operations": [],

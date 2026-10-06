@@ -75,22 +75,27 @@ def _strip_contract_fields(payload: dict) -> dict:
     return out
 
 
+def _start_model_list_patches(test: unittest.TestCase) -> None:
+    """Serve /v1/models from the snapshot's LiteLLM ids, with nothing loaded."""
+    patches = [
+        patch.object(proxy, "AUTH_ENABLED", False),
+        patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
+        patch.object(proxy, "_litellm_runtime_config", return_value=SimpleNamespace(enabled=True, service_id="litellm")),
+        patch.object(proxy, "_service_availability_response", return_value=None),
+        patch.object(proxy, "_litellm_models_payload", _fake_litellm_payload),
+        patch.object(proxy, "_decision_models_for", _fake_decision_models),
+        patch.object(proxy, "_kobold_context_window", _no_context_probe),
+        patch.object(proxy, "_current_loaded_llm_model_ids", _loaded(None)),
+    ]
+    for patcher in patches:
+        patcher.start()
+        test.addCleanup(patcher.stop)
+
+
 class ModelListEndpointTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(proxy.app)
-        patches = [
-            patch.object(proxy, "AUTH_ENABLED", False),
-            patch.object(proxy, "_enforce_runtime_route_policy", return_value=None),
-            patch.object(proxy, "_litellm_runtime_config", return_value=SimpleNamespace(enabled=True, service_id="litellm")),
-            patch.object(proxy, "_service_availability_response", return_value=None),
-            patch.object(proxy, "_litellm_models_payload", _fake_litellm_payload),
-            patch.object(proxy, "_decision_models_for", _fake_decision_models),
-            patch.object(proxy, "_kobold_context_window", _no_context_probe),
-            patch.object(proxy, "_current_loaded_llm_model_ids", _loaded(None)),
-        ]
-        for patcher in patches:
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        _start_model_list_patches(self)
 
     def _list(self, path: str = "/v1/models") -> dict:
         response = self.client.get(path)
@@ -266,6 +271,85 @@ class ModelListEndpointTests(unittest.TestCase):
         index = asyncio.run(proxy._catalog_model_metadata(proxy._current_loaded_model_entries(), proxy.ADMIN_STORE.get_service_registry(), []))
         self.assertIn("reasoning", index["current"]["tags"])
         self.assertNotIn("reasoning", index["current-fast"]["tags"])
+
+
+# What each `/v1/models` type may show as on the Models page. The oracle for
+# the agreement tests below: written out here, not imported from the code.
+UI_CAPABILITIES_FOR_TYPE = {
+    "language": {"chat"}, "image": {"image"}, "video": {"video"},
+    "audio": {"music", "sfx", "speech", "transcribe", "audio"},
+    "embedding": {"embed"}, "reranking": {"rerank"}, "decision": {"decide"},
+}
+UI_ICON_FOR_CAPABILITY = {
+    "chat": "chat", "image": "image", "video": "video", "music": "music", "sfx": "sfx",
+    "speech": "speech", "transcribe": "transcribe", "audio": "sfx", "decide": "decide",
+    "embed": "embed", "rerank": "rerank",
+}
+
+
+class ModelsPageAgreesWithModelListTests(unittest.TestCase):
+    """The Models page classification and `/v1/models` `type` never disagree for one id."""
+
+    def setUp(self) -> None:
+        patcher = patch.object(proxy, "_current_loaded_llm_model_ids", _loaded(QWEN_PATH))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _catalog_rows(self) -> list[dict]:
+        registry = proxy.ADMIN_STORE.get_service_registry()
+        context = proxy._catalog_auth_context_for_profile(proxy.DEFAULT_PROFILE, "default-local")
+        capability_sets = [proxy._gateway_capabilities_for_auth_context(context)]
+        model_entries = [
+            *proxy._stable_alias_model_entries(),
+            *proxy._build_workflow_model_entries(),
+            *proxy._current_loaded_model_entries(),
+        ]
+        catalog = build_models_catalog(
+            model_metadata=asyncio.run(proxy._catalog_model_metadata(model_entries, registry, capability_sets)),
+            alias_views=proxy._gateway_aliases_provider(),
+            capability_sets=capability_sets,
+            model_entries=model_entries,
+            service_records=registry,
+            workflow_records=[{"id": r.id, "manifest": r.manifest} for r in proxy.GATEWAY_WORKFLOW_REGISTRY.records()],
+        )
+        return [*catalog["aliases"], *catalog["models"]]
+
+    def test_every_typed_row_shows_a_capability_of_its_type(self) -> None:
+        rows = [row for row in self._catalog_rows() if "type" in row]
+        self.assertGreater(len(rows), 10)
+        for row in rows:
+            with self.subTest(model=row["id"]):
+                self.assertIn(row["capability"], UI_CAPABILITIES_FOR_TYPE[row["type"]])
+                self.assertEqual(row["icon_key"], UI_ICON_FOR_CAPABILITY[row["capability"]])
+                self.assertEqual(row["io"], {
+                    "input": row["architecture"]["input_modalities"],
+                    "output": row["architecture"]["output_modalities"],
+                })
+
+    def test_catalog_rows_have_the_type_v1_models_lists(self) -> None:
+        _start_model_list_patches(self)
+        loaded = patch.object(proxy, "_current_loaded_llm_model_ids", _loaded(QWEN_PATH))
+        loaded.start()
+        self.addCleanup(loaded.stop)
+        response = TestClient(proxy.app).get("/v1/models")
+        self.assertEqual(response.status_code, 200, response.text)
+        listed = {entry["id"]: entry for entry in response.json()["data"]}
+        shared = [row for row in self._catalog_rows() if row["id"] in listed]
+        self.assertGreater(len(shared), 10)
+        for row in shared:
+            with self.subTest(model=row["id"]):
+                self.assertEqual(row.get("type"), listed[row["id"]].get("type"))
+                if "type" in row:
+                    self.assertIn(row["capability"], UI_CAPABILITIES_FOR_TYPE[listed[row["id"]]["type"]])
+
+    def test_a_declared_type_moves_the_row(self) -> None:
+        # A chat-serving id declared as an embedding model is shown as one.
+        capability = Capability(intent="chat.completions", backend="engine", model="m",
+                                input_modalities=("text",), output_modalities=("text",))
+        fields = {"type": "embedding", "architecture": {"input_modalities": ["text"], "output_modalities": ["embedding"]}}
+        row, = build_models_catalog(capabilities=[capability], model_metadata={"m": fields})["models"]
+        self.assertEqual((row["type"], row["capability"], row["icon_key"]), ("embedding", "embed", "embed"))
+        self.assertEqual(row["io"], {"input": ["text"], "output": ["embedding"]})
 
 
 def _remote_registry(model_count: int = 1) -> dict:

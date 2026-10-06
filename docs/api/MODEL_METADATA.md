@@ -194,10 +194,30 @@ callers override, not a cap. The `vision` and `fast` aliases inherit from `defau
 |---|---|
 | `GET /v1/models`, `GET /openai/v1/models` | Annotated as above. |
 | `GET /v1/models/{id}` | Returns the same entry as the list. |
-| `GET /me/api/models/catalog` (member Models page) | Alias and model rows carry the same `type`, `architecture`, `max_tokens` and `tags` as `/v1/models` for the same id. |
+| `GET /me/api/models/catalog` (member Models page) | Alias and model rows carry the same `type`, `architecture`, `max_tokens` and `tags` as `/v1/models` for the same id. The row's `capability`, `icon_key` and `io` come from those fields, see "Models page classification". |
 | `GET /anthropic/v1/models[/{id}]`, or `/v1/models` with `anthropic-version` | Anthropic shape, unchanged; none of these fields are added. |
 | Ollama `GET /api/tags` | Ollama shape, unchanged. |
 | `GET /v1/models` with a LiteLLM virtual key (delegated) | **Gap:** returns LiteLLM's raw payload unchanged, without these fields. Delegated keys are scoped by LiteLLM itself, and LiteLLM's `/v1/models` does not emit `model_info`, so the gateway does not rewrite that payload. Clients that need the metadata should use a gateway key. |
+
+## Models page classification
+
+The member Models page (`/me/api/models/catalog`) groups rows by a product capability and shows one
+icon per row. One classifier, `product_capability` in `gateway/model_presentation.py`, derives both from
+this contract: the row's `/v1/models` fields when the list has the id, else the serving capability's
+intent and modalities read through `model_metadata.from_capability`.
+
+| `type` | `capability` (and `icon_key`) |
+|---|---|
+| `language` | `chat` |
+| `image` / `video` | `image` / `video` |
+| `embedding` / `reranking` / `decision` | `embed` / `rerank` / `decide` |
+| `audio`, audio in and no audio out | `transcribe` |
+| `audio`, other | the declared subtype (`capability: music` or `sfx` in the workflow manifest, or `speech`), else the speech intent gives `speech`, else `audio` (icon `sfx`) |
+
+A declared `capability` only splits audio. It cannot move a row to another type. The row's `io` is its
+`architecture` when the list has the id. The page shows `architecture` as an "inputs → outputs" chip and
+each tag as a chip. `tests/test_model_metadata_endpoints.py` fails if a row's capability and its
+`/v1/models` `type` disagree.
 
 ## Client rules
 

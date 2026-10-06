@@ -13,8 +13,15 @@ const seededCatalog = {
       operations: ["chat"],
       resolves_to: { chat: "demo-chat" },
       description: "Best default for short conversations and app setup tests.",
+      type: "language",
+      architecture: {
+        input_modalities: ["text", "image"],
+        output_modalities: ["text"],
+      },
+      tags: ["tool-use", "reasoning", "vision"],
       capabilities: [
         {
+          capability: "chat",
           intent: "chat.completions",
           label: "Chat",
           input_modalities: ["text"],
@@ -66,8 +73,14 @@ const seededCatalog = {
       operations: ["image"],
       resolves_to: { image: "provider/image-fast" },
       description: "Image generation through the configured remote provider.",
+      type: "image",
+      architecture: {
+        input_modalities: ["text"],
+        output_modalities: ["image"],
+      },
       capabilities: [
         {
+          capability: "image",
           intent: "image.generate",
           label: "Images",
           input_modalities: ["text"],
@@ -110,6 +123,7 @@ const seededCatalog = {
       description: "On-demand decision model for routing choices.",
       capabilities: [
         {
+          capability: "decide",
           intent: "decision.systemone",
           label: "Decide",
           input_modalities: ["text"],
@@ -146,6 +160,7 @@ const seededCatalog = {
       description: "Speech synthesis when a backend is configured.",
       capabilities: [
         {
+          capability: "speech",
           intent: "speech.synthesis",
           label: "Speech",
           input_modalities: ["text"],
@@ -184,6 +199,7 @@ const seededCatalog = {
       description: "Low latency chat model",
       capabilities: [
         {
+          capability: "chat",
           intent: "chat.completions",
           label: "Chat",
           input_modalities: ["text"],
@@ -222,6 +238,7 @@ const seededCatalog = {
       description: null,
       capabilities: [
         {
+          capability: "image",
           intent: "image.generate",
           label: "Images",
           input_modalities: ["text"],
@@ -330,6 +347,15 @@ for (const theme of ["light", "dark"] as const) {
         page.getByRole("heading", { name: "Speech", exact: true }),
       ).toBeVisible();
       await expect(page.getByText(/Other options/)).toHaveCount(0);
+      const chat = page.locator("section").filter({
+        has: page.getByRole("heading", { name: "Chat", exact: true }),
+      });
+      const chatFacts = chat.getByRole("list", { name: "Model facts" });
+      await expect(chatFacts.getByText("Reasoning")).toBeVisible();
+      await expect(chatFacts.getByText("Vision")).toBeVisible();
+      await expect(chatFacts.getByRole("listitem").first()).toHaveText(
+        "text, image→totext",
+      );
       await expect(
         page.getByRole("button", { name: "Copy model name image" }),
       ).toBeVisible();

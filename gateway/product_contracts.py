@@ -9,6 +9,11 @@ from typing_extensions import NotRequired, TypedDict
 AvailabilityStatus = Literal["ready", "idle", "starting", "busy", "unknown", "unavailable"]
 CapabilityIconKey = Literal["chat", "image", "video", "music", "sfx", "speech", "transcribe", "decide", "embed", "rerank"]
 SetupEvent = Literal["settings_copied", "external_client_confirmed", "receipt_viewed"]
+# The `/v1/models` metadata vocabulary (gateway/model_metadata.py, docs/api/MODEL_METADATA.md).
+ModelType = Literal["language", "embedding", "reranking", "image", "video", "audio", "decision"]
+InputModality = Literal["text", "image", "audio", "video", "file"]
+OutputModality = Literal["text", "image", "audio", "video", "embedding"]
+ModelTag = Literal["tool-use", "reasoning", "vision", "file-input"]
 
 
 class AvailabilityEvidence(TypedDict, total=False):
@@ -218,7 +223,7 @@ class MemberStatus(TypedDict):
 
 class CatalogCapability(TypedDict):
     icon_key: NotRequired[CapabilityIconKey]
-    capability: NotRequired[str]
+    capability: str
     intent: str
     label: str
     input_modalities: list[str]
@@ -263,7 +268,13 @@ class CatalogSummary(TypedDict, total=False):
     price: object
 
 
+class ModelArchitecture(TypedDict):
+    input_modalities: list[InputModality]
+    output_modalities: list[OutputModality]
+
+
 class CatalogRow(TypedDict):
+    capability: NotRequired[str]
     recommended: NotRequired[bool]
     capability_title: NotRequired[str]
     icon_key: NotRequired[CapabilityIconKey]
@@ -292,6 +303,11 @@ class CatalogRow(TypedDict):
     examples: list[CatalogExample]
     recent_receipts: list[dict[str, object]]
     use: CatalogUse
+    # The same values `/v1/models` reports for this id, when it lists the id.
+    type: NotRequired[ModelType]
+    architecture: NotRequired[ModelArchitecture]
+    max_tokens: NotRequired[int]
+    tags: NotRequired[list[ModelTag]]
 
 
 class CatalogCounts(TypedDict):

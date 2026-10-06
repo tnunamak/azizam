@@ -54,6 +54,7 @@ function row(overrides: Partial<CatalogRow> = {}): CatalogRow {
     description: "Chat through your configured model.",
     capabilities: [
       {
+        capability: "chat",
         intent: "chat.completions",
         label: "Chat",
         input_modalities: ["text"],
@@ -302,19 +303,23 @@ describe("models catalog contract distinctions", () => {
     ).toBeNull();
   });
 
-  it("groups aliases without presentation metadata by their contract intent", async () => {
-    const intentRow = (id: string, intent: string, label: string) =>
+  it("groups rows by the server classification, not by intent", async () => {
+    const classified = (id: string, capability: string, label: string) =>
       row({
         id,
-        capabilities: [{ ...row().capabilities[0], intent, label }],
+        capability,
+        capability_title: label,
+        // The row's capability comes from its /v1/models type. It decides
+        // even where the first serving capability is a chat endpoint.
+        capabilities: [{ ...row().capabilities[0], label }],
       });
     renderModels(
       catalog([
-        intentRow("chat", "chat.completions", "Chat"),
-        intentRow("fast", "text.completions", "Chat"),
-        intentRow("image", "image.generate", "Images"),
-        intentRow("decide", "decision.systemone", "Decisions"),
-        intentRow("tts", "speech.synthesis", "Speech"),
+        classified("chat", "chat", "Chat"),
+        classified("fast", "chat", "Chat"),
+        classified("image", "image", "Images"),
+        classified("decide", "decide", "Decisions"),
+        classified("tts", "speech", "Speech"),
       ]),
     );
     await screen.findByRole("button", { name: "Copy model name chat" });
@@ -336,6 +341,71 @@ describe("models catalog contract distinctions", () => {
     ).toBeVisible();
     expect(
       screen.queryByRole("button", { name: "Copy model name chat" }),
+    ).toBeNull();
+  });
+
+  it("shows input and output modalities and capability tags on each row", async () => {
+    renderModels(
+      catalog(
+        [
+          row({
+            type: "language",
+            architecture: {
+              input_modalities: ["text", "image"],
+              output_modalities: ["text"],
+            },
+            tags: ["tool-use", "reasoning", "vision"],
+          }),
+        ],
+        [
+          row({
+            id: "plain-chat",
+            alias: false,
+            object: "model_catalog.model",
+            type: "language",
+            architecture: {
+              input_modalities: ["text"],
+              output_modalities: ["text"],
+            },
+          }),
+        ],
+      ),
+    );
+    const copy = await screen.findByRole("button", {
+      name: "Copy model name chat",
+    });
+    const facts = within(
+      within(copy.closest("article")!).getByRole("list", {
+        name: "Model facts",
+      }),
+    );
+    expect(facts.getByText("Reasoning")).toBeVisible();
+    expect(facts.getByText("Tool use")).toBeVisible();
+    expect(facts.getByText("Vision")).toBeVisible();
+    expect(facts.getAllByRole("listitem")[0]).toHaveTextContent(
+      "text, image→totext",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "All models" }));
+    const tableRow = screen
+      .getByRole("button", { name: "Copy model name plain-chat" })
+      .closest("tr")!;
+    const tableFacts = within(tableRow).getByRole("list", {
+      name: "Model facts",
+    });
+    expect(within(tableFacts).getAllByRole("listitem")).toHaveLength(1);
+    expect(tableFacts).toHaveTextContent("text→totext");
+  });
+
+  it("shows no facts for a row /v1/models does not type", async () => {
+    renderModels(catalog([row()]));
+    const copy = await screen.findByRole("button", {
+      name: "Copy model name chat",
+    });
+    expect(
+      within(copy.closest("article")!).queryByRole("list", {
+        name: "Model facts",
+      }),
     ).toBeNull();
   });
 
@@ -927,6 +997,7 @@ describe("models catalog contract distinctions", () => {
           name: "Busy image",
           capabilities: [
             {
+              capability: "image",
               intent: "image.generate",
               label: "Images",
               input_modalities: ["text"],

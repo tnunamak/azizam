@@ -127,6 +127,28 @@ _SERVICE_CAPABILITIES: tuple[tuple[str, ModelMetadata], ...] = (
     ("decisions", _DECISION),
 )
 
+# Gateway capability intents (gateway/capabilities.Capability.intent) that are
+# not workflow intents. Families match by prefix when no exact intent does;
+# the capability's own declared modalities then refine the defaults.
+_CAPABILITY_INTENTS: dict[str, ModelMetadata] = {
+    **_INTENTS,
+    "chat.completions": _LANGUAGE,
+    "text.completions": _LANGUAGE,
+    "text.rerank": _OPERATIONS["rerank"],
+    "speech.synthesis": _OPERATIONS["speech"],
+    "speech.transcription": _OPERATIONS["transcriptions"],
+    "speech.translation": _OPERATIONS["transcriptions"],
+}
+_CAPABILITY_INTENT_FAMILIES: tuple[tuple[str, ModelMetadata], ...] = (
+    ("chat.", _LANGUAGE),
+    ("responses.", _LANGUAGE),
+    ("decision.", _DECISION),
+    ("image.", _INTENTS["image.generate"]),
+    ("video.", _INTENTS["video.generate"]),
+    ("speech.", _OPERATIONS["speech"]),
+    ("audio.", _INTENTS["audio.generate"]),
+)
+
 # Major media type of a manifest output -> output modality.
 _MEDIA_MAJOR_TO_MODALITY = {"image": "image", "video": "video", "audio": "audio", "text": "text"}
 
@@ -146,6 +168,40 @@ def from_intent(intent: str | None, manifest: Mapping[str, Any] | None = None) -
         base,
         input_modalities=_ordered(inputs, INPUT_MODALITIES),
         output_modalities=_ordered(outputs, OUTPUT_MODALITIES),
+    )
+
+
+def from_capability(
+    intent: str | None,
+    input_modalities: Iterable[str] = (),
+    output_modalities: Iterable[str] = (),
+) -> ModelMetadata | None:
+    """Metadata for one gateway capability: its intent's type and its declared modalities."""
+    intent = str(intent or "")
+    base = _CAPABILITY_INTENTS.get(intent) or next(
+        (metadata for prefix, metadata in _CAPABILITY_INTENT_FAMILIES if intent.startswith(prefix)), None
+    )
+    if base is None:
+        return None
+    return replace(
+        base,
+        input_modalities=_ordered(input_modalities, INPUT_MODALITIES) or base.input_modalities,
+        output_modalities=_ordered(output_modalities, OUTPUT_MODALITIES) or base.output_modalities,
+    )
+
+
+def from_fields(fields: Mapping[str, Any] | None) -> ModelMetadata | None:
+    """Read back the response fields `ModelMetadata.to_fields` wrote. None when untyped."""
+    if not isinstance(fields, Mapping) or fields.get("type") not in MODEL_TYPES:
+        return None
+    architecture = fields.get("architecture") if isinstance(fields.get("architecture"), Mapping) else {}
+    max_tokens = fields.get("max_tokens")
+    return ModelMetadata(
+        type=fields["type"],
+        input_modalities=_ordered(architecture.get("input_modalities") or (), INPUT_MODALITIES),
+        output_modalities=_ordered(architecture.get("output_modalities") or (), OUTPUT_MODALITIES),
+        max_tokens=max_tokens if isinstance(max_tokens, int) and not isinstance(max_tokens, bool) else None,
+        tags=_ordered(fields.get("tags") or (), TAGS),
     )
 
 
