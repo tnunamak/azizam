@@ -21,7 +21,7 @@ import {
   Waves,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { productApi, type CatalogRow } from "@/lib/product-api";
+import { productApi, type CatalogRow, type ModelTag } from "@/lib/product-api";
 import { preferredTerms } from "@/lib/terms";
 import { availabilityReason } from "@/lib/status-copy";
 import { Button } from "@/components/ui/button";
@@ -76,8 +76,6 @@ type ProductCapability =
   | "embed"
   | "rerank"
   | "audio";
-
-type CatalogCapabilityEntry = CatalogRow["capabilities"][number];
 
 const productCapabilityOrder: ProductCapability[] = [
   "chat",
@@ -136,29 +134,17 @@ function CatalogIcon({ row }: { row: CatalogRow }) {
   );
 }
 
-function entryCapability(entry: CatalogCapabilityEntry): ProductCapability {
-  if (entry.capability) return entry.capability as ProductCapability;
-  // Legacy catalog entries retain their protocol intent without presentation metadata.
-  const intent = entry.intent;
-  if (/^(chat\.|text\.completions|responses\.)/.test(intent)) return "chat";
-  if (/^(speech\.trans|audio\.trans)/.test(intent)) return "transcribe";
-  if (/^(speech\.|audio\.speech)/.test(intent)) return "speech";
-  if (/^(decision|systemone)/.test(intent)) return "decide";
-  if (intent === "text.embeddings") return "embed";
-  if (intent === "text.rerank") return "rerank";
-  return intent.split(".")[0] as ProductCapability;
-}
-
+// The server classifies each row from its /v1/models type and modalities.
 function primaryCapability(row: CatalogRow): ProductCapability {
-  const entry = row.capabilities[0] as CatalogCapabilityEntry | undefined;
-  return entry ? entryCapability(entry) : "chat";
+  return (row.capability ??
+    row.capabilities[0]?.capability ??
+    "chat") as ProductCapability;
 }
 
 function primaryCapabilityLabel(row: CatalogRow): string {
-  const entry = row.capabilities[0] as CatalogCapabilityEntry | undefined;
   return (
     row.capability_title ??
-    entry?.label ??
+    row.capabilities[0]?.label ??
     capabilityLabels[primaryCapability(row)]
   );
 }
@@ -167,8 +153,56 @@ function hasCapability(
   row: CatalogRow,
   capability: ProductCapability,
 ): boolean {
-  return row.capabilities.some(
-    (entry) => entryCapability(entry as CatalogCapabilityEntry) === capability,
+  return (
+    primaryCapability(row) === capability ||
+    row.capabilities.some((entry) => entry.capability === capability)
+  );
+}
+
+const tagLabels: Record<ModelTag, string> = {
+  reasoning: "Reasoning",
+  "tool-use": "Tool use",
+  vision: "Vision",
+  "file-input": "File input",
+};
+
+// Inputs -> outputs and the chat capability tags /v1/models reports.
+function ModelFacts({
+  row,
+  className,
+}: {
+  row: CatalogRow;
+  className?: string;
+}) {
+  const inputs = row.architecture?.input_modalities ?? [];
+  const outputs = row.architecture?.output_modalities ?? [];
+  const tags = row.tags ?? [];
+  const showIo = inputs.length > 0 && outputs.length > 0;
+  if (!showIo && tags.length === 0) return null;
+  return (
+    <ul
+      aria-label="Model facts"
+      className={cn("flex flex-wrap items-center gap-1", className)}
+    >
+      {showIo && (
+        <li>
+          <Badge
+            variant="outline"
+            className="text-muted-foreground font-normal"
+          >
+            {inputs.join(", ")}
+            <span aria-hidden="true">→</span>
+            <span className="sr-only">to</span>
+            {outputs.join(", ")}
+          </Badge>
+        </li>
+      )}
+      {tags.map((tag) => (
+        <li key={tag}>
+          <Badge variant="secondary">{tagLabels[tag]}</Badge>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -489,6 +523,7 @@ function AliasOptionRow({
         {costLabel(row) && (
           <p className="text-muted-foreground text-xs">{costLabel(row)}</p>
         )}
+        <ModelFacts row={row} className="mt-1" />
       </div>
       <CopyModelName row={row} />
       {availabilityState(row) !== "ready" && (
@@ -534,9 +569,10 @@ function CapabilityRow({
         <h2 className="text-sm font-semibold">
           {primaryCapabilityLabel(primary)}
         </h2>
-        <h3 className="col-start-2 row-start-2 min-w-0 truncate text-sm xl:col-start-auto xl:row-start-auto">
-          {titleFor(primary)}
-        </h3>
+        <div className="col-start-2 row-start-2 min-w-0 space-y-1 xl:col-start-auto xl:row-start-auto">
+          <h3 className="truncate text-sm">{titleFor(primary)}</h3>
+          <ModelFacts row={primary} />
+        </div>
         <div className="col-start-2 row-start-3 flex min-w-0 flex-wrap items-center gap-2 xl:col-start-auto xl:row-start-auto">
           <CopyModelName row={primary} />
           {costLabel(primary) && (
@@ -886,7 +922,7 @@ export default function ModelsClient() {
                 >
                   {allRows
                     .flatMap((row) => row.capabilities)
-                    .find((entry) => entryCapability(entry) === cap)?.label ??
+                    .find((entry) => entry.capability === cap)?.label ??
                     capabilityLabels[cap]}
                 </FilterToggle>
               ))}
@@ -1003,7 +1039,10 @@ export default function ModelsClient() {
                           )}
                           <CopyModelName row={row} />
                         </TableCell>
-                        <TableCell>{primaryCapabilityLabel(row)}</TableCell>
+                        <TableCell>
+                          {primaryCapabilityLabel(row)}
+                          <ModelFacts row={row} className="mt-1" />
+                        </TableCell>
                         <TableCell>{summaryEngineLabel(row)}</TableCell>
                         <TableCell>{costLabel(row)}</TableCell>
                         <TableCell>

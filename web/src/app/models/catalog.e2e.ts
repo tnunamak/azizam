@@ -22,6 +22,7 @@ function row(
     description: `Chat through ${id}.`,
     capabilities: [
       {
+        capability: "chat",
         intent: "chat.completions",
         label: "Chat",
         input_modalities: ["text"],

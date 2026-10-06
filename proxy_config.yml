@@ -162,9 +162,9 @@ backends:
           tags: [tool-use, vision]
       # These aliases deliberately select the already loaded routing target.
       # Their base references are policy data, not loaded-file inference.
-      # Their model_metadata claims only what every loadable local model has:
-      # text in, text out. Any local LLM can be the loaded one (models:
-      # cydonia-24b is text-only), and clients cache /v1/models across swaps.
+      # /v1/models reports the loaded model's declared metadata for them. Their
+      # own model_metadata is the fallback when nothing declared is loaded
+      # (models: cydonia-24b is text-only and undeclared): text in, text out.
       - id: current
         model_group: current
         base_model_id: default

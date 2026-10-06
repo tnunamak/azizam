@@ -6,6 +6,7 @@ import re
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
+from gateway import model_metadata
 from gateway.service_registry import is_litellm_service_record, is_remote_provider_config
 
 
@@ -184,29 +185,46 @@ def service_presentation(service: Mapping[str, Any], service_id: str) -> dict[st
             "capability_labels": labels, "icon_key": CAPABILITY_ICON_KEYS[kind]}
 
 
+# Presentation-metadata key holding a row's `/v1/models` contract fields
+# (`type`, `architecture`, ...). When present it decides the classification.
+LISTED_METADATA_KEY = "listed_model_metadata"
+# `/v1/models` type -> product capability. `audio` is split below.
+_TYPE_CAPABILITIES = {
+    "language": "chat", "image": "image", "video": "video", "embedding": "embed",
+    "reranking": "rerank", "decision": "decide",
+}
+_AUDIO_SUBTYPES = ("music", "sfx", "speech")
+
+
 def product_capability(capability: Any, metadata: Mapping[str, Any] | None = None) -> str:
-    """Classify declared protocol data; never infer capabilities from model IDs."""
+    """Classify through the `/v1/models` contract (gateway/model_metadata.py).
+
+    The listed model's `type` and modalities decide, else the capability's
+    intent and modalities read through the same contract. Audio that turns
+    audio into text is `transcribe`; other audio takes a declared subtype
+    (`capability: music`, a `capability:sfx` tag) or the speech intent, else
+    stays generic `audio`. Never inferred from model IDs.
+    """
     metadata = metadata or {}
-    declared = metadata.get("capability") or getattr(capability, "capability", None)
-    if isinstance(declared, str) and declared in CAPABILITY_LABELS:
-        return declared
-    tags = tuple(metadata.get("tags") or ()) + tuple(getattr(capability, "tags", ()))
-    for tag in tags:
-        value = str(tag).removeprefix("capability:")
-        if value in CAPABILITY_LABELS:
-            return value
     intent = capability if isinstance(capability, str) else capability.intent
-    if intent in PROTOCOL_CAPABILITIES:
-        return PROTOCOL_CAPABILITIES[intent]
-    if intent.startswith(("chat.", "text.completions", "responses.")):
-        return "chat"
-    if intent.startswith(("speech.trans", "audio.trans")):
+    contract = model_metadata.from_fields(metadata.get(LISTED_METADATA_KEY)) or model_metadata.from_capability(
+        intent,
+        getattr(capability, "input_modalities", ()),
+        getattr(capability, "output_modalities", ()),
+    )
+    if contract is None:
+        return intent.split(".", 1)[0]
+    if contract.type != "audio":
+        return _TYPE_CAPABILITIES[contract.type]
+    if "audio" in contract.input_modalities and "audio" not in contract.output_modalities:
         return "transcribe"
-    if intent.startswith(("speech.", "audio.speech")):
-        return "speech"
-    if intent.startswith(("decision", "systemone")):
-        return "decide"
-    return intent.split(".", 1)[0]
+    tags = tuple(metadata.get("tags") or ()) + tuple(getattr(capability, "tags", ()))
+    hints = (metadata.get("capability"), getattr(capability, "capability", None),
+             *(str(tag).removeprefix("capability:") for tag in tags))
+    subtype = next((hint for hint in hints if hint in _AUDIO_SUBTYPES), None)
+    if subtype:
+        return subtype
+    return "speech" if intent.startswith(("speech.", "audio.speech")) else "audio"
 
 
 def friendly_name(value: str) -> str:

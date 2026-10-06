@@ -13172,8 +13172,33 @@ def _role_catalog_ids_for_loaded_path(
     return ids
 
 
-async def _current_loaded_llm_model_ids(active_backend: str | None = None) -> set[str]:
-    """Return public ids that resolve to the currently loaded LLM backend."""
+def _declarations_for_loaded_model(backend: str, loaded_model: str) -> set[str]:
+    """Match declarations using chat execution's activation resolver, without I/O."""
+    service_cfg = (config.get("backends") or {}).get(backend, {})
+    if not isinstance(service_cfg, Mapping):
+        return set()
+    names = {
+        str(record.get("model_group") or record.get("id") or record.get("upstream_model") or "")
+        for record in _service_model_records(service_cfg)
+    }
+    if service_cfg.get("model_id"):
+        names.add(str(service_cfg["model_id"]))
+    ids: set[str] = set()
+    for name in names - USE_LOADED_MODEL_ALIASES - {""}:
+        target = _configured_litellm_local_model_target(name, service_id=backend)
+        if target and target.model and normalize_model_id(target.model) == normalize_model_id(loaded_model):
+            ids.add(name)
+    return ids
+
+
+async def _current_loaded_llm_model_ids(
+    active_backend: str | None = None, *, metadata_ids: set[str] | None = None,
+) -> set[str]:
+    """Return main's availability ids; optionally pass declaration ids to metadata.
+
+    Metadata uses the identity observed here, without another loaded-state read.
+    Its declaration matching must not expand the availability ids.
+    """
     try:
         active = active_backend or await get_active_backend()
     except Exception:
@@ -13192,6 +13217,8 @@ async def _current_loaded_llm_model_ids(active_backend: str | None = None) -> se
                     loaded_model_id=loaded,
                 )
             )
+        if loaded and metadata_ids is not None:
+            metadata_ids.update(_declarations_for_loaded_model(active, loaded))
         return {item for item in ids if item}
 
     loaded_path = currently_loaded_kobold_model()
@@ -13208,6 +13235,9 @@ async def _current_loaded_llm_model_ids(active_backend: str | None = None) -> se
                 loaded_model_id=basename,
             )
         )
+    if (loaded_path and active and engine_quarantine.loaded_model_is_path(active)
+            and metadata_ids is not None):
+        metadata_ids.update(_declarations_for_loaded_model(active, loaded_path))
     return {item for item in ids if item}
 
 
@@ -13229,6 +13259,8 @@ async def _current_loaded_model_policy_decision(
 async def _filter_model_list_for_profile(
     data: list[Any],
     auth_context: AuthContext,
+    *,
+    metadata_ids: set[str] | None = None,
 ) -> tuple[list[Any], dict[str, Any]]:
     metadata: dict[str, Any] = {}
     filtered = [item for item in data if isinstance(item, dict)]
@@ -13259,10 +13291,9 @@ async def _filter_model_list_for_profile(
             for item in filtered
             if normalize_model_id(str(item.get("id") or "")) in allowed_ids
         ]
-        metadata["vivid_fish_profile_model_allowlist"] = sorted(allowlist)
 
     if _profile_target_visibility(auth_context) == "available":
-        loaded_ids = await _current_loaded_llm_model_ids()
+        loaded_ids = await _current_loaded_llm_model_ids(metadata_ids=metadata_ids)
         loaded_norm = {normalize_model_id(item) for item in loaded_ids}
         comfy_available = _comfy_target_available()
         filtered = [
@@ -13288,10 +13319,17 @@ async def _filter_model_list_for_profile(
         metadata["vivid_fish_target_visibility"] = "available"
         metadata["vivid_fish_target_activation"] = _profile_target_activation(auth_context)
         metadata["vivid_fish_model_access"] = "current_loaded"
-        metadata["vivid_fish_current_model_ids"] = sorted(
-            item for item in loaded_ids if item and not item.startswith("/")
-        )
+        metadata["vivid_fish_current_model_ids"] = sorted({
+            str(item["id"]) for item in filtered
+            if item.get("id") and not str(item["id"]).startswith("/")
+            and normalize_model_id(str(item["id"])) in loaded_norm
+        })
 
+    if allowlist is not None:
+        visible_norm = {normalize_model_id(str(item.get("id") or "")) for item in filtered}
+        metadata["vivid_fish_profile_model_allowlist"] = sorted(
+            item for item in allowlist if normalize_model_id(item) in visible_norm
+        )
     return filtered, metadata
 
 
@@ -22890,6 +22928,7 @@ def _configured_model_record_for_id(model_id: str) -> tuple[str | None, Mapping[
 async def _context_window_for_model_id(
     model_id: str,
     entry: Mapping[str, Any] | None = None,
+    *, observed_windows: dict[str, int] | None = None,
 ) -> int | None:
     found = _context_window_from_mapping(entry)
     if found is not None:
@@ -22909,18 +22948,23 @@ async def _context_window_for_model_id(
     if found is not None:
         return found
     if engine_quarantine.context_window_from_live_probe(backend):
-        return await _kobold_context_window()
+        found = await _kobold_context_window()
+        if found is not None and observed_windows is not None:
+            observed_windows[model_id] = found
+        return found
     return None
 
 
-async def _annotate_model_context_windows(data: list[Any]) -> None:
+async def _annotate_model_context_windows(
+    data: list[Any], *, observed_windows: dict[str, int] | None = None,
+) -> None:
     for item in data:
         if not isinstance(item, dict):
             continue
         model_id = item.get("id")
         if not isinstance(model_id, str) or not model_id:
             continue
-        found = await _context_window_for_model_id(model_id, item)
+        found = await _context_window_for_model_id(model_id, item, observed_windows=observed_windows)
         if found is not None:
             item["context_window"] = found
 
@@ -23031,6 +23075,65 @@ def _model_metadata_sources(
         workflow_for_model=by_model_id.get,
         origins=dict(origins or {}),
     )
+
+
+def _policy_turns_reasoning_off(model_id: str) -> bool:
+    """True when the model's own request policy defaults `reasoning_effort` to `none`.
+
+    Reads the declared base transforms and alias overlay (data such as a
+    `default-params` overlay) by running them on an empty request.
+    """
+    try:
+        target = _resolve_request_target(model_id)
+        if target is None:
+            return False
+        body = _run_request_pipeline(
+            [*target.base_transform_specs, *target.alias_overlay_specs],
+            {},
+            _TransformContext(),
+            _TRANSFORM_REGISTRY,
+        )
+    except Exception:  # noqa: BLE001
+        return False
+    return body.get("reasoning_effort") == "none"
+
+
+def _with_loaded_model_inheritance(
+    sources: model_metadata.MetadataSources,
+    loaded_ids: Iterable[str],
+) -> tuple[model_metadata.MetadataSources, dict[str, int]]:
+    """Let `current` / `current-fast` inherit the loaded model's declared metadata.
+
+    `loaded_ids` are declaration names resolved from the identity already
+    observed during profile filtering in this request. Returns the sources with `inherited` set
+    and {alias id: context window} from the loaded model's configured records
+    (the smallest, as the records can use different context profiles). With
+    nothing loaded, or no declaration for the loaded model, both are empty
+    and the aliases keep their own conservative declaration.
+    """
+    declared_ids = sorted(
+        model_id for model_id in loaded_ids
+        if model_id not in USE_LOADED_MODEL_ALIASES and sources.declared(model_id) is not None
+    )
+    # A record whose own policy turns thinking off omits `reasoning` for that
+    # policy, not because the loaded weights cannot think.
+    thinking_ids = [model_id for model_id in declared_ids if not _policy_turns_reasoning_off(model_id)]
+    loaded = model_metadata.loaded_model_metadata(thinking_ids or declared_ids, sources)
+    if loaded is None:
+        return sources, {}
+    inherited = {
+        alias: model_metadata.without_reasoning(loaded) if _policy_turns_reasoning_off(alias) else loaded
+        for alias in sorted(USE_LOADED_MODEL_ALIASES)
+    }
+    windows = [
+        window for window in (
+            _context_window_from_mapping(_configured_model_record_for_id(model_id)[1])
+            for model_id in declared_ids
+        )
+        if window is not None
+    ]
+    context_windows = {alias: min(windows) for alias in inherited} if windows else {}
+    return replace(sources, inherited=inherited), context_windows
 
 
 def _build_role_catalog_entries() -> list[dict]:
@@ -23550,9 +23653,12 @@ async def list_models(request: Request):
             item["created"] = 0
 
     # Alias targets resolve against the whole catalog, so a caller's profile
-    # cannot change what an alias reports.
+    # does not change how static alias targets resolve.
     metadata_catalog = list(data)
-    data, policy_metadata = await _filter_model_list_for_profile(data, auth_context)
+    metadata_ids: set[str] = set()
+    data, policy_metadata = await _filter_model_list_for_profile(
+        data, auth_context, metadata_ids=metadata_ids,
+    )
 
     # Annotate each model entry with a description sourced from roles: or
     # models: in proxy_config.yml. Non-standard field — ignored by spec-
@@ -23583,12 +23689,34 @@ async def list_models(request: Request):
         if entry["id"] not in {item.get("id") for item in data if isinstance(item, dict)}:
             data.append(entry)
 
-    await _annotate_model_context_windows(data)
+    # Preserve only upstream observations ahead of loaded-record inheritance;
+    # values added by the annotation pass may be static alias configuration.
+    observed_alias_windows = {
+        item["id"]: window for item in data if isinstance(item, dict)
+        and item.get("id") in USE_LOADED_MODEL_ALIASES
+        and (window := _context_window_from_mapping(item)) is not None
+    }
+    await _annotate_model_context_windows(data, observed_windows=observed_alias_windows)
     origins = {
         **{model_id: model_metadata.ORIGIN_LLM_CATALOG for model_id in llm_catalog_ids},
         **{model_id: model_metadata.ORIGIN_DECISION for model_id in decision_ids},
     }
-    model_metadata.annotate_entries(data, _model_metadata_sources(origins), catalog=metadata_catalog)
+    sources, inherited_windows = _with_loaded_model_inheritance(_model_metadata_sources(origins), metadata_ids)
+    # A live-observed context window is more exact than a declared one.
+    for item in data:
+        if isinstance(item, dict) and item.get("id") in inherited_windows:
+            item["context_window"] = observed_alias_windows.get(item["id"], inherited_windows[item["id"]])
+    model_metadata.annotate_entries(data, sources, catalog=metadata_catalog)
+
+    # Resolve metadata against the full catalog, then hide target IDs that the
+    # caller cannot see. This does not change which alias entries are listed.
+    visible_ids = {normalize_model_id(str(item.get("id") or "")) for item in data if isinstance(item, dict)}
+    for item in data:
+        if isinstance(item, dict) and isinstance(item.get("vivid_fish_resolves_to"), Mapping):
+            item["vivid_fish_resolves_to"] = {
+                operation: target for operation, target in item["vivid_fish_resolves_to"].items()
+                if target and normalize_model_id(str(target)) in visible_ids
+            }
 
     upstream_payload.update(policy_metadata)
     upstream_payload["data"] = data

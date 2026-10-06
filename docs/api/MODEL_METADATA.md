@@ -7,7 +7,7 @@ Gateway `type`/`tags`/`context_window`/`max_tokens` names and OpenRouter's `arch
 invent only `audio` and `decision`.
 
 Code: `gateway/model_metadata.py` (pure derivation), wired in `proxy.py` (`list_models`,
-`_model_metadata_sources`, `_service_model_index`, `_declared_model_metadata_index`,
+`_model_metadata_sources`, `_service_model_index`, `_declared_model_metadata_index`, `_with_loaded_model_inheritance`,
 `_catalog_model_metadata`).
 
 ## Fields
@@ -39,8 +39,8 @@ Semantics:
 - An alias (`coder`, `image`, `tts`, ...) is typed by what it resolves to. An alias with several
   operations (`image` -> `images` + `image_edits`) takes the type they share and the union of their
   modalities and tags.
-- A dynamic alias (`current`, `current-fast`: whatever local LLM is loaded) claims only what every
-  model it can resolve to has. See "This machine's declarations".
+- A dynamic alias (`current`, `current-fast`: whatever local LLM is loaded) inherits the metadata of
+  the loaded model. See "Dynamic aliases".
 - No new field uses a `vivid_fish` name.
 
 Example:
@@ -75,7 +75,8 @@ operator declaration then overrides it field by field.
 | Decision models | `decision` | text -> text |
 | Registry service capability `chat`/`completions` | `language` | text -> text (+ image when the service lists `vision`) |
 | Registry service capability `embeddings` / `rerank` / `decisions` | `embedding` / `reranking` / `decision` | |
-| LLM catalog (LiteLLM-backed) entries, `current`, `current-fast` | `language` unless the serving registry service says otherwise | text -> text |
+| LLM catalog (LiteLLM-backed) entries | `language` unless the serving registry service says otherwise | text -> text |
+| `current`, `current-fast` | the loaded model's, see "Dynamic aliases" | the loaded model's |
 
 Notes:
 
@@ -85,10 +86,39 @@ Notes:
   A manifest that takes assets of different media (for example `video-scail-2-replace`: a reference
   image and a source video) must declare `media_type` on each one.
 - Output modalities come from the manifest's `outputs.*.media_type` when present.
-- Alias targets resolve against the whole catalog before profile filtering, so a caller's profile never
-  changes what an alias reports.
+- Alias targets resolve against the whole catalog before profile filtering, so visibility does not
+  change how static alias targets resolve. Dynamic aliases inherit only when this request already
+  observes a loaded identity for filtering.
 - Context windows keep their existing lookup (`_annotate_model_context_windows`); this contract only
   passes them through.
+
+## Dynamic aliases (`current`, `current-fast`)
+
+These aliases send requests to whichever local LLM is loaded. When profile filtering already
+observes the loaded identity in this model-list request, metadata uses that same observation.
+Declared service models match through chat execution's activation resolver. Metadata adds no
+health or loaded-state probes and no cache. Profiles that do not need loaded-state filtering,
+and catalog consumers without that observation, use the conservative fallback.
+
+- The aliases inherit `type`, `architecture`, `tags` and `max_tokens` from the `model_metadata`
+  declarations of those ids. Only declared ids count. When several are declared, the aliases claim
+  only what all of them claim. A record whose own request policy turns thinking off (it defaults
+  `reasoning_effort` to `none`, for example with a `default-params` policy overlay) does not count
+  against the `reasoning` tag.
+- An alias whose own request policy turns thinking off drops the `reasoning` tag. On this machine that
+  is `current-fast`, through its `reasoning_effort: none` overlay. The gateway reads this from the
+  policy data, not from the alias name.
+- `context_window`: a value observed from the running engine wins. Without one, the aliases take the
+  smallest `context_window` configured on the loaded model's records, ahead of static alias values.
+- When nothing is loaded, or no id of the loaded model is declared (for example `cydonia-24b`), the
+  aliases keep their own declaration: text in, text out, no tags.
+- The inherited values win over the aliases' own `model_metadata`, which is only the fallback.
+- Clients may cache `/v1/models`. After a model swap, a client can see the previous model's values
+  until it lists the models again.
+
+List and retrieve endpoints use the same request policy. The member catalog has no loaded-state
+filtering observation, so its dynamic aliases use the conservative fallback. Model-ID lists in
+response metadata and alias target maps include only IDs visible in `data` under the caller's profile.
 
 ## Operator declarations (`model_metadata`)
 
@@ -157,7 +187,7 @@ start it again. `roles:` and `models:` declarations are read from `proxy_config.
 |---|---|---|---|
 | `default`, `coder`, `coder-q5`, `coder-q8`, `coder-unchained`, `rp` | text, image | reasoning, tool-use, vision | Every record loads the mmproj (image input); llama-bee runs with `--jinja` (native tool calls) and `--reasoning on`, and the gateway maps `reasoning_effort` to a thinking budget. |
 | `default-fast` | text, image | tool-use, vision | Same weights; the record's `reasoning_effort: none` overlay turns thinking off, so clients should not send an effort. |
-| `current`, `current-fast` | text | none | They resolve to whichever local LLM is loaded, which can be a text-only model such as `cydonia-24b` (`models:`, no mmproj) whose tool-call and reasoning support is not declared. Clients also cache `/v1/models` across model swaps, so a value read from the loaded model at list time could be wrong at request time. The records declare `input_modalities: [text]` and `tags: []` so a sync also overwrites older declarations. |
+| `current`, `current-fast` | text | none | The fallback only (see "Dynamic aliases"): the values when nothing declared is loaded, for example the text-only `cydonia-24b` (`models:`, no mmproj, no declaration). With a Qwen record loaded they inherit text, image and tool-use, vision, plus reasoning for `current`. |
 
 No `max_tokens` is declared: the `max_tokens: 16384` on `default` is a `default-params` default that
 callers override, not a cap. The `vision` and `fast` aliases inherit from `default` and `default-fast`.
@@ -168,10 +198,30 @@ callers override, not a cap. The `vision` and `fast` aliases inherit from `defau
 |---|---|
 | `GET /v1/models`, `GET /openai/v1/models` | Annotated as above. |
 | `GET /v1/models/{id}` | Returns the same entry as the list. |
-| `GET /me/api/models/catalog` (member Models page) | Alias and model rows carry the same `type`, `architecture`, `max_tokens` and `tags` as `/v1/models` for the same id. |
+| `GET /me/api/models/catalog` (member Models page) | Alias and model rows carry the same metadata contract. Dynamic aliases use the conservative fallback because this request has no loaded identity. The row's `capability`, `icon_key` and `io` come from those fields, see "Models page classification". |
 | `GET /anthropic/v1/models[/{id}]`, or `/v1/models` with `anthropic-version` | Anthropic shape, unchanged; none of these fields are added. |
 | Ollama `GET /api/tags` | Ollama shape, unchanged. |
 | `GET /v1/models` with a LiteLLM virtual key (delegated) | **Gap:** returns LiteLLM's raw payload unchanged, without these fields. Delegated keys are scoped by LiteLLM itself, and LiteLLM's `/v1/models` does not emit `model_info`, so the gateway does not rewrite that payload. Clients that need the metadata should use a gateway key. |
+
+## Models page classification
+
+The member Models page (`/me/api/models/catalog`) groups rows by a product capability and shows one
+icon per row. One classifier, `product_capability` in `gateway/model_presentation.py`, derives both from
+this contract: the row's `/v1/models` fields when the list has the id, else the serving capability's
+intent and modalities read through `model_metadata.from_capability`.
+
+| `type` | `capability` (and `icon_key`) |
+|---|---|
+| `language` | `chat` |
+| `image` / `video` | `image` / `video` |
+| `embedding` / `reranking` / `decision` | `embed` / `rerank` / `decide` |
+| `audio`, audio in and no audio out | `transcribe` |
+| `audio`, other | the declared subtype (`capability: music` or `sfx` in the workflow manifest, or `speech`), else the speech intent gives `speech`, else `audio` (icon `sfx`) |
+
+A declared `capability` only splits audio. It cannot move a row to another type. The row's `io` is its
+`architecture` when the list has the id. The page shows `architecture` as an "inputs → outputs" chip and
+each tag as a chip. `tests/test_model_metadata_endpoints.py` fails if a row's capability and its
+`/v1/models` `type` disagree.
 
 ## Client rules
 

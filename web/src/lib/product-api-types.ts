@@ -7,6 +7,14 @@ export type CapabilityIconKey = "chat" | "image" | "video" | "music" | "sfx" | "
 
 export type SetupEvent = "settings_copied" | "external_client_confirmed" | "receipt_viewed";
 
+export type ModelType = "language" | "embedding" | "reranking" | "image" | "video" | "audio" | "decision";
+
+export type InputModality = "text" | "image" | "audio" | "video" | "file";
+
+export type OutputModality = "text" | "image" | "audio" | "video" | "embedding";
+
+export type ModelTag = "tool-use" | "reasoning" | "vision" | "file-input";
+
 export interface AvailabilityEvidence {
   source?: string;
   observed_at_s?: number;
@@ -243,7 +251,7 @@ export interface MemberStatus {
 
 export interface CatalogCapability {
   icon_key?: "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank";
-  capability?: string;
+  capability: string;
   intent: string;
   label: string;
   input_modalities: Array<string>;
@@ -288,7 +296,13 @@ export interface CatalogSummary {
   price?: unknown;
 }
 
+export interface ModelArchitecture {
+  input_modalities: Array<"text" | "image" | "audio" | "video" | "file">;
+  output_modalities: Array<"text" | "image" | "audio" | "video" | "embedding">;
+}
+
 export interface CatalogRow {
+  capability?: string;
   recommended?: boolean;
   capability_title?: string;
   icon_key?: "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank";
@@ -317,6 +331,10 @@ export interface CatalogRow {
   examples: Array<CatalogExample>;
   recent_receipts: Array<Record<string, unknown>>;
   use: CatalogUse;
+  type?: "language" | "embedding" | "reranking" | "image" | "video" | "audio" | "decision";
+  architecture?: ModelArchitecture;
+  max_tokens?: number;
+  tags?: Array<"tool-use" | "reasoning" | "vision" | "file-input">;
 }
 
 export interface CatalogCounts {

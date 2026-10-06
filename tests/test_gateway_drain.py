@@ -9,7 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -337,6 +337,7 @@ class DrainAdminRouteTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertFalse(proxy.DRAIN_STATE.is_draining())
 
+    @patch.object(proxy, "_current_loaded_llm_model_ids", AsyncMock(return_value=set()))
     def test_real_app_counts_in_flight_requests(self) -> None:
         seen = []
         original = proxy.DRAIN_STATE.begin

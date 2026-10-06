@@ -231,6 +231,64 @@ class OverrideTests(unittest.TestCase):
         self.assertIn("image", _arch(visible["vision"])[0])
 
 
+class LoadedModelInheritanceTests(unittest.TestCase):
+    """Dynamic aliases (`current`, `current-fast`) take the loaded model's declared metadata."""
+
+    DECLARED = {
+        "big": {"input_modalities": ["text", "image"], "tags": ["reasoning", "tool-use"], "max_tokens": 8192},
+        "big-alt": {"input_modalities": ["text", "image"], "tags": ["reasoning"], "max_tokens": 8192},
+        "current": {"input_modalities": ["text"], "tags": []},
+    }
+
+    def _sources(self, **kwargs) -> mm.MetadataSources:
+        return mm.MetadataSources(declared=self.DECLARED.get, **kwargs)
+
+    def test_loaded_metadata_comes_from_declared_ids_only(self) -> None:
+        loaded = mm.loaded_model_metadata(["big", "undeclared.gguf", "/path/to/big.gguf"], self._sources())
+        self.assertEqual(loaded.to_fields(), {
+            "type": "language",
+            "architecture": {"input_modalities": ["text", "image"], "output_modalities": ["text"]},
+            "max_tokens": 8192,
+            "tags": ["tool-use", "reasoning", "vision"],
+        })
+
+    def test_several_declared_ids_claim_only_what_they_share(self) -> None:
+        loaded = mm.loaded_model_metadata(["big", "big-alt"], self._sources())
+        self.assertEqual(loaded.tags, ("reasoning", "vision"))
+        self.assertEqual(loaded.max_tokens, 8192)
+
+    def test_nothing_declared_loaded_is_none(self) -> None:
+        self.assertIsNone(mm.loaded_model_metadata([], self._sources()))
+        self.assertIsNone(mm.loaded_model_metadata(["undeclared.gguf"], self._sources()))
+
+    def test_common_needs_a_shared_type(self) -> None:
+        self.assertIsNone(mm.common([mm.from_operation("chat"), mm.from_operation("embeddings")]))
+        caps = mm.common([mm.ModelMetadata("language", ("text",), ("text",), 10), mm.ModelMetadata("language", ("text",), ("text",), 20)])
+        self.assertIsNone(caps.max_tokens)
+
+    def test_inherited_wins_over_the_alias_declaration(self) -> None:
+        loaded = mm.loaded_model_metadata(["big"], self._sources())
+        inherited = {"current": loaded, "current-fast": mm.without_reasoning(loaded)}
+        entries = [{"id": "current", "vivid_fish_current_loaded": True}, {"id": "current-fast", "vivid_fish_current_loaded": True}]
+        out = _annotated(entries, self._sources(inherited=inherited))
+        self.assertEqual(out["current"]["tags"], ["tool-use", "reasoning", "vision"])
+        self.assertEqual(out["current-fast"]["tags"], ["tool-use", "vision"])
+        self.assertEqual(_arch(out["current-fast"]), (["text", "image"], ["text"]))
+
+    def test_without_inheritance_the_alias_declaration_is_the_fallback(self) -> None:
+        out = _annotated([{"id": "current", "vivid_fish_current_loaded": True}], self._sources())
+        self.assertEqual(_arch(out["current"]), (["text"], ["text"]))
+        self.assertNotIn("tags", out["current"])
+
+    def test_alias_resolving_to_a_dynamic_alias_inherits_too(self) -> None:
+        loaded = mm.loaded_model_metadata(["big"], self._sources())
+        out = _annotated(
+            [{"id": "current"}, {"id": "here", "vivid_fish_resolves_to": {"chat": "current"}}],
+            self._sources(inherited={"current": loaded}),
+        )
+        self.assertIn("reasoning", out["here"]["tags"])
+
+
 class ConsistencyAndOmissionTests(unittest.TestCase):
     def test_vision_tag_implies_image_input(self) -> None:
         sources = mm.MetadataSources(declared={"m": {"tags": ["vision"]}}.get, origins={"m": mm.ORIGIN_LLM_CATALOG})

@@ -212,20 +212,9 @@ test("models polish 2 empty states provide the next action", async ({
   ).toBeVisible();
 });
 
-test("legacy alias intents keep alternatives within the same capability", async ({
+test("aliases keep alternatives within their server-classified capability", async ({
   page,
 }) => {
-  const legacy = (id: string, intent: string, label: string) => ({
-    ...measured,
-    id,
-    display_name: id,
-    title: id,
-    capability_title: undefined,
-    icon_key: undefined,
-    use_names: [id],
-    operations: [id],
-    capabilities: [{ intent, label }],
-  });
   const peer = (
     id: string,
     intent: string,
@@ -236,15 +225,18 @@ test("legacy alias intents keep alternatives within the same capability", async 
     id,
     display_name: id,
     title: id,
+    capability,
+    capability_title: label,
+    icon_key: capability,
     use_names: [id],
     operations: [capability],
     capabilities: [{ intent, label, capability, icon_key: capability }],
   });
   await catalog(page, [
-    legacy("default", "chat.completions", "Chat"),
-    legacy("image", "image.generate", "Images"),
-    legacy("decide", "decision.systemone", "Decisions"),
-    legacy("tts", "speech.synthesis", "Speech"),
+    peer("default", "chat.completions", "chat", "Chat"),
+    peer("image", "image.generate", "image", "Images"),
+    peer("decide", "decision.systemone", "decide", "Decisions"),
+    peer("tts", "speech.synthesis", "speech", "Speech"),
     peer("chat-peer", "chat.completions", "chat", "Chat"),
     peer("image-peer", "image.generate", "image", "Images"),
   ]);

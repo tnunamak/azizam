@@ -6,6 +6,19 @@ from gateway.capabilities import Capability
 from gateway.models_catalog import build_models_catalog
 from gateway.model_presentation import engine_label, model_locality, service_health_endpoint
 
+# A capability of each product kind. The intent sets the `/v1/models` type;
+# a declared capability only splits audio generation into music and sfx.
+_KIND_INTENTS = {
+    "chat": "chat.completions", "image": "image.generate", "video": "video.generate",
+    "music": "audio.generate", "sfx": "audio.generate", "speech": "speech.synthesis",
+    "transcribe": "speech.transcription", "decide": "decision.systemone",
+    "embed": "text.embeddings", "rerank": "text.rerank",
+}
+
+
+def _kind_capability(kind, **kwargs):
+    return Capability(intent=_KIND_INTENTS[kind], capability=kind, **kwargs)
+
 
 def test_chat_catalog_recommends_default_independent_of_order_and_health():
     catalog = build_models_catalog(
@@ -27,8 +40,8 @@ def test_chat_catalog_recommends_default_independent_of_order_and_health():
 ])
 def test_general_purpose_stable_alias_is_recommended(kind, alias):
     catalog = build_models_catalog(capabilities=[
-        Capability(intent="audio.generate", backend="operator", capability=kind, model=alias),
-        Capability(intent="audio.generate", backend="operator", capability=kind, model=f"{alias}-specialist"),
+        _kind_capability(kind, backend="operator", model=alias),
+        _kind_capability(kind, backend="operator", model=f"{alias}-specialist"),
     ])
     assert [row["id"] for row in catalog["models"] if row["recommended"]] == [alias]
 
@@ -55,7 +68,7 @@ def test_media_synonyms_preserve_recommended_alias_even_when_seen_last():
 def test_media_technical_description_stays_in_details(kind, expected):
     technical = "Portable contract workflow with ComfyUI T2V FLAC 44.1 kHz."
     catalog = build_models_catalog(
-        capabilities=[Capability(intent="audio.generate", backend="one", model="actual", capability=kind)],
+        capabilities=[_kind_capability(kind, backend="one", model="actual")],
         model_entries=[{"id": "actual", "description": technical}],
     )
     row, = catalog["models"]
@@ -67,7 +80,7 @@ def test_media_technical_description_stays_in_details(kind, expected):
 @pytest.mark.parametrize("kind,title,expected", [("speech", "TTS", "Speech"), ("transcribe", "STT", "Transcription")])
 def test_speech_protocol_acronyms_use_friendly_titles(kind, title, expected):
     from gateway.model_presentation import capability_presentation
-    row = capability_presentation(Capability(intent="audio.generate", backend="one", capability=kind, title=title))
+    row = capability_presentation(_kind_capability(kind, backend="one", title=title))
     assert row["title"] == expected
 
 
@@ -436,7 +449,7 @@ def test_technical_summary_dedupes_exact_entries_and_keeps_alias_target_details(
 @pytest.mark.parametrize("kind", ["chat", "image", "video", "music", "sfx", "speech", "transcribe", "decide", "embed", "rerank"])
 def test_presentation_taxonomy_has_distinct_icon_keys(kind):
     from gateway.model_presentation import capability_presentation
-    row = capability_presentation(Capability(intent="audio.generate", backend="one", capability=kind))
+    row = capability_presentation(_kind_capability(kind, backend="one"))
     assert row["icon_key"] == kind
     assert row["capability"] == kind
     assert row["summary"].endswith(".")
@@ -673,3 +686,18 @@ def test_remote_concrete_profile_override_remains_operator_authored():
         {"locality": "remote", "secondary_profile": True},
     )
     assert row["secondary_profile"]
+
+
+def test_classification_follows_the_model_list_type():
+    from gateway.model_presentation import LISTED_METADATA_KEY, product_capability
+    # A declared kind cannot contradict the intent's type; it only splits audio.
+    assert product_capability(Capability(intent="chat.completions", backend="one", capability="music")) == "chat"
+    assert product_capability(Capability(intent="audio.generate", backend="one", capability="chat")) == "audio"
+    assert product_capability(Capability(intent="audio.generate", backend="one", capability="sfx")) == "sfx"
+    # Audio direction comes from the declared modalities.
+    stt = Capability(intent="audio.transcriptions", backend="one", input_modalities=("audio",), output_modalities=("text",))
+    assert product_capability(stt) == "transcribe"
+    assert product_capability(Capability(intent="speech.synthesis", backend="one")) == "speech"
+    # The listed `/v1/models` fields win over the capability's intent.
+    listed = {"type": "reranking", "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]}}
+    assert product_capability(Capability(intent="chat.completions", backend="one"), {LISTED_METADATA_KEY: listed}) == "rerank"

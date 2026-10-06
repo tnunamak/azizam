@@ -699,6 +699,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertEqual(transcription.headers["retry-after"], "32")
         self.assertEqual(transcription.json()["error"]["message"], "stt paused")
 
+    @patch.object(proxy, "_current_loaded_llm_model_ids", AsyncMock(return_value=set()))
     def test_full_openai_profile_allows_models_route(self) -> None:
         full_profile = AppProfile(
             id="full-openai",
@@ -719,6 +720,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["object"], "list")
 
+    @patch.object(proxy, "_current_loaded_llm_model_ids", AsyncMock(return_value=set()))
     def test_models_route_filters_profile_model_allowlist(self) -> None:
         model_locked = AppProfile(
             id="model-locked",
