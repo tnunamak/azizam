@@ -1572,7 +1572,7 @@ class AdminAuthTests(unittest.TestCase):
         allowed = client.post(
             "/admin/api/apps",
             json={"name": "brother-laptop"},
-            headers={"x-ai-gateway-admin-action": "1"},
+            headers={"x-azizam-admin-action": "1"},
         )
         self.assertEqual(allowed.status_code, 201, allowed.text)
 
@@ -1593,7 +1593,7 @@ class AdminAuthTests(unittest.TestCase):
         action_only = client.post(
             "/admin/api/apps",
             json={"name": "brother-laptop"},
-            headers={"x-ai-gateway-admin-action": "1"},
+            headers={"x-azizam-admin-action": "1"},
         )
         self.assertEqual(action_only.status_code, 403, action_only.text)
         self.assertEqual(action_only.json()["error"]["code"], "admin_csrf_required")
@@ -1602,8 +1602,8 @@ class AdminAuthTests(unittest.TestCase):
             "/admin/api/apps",
             json={"name": "brother-laptop"},
             headers={
-                "x-ai-gateway-admin-action": "1",
-                "x-ai-gateway-csrf": "csrf-token",
+                "x-azizam-admin-action": "1",
+                "x-azizam-csrf": "csrf-token",
             },
         )
         self.assertEqual(allowed.status_code, 201, allowed.text)

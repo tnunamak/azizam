@@ -1564,7 +1564,7 @@ _LITELLM_KEYS_JS = (
     "async function loadLitellmKeys(){"
     "const host=document.getElementById('litellm-keys-list');if(!host)return;"
     "try{const r=await fetch('/admin/api/operator/litellm/keys',{credentials:'same-origin',"
-    "cache:'no-store',headers:{'x-ai-gateway-admin-action':'1','x-ai-gateway-csrf':csrfToken}});"
+    "cache:'no-store',headers:{'x-azizam-admin-action':'1','x-azizam-csrf':csrfToken}});"
     "const data=await r.json();if(!r.ok){throw data}"
     "renderLitellmKeys(host,(data&&data.keys)||[])}"
     "catch(err){host.innerHTML='<p class=\"bad\">'+esc((err&&err.error&&(err.error.message||err.error.code))||'Could not load keys')+'</p>'}}"
@@ -2160,7 +2160,7 @@ ADMIN_SECTIONS: tuple[tuple[str, str], ...] = (
 )
 
 
-def _admin_sidebar(brand_noun: str = "AI Gateway") -> str:
+def _admin_sidebar(brand_noun: str = "Azizam") -> str:
     """A real left sidebar of admin sections, one visible at a time.
 
     Replaces the old single-page scroll + anchor-link strip. The first section
@@ -2195,7 +2195,7 @@ _ADMIN_NAV_SCRIPT = """
 // Exposed as window.__adminNavInit so the admin's refreshMain (which replaces
 // <main> after each action) can re-wire the sidebar without a full reload.
 window.__adminNavInit = function () {
-  const KEY = "vivid_fish_admin_section";
+  const KEY = "azizam_admin_section";
   const links = Array.from(document.querySelectorAll("[data-admin-nav]"));
   const sections = Array.from(document.querySelectorAll("[data-admin-section]"));
   if (!links.length || !sections.length) return;
@@ -2791,8 +2791,8 @@ def _policy_simulator_form(
 def render_admin_dashboard(
     snapshot: Mapping[str, Any],
     *,
-    title: str = "AI Gateway Admin",
-    brand: str = "AI Gateway",
+    title: str = "Azizam Admin",
+    brand: str = "Azizam",
     wordmark: tuple[str, str] | None = None,
     base_url: str = "https://ai.vivid.fish/openai/v1",
     create_app_action: str = "/admin/api/apps",
@@ -3111,7 +3111,7 @@ def render_admin_dashboard(
         "const copyText=async(text,button)=>{const original=button?(button.dataset.copyLabel||button.textContent||'Copy'):'';if(button)button.dataset.copyLabel=original;try{await navigator.clipboard.writeText(text);if(button)button.textContent='Copied'}catch(_){if(button)button.textContent='Failed'}finally{if(button)setTimeout(()=>{if(button.textContent==='Copied'||button.textContent==='Failed')button.textContent=button.dataset.copyLabel||original||'Copy'},1300)}};"
         "let serviceRegistryEtag=null;"
         "const isRegistryMutation=(url,method)=>{const path=String(url).split('?')[0];if(method==='PUT'&&path==='/admin/api/operator/service-registry')return true;if(method==='POST'&&path==='/admin/api/operator/services')return true;if((method==='PATCH'||method==='DELETE')&&/^\\/admin\\/api\\/operator\\/services\\/[^/]+$/.test(path))return true;if(method==='POST'&&/^\\/admin\\/api\\/operator\\/services\\/[^/]+\\/enabled$/.test(path))return true;return method==='POST'&&path==='/admin/api/extensions/enable'};"
-        "const refreshRegistryEtag=async()=>{const r=await fetch('/admin/api/operator/service-registry',{credentials:'same-origin',cache:'no-store',headers:{'x-ai-gateway-admin-action':'1','x-ai-gateway-csrf':csrfToken}});if(r.ok){const tag=r.headers.get('etag');if(tag)serviceRegistryEtag=tag}return r};"
+        "const refreshRegistryEtag=async()=>{const r=await fetch('/admin/api/operator/service-registry',{credentials:'same-origin',cache:'no-store',headers:{'x-azizam-admin-action':'1','x-azizam-csrf':csrfToken}});if(r.ok){const tag=r.headers.get('etag');if(tag)serviceRegistryEtag=tag}return r};"
         "const showError=err=>{raw(err);const conflict=err&&(err.status===412||(err.error&&err.error.code==='generation_mismatch'));message(conflict?'The service registry changed elsewhere (412 Precondition Failed). Refresh and retry.':(err&&err.error&&(err.error.message||err.error.code))||err.message||'Request failed','bad')};"
         "const show=v=>{raw(v);message('Done.','good')};"
         "const showSecret=(v,lead,warning,setup)=>{raw(v);const key=(v&&v.credential&&v.credential.api_key)||(v&&v.key&&v.key.credential&&v.key.credential.api_key);const el=document.getElementById('admin-flow-message');"
@@ -3142,7 +3142,7 @@ def render_admin_dashboard(
         "if(!r.ok)return;const html=await r.text();const doc=new DOMParser().parseFromString(html,'text/html');"
         "const next=doc.querySelector('main.shell-main'),main=document.querySelector('main.shell-main');"
         "if(next&&main){main.replaceWith(next);initProfileForm();if(window.__adminNavInit)window.__adminNavInit();if(document.getElementById('litellm-keys-list'))loadLitellmKeys()}};"
-        "const json=async(url,body,method='POST')=>{const headers={'content-type':'application/json','x-ai-gateway-admin-action':'1','x-ai-gateway-csrf':csrfToken};if(isRegistryMutation(url,method)){if(!serviceRegistryEtag)await refreshRegistryEtag();headers['If-Match']=serviceRegistryEtag||''}const r=await fetch(url,{method,credentials:'same-origin',headers,body:JSON.stringify(body)});"
+        "const json=async(url,body,method='POST')=>{const headers={'content-type':'application/json','x-azizam-admin-action':'1','x-azizam-csrf':csrfToken};if(isRegistryMutation(url,method)){if(!serviceRegistryEtag)await refreshRegistryEtag();headers['If-Match']=serviceRegistryEtag||''}const r=await fetch(url,{method,credentials:'same-origin',headers,body:JSON.stringify(body)});"
         "const text=await r.text();let data;try{data=text?JSON.parse(text):{}}catch{data={error:text}};"
         "if(r.headers.get('etag'))serviceRegistryEtag=r.headers.get('etag');if(!r.ok){if(r.status===412){data.status=412}throw data}return data};"
         "document.addEventListener('submit',async e=>{"
@@ -3216,7 +3216,7 @@ def render_admin_dashboard(
         "if(!revoke&&!disable&&!appDisable)return;"
         "if(revoke){const id=revoke.dataset.revokeCredential;try{const data=await json('/admin/api/credentials/'+encodeURIComponent(id)+'/revoke',{});await refreshMain();show(data)}catch(err){showError(err)}return}"
         "if(appDisable){const id=appDisable.dataset.disableApp;try{const data=await json('/admin/api/apps/'+encodeURIComponent(id),{},'DELETE');await refreshMain();show(data)}catch(err){showError(err)}return}"
-        "if(disable){const id=disable.dataset.disableRuntimeMapping;try{const r=await fetch('/admin/api/runtime-profile-mappings/'+encodeURIComponent(id),{method:'DELETE',credentials:'same-origin',headers:{'x-ai-gateway-admin-action':'1','x-ai-gateway-csrf':csrfToken}});const text=await r.text();const data=text?JSON.parse(text):{};if(!r.ok)throw data;await refreshMain();show(data)}catch(err){showError(err)}}});"
+        "if(disable){const id=disable.dataset.disableRuntimeMapping;try{const r=await fetch('/admin/api/runtime-profile-mappings/'+encodeURIComponent(id),{method:'DELETE',credentials:'same-origin',headers:{'x-azizam-admin-action':'1','x-azizam-csrf':csrfToken}});const text=await r.text();const data=text?JSON.parse(text):{};if(!r.ok)throw data;await refreshMain();show(data)}catch(err){showError(err)}}});"
         "document.addEventListener('change',e=>{const p=e.target.closest('[data-service-preset]');if(p)applyServicePreset(p.value)});"
         + _SERVICE_CRUD_JS
         + _LITELLM_KEYS_JS

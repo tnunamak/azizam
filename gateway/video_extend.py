@@ -318,7 +318,7 @@ class ChainEngine:
     model_family = "ltx-2.5"
     stride_reason = "ltx_latent_8np1_stride"
     min_shot_seconds = MIN_SHOT_SECONDS
-    # Extension options (extensions.com.vividfish.workflow) this engine understands.
+    # Extension options (extensions.com.azizam.workflow) this engine understands.
     option_keys = ("state_ledger", "context_seconds", "context_strength")
     default_negative = NEGATIVE_DEFAULT
 

@@ -2,14 +2,14 @@
 
 A [Pi](https://pi.dev) package that adds an **Azizam** provider. It reads the gateway's `GET /v1/models` and lists the **chat models** in Pi (and in T3 Code, which drives Pi over RPC), with context window, image input and reasoning taken from the gateway's own metadata. No hand-written model list.
 
-Azizam is the working name of the `openai-proxy` gateway. Any OpenAI-compatible gateway works; metadata-rich ones work best (see [the contract](#the-model-metadata-contract)).
+Azizam is the working name of the `azizam` gateway. Any OpenAI-compatible gateway works; metadata-rich ones work best (see [the contract](#the-model-metadata-contract)).
 
 ## Install
 
 ```bash
 pi install npm:pi-provider-azizam          # once published
-pi install /path/to/openai-proxy/integrations/pi   # from a checkout
-pi -e /path/to/openai-proxy/integrations/pi        # try for one run, no install
+pi install /path/to/azizam/integrations/pi   # from a checkout
+pi -e /path/to/azizam/integrations/pi        # try for one run, no install
 ```
 
 ## Configure
@@ -106,7 +106,7 @@ An Azizam gateway makes `/v1/models` self-describing. Every entry keeps the Open
 | `max_tokens` | maximum output tokens per request |
 | `tags` | subset of `tool-use`, `reasoning`, `vision`, `file-input` |
 
-`type: "language"` means "callable through `POST /v1/chat/completions` with text in, text out". OpenAI clients ignore the extra keys. The full contract lives in the gateway repository. Fields use Vercel AI Gateway and OpenRouter names, so other clients can use them without a Azizam-specific adapter.
+`type: "language"` means "callable through `POST /v1/chat/completions` with text in, text out". OpenAI clients ignore the extra keys. The full contract lives in the gateway repository. Fields use Vercel Azizam and OpenRouter names, so other clients can use them without a Azizam-specific adapter.
 
 Example entry:
 

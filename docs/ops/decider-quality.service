@@ -16,8 +16,8 @@ Environment=DECIDER_LLAMA_PORT=8026
 Environment=DECIDER_THREADS=8
 Environment=DECIDER_CTX=4096
 Environment=DECIDER_IDLE_EXIT_S=600
-Environment=DECIDER_PYTHON=%h/applications/openai-proxy/venv/bin/python
-ExecStart=%h/applications/openai-proxy/scripts/decider-idle-exit.sh
+Environment=DECIDER_PYTHON=%h/applications/azizam/venv/bin/python
+ExecStart=%h/applications/azizam/scripts/decider-idle-exit.sh
 Restart=on-failure
 RestartSec=10
 MemoryMax=10G

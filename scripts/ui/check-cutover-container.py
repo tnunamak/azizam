@@ -22,7 +22,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--image", default="vivid-fish-cutover-check")
+    parser.add_argument("--image", default="azizam-cutover-check")
     parser.add_argument("--port", type=int, default=18192)
     args = parser.parse_args()
     if not 18000 <= args.port <= 18999:
@@ -36,8 +36,8 @@ def main() -> None:
             "docker", "run", "--rm", "-d", "--name", name,
             "-p", f"127.0.0.1:{args.port}:5000",
             "--mount", f"type=bind,source={state},target=/app/data",
-            "-e", "AI_GATEWAY_CONFIG_PATH=/app/first-run.yml",
-            "-e", "AI_GATEWAY_LITELLM_BASE_URL=http://127.0.0.1:18999",
+            "-e", "AZIZAM_CONFIG_PATH=/app/first-run.yml",
+            "-e", "AZIZAM_LITELLM_BASE_URL=http://127.0.0.1:18999",
             args.image, "python3", "-m", "uvicorn", "proxy:app",
             "--host", "0.0.0.0", "--port", "5000",
         ], check=True, stdout=subprocess.DEVNULL)

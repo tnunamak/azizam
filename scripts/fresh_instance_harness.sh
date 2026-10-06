@@ -1,22 +1,24 @@
 #!/usr/bin/env bash
-# fresh_instance_harness.sh -- spin up an isolated AI Gateway instance for fresh-instance testing.
+
+source "$(dirname "${BASH_SOURCE[0]}")/azizam-env.sh"
+# fresh_instance_harness.sh -- spin up an isolated Azizam instance for fresh-instance testing.
 #
 # WHAT THIS DOES
 #   1. Creates a temp directory under /tmp for all persistent stores and config.
-#   2. Writes a minimal proxy_config.yml into the temp dir; points AI_GATEWAY_CONFIG_PATH at it.
+#   2. Writes a minimal proxy_config.yml into the temp dir; points AZIZAM_CONFIG_PATH at it.
 #   3. Sets env overrides for every persistent store so nothing writes to the repo data/ dir.
 #   4. Binds to HARNESS_PORT (default 15000) -- never the live port 5000.
 #   5. Fails loudly if startup output references the repo data/ directory.
 #
 # SOURCES OF TRUTH (documented explicitly)
-#   Env: AI_GATEWAY_ADMIN_DB        -- temp admin DB (never touches live data/admin.db)
-#   Env: AI_GATEWAY_METRICS_DB      -- temp metrics DB
-#   Env: AI_GATEWAY_RESPONSES_DB    -- temp responses DB
-#   Env: AI_GATEWAY_RECEIPTS_DB     -- temp receipt store DB
-#   Env: AI_GATEWAY_MEDIA_JOBS_DB   -- temp media jobs DB
-#   Env: AI_GATEWAY_CONFIG_PATH     -- temp proxy_config.yml written by this script
-#   Env: OPENAI_PROXY_PORT          -- set to HARNESS_PORT
-#   Env: AI_GATEWAY_ADMIN_SESSION_KEY -- fixed test-only secret
+#   Env: AZIZAM_ADMIN_DB        -- temp admin DB (never touches live data/admin.db)
+#   Env: AZIZAM_METRICS_DB      -- temp metrics DB
+#   Env: AZIZAM_RESPONSES_DB    -- temp responses DB
+#   Env: AZIZAM_RECEIPTS_DB     -- temp receipt store DB
+#   Env: AZIZAM_MEDIA_JOBS_DB   -- temp media jobs DB
+#   Env: AZIZAM_CONFIG_PATH     -- temp proxy_config.yml written by this script
+#   Env: AZIZAM_PORT          -- set to HARNESS_PORT
+#   Env: AZIZAM_ADMIN_SESSION_KEY -- fixed test-only secret
 #
 # USAGE
 #   ./scripts/fresh_instance_harness.sh [--smoke] [--fixture] [--browser] [--scenario NAME] [--port PORT]
@@ -64,18 +66,18 @@ fi
 
 # -- Safety guard --------------------------------------------------------------
 LIVE_DB="$REPO_ROOT/data/admin.db"
-if [[ "${AI_GATEWAY_ADMIN_DB:-}" == "$LIVE_DB" ]]; then
-  echo "ERROR: AI_GATEWAY_ADMIN_DB is set to the live DB path. Aborting." >&2
-  exit 1
-fi
-if [[ "${OPENAI_PROXY_ADMIN_DB:-}" == "$LIVE_DB" ]]; then
-  echo "ERROR: OPENAI_PROXY_ADMIN_DB is set to the live DB path. Aborting." >&2
-  exit 1
-fi
-if [[ "${OPENAI_PROXY_PORT:-}" == "5000" || "${HARNESS_PORT}" == "5000" ]]; then
-  echo "ERROR: Refusing to bind on live port 5000. Use --port or set HARNESS_PORT." >&2
-  exit 1
-fi
+for env_name in AZIZAM_ADMIN_DB AI_GATEWAY_ADMIN_DB OPENAI_PROXY_ADMIN_DB; do
+  if [[ "${!env_name:-}" == "$LIVE_DB" || "${!env_name:-}" == "$(dirname "$REPO_ROOT")/azizam/data/admin.db" || "${!env_name:-}" == "$(dirname "$REPO_ROOT")/openai-proxy/data/admin.db" ]]; then
+    echo "ERROR: $env_name is set to a production DB path. Aborting." >&2
+    exit 1
+  fi
+done
+for env_name in AZIZAM_PORT OPENAI_PROXY_PORT HARNESS_PORT; do
+  if [[ "${!env_name:-}" == "5000" ]]; then
+    echo "ERROR: Refusing to bind on live port 5000." >&2
+    exit 1
+  fi
+done
 
 # -- Temp workspace -------------------------------------------------------------
 if [[ "$FIXTURE_MODE" == 1 ]]; then
@@ -115,7 +117,7 @@ echo "[harness] Admin DB:       $TMPDIR_ROOT/admin.db"
 cat > "$TMPDIR_ROOT/proxy_config.yml" <<'YAML'
 proxy:
   host: 127.0.0.1
-  port: 15000  # overridden by OPENAI_PROXY_PORT env below
+  port: 15000  # overridden by AZIZAM_PORT env below
 
 # No auth required for fresh-instance smoke: lets health + admin endpoints work
 # without needing to provision an App credential first.
@@ -177,7 +179,7 @@ proxy:
 auth:
   enabled: true
 admin:
-  session_signing_key_env: AI_GATEWAY_ADMIN_SESSION_KEY
+  session_signing_key_env: AZIZAM_ADMIN_SESSION_KEY
   oidc:
     enabled: false
     cookie:
@@ -243,17 +245,17 @@ echo "[harness] Python: $PYTHON"
 if [[ "$FIXTURE_MODE" == 1 ]]; then
   STARTUP_LOG="$TMPDIR_ROOT/startup.log"
   mkdir -p "$TMPDIR_ROOT/home"
-  export AI_GATEWAY_ADMIN_DB="$TMPDIR_ROOT/admin.db"
-  export AI_GATEWAY_METRICS_DB="$TMPDIR_ROOT/metrics.db"
-  export AI_GATEWAY_RESPONSES_DB="$TMPDIR_ROOT/responses.db"
-  export AI_GATEWAY_RECEIPTS_DB="$TMPDIR_ROOT/receipts.db"
-  export AI_GATEWAY_MEDIA_JOBS_DB="$TMPDIR_ROOT/media_jobs.db"
-  export AI_GATEWAY_CONFIG_PATH="$TMPDIR_ROOT/proxy_config.yml"
-  export AI_GATEWAY_ADMIN_SESSION_KEY="p1b-only-session-signing-key-32-bytes-minimum"
+  export AZIZAM_ADMIN_DB="$TMPDIR_ROOT/admin.db"
+  export AZIZAM_METRICS_DB="$TMPDIR_ROOT/metrics.db"
+  export AZIZAM_RESPONSES_DB="$TMPDIR_ROOT/responses.db"
+  export AZIZAM_RECEIPTS_DB="$TMPDIR_ROOT/receipts.db"
+  export AZIZAM_MEDIA_JOBS_DB="$TMPDIR_ROOT/media_jobs.db"
+  export AZIZAM_CONFIG_PATH="$TMPDIR_ROOT/proxy_config.yml"
+  export AZIZAM_ADMIN_SESSION_KEY="p1b-only-session-signing-key-32-bytes-minimum"
   export AGW_IMAGE_CACHE_DIR="$TMPDIR_ROOT/images"
   export AGW_VRAM_ESTIMATES_PATH="$TMPDIR_ROOT/vram_estimates.json"
   export AGW_DRIFT_REPORT_PATH="$TMPDIR_ROOT/drift_status.json"
-  export OPENAI_PROXY_KEY_ACTIVITY_LOG="$TMPDIR_ROOT/key_activity.jsonl"
+  export AZIZAM_KEY_ACTIVITY_LOG="$TMPDIR_ROOT/key_activity.jsonl"
   export PYTHONPYCACHEPREFIX="$TMPDIR_ROOT/pycache"
   export TMPDIR="$TMPDIR_ROOT"
   fixture_sandbox_args=(
@@ -274,7 +276,7 @@ if [[ "$FIXTURE_MODE" == 1 ]]; then
     "$PYTHON" "$REPO_ROOT/tests/compat/python/macro_ux_fixture.py" --assert-os-containment --state-root "$TMPDIR_ROOT" --readonly-root "$REPO_ROOT"
   echo "[harness] Launching authenticated fixture ($FIXTURE_SCENARIO)..."
   setsid strace -f -qq -o "$TMPDIR_ROOT/network-trace.log" -e trace=network bwrap "${fixture_sandbox_args[@]}" -- env -i PATH="$PATH" HOME="$TMPDIR_ROOT/home" TMPDIR="$TMPDIR" LANG="${LANG:-C.UTF-8}" LC_ALL="${LC_ALL:-C.UTF-8}" PYTHONPATH="$REPO_ROOT" PYTHONUNBUFFERED=1 PYTHONPYCACHEPREFIX="$PYTHONPYCACHEPREFIX" \
-    AI_GATEWAY_ADMIN_DB="$AI_GATEWAY_ADMIN_DB" AI_GATEWAY_METRICS_DB="$AI_GATEWAY_METRICS_DB" AI_GATEWAY_RESPONSES_DB="$AI_GATEWAY_RESPONSES_DB" AI_GATEWAY_RECEIPTS_DB="$AI_GATEWAY_RECEIPTS_DB" AI_GATEWAY_MEDIA_JOBS_DB="$AI_GATEWAY_MEDIA_JOBS_DB" AI_GATEWAY_CONFIG_PATH="$AI_GATEWAY_CONFIG_PATH" AI_GATEWAY_ADMIN_SESSION_KEY="$AI_GATEWAY_ADMIN_SESSION_KEY" AI_GATEWAY_LITELLM_BASE_URL=http://127.0.0.1:9 AI_GATEWAY_LITELLM_API_KEY= TABBY_IDLE_TIMEOUT=0 TTS_ENABLED=false AGW_HOST_TELEMETRY_DISABLED=1 P1B_FIXTURE_SCENARIO="$FIXTURE_SCENARIO" AGW_IMAGE_CACHE_DIR="$AGW_IMAGE_CACHE_DIR" AGW_VRAM_ESTIMATES_PATH="$AGW_VRAM_ESTIMATES_PATH" AGW_DRIFT_REPORT_PATH="$AGW_DRIFT_REPORT_PATH" OPENAI_PROXY_KEY_ACTIVITY_LOG="$OPENAI_PROXY_KEY_ACTIVITY_LOG" \
+    AZIZAM_ADMIN_DB="$AZIZAM_ADMIN_DB" AZIZAM_METRICS_DB="$AZIZAM_METRICS_DB" AZIZAM_RESPONSES_DB="$AZIZAM_RESPONSES_DB" AZIZAM_RECEIPTS_DB="$AZIZAM_RECEIPTS_DB" AZIZAM_MEDIA_JOBS_DB="$AZIZAM_MEDIA_JOBS_DB" AZIZAM_CONFIG_PATH="$AZIZAM_CONFIG_PATH" AZIZAM_ADMIN_SESSION_KEY="$AZIZAM_ADMIN_SESSION_KEY" AZIZAM_LITELLM_BASE_URL=http://127.0.0.1:9 AZIZAM_LITELLM_API_KEY= TABBY_IDLE_TIMEOUT=0 TTS_ENABLED=false AGW_HOST_TELEMETRY_DISABLED=1 P1B_FIXTURE_SCENARIO="$FIXTURE_SCENARIO" AGW_IMAGE_CACHE_DIR="$AGW_IMAGE_CACHE_DIR" AGW_VRAM_ESTIMATES_PATH="$AGW_VRAM_ESTIMATES_PATH" AGW_DRIFT_REPORT_PATH="$AGW_DRIFT_REPORT_PATH" AZIZAM_KEY_ACTIVITY_LOG="$AZIZAM_KEY_ACTIVITY_LOG" \
     "$PYTHON" "$REPO_ROOT/tests/compat/python/macro_ux_fixture.py" --serve --state-root "$TMPDIR_ROOT" --scenario "$FIXTURE_SCENARIO" >"$STARTUP_LOG" 2>&1 &
   PROXY_PID=$!
   for _ in $(seq 1 200); do [[ -f "$TMPDIR_ROOT/fixture-ready.json" ]] && break; kill -0 "$PROXY_PID" 2>/dev/null || break; sleep 0.1; done
@@ -290,24 +292,24 @@ if [[ "$FIXTURE_MODE" == 1 ]]; then
   if [[ "$FIXTURE_BROWSER" == 1 ]]; then
     (cd "$REPO_ROOT/web" && P1B_BOOTSTRAP_PATH="$TMPDIR_ROOT/bootstrap-private.json" npm run test:e2e -- tests/playwright/p1b/authenticated-gateway.spec.ts)
   fi
-  (cd "$TMPDIR_ROOT" && PYTHONPATH="$REPO_ROOT" OPENAI_PROXY_BASE_URL="http://127.0.0.1:$HARNESS_PORT" OPENAI_PROXY_ADMIN_KEY="$("$PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["compatibility_key"])' "$TMPDIR_ROOT/bootstrap-private.json")" "$PYTHON" -m unittest tests.compat.python.probe_fresh_instance_journey -v) || exit 1
+  (cd "$TMPDIR_ROOT" && PYTHONPATH="$REPO_ROOT" AZIZAM_BASE_URL="http://127.0.0.1:$HARNESS_PORT" AZIZAM_ADMIN_KEY="$("$PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["compatibility_key"])' "$TMPDIR_ROOT/bootstrap-private.json")" "$PYTHON" -m unittest tests.compat.python.probe_fresh_instance_journey -v) || exit 1
   "$PYTHON" "$REPO_ROOT/tests/compat/python/macro_ux_fixture.py" --assert-network-trace "$TMPDIR_ROOT/network-trace.log" --fixture-port "$HARNESS_PORT"
   exit 0
 fi
 
 # -- Launch --------------------------------------------------------------------
-export AI_GATEWAY_ADMIN_DB="$TMPDIR_ROOT/admin.db"
-export AI_GATEWAY_METRICS_DB="$TMPDIR_ROOT/metrics.db"
-export AI_GATEWAY_RESPONSES_DB="$TMPDIR_ROOT/responses.db"
-export AI_GATEWAY_RECEIPTS_DB="$TMPDIR_ROOT/receipts.db"
-export AI_GATEWAY_MEDIA_JOBS_DB="$TMPDIR_ROOT/media_jobs.db"
-export AI_GATEWAY_CONFIG_PATH="$TMPDIR_ROOT/proxy_config.yml"
-export OPENAI_PROXY_PORT="$HARNESS_PORT"
-export AI_GATEWAY_ADMIN_SESSION_KEY="harness-test-session-key-not-for-production"
+export AZIZAM_ADMIN_DB="$TMPDIR_ROOT/admin.db"
+export AZIZAM_METRICS_DB="$TMPDIR_ROOT/metrics.db"
+export AZIZAM_RESPONSES_DB="$TMPDIR_ROOT/responses.db"
+export AZIZAM_RECEIPTS_DB="$TMPDIR_ROOT/receipts.db"
+export AZIZAM_MEDIA_JOBS_DB="$TMPDIR_ROOT/media_jobs.db"
+export AZIZAM_CONFIG_PATH="$TMPDIR_ROOT/proxy_config.yml"
+export AZIZAM_PORT="$HARNESS_PORT"
+export AZIZAM_ADMIN_SESSION_KEY="harness-test-session-key-not-for-production"
 # Fresh-instance probes must not borrow the operator's live LiteLLM sidecar.
 # Keep LiteLLM deliberately unreachable unless a test opts in explicitly.
-export AI_GATEWAY_LITELLM_BASE_URL="${AI_GATEWAY_LITELLM_BASE_URL:-http://127.0.0.1:15999}"
-export AI_GATEWAY_LITELLM_API_KEY="${AI_GATEWAY_LITELLM_API_KEY:-}"
+export AZIZAM_LITELLM_BASE_URL="${AZIZAM_LITELLM_BASE_URL:-http://127.0.0.1:15999}"
+export AZIZAM_LITELLM_API_KEY="${AZIZAM_LITELLM_API_KEY:-}"
 # Silence noisy tabbyapi health checks that would fail on a fresh host
 export TABBY_IDLE_TIMEOUT=0
 export TTS_ENABLED=false

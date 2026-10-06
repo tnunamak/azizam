@@ -77,7 +77,7 @@ const workflowsCatalog = {
           style: "studio",
           strength: 0.35,
           size: "1024x1024",
-          extensions: { "com.vividfish.workflow": { seed: 42, steps: 8 } },
+          extensions: { "com.azizam.workflow": { seed: 42, steps: 8 } },
         },
         form: {},
         files: {},
@@ -411,9 +411,9 @@ test("workflow deep link edits guided JSON fields and preserves advanced extras"
     nested: { preserve: true },
     extensions: {
       ...((body.extensions as Record<string, unknown> | undefined) ?? {}),
-      "com.vividfish.workflow": {
+      "com.azizam.workflow": {
         ...(((body.extensions as Record<string, unknown> | undefined)?.[
-          "com.vividfish.workflow"
+          "com.azizam.workflow"
         ] as Record<string, unknown> | undefined) ?? {}),
         seed: 99,
       },
@@ -431,7 +431,7 @@ test("workflow deep link edits guided JSON fields and preserves advanced extras"
     await route.fulfill({
       headers: {
         "content-type": "application/json",
-        "x-ai-gateway-receipt-id": "receipt_json_workflow",
+        "x-azizam-receipt-id": "receipt_json_workflow",
       },
       json: {
         data: [
@@ -463,7 +463,7 @@ test("workflow deep link edits guided JSON fields and preserves advanced extras"
     style: "flatlay",
     size: "768x512",
     strength: 0.8,
-    extensions: { "com.vividfish.workflow": { seed: 99, steps: 11 } },
+    extensions: { "com.azizam.workflow": { seed: 99, steps: 11 } },
     scheduler: "karras",
     nested: { preserve: true },
   });
@@ -499,7 +499,7 @@ test("workflow multipart guided fields include file, numeric edits, and preserve
     await route.fulfill({
       headers: {
         "content-type": "image/png",
-        "x-ai-gateway-request-id": "req_workflow_multipart",
+        "x-azizam-request-id": "req_workflow_multipart",
       },
       body: Buffer.from(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
@@ -761,7 +761,7 @@ test("workflow denied receipt does not create a link, while verified receipt lin
   await page.unroute("**/v1/images/generations");
   await page.route("**/v1/images/generations", (route) =>
     route.fulfill({
-      headers: { "x-ai-gateway-receipt-id": "receipt denied/value" },
+      headers: { "x-azizam-receipt-id": "receipt denied/value" },
       json: { data: [{ url: "data:image/png;base64,iVBORw0KGgo=" }] },
     }),
   );
@@ -777,7 +777,7 @@ test("workflow denied receipt does not create a link, while verified receipt lin
   await page.unroute("**/v1/images/generations");
   await page.route("**/v1/images/generations", (route) =>
     route.fulfill({
-      headers: { "x-ai-gateway-receipt-id": "receipt verified/value" },
+      headers: { "x-azizam-receipt-id": "receipt verified/value" },
       json: { data: [{ url: "data:image/png;base64,iVBORw0KGgo=" }] },
     }),
   );

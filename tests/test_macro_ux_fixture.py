@@ -89,7 +89,7 @@ class TestMacroUxFixture(unittest.TestCase):
     def test_fixture_child_environment_and_owned_paths_are_explicit(self) -> None:
         source = HARNESS_PATH.read_text(encoding="utf-8")
         self.assertIn('env -i PATH="$PATH" HOME="$TMPDIR_ROOT/home"', source)
-        for name in ("AI_GATEWAY_ADMIN_DB", "AI_GATEWAY_METRICS_DB", "AI_GATEWAY_RESPONSES_DB", "AI_GATEWAY_RECEIPTS_DB", "AI_GATEWAY_MEDIA_JOBS_DB", "AI_GATEWAY_CONFIG_PATH", "OPENAI_PROXY_KEY_ACTIVITY_LOG", "PYTHONPYCACHEPREFIX"):
+        for name in ("AZIZAM_ADMIN_DB", "AZIZAM_METRICS_DB", "AZIZAM_RESPONSES_DB", "AZIZAM_RECEIPTS_DB", "AZIZAM_MEDIA_JOBS_DB", "AZIZAM_CONFIG_PATH", "AZIZAM_KEY_ACTIVITY_LOG", "PYTHONPYCACHEPREFIX"):
             self.assertIn(f'{name}=\"$TMPDIR_ROOT/', source)
         self.assertIn('TMPDIR="$TMPDIR_ROOT"', source)
         self.assertIn('--ro-bind / /', source)

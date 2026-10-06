@@ -6,7 +6,7 @@
   "use strict";
   const C = window.ShowcaseCore;
   const BASE = location.origin;
-  const KEY_STORE = "vividfish.showcase.apiKey";
+  const KEY_STORE = "azizam.showcase.apiKey";
   const $ = (sel, root) => (root || document).querySelector(sel);
 
   // ------------------------------------------------------------------ helpers
@@ -602,7 +602,7 @@
     return wrap;
   }
 
-  const KEYLINE = '-H "Authorization: Bearer $OPENAI_PROXY_API_KEY"';
+  const KEYLINE = '-H "Authorization: Bearer $AZIZAM_API_KEY"';
 
   function cardSnippets(card, ex) {
     const exampleValues = {};
@@ -621,30 +621,30 @@
       case "chat": case "vision":
         return [
           { label: "curl", code: `curl -sS ${BASE}/v1/chat/completions ${KEYLINE} \\\n  -H 'Content-Type: application/json' \\\n  -d '{"model": "${card.aliases[0].alias}", "messages": [{"role": "user", "content": "Explain why the sky is blue."}]}'` },
-          { label: "Python (openai)", code: `from openai import OpenAI\nclient = OpenAI(base_url="${BASE}/v1", api_key="$OPENAI_PROXY_API_KEY")\n\nr = client.chat.completions.create(\n    model="${card.aliases[0].alias}",\n    messages=[{"role": "user", "content": "Explain why the sky is blue."}],\n)\nprint(r.choices[0].message.content)` + (card.kind === "vision" ? `\n\n# Vision: pass an image part\nmessages=[{"role": "user", "content": [\n    {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}},\n    {"type": "text", "text": "What is in this image?"},\n]}]` : "") },
-          { label: "JavaScript", code: `import OpenAI from "openai";\nconst client = new OpenAI({ baseURL: "${BASE}/v1", apiKey: process.env.OPENAI_PROXY_API_KEY });\nconst r = await client.chat.completions.create({\n  model: "${card.aliases[0].alias}",\n  messages: [{ role: "user", content: "Explain why the sky is blue." }],\n});\nconsole.log(r.choices[0].message.content);` },
+          { label: "Python (openai)", code: `from openai import OpenAI\nclient = OpenAI(base_url="${BASE}/v1", api_key="$AZIZAM_API_KEY")\n\nr = client.chat.completions.create(\n    model="${card.aliases[0].alias}",\n    messages=[{"role": "user", "content": "Explain why the sky is blue."}],\n)\nprint(r.choices[0].message.content)` + (card.kind === "vision" ? `\n\n# Vision: pass an image part\nmessages=[{"role": "user", "content": [\n    {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}},\n    {"type": "text", "text": "What is in this image?"},\n]}]` : "") },
+          { label: "JavaScript", code: `import OpenAI from "openai";\nconst client = new OpenAI({ baseURL: "${BASE}/v1", apiKey: process.env.AZIZAM_API_KEY });\nconst r = await client.chat.completions.create({\n  model: "${card.aliases[0].alias}",\n  messages: [{ role: "user", content: "Explain why the sky is blue." }],\n});\nconsole.log(r.choices[0].message.content);` },
         ];
       case "embeddings":
         return [
           { label: "curl", code: `curl -sS ${BASE}/v1/embeddings ${KEYLINE} \\\n  -H 'Content-Type: application/json' \\\n  -d '{"model": "embed", "input": ["A cat sat on the mat.", "A kitten rested on the rug."]}'` },
-          { label: "Python (openai)", code: `from openai import OpenAI\nclient = OpenAI(base_url="${BASE}/v1", api_key="$OPENAI_PROXY_API_KEY")\nr = client.embeddings.create(model="embed", input=["A cat sat on the mat."])\nprint(len(r.data[0].embedding))  # 768` },
+          { label: "Python (openai)", code: `from openai import OpenAI\nclient = OpenAI(base_url="${BASE}/v1", api_key="$AZIZAM_API_KEY")\nr = client.embeddings.create(model="embed", input=["A cat sat on the mat."])\nprint(len(r.data[0].embedding))  # 768` },
         ];
       case "tts":
         return [
           { label: "curl", code: `curl -sS ${BASE}/v1/audio/speech ${KEYLINE} \\\n  -H 'Content-Type: application/json' \\\n  -d '{"model": "tts", "voice": "alloy", "input": "Hello from the gateway.", "response_format": "mp3"}' \\\n  -o speech.mp3` },
-          { label: "Python (openai)", code: `from openai import OpenAI\nclient = OpenAI(base_url="${BASE}/v1", api_key="$OPENAI_PROXY_API_KEY")\nwith client.audio.speech.with_streaming_response.create(\n    model="tts", voice="alloy", input="Hello from the gateway.",\n) as r:\n    r.stream_to_file("speech.mp3")` },
+          { label: "Python (openai)", code: `from openai import OpenAI\nclient = OpenAI(base_url="${BASE}/v1", api_key="$AZIZAM_API_KEY")\nwith client.audio.speech.with_streaming_response.create(\n    model="tts", voice="alloy", input="Hello from the gateway.",\n) as r:\n    r.stream_to_file("speech.mp3")` },
           { label: "Streaming PCM", code: `# response_format=pcm streams 24 kHz s16le while the engine speaks\ncurl -sN ${BASE}/v1/audio/speech ${KEYLINE} \\\n  -H 'Content-Type: application/json' \\\n  -d '{"model": "tts-fast", "voice": "alloy", "input": "Streaming test.", "response_format": "pcm"}' \\\n  | ffplay -f s16le -ar 24000 -ac 1 -nodisp -autoexit -` },
         ];
       case "voices": case "custom-voices":
         return [
           { label: "curl", code: `# list built-in and your custom voices\ncurl -sS ${BASE}/v1/voices ${KEYLINE}\n\n# create a custom voice from a 5-60 s sample\ncurl -sS ${BASE}/v1/audio/voices ${KEYLINE} \\\n  -F name='My narrator' -F audio_sample=@me.wav\n\n# speak with it\ncurl -sS ${BASE}/v1/audio/speech ${KEYLINE} \\\n  -H 'Content-Type: application/json' \\\n  -d '{"model": "tts", "voice": {"id": "voice_..."}, "input": "Hello there."}' -o out.wav` },
-          { label: "Python (openai)", code: `from openai import OpenAI\nclient = OpenAI(base_url="${BASE}/v1", api_key="$OPENAI_PROXY_API_KEY")\nvoice = client.audio.voices.create(name="My narrator", audio_sample=open("me.wav", "rb"))\nwith client.audio.speech.with_streaming_response.create(\n    model="tts", voice={"id": voice.id}, input="Hello there.",\n) as r:\n    r.stream_to_file("out.wav")` },
+          { label: "Python (openai)", code: `from openai import OpenAI\nclient = OpenAI(base_url="${BASE}/v1", api_key="$AZIZAM_API_KEY")\nvoice = client.audio.voices.create(name="My narrator", audio_sample=open("me.wav", "rb"))\nwith client.audio.speech.with_streaming_response.create(\n    model="tts", voice={"id": voice.id}, input="Hello there.",\n) as r:\n    r.stream_to_file("out.wav")` },
         ];
       case "stt": case "stt-diarize": {
         const d = card.kind === "stt-diarize";
         return [
           { label: "curl", code: `curl -sS ${BASE}/v1/audio/transcriptions ${KEYLINE} \\\n  -F model=${card.aliases[0].alias} -F file=@speech.wav` + (d ? ` \\\n  -F response_format=diarized_json -F chunking_strategy=auto` : "") },
-          { label: "Python (openai)", code: `from openai import OpenAI\nclient = OpenAI(base_url="${BASE}/v1", api_key="$OPENAI_PROXY_API_KEY")\nr = client.audio.transcriptions.create(\n    model="${card.aliases[0].alias}", file=open("speech.wav", "rb"),` + (d ? `\n    response_format="diarized_json", chunking_strategy="auto",\n)\nfor s in r.segments:\n    print(s.speaker, s.start, s.end, s.text)` : `\n)\nprint(r.text)`) },
+          { label: "Python (openai)", code: `from openai import OpenAI\nclient = OpenAI(base_url="${BASE}/v1", api_key="$AZIZAM_API_KEY")\nr = client.audio.transcriptions.create(\n    model="${card.aliases[0].alias}", file=open("speech.wav", "rb"),` + (d ? `\n    response_format="diarized_json", chunking_strategy="auto",\n)\nfor s in r.segments:\n    print(s.speaker, s.start, s.end, s.text)` : `\n)\nprint(r.text)`) },
         ];
       }
       case "protocol": {
@@ -652,10 +652,10 @@
         const body = JSON.stringify(PROTO_BODIES[p]("Hello"), null, 2);
         const curl = `curl -sS ${BASE}${card.path} ${KEYLINE} \\\n  -H 'Content-Type: application/json'${p === "anthropic" ? " \\\n  -H 'anthropic-version: 2023-06-01'" : ""} \\\n  -d '${body}'`;
         const sdk = {
-          openai: `from openai import OpenAI\nclient = OpenAI(base_url="${BASE}/v1", api_key="$OPENAI_PROXY_API_KEY")\nr = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": "Hello"}])  # gpt-4o resolves to alias default\nprint(r.choices[0].message.content)`,
-          responses: `from openai import OpenAI\nclient = OpenAI(base_url="${BASE}/v1", api_key="$OPENAI_PROXY_API_KEY")\nr = client.responses.create(model="default", input="Hello")\nprint(r.output_text)`,
-          anthropic: `import anthropic\nclient = anthropic.Anthropic(base_url="${BASE}/anthropic", api_key="$OPENAI_PROXY_API_KEY")\nm = client.messages.create(model="claude-sonnet-4", max_tokens=256, messages=[{"role": "user", "content": "Hello"}])\nprint(m.content[0].text)`,
-          ollama: `from ollama import Client\nclient = Client(host="${BASE}/ollama", headers={"Authorization": "Bearer $OPENAI_PROXY_API_KEY"})\nr = client.chat(model="default", messages=[{"role": "user", "content": "Hello"}])\nprint(r.message.content)`,
+          openai: `from openai import OpenAI\nclient = OpenAI(base_url="${BASE}/v1", api_key="$AZIZAM_API_KEY")\nr = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": "Hello"}])  # gpt-4o resolves to alias default\nprint(r.choices[0].message.content)`,
+          responses: `from openai import OpenAI\nclient = OpenAI(base_url="${BASE}/v1", api_key="$AZIZAM_API_KEY")\nr = client.responses.create(model="default", input="Hello")\nprint(r.output_text)`,
+          anthropic: `import anthropic\nclient = anthropic.Anthropic(base_url="${BASE}/anthropic", api_key="$AZIZAM_API_KEY")\nm = client.messages.create(model="claude-sonnet-4", max_tokens=256, messages=[{"role": "user", "content": "Hello"}])\nprint(m.content[0].text)`,
+          ollama: `from ollama import Client\nclient = Client(host="${BASE}/ollama", headers={"Authorization": "Bearer $AZIZAM_API_KEY"})\nr = client.chat(model="default", messages=[{"role": "user", "content": "Hello"}])\nprint(r.message.content)`,
         }[p];
         return [{ label: "curl", code: curl }, { label: "Python SDK", code: sdk }];
       }

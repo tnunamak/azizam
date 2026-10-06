@@ -264,9 +264,9 @@ async function publicRequest(path: string, key: string, init: RequestInit) {
 
 function receiptFrom(response: Response, payload: unknown) {
   const header =
-    response.headers.get("x-ai-gateway-receipt-id") ??
-    response.headers.get("x-ai-gateway-request-id") ??
-    response.headers.get("x-gateway-request-id") ??
+    response.headers.get("x-azizam-receipt-id") ??
+    response.headers.get("x-azizam-request-id") ??
+    response.headers.get("x-azizam-request-id") ??
     response.headers.get("x-request-id");
   if (header) return header;
   if (typeof payload === "object" && payload !== null) {
@@ -1153,8 +1153,8 @@ export default function TryPage() {
           const extensions = wasString
             ? JSON.parse(formBody.extensions as string)
             : { ...((formBody.extensions as Record<string, unknown>) ?? {}) };
-          extensions["com.vividfish.workflow"] = {
-            ...extensions["com.vividfish.workflow"],
+          extensions["com.azizam.workflow"] = {
+            ...extensions["com.azizam.workflow"],
             [mapping.field]: { multipart_field: mapping.field },
           };
           formBody.extensions = wasString
@@ -1322,7 +1322,7 @@ export default function TryPage() {
       const receiptId = requestId
         ? await verifiedReceiptId(
             new Response(null, {
-              headers: { "x-ai-gateway-receipt-id": requestId },
+              headers: { "x-azizam-receipt-id": requestId },
             }),
             null,
           )

@@ -2,8 +2,8 @@
 
 Date: 2026-05-15
 
-This document scopes **Vivid Fish AI Gateway** (the product formerly known as
-`openai-proxy`) around the top target users without turning one operator's
+This document scopes **Azizam** (the product formerly known as
+`azizam`) around the top target users without turning one operator's
 current machine into the product spec.
 
 Example public host: `https://ai.example.com`.
@@ -331,7 +331,7 @@ in a namespaced `extensions` object, for example:
 {
   "workflow": "flux2-edit-controlnet",
   "extensions": {
-    "com.vividfish.workflow": {
+    "com.azizam.workflow": {
       "denoise": 0.35,
       "controlnet_strength": 1.1
     }
@@ -345,16 +345,16 @@ extra multipart field:
 
 ```bash
 curl -s http://127.0.0.1:5000/v1/images/edits \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -F model=flux2-edit-controlnet \
   -F prompt='preserve the geometry, watercolor style' \
   -F image=@input.png \
   -F control_image=@edge-map.png \
-  -F 'extensions={"com.vividfish.workflow":{"control_image":{"multipart_field":"control_image"},"controlnet_strength":1.1}}'
+  -F 'extensions={"com.azizam.workflow":{"control_image":{"multipart_field":"control_image"},"controlnet_strength":1.1}}'
 ```
 
 The form field `control_image` is upload transport. The portable control remains
-`extensions.com.vividfish.workflow.control_image`, and it only works when the
+`extensions.com.azizam.workflow.control_image`, and it only works when the
 resolved manifest declares and binds that asset input.
 
 For gateway-owned media jobs, use a cleaner native shape:
@@ -380,7 +380,7 @@ Do not prove this by eyeballing generated images.
 
 Prove it with a fake ComfyUI backend and manifest contract tests:
 
-1. Submit an image-edit request with `extensions.com.vividfish.workflow.denoise=0.35`, or a gateway media job with `parameters.denoise=0.35`.
+1. Submit an image-edit request with `extensions.com.azizam.workflow.denoise=0.35`, or a gateway media job with `parameters.denoise=0.35`.
 2. Capture the backend request produced by the adapter.
 3. Assert the configured backend binding changed to `0.35`.
 4. Assert the route receipt lists `denoise` as accepted.

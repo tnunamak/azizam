@@ -95,11 +95,11 @@ def _build_registry() -> WorkflowRegistry:
     registry = WorkflowRegistry()
     registry.add_manifest(
         yaml.safe_load(CONTROLNET_MANIFEST_YAML),
-        source_path="/srv/openai-proxy/manifests/workflows/controlnet.yml",
+        source_path="/srv/azizam/manifests/workflows/controlnet.yml",
     )
     registry.add_manifest(
         yaml.safe_load(SIMPLE_MANIFEST_YAML),
-        source_path="/srv/openai-proxy/manifests/workflows/simple.yml",
+        source_path="/srv/azizam/manifests/workflows/simple.yml",
     )
     return registry
 
@@ -160,7 +160,7 @@ class GatewayDiscoveryRouterTests(unittest.TestCase):
         for response in responses:
             self.assertEqual(response.status_code, 200)
             raw = response.text
-            self.assertNotIn("/srv/openai-proxy/manifests", raw)
+            self.assertNotIn("/srv/azizam/manifests", raw)
             self.assertNotIn("source_path", raw)
             self.assertNotIn("manifest_hash", raw)
             self.assertNotIn("bindings", raw)
@@ -445,10 +445,10 @@ class GatewayCapabilitiesEndpointTests(unittest.TestCase):
         self.assertEqual(body["audience"], "client")
         by_namespace = {item["namespace"]: item for item in body["extensions"]}
         self.assertEqual(
-            by_namespace["com.vividfish.workflow"]["namespace"],
-            "com.vividfish.workflow",
+            by_namespace["com.azizam.workflow"]["namespace"],
+            "com.azizam.workflow",
         )
-        routes = by_namespace["com.vividfish.workflow"]["routes"]
+        routes = by_namespace["com.azizam.workflow"]["routes"]
         route_targets = {route["route"]: route["targets"] for route in routes}
         self.assertIn("/v1/images/edits", route_targets)
         edit_target = route_targets["/v1/images/edits"][0]
@@ -463,14 +463,14 @@ class GatewayCapabilitiesEndpointTests(unittest.TestCase):
         }
         self.assertNotIn("image.edit", generate_intents)
         self.assertEqual(
-            by_namespace["com.vividfish.chat"]["routes"][0]["controls"],
+            by_namespace["com.azizam.chat"]["routes"][0]["controls"],
             ["receipt_verbosity"],
         )
         self.assertEqual(
-            by_namespace["com.vividfish.routing"]["routes"][0]["controls"],
+            by_namespace["com.azizam.routing"]["routes"][0]["controls"],
             ["local_preference"],
         )
-        self.assertNotIn("/srv/openai-proxy", response.text)
+        self.assertNotIn("/srv/azizam", response.text)
 
 
 def _make_receipts_client(

@@ -24,7 +24,7 @@ READS = (
     "/v1/assets/exposure-probe-missing/content",
     "/v1/images/exposure-probe-missing/content",
     "/v1/videos/exposure-probe-missing/content",
-    "/.well-known/ai-gateway", "/.well-known/skills",
+    "/.well-known/azizam", "/.well-known/skills",
 )
 WRITES = (
     "/v1/chat/completions", "/anthropic/v1/messages", "/api/generate",

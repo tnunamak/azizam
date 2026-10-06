@@ -237,8 +237,8 @@ class TestFlux2SeamlessTileManifest(unittest.TestCase):
 
         self.assertIn("flux2-klein-4b-seamless-tile", by_id)
         tile = by_id["flux2-klein-4b-seamless-tile"]
-        self.assertEqual(tile["vivid_fish_workflow_id"], self.manifest["id"])
-        self.assertEqual(tile["vivid_fish_backend"], "gateway")
+        self.assertEqual(tile["azizam_workflow_id"], self.manifest["id"])
+        self.assertEqual(tile["azizam_backend"], "gateway")
         rendered = json.dumps(tile, sort_keys=True)
         self.assertNotIn("/home/", rendered)
         self.assertNotIn("/media/", rendered)

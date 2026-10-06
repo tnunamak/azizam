@@ -10,7 +10,7 @@ URL path, so the routes must sit at host root:
 * ``POST /sdapi/v1/txt2img``, ``POST /sdapi/v1/interrupt``
 
 This module is a translator and nothing else. ``txt2img`` becomes a call to the image
-route of a catalog workflow (the ``fields`` map in ``x-vividfish-workflows`` says where
+route of a catalog workflow (the ``fields`` map in ``x-azizam-workflows`` says where
 each input goes) through ``A1111Deps.call``, so authentication, profile policy and
 receipts stay in the core. A1111's "checkpoints" are the gateway's stable image aliases
 and its synchronous ``image.generate`` workflows.
@@ -19,7 +19,7 @@ Honesty rules (see docs/VENDOR_FACADES.md): a field that changes what the image 
 and that the gateway cannot honour (hires fix, face restoration, ADetailer and other
 scripts, LoRA prompt tags, styles, variation seeds) is rejected with a 422 that names it.
 A tuning knob the chosen model has no use for (negative prompt on a CFG-distilled model,
-sampler, ``clip_skip``, an unknown ``override_settings.sd_vae`` as in real A1111) is dropped, and the response lists it in ``x-gateway-ignored-params``.
+sampler, ``clip_skip``, an unknown ``override_settings.sd_vae`` as in real A1111) is dropped, and the response lists it in ``x-azizam-ignored-params``.
 
 Auth: SillyTavern sends ``Authorization: Basic base64(auth)`` from its "Authentication"
 box. The password (or the whole string, when it has no colon) is the gateway API key.
@@ -182,7 +182,7 @@ def _check_unsupported(payload: Mapping[str, Any]) -> None:
         # An unknown sd_vae is not an error in real A1111: sd_vae.resolve_vae_from_setting prints
         # "Couldn't find VAE named ...; using None instead" and generation continues. This gateway
         # lists no selectable VAEs (/sdapi/v1/sd-vae), so every named VAE is unknown here. map_payload
-        # reports it in x-gateway-ignored-params.
+        # reports it in x-azizam-ignored-params.
 
 
 def _clamp(value: float, spec: Mapping[str, Any]) -> tuple[float, bool]:
@@ -290,7 +290,7 @@ def info_json(payload: Mapping[str, Any], entry: Mapping[str, Any], inputs: Mapp
         "restore_faces": False, "sd_model_name": entry["short_id"], "sd_model_hash": None, "sd_vae_name": None,
         "clip_skip": 1, "job_timestamp": time.strftime("%Y%m%d%H%M%S"), "index_of_first_image": 0,
         "infotexts": [], "styles": [], "extra_generation_params": {"gateway_workflow": entry["id"]},
-        "is_using_inpainting_conditioning": False, "version": "vivid-fish-gateway",
+        "is_using_inpainting_conditioning": False, "version": "azizam-gateway",
     })
 
 
@@ -427,7 +427,7 @@ def register_a1111_routes(app: FastAPI, deps: A1111Deps, *, prefix: str = "/sdap
         images = [item["b64_json"] for item in (resp.json().get("data") or []) if isinstance(item, Mapping) and item.get("b64_json")]
         if not images:
             raise A1111Error(502, "the gateway returned no inline image data")
-        headers = {"x-gateway-ignored-params": ",".join(ignored)} if ignored else {}
+        headers = {"x-azizam-ignored-params": ",".join(ignored)} if ignored else {}
         body = {"images": images if payload.get("send_images", True) else [], "parameters": _echo(payload),
                 "info": info_json(payload, entry, inputs, seed, count)}
         return JSONResponse(body, headers=headers)

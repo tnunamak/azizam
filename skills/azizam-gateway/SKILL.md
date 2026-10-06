@@ -1,9 +1,9 @@
 ---
-name: openai-proxy-gateway
-description: Use Vivid Fish AI Gateway (the local OpenAI-compatible AI gateway, formerly openai-proxy) for chat, embeddings, image generation/editing, TTS, STT, audio generation, video jobs, Anthropic Messages, Ollama-compatible chat/generate/model routes, and gateway-native capabilities/receipts. Use when a task mentions Vivid Fish AI Gateway, AI Gateway, openai-proxy, /gateway/v1, opk_ keys, local AI backends, or apps that need one local AI endpoint.
+name: azizam-gateway
+description: Use Azizam (the local OpenAI-compatible AI gateway, formerly azizam) for chat, embeddings, image generation/editing, TTS, STT, audio generation, video jobs, Anthropic Messages, Ollama-compatible chat/generate/model routes, and gateway-native capabilities/receipts. Use when a task mentions Azizam, Azizam, azizam, /gateway/v1, opk_ keys, local AI backends, or apps that need one local AI endpoint.
 ---
 
-# Vivid Fish AI Gateway
+# Azizam
 
 Use this skill when you need to call the user's local AI gateway. Treat the gateway as local infrastructure owned by the user. Discover capabilities first, use the narrowest working protocol, and never expose secrets.
 
@@ -17,21 +17,21 @@ Start with unauthenticated metadata:
 
 ```bash
 curl -fsS "$BASE/health"
-curl -fsS "$BASE/.well-known/ai-gateway" || curl -fsS "$BASE/.well-known/openai-proxy"
+curl -fsS "$BASE/.well-known/ai-gateway" || curl -fsS "$BASE/.well-known/azizam"
 ```
 
 Then use authenticated gateway discovery before assuming a modality:
 
 ```bash
 curl -fsS "$BASE/gateway/v1/capabilities" \
-  -H "Authorization: Bearer $AI_GATEWAY_API_KEY"
+  -H "Authorization: Bearer $AZIZAM_API_KEY"
 curl -fsS "$BASE/gateway/v1/workflows" \
-  -H "Authorization: Bearer $AI_GATEWAY_API_KEY"
+  -H "Authorization: Bearer $AZIZAM_API_KEY"
 ```
 
-`OPENAI_PROXY_API_KEY` is still accepted by existing apps and tooling as an env-var alias for the same bearer token.
+`AZIZAM_API_KEY` is still accepted by existing apps and tooling as an env-var alias for the same bearer token.
 
-Typed inputs, aliases, typical times, and the sync and async route of every native workflow are in `GET /openapi.json`, root list `x-vividfish-workflows` (each entry points at a `WorkflowInputs_<id>` schema). Slow work uses an async route: submit, poll, fetch the content. Pick the entry, then call its route with curl or an OpenAI SDK: `execution.fields` says whether each input is a body field, an `extensions["com.vividfish.workflow"]` key, or a file part.
+Typed inputs, aliases, typical times, and the sync and async route of every native workflow are in `GET /openapi.json`, root list `x-azizam-workflows` (each entry points at a `WorkflowInputs_<id>` schema). Slow work uses an async route: submit, poll, fetch the content. Pick the entry, then call its route with curl or an OpenAI SDK: `execution.fields` says whether each input is a body field, an `extensions["com.azizam.workflow"]` key, or a file part.
 
 If a needed capability is absent or unavailable, stop and report that honestly.
 
@@ -46,7 +46,7 @@ If a needed capability is absent or unavailable, stop and report that honestly.
 
 ## Auth Rules
 
-- Use `Authorization: Bearer $AI_GATEWAY_API_KEY` (or the legacy `$OPENAI_PROXY_API_KEY` env-var name when that is already set).
+- Use `Authorization: Bearer $AZIZAM_API_KEY` (or the legacy `$AZIZAM_API_KEY` env-var name when that is already set).
 - Bearer tokens start with `opk_` regardless of which env-var name your client uses.
 - Never ask the user to paste a raw `opk_...` token into chat.
 - Never read, print, or echo local key stores.
@@ -60,16 +60,16 @@ When a request is rejected, an extension is ignored, or output does not match th
 
 ```bash
 curl -fsS "$BASE/gateway/v1/receipts?limit=20" \
-  -H "Authorization: Bearer $AI_GATEWAY_API_KEY"
+  -H "Authorization: Bearer $AZIZAM_API_KEY"
 curl -fsS "$BASE/gateway/v1/receipts/$REQUEST_ID" \
-  -H "Authorization: Bearer $AI_GATEWAY_API_KEY"
+  -H "Authorization: Bearer $AZIZAM_API_KEY"
 ```
 
 Receipts record field names and reasons, not raw prompts or media bytes. Use them to understand policy denials, accepted inputs, rejected inputs, ignored namespaced workflow controls, and manifest provenance.
 
 ## Workflow Controls
 
-Do not send backend workflow knobs as random top-level OpenAI fields. First fetch `GET /gateway/v1/workflows`, then send only manifest-listed controls under `extensions.com.vividfish.workflow`.
+Do not send backend workflow knobs as random top-level OpenAI fields. First fetch `GET /gateway/v1/workflows`, then send only manifest-listed controls under `extensions.com.azizam.workflow`.
 
 Current examples:
 
@@ -85,7 +85,7 @@ Current examples:
 - Image generation/edit responses include `asset_id`, `asset_url`, and `media_type` alongside `b64_json` or `url`.
 - Durable image jobs always produce URL-backed assets, even if the submitted request asked for `b64_json`; this keeps job records small and reusable.
 - Video `input_reference` accepts prior image handles as `{"asset_id":"img_<sha256>"}` or `asset:img_<sha256>` when the same App API key minted the asset.
-- For image variants, use top-level `n`; for repeatability, use manifest-backed `extensions.com.vividfish.workflow.seed` only when discovery lists `seed`.
+- For image variants, use top-level `n`; for repeatability, use manifest-backed `extensions.com.azizam.workflow.seed` only when discovery lists `seed`.
 - For video variants, repeat calls with different top-level `seed`. Do not invent `variant_count` or other unadvertised controls.
 
 Example JSON body shape:
@@ -95,7 +95,7 @@ Example JSON body shape:
   "model": "flux2-klein-4b-edit",
   "prompt": "preserve this structure, paint it as underwater rock",
   "extensions": {
-    "com.vividfish.workflow": {
+    "com.azizam.workflow": {
       "denoise": 0.35
     }
   }
@@ -119,6 +119,6 @@ Example JSON body shape:
 
 - Assuming a model or modality exists because OpenAI has it.
 - Assuming Ollama model mutation routes pull/create/delete local files; they return unsupported-operation by design. Manage model files on the backend that owns them.
-- Sending ComfyUI-specific knobs as random top-level OpenAI fields. Put gateway workflow controls under `extensions.com.vividfish.workflow` when a manifest supports them.
+- Sending ComfyUI-specific knobs as random top-level OpenAI fields. Put gateway workflow controls under `extensions.com.azizam.workflow` when a manifest supports them.
 - Rewriting a working app's hostname purely for cosmetic reasons when the operator still supports its compatibility alias.
 - Reading secret files to "check" credentials.

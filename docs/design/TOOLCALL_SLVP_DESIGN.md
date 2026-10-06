@@ -25,7 +25,7 @@ STRUCTURAL NORMALIZATION**. It carries **no tool-call text parsers** and adds
 2. **Advise.** The gateway knows which backend produced the response (it is in
    the service registry). It emits the *exact* remediation for that backend
    (`--tool-call-parser hermes` for vLLM, `--jinja` for llama.cpp, etc.) via a
-   structured `x-gateway-toolcall-advisory` response header + a one-time admin
+   structured `x-azizam-toolcall-advisory` response header + a one-time admin
    notice + a WARN log. It never mutates the response body.
 3. **Normalize (structural, not parsing).** For backends that *do* lift but
    slightly off-spec — TabbyAPI returns `arguments` as a dict not a JSON string;
@@ -312,7 +312,7 @@ The strongest non-self confirmation is that the mature gateways in this category
 - **vLLM / SGLang** keep parsing **inside the engine**, opt-in by flag, precisely
   because it is tokenizer/streaming-coupled. They are the *producers* of the
   structured shape; a downstream proxy is the wrong layer to re-implement it.
-- **Cloudflare AI Gateway / OpenRouter** punt: they pass the upstream
+- **Cloudflare Azizam / OpenRouter** punt: they pass the upstream
   tool-call shape through and rely on the upstream to be correct. They carry no
   cross-family text parsers either.
 - **No standalone maintained library** exists to vendor (re-confirmed §2). So
@@ -394,7 +394,7 @@ Qwen3-Coder model"), `[TOOL_CALLS]` ⇒ `mistral`, `<|python_tag|>` ⇒ `llama3`
 backend sent (today's behavior). The advisory is delivered out-of-band, three
 ways, in increasing persistence:
 
-1. **Response header** `x-gateway-toolcall-advisory: <remediation>` on
+1. **Response header** `x-azizam-toolcall-advisory: <remediation>` on
    non-streaming responses. Invisible to a working client, instantly visible to
    anyone debugging in curl / devtools. (Header value is single-line,
    URL/ASCII-safe; full text + docs link in the admin notice.)

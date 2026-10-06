@@ -25,7 +25,7 @@ class UserPortalRenderTests(unittest.TestCase):
         )
         self.assertTrue(html.startswith("<!doctype html>"))
         self.assertIn("</html>", html)
-        self.assertIn("AI Gateway", html)
+        self.assertIn("Azizam", html)
         self.assertIn("Continue with vivid.fish ID", html)
         self.assertIn('/login?return_to=/', html)
         # /v1/models survives in the reveal sheet's runnable "prove it works"
@@ -185,7 +185,7 @@ class UserPortalRenderTests(unittest.TestCase):
         self.assertIn("<button type=\"submit\">Create App</button>", html)
         self.assertIn("data-create-owned-app", html)
         self.assertIn("Create your first App to get an", html)
-        self.assertIn("x-ai-gateway-csrf", html)
+        self.assertIn("x-azizam-csrf", html)
 
     def test_base_url_area_keeps_copy_and_openai_setup_compact(self) -> None:
         html = render_user_portal(
@@ -335,8 +335,8 @@ class UserPortalRenderTests(unittest.TestCase):
         # Shared shell chrome.
         self.assertIn('class="shell-header"', html)
         self.assertIn('class="shell-main"', html)
-        self.assertIn('aria-label="AI Gateway home"', html)
-        self.assertIn(">AI Gateway</span>", html)
+        self.assertIn('aria-label="Azizam home"', html)
+        self.assertIn(">Azizam</span>", html)
         # Signed-out chrome has no inert section nav; operator-only links stay hidden.
         self.assertNotIn('class="shell-nav"', html)
         self.assertNotIn('href="/status"', html)
@@ -594,7 +594,7 @@ assert.equal(messages.at(-1).kind, "good");
         neutral = render_user_portal(oidc_enabled=False, owner_exists=True)
         self.assertNotIn('<div class="hero-or">', neutral)
         self.assertIn("invite only", neutral)
-        self.assertIn("Your AI Gateway account controls", neutral)
+        self.assertIn("Your Azizam account controls", neutral)
         self.assertNotIn("vivid.fish account", neutral)
         self.assertNotIn("Continue with vivid", neutral)
 
@@ -660,8 +660,8 @@ assert.equal(messages.at(-1).kind, "good");
         self.assertNotIn("vivid.fish account", signed_out)
         self.assertNotIn("Continue with vivid.fish ID", signed_out)
         self.assertNotIn('class="eyebrow">ai.vivid.fish', signed_out)
-        self.assertIn("Continue with AI Gateway ID", signed_out)
-        self.assertIn("Your AI Gateway account controls", signed_out)
+        self.assertIn("Continue with Azizam ID", signed_out)
+        self.assertIn("Your Azizam account controls", signed_out)
 
     def test_signed_out_with_oidc_keeps_setup_fallback(self) -> None:
         # OIDC is the primary path, but operators without an IdP account can

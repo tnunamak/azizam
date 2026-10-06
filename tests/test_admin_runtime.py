@@ -644,7 +644,7 @@ class AdminRuntimeTests(unittest.TestCase):
         )
         hrefs = {link["href"] for link in snapshot["discovery_links"]}
         self.assertIn("/", hrefs)
-        self.assertIn("/.well-known/ai-gateway", hrefs)
+        self.assertIn("/.well-known/azizam", hrefs)
         self.assertIn("/admin/api/overview", hrefs)
         self.assertNotIn("/gateway/v1/capabilities", hrefs)
         self.assertTrue(
@@ -1283,7 +1283,7 @@ class ServicePatchRoundTripTests(unittest.TestCase):
         client = TestClient(app)
         client.headers.update({
             "Authorization": f"Bearer {admin_key}",
-            "x-ai-gateway-admin-action": "1",
+            "x-azizam-admin-action": "1",
         })
         before = client.get("/admin/api/operator/service-registry")
         self.assertEqual(before.status_code, 200, before.text)

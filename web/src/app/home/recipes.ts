@@ -65,7 +65,7 @@ export function recipeFor(
         ],
         keyLabel: "GATEWAY_API_KEY",
         language: "YAML",
-        code: `endpoints:\n  custom:\n    - name: "Vivid Fish"\n      apiKey: "\${GATEWAY_API_KEY}"\n      baseURL: ${quotedUrl}\n      models:\n        default: [${quotedModel}]\n        fetch: true\n      modelDisplayLabel: "Vivid Fish"`,
+        code: `endpoints:\n  custom:\n    - name: "Azizam"\n      apiKey: "\${GATEWAY_API_KEY}"\n      baseURL: ${quotedUrl}\n      models:\n        default: [${quotedModel}]\n        fetch: true\n      modelDisplayLabel: "Azizam"`,
         docs: "https://www.librechat.ai/docs/configuration/librechat_yaml/ai_endpoints",
       };
     case "SillyTavern":
@@ -103,7 +103,7 @@ export function recipeFor(
         ],
         keyLabel: "GATEWAY_API_KEY",
         language: "TOML",
-        code: `model = ${quotedModel}\nmodel_provider = "vivid_fish"\n\n[model_providers.vivid_fish]\nname = "Vivid Fish"\nbase_url = ${quotedUrl}\nenv_key = "GATEWAY_API_KEY"\nwire_api = "responses"`,
+        code: `model = ${quotedModel}\nmodel_provider = "azizam"\n\n[model_providers.azizam]\nname = "Azizam"\nbase_url = ${quotedUrl}\nenv_key = "GATEWAY_API_KEY"\nwire_api = "responses"`,
         docs: "https://learn.chatgpt.com/docs/config-file/config-advanced#custom-model-providers",
       };
     case "Claude Code":

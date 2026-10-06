@@ -57,7 +57,7 @@ for (const theme of ["light", "dark"]) {
                     },
                   }
                 : {
-                    headers: { "x-ai-gateway-receipt-id": id },
+                    headers: { "x-azizam-receipt-id": id },
                     json: {
                       answers: {
                         route: {
@@ -137,9 +137,9 @@ test("Try prepares a key and links a real public chat receipt", async ({
   await page.getByRole("button", { name: "Run", exact: true }).click();
   const response = await chatResponse;
   expect(response.ok()).toBe(true);
-  const id = response.headers()["x-ai-gateway-receipt-id"];
+  const id = response.headers()["x-azizam-receipt-id"];
   expect(id).toBeTruthy();
-  expect(response.headers()["x-ai-gateway-request-id"]).toBe(id);
+  expect(response.headers()["x-azizam-request-id"]).toBe(id);
   await expect(page.getByText("Chat result", { exact: true })).toBeVisible();
   await expect(
     page.getByText(

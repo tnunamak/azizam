@@ -1,4 +1,4 @@
-"""Fresh-instance API journey gauntlet for the AI Gateway.
+"""Fresh-instance API journey gauntlet for the Azizam.
 
 Exercises the full operator journey a sophisticated self-hoster needs after a
 fresh install: health, discovery, admin auth, service inventory, profile
@@ -8,24 +8,24 @@ discovery.
 
 Required env vars
 -----------------
-OPENAI_PROXY_BASE_URL
+AZIZAM_BASE_URL
     Root URL of the gateway, e.g. ``http://127.0.0.1:5000``. Must not
     include a protocol suffix.
 
-OPENAI_PROXY_ADMIN_KEY
+AZIZAM_ADMIN_KEY
     An ``oak_...`` admin API key. Required for admin-plane probes.
     The suite creates a gauntlet-scoped App and key, then cleans them up
     after the run.
 
-OPENAI_PROXY_API_KEY          (optional)
+AZIZAM_API_KEY          (optional)
     A pre-existing ``opk_...`` runtime App key to use for runtime probes.
     If absent, the suite creates and uses a temporary gauntlet App key
     minted from the admin key, then revokes it on teardown.
 
 Run with::
 
-    OPENAI_PROXY_BASE_URL=http://127.0.0.1:5000 \\
-    OPENAI_PROXY_ADMIN_KEY=oak_... \\
+    AZIZAM_BASE_URL=http://127.0.0.1:5000 \\
+    AZIZAM_ADMIN_KEY=oak_... \\
     python -m unittest tests.compat.python.probe_fresh_instance_journey -v
 
 Product gaps discovered during a probe run are written to
@@ -145,9 +145,9 @@ def record_gap(tag: str, message: str, context: dict[str, Any] | None = None) ->
 # Skip conditions
 # ---------------------------------------------------------------------------
 
-_BASE_URL = os.environ.get("OPENAI_PROXY_BASE_URL", "").strip().rstrip("/")
-_ADMIN_KEY = os.environ.get("OPENAI_PROXY_ADMIN_KEY", "").strip()
-_RUNTIME_KEY_ENV = os.environ.get("OPENAI_PROXY_API_KEY", "").strip()
+_BASE_URL = os.environ.get("AZIZAM_BASE_URL", "").strip().rstrip("/")
+_ADMIN_KEY = os.environ.get("AZIZAM_ADMIN_KEY", "").strip()
+_RUNTIME_KEY_ENV = os.environ.get("AZIZAM_API_KEY", "").strip()
 
 _SKIP_NO_BASE = not _BASE_URL
 _SKIP_NO_ADMIN = not _ADMIN_KEY
@@ -157,7 +157,7 @@ _SKIP_NO_ADMIN = not _ADMIN_KEY
 # 1. Public / unauthenticated surfaces
 # ---------------------------------------------------------------------------
 
-@unittest.skipIf(_SKIP_NO_BASE, "OPENAI_PROXY_BASE_URL not set")
+@unittest.skipIf(_SKIP_NO_BASE, "AZIZAM_BASE_URL not set")
 class TestPublicSurfaces(unittest.TestCase):
     """Public endpoints that must work without any credentials."""
 
@@ -194,16 +194,16 @@ class TestPublicSurfaces(unittest.TestCase):
     # -- discovery --
 
     def test_well_known_ai_gateway(self) -> None:
-        r = self.gw.get("/.well-known/ai-gateway")
+        r = self.gw.get("/.well-known/azizam")
         self.assertEqual(r.status, 200, r.text()[:300])
         data = r.json()
         self.assertIn("service", data)
         svc = data["service"]
         self.assertIn("product", svc)
-        self.assertIn("AI Gateway", svc["product"], svc["product"])
+        self.assertIn("Azizam", svc["product"], svc["product"])
 
-    def test_well_known_openai_proxy_alias(self) -> None:
-        r = self.gw.get("/.well-known/openai-proxy")
+    def test_well_known_azizam_alias(self) -> None:
+        r = self.gw.get("/.well-known/azizam")
         self.assertEqual(r.status, 200, r.text()[:300])
         data = r.json()
         self.assertIn("service", data)
@@ -260,8 +260,8 @@ class TestPublicSurfaces(unittest.TestCase):
 # 2. Admin-plane probes (require oak_ key)
 # ---------------------------------------------------------------------------
 
-@unittest.skipIf(_SKIP_NO_BASE, "OPENAI_PROXY_BASE_URL not set")
-@unittest.skipIf(_SKIP_NO_ADMIN, "OPENAI_PROXY_ADMIN_KEY not set")
+@unittest.skipIf(_SKIP_NO_BASE, "AZIZAM_BASE_URL not set")
+@unittest.skipIf(_SKIP_NO_ADMIN, "AZIZAM_ADMIN_KEY not set")
 class TestAdminPlane(unittest.TestCase):
     """Admin API probes -- these read and write through the oak_ key."""
 
@@ -329,7 +329,7 @@ class TestAdminPlane(unittest.TestCase):
 
     def test_admin_overview_rejected_with_runtime_key(self) -> None:
         if not _RUNTIME_KEY_ENV:
-            self.skipTest("OPENAI_PROXY_API_KEY not set")
+            self.skipTest("AZIZAM_API_KEY not set")
         r = self.gw.get("/admin/api/overview", bearer=_RUNTIME_KEY_ENV)
         self.assertIn(
             r.status, (401, 403),
@@ -520,8 +520,8 @@ class TestAdminPlane(unittest.TestCase):
 # 3. Runtime probes (require opk_ key)
 # ---------------------------------------------------------------------------
 
-@unittest.skipIf(_SKIP_NO_BASE, "OPENAI_PROXY_BASE_URL not set")
-@unittest.skipIf(_SKIP_NO_ADMIN, "OPENAI_PROXY_ADMIN_KEY not set (needed to mint runtime key)")
+@unittest.skipIf(_SKIP_NO_BASE, "AZIZAM_BASE_URL not set")
+@unittest.skipIf(_SKIP_NO_ADMIN, "AZIZAM_ADMIN_KEY not set (needed to mint runtime key)")
 class TestRuntimePlane(unittest.TestCase):
     """Runtime probes using an opk_ key minted from the admin key."""
 
@@ -571,7 +571,7 @@ class TestRuntimePlane(unittest.TestCase):
     def _key(self) -> str:
         key = self._runtime_app_key
         if not key:
-            self.skipTest("no opk_ key available; set OPENAI_PROXY_ADMIN_KEY or OPENAI_PROXY_API_KEY")
+            self.skipTest("no opk_ key available; set AZIZAM_ADMIN_KEY or AZIZAM_API_KEY")
         return key
 
     def _auth_enabled(self) -> bool:
@@ -807,7 +807,7 @@ class TestRuntimePlane(unittest.TestCase):
 # 4. Bootstrap / setup state detection
 # ---------------------------------------------------------------------------
 
-@unittest.skipIf(_SKIP_NO_BASE, "OPENAI_PROXY_BASE_URL not set")
+@unittest.skipIf(_SKIP_NO_BASE, "AZIZAM_BASE_URL not set")
 class TestBootstrapDetect(unittest.TestCase):
     """Detect whether the instance looks fresh or already claimed."""
 

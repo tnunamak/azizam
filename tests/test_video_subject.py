@@ -174,15 +174,15 @@ class ReplaceSubjectRouteTests(RemixReplaceBase):
                         vs.PROBE_NODE: {"text": [TRACK_REPR % "[0.9, 0.9, 0.8]"]}}}
         status = self.client.get(f"/v1/videos/{NEW_ID}").json()
         self.assertEqual(status["status"], "completed")
-        self.assertEqual(len(status["vivid_fish_warnings"]), 1)
-        self.assertIn("3 people", status["vivid_fish_warnings"][0])
+        self.assertEqual(len(status["azizam_warnings"]), 1)
+        self.assertIn("3 people", status["azizam_warnings"][0])
 
     def test_no_warning_when_the_person_was_chosen(self) -> None:
         self._create(subject_index="1")
         self.comfy.history[NEW_PROMPT_ID] = {
             "status": {"completed": True, "status_str": "success", "messages": []},
             "outputs": {vs.PROBE_NODE: {"text": [TRACK_REPR % "[0.9, 0.9, 0.8]"]}}}
-        self.assertNotIn("vivid_fish_warnings", self.client.get(f"/v1/videos/{NEW_ID}").json())
+        self.assertNotIn("azizam_warnings", self.client.get(f"/v1/videos/{NEW_ID}").json())
 
 
 if __name__ == "__main__":

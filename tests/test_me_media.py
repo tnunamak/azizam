@@ -106,14 +106,14 @@ class MeMediaRouterTests(unittest.TestCase):
         )
 
     def _mutation_validator(self, request: Request, _session: AdminSession):
-        if request.headers.get("x-ai-gateway-user-action") != "1":
+        if request.headers.get("x-azizam-user-action") != "1":
             from fastapi.responses import JSONResponse
 
             return JSONResponse(
                 status_code=403,
                 content={"error": {"code": "user_action_header_required"}},
             )
-        if request.headers.get("x-ai-gateway-csrf") != "valid-csrf":
+        if request.headers.get("x-azizam-csrf") != "valid-csrf":
             from fastapi.responses import JSONResponse
 
             return JSONResponse(
@@ -320,13 +320,13 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(
             self.client.delete(
                 f"/me/api/media/{asset_id}",
-                headers={"x-ai-gateway-user-action": "1", "x-ai-gateway-csrf": "bad"},
+                headers={"x-azizam-user-action": "1", "x-azizam-csrf": "bad"},
             ).status_code,
             403,
         )
         deleted = self.client.delete(
             f"/me/api/media/{asset_id}",
-            headers={"x-ai-gateway-user-action": "1", "x-ai-gateway-csrf": "valid-csrf"},
+            headers={"x-azizam-user-action": "1", "x-azizam-csrf": "valid-csrf"},
         )
         self.assertEqual(deleted.status_code, 200, deleted.text)
         self.assertTrue(deleted.json()["deleted"])
@@ -552,8 +552,8 @@ class MeMediaRouterTests(unittest.TestCase):
             self.assertEqual(client.get(workflow_url.replace("md=full", "md=none")).status_code, 403)
             self.assertEqual(client.delete(f"/me/api/media/{asset_id}").status_code, 403)
             removed = client.delete(f"/me/api/media/{asset_id}", headers={
-                "x-ai-gateway-user-action": "1",
-                "x-ai-gateway-csrf": proxy._csrf_token_for_oidc_session(session),
+                "x-azizam-user-action": "1",
+                "x-azizam-csrf": proxy._csrf_token_for_oidc_session(session),
             })
             self.assertEqual(removed.status_code, 200, removed.text)
             self.assertTrue(removed.json()["physical_removed"])
@@ -625,7 +625,7 @@ class MeMediaRouterTests(unittest.TestCase):
     def test_cross_user_delete_and_download_do_not_reveal_foreign_assets(self) -> None:
         asset_id = "img_" + "5" * 64
         self._write_asset(asset_id, ["sha256:bob"])
-        headers = {"x-ai-gateway-user-action": "1", "x-ai-gateway-csrf": "valid-csrf"}
+        headers = {"x-azizam-user-action": "1", "x-azizam-csrf": "valid-csrf"}
         self.assertEqual(self.client.delete(f"/me/api/media/{asset_id}", headers=headers).status_code, 404)
         self.assertEqual(self.client.get(f"/me/api/media/{asset_id}/download?metadata=full").status_code, 404)
         self.assertTrue(self._asset_path(asset_id).exists())
@@ -637,7 +637,7 @@ class MeMediaRouterTests(unittest.TestCase):
         detail = self.client.get(f"/me/api/media/{asset_id}")
         self.assertEqual(detail.status_code, 200)
         self.assertTrue(admin_store.list_audit(action_prefix="media.detail.everyone", path=self.admin_db))
-        headers = {"x-ai-gateway-user-action": "1", "x-ai-gateway-csrf": "valid-csrf"}
+        headers = {"x-azizam-user-action": "1", "x-azizam-csrf": "valid-csrf"}
         self.assertEqual(self.client.delete(f"/me/api/media/{asset_id}?scope=everyone", headers=headers).status_code, 404)
         admin_store.assign_admin_role(role="admin", subject_kind="user", subject_id=self.bob["id"], path=self.admin_db)
         self.current_user = self.bob
@@ -647,7 +647,7 @@ class MeMediaRouterTests(unittest.TestCase):
     def test_deleted_shared_asset_stays_deleted_after_audit_churn(self) -> None:
         asset_id = "img_" + "7" * 64
         self._write_asset(asset_id, ["sha256:alice", "sha256:bob"])
-        headers = {"x-ai-gateway-user-action": "1", "x-ai-gateway-csrf": "valid-csrf"}
+        headers = {"x-azizam-user-action": "1", "x-azizam-csrf": "valid-csrf"}
         self.assertEqual(self.client.delete(f"/me/api/media/{asset_id}", headers=headers).status_code, 200)
         for index in range(1001):
             admin_store.record_audit("media.asset.delete", actor_id=self.bob["id"], actor_kind="user",

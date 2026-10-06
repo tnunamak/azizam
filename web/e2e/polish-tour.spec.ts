@@ -133,7 +133,7 @@ test.beforeAll(async ({ request }) => {
   );
   expect(profile).toBeTruthy();
   const result = await request.post("/admin/api/invites", {
-    headers: { "x-ai-gateway-csrf": session.actor.csrf_token },
+    headers: { "x-azizam-csrf": session.actor.csrf_token },
     data: {
       profile_id: profile.id,
       email: "polish-tour@example.test",

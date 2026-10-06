@@ -328,7 +328,7 @@ class RemixReplaceConformanceTests(RemixReplaceBase):
         body = r.json()
         _conforms_to_video_resource(self, body)
         self.assertEqual(body["model"], "character-replace")
-        self.assertEqual(body["vivid_fish_resolved_model"], "video-scail-2-replace")
+        self.assertEqual(body["azizam_resolved_model"], "video-scail-2-replace")
 
     def test_job_lifecycle_is_monotonic_and_content_waits_for_completion(self) -> None:
         r = self.client.post(f"/v1/videos/{rr.SOURCE_ID}/remix", json={"prompt": "x"})

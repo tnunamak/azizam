@@ -12,7 +12,7 @@ const wf = (id, intent, extra = {}) => ({ id, intent, display_name: id, descript
 const openapi = {
   components: { schemas: { In: { type: "object", required: ["prompt"], properties: {
     prompt: { type: "string" }, seed: { type: "integer", minimum: 0 },
-    source_image: { type: "string", "x-vividfish-asset": true },
+    source_image: { type: "string", "x-azizam-asset": true },
     width: { type: "integer", default: 832 }, height: { type: "integer", default: 480 },
     length: { type: "integer", minimum: 5 }, steps: { type: "integer" } } } } },
 };
@@ -57,7 +57,7 @@ test("classifyWorkflow follows section rules and falls back", () => {
 
 test("buildSections is ordered by modality and shows new workflows automatically", () => {
   const ctx = {
-    sectionsDoc, openapi: { ...openapi, "x-vividfish-workflows": [oxSync] },
+    sectionsDoc, openapi: { ...openapi, "x-azizam-workflows": [oxSync] },
     workflows: [wf("video.generate.ltx-2.5-t2v", "video.generate", { typical_seconds: 45 }), wf("image.edit.demo", "image.edit"), wf("depth.estimate.zoe", "depth.estimate")],
     capabilities: { capabilities: [{ workflow: "demo", available: false }] },
     aliases: { operations: { chat: { stable: [{ alias: "default", resolves_to: "default" }, { alias: "vision", resolves_to: "default" }] }, embeddings: { stable: [{ alias: "embed", resolves_to: "nomic" }] },
@@ -137,7 +137,7 @@ test("snippets reflect the plan and never embed an inline file body", () => {
   assert.match(curl, /\/v1\/images\/edits/);
   assert.match(curl, /-F 'image=@a\.png'/);
   assert.match(curl, /prompt=it'\\''s/);
-  assert.match(curl, /Authorization: Bearer \$OPENAI_PROXY_API_KEY/);
+  assert.match(curl, /Authorization: Bearer \$AZIZAM_API_KEY/);
   const jplan = C.planWorkflow({ ox: oxVideo }, { prompt: "p", source_image: { filename: "a.mp4", dataUri: "data:video/mp4;base64," + "A".repeat(500) } });
   assert.ok(C.curlFor(jplan, "http://h").length < 900);
   const py = C.pythonFor(jplan, "http://h");

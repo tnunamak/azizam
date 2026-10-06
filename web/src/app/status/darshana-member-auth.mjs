@@ -38,8 +38,8 @@ export default async function login(browser) {
         if (!profile) throw new Error("Seeded Local chat access plan missing");
         const invited = await owner.request.post("/admin/api/invites", {
           headers: {
-            "x-ai-gateway-csrf": session.actor.csrf_token,
-            "x-ai-gateway-admin-action": "1",
+            "x-azizam-csrf": session.actor.csrf_token,
+            "x-azizam-admin-action": "1",
           },
           data: { profile_id: profile.id, email, expires_in: 3600 },
         });

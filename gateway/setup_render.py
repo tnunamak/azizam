@@ -1,4 +1,4 @@
-"""Server-rendered first-run setup page for the AI Gateway.
+"""Server-rendered first-run setup page for the Azizam.
 
 The gateway is web-first: a new self-hoster starts the service, opens
 ``/setup`` in a browser, and creates the first owner directly in the
@@ -822,8 +822,8 @@ def _first_app_card(
 
 def render_setup_page(
     *,
-    title: str = "AI Gateway setup",
-    brand: str = "AI Gateway",
+    title: str = "Azizam setup",
+    brand: str = "Azizam",
     wordmark: tuple[str, str] | None = None,
     owner_or_admin_exists: bool,
     oidc_enabled: bool,

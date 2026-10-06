@@ -22,7 +22,7 @@
   {
     "gateway_version": "local",
     "notes": {
-      "chat.completions.image_input_block": "OPENAI_PROXY_SMOKE_LIVE_VISION=1 not set; vision probe disabled (text-only backends would 4xx the image block)"
+      "chat.completions.image_input_block": "AZIZAM_SMOKE_LIVE_VISION=1 not set; vision probe disabled (text-only backends would 4xx the image block)"
     },
     "protocol": "openai",
     "results": {
@@ -54,12 +54,12 @@
   {
     "gateway_version": "local",
     "notes": {
-      "audio.speech.create": "OPENAI_PROXY_SMOKE_AUDIO_SPEECH=1 not set; live probe disabled",
-      "audio.transcriptions.create": "OPENAI_PROXY_SMOKE_AUDIO_TRANSCRIPTION=1 not set; live probe disabled",
-      "audio.translations.create": "OPENAI_PROXY_SMOKE_AUDIO_TRANSLATION=1 not set; live probe disabled",
-      "images.generate": "OPENAI_PROXY_SMOKE_IMAGES=1 not set; live probe disabled",
-      "responses.create": "OPENAI_PROXY_SMOKE_RESPONSES=1 not set; live probe disabled",
-      "videos.create": "OPENAI_PROXY_SMOKE_VIDEO=1 not set; live probe disabled"
+      "audio.speech.create": "AZIZAM_SMOKE_AUDIO_SPEECH=1 not set; live probe disabled",
+      "audio.transcriptions.create": "AZIZAM_SMOKE_AUDIO_TRANSCRIPTION=1 not set; live probe disabled",
+      "audio.translations.create": "AZIZAM_SMOKE_AUDIO_TRANSLATION=1 not set; live probe disabled",
+      "images.generate": "AZIZAM_SMOKE_IMAGES=1 not set; live probe disabled",
+      "responses.create": "AZIZAM_SMOKE_RESPONSES=1 not set; live probe disabled",
+      "videos.create": "AZIZAM_SMOKE_VIDEO=1 not set; live probe disabled"
     },
     "protocol": "openai",
     "results": {
@@ -76,8 +76,8 @@
   {
     "gateway_version": "local",
     "notes": {
-      "messages.create.image_block": "OPENAI_PROXY_SMOKE_LIVE_VISION not set; live vision probe disabled",
-      "messages.create.tool_use": "OPENAI_PROXY_SMOKE_LIVE_TOOLS not set; live tools probe disabled"
+      "messages.create.image_block": "AZIZAM_SMOKE_LIVE_VISION not set; live vision probe disabled",
+      "messages.create.tool_use": "AZIZAM_SMOKE_LIVE_TOOLS not set; live tools probe disabled"
     },
     "protocol": "anthropic",
     "results": {

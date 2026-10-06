@@ -8,6 +8,11 @@ thread brief that can be handed to a writer or LLM.
 
 from __future__ import annotations
 
+import sys as _compat_sys
+from pathlib import Path as _CompatPath
+_compat_sys.path.insert(0, str(_CompatPath(__file__).resolve().parents[2]))
+from gateway.compat import get_env
+
 import argparse
 import dataclasses
 import datetime as dt
@@ -24,10 +29,10 @@ from typing import Any
 
 DEFAULT_BASE_URL = "https://ai.vivid.fish"
 DEFAULT_PERSONAS = Path(__file__).with_name("reddit_simulation_personas.json")
-DEFAULT_CORPUS = Path("/tmp/ai-gateway-reddit-corpus")
-DEFAULT_OUT = Path("/tmp/ai-gateway-simulations/live")
-RUNTIME_KEY_ENVS = ("AI_GATEWAY_API_KEY", "VIVID_OPENAI_API_KEY", "OPENAI_PROXY_API_KEY")
-ADMIN_KEY_ENVS = ("AI_GATEWAY_ADMIN_KEY", "VIVID_ADMIN_API_KEY", "OPENAI_PROXY_ADMIN_KEY")
+DEFAULT_CORPUS = Path("/tmp/azizam-reddit-corpus")
+DEFAULT_OUT = Path("/tmp/azizam-simulations/live")
+RUNTIME_KEY_ENVS = ("AZIZAM_API_KEY",)
+ADMIN_KEY_ENVS = ("AZIZAM_ADMIN_KEY",)
 
 
 @dataclasses.dataclass
@@ -51,7 +56,7 @@ def _load_json(path: Path) -> Any:
 
 def _env_key(names: tuple[str, ...]) -> tuple[str | None, str | None]:
     for name in names:
-        value = os.environ.get(name)
+        value = get_env(name)
         if value:
             return name, value
     return None, None
@@ -60,8 +65,7 @@ def _env_key(names: tuple[str, ...]) -> tuple[str | None, str | None]:
 def _base_url(args: argparse.Namespace) -> str:
     configured = (
         args.base_url
-        or os.environ.get("AI_GATEWAY_BASE_URL")
-        or os.environ.get("VIVID_OPENAI_BASE_URL")
+        or get_env("AZIZAM_BASE_URL")
         or DEFAULT_BASE_URL
     )
     return gateway_root_url(configured)

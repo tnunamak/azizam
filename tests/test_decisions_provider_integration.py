@@ -216,9 +216,9 @@ def test_typesafe_prefixed_systemone_routes_to_paid_provider_and_records_owner_r
     assert [r.status_code for r in responses] == [200, 200]
     for response in responses:
         assert response.json()["model"] == "jev-latest"
-        assert response.headers["x-gateway-remote"] == "1"
-        assert response.headers["x-gateway-provider"] == "typesafe"
-        assert Decimal(response.headers["x-gateway-cost-usd"]) == Decimal("0.002")
+        assert response.headers["x-azizam-remote"] == "1"
+        assert response.headers["x-azizam-provider"] == "typesafe"
+        assert Decimal(response.headers["x-azizam-cost-usd"]) == Decimal("0.002")
     assert [item[0] for item in seen] == ["https://api.typesafe.test/v1/systemone", "https://api.typesafe.test/v1/systemone"]
     assert all(auth == "Bearer ts_secret_test_key" for _url, auth, _body in seen)
     assert [body["model"] for _url, _auth, body in seen] == ["jev-latest", "jev-latest"]
@@ -279,13 +279,13 @@ def test_typesafe_resolved_model_alias_price_persists_receipt_and_ledger(tmp_pat
 
     assert response.status_code == 200, response.text
     assert response.json()["model"] == "jev-1.13.0"
-    assert Decimal(response.headers["x-gateway-cost-usd"]) == Decimal("0.000012684")
+    assert Decimal(response.headers["x-azizam-cost-usd"]) == Decimal("0.000012684")
     rows = _ledger_rows(tmp_path / "provider_spend.db")
     assert len(rows) == 1
     assert rows[0][0] == "typesafe"
     assert rows[0][2] == "settled"
     assert rows[0][4] == "0.000012684"
-    stored = receipt_store.get(response.headers["x-gateway-request-id"], path=receipts_db)
+    stored = receipt_store.get(response.headers["x-azizam-request-id"], path=receipts_db)
     assert stored["resolved_model"] == "jev-1.13.0"
     assert stored["cost"]["usd"] == "0.000012684"
     assert stored["cost"]["source"] == "price-table"
@@ -317,7 +317,7 @@ def test_bare_jev_alias_stays_local_and_never_uses_paid_provider(tmp_path):
             response = TestClient(proxy.app).post("/v1/systemone", json=LOCAL_BODY, headers=AUTH_HEADERS)
 
     assert response.status_code == 200, response.text
-    assert response.headers["x-gateway-remote"] == "0"
+    assert response.headers["x-azizam-remote"] == "0"
     assert called is False
     assert not (tmp_path / "provider_spend.db").exists()
 
@@ -397,7 +397,7 @@ def test_typesafe_provider_unknown_actual_cost_is_projected_as_unknown_not_zero_
             response = TestClient(proxy.app).post("/v1/systemone", json=BODY, headers=AUTH_HEADERS)
 
     assert response.status_code == 200, response.text
-    assert response.headers["x-gateway-cost-usd"] == "unknown"
+    assert response.headers["x-azizam-cost-usd"] == "unknown"
     assert "ts_secret_test_key" not in response.text
     assert _ledger_rows(tmp_path / "provider_spend.db") == [("typesafe", "paid-plan", "needs_reconciliation", "0.000643000", None)]
     projected = receipts[-1].to_dict(audience="client")
@@ -521,9 +521,9 @@ def test_openai_decisions_forwards_opaque_bytes_when_explicit_capability_configu
             response = TestClient(proxy.app).post("/v1/decisions", content=raw, headers={**AUTH_HEADERS, "content-type": "application/json"})
 
     assert response.status_code == 200, response.text
-    assert response.headers["x-gateway-remote"] == "1"
-    assert response.headers["x-gateway-provider"] == "openai"
-    assert response.headers["x-gateway-cost-usd"] == "0.004000000"
+    assert response.headers["x-azizam-remote"] == "1"
+    assert response.headers["x-azizam-provider"] == "openai"
+    assert response.headers["x-azizam-cost-usd"] == "0.004000000"
     assert calls == [("https://openai.test/v1/decisions", raw, "Bearer oa_secret_test_key")]
     assert _ledger_rows(tmp_path / "provider_spend.db") == [("openai", "paid-plan", "settled", "0E-9", "0.004000000")]
     assert receipts

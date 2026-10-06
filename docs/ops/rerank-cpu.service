@@ -20,7 +20,7 @@ Environment=RERANK_CTX=4096
 Environment=RERANK_IDLE_EXIT_S=600
 Nice=5
 MemoryMax=5G
-ExecStart=%h/applications/openai-proxy/scripts/rerank-idle-exit.sh
+ExecStart=%h/applications/azizam/scripts/rerank-idle-exit.sh
 Restart=on-failure
 RestartSec=10
 LimitCORE=0

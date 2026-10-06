@@ -17,7 +17,7 @@ the bottom:
 
 * the actual gateway ``proxy.app`` (outer hop) — real uvicorn on an
   OS-assigned loopback port
-* a fake LiteLLM-shaped ASGI app that forwards ``X-AI-Gateway-Request-Id``
+* a fake LiteLLM-shaped ASGI app that forwards ``X-Azizam-Request-Id``
   and proxies to the fake backend, standing in for the LiteLLM sidecar's
   ``forward_client_headers_to_llm_api`` behavior — real uvicorn, OS-assigned
   port
@@ -432,14 +432,14 @@ class FakeLiteLlmHop:
 
     async def _handle(self, request: StarletteRequest):
         body = await request.body()
-        gateway_request_id = request.headers.get("x-ai-gateway-request-id", "")
+        gateway_request_id = request.headers.get("x-azizam-request-id", "")
         self.forwarded_request_ids.append(gateway_request_id)
         forward_headers = {"content-type": "application/json"}
         if gateway_request_id:
-            forward_headers["x-ai-gateway-request-id"] = gateway_request_id
+            forward_headers["x-azizam-request-id"] = gateway_request_id
         if self.internal_key:
             # Mirrors litellm_params["api_key"] resolved from
-            # AI_GATEWAY_INTERNAL_LITELLM_KEY for the internal-lifecycle
+            # AZIZAM_INTERNAL_LITELLM_KEY for the internal-lifecycle
             # model_list entries (gateway/litellm_substrate.py) — the real
             # internal route requires this exact bearer to authenticate.
             forward_headers["authorization"] = f"Bearer {self.internal_key}"
@@ -639,9 +639,9 @@ class RealSocketCancellationTests(unittest.TestCase):
                 },
             )
             self.assertEqual(response.status_code, 200, response.text)
-            receipt_id = response.headers.get("x-ai-gateway-receipt-id")
+            receipt_id = response.headers.get("x-azizam-receipt-id")
             self.assertTrue(receipt_id)
-            self.assertEqual(response.headers.get("x-ai-gateway-request-id"), receipt_id)
+            self.assertEqual(response.headers.get("x-azizam-request-id"), receipt_id)
             self.assertEqual(receipt_id, self.litellm_hop.forwarded_request_ids[-1])
             self.assertEqual(response.json()["choices"][0]["message"]["content"], "ok")
 
@@ -660,8 +660,8 @@ class RealSocketCancellationTests(unittest.TestCase):
                 },
             ) as response:
                 self.assertEqual(response.status_code, 200)
-                receipt_id = response.headers.get("x-ai-gateway-receipt-id")
-                self.assertEqual(response.headers.get("x-ai-gateway-request-id"), receipt_id)
+                receipt_id = response.headers.get("x-azizam-receipt-id")
+                self.assertEqual(response.headers.get("x-azizam-request-id"), receipt_id)
                 body = b"".join([chunk async for chunk in response.aiter_bytes()])
             self.assertIn(b"data: [DONE]", body)
             self.assertTrue(self.litellm_hop.forwarded_request_ids)
@@ -740,7 +740,7 @@ class RealSocketCancellationTests(unittest.TestCase):
 
         Drives the real ``/internal/litellm/local/{backend}`` route — the
         actual second hop reached through LiteLLM's forwarded
-        ``X-AI-Gateway-Request-Id`` — against the slow raw backend, with no
+        ``X-Azizam-Request-Id`` — against the slow raw backend, with no
         local ASGI disconnect of its own (its own client stays connected).
         Signalling the registry for the forwarded id from another task is
         the only thing that stops its read; this is the load-bearing
@@ -754,7 +754,7 @@ class RealSocketCancellationTests(unittest.TestCase):
             backend_url = _HARNESS["backend_url"]
 
             with patch.dict(
-                os.environ, {"AI_GATEWAY_INTERNAL_LITELLM_KEY": internal_key}, clear=False
+                os.environ, {"AZIZAM_INTERNAL_LITELLM_KEY": internal_key}, clear=False
             ), patch.dict(
                 proxy.LLM_BACKEND_HOSTS, {backend_name: backend_url}, clear=False
             ), patch.object(
@@ -767,7 +767,7 @@ class RealSocketCancellationTests(unittest.TestCase):
                         f"{self.gateway_url}/internal/litellm/local/{backend_name}/v1/chat/completions",
                         headers={
                             "Authorization": f"Bearer {internal_key}",
-                            "X-AI-Gateway-Request-Id": forwarded_id,
+                            "X-Azizam-Request-Id": forwarded_id,
                         },
                         json={
                             "model": "loaded.gguf",
@@ -895,7 +895,7 @@ async def _boot_composed_harness() -> None:
     """Compose all three hops with ONE real internal route in the middle.
 
     outer gateway (real proxy.app, real uvicorn)
-      -> FakeLiteLlmHop (real uvicorn, forwards X-AI-Gateway-Request-Id +
+      -> FakeLiteLlmHop (real uvicorn, forwards X-Azizam-Request-Id +
          the internal-lifecycle bearer, exactly like LiteLLM's
          model_list/forward_client_headers_to_llm_api)
       -> the SAME gateway process's real
@@ -927,7 +927,7 @@ async def _boot_composed_harness() -> None:
         os.environ,
         {
             "LITELLM_MASTER_TEST": "sk-master",
-            "AI_GATEWAY_INTERNAL_LITELLM_KEY": _COMPOSED_INTERNAL_KEY,
+            "AZIZAM_INTERNAL_LITELLM_KEY": _COMPOSED_INTERNAL_KEY,
         },
         clear=False,
     )
@@ -1017,7 +1017,7 @@ async def _shutdown_composed_harness() -> None:
 class ComposedRealSocketOracleTests(unittest.TestCase):
     """The single composed oracle: one id, one lifetime, all three real hops.
 
-    Every test below carries ONE ``X-AI-Gateway-Request-Id`` from the outer
+    Every test below carries ONE ``X-Azizam-Request-Id`` from the outer
     gateway route, through the fake-but-real-uvicorn LiteLLM hop, into the
     SAME gateway process's real internal route, down to the raw backend —
     and hard-asserts, for that one id, on the SAME chain: signal precedes

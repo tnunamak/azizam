@@ -17,7 +17,7 @@ export interface BrandLockupProps {
 
 function BrandLockupBody({
   name = "vivid.fish",
-  kicker = "AI Gateway",
+  kicker = "Azizam",
 }: Pick<BrandLockupProps, "name" | "kicker">) {
   return (
     <>

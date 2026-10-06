@@ -8,6 +8,8 @@ Callers supply already-loaded data and an already-authenticated policy view.
 
 from __future__ import annotations
 
+from gateway.compat import read_field
+
 import asyncio
 import copy
 import json
@@ -363,7 +365,7 @@ def _public_model_ids_for_workflow(
     return [
         model_id
         for model_id, entry in model_entries.items()
-        if str(entry.get("vivid_fish_workflow_id") or "") == workflow_id
+        if str(read_field(entry, "azizam_workflow_id") or "") == workflow_id
     ]
 
 
@@ -538,7 +540,7 @@ def _base_row(
     listed: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     service = {"id": service_id, **_service_record(service_records, service_id)}
-    workflow_id = str((model_entry or {}).get("vivid_fish_workflow_id") or next(
+    workflow_id = str(read_field(model_entry or {}, "azizam_workflow_id") or next(
         (cap.workflow for cap in capabilities if cap.workflow), ""
     ))
     manifest = (workflow_metadata.get(row_id) or (workflow_metadata.get(target) if target else None)
@@ -741,8 +743,8 @@ def _use_snippets(row_id: str, capabilities: Sequence[Capability]) -> dict[str, 
         "model": row_id,
         "path": path,
         "curl": (
-            f"curl $AI_GATEWAY_BASE{path} "
-            '-H "Authorization: Bearer $AI_GATEWAY_API_KEY" '
+            f"curl $AZIZAM_BASE{path} "
+            '-H "Authorization: Bearer $AZIZAM_API_KEY" '
             '-H "Content-Type: application/json" '
             f"-d '{json.dumps(body, separators=(',', ':'))}'"
         ) if is_json_runnable else None,

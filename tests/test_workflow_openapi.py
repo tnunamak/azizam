@@ -65,7 +65,7 @@ class WorkflowOpenApiTests(unittest.TestCase):
                 for name, spec in record.manifest["inputs"].items():
                     prop = schema["properties"][name]
                     if spec["type"] == "asset":
-                        self.assertTrue(prop["x-vividfish-asset"])
+                        self.assertTrue(prop["x-azizam-asset"])
                         continue
                     self.assertEqual(prop["type"], spec["type"])
                     for bound in ("minimum", "maximum", "default"):
@@ -149,7 +149,7 @@ class WorkflowOpenApiTests(unittest.TestCase):
         audio = schemas["AudioGenerationRequest"]["properties"]["extensions"]
         self.assertIn(
             schema_name("audio.generate.sa3-small-sfx"),
-            str(audio["properties"]["com.vividfish.workflow"]["anyOf"]),
+            str(audio["properties"]["com.azizam.workflow"]["anyOf"]),
         )
         image_job = self.spec["paths"]["/gateway/v1/media/jobs/image-generations"]["post"]
         self.assertEqual(
@@ -176,7 +176,7 @@ class WorkflowOpenApiTests(unittest.TestCase):
             if "$ref" in schema:
                 self.fail(f"{path} body should be inline")
             options = schema["properties"]["extensions"]["properties"][
-                "com.vividfish.workflow"
+                "com.azizam.workflow"
             ]["anyOf"]
             wanted = {
                 schema_name(r.id)
@@ -270,19 +270,19 @@ class WorkflowOpenApiTests(unittest.TestCase):
 
     def test_discovery_surfaces_point_at_the_catalog(self) -> None:
         llms = self.client.get("/llms.txt").text
-        self.assertIn("x-vividfish-workflows", llms)
+        self.assertIn("x-azizam-workflows", llms)
         self.assertIn("execution", llms)
-        skill = self.client.get("/.well-known/skills/openai-proxy-gateway/SKILL.md").text
-        self.assertIn("x-vividfish-workflows", skill)
+        skill = self.client.get("/.well-known/skills/azizam-gateway/SKILL.md").text
+        self.assertIn("x-azizam-workflows", skill)
         self.assertIn("execution.fields", skill)
         with patch.object(proxy, "AUTH_ENABLED", False):
-            meta = self.client.get("/.well-known/ai-gateway").json()
-        self.assertEqual(meta["links"]["workflow_catalog"], "/openapi.json#x-vividfish-workflows")
+            meta = self.client.get("/.well-known/azizam").json()
+        self.assertEqual(meta["links"]["workflow_catalog"], "/openapi.json#x-azizam-workflows")
 
     def test_augment_is_idempotent_on_a_bare_spec(self) -> None:
         bare = {"openapi": "3.1.0", "info": {"title": "FastAPI", "version": "1"}, "paths": {}}
         out = augment_openapi(bare, self.registry.records(), None)
-        self.assertEqual(out["info"]["title"], "Vivid Fish AI Gateway")
+        self.assertEqual(out["info"]["title"], "Azizam")
         self.assertEqual(validate_openapi(out), [])
 
 

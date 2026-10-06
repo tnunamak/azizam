@@ -9,6 +9,7 @@ should layer extra env vars on top, not redefine these.
 from __future__ import annotations
 
 import os
+from gateway.compat import get_env
 from dataclasses import dataclass, field
 from typing import Mapping, Optional
 from urllib.parse import urlsplit
@@ -68,7 +69,7 @@ def load_config(
     *,
     allow_anonymous: bool = False,
 ) -> HarnessConfig:
-    """Read ``OPENAI_PROXY_BASE_URL`` / ``OPENAI_PROXY_API_KEY`` from env.
+    """Read ``AZIZAM_BASE_URL`` / ``AZIZAM_API_KEY`` from env.
 
     Pass ``env`` to make this deterministic in tests. ``allow_anonymous``
     is used by probe modules that exercise public endpoints such as
@@ -77,58 +78,58 @@ def load_config(
 
     env = os.environ if env is None else env
 
-    base_url = (env.get("OPENAI_PROXY_BASE_URL") or "").strip()
+    base_url = (get_env("AZIZAM_BASE_URL", environ=env) or "").strip()
     if not base_url:
         raise ConfigError(
-            "OPENAI_PROXY_BASE_URL is not set. Example: "
-            "OPENAI_PROXY_BASE_URL=http://127.0.0.1:8080"
+            "AZIZAM_BASE_URL is not set. Example: "
+            "AZIZAM_BASE_URL=http://127.0.0.1:8080"
         )
 
     parsed = urlsplit(base_url)
     if parsed.scheme not in ("http", "https"):
         raise ConfigError(
-            f"OPENAI_PROXY_BASE_URL must start with http:// or https://, got {base_url!r}"
+            f"AZIZAM_BASE_URL must start with http:// or https://, got {base_url!r}"
         )
     if not parsed.netloc:
-        raise ConfigError(f"OPENAI_PROXY_BASE_URL has no host: {base_url!r}")
+        raise ConfigError(f"AZIZAM_BASE_URL has no host: {base_url!r}")
 
     path = parsed.path.rstrip("/")
     for suffix in _RESERVED_SUFFIXES:
         if path.endswith(suffix.rstrip("/")) and suffix.strip("/"):
             raise ConfigError(
-                "OPENAI_PROXY_BASE_URL must be the gateway root, not a "
+                "AZIZAM_BASE_URL must be the gateway root, not a "
                 f"protocol prefix. Drop the trailing {suffix!r} from {base_url!r}."
             )
 
-    api_key = (env.get("OPENAI_PROXY_API_KEY") or "").strip()
+    api_key = (get_env("AZIZAM_API_KEY", environ=env) or "").strip()
     if not api_key and not allow_anonymous:
         raise ConfigError(
-            "OPENAI_PROXY_API_KEY is not set. Use allow_anonymous=True "
+            "AZIZAM_API_KEY is not set. Use allow_anonymous=True "
             "only for probes that exercise unauthenticated endpoints."
         )
 
-    timeout_raw = env.get("OPENAI_PROXY_TIMEOUT_S")
+    timeout_raw = get_env("AZIZAM_TIMEOUT_S", environ=env)
     if timeout_raw:
         try:
             request_timeout_s = float(timeout_raw)
         except ValueError as exc:
             raise ConfigError(
-                f"OPENAI_PROXY_TIMEOUT_S must be a number, got {timeout_raw!r}"
+                f"AZIZAM_TIMEOUT_S must be a number, got {timeout_raw!r}"
             ) from exc
         if request_timeout_s <= 0:
-            raise ConfigError("OPENAI_PROXY_TIMEOUT_S must be positive")
+            raise ConfigError("AZIZAM_TIMEOUT_S must be positive")
     else:
         request_timeout_s = 30.0
 
     extra = {
         k: v
         for k, v in env.items()
-        if k.startswith("OPENAI_PROXY_")
+        if k.startswith("AZIZAM_")
         and k
         not in {
-            "OPENAI_PROXY_BASE_URL",
-            "OPENAI_PROXY_API_KEY",
-            "OPENAI_PROXY_TIMEOUT_S",
+            "AZIZAM_BASE_URL",
+            "AZIZAM_API_KEY",
+            "AZIZAM_TIMEOUT_S",
         }
     }
 

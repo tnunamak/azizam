@@ -18,19 +18,19 @@ from gateway.gateway_shell import render_shell_header  # noqa: E402
 
 class ShellBrandTests(unittest.TestCase):
     def test_default_header_has_no_deployment_brand(self) -> None:
-        html = render_shell_header(brand="AI Gateway")
+        html = render_shell_header(brand="Azizam")
         # A generic install must not leak Tim's deployment brand.
         self.assertNotIn("vivid", html.lower())
         self.assertNotIn("shell-brand-word", html)
-        self.assertIn("AI Gateway", html)
+        self.assertIn("Azizam", html)
 
     def test_wordmark_renders_stylized_deployment_mark(self) -> None:
-        html = render_shell_header(brand="AI Gateway", wordmark=("vivid", "fish"))
+        html = render_shell_header(brand="Azizam", wordmark=("vivid", "fish"))
         self.assertIn("shell-brand-word", html)
         self.assertIn("<em>vivid</em>", html)
         self.assertIn(">fish</span>", html)
         # Product label still present alongside the wordmark.
-        self.assertIn("AI Gateway", html)
+        self.assertIn("Azizam", html)
 
     def test_wordmark_is_deployment_neutral(self) -> None:
         # Any deployment can set its own mark; nothing hardcodes vivid.fish.

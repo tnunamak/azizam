@@ -174,7 +174,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
             effective="1024x1024",
         )
 
-        self.assertEqual(headers["X-Vivid-Size-Adjusted"], "1000x600->1024x1024")
+        self.assertEqual(headers["X-Azizam-Size-Adjusted"], "1000x600->1024x1024")
         self.assertEqual(
             receipt.metadata["image_size_adjustment"],
             {"requested": "1000x600", "effective": "1024x1024"},
@@ -1351,7 +1351,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
                 *(extra_parts or []),
                 (
                     "extensions",
-                    json.dumps({"com.vividfish.workflow": extension_block}),
+                    json.dumps({"com.azizam.workflow": extension_block}),
                 ),
             ]
         )
@@ -1414,11 +1414,11 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(workflow_payload["44"]["inputs"]["strength"], 0.75)
         self.assertIn("control_image", receipt.accepted_inputs)
         self.assertIn(
-            "com.vividfish.workflow.control_image",
+            "com.azizam.workflow.control_image",
             receipt.accepted_inputs,
         )
         self.assertIn(
-            "com.vividfish.workflow.controlnet_strength",
+            "com.azizam.workflow.controlnet_strength",
             receipt.accepted_inputs,
         )
 
@@ -1426,7 +1426,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
         receipt, response, captured = await self._run_edit_with_manifest(
             extension_block={},
             extra_parts=[
-                ("extensions[com.vividfish.workflow][controlnet_strength]", "0.75"),
+                ("extensions[com.azizam.workflow][controlnet_strength]", "0.75"),
             ],
             manifest=self._conditioning_manifest(
                 inputs={
@@ -1452,7 +1452,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
             0.75,
         )
         self.assertIn(
-            "com.vividfish.workflow.controlnet_strength",
+            "com.azizam.workflow.controlnet_strength",
             receipt.accepted_inputs,
         )
 
@@ -1554,7 +1554,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
         uploaded_control = _FakeAsyncClient.upload_files[1]["image"]
         self.assertEqual(uploaded_control[1], control_bytes)
         self.assertIn(
-            "com.vividfish.workflow.control_image",
+            "com.azizam.workflow.control_image",
             receipt.accepted_inputs,
         )
 
@@ -1582,7 +1582,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(captured, {})
         self.assertIn(
-            "extensions.com.vividfish.workflow.sampler",
+            "extensions.com.azizam.workflow.sampler",
             receipt.rejected_inputs,
         )
         self.assertIn("not a supported asset", response.body.decode())
@@ -1612,7 +1612,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(captured, {})
         self.assertIn(
-            "extensions.com.vividfish.workflow.denoise",
+            "extensions.com.azizam.workflow.denoise",
             receipt.rejected_inputs,
         )
         self.assertIn("not an asset", response.body.decode())
@@ -1629,7 +1629,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(captured, {})
         self.assertIn(
-            "extensions.com.vividfish.workflow.control_image",
+            "extensions.com.azizam.workflow.control_image",
             receipt.rejected_inputs,
         )
         self.assertIn("not supported", response.body.decode())
@@ -1643,7 +1643,7 @@ class TestProxyComfyEditRequestMask(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(captured, {})
         self.assertIn(
-            "extensions.com.vividfish.workflow.control_image",
+            "extensions.com.azizam.workflow.control_image",
             receipt.rejected_inputs,
         )
         self.assertIn("reserved", response.body.decode())

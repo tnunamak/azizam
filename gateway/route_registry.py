@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from gateway.compat import read_field
+
 import copy
 from collections.abc import Mapping
 from typing import Any
@@ -106,7 +108,7 @@ def runtime_route_policy(
     return policies
 
 
-def openai_proxy_policy(
+def azizam_policy(
     *,
     registry: Mapping[str, Any] | None = None,
     proxy_config: Mapping[str, Any] | None = None,
@@ -117,7 +119,7 @@ def openai_proxy_policy(
         proxy_config=proxy_config,
     ):
         path = _path(route.get("canonical") or route.get("path"))
-        policy = route.get("openai_proxy_policy")
+        policy = read_field(route, "azizam_policy")
         if not path or not isinstance(policy, Mapping):
             continue
         protocol = str(policy.get("protocol") or "").strip()

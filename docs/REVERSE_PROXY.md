@@ -1,6 +1,6 @@
 # Reverse Proxy and Deployment Security Guide
 
-Vivid Fish AI Gateway binds to `127.0.0.1:5000` by default. The expectation
+Azizam binds to `127.0.0.1:5000` by default. The expectation
 for LAN or internet exposure is that a TLS-terminating reverse proxy (Nginx,
 Caddy, Traefik, HAProxy) sits in front.
 
@@ -100,4 +100,4 @@ To silence the warning legitimately: keep `auth.enabled=false` but set
 `proxy.host` to `127.0.0.1` and let the reverse proxy handle TLS + auth.
 
 To enable auth: set `auth.enabled=true` in `proxy_config.yml` or set the
-environment variable `OPENAI_PROXY_AUTH_ENABLED=true`.
+environment variable `AZIZAM_AUTH_ENABLED=true`.

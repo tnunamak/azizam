@@ -1,4 +1,4 @@
-Newsreader is the variable heading face used by the Vivid Fish product site.
+Newsreader is the variable heading face used by the Azizam product site.
 This Latin subset is bundled locally from Fontsource Newsreader 5.3.0, under
 the included SIL Open Font License. No font request leaves the gateway.
 

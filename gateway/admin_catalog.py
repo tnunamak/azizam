@@ -7,6 +7,8 @@ Live service state, workflows, models, and user data are layered in by
 
 from __future__ import annotations
 
+from gateway.compat import read_field
+
 import copy
 from functools import lru_cache
 from pathlib import Path
@@ -248,8 +250,8 @@ def _policy_values(record: Mapping[str, Any]) -> list[str]:
     for route in record.get("routes") or []:
         if not isinstance(route, Mapping):
             continue
-        for key in ("runtime_policy", "openai_proxy_policy"):
-            policy = route.get(key)
+        for key in ("runtime_policy", "azizam_policy"):
+            policy = read_field(route, key)
             if isinstance(policy, Mapping) and isinstance(policy.get("intent"), str):
                 values.append(policy["intent"])
     return values

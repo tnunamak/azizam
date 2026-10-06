@@ -7,6 +7,7 @@ workflows or inspect backend files.
 
 from __future__ import annotations
 
+
 import inspect
 import json
 from collections.abc import Awaitable, Callable, Iterable, Mapping
@@ -188,7 +189,7 @@ def _workflow_row(
         "native_route": native_route,
         "native_passthrough_route": native_route,
         "discovery_url": _join_url(base_url, f"/gateway/v1/workflows/{record.id}"),
-        "machine_readable_discovery_url": _join_url(base_url, f"/openapi.json#x-vividfish-workflows"),
+        "machine_readable_discovery_url": _join_url(base_url, f"/openapi.json#x-azizam-workflows"),
         "recent_jobs_url": f"/me/api/media?workflow={record.id}",
         "try_url": f"/ui/try/?workflow={record.id}",
         "capabilities": [summarize_capability(cap, "client") for cap in capability_rows],
@@ -330,7 +331,7 @@ def _example_body(
         if name and field not in body:
             body[field] = _example_value(item)
     if extension:
-        body.setdefault("extensions", {})["com.vividfish.workflow"] = extension
+        body.setdefault("extensions", {})["com.azizam.workflow"] = extension
     return body
 
 
@@ -369,7 +370,7 @@ def _example_multipart_parts(
         if field == "size" and all(part in values for part in parts):
             form[field] = f"{values[parts[0]]}x{values[parts[1]]}"
     if extension:
-        form["extensions"] = json.dumps({"com.vividfish.workflow": extension}, separators=(",", ":"))
+        form["extensions"] = json.dumps({"com.azizam.workflow": extension}, separators=(",", ":"))
     return form, files
 
 
@@ -419,7 +420,7 @@ def _curl_example(
 ) -> str:
     lines = [
         f"curl {_shell_single_quote(url)} \\",
-        "  -H 'Authorization: Bearer '$AI_GATEWAY_API_KEY \\",
+        "  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\",
     ]
     if content_type == "multipart/form-data":
         for key, value in form.items():
@@ -456,7 +457,7 @@ def _python_example(
             "with ExitStack() as stack:\n"
             f"    files = {{\n{file_lines}\n    }}\n"
             f"    response = requests.request({method!r}, {url!r},\n"
-            "        headers={'Authorization': f\"Bearer {os.environ['AI_GATEWAY_API_KEY']}\"},\n"
+            "        headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or os.environ.get('AI_GATEWAY_API_KEY') or os.environ.get('OPENAI_PROXY_API_KEY') or os.environ.get('VIVID_API_KEY') or os.environ.get('VIVID_OPENAI_API_KEY') or ''}\"},\n"
             f"        data={dict(form)!r}, files=files, timeout=300)\n"
             "response.raise_for_status()\n"
             + (
@@ -468,7 +469,7 @@ def _python_example(
     return (
         "import os\nimport requests\n\n"
         f"response = requests.request({method!r}, {url!r},\n"
-        "    headers={'Authorization': f\"Bearer {os.environ['AI_GATEWAY_API_KEY']}\"},\n"
+        "    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or os.environ.get('AI_GATEWAY_API_KEY') or os.environ.get('OPENAI_PROXY_API_KEY') or os.environ.get('VIVID_API_KEY') or os.environ.get('VIVID_OPENAI_API_KEY') or ''}\"},\n"
         f"    json={dict(body)!r}, timeout=300)\n"
         "response.raise_for_status()\n"
         + (
@@ -504,7 +505,7 @@ def _javascript_example(
             ],
             f"const response = await fetch({json.dumps(url)}, {{",
             f"  method: {json.dumps(method)},",
-            "  headers: { authorization: `Bearer ${process.env.AI_GATEWAY_API_KEY}` },",
+            "  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}` },",
             "  body: form",
             "});",
             "if (!response.ok) throw new Error(await response.text());",
@@ -524,7 +525,7 @@ def _javascript_example(
     return (
         f"{import_line}const response = await fetch({json.dumps(url)}, {{\n"
         f"  method: {json.dumps(method)},\n"
-        "  headers: { authorization: `Bearer ${process.env.AI_GATEWAY_API_KEY}`, 'content-type': 'application/json' },\n"
+        "  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n"
         f"  body: JSON.stringify({json.dumps(dict(body), indent=2)}),\n"
         f"}});\nif (!response.ok) throw new Error(await response.text());\n{result_line}"
     )

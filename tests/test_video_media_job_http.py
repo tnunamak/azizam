@@ -104,9 +104,9 @@ class VideoMediaJobHttpAdapterTests(unittest.TestCase):
 
         self.assertEqual(generation["id"], "video_abc")
         self.assertEqual(generation["object"], "video")
-        self.assertEqual(generation["vivid_object"], "video.generation")
+        self.assertEqual(generation["azizam_object"], "video.generation")
         self.assertEqual(generation["status"], "completed")
-        self.assertEqual(generation["vivid_status"], "succeeded")
+        self.assertEqual(generation["azizam_status"], "succeeded")
         self.assertEqual(
             generation["content_url"],
             "http://testserver/v1/assets/vid_abc/content?expires=1&sig=abc",

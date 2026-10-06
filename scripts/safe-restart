@@ -8,7 +8,7 @@
     scripts/safe-restart --force         skip the wait (kills in-flight work)
 
 Restart the gateway ONLY with this script. A plain `systemctl --user restart
-openai-proxy` cuts every streaming reply and sync media call that is running.
+azizam` cuts every streaming reply and sync media call that is running.
 
 The script first waits, while the gateway still ACCEPTS work, until nothing is
 in flight and no chat request started or finished for --quiet-seconds (default
@@ -18,8 +18,8 @@ gets 503 + Retry-After), waits for any request that slipped in, restarts the
 unit, waits for health, and leaves draining off. The deadline covers both
 waits. It needs the loopback admin endpoint
 GET/POST /admin/api/drain and an admin bearer key from the environment
-(AI_GATEWAY_ADMIN_KEY, VIVID_ADMIN_API_KEY or OPENAI_PROXY_ADMIN_KEY) or a
-key file (AI_GATEWAY_ADMIN_KEY_FILE, default ~/.config/openai-proxy/admin-key).
+(AZIZAM_ADMIN_KEY, with migration fallbacks) or a
+key file (AZIZAM_ADMIN_KEY_FILE, default ~/.config/azizam/admin-key).
 The key is never printed.
 
 Exit codes:
@@ -34,6 +34,11 @@ Exit codes:
 """
 
 from __future__ import annotations
+
+import sys as _compat_sys
+from pathlib import Path as _CompatPath
+_compat_sys.path.insert(0, str(_CompatPath(__file__).resolve().parents[1]))
+from gateway.compat import get_env
 
 import argparse
 import fcntl
@@ -61,7 +66,7 @@ DEFAULT_GATEWAY_URL = "http://127.0.0.1:5000"
 DEFAULT_LLAMA_URL = "http://127.0.0.1:5051"
 DEFAULT_TIMEOUT_S = 3600.0  # long enough to find a 5-minute idle window during normal use
 DEFAULT_QUIET_S = 300.0  # a person using an agent pauses for minutes between messages; 20 s only covered tool steps
-TOKEN_ENV_NAMES = ("AI_GATEWAY_ADMIN_KEY", "VIVID_ADMIN_API_KEY", "OPENAI_PROXY_ADMIN_KEY")
+TOKEN_ENV_NAMES = ("AZIZAM_ADMIN_KEY",)
 MAX_TTL_S = 7200.0
 
 
@@ -111,18 +116,23 @@ def run_command(cmd: Sequence[str], timeout: float) -> int:
 
 
 def resolve_token(env: Mapping[str, str]) -> str | None:
-    for name in TOKEN_ENV_NAMES:
-        value = env.get(name, "").strip()
+    value = get_env("AZIZAM_ADMIN_KEY", "", environ=env).strip()
+    if value:
+        return value
+    configured = get_env("AZIZAM_ADMIN_KEY_FILE", environ=env)
+    home = Path(env.get("HOME", "~")).expanduser()
+    paths = [Path(configured)] if configured else [
+        home / ".config" / "azizam" / "admin-key",
+        home / ".config" / "openai-proxy" / "admin-key",
+    ]
+    for path in paths:
+        try:
+            value = path.read_text().strip()
+        except OSError:
+            continue
         if value:
             return value
-    key_file = env.get("AI_GATEWAY_ADMIN_KEY_FILE") or str(
-        Path(env.get("HOME", "~")).expanduser() / ".config" / "openai-proxy" / "admin-key"
-    )
-    try:
-        value = Path(key_file).read_text().strip()
-    except OSError:
-        return None
-    return value or None
+    return None
 
 
 def describe_inflight(snapshot: Mapping[str, Any], *, limit: int = 8) -> list[str]:
@@ -184,7 +194,7 @@ class Restarter:
             raise DrainUnavailable(
                 "no admin key found. Set one of "
                 + ", ".join(TOKEN_ENV_NAMES)
-                + " or AI_GATEWAY_ADMIN_KEY_FILE"
+                + " or AZIZAM_ADMIN_KEY_FILE"
             )
         try:
             status, payload = self.http("GET", self._drain_url(), token=self.token)
@@ -529,14 +539,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--ignore-async-jobs", action="store_true", help="do not wait for async media jobs (they resume from the start)")
     parser.add_argument("--health-timeout", type=float, default=None, help="seconds to wait for health after restart (default 120; 600 with --llama)")
-    parser.add_argument("--url", default=os.environ.get("AI_GATEWAY_URL", DEFAULT_GATEWAY_URL), help="gateway base URL (loopback)")
+    parser.add_argument("--url", default=get_env("AZIZAM_URL", DEFAULT_GATEWAY_URL), help="gateway base URL (loopback)")
     parser.add_argument("--llama-url", default=DEFAULT_LLAMA_URL)
-    parser.add_argument("--unit", default="openai-proxy")
+    parser.add_argument("--unit", default="azizam")
     parser.add_argument("--llama-unit", default="llama-bee")
     parser.add_argument("--poll", type=float, default=2.0, help=argparse.SUPPRESS)
     parser.add_argument("--systemctl-timeout", type=float, default=300.0, help=argparse.SUPPRESS)
     parser.add_argument("--lock-file", default=str(Path.home() / ".tmp" / "safe-restart.lock"), help=argparse.SUPPRESS)
     return parser
+
+
+def installed_gateway_unit(env: Mapping[str, str]) -> str:
+    if not env.get("HOME"):
+        return "azizam"
+    unit_dir = Path(env["HOME"]) / ".config" / "systemd" / "user"
+    for unit in ("azizam", "openai-proxy"):
+        if (unit_dir / (unit + ".service")).exists():
+            return unit
+    return "azizam"
 
 
 def validate(args: argparse.Namespace) -> str | None:
@@ -563,6 +583,10 @@ def main(
         args = parser.parse_args(argv)
     except SystemExit as exc:
         return EXIT_USAGE if exc.code not in (0, None) else EXIT_OK
+    env = os.environ if env is None else env
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if not any(arg == "--unit" or arg.startswith("--unit=") for arg in arguments):
+        args.unit = installed_gateway_unit(env)
     problem = validate(args)
     if problem:
         print(f"error: {problem}", file=sys.stderr)

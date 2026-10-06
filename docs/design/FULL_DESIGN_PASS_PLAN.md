@@ -2,7 +2,7 @@
 
 > Historical execution record. Current React UI requirements live in
 > `docs/design/WEB_UI_STEERING.md` and
-> `docs/design/VIVID_FISH_COMPONENT_LIBRARY_SPEC.md`. The proposed stack,
+> `docs/design/AZIZAM_COMPONENT_LIBRARY_SPEC.md`. The proposed stack,
 > source-of-truth wording, and phase status below describe this plan's
 > 2026-06 execution context; they do not override the current contracts.
 
@@ -15,7 +15,7 @@ Python stack, consuming the `@vivid-fish/brand` tokens, and built to a
 **migration-safe seam** so the work is never walked back if the UI is later
 ported to Next.js/React.
 
-Source of truth for the design: `docs/design/vivid-fish-handoff/` (the Claude
+Source of truth for the design: `docs/design/azizam-handoff/` (the Claude
 Design handoff). Authoritative files: `gateway/atoms.jsx`, `screens-user.jsx`,
 `screens-admin.jsx`, `screens-admin-v2.jsx`, `brief.jsx`.
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+source "$(dirname "${BASH_SOURCE[0]}")/../../../scripts/azizam-env.sh"
 # Deterministic verifier for the source-only autotile skill.
 #
 # Default mode never contacts a gateway or ComfyUI.  `--live` is an explicit
@@ -13,7 +14,7 @@ Usage: verify.sh [--live]
 Without --live, validates composition and byte-exact post-compositing using
 generated fixture pixels only.  With --live, additionally requests one image
 from the configured OpenAI-compatible gateway and runs one configured ComfyUI
-inpaint pass.  Live mode requires AUTOTILE_TEXTURE_MODEL, AI_GATEWAY_API_KEY
+inpaint pass.  Live mode requires AUTOTILE_TEXTURE_MODEL, AZIZAM_API_KEY
 (or the variable named by AUTOTILE_GATEWAY_API_KEY_ENV), and the AUTOTILE_COMFY_*
 and model-file variables documented in ../README.md.
 EOF
@@ -222,7 +223,7 @@ if not model:
     raise SystemExit("AUTOTILE_TEXTURE_MODEL is required for --live")
 client = GatewayImageClient(
     base_url=os.environ["AUTOTILE_GATEWAY_BASE_URL"].rstrip("/"),
-    api_key_env=os.environ.get("AUTOTILE_GATEWAY_API_KEY_ENV", "AI_GATEWAY_API_KEY"),
+    api_key_env=os.environ.get("AUTOTILE_GATEWAY_API_KEY_ENV", "AZIZAM_API_KEY"),
 )
 (work / "reference.png").write_bytes(client.generate(
     model=model,

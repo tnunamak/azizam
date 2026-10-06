@@ -14,7 +14,7 @@ transport boundary):
 * No imports of ``proxy.py`` and no ``os.environ`` reads. The caller resolves a
   :class:`~gateway.backends.llm_execution.LiteLlmRuntimeConfig` and hands it in.
 * ``/key/*`` is master-key protected. The master key is exactly the gateway's
-  sidecar bearer (``start.sh`` sets ``LITELLM_MASTER_KEY=$AI_GATEWAY_LITELLM_API_KEY``),
+  sidecar bearer (``start.sh`` sets ``LITELLM_MASTER_KEY=$AZIZAM_LITELLM_API_KEY``),
   so ``runtime_config.api_key`` IS the management credential — no separate field.
 * Errors surface as a single typed :class:`LiteLLMAdminError` carrying an HTTP
   status + machine code, so the admin endpoint layer can map them to a
@@ -157,7 +157,7 @@ class LiteLLMKeyAdminClient:
                 503,
                 "litellm_unconfigured",
                 "The LiteLLM master key is not configured "
-                "(set AI_GATEWAY_LITELLM_API_KEY to match the sidecar's "
+                "(set AZIZAM_LITELLM_API_KEY to match the sidecar's "
                 "LITELLM_MASTER_KEY); virtual-key management is unavailable.",
             )
         url = litellm_url(base_url=self._config.base_url, path=path, query=query)
@@ -185,7 +185,7 @@ class LiteLLMKeyAdminClient:
                 "litellm_admin_auth_failed",
                 "The gateway's LiteLLM master key was rejected by the sidecar "
                 "key API. Confirm LITELLM_MASTER_KEY matches the gateway's "
-                "AI_GATEWAY_LITELLM_API_KEY.",
+                "AZIZAM_LITELLM_API_KEY.",
                 upstream_status=resp.status_code,
             )
         if resp.status_code >= 400:

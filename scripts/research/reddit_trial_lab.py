@@ -8,6 +8,11 @@ artifacts that can ground a realistic Reddit thread or product gap review.
 
 from __future__ import annotations
 
+import sys as _compat_sys
+from pathlib import Path as _CompatPath
+_compat_sys.path.insert(0, str(_CompatPath(__file__).resolve().parents[2]))
+from gateway.compat import get_env
+
 import argparse
 import dataclasses
 import datetime as dt
@@ -26,7 +31,7 @@ from scripts.research import reddit_simulation as sim  # noqa: E402
 
 
 DEFAULT_SCENARIOS = Path(__file__).with_name("reddit_trial_lab_scenarios.json")
-DEFAULT_OUT = Path("/tmp/ai-gateway-simulations/100x")
+DEFAULT_OUT = Path("/tmp/azizam-simulations/100x")
 
 
 @dataclasses.dataclass
@@ -135,8 +140,8 @@ def _filter_scenarios(
 def _configured_base_url(args: argparse.Namespace) -> str:
     return (
         args.base_url
-        or os.environ.get("AI_GATEWAY_BASE_URL")
-        or os.environ.get("VIVID_OPENAI_BASE_URL")
+        or get_env("AZIZAM_BASE_URL")
+        or get_env("AZIZAM_BASE_URL")
         or sim.DEFAULT_BASE_URL
     )
 

@@ -428,8 +428,8 @@ def _nav_link(href: str, label: str, *, active: bool) -> str:
 
 def render_shell_header(
     *,
-    title: str = "AI Gateway",
-    brand: str = "AI Gateway",
+    title: str = "Azizam",
+    brand: str = "Azizam",
     wordmark: tuple[str, str] | None = None,
     current: str = "",
     show_account: bool = True,
@@ -442,7 +442,7 @@ def render_shell_header(
     """Return the shared header HTML.
 
     ``brand`` is the product label shown in the header (defaults to the neutral
-    "AI Gateway"). ``wordmark`` is an optional deployment wordmark as a
+    "Azizam"). ``wordmark`` is an optional deployment wordmark as a
     ``(name, tld)`` pair, e.g. ``("vivid", "fish")``; when set it renders the
     stylized ``name.tld`` mark before the product label. It is ``None`` by
     default so a generic install shows only the neutral product mark — the

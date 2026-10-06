@@ -277,7 +277,7 @@ class DecisionProviderReconciliationTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers["x-gateway-cost-usd"], "unknown")
+        self.assertEqual(response.headers["x-azizam-cost-usd"], "unknown")
         self.assertEqual(len(self.receipts), 1)
         self.assertEqual(self.receipts[0].cost["reconciliation_status"], "needs_reconciliation")
         self.assertIsNotNone(self.receipts[0].cost["reservation_id"])

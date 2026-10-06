@@ -19,7 +19,7 @@ from gateway.extensions import (  # noqa: E402
 from gateway.receipts import RouteReceipt  # noqa: E402
 
 
-NAMESPACE = "com.vividfish.workflow"
+NAMESPACE = "com.azizam.workflow"
 
 
 CONTROLNET_INPUT_SPECS = {

@@ -1,4 +1,4 @@
-# AI Gateway Product Strategy
+# Azizam Product Strategy
 
 Status: product direction for the current release push.
 

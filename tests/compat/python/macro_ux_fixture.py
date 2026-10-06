@@ -280,9 +280,9 @@ def _request(bootstrap: Mapping[str, Any], identity: str, method: str, path: str
     if body is not None:
         data = json.dumps(body).encode()
         headers["Content-Type"] = "application/json"
-        headers["x-ai-gateway-csrf"] = session["csrf"]
+        headers["x-azizam-csrf"] = session["csrf"]
         if identity != "admin":
-            headers["x-ai-gateway-user-action"] = "1"
+            headers["x-azizam-user-action"] = "1"
     request = urllib.request.Request(f"{bootstrap['base_url']}{path}", data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(request, timeout=5) as response:

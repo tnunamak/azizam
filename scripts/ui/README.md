@@ -29,7 +29,7 @@ The container packaging check builds the UI from source, then proves Home,
 sign-in, owner claim, the admin redirect and Status against fresh private state:
 
 ```sh
-docker build -t vivid-fish-cutover-check .
+docker build -t azizam-cutover-check .
 python3 scripts/ui/check-cutover-container.py
 ```
 

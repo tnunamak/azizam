@@ -61,7 +61,7 @@ export const workflowsPolishCatalog = {
       typical_seconds: 12,
       aliases: ["image", "product-shot"],
       examples: {
-        curl: 'curl $AI_GATEWAY_BASE/v1/images/generations -H "Authorization: Bearer $AI_GATEWAY_API_KEY" -H "Content-Type: application/json" -d \'{"workflow":"image.product-render","prompt":"A teal desk lamp"}\'',
+        curl: 'curl $AZIZAM_BASE/v1/images/generations -H "Authorization: Bearer $AZIZAM_API_KEY" -H "Content-Type: application/json" -d \'{"workflow":"image.product-render","prompt":"A teal desk lamp"}\'',
         python:
           'from openai import OpenAI\nclient = OpenAI()\nclient.images.generate(model="image", prompt="A teal desk lamp", extra_body={"workflow":"image.product-render"})',
         javascript:

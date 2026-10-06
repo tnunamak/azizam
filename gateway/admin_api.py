@@ -1152,7 +1152,7 @@ def _require_admin(auth: AdminAuth, request: Request) -> AdminContext | JSONResp
         and request.method not in {"GET", "HEAD", "OPTIONS"}
     ):
         if ctx.csrf_token:
-            supplied = request.headers.get("x-ai-gateway-csrf") or ""
+            supplied = request.headers.get("x-azizam-csrf") or ""
             if not hmac.compare_digest(supplied, ctx.csrf_token):
                 return _auth_error_response(
                     AdminAuthError(
@@ -1161,7 +1161,7 @@ def _require_admin(auth: AdminAuth, request: Request) -> AdminContext | JSONResp
                         code="admin_csrf_required",
                     )
                 )
-        elif request.headers.get("x-ai-gateway-admin-action") != "1":
+        elif request.headers.get("x-azizam-admin-action") != "1":
             return _auth_error_response(
                 AdminAuthError(
                     "admin session mutation requires same-origin admin action header",

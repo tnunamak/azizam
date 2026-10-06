@@ -121,7 +121,7 @@ def _snapshot() -> dict:
             }
         ],
         "discovery_links": [
-            {"label": "Gateway metadata", "href": "/.well-known/ai-gateway"},
+            {"label": "Gateway metadata", "href": "/.well-known/azizam"},
             {"label": "Admin overview", "href": "/admin/api/overview"},
         ],
     }
@@ -132,7 +132,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         html = render_admin_dashboard(_snapshot())
         self.assertTrue(html.startswith("<!doctype html>"))
         self.assertIn("</html>", html)
-        self.assertIn("AI Gateway Admin", html)
+        self.assertIn("Azizam Admin", html)
 
     def test_attention_panel_all_clear_when_no_items(self) -> None:
         # No attention items -> a single calm "all clear" line, not a stat grid.
@@ -179,8 +179,8 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertNotIn("oak_</code>", html)
         self.assertIn("/admin/api/admin-keys", html)
         self.assertIn('action="/admin/api/apps"', html)
-        self.assertIn("x-ai-gateway-admin-action", html)
-        self.assertIn("x-ai-gateway-csrf", html)
+        self.assertIn("x-azizam-admin-action", html)
+        self.assertIn("x-azizam-csrf", html)
         # Mint-key form must reference the key creation endpoint template.
         self.assertIn("/admin/api/apps/{app_id}/keys", html)
         self.assertIn("Revoke", html)
@@ -221,7 +221,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         snapshot["oidc_config"] = {
             "enabled": True,
             "issuer": "https://idp.example.com",
-            "client_id": "ai-gateway",
+            "client_id": "azizam",
             "client_secret": "<redacted>",
             "client_secret_set": True,
             "redirect_uri": "https://ai.example.com/admin/oidc/callback",
@@ -233,7 +233,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
 
         self.assertIn('name="enabled" checked', identity_section)
         self.assertIn('value="https://idp.example.com"', identity_section)
-        self.assertIn('value="ai-gateway"', identity_section)
+        self.assertIn('value="azizam"', identity_section)
         self.assertIn("Client secret saved", identity_section)
         self.assertIn("Leave blank to keep saved secret", identity_section)
         self.assertIn('value="openid, email, profile"', identity_section)
@@ -247,7 +247,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
             "source": "bootstrap",
             "enabled": True,
             "issuer": "https://idp.example.com",
-            "client_id": "ai-gateway",
+            "client_id": "azizam",
             "client_secret_set": True,
         }
         html = render_admin_dashboard(snapshot)
@@ -496,7 +496,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
 
     def test_omits_discovery_links_from_clean_admin_chrome(self) -> None:
         html = render_admin_dashboard(_snapshot())
-        self.assertNotIn('href="/.well-known/ai-gateway"', html)
+        self.assertNotIn('href="/.well-known/azizam"', html)
         self.assertNotIn('href="/admin/api/overview"', html)
         self.assertNotIn(">Admin links<", html)
         self.assertIn('href="/">Home</a>', html)
@@ -1002,8 +1002,8 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn('class="shell-header"', html)
         self.assertRegex(html, r'<main class="[^"]*shell-main')
         self.assertIn("admin-shell", html)
-        self.assertIn('aria-label="AI Gateway home"', html)
-        self.assertIn(">AI Gateway</span>", html)
+        self.assertIn('aria-label="Azizam home"', html)
+        self.assertIn(">Azizam</span>", html)
         # The signed-in actor is still surfaced in the header.
         self.assertIn("owner@example.com", html)
 

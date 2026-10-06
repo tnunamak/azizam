@@ -1,12 +1,12 @@
-# AI Gateway UI — Design Implementation Plan
+# Azizam UI — Design Implementation Plan
 
 > Historical implementation record. Use
 > `docs/design/WEB_UI_STEERING.md` for current product IA and presentation
-> requirements, and `docs/design/VIVID_FISH_COMPONENT_LIBRARY_SPEC.md` for
+> requirements, and `docs/design/AZIZAM_COMPONENT_LIBRARY_SPEC.md` for
 > current shared-component contracts. The server-rendered stack and checklist
 > below are preserved as history, not as a competing current brief.
 
-Source design: `docs/design/vivid-fish-handoff/` (Claude Design handoff).
+Source design: `docs/design/azizam-handoff/` (Claude Design handoff).
 Authoritative reference files: `gateway/atoms.jsx` (tokens/icons/primitives),
 `gateway/screens-user.jsx`, `gateway/screens-admin.jsx`,
 `gateway/screens-admin-v2.jsx`, `gateway/brief.jsx`, `chats/chat1.md`.
@@ -26,7 +26,7 @@ Authoritative reference files: `gateway/atoms.jsx` (tokens/icons/primitives),
 - **Form factor:** mobile-first base, desktop expands (same components, more
   columns) — exactly the designer's stated intent. No literal phone chrome
   (status bar / 28px frame / bottom tab bar) on desktop.
-- **Brand vs product:** Vivid Fish is Tim's deployment brand, not the product.
+- **Brand vs product:** Azizam is Tim's deployment brand, not the product.
   Keep deployment branding swappable; don't hardcode "Tim's gateway" copy into
   product logic.
 

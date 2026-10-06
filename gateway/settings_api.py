@@ -16,7 +16,7 @@ INSTANCE_SETTING_KEY = "instance_presentation"
 
 
 def instance_settings(path: Path, defaults: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    value = {"name": "AI Gateway", "base_url": "", "theme_default": "system", **(defaults or {})}
+    value = {"name": "Azizam", "base_url": "", "theme_default": "system", **(defaults or {})}
     stored = admin_store.get_operator_setting(INSTANCE_SETTING_KEY, path=path)
     if stored:
         value.update(stored["value"])

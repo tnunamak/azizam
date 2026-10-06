@@ -49,7 +49,7 @@ def home_case(tmp_path):
             raise UserPortalError("login_required", "Sign in.", status_code=401)
         return session
     def action(request, _session):
-        if request.headers.get("x-ai-gateway-user-action") != "1" or request.headers.get("x-ai-gateway-csrf") != "csrf":
+        if request.headers.get("x-azizam-user-action") != "1" or request.headers.get("x-azizam-csrf") != "csrf":
             return JSONResponse({"error": {"code": "csrf_required"}}, status_code=403)
     def admin_auth(request):
         if not case.logged_in:
@@ -84,13 +84,13 @@ def home_case(tmp_path):
         assert not request.headers.get("cookie")
         admin_store.touch_credential_last_used(cred["id"], path=db)
         receipt_store.record({"request_id": "real-test", "app_id": client_app["id"], "source_kind": "gateway-ui" if current_gateway_ui() else "app", "status": "succeeded", "intent": "chat.completions"}, path=receipts)
-        return JSONResponse({"choices": [{"message": {"content": "Hi"}}]}, headers={"x-ai-gateway-request-id": "real-test", "request-id": "provider-opaque-id"})
+        return JSONResponse({"choices": [{"message": {"content": "Hi"}}]}, headers={"x-azizam-request-id": "real-test", "request-id": "provider-opaque-id"})
     @app.get("/v1/models")
     async def models(request: Request):
         case.calls.append((request.url.path, dict(request.headers), None))
         return {"object": "list", "data": []}
     case.http = TestClient(app, raise_server_exceptions=False)
-    case.headers = {"x-ai-gateway-user-action": "1", "x-ai-gateway-csrf": "csrf"}
+    case.headers = {"x-azizam-user-action": "1", "x-azizam-csrf": "csrf"}
     yield case
     case.http.close()
 
@@ -553,7 +553,7 @@ def test_public_chat_header_returns_own_durable_receipt_not_upstream_id(monkeypa
 
     class Upstream:
         status_code = 200
-        headers = {"content-type": "application/json", "x-ai-gateway-request-id": "spoofed-upstream", "x-ai-gateway-receipt-id": "spoofed-receipt", "request-id": "provider-opaque"}
+        headers = {"content-type": "application/json", "x-azizam-request-id": "spoofed-upstream", "x-azizam-receipt-id": "spoofed-receipt", "request-id": "provider-opaque"}
         async def aread(self):
             return b'{"choices":[{"message":{"role":"assistant","content":"Hi"},"finish_reason":"stop"}]}'
         async def aclose(self):
@@ -584,8 +584,8 @@ def test_public_chat_header_returns_own_durable_receipt_not_upstream_id(monkeypa
     finally:
         client.close()
     assert response.status_code == 200, response.text
-    request_id = response.headers["x-ai-gateway-request-id"]
-    assert response.headers["x-ai-gateway-receipt-id"] == request_id
+    request_id = response.headers["x-azizam-request-id"]
+    assert response.headers["x-azizam-receipt-id"] == request_id
     assert request_id not in {"spoofed-upstream", "provider-opaque"} and "," not in request_id
     assert response.headers["request-id"] == "provider-opaque"
     receipt = receipt_store.get(request_id, path=receipt_db)

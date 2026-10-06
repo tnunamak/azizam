@@ -22,8 +22,8 @@ except ImportError:  # pragma: no cover
 
 @unittest.skipUnless(_ollama is not None, "ollama SDK not installed")
 @unittest.skipUnless(
-    os.environ.get("OPENAI_PROXY_BASE_URL"),
-    "OPENAI_PROXY_BASE_URL not set; live SDK probe disabled",
+    os.environ.get("AZIZAM_BASE_URL"),
+    "AZIZAM_BASE_URL not set; live SDK probe disabled",
 )
 class TestOllamaPythonSDK(unittest.TestCase):
     def setUp(self) -> None:
@@ -53,7 +53,7 @@ class TestOllamaPythonSDK(unittest.TestCase):
 
     def test_embed_current_route(self) -> None:
         result = self.client.embed(
-            model=os.environ.get("OPENAI_PROXY_SMOKE_OLLAMA_EMBED_MODEL", "nomic-embed-text-v1.5"),
+            model=os.environ.get("AZIZAM_SMOKE_OLLAMA_EMBED_MODEL", "nomic-embed-text-v1.5"),
             input="compatibility probe",
         )
         embeddings = result.get("embeddings") if isinstance(result, dict) else getattr(result, "embeddings", None)
@@ -65,7 +65,7 @@ class TestOllamaPythonSDK(unittest.TestCase):
 
     def test_embeddings_legacy_route(self) -> None:
         result = self.client.embeddings(
-            model=os.environ.get("OPENAI_PROXY_SMOKE_OLLAMA_EMBED_MODEL", "nomic-embed-text-v1.5"),
+            model=os.environ.get("AZIZAM_SMOKE_OLLAMA_EMBED_MODEL", "nomic-embed-text-v1.5"),
             prompt="compatibility probe",
         )
         embedding = result.get("embedding") if isinstance(result, dict) else getattr(result, "embedding", None)
@@ -167,11 +167,11 @@ class TestOllamaPythonSDK(unittest.TestCase):
         self.assertIn("unsupported", str(ctx.exception).lower())
 
     def _model(self) -> str:
-        return os.environ.get("OPENAI_PROXY_SMOKE_OLLAMA_MODEL", "default")
+        return os.environ.get("AZIZAM_SMOKE_OLLAMA_MODEL", "default")
 
     def _skip_without_live_llm(self) -> None:
-        if os.environ.get("OPENAI_PROXY_SMOKE_LIVE_LLM") != "1":
-            self.skipTest("OPENAI_PROXY_SMOKE_LIVE_LLM not set; live LLM probe disabled")
+        if os.environ.get("AZIZAM_SMOKE_LIVE_LLM") != "1":
+            self.skipTest("AZIZAM_SMOKE_LIVE_LLM not set; live LLM probe disabled")
 
 
 def _field(value, name: str):

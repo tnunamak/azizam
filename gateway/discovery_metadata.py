@@ -166,7 +166,7 @@ def _base_url(base_url: str | None) -> str:
 def build_gateway_discovery_metadata(
     *,
     base_url: str | None = None,
-    service_name: str = "vivid-fish-ai-gateway",
+    service_name: str = "azizam",
     registry: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return unauthenticated public metadata for agent/client discovery."""
@@ -192,8 +192,8 @@ def build_gateway_discovery_metadata(
         "openapi": "/openapi.json",
         "llms_txt": "/llms.txt",
         "skill_catalog": "/.well-known/skills",
-        "skill": "/.well-known/skills/openai-proxy-gateway/SKILL.md",
-        "workflow_catalog": "/openapi.json#x-vividfish-workflows",
+        "skill": "/.well-known/skills/azizam-gateway/SKILL.md",
+        "workflow_catalog": "/openapi.json#x-azizam-workflows",
         "capabilities": "/gateway/v1/capabilities",
         "extensions": "/gateway/v1/extensions",
         "model_capabilities": "/gateway/v1/models/{model}/capabilities",
@@ -210,10 +210,10 @@ def build_gateway_discovery_metadata(
 
     return {
         "schema_version": 1,
-        "object": "ai_gateway_discovery",
+        "object": "azizam_discovery",
         "service": {
             "name": service_name,
-            "product": "Vivid Fish AI Gateway",
+            "product": "Azizam",
             "base_url": base_url.rstrip("/") if base_url else None,
             "canonical_host": base_url.rstrip("/") if base_url else None,
             "local_first": True,
@@ -233,8 +233,7 @@ def build_gateway_discovery_metadata(
             ],
             "public_without_auth": [
                 "/health",
-                "/.well-known/ai-gateway",
-                "/.well-known/openai-proxy",
+                "/.well-known/azizam",
                 "/.well-known/skills",
                 "/llms.txt",
                 "/openapi.json",
@@ -272,9 +271,9 @@ def build_gateway_discovery_metadata(
             "start_here": [
                 "GET /health without auth.",
                 "Fetch this metadata document.",
-                "Fetch the openai-proxy-gateway skill if your agent runtime supports skills.",
+                "Fetch the azizam-gateway skill if your agent runtime supports skills.",
                 "Use /gateway/v1/capabilities with a bearer token before assuming a modality.",
-                "Read x-vividfish-workflows in /openapi.json for typed workflow inputs, sync/async routes and aliases, then call the route with curl or an OpenAI SDK.",
+                "Read x-azizam-workflows in /openapi.json for typed workflow inputs, sync/async routes and aliases, then call the route with curl or an OpenAI SDK.",
             ],
             "default_surface": "Use canonical /openai/v1 endpoints for new OpenAI-compatible setup; /v1 remains a convenience route for existing clients.",
             "protocol_aliases": "Use /anthropic/v1 for Anthropic Messages and /ollama/api for Ollama-compatible clients; /api remains an Ollama convenience route.",
@@ -287,18 +286,18 @@ def build_gateway_discovery_metadata(
 
 def build_skill_catalog(*, base_url: str | None = None) -> dict[str, Any]:
     """Return a tiny unauthenticated skill catalog."""
-    skill_path = "/.well-known/skills/openai-proxy-gateway/SKILL.md"
+    skill_path = "/.well-known/skills/azizam-gateway/SKILL.md"
     return {
         "schema_version": 1,
         "object": "skill_catalog",
         "skills": [
             {
-                "id": "openai-proxy-gateway",
-                "name": "openai-proxy-gateway",
+                "id": "azizam-gateway",
+                "name": "azizam-gateway",
                 "media_type": "text/markdown",
                 "href": skill_path,
                 "url": _join(base_url, skill_path),
-                "description": "Discover-first instructions for using Vivid Fish AI Gateway safely from agent clients.",
+                "description": "Discover-first instructions for using Azizam safely from agent clients.",
             }
         ],
     }
@@ -309,35 +308,34 @@ def build_llms_txt(*, base_url: str | None = None) -> str:
     root = (base_url or "").rstrip("/")
     prefix = f"{root}" if root else ""
     lines = [
-        "# Vivid Fish AI Gateway",
+        "# Azizam",
         "",
         "Local-first AI gateway with canonical OpenAI, Anthropic, Ollama, and gateway-native discovery surfaces.",
         f"Canonical host: {root}" if root else "Discovery links use the request origin.",
         "",
         "## Discovery",
-        f"- Gateway metadata: {prefix}/.well-known/ai-gateway",
-        f"- Alias metadata: {prefix}/.well-known/openai-proxy",
+        f"- Gateway metadata: {prefix}/.well-known/azizam",
         f"- OpenAPI: {prefix}/openapi.json",
-        f"- Agent skill: {prefix}/.well-known/skills/openai-proxy-gateway/SKILL.md",
+        f"- Agent skill: {prefix}/.well-known/skills/azizam-gateway/SKILL.md",
         "",
         "## Auth",
-        "- Use Authorization: Bearer $AI_GATEWAY_API_KEY (OPENAI_PROXY_API_KEY remains a working alias; x-api-key is accepted too, as Anthropic SDKs send it) for all /openai/v1, /anthropic/v1, /ollama/api, /v1, /api, and /gateway/v1 calls except /health.",
+        "- Use Authorization: Bearer $AZIZAM_API_KEY (x-api-key is accepted too, as Anthropic SDKs send it) for all /openai/v1, /anthropic/v1, /ollama/api, /v1, /api, and /gateway/v1 calls except /health.",
         "- Do not ask users to paste raw opk tokens into chat.",
         "",
         "## Preferred Flow",
         "1. GET /health.",
-        "2. GET /.well-known/ai-gateway.",
+        "2. GET /.well-known/azizam.",
         "3. GET /gateway/v1/capabilities with bearer auth.",
         "4. Use /openai/v1 by default for new setup; /v1 remains available for existing OpenAI-compatible clients.",
         "5. Use /anthropic/v1 or /ollama/api only for clients that require those protocols; /api remains an Ollama convenience route.",
         "6. Use /gateway/v1/providers to discover provider-native lanes; use /gateway/v1/providers/{provider}/{path...} only for policy-gated native_passthrough; there is no root Tabby shim.",
         "7. Ollama lifecycle routes create/pull/push/copy/delete return unsupported_operation and do not mutate model files.",
-        "8. Fetch /gateway/v1/workflows before using extensions.com.vividfish.workflow controls.",
+        "8. Fetch /gateway/v1/workflows before using extensions.com.azizam.workflow controls.",
         "9. Use /gateway/v1/receipts when a request is rejected or a workflow extension is ignored.",
         "10. Reuse generated images via data[].asset_id or signed /v1/assets/{asset_id}/content URLs when present; asset IDs are scoped to the minting App API key.",
         "",
         "## Native Workflows (image, audio, video generation and editing)",
-        f"- {prefix}/openapi.json lists every workflow in the root list `x-vividfish-workflows`: typed inputs (`WorkflowInputs_<id>` schemas), aliases, typical seconds, the sync route, the async route, which to prefer, and where each input goes in the request.",
+        f"- {prefix}/openapi.json lists every workflow in the root list `x-azizam-workflows`: typed inputs (`WorkflowInputs_<id>` schemas), aliases, typical seconds, the sync route, the async route, which to prefer, and where each input goes in the request.",
         "- Slow work (video, long music) uses an async route: submit, poll until terminal, then fetch the content. Image, audio and video generation can use POST /gateway/v1/media/jobs; video uses POST /v1/videos.",
         "- Any OpenAPI-aware tool can read this document; for a plain call, build a curl request from the entry's `execution` block (route, content type, and the `fields` map that says where each input goes).",
         "",

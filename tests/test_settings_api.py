@@ -31,7 +31,7 @@ def settings(tmp_path):
     return TestClient(app), path, config
 
 
-OWNER = {"test-role": "owner", "x-ai-gateway-csrf": "csrf-fixture"}
+OWNER = {"test-role": "owner", "x-azizam-csrf": "csrf-fixture"}
 
 
 @pytest.mark.parametrize("route", ["instance", "defaults", "lan-placeholder-keys", "effective", "effective/export"])
@@ -239,7 +239,7 @@ def test_saved_presentation_drives_existing_brand_and_discovery(settings, monkey
     request = Request({"type": "http", "scheme": "http", "headers": [(b"host", b"request.example.test")], "path": "/"})
     assert proxy._brand_settings()[0] == "Saved gateway"
     assert proxy._public_base_url(request) == "https://saved.example.test"
-    response = TestClient(proxy.app).get("/.well-known/ai-gateway")
+    response = TestClient(proxy.app).get("/.well-known/azizam")
     assert response.status_code == 200
     assert response.json()["service"]["name"] == "Saved gateway"
     assert response.json()["presentation"] == {"theme_default": "dark"}

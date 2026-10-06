@@ -460,7 +460,7 @@ test("new visitors use the saved default theme and personal choices persist", as
 }) => {
   const context = await browser.newContext({ colorScheme: "light" });
   const page = await context.newPage();
-  await page.route("**/.well-known/ai-gateway", (route) =>
+  await page.route("**/.well-known/azizam", (route) =>
     route.fulfill({
       json: {
         service: { name: "Our gateway" },

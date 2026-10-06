@@ -1,4 +1,4 @@
-"""Runtime glue for the AI Gateway admin control plane.
+"""Runtime glue for the Azizam admin control plane.
 
 This module adapts the durable :mod:`gateway.admin_store` functions to the
 duck-typed store expected by :mod:`gateway.admin_api`, and provides a small
@@ -1372,10 +1372,10 @@ class AdminSQLiteStore:
             "audit": audit,
             "discovery_links": [
                 {"label": "Account", "href": "/"},
-                {"label": "Gateway metadata", "href": "/.well-known/ai-gateway"},
+                {"label": "Gateway metadata", "href": "/.well-known/azizam"},
                 {
                     "label": "Agent skill",
-                    "href": "/.well-known/skills/openai-proxy-gateway/SKILL.md",
+                    "href": "/.well-known/skills/azizam-gateway/SKILL.md",
                 },
                 {"label": "Admin overview", "href": "/admin/api/overview"},
                 {"label": "Apps JSON", "href": "/admin/api/apps"},

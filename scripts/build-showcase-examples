@@ -27,6 +27,11 @@ Usage:
 
 from __future__ import annotations
 
+import sys as _compat_sys
+from pathlib import Path as _CompatPath
+_compat_sys.path.insert(0, str(_CompatPath(__file__).resolve().parents[1]))
+from gateway.compat import get_env
+
 import argparse
 import base64
 import json
@@ -136,7 +141,7 @@ class IdleGuard:
 class Gateway:
     def __init__(self, base: str):
         self.base = base.rstrip("/")
-        key = os.environ.get("OPENAI_PROXY_API_KEY")
+        key = get_env("AZIZAM_API_KEY")
         self.headers = {"Authorization": f"Bearer {key}"} if key else {}
         self.http = httpx.Client(timeout=httpx.Timeout(1800, connect=10), headers=self.headers)
 
@@ -412,7 +417,7 @@ def _image_gen(ex_id, card, alias, prompt, size, order=0, ext=None, title=None):
     def _(c: Ctx):
         body = {"model": alias, "prompt": prompt, "size": size, "n": 1, "response_format": "b64_json"}
         if ext:
-            body["extensions"] = {"com.vividfish.workflow": ext}
+            body["extensions"] = {"com.azizam.workflow": ext}
         r, s = timed(lambda: c.gw.json("POST", "/v1/images/generations", json=body))
         png = b64_image(r)
         c.save({"id": ex_id, "card": card, "order": order, "title": title or f"Alias {alias}", "seconds": s, "model": alias, "resolves_to": c.gw.resolve("images", alias),
@@ -444,7 +449,7 @@ def _edit(ex_id, card, alias, prompt, group="edits", extra_files=None, order=0, 
         files.update({k: (k + ".png", v(c) if callable(v) else v, "image/png") for k, v in (extra_files or {}).items()})
         data = {"model": alias, "prompt": prompt, "response_format": "b64_json"}
         if ext:
-            data["extensions"] = json.dumps({"com.vividfish.workflow": ext})
+            data["extensions"] = json.dumps({"com.azizam.workflow": ext})
         r, s = timed(lambda: c.gw.json("POST", "/v1/images/edits", data=data, files=files))
         out_files = {"source.png": src, "output.png": b64_image(r)}
         inputs = [{"kind": "image", "label": "Source image", "name": "source_image", "file": "source.png", "type": "image/png"}]
@@ -471,7 +476,7 @@ def _audio(ex_id, group, card, model, body, alias, ext=None, title=None, order=0
     def _(c: Ctx):
         b = {"model": model, **body}
         if ext:
-            b["extensions"] = {"com.vividfish.workflow": ext}
+            b["extensions"] = {"com.azizam.workflow": ext}
         r, s = timed(lambda: c.gw.request("POST", "/v1/audio/generate", json=b))
         ctype = r.headers.get("content-type", "")
         suffix = "flac" if "flac" in ctype else "mp3" if "mpeg" in ctype else "wav"
@@ -542,7 +547,7 @@ def _(c: Ctx):
 def _(c: Ctx):
     src = c.read("video-ltx-t2v", "output.mp4")
     prompt = "Make it a snowy winter evening. Keep the lighthouse and its composition unchanged."
-    (content, job), s = timed(lambda: c.gw.video({"model": "video-remix", "prompt": prompt, "extensions": {"com.vividfish.workflow": {"source_video": data_uri(src, "video/mp4")}}}, poll_s=8))
+    (content, job), s = timed(lambda: c.gw.video({"model": "video-remix", "prompt": prompt, "extensions": {"com.azizam.workflow": {"source_video": data_uri(src, "video/mp4")}}}, poll_s=8))
     _video_save(c, "video-remix", "bernini-r-remix", "video-remix", "video-bernini-r-remix", s, prompt, content,
                 [{"kind": "video", "label": "Source clip", "name": "source_video", "file": "source.mp4", "type": "video/mp4"}, {"kind": "text", "label": "Edit", "name": "prompt", "value": prompt}], title="Prompt-driven remix", extra_files={"source.mp4": src})
 
@@ -556,7 +561,7 @@ def _(c: Ctx):
     ref = b64_image(c.gw.json("POST", "/v1/images/generations", json={"model": "image", "prompt": ref_prompt, "size": "768x768", "response_format": "b64_json"}))
     prompt = "A young woman in a bright red raincoat walks toward the camera, waving."
     ext = {"source_video": data_uri(src, "video/mp4"), "reference_image": data_uri(ref, "image/png"), "source_subject": "person", "reference_subject": "woman"}
-    (content, job), s = timed(lambda: c.gw.video({"model": "character-replace", "prompt": prompt, "extensions": {"com.vividfish.workflow": ext}}, poll_s=8))
+    (content, job), s = timed(lambda: c.gw.video({"model": "character-replace", "prompt": prompt, "extensions": {"com.azizam.workflow": ext}}, poll_s=8))
     _video_save(c, "video-character-replace", "scail-2-replace", "character-replace", "video-scail-2-replace", s, prompt, content,
                 [{"kind": "video", "label": "Driving video (generated)", "name": "source_video", "file": "source.mp4", "type": "video/mp4"}, {"kind": "image", "label": "Reference character (generated)", "name": "reference_image", "file": "reference.png", "type": "image/png"}, {"kind": "text", "label": "Prompt", "name": "prompt", "value": prompt}],
                 title="Swap the character", extra_files={"source.mp4": src, "reference.png": ref})
@@ -573,7 +578,7 @@ def select(only: list[str] | None, groups: list[str] | None) -> list[dict[str, A
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--base", default=os.environ.get("SHOWCASE_BASE_URL", "http://127.0.0.1:5000"))
-    ap.add_argument("--out", default=os.environ.get("OPENAI_PROXY_SHOWCASE_EXAMPLES_DIR") or str(REPO / "data" / "showcase" / "examples"))
+    ap.add_argument("--out", default=get_env("AZIZAM_SHOWCASE_EXAMPLES_DIR") or str(REPO / "data" / "showcase" / "examples"))
     ap.add_argument("--comfy", default="http://127.0.0.1:7890")
     ap.add_argument("--llm", default="http://127.0.0.1:5051")
     ap.add_argument("--only", help="comma-separated example ids")

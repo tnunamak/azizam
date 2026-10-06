@@ -10,8 +10,8 @@ test("Home uses the saved public URL without assuming every key can call Chat", 
   const { instance } = await originalResponse.json();
   const session = await (await request.get("/admin/api/session")).json();
   const headers = {
-    "x-ai-gateway-admin-action": "1",
-    "x-ai-gateway-csrf": session.actor.csrf_token,
+    "x-azizam-admin-action": "1",
+    "x-azizam-csrf": session.actor.csrf_token,
   };
   const publicUrl = "https://family-gateway.example.test";
   try {

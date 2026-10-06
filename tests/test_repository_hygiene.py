@@ -44,7 +44,7 @@ IGNORED_PATHS = [
     "data/stt-spool/request-private-audio/upload-private.part",
     "core.73804",
     "core.348027",
-    "docs/design/vivid-fish-handoff/gateway/core.348027",
+    "docs/design/azizam-handoff/gateway/core.348027",
     "core",
 ]
 

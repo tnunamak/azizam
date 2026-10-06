@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://openai-proxy/compat/long_tail_targets.schema.json",
+  "$id": "https://azizam/compat/long_tail_targets.schema.json",
   "title": "Long-tail Compatibility Target Matrix",
   "description": "Curated, machine-readable list of self-hosted clients and agent frameworks the gateway should remain compatible with. Each row describes how to point the client at the gateway and which gateway endpoints it exercises, so a future worker can lift it into an automated probe.",
   "type": "object",

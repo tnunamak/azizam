@@ -31,9 +31,9 @@ test("try creates a session key, runs public chat, and links a receipt", async (
   await waitForCatalog(page);
   const response = await chatResponse;
   expect(response.request().postDataJSON().model).not.toBe("");
-  const receiptId = response.headers()["x-ai-gateway-receipt-id"] ?? "";
+  const receiptId = response.headers()["x-azizam-receipt-id"] ?? "";
   expect(receiptId).not.toBe("");
-  expect(response.headers()["x-ai-gateway-request-id"]).toBe(receiptId);
+  expect(response.headers()["x-azizam-request-id"]).toBe(receiptId);
   expect(response.ok()).toBe(true);
   await expect(page.getByText("Chat result", { exact: true })).toBeVisible();
   await expect(
@@ -74,7 +74,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   await page.route("**/openai/v1/chat/completions", (route) =>
     route.fulfill({
       headers: {
-        "x-ai-gateway-receipt-id": "receipt_preferred",
+        "x-azizam-receipt-id": "receipt_preferred",
         "x-request-id": "generic_request",
       },
       json: {
@@ -97,7 +97,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   await page.getByRole("tab", { name: "Image" }).click();
   await page.route("**/openai/v1/images/generations", (route) =>
     route.fulfill({
-      headers: { "x-ai-gateway-request-id": "req_image_try" },
+      headers: { "x-azizam-request-id": "req_image_try" },
       json: {
         id: "req_image_try",
         data: [
@@ -116,7 +116,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
     route.fulfill({
       headers: {
         "content-type": "audio/mpeg",
-        "x-ai-gateway-request-id": "req_speech_try",
+        "x-azizam-request-id": "req_speech_try",
       },
       body: "audio",
     }),
@@ -132,7 +132,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   });
   await page.route("**/openai/v1/audio/transcriptions", (route) =>
     route.fulfill({
-      headers: { "x-ai-gateway-request-id": "req_transcribe_try" },
+      headers: { "x-azizam-request-id": "req_transcribe_try" },
       json: { text: "The gateway is ready.", request_id: "req_transcribe_try" },
     }),
   );
@@ -160,7 +160,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   await page.unroute("**/v1/systemone");
   await page.route("**/v1/systemone", (route) =>
     route.fulfill({
-      headers: { "x-ai-gateway-request-id": "req_decide_try" },
+      headers: { "x-azizam-request-id": "req_decide_try" },
       json: {
         answers: {
           route: {
@@ -180,7 +180,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   await page.route("**/openai/v1/embeddings", (route) =>
     route.fulfill({
       headers: {
-        "x-ai-gateway-request-id": "req_embed_try",
+        "x-azizam-request-id": "req_embed_try",
         "x-litellm-response-cost": "0.0025",
       },
       json: { data: [{ embedding: [0.1, -0.2, 0.4] }] },

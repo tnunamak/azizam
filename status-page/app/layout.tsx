@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'openai.vivid.fish — status',
-  description: 'Local OpenAI-compatible proxy status dashboard',
+  title: 'Azizam — openai.vivid.fish status',
+  description: 'Azizam local AI gateway status dashboard',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -12,7 +12,7 @@ Tools (about 200 standing tokens each, generated from discovery, never one tool
 per model):
 
 * ``capabilities``: list or describe workflows, stable aliases and operations
-  with typed inputs. Generated from ``x-vividfish-workflows``.
+  with typed inputs. Generated from ``x-azizam-workflows``.
 * ``run``: start a workflow or an OpenAI-style media operation (speech). Returns
   the result, or a job id when the work outlives ``wait_seconds``.
 * ``job``: poll, wait for, or cancel a job; fetches the result.
@@ -56,7 +56,7 @@ INTERNAL_ERROR = -32603
 HEADER_MISMATCH = -32020
 UNSUPPORTED_VERSION = -32022
 
-SERVER_NAME = "vivid-fish-ai-gateway"
+SERVER_NAME = "azizam"
 INSTRUCTIONS = (
     "Media generation gateway. Call `capabilities` to see workflows and aliases "
     "(image, video, music, sfx, speech), `capabilities` with `target` for typed "

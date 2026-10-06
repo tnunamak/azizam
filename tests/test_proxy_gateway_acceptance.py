@@ -520,7 +520,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertEqual(response.json()["job_id"], "mj_acceptance")
         self.assertEqual(calls[0]["path"], proxy.media_jobs.DB_PATH)
 
-    def test_explicit_openai_proxy_routes_bypass_unmapped_v1_guard(self) -> None:
+    def test_explicit_azizam_routes_bypass_unmapped_v1_guard(self) -> None:
         async def fake_false(*_args, **_kwargs):
             return False
 
@@ -639,7 +639,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["choices"][0]["message"]["content"], "pong")
-        self.assertEqual(response.headers["X-AI-Gateway-LLM-Execution"], "litellm")
+        self.assertEqual(response.headers["X-Azizam-LLM-Execution"], "litellm")
         self.assertEqual(len(calls), 1)
         self.assertEqual(
             calls[0].url,
@@ -647,8 +647,8 @@ class TestGatewayRouterMounting(unittest.TestCase):
         )
         self.assertEqual(calls[0].headers["X-Litellm-Key"], "Bearer sk-litellm-internal")
         self.assertNotIn("authorization", calls[0].headers)
-        self.assertEqual(calls[0].headers["x-ai-gateway-execution"], "litellm")
-        self.assertEqual(calls[0].headers["x-ai-gateway-service-id"], "litellm")
+        self.assertEqual(calls[0].headers["x-azizam-execution"], "litellm")
+        self.assertEqual(calls[0].headers["x-azizam-service-id"], "litellm")
         self.assertEqual(json.loads(calls[0].body)["metadata"], {"client": "kept"})
         self.assertNotIn("opk_client", repr(calls[0]))
         self.assertEqual(len(receipts), 1)
@@ -712,8 +712,8 @@ class TestGatewayRouterMounting(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.headers["X-AI-Gateway-LLM-Execution"], "current-loaded")
-        self.assertEqual(response.headers["X-AI-Gateway-Backend"], "kobold")
+        self.assertEqual(response.headers["X-Azizam-LLM-Execution"], "current-loaded")
+        self.assertEqual(response.headers["X-Azizam-Backend"], "kobold")
         self.assertEqual(len(calls), 1)
         self.assertEqual(
             calls[0].url,
@@ -867,7 +867,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.headers["X-AI-Gateway-LLM-Execution"], "current-loaded")
+        self.assertEqual(response.headers["X-Azizam-LLM-Execution"], "current-loaded")
         forwarded = json.loads(calls[0].body.decode())
         self.assertEqual(forwarded["model"], "Manual-Experiment.gguf")
         self.assertNotIn("reasoning_effort", forwarded)
@@ -1347,7 +1347,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
         self.assertNotIn("default", ids)
         assistant = next(item for item in payload["data"] if item["id"] == "assistant-default")
         self.assertEqual(assistant["context_window"], 102400)
-        self.assertEqual(payload["x_ai_gateway_llm_execution"], "litellm")
+        self.assertEqual(payload["x_azizam_llm_execution"], "litellm")
         self.assertEqual(calls[0].url, "http://127.0.0.1:4011/v1/models")
 
     @patch.object(proxy, "_current_loaded_llm_model_ids", AsyncMock(return_value=set()))
@@ -1380,7 +1380,7 @@ class TestGatewayRouterMounting(unittest.TestCase):
 
         self.assertEqual(openai_models.status_code, 200, openai_models.text)
         self.assertIn(
-            "vivid_fish_catalog_warning",
+            "azizam_catalog_warning",
             openai_models.json(),
         )
         self.assertIn(
@@ -1763,7 +1763,7 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
         return receipt, response
 
     async def test_unknown_top_level_param_is_rejected(self) -> None:
-        # `denoise` belongs under extensions.com.vividfish.workflow, not at
+        # `denoise` belongs under extensions.com.azizam.workflow, not at
         # the top level. The route used to silently drop it. The owner wiring
         # converts that into a 400.
         receipt, response = await self._call(
@@ -1830,7 +1830,7 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
         body = {
             "prompt": "x",
             "model": "flux2-klein-4b",
-            "extensions": {"com.vividfish.workflow": {"guidance": 3.5}},
+            "extensions": {"com.azizam.workflow": {"guidance": 3.5}},
         }
         receipt, response = await self._call(body)
 
@@ -1844,7 +1844,7 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
             )
         self.assertNotIn("extensions", receipt.rejected_inputs or {})
         self.assertIn(
-            "com.vividfish.workflow.guidance",
+            "com.azizam.workflow.guidance",
             receipt.accepted_inputs,
         )
         # We allow the test to pass even when downstream backend returns a
@@ -1857,7 +1857,7 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
             "prompt": "tileable mossy cobblestone",
             "model": "sdxl-seamless-tile",
             "size": "512x512",
-            "extensions": {"com.vividfish.workflow": {"seed": 12345}},
+            "extensions": {"com.azizam.workflow": {"seed": 12345}},
         }
         receipt = proxy.start_image_route_receipt(
             "/v1/images/generations", proxy.NO_AUTH_CONTEXT
@@ -1897,7 +1897,7 @@ class TestImageRouteRejectsUnknownTopLevelParams(unittest.IsolatedAsyncioTestCas
         self.assertEqual(captured["fixed_seed"], 12345)
         self.assertEqual(captured["base_workflow"]["8"]["inputs"]["width"], 512)
         self.assertEqual(captured["base_workflow"]["8"]["inputs"]["height"], 512)
-        self.assertIn("com.vividfish.workflow.seed", receipt.accepted_inputs)
+        self.assertIn("com.azizam.workflow.seed", receipt.accepted_inputs)
 
 
 # ---------------------------------------------------------------------------

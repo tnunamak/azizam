@@ -8,6 +8,8 @@ reading process environment.
 
 from __future__ import annotations
 
+from gateway.compat import get_env
+
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -88,9 +90,9 @@ CONFIG_SPECS: tuple[ConfigSpec, ...] = (
 )
 
 ENV_RECOMMENDATIONS: Mapping[str, tuple[str, str, str]] = {
-    "AI_GATEWAY_USER_SELF_SERVICE": ("User access bootstrap environment", "auth/admin", "Bootstrap seed for admin.db user access defaults; manage runtime policy in the dashboard."),
-    "AI_GATEWAY_AUTO_CREATE_PERSONAL_APP": ("User access bootstrap environment", "auth/admin", "Bootstrap seed for admin.db user access defaults; manage runtime policy in the dashboard."),
-    "AI_GATEWAY_LITELLM": ("LiteLLM substrate environment", "services/providers", "Bootstrap sidecar URL and internal secret references; service records live in admin.db."),
+    "AZIZAM_USER_SELF_SERVICE": ("User access bootstrap environment", "auth/admin", "Bootstrap seed for admin.db user access defaults; manage runtime policy in the dashboard."),
+    "AZIZAM_AUTO_CREATE_PERSONAL_APP": ("User access bootstrap environment", "auth/admin", "Bootstrap seed for admin.db user access defaults; manage runtime policy in the dashboard."),
+    "AZIZAM_LITELLM": ("LiteLLM substrate environment", "services/providers", "Bootstrap sidecar URL and internal secret references; service records live in admin.db."),
     "OIDC": ("OIDC environment", "auth/admin", "Keep OIDC secrets and issuer bootstrap in env."),
     "OPENAI": ("OpenAI provider environment", "services/providers", "Keep provider credentials in env or secret stores."),
     "ANTHROPIC": ("Anthropic provider environment", "services/providers", "Keep provider credentials in env or secret stores."),
@@ -100,14 +102,14 @@ ENV_RECOMMENDATIONS: Mapping[str, tuple[str, str, str]] = {
 }
 
 KNOWN_ENV_SOURCE_NAMES: tuple[str, ...] = (
-    "AI_GATEWAY_ADMIN_DB",
-    "AI_GATEWAY_ADMIN_SESSION_KEY",
-    "AI_GATEWAY_ADMIN_OIDC_ADMIN_GROUPS",
-    "AI_GATEWAY_AUTO_CREATE_PERSONAL_APP",
-    "AI_GATEWAY_LITELLM_API_KEY",
-    "AI_GATEWAY_LITELLM_BASE_URL",
-    "AI_GATEWAY_OIDC_CLIENT_SECRET",
-    "AI_GATEWAY_USER_SELF_SERVICE",
+    "AZIZAM_ADMIN_DB",
+    "AZIZAM_ADMIN_SESSION_KEY",
+    "AZIZAM_ADMIN_OIDC_ADMIN_GROUPS",
+    "AZIZAM_AUTO_CREATE_PERSONAL_APP",
+    "AZIZAM_LITELLM_API_KEY",
+    "AZIZAM_LITELLM_BASE_URL",
+    "AZIZAM_OIDC_CLIENT_SECRET",
+    "AZIZAM_USER_SELF_SERVICE",
     "COMFY_ENABLED",
     "COMFY_HOST",
     "COMFY_TIMEOUT",
@@ -120,13 +122,13 @@ KNOWN_ENV_SOURCE_NAMES: tuple[str, ...] = (
     "OPENAI_MODEL_ALIASES_FILE",
     "OPENAI_MODEL_DISCOVERY_API_KEY",
     "OPENAI_MODEL_DISCOVERY_INCLUDE_PRIVATE",
-    "OPENAI_PROXY_ADMIN_DB",
-    "OPENAI_PROXY_ADMIN_SESSION_KEY",
-    "OPENAI_PROXY_AUTH_ENABLED",
-    "OPENAI_PROXY_BASE_URL",
-    "OPENAI_PROXY_MODEL_COMPAT_ENABLED",
-    "OPENAI_PROXY_PORT",
-    "OPENAI_PROXY_PUBLIC_URL",
+    "AZIZAM_ADMIN_DB",
+    "AZIZAM_ADMIN_SESSION_KEY",
+    "AZIZAM_AUTH_ENABLED",
+    "AZIZAM_BASE_URL",
+    "AZIZAM_MODEL_COMPAT_ENABLED",
+    "AZIZAM_PORT",
+    "AZIZAM_PUBLIC_URL",
     "STT_ENABLED",
     "STT_HOST",
     "STT_TIMEOUT",
@@ -264,7 +266,7 @@ def _config_row(spec: ConfigSpec, value: Any) -> dict[str, Any]:
 def _env_rows(env: Mapping[str, Any], env_names: Sequence[str]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for name in sorted(dict.fromkeys(env_names)):
-        value = env.get(name, _MISSING)
+        value = get_env(name, _MISSING, environ=env)
         is_secret = _looks_secret_env(name, value)
         label, domain, recommendation = _env_metadata(name)
         rows.append(

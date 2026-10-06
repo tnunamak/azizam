@@ -1,6 +1,6 @@
 # The Engine Registry — SLVP-Ideal Greenfield Design
 
-**For:** the Vivid Fish AI Gateway (formerly openai-proxy)
+**For:** Azizam
 **Scope:** the service / engine / capability / lifecycle registry that replaces the ~74 hardcoded service-specific behaviors catalogued in `docs/design/SERVICE_HARDCODING_AUDIT.md`.
 **Audience test:** an r/LocalLLaMA / r/selfhosted infra person reading the YAML should immediately understand it, trust it, and be able to reproduce their gateway from a Git checkout.
 
@@ -143,7 +143,7 @@ service:
 
 Model-file availability is a generic registry projection, not an engine adapter. The gateway checks only files that the registry declares as gateway-host files:
 
-- `model_path`, `path`, `vivid_fish_model_path`, and the companion `mmproj` are legacy gateway-host file fields by default.
+- `model_path`, `path`, `azizam_model_path`, and the companion `mmproj` are legacy gateway-host file fields by default.
 - `activation_model` and `activation_mmproj` are checked only when the value is absolute and the service uses a currently host-managed lifecycle driver (`systemd` or `command`), or when `model_file_scope: gateway` is declared on the model, service, or service config.
 - `required_model_files` and `required_files` declare additional gateway-host dependencies, such as companion projector files. These requirements inherit through `base_model_id`.
 - `model_file_scope: backend` (also `remote`, `container`, or `external`) means the path belongs to the backend's filesystem or naming scope, so the gateway must not classify it by calling `Path.is_file()` on the gateway host.
@@ -604,4 +604,4 @@ The current code is already partway: generic health exists, `LLM_BACKEND_HOSTS` 
 
 ---
 
-The final design is saved at `/home/tnunamak/applications/openai-proxy/docs/design/ENGINE_REGISTRY_DESIGN.md`.
+The final design is saved at `/home/tnunamak/applications/azizam/docs/design/ENGINE_REGISTRY_DESIGN.md`.

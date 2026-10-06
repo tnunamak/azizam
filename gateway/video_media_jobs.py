@@ -7,6 +7,8 @@ It deliberately avoids scheduling, persistence, and backend calls.
 
 from __future__ import annotations
 
+from gateway.compat import emit_aliases
+
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any, Mapping
@@ -234,10 +236,10 @@ def video_generation_payload(
     payload: dict[str, Any] = {
         "id": public_id or job.get("job_id"),
         "object": VIDEO_OBJECT,
-        "vivid_object": LEGACY_VIDEO_OBJECT,
+        "azizam_object": LEGACY_VIDEO_OBJECT,
         "model": metadata.get("model") or job.get("workflow"),
         "status": openai_video_status(internal_status),
-        "vivid_status": internal_status,
+        "azizam_status": internal_status,
         "progress": _progress(job.get("progress", 0)),
         "created_at": job.get("created_at"),
         "updated_at": job.get("updated_at"),
@@ -250,7 +252,7 @@ def video_generation_payload(
         "error": None,
     }
     if job.get("workflow") is not None:
-        payload["vivid_fish_resolved_model"] = job["workflow"]
+        payload["azizam_resolved_model"] = job["workflow"]
     for key in ("size", "seconds", "actual_seconds"):
         if key in metadata:
             payload[key] = metadata[key]
@@ -269,9 +271,9 @@ def video_generation_payload(
             content_url = first.get("content_url") or first.get("url")
             if content_url:
                 payload["content_url"] = content_url
-    return {key: value for key, value in payload.items() if value is not None or key in {
+    return emit_aliases({key: value for key, value in payload.items() if value is not None or key in {
         "completed_at", "expires_at", "prompt", "remixed_from_video_id", "error"
-    }}
+    }})
 
 
 def openai_video_status(status: str) -> str:

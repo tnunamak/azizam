@@ -15,6 +15,8 @@ Explicit limitations:
 
 from __future__ import annotations
 
+from gateway.compat import get_env
+
 import os
 import hashlib
 from pathlib import Path
@@ -37,7 +39,7 @@ OPENAI_COMPATIBLE_PROTOCOLS = frozenset({"openai", "openai-compatible"})
 SECRET_PLACEHOLDER = "<external-secret>"
 DEFAULT_GATEWAY_LIFECYCLE_BASE_URL = "http://127.0.0.1:5000/internal/litellm/local"
 DEFAULT_GATEWAY_CURRENT_BASE_URL = "http://127.0.0.1:5000/internal/litellm/current/v1"
-DEFAULT_GATEWAY_LIFECYCLE_API_KEY_REF = "os.environ/AI_GATEWAY_INTERNAL_LITELLM_KEY"
+DEFAULT_GATEWAY_LIFECYCLE_API_KEY_REF = "os.environ/AZIZAM_INTERNAL_LITELLM_KEY"
 DEFAULT_LITELLM_KEY_HEADER = "X-Litellm-Key"
 # Bare filename: the artifact lives in the caller-provided ``base_dir`` (the
 # gateway's state dir — next to ``admin.db``), so it follows the same isolation
@@ -76,7 +78,7 @@ def compile_litellm_substrate_config(
         "general_settings": {
             "litellm_key_header_name": DEFAULT_LITELLM_KEY_HEADER,
             # Forwards the gateway's cancellation-correlation header
-            # (X-AI-Gateway-Request-Id) through to the internal gateway hop
+            # (X-Azizam-Request-Id) through to the internal gateway hop
             # behind LiteLLM. LiteLLM does not propagate a cancel signal of
             # its own on this version (its non-stream disconnect canceller is
             # dead code), so the gateway carries the id itself and races its
@@ -178,7 +180,7 @@ def litellm_provider_key_statuses(
         env_name = str(config.get("api_key_env") or "")
         secret_id = str(config.get("api_key_secret_id") or "")
         env_usable = False
-        if env_name and environ.get(env_name):
+        if env_name and get_env(env_name, environ=environ):
             expected_origin_raw = str(config.get("credential_origin") or "").strip()
             if expected_origin_raw:
                 try:
@@ -602,7 +604,7 @@ def _api_key_ref(config: Mapping[str, Any], secret_refs: Mapping[str, Any]) -> s
         env_name = secret_env_name_for_provider(str(config.get("provider_id") or ""), secret_id)
         return f"os.environ/{env_name}"
     if secret_refs.get("api_key") == SECRET_PLACEHOLDER:
-        return "os.environ/AI_GATEWAY_DOWNSTREAM_API_KEY"
+        return "os.environ/AZIZAM_DOWNSTREAM_API_KEY"
     return ""
 
 

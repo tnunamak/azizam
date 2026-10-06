@@ -5,7 +5,7 @@ The CLI ships with a registry of known probe modules, each of which is
 *optional*. A probe is included when:
 
 - its SDK dependency is importable, AND
-- ``OPENAI_PROXY_BASE_URL`` (and ``OPENAI_PROXY_API_KEY`` unless the
+- ``AZIZAM_BASE_URL`` (and ``AZIZAM_API_KEY`` unless the
   probe is anonymous) are set.
 
 When both checks pass, this script loads the probe module's unittest

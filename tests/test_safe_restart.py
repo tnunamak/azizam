@@ -94,7 +94,7 @@ class World:
         self.commands.append(list(cmd))
         self.restarted = True
         if self.systemctl_code == 0:
-            self.draining = False if cmd[-1] == "openai-proxy" else self.draining
+            self.draining = False if cmd[-1] == "azizam" else self.draining
         return self.systemctl_code
 
     def invoke(self, *argv, token=TOKEN):
@@ -126,7 +126,7 @@ class SafeRestartTests(unittest.TestCase):
         world = World()
         code = world.invoke()
         self.assertEqual(code, sr.EXIT_OK, world.text)
-        self.assertEqual(world.commands, [["systemctl", "--user", "restart", "openai-proxy"]])
+        self.assertEqual(world.commands, [["systemctl", "--user", "restart", "azizam"]])
         self.assertEqual(world.posts()[0]["draining"], True)
         self.assertEqual(world.posts()[0]["reason"], "safe-restart")
         self.assertFalse(world.draining)
@@ -415,12 +415,12 @@ class MainTests(unittest.TestCase):
         self.assertEqual(sr.main(["--bogus"], env={}), sr.EXIT_USAGE)
 
     def test_resolve_token_prefers_env_then_file(self) -> None:
-        self.assertEqual(sr.resolve_token({"VIVID_ADMIN_API_KEY": " abc "}), "abc")
+        self.assertEqual(sr.resolve_token({"AZIZAM_ADMIN_KEY": " abc "}), "abc")
         with tempfile.TemporaryDirectory() as tmp:
             key_file = Path(tmp) / "k"
             key_file.write_text("from-file\n")
-            self.assertEqual(sr.resolve_token({"AI_GATEWAY_ADMIN_KEY_FILE": str(key_file)}), "from-file")
-            self.assertIsNone(sr.resolve_token({"AI_GATEWAY_ADMIN_KEY_FILE": str(Path(tmp) / "none")}))
+            self.assertEqual(sr.resolve_token({"AZIZAM_ADMIN_KEY_FILE": str(key_file)}), "from-file")
+            self.assertIsNone(sr.resolve_token({"AZIZAM_ADMIN_KEY_FILE": str(Path(tmp) / "none")}))
 
     def test_second_instance_is_locked_out(self) -> None:
         import fcntl

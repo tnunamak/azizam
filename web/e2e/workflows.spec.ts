@@ -52,7 +52,7 @@ const seededCatalog = {
       typical_seconds: 12,
       aliases: ["image", "product-shot"],
       examples: {
-        curl: 'curl $AI_GATEWAY_BASE/v1/images/generations -H "Authorization: Bearer $AI_GATEWAY_API_KEY" -H "Content-Type: application/json" -d \'{"workflow":"image.product-render","prompt":"A teal desk lamp"}\'',
+        curl: 'curl $AZIZAM_BASE/v1/images/generations -H "Authorization: Bearer $AZIZAM_API_KEY" -H "Content-Type: application/json" -d \'{"workflow":"image.product-render","prompt":"A teal desk lamp"}\'',
         python:
           'from openai import OpenAI\nclient = OpenAI()\nclient.images.generate(model="image", prompt="A teal desk lamp", extra_body={"workflow":"image.product-render"})',
         javascript:
@@ -86,7 +86,7 @@ const seededCatalog = {
       typical_seconds: null,
       aliases: ["speech"],
       examples: {
-        curl: 'curl $AI_GATEWAY_BASE/v1/audio/speech -H "Authorization: Bearer $AI_GATEWAY_API_KEY" -d \'{"workflow":"audio.voiceover","input":"Hello"}\'',
+        curl: 'curl $AZIZAM_BASE/v1/audio/speech -H "Authorization: Bearer $AZIZAM_API_KEY" -d \'{"workflow":"audio.voiceover","input":"Hello"}\'',
         python:
           'from openai import OpenAI\nclient = OpenAI()\nclient.audio.speech.create(model="voice", input="Hello", voice="alloy")',
         javascript:
@@ -558,7 +558,7 @@ test("workflow sheet shows controls, code, links and seeded recent jobs", async 
     details.getByText("product-shot", { exact: true }),
   ).toBeVisible();
 
-  await expect(sheet.getByText(/curl \$AI_GATEWAY_BASE/)).toBeVisible();
+  await expect(sheet.getByText(/curl \$AZIZAM_BASE/)).toBeVisible();
   await sheet.getByRole("tab", { name: "Python" }).click();
   await expect(sheet.getByText(/from openai import OpenAI/)).toBeVisible();
   await sheet.getByRole("tab", { name: "JavaScript" }).click();

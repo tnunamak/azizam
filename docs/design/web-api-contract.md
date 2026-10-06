@@ -48,12 +48,12 @@ Reads (`GET`) need only the session cookie. Every mutation (`POST`/`PATCH`/
 `PUT`/`DELETE`) from a cookie session must send **both** headers:
 
 ```
-x-ai-gateway-admin-action: 1
-x-ai-gateway-csrf: <csrf_token from GET /admin/api/session>
+x-azizam-admin-action: 1
+x-azizam-csrf: <csrf_token from GET /admin/api/session>
 ```
 
 Server behavior (see `_require_admin`): when the session carries a CSRF token
-(it always does for real sessions), `x-ai-gateway-csrf` must match or the write
+(it always does for real sessions), `x-azizam-csrf` must match or the write
 fails `403 admin_csrf_required` — the action header alone is not enough.
 Bearer-key (`Authorization: Bearer oak_…`) callers need neither header. Wire
 both into the single `adminFetch` in `web/src/lib/api.ts`.

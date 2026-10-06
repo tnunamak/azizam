@@ -214,7 +214,7 @@ for (const colorScheme of ["light", "dark"] as const) {
       await page.goto("/ui/");
 
       await expect(
-        page.getByRole("link", { name: /Vivid Fish/ }).first(),
+        page.getByRole("link", { name: /Azizam/ }).first(),
       ).toBeVisible();
       await expect(
         page.getByRole("button", { name: "Account menu: Alex Owner" }).first(),

@@ -6,10 +6,10 @@ Please report security issues privately. Do not open a public issue for a
 suspected vulnerability.
 
 Preferred route: open a private GitHub security advisory draft for
-`Vivid-Fish/openai-proxy` at:
+`Vivid-Fish/azizam` at:
 
 ```text
-https://github.com/Vivid-Fish/openai-proxy/security/advisories/new
+https://github.com/Vivid-Fish/azizam/security/advisories/new
 ```
 
 If GitHub private vulnerability reporting is not enabled for the repository,

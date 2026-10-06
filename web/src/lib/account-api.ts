@@ -26,8 +26,8 @@ async function accountRequest<T>(
   if (init.body !== undefined) headers.set("content-type", "application/json");
   if (init.method && init.method !== "GET") {
     const session = await accountApi.session();
-    headers.set("x-ai-gateway-user-action", "1");
-    headers.set("x-ai-gateway-csrf", session.csrf_token);
+    headers.set("x-azizam-user-action", "1");
+    headers.set("x-azizam-csrf", session.csrf_token);
   }
   const response = await fetch(path, {
     method: init.method,
@@ -55,7 +55,7 @@ async function accountRequest<T>(
 export const accountApi = {
   discovery: () =>
     accountRequest<{ recipes: { openai?: { canonical_base_url?: string } } }>(
-      "/.well-known/ai-gateway",
+      "/.well-known/azizam",
     ),
   session: () => accountRequest<AccountSnapshot>("/me/api/session"),
   createApp: (name: string) =>

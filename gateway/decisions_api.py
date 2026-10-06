@@ -65,7 +65,7 @@ class DecisionModel:
 
     id: str
     object: str = "model"
-    owned_by: str = "vivid-fish"
+    owned_by: str = "azizam"
     root: str | None = None
     parent: str | None = None
     backend: str | None = None
@@ -669,25 +669,25 @@ def _is_validation_detail(value: Any) -> bool:
 
 def _response_headers(request_id: str, result: DecisionDispatchResult) -> dict[str, str]:
     headers = {
-        "x-gateway-remote": "1" if result.remote else "0",
-        "x-gateway-cost-usd": str(result.cost_usd) if result.cost_usd is not None else "unknown",
+        "x-azizam-remote": "1" if result.remote else "0",
+        "x-azizam-cost-usd": str(result.cost_usd) if result.cost_usd is not None else "unknown",
     }
     headers.update({str(k): str(v) for k, v in result.headers.items()})
-    headers["x-gateway-request-id"] = request_id
+    headers["x-azizam-request-id"] = request_id
     if result.backend:
-        headers["x-gateway-backend"] = result.backend
+        headers["x-azizam-backend"] = result.backend
     if result.engine:
-        headers["x-gateway-engine"] = result.engine
+        headers["x-azizam-engine"] = result.engine
         headers["x-decision-engine"] = result.engine
     if result.fallback_reasons:
-        headers["x-gateway-fallback-reasons"] = ",".join(result.fallback_reasons)
+        headers["x-azizam-fallback-reasons"] = ",".join(result.fallback_reasons)
         if 200 <= result.status_code < 300:
-            headers["x-gateway-fallback"] = ",".join(result.fallback_reasons)
+            headers["x-azizam-fallback"] = ",".join(result.fallback_reasons)
     return headers
 
 
 def _request_headers(request_id: str, extra: Mapping[str, str] | None = None) -> dict[str, str]:
-    headers = {"x-gateway-request-id": request_id}
+    headers = {"x-azizam-request-id": request_id}
     headers.update({str(k): str(v) for k, v in (extra or {}).items()})
     return headers
 

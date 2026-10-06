@@ -793,8 +793,8 @@ test("providers real backend OpenRouter journey keeps paid access denied until a
 }) => {
   const session = await (await request.get("/admin/api/session")).json();
   const headers = {
-    "x-ai-gateway-admin-action": "1",
-    "x-ai-gateway-csrf": session.actor.csrf_token,
+    "x-azizam-admin-action": "1",
+    "x-azizam-csrf": session.actor.csrf_token,
   };
   const unique = Date.now().toString(36);
   let profile: { id: string } | undefined;

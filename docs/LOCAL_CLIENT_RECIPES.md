@@ -21,10 +21,10 @@ For new installs, create a key from `/setup`, the account portal (`/`), or
 export it in the shell you run smoke commands from:
 
 ```bash
-export OPENAI_PROXY_API_KEY='opk_...'
+export AZIZAM_API_KEY='opk_...'
 ```
 
-> The `$OPENAI_PROXY_API_KEY` placeholder is used throughout. Do not paste
+> The `$AZIZAM_API_KEY` placeholder is used throughout. Do not paste
 > real `opk_...` values into config files, prompts, or commit messages.
 
 ## Supported interfaces
@@ -72,7 +72,7 @@ on 2026-10-02; those scripts are not part of the test suite.
 | | WebRTC (`/v1/realtime/calls`), `client_secrets`, SIP, `conversation.item.truncate` (accepted, no effect), server-side audio formats other than PCM16 24 kHz, `semantic_vad` | Not supported, or not tested | documented gap |
 | **A1111 / SD WebUI** (`/sdapi/v1`, host root) | `txt2img`, `options`, `sd-models`, `samplers`, `schedulers`, `upscalers`, `latent-upscale-modes`, `sd-vae`, `progress`, `interrupt` | Works | `tests/test_a1111_api.py`; Live: SillyTavern 1.18.0 server code against a temporary gateway |
 | | Hires fix, `restore_faces`, ADetailer and other scripts, LoRA tags, styles, variation seeds | Unsupported: 422 that names the field | same |
-| | Negative prompt, sampler, scheduler, `cfg_scale`, `clip_skip` on a model that does not use them | Dropped; the names are in the `x-gateway-ignored-params` header | same |
+| | Negative prompt, sampler, scheduler, `cfg_scale`, `clip_skip` on a model that does not use them | Dropped; the names are in the `x-azizam-ignored-params` header | same |
 | | `img2img`, extras upscaling, `interrogate`, `png-info` | Unsupported: 501 | same |
 
 Per-client recipes follow in this document.
@@ -150,10 +150,10 @@ Use the discovery surfaces before guessing workflow controls:
 
 ```bash
 curl -s http://127.0.0.1:5000/gateway/v1/extensions \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY"
+  -H "Authorization: Bearer $AZIZAM_API_KEY"
 
 curl -s http://127.0.0.1:5000/gateway/v1/models/flux2-klein-4b-edit/capabilities \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY"
+  -H "Authorization: Bearer $AZIZAM_API_KEY"
 
 ./venv/bin/python scripts/doctor.py \
   --base-url http://127.0.0.1:5000 \
@@ -168,7 +168,7 @@ inspect or print local key stores.
 
 ## Workflow Control Examples
 
-Workflow knobs live under `extensions.com.vividfish.workflow`; standard API
+Workflow knobs live under `extensions.com.azizam.workflow`; standard API
 fields such as `model`, `prompt`, `size`, `duration`, `seconds`, and
 image-edit `mask` stay top-level. Route-native `seed` stays top-level on
 audio/video; image workflow seeds are manifest-backed extensions.
@@ -177,7 +177,7 @@ Image generation seamless tile, recommended Flux2 offset+inpaint path:
 
 ```bash
 curl -s http://127.0.0.1:5000/v1/images/generations \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "flux2-klein-4b-seamless-tile",
@@ -186,7 +186,7 @@ curl -s http://127.0.0.1:5000/v1/images/generations \
     "n": 1,
     "response_format": "b64_json",
     "extensions": {
-      "com.vividfish.workflow": {
+      "com.azizam.workflow": {
         "steps": 5,
         "guidance": 3.5,
         "seed": 4242,
@@ -207,7 +207,7 @@ Direct SDXL postprocess tile workflow:
 
 ```bash
 curl -s http://127.0.0.1:5000/v1/images/generations \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "sdxl-seamless-tile",
@@ -216,7 +216,7 @@ curl -s http://127.0.0.1:5000/v1/images/generations \
     "n": 1,
     "response_format": "b64_json",
     "extensions": {
-      "com.vividfish.workflow": {
+      "com.azizam.workflow": {
         "steps": 28,
         "guidance": 7.0,
         "seed": 4242,
@@ -256,7 +256,7 @@ Gateway-aware clients can refresh metadata and a new signed URL with:
 
 ```bash
 curl "http://127.0.0.1:5000/gateway/v1/assets/$ASSET_ID" \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY"
+  -H "Authorization: Bearer $AZIZAM_API_KEY"
 ```
 
 Durable image generation job, preferred for unattended batches or clients that
@@ -264,7 +264,7 @@ cannot safely keep a long HTTP request open:
 
 ```bash
 JOB_JSON=$(curl -s http://127.0.0.1:5000/gateway/v1/media/jobs \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -H "Content-Type: application/json" \
   -H "Idempotency-Key: tile-rock-4242" \
   -d '{
@@ -275,7 +275,7 @@ JOB_JSON=$(curl -s http://127.0.0.1:5000/gateway/v1/media/jobs \
       "size": "1024x1024",
       "n": 1,
       "extensions": {
-        "com.vividfish.workflow": {
+        "com.azizam.workflow": {
           "seed": 4242,
           "seam_mask_width": 96,
           "seam_denoise": 0.58
@@ -285,9 +285,9 @@ JOB_JSON=$(curl -s http://127.0.0.1:5000/gateway/v1/media/jobs \
   }')
 JOB_ID=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["job_id"])' <<<"$JOB_JSON")
 curl -s "http://127.0.0.1:5000/gateway/v1/media/jobs/$JOB_ID" \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY"
+  -H "Authorization: Bearer $AZIZAM_API_KEY"
 curl -s "http://127.0.0.1:5000/gateway/v1/media/jobs/$JOB_ID/content" \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY"
+  -H "Authorization: Bearer $AZIZAM_API_KEY"
 ```
 
 The job executor forces `response_format: "url"` so durable records point at
@@ -302,18 +302,18 @@ Image edit denoise:
 
 ```bash
 curl -s http://127.0.0.1:5000/v1/images/edits \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -F model=flux2-klein-4b-edit \
   -F prompt='remove the background clutter' \
   -F image=@input.png \
-  -F 'extensions={"com.vividfish.workflow":{"denoise":0.42,"steps":24,"guidance":3.5}}'
+  -F 'extensions={"com.azizam.workflow":{"denoise":0.42,"steps":24,"guidance":3.5}}'
 ```
 
 Image edit mask:
 
 ```bash
 curl -s http://127.0.0.1:5000/v1/images/edits \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -F model=flux2-klein-4b-edit \
   -F prompt='replace only the masked area with coral texture' \
   -F image=@input.png \
@@ -332,7 +332,7 @@ Image edit with multiple reference images (gpt-image-1 shape, repeated
 
 ```bash
 curl -s http://127.0.0.1:5000/v1/images/edits \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -F model=flux2-klein-4b-edit \
   -F prompt='combine these references' \
   -F 'image[]=@reference-a.png' \
@@ -359,7 +359,7 @@ decision to remove:
 
 ```bash
 curl -s http://127.0.0.1:5000/v1/images/generations \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "flux2-klein-4b",
@@ -397,7 +397,7 @@ configurable edit-capable workflow instead, with a fixed generic prompt:
 
 ```bash
 curl -s http://127.0.0.1:5000/v1/images/variations \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -F image=@input.png \
   -F n=2 \
   -F size=1024x1024
@@ -421,7 +421,7 @@ ACE-Step music generation:
 
 ```bash
 curl -s http://127.0.0.1:5000/v1/audio/generate \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "ace-step-1.5-xl-turbo",
@@ -442,7 +442,7 @@ TangoFlux audio generation:
 
 ```bash
 curl -s http://127.0.0.1:5000/v1/audio/generate \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "tangoflux",
@@ -450,7 +450,7 @@ curl -s http://127.0.0.1:5000/v1/audio/generate \
     "duration": 6,
     "seed": 1234,
     "extensions": {
-      "com.vividfish.workflow": {
+      "com.azizam.workflow": {
         "steps": 30,
         "guidance": 4.5,
         "batch_size": 1
@@ -463,7 +463,7 @@ YuE2 song generation (songs with vocals; license CC BY-NC, non-commercial):
 
 ```bash
 curl -s http://127.0.0.1:5000/v1/audio/generate \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "yue2-song",
@@ -483,7 +483,7 @@ Stable Audio 3 small-sfx (default for `model: "sfx"` and `"ambient"`):
 
 ```bash
 curl -s http://127.0.0.1:5000/v1/audio/generate \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model": "sa3-small-sfx", "prompt": "glass bottle breaking on concrete", "duration": 4}' \
   -o sfx.flac
@@ -502,7 +502,7 @@ points at the LTX-2.5 workflow for its role (see the table below).
 ```bash
 # Text to video (LTX-2.5, default)
 curl -s http://127.0.0.1:5000/v1/videos \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"prompt": "a lighthouse at dusk, waves crashing", "seconds": 5, "size": "960x512"}'
 # Image to video: add input_reference (path, URL, data URI, base64, or multipart file).
@@ -552,7 +552,7 @@ different API key's jobs never appear in the list:
 
 ```bash
 curl -s "http://127.0.0.1:5000/v1/videos?limit=10&order=desc" \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY"
+  -H "Authorization: Bearer $AZIZAM_API_KEY"
 ```
 
 A pagination `after` cursor that no longer resolves (evicted, deleted, or
@@ -566,7 +566,7 @@ for a job that may keep rendering:
 
 ```bash
 curl -s -X DELETE "http://127.0.0.1:5000/v1/videos/$VIDEO_ID" \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY"
+  -H "Authorization: Bearer $AZIZAM_API_KEY"
 ```
 
 ### Long video
@@ -609,7 +609,7 @@ multipart (`video[id]`, an uploaded file in `video`, or a zero-byte `video` file
 spec has no extension field), and `extended_from_video_id` repeats it. Fields: `model`, `seed`,
 `size` (default: the source's size), `negative_prompt`, `context_seconds` (0.34-4, default 1; the
 overlap taken from the end of the source), and under
-`extensions.com.vividfish.workflow`: `state_ledger`, `context_strength` (0-1, default 0.9).
+`extensions.com.azizam.workflow`: `state_ledger`, `context_strength` (0-1, default 0.9).
 `input_reference` and `shots` are not accepted on extensions. A segment is at most 8 s
 (`videos.chain_segment_seconds`); a longer request is split into near-equal segments with
 the same prompt. Frame counts are multiples of 8, so the result can differ from the request
@@ -694,7 +694,7 @@ motion unchanged."
 
 ```bash
 curl -s -X POST "http://127.0.0.1:5000/v1/videos/$VIDEO_ID/remix" \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" -H "Content-Type: application/json" \
   -d '{"prompt": "Replace the beach with a snowy mountain at golden hour. Keep the dog unchanged."}'
 ```
 
@@ -709,12 +709,12 @@ To remix a clip that is not a gateway video, use OpenAI's edit route,
 Over JSON, `video` can also be `{"id": "video_..."}` (this sets
 `remixed_from_video_id`). An upload gives `remixed_from_video_id: null`. The same
 upload also works on `POST /v1/videos` with `model: "video-remix"` and
-`extensions.com.vividfish.workflow.source_video` set to a video id, an http(s) URL
+`extensions.com.azizam.workflow.source_video` set to a video id, an http(s) URL
 or a `data:video/mp4;base64,...` URI.
 
 Optional gateway fields on remix and edit: `seed`, `seconds`, `size`, `negative_prompt`,
 and `model`. Without `model` the resource reports `"model": "video-remix"` (OpenAI reports
-the source's model); `vivid_fish_resolved_model` is always `video-bernini-r-remix`.
+the source's model); `azizam_resolved_model` is always `video-bernini-r-remix`.
 Output keeps the source frame rate and audio. `seconds` defaults to the source length, up to
 3.4 s, and may not exceed the source length; the maximum is 4 s, 832x480 (4k+1 frames).
 Measured on the 3090: 81 frames at 832x480 = 462 s warm.
@@ -723,7 +723,7 @@ Measured on the 3090: 81 frames at 832x480 = 462 s warm.
 `POST /v1/videos` with `model: "character-replace"` (also `scail-2`). A reference
 character image takes over the person in a driving video, with the driving
 video's motion and scene (SCAIL-2, Q4_K_M, SAM 3.1 tracking). Inputs go in
-`extensions.com.vividfish.workflow`:
+`extensions.com.azizam.workflow`:
 
 | Input | Required | Meaning |
 |---|---|---|
@@ -741,7 +741,7 @@ source with fewer frames gives a shorter clip. Measured on the 3090: 303 s warm.
 Only one person is replaced. With several people in the clip, name the person by position
 (`source_point_x`/`source_point_y`) or by order (`subject_index`); text names such as "man in gray hoodie"
 still track every match and the largest one wins. When more than one person was tracked and you did
-not choose, the finished video has `vivid_fish_warnings` saying how many were tracked and how to choose.
+not choose, the finished video has `azizam_warnings` saying how many were tracked and how to choose.
 Measured on a clip with two men and a crowd: the old graph (reference centre-cropped, all tracked people
 masked) drew a large extra woman and left the man; a point on the man plus `reference_fit` replaced him
 and kept the other man. A reference with the whole character in frame (head to feet) works best.
@@ -752,7 +752,7 @@ ref = "data:image/png;base64," + base64.b64encode(open("character.png", "rb").re
 video = client.videos.create_and_poll(
     model="character-replace",
     prompt="A young woman in a bright red raincoat walks toward the camera, waving.",
-    extra_body={"extensions": {"com.vividfish.workflow": {
+    extra_body={"extensions": {"com.azizam.workflow": {
         "source_video": {"video_id": driving_video.id},
         "reference_image": ref,
         "source_subject": "man in gray hoodie",
@@ -762,7 +762,7 @@ video = client.videos.create_and_poll(
 ```
 
 The OpenAI Python SDK sends `extra_body` on `videos.create` as bracketed multipart
-fields (`extensions[com.vividfish.workflow][source_video][video_id]`); the gateway
+fields (`extensions[com.azizam.workflow][source_video][video_id]`); the gateway
 rebuilds them, and converts numeric strings to the manifest's types.
 
 Both jobs use the normal video resource: `queued` to `in_progress` to `completed`
@@ -776,18 +776,18 @@ operators should not advertise or send ControlNet controls until a real
 ControlNet workflow, model, manifest, and readiness check are present.
 
 When a future workflow does advertise conditioning controls, keep them under
-`extensions.com.vividfish.workflow`. For multipart image edits, an asset-valued
+`extensions.com.azizam.workflow`. For multipart image edits, an asset-valued
 control can point at an extra form field without becoming a top-level API
 parameter:
 
 ```bash
 curl -s http://127.0.0.1:5000/v1/images/edits \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -F model=flux2-klein-4b-edit-controlnet \
   -F prompt='preserve the geometry, paint it as underwater rock' \
   -F image=@input.png \
   -F control_image=@edge-map.png \
-  -F 'extensions={"com.vividfish.workflow":{"control_image":{"multipart_field":"control_image"},"controlnet_strength":0.75}}'
+  -F 'extensions={"com.azizam.workflow":{"control_image":{"multipart_field":"control_image"},"controlnet_strength":0.75}}'
 ```
 
 Fetch `/gateway/v1/workflows` first. If `control_image` or
@@ -812,7 +812,7 @@ Generated image outputs can be reused without inventing new top-level fields:
 Variants use existing route semantics:
 
 - Image generation and edits: use top-level `n` for count and manifest-backed
-  `extensions.com.vividfish.workflow.seed` when the selected image workflow
+  `extensions.com.azizam.workflow.seed` when the selected image workflow
   exposes `seed`.
 - Video: repeat requests with different top-level `seed`; model aliases are
   quality/speed choices, not batch-variant controls.
@@ -879,11 +879,11 @@ path, call it through `/gateway/v1/providers/{provider}/{path...}` after
 discovering the provider id and confirming the App profile allows
 `native_passthrough`.
 
-Auth semantics are also uniform. `/health`, `/.well-known/ai-gateway`,
-`/.well-known/openai-proxy`, `/.well-known/skills`, `/llms.txt`, and
+Auth semantics are also uniform. `/health`, `/.well-known/azizam`,
+`/.well-known/azizam`, `/.well-known/skills`, `/llms.txt`, and
 `/openapi.json` are public discovery. Protocol frontends, gateway-native
 runtime APIs, and provider-native passthrough require
-`Authorization: Bearer $OPENAI_PROXY_API_KEY`. Some SDKs name that field
+`Authorization: Bearer $AZIZAM_API_KEY`. Some SDKs name that field
 `api_key`, `apiKey`, or `x-api-key`; the value is still the gateway `opk_...`
 token, not an upstream OpenAI, Anthropic, or Ollama credential.
 
@@ -895,7 +895,7 @@ the other common paths; `/v2/rerank` does not echo documents unless you ask.
 
 ```bash
 curl -s http://127.0.0.1:5000/v1/rerank \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" -H "Content-Type: application/json" \
   -d '{"model":"rerank","query":"capital of France","top_n":2,
        "documents":["Paris is the capital of France.","Bananas are yellow.","Lyon is a city in France."]}'
 # {"results":[{"index":0,"relevance_score":0.99,...},{"index":2,...}], "data":[...same...], ...}
@@ -914,7 +914,7 @@ Settings in the other clients (field names from each client's rerank settings; t
 against the gateway here, the request shape they send is the one above):
 
 - **Open WebUI:** Admin Settings, Documents, Reranking Engine `External`; URL
-  `http://127.0.0.1:5000/v1/rerank`; key `$OPENAI_PROXY_API_KEY`; model `rerank`.
+  `http://127.0.0.1:5000/v1/rerank`; key `$AZIZAM_API_KEY`; model `rerank`.
 - **LlamaIndex / langchain-cohere:** the Cohere rerank class with `base_url` set to
   `http://127.0.0.1:5000` and any `rerank*` model name.
 - **Dify, Continue:** a Cohere-style or Jina-style rerank provider; endpoint
@@ -997,7 +997,7 @@ the gateway does not pull, push, create, copy, or delete local model files.
 
 ```text
 Base URL:  http://127.0.0.1:5000/openai/v1
-API Key:   $OPENAI_PROXY_API_KEY
+API Key:   $AZIZAM_API_KEY
 ```
 
 Then refresh models; Open WebUI will call the configured models endpoint and
@@ -1008,7 +1008,7 @@ Smoke test from the same host:
 
 ```bash
 curl -s http://127.0.0.1:5000/openai/v1/models \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" \
   | head -c 400
 ```
 
@@ -1029,8 +1029,8 @@ endpoint pointing at the proxy:
 ```yaml
 endpoints:
   custom:
-    - name: "openai-proxy"
-      apiKey: "${OPENAI_PROXY_API_KEY}"
+    - name: "azizam"
+      apiKey: "${AZIZAM_API_KEY}"
       baseURL: "http://127.0.0.1:5000/openai/v1"
       models:
         default: ["auto"]
@@ -1039,7 +1039,7 @@ endpoints:
       modelDisplayLabel: "Local Proxy"
 ```
 
-Set `OPENAI_PROXY_API_KEY` in the LibreChat `.env`. Do not paste the literal
+Set `AZIZAM_API_KEY` in the LibreChat `.env`. Do not paste the literal
 `opk_...` into `librechat.yaml`.
 
 Expected unsupported features:
@@ -1063,7 +1063,7 @@ Expected unsupported features:
       "provider": "openai",
       "model": "auto",
       "apiBase": "http://127.0.0.1:5000/openai/v1",
-      "apiKey": "$OPENAI_PROXY_API_KEY"
+      "apiKey": "$AZIZAM_API_KEY"
     }
   ],
   "tabAutocompleteModel": {
@@ -1071,19 +1071,19 @@ Expected unsupported features:
     "provider": "openai",
     "model": "auto",
     "apiBase": "http://127.0.0.1:5000/openai/v1",
-    "apiKey": "$OPENAI_PROXY_API_KEY"
+    "apiKey": "$AZIZAM_API_KEY"
   },
   "embeddingsProvider": {
     "provider": "openai",
     "model": "auto",
     "apiBase": "http://127.0.0.1:5000/openai/v1",
-    "apiKey": "$OPENAI_PROXY_API_KEY"
+    "apiKey": "$AZIZAM_API_KEY"
   }
 }
 ```
 
 Replace `auto` with whichever alias your `proxy_config.yml` defines. Continue
-substitutes `$OPENAI_PROXY_API_KEY` from environment at load time.
+substitutes `$AZIZAM_API_KEY` from environment at load time.
 
 Expected unsupported features:
 
@@ -1102,7 +1102,7 @@ These agents accept any OpenAI-compatible endpoint.
 ```text
 API Provider:   OpenAI Compatible
 Base URL:       http://127.0.0.1:5000/openai/v1
-API Key:        $OPENAI_PROXY_API_KEY
+API Key:        $AZIZAM_API_KEY
 Model ID:       auto   (or whichever alias proxy_config.yml defines)
 ```
 
@@ -1135,7 +1135,7 @@ chat-completions and embeddings pipelines:
 Point the Ollama base URL at `http://127.0.0.1:5000/ollama` when the client
 supports a pathful base URL. For clients hard-coded to `/api`, use
 `http://127.0.0.1:5000` and the convenience `/api` routes. Send
-`Authorization: Bearer $AI_GATEWAY_API_KEY` (`x-api-key` also works, but the
+`Authorization: Bearer $AZIZAM_API_KEY` (`x-api-key` also works, but the
 Ollama clients only send a bearer header); this is not a vanilla
 unauthenticated Ollama daemon. Clients on the LAN bypass list need no key.
 The official `ollama` Python client takes the key as
@@ -1154,7 +1154,7 @@ What is verified with the official `ollama` Python client (0.6.3) and the
 | Final-object stats | `prompt_eval_count`, `eval_count`, and nanosecond durations are filled from backend timings. `load_duration` is always 0. |
 | Empty `messages` / empty `prompt` | Loads or, with `keep_alive: 0`, unloads. The gateway only checks that the model exists; it does not warm or free anything. |
 | `embed`, legacy `embeddings` | Works. `truncate`, `keep_alive`, `options` are ignored; `dimensions` is forwarded. |
-| `list` / `tags`, `show`, `ps`, `version` | Works. `show` reports `completion`, `vision`, `tools`, `thinking` (`embedding` for embedding models). `version` is a semver with a `+vivid-fish` suffix. |
+| `list` / `tags`, `show`, `ps`, `version` | Works. `show` reports `completion`, `vision`, `tools`, `thinking` (`embedding` for embedding models). `version` is a semver with a `+azizam` suffix. |
 | Unknown model | 404 `model "x" not found, try pulling it first`. `name:latest` is the same model as `name`. |
 | `suffix` (fill-in-the-middle), `template`, `raw: true` | Rejected with 400. The chat-completions pipeline cannot honor them. |
 | `context` (deprecated), `keep_alive`, `logprobs` | Ignored. |
@@ -1163,7 +1163,7 @@ What is verified with the official `ollama` Python client (0.6.3) and the
 
 ```bash
 curl -fsS http://127.0.0.1:5000/ollama/api/tags \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" | head -c 400
+  -H "Authorization: Bearer $AZIZAM_API_KEY" | head -c 400
 ```
 
 Use the OpenAI-compatible surface for general-purpose clients. The Ollama
@@ -1190,7 +1190,7 @@ from anthropic import Anthropic
 
 client = Anthropic(
     base_url="http://127.0.0.1:5000/anthropic",
-    api_key=os.environ["AI_GATEWAY_API_KEY"],  # sent as x-api-key
+    api_key=os.environ["AZIZAM_API_KEY"],  # sent as x-api-key
 )
 
 msg = client.messages.create(
@@ -1205,7 +1205,7 @@ Auth: the SDK's `api_key` is sent as `x-api-key`; `auth_token=` (bearer) works
 too. Use either. Clients on the LAN bypass list need no key.
 
 Claude Code: set `ANTHROPIC_BASE_URL=http://127.0.0.1:5000`,
-`ANTHROPIC_AUTH_TOKEN=$AI_GATEWAY_API_KEY`, `ANTHROPIC_MODEL=default` and
+`ANTHROPIC_AUTH_TOKEN=$AZIZAM_API_KEY`, `ANTHROPIC_MODEL=default` and
 `ANTHROPIC_SMALL_FAST_MODEL=default`. Claude Code then runs its tool loop
 (Read, Bash, and so on) against the local model. Claude Code prints
 `unrecognized_model` for local model names; that is only a cost-table warning.
@@ -1222,7 +1222,7 @@ otherwise.
 | `thinking` `enabled` / `adaptive` | Works. Local reasoning returns as `thinking` blocks (signature is empty); `display: "omitted"` returns none. `budget_tokens` and `output_config.effort` choose a `reasoning_effort`. Without `thinking`, reasoning is never returned as text. Prior `thinking` blocks in history are dropped. |
 | `stop_reason` | `end_turn`, `max_tokens`, `tool_use`. `stop_sequence` is never reported: the backend does not say which sequence matched, so `stop_sequences` stop generation but the reason is `end_turn` and `stop_sequence` is null. A stop sequence can also match inside the model's reasoning. |
 | `usage` | `input_tokens` and `output_tokens` from the backend. Cache fields are absent. Streams report usage in `message_delta`. |
-| `count_tokens` | Estimate (about 4 characters per token); header `X-AI-Gateway-Token-Counting: estimated`. |
+| `count_tokens` | Estimate (about 4 characters per token); header `X-Azizam-Token-Counting: estimated`. |
 | `models.list`, `models.retrieve` | Works at `/anthropic/v1/models[/{id}]`. `display_name` is the model description or a title-cased id. |
 | Errors | Anthropic shape with a `request-id` header: 400 `invalid_request_error`, 401 `authentication_error`, 403 `permission_error`, 404 `not_found_error` (unknown model: `model: <name>`), 429 `rate_limit_error`, 5xx `api_error`. |
 | `top_k` | Forwarded to the backend. `temperature`, `top_p`, `metadata.user_id` map as usual. In SDK 1.11 `temperature` is no longer a typed argument; pass it with `extra_body`. |
@@ -1283,7 +1283,7 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="http://127.0.0.1:5000/openai/v1",
-    api_key=os.environ["OPENAI_PROXY_API_KEY"],
+    api_key=os.environ["AZIZAM_API_KEY"],
 )
 
 resp = client.chat.completions.create(
@@ -1300,7 +1300,7 @@ import OpenAI from "openai";
 
 const client = new OpenAI({
   baseURL: "http://127.0.0.1:5000/openai/v1",
-  apiKey: process.env.OPENAI_PROXY_API_KEY,
+  apiKey: process.env.AZIZAM_API_KEY,
 });
 
 const r = await client.chat.completions.create({
@@ -1314,7 +1314,7 @@ Smoke test (no SDK):
 
 ```bash
 curl -s http://127.0.0.1:5000/openai/v1/chat/completions \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"auto","messages":[{"role":"user","content":"ping"}]}' \
   | head -c 400
@@ -1355,7 +1355,7 @@ Media comes back as MCP `resource_link` blocks that point at signed asset URLs, 
 as `structuredContent.assets[]` with the `asset_id`. Pass an `asset_id` or a data URI
 as an image input to chain an edit. The adapter does not fetch external URLs.
 
-The tools are generated from `x-vividfish-workflows` and the stable aliases, so a
+The tools are generated from `x-azizam-workflows` and the stable aliases, so a
 new workflow appears with no code change. Every action is dispatched to the same
 core route a plain HTTP client would call, with your key, so profile policy and
 receipts apply. A policy denial comes back as a tool error that carries the HTTP status.
@@ -1372,14 +1372,14 @@ revisions 2025-03-26 to 2025-11-25. The server never issues `Mcp-Session-Id`;
 
 ```bash
 claude mcp add gateway https://ai.example.com/mcp --transport http \
-  -H 'Authorization: Bearer ${AI_GATEWAY_API_KEY}'
+  -H 'Authorization: Bearer ${AZIZAM_API_KEY}'
 ```
 
 **Pi (`pi-mcp-adapter`)**, in `.mcp.json` or `~/.config/mcp/mcp.json`:
 
 ```json
 { "mcpServers": { "gateway": { "url": "https://ai.example.com/mcp",
-    "headers": { "Authorization": "Bearer ${AI_GATEWAY_API_KEY}" },
+    "headers": { "Authorization": "Bearer ${AZIZAM_API_KEY}" },
     "protocolVersion": "auto" } } }
 ```
 
@@ -1388,7 +1388,7 @@ claude mcp add gateway https://ai.example.com/mcp --transport http \
 **Smoke test without a client:**
 
 ```bash
-curl -s https://ai.example.com/mcp -H "Authorization: Bearer $AI_GATEWAY_API_KEY" \
+curl -s https://ai.example.com/mcp -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"run","arguments":{"target":"tts-fast","inputs":{"input":"Hello."}}}}'
 ```
@@ -1403,7 +1403,7 @@ SillyTavern calls at host root.
 
 ```text
 SD WebUI URL:    http://127.0.0.1:5000        (host root, no path)
-Authentication:  gateway:$AI_GATEWAY_API_KEY  (user:password; the password is the key)
+Authentication:  gateway:$AZIZAM_API_KEY  (user:password; the password is the key)
 ```
 
 Click Connect, then pick a model. The model list holds the stable image aliases
@@ -1416,7 +1416,7 @@ What maps and what does not:
   chosen workflow. `cfg_scale`, `negative_prompt`, `sampler_name` and `scheduler` map
   only when that workflow has the input (for example `flux2-klein-4b` takes
   `guidance`; `krea2-turbo` takes none of them). Otherwise the response header
-  `x-gateway-ignored-params` names what was dropped. `steps` and `cfg_scale` clamp
+  `x-azizam-ignored-params` names what was dropped. `steps` and `cfg_scale` clamp
   to the workflow's range and say so in the same header.
 - A size outside the workflow's range is a 422, not a silent resize.
 - Hires fix (`enable_hr`), face restoration, ADetailer and other scripts, styles,
@@ -1501,7 +1501,7 @@ always-on CPU Parakeet) when the first engine cannot serve the request:
 
 A `4xx`, bad audio, a timeout and any other `5xx` never fall back, and a name that is an engine id
 (`model=parakeet-gpu`) never falls back. Each fallback is visible: the response carries
-`x-vivid-fallback: parakeet-gpu->parakeet (gpu_oom)` (comma-joined when there are several), the gateway logs
+`x-azizam-fallback: parakeet-gpu->parakeet (gpu_oom)` (comma-joined when there are several), the gateway logs
 it, and for STT the serving receipt lists it in `fallback_reasons`. When every engine fails, the last
 engine's error is returned with the header. A TTS fallback engine applies its own voice map, so the voice
 can differ; a custom voice only falls back to engines that accept one. `GET /gateway/v1/aliases/resolve`
@@ -1612,7 +1612,7 @@ for s in r.segments:            # s.speaker is "A", "B", ... in order of first a
 Discovery and dry run (no model is loaded or run):
 
 ```bash
-curl -s localhost:5000/v1/models -H "Authorization: Bearer $KEY"      # alias entries carry vivid_fish_resolves_to; every entry a type (docs/api/MODEL_METADATA.md)
+curl -s localhost:5000/v1/models -H "Authorization: Bearer $KEY"      # alias entries carry azizam_resolves_to; every entry a type (docs/api/MODEL_METADATA.md)
 curl -s localhost:5000/gateway/v1/aliases -H "Authorization: Bearer $KEY"   # stable + OpenAI rules + engines (deployed or not)
 curl -s "localhost:5000/gateway/v1/aliases/resolve?operation=chat&model=gpt-4o" -H "Authorization: Bearer $KEY"
 ```
@@ -1640,7 +1640,7 @@ the LLM is generating (`GET /showcase/api/status`, normal auth).
 
 The page, its assets and the example files are public. Examples live in
 `data/showcase/examples/<id>/` (gitignored; override with
-`OPENAI_PROXY_SHOWCASE_EXAMPLES_DIR`). Record them with
+`AZIZAM_SHOWCASE_EXAMPLES_DIR`). Record them with
 `scripts/build-showcase-examples`. It is idempotent, waits for an idle GPU before
 every job, and runs cheap jobs first and video last. `--list` shows what is pending.
 
@@ -1657,7 +1657,7 @@ The audience returned to a client is determined server-side; default is
 
 ```bash
 curl -s http://127.0.0.1:5000/gateway/v1/workflows \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY"
+  -H "Authorization: Bearer $AZIZAM_API_KEY"
 ```
 
 Returns the workflows the caller's profile is allowed to see, with portable
@@ -1667,7 +1667,7 @@ inputs and outputs (no backend node IDs at `client` audience).
 
 ```bash
 curl -s http://127.0.0.1:5000/gateway/v1/capabilities \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY"
+  -H "Authorization: Bearer $AZIZAM_API_KEY"
 ```
 
 Use this from an agent at startup to decide what intents are actually
@@ -1681,14 +1681,14 @@ depending on protocol) and:
 
 ```bash
 curl -s "http://127.0.0.1:5000/gateway/v1/receipts/$REQUEST_ID" \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY"
+  -H "Authorization: Bearer $AZIZAM_API_KEY"
 ```
 
 Or list recent:
 
 ```bash
 curl -s "http://127.0.0.1:5000/gateway/v1/receipts?limit=20" \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY"
+  -H "Authorization: Bearer $AZIZAM_API_KEY"
 ```
 
 A receipt records: canonical intent, accepted/rejected/ignored inputs,
@@ -1717,10 +1717,10 @@ receives is a delivery choice.
 
 | Media | Where | Content |
 | --- | --- | --- |
-| PNG | text chunks | ComfyUI `prompt` (API graph), `workflow` (UI graph; drag the file into ComfyUI to reopen it), `vividfish_provenance` |
-| JPEG, WebP | EXIF | `Make` = `workflow:<json>`, `Model` = `prompt:<json>`, `ImageDescription` = `vividfish_provenance:<json>` (ComfyUI's WebP convention) |
-| MP4, WebM, FLAC, MP3 | container tags | `prompt`, `workflow`, `vividfish_provenance` |
-| WAV | `comment` tag | `vividfish_provenance=<json>` (WAV has no free-form tag fields) |
+| PNG | text chunks | ComfyUI `prompt` (API graph), `workflow` (UI graph; drag the file into ComfyUI to reopen it), `azizam_provenance` |
+| JPEG, WebP | EXIF | `Make` = `workflow:<json>`, `Model` = `prompt:<json>`, `ImageDescription` = `azizam_provenance:<json>` (ComfyUI's WebP convention) |
+| MP4, WebM, FLAC, MP3 | container tags | `prompt`, `workflow`, `azizam_provenance` |
+| WAV | `comment` tag | `azizam_provenance=<json>` (WAV has no free-form tag fields) |
 
 The `workflow` graph is derived from the graph actually submitted to ComfyUI,
 so it shows this request's prompt, seed and size. Speech (`/v1/audio/speech`)
@@ -1739,8 +1739,8 @@ media are replaced before embedding).
 
 ```bash
 curl -s http://127.0.0.1:5000/v1/images/generations \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" -H "Content-Type: application/json" \
-  -d '{"model":"flux2-klein-4b","prompt":"a lighthouse","extensions":{"com.vividfish.workflow":{"metadata":"none"}}}'
+  -H "Authorization: Bearer $AZIZAM_API_KEY" -H "Content-Type: application/json" \
+  -d '{"model":"flux2-klein-4b","prompt":"a lighthouse","extensions":{"com.azizam.workflow":{"metadata":"none"}}}'
 ```
 
 - `"full"`: deliver the stored bytes, metadata included.
@@ -1755,10 +1755,10 @@ Where to put it:
 | Route | How |
 | --- | --- |
 | `/v1/images/generations`, `/v1/audio/generate`, `/v1/audio/speech`, `/v1/videos` | JSON `extensions` |
-| `/v1/images/edits`, `/v1/images/variations`, `/v1/videos` (multipart) | form field `extensions[com.vividfish.workflow][metadata]` (edits also accept the JSON `extensions` field) |
-| `/gateway/v1/images/identity` | form field `extensions[com.vividfish.workflow][metadata]` |
-| `/gateway/v1/workflows/{id}/run` | form field `extensions[com.vividfish.workflow][metadata]` |
-| `GET /v1/videos/{id}/content`, `GET /gateway/v1/media/jobs/{id}/content`, `GET /gateway/v1/assets/{id}` | query `?extensions[com.vividfish.workflow][metadata]=none` or the short `?metadata=none` |
+| `/v1/images/edits`, `/v1/images/variations`, `/v1/videos` (multipart) | form field `extensions[com.azizam.workflow][metadata]` (edits also accept the JSON `extensions` field) |
+| `/gateway/v1/images/identity` | form field `extensions[com.azizam.workflow][metadata]` |
+| `/gateway/v1/workflows/{id}/run` | form field `extensions[com.azizam.workflow][metadata]` |
+| `GET /v1/videos/{id}/content`, `GET /gateway/v1/media/jobs/{id}/content`, `GET /gateway/v1/assets/{id}` | query `?extensions[com.azizam.workflow][metadata]=none` or the short `?metadata=none` |
 
 For `response_format: "url"`, media jobs and assets, the mode is fixed when the
 signed URL is minted: the URL carries `md=full|none` and the signature covers
@@ -1766,7 +1766,7 @@ it, so a client cannot flip `none` to `full`. A signed URL minted before this
 control existed (no `md`) is delivered with `none`. A video job remembers the
 choice made when it was submitted; a later GET override wins over it. Streaming
 speech (`stream_format`) is delivered as the engine produced it, unbuffered.
-An invalid value is a `400` with `param: extensions.com.vividfish.workflow.metadata`.
+An invalid value is a `400` with `param: extensions.com.azizam.workflow.metadata`.
 
 **Profile default.** Order: request control, then profile
 `media_metadata.default`, then `none`.
@@ -1827,7 +1827,7 @@ The profile-binding path is:
 
 What this document deliberately does *not* do: print any real key, real hash,
 real env name from a downstream service block, or any value from a live key
-store. The placeholders `opk_...`, `sha256:...`, and `$OPENAI_PROXY_API_KEY`
+store. The placeholders `opk_...`, `sha256:...`, and `$AZIZAM_API_KEY`
 are the only forms that should appear in shared docs and commit history.
 
 ## Operational Notes
@@ -1839,11 +1839,11 @@ multipart upload and returns the usual image JSON response:
 
 ```bash
 curl -s http://127.0.0.1:5000/v1/images/edits \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -F 'model=seedvr2-upscale' \
   -F 'prompt=Upscale and restore this image faithfully' \
   -F 'image=@input.png' \
-  -F 'extensions={"com.vividfish.workflow":{"scale":2,"color_correction_method":"lab"}}'
+  -F 'extensions={"com.azizam.workflow":{"scale":2,"color_correction_method":"lab"}}'
 ```
 
 `scale` accepts `2` or `4`; `color_correction_method` accepts `none`, `lab`,
@@ -1859,7 +1859,7 @@ video file:
 
 ```bash
 curl -sS http://127.0.0.1:5000/gateway/v1/workflows/rife-interpolate/run \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -F 'source_video=@input.mp4;type=video/mp4' \
   -F 'multiplier=2' \
   -o interpolated.mp4

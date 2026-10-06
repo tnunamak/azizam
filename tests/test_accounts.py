@@ -270,7 +270,7 @@ def account_client(account_db):
         yield client, state
 
 
-OWNER_HEADERS = {"x-test-role": "owner", "x-ai-gateway-csrf": "owner-csrf"}
+OWNER_HEADERS = {"x-test-role": "owner", "x-azizam-csrf": "owner-csrf"}
 
 
 @pytest.mark.parametrize("endpoint", ["/admin/api/people", "/admin/api/invites", "/admin/api/operator/sign-in"])
@@ -384,7 +384,7 @@ def test_oidc_targeted_invite_requires_session_csrf_verified_email_and_matching_
     session = session_from_claims({"sub": user["id"], "email": user["email"]}, role="none", cookie=CookieConfig(secure=False))
     state["session"] = session
     assert client.post("/auth/api/invite/accept", json=payload).status_code == 403
-    csrf = {"x-ai-gateway-csrf": csrf_token_for_session(session, signing_key=SIGNING_KEY)}
+    csrf = {"x-azizam-csrf": csrf_token_for_session(session, signing_key=SIGNING_KEY)}
     response = client.post("/auth/api/invite/accept", json=payload, headers=csrf)
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "verified_email_required"
@@ -478,7 +478,7 @@ def test_proxy_http_full_member_lifecycle_from_owner_invitation_through_reset_an
     admin = TestClient(proxy.app)
     member = TestClient(proxy.app)
     admin.cookies.set(cookie.name, encode_session_cookie(owner_session, signing_key=SIGNING_KEY))
-    owner_csrf = {"x-ai-gateway-csrf": csrf_token_for_session(owner_session, signing_key=SIGNING_KEY)}
+    owner_csrf = {"x-azizam-csrf": csrf_token_for_session(owner_session, signing_key=SIGNING_KEY)}
     invitation = admin.post("/admin/api/invites", headers=owner_csrf, json={"profile_id": plan["id"], "email": "member@example.test"})
     assert invitation.status_code == 200
     token = invitation.json()["url"].split("token=", 1)[1]
@@ -606,7 +606,7 @@ def test_oidc_invite_binding_reassigns_all_preexisting_apps_and_keys_to_invited_
     session = session_from_claims({"sub": user["id"], "email": user["email"]}, role="none", cookie=CookieConfig(secure=False))
     state["session"] = session
     _, token = accounts.create_link("invite", "owner", profile_id=plan["id"], email=user["email"], path=path)
-    response = client.post("/auth/api/invite/accept", json={"token": token, "email": user["email"], "name": "Person"}, headers={"x-ai-gateway-csrf": csrf_token_for_session(session, signing_key=SIGNING_KEY)})
+    response = client.post("/auth/api/invite/accept", json={"token": token, "email": user["email"], "name": "Person"}, headers={"x-azizam-csrf": csrf_token_for_session(session, signing_key=SIGNING_KEY)})
     assert response.status_code == 200
     apps = rows(path, "SELECT * FROM apps WHERE owner_user_id=?", (user["id"],))
     keys = rows(path, "SELECT * FROM credentials")
@@ -676,7 +676,7 @@ def test_public_signin_options_and_invite_inspection_use_saved_instance_name_liv
         assert options.headers["cache-control"] == "no-store"
         assert invite.headers["cache-control"] == "no-store"
 
-    assert_public_name("AI Gateway")
+    assert_public_name("Azizam")
     for name in ("Our team's gateway", "Renamed gateway"):
         admin_store.put_operator_setting("instance_presentation", {
             "name": name, "base_url": "https://gateway.example.test", "theme_default": "dark",

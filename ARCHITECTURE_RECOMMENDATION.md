@@ -1,14 +1,14 @@
-# Vivid Fish AI Gateway — Architecture Recommendation
+# Azizam — Architecture Recommendation
 
 Date: 2026-05-15
 Status: recommendation plus live vertical-slice checkpoint
-Product: **Vivid Fish AI Gateway** (the "AI Gateway"). Example public host:
+Product: **Azizam** (the "Azizam"). Example public host:
 `https://ai.example.com`. Keep old hostnames as compatibility aliases until
 configured apps have moved.
 
 This document is the product and architecture recommendation for evolving
-the codebase still known internally as `openai-proxy` into the local-first
-**Vivid Fish AI Gateway** — a generalized control plane and operator
+the codebase still known internally as `azizam` into the local-first
+**Azizam** — a generalized control plane and operator
 experience for self-hosted AI.
 
 Detailed inventories live in:
@@ -132,7 +132,7 @@ so they speak clearly.
 
 ## What Exists Today
 
-`openai-proxy` already provides a serious local gateway:
+`azizam` already provides a serious local gateway:
 
 - OpenAI-compatible `/v1` API on FastAPI
 - chat/completions and embeddings passthrough to local LLM backends

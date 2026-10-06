@@ -57,13 +57,13 @@ Model: qwen3-vl-30b (or use default from /v1/models)
 
 ```bash
 # Check status
-systemctl --user status tabbyapi openai-proxy qwen3-tts parakeet-stt
+systemctl --user status tabbyapi azizam qwen3-tts parakeet-stt
 
 # Restart all
-systemctl --user restart tabbyapi openai-proxy qwen3-tts parakeet-stt
+systemctl --user restart tabbyapi azizam qwen3-tts parakeet-stt
 
 # View logs
-journalctl --user -u openai-proxy -f
+journalctl --user -u azizam -f
 ```
 
 ## Performance

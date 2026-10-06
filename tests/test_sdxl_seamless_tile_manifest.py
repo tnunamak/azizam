@@ -256,11 +256,11 @@ class TestSdxlSeamlessTileModelDiscovery(unittest.TestCase):
         self.assertIn("sdxl-seamless-tile", by_id)
         tile = by_id["sdxl-seamless-tile"]
         self.assertEqual(tile["object"], "model")
-        self.assertEqual(tile["owned_by"], "vivid-fish")
-        self.assertTrue(tile["vivid_fish_workflow"])
-        self.assertEqual(tile["vivid_fish_workflow_id"], "image.generate.sdxl-seamless-tile")
-        self.assertEqual(tile["vivid_fish_intent"], "image.generate")
-        self.assertEqual(tile["vivid_fish_backend"], "comfyui")
+        self.assertEqual(tile["owned_by"], "azizam")
+        self.assertTrue(tile["azizam_workflow"])
+        self.assertEqual(tile["azizam_workflow_id"], "image.generate.sdxl-seamless-tile")
+        self.assertEqual(tile["azizam_intent"], "image.generate")
+        self.assertEqual(tile["azizam_backend"], "comfyui")
 
         rendered = json.dumps(tile, sort_keys=True)
         self.assertNotIn("/home/", rendered)

@@ -89,7 +89,7 @@ def test_compose_setup_allowance_matches_defined_gateway():
     import yaml
     compose = yaml.safe_load((Path(__file__).resolve().parents[1] / "docker-compose.yml").read_text())
     gateway = compose["networks"]["default"]["ipam"]["config"][0]["gateway"]
-    assert compose["services"]["gateway"]["environment"]["OPENAI_PROXY_SETUP_ALLOWED_CIDRS"] == gateway + "/32"
+    assert compose["services"]["gateway"]["environment"]["AZIZAM_SETUP_ALLOWED_CIDRS"] == gateway + "/32"
     assert compose["services"]["gateway"]["ports"][0].startswith("127.0.0.1:")
     assert "--no-proxy-headers" in compose["services"]["gateway"]["command"]
 
@@ -431,7 +431,7 @@ def test_admin_config_reload_cookie_session_requires_valid_csrf(
 
     wrong = client.post(
         "/admin/api/config/reload",
-        headers={"x-ai-gateway-csrf": "wrong"},
+        headers={"x-azizam-csrf": "wrong"},
     )
     assert wrong.status_code == 403, wrong.text
     assert wrong.json()["error"]["code"] == "admin_csrf_required"
@@ -439,7 +439,7 @@ def test_admin_config_reload_cookie_session_requires_valid_csrf(
 
     accepted = client.post(
         "/admin/api/config/reload",
-        headers={"x-ai-gateway-csrf": csrf},
+        headers={"x-azizam-csrf": csrf},
     )
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["reloaded"] is True

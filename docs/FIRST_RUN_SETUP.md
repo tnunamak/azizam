@@ -30,13 +30,13 @@ Docker Compose starts two containers:
 - `gateway`, the public API and admin UI on port 5000;
 - `litellm`, the managed LiteLLM sidecar that executes chat-shaped requests.
 
-`AI_GATEWAY_LITELLM_BASE_URL` is the URL of that sidecar as seen by the
+`AZIZAM_LITELLM_BASE_URL` is the URL of that sidecar as seen by the
 gateway container. Compose sets it to `http://litellm:4000`. Do not use this
 variable for Ollama, llama.cpp, vLLM, TabbyAPI, or another user engine.
 Add user engines as Services records instead.
 
-Compose publishes the gateway as `127.0.0.1:${OPENAI_PROXY_PORT:-5000}:5000`
-and sets `AI_GATEWAY_CONFIG_PATH=/app/first-run.yml`. That file is a minimal
+Compose publishes the gateway as `127.0.0.1:${AZIZAM_PORT:-5000}:5000`
+and sets `AZIZAM_CONFIG_PATH=/app/first-run.yml`. That file is a minimal
 fresh-install config:
 
 - `proxy.host: 127.0.0.1`, so bare Python stays local by default;
@@ -68,9 +68,9 @@ docker compose up -d
 
 Persistent state (SQLite databases, session keys) is stored in the
 `gateway-data` Docker volume, which maps to `/app/data` inside the container.
-Store paths can be overridden via env vars (`AI_GATEWAY_ADMIN_DB`,
-`AI_GATEWAY_RESPONSES_DB`, `AI_GATEWAY_METRICS_DB`, `AI_GATEWAY_RECEIPTS_DB`,
-`AI_GATEWAY_MEDIA_JOBS_DB`) — see `.env.example` for the full list.
+Store paths can be overridden via env vars (`AZIZAM_ADMIN_DB`,
+`AZIZAM_RESPONSES_DB`, `AZIZAM_METRICS_DB`, `AZIZAM_RECEIPTS_DB`,
+`AZIZAM_MEDIA_JOBS_DB`) — see `.env.example` for the full list.
 To use a host directory instead of a named volume, replace the volume entry in
 `docker-compose.yml`:
 
@@ -104,9 +104,9 @@ If you just want a working gateway, in order:
    npm --prefix web ci
    npm --prefix web run build
 
-   AI_GATEWAY_CONFIG_PATH=first-run.yml \
-   AI_GATEWAY_REQUIREMENTS_FILE=tests/requirements-hermetic.lock \
-   AI_GATEWAY_REQUIREMENTS_HASHES=true \
+   AZIZAM_CONFIG_PATH=first-run.yml \
+   AZIZAM_REQUIREMENTS_FILE=tests/requirements-hermetic.lock \
+   AZIZAM_REQUIREMENTS_HASHES=true \
    ./start.sh
    ```
 
@@ -195,7 +195,7 @@ safely:
 
 - listener host/port and deployment shape,
 - optional `admin.session_signing_key` (or
-  `AI_GATEWAY_ADMIN_SESSION_KEY`) when you want to externalize the browser
+  `AZIZAM_ADMIN_SESSION_KEY`) when you want to externalize the browser
   session secret. If omitted, the gateway creates a persistent
   `data/admin_session_key` file next to `admin.db`,
 - optional bootstrap `admin.oidc` issuer/client/trust configuration when you

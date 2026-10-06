@@ -140,7 +140,7 @@ def parse_bracket_form(items: Iterable[tuple[str, Any]]) -> dict[str, Any]:
     """Rebuild nested dicts from ``a[b][c]`` form keys.
 
     The OpenAI SDK flattens ``extra_body={"extensions": {...}}`` into
-    ``extensions[com.vividfish.workflow][seed]`` multipart fields. Plain keys
+    ``extensions[com.azizam.workflow][seed]`` multipart fields. Plain keys
     pass through unchanged. A key that is both a scalar and a container is
     rejected with ValueError.
     """

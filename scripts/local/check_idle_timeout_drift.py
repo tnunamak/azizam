@@ -1,11 +1,11 @@
 """Report ``TABBY_IDLE_TIMEOUT`` drift between ``start.sh`` and the systemd unit.
 
 ``start.sh`` is the source of truth for local-development defaults; the
-systemd unit (``openai-proxy.service``) pins a value for the long-running
+systemd unit (``azizam.service``) pins a value for the long-running
 service. When they disagree, the service silently uses its own value and the
 shell default has no effect, which has bitten the owner before.
 
-This check is *read-only*: it never mutates ``openai-proxy.service`` or the
+This check is *read-only*: it never mutates ``azizam.service`` or the
 running unit. It prints a recommendation and exits non-zero on drift so it can
 be wired into CI or a pre-deploy gate later.
 """
@@ -57,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
         prog="check_idle_timeout_drift",
         description=(
             "Report TABBY_IDLE_TIMEOUT drift between start.sh and "
-            "openai-proxy.service. Read-only; never mutates the unit."
+            "azizam.service. Read-only; never mutates the unit."
         ),
     )
     parser.add_argument(
@@ -69,8 +69,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--service-unit",
         type=Path,
-        default=Path("openai-proxy.service"),
-        help="Path to the systemd unit file (default: ./openai-proxy.service)",
+        default=Path("azizam.service"),
+        help="Path to the systemd unit file (default: ./azizam.service)",
     )
     args = parser.parse_args(argv)
 
@@ -79,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     print(f"start.sh             TABBY_IDLE_TIMEOUT={shell_value or '<unset>'}")
-    print(f"openai-proxy.service TABBY_IDLE_TIMEOUT={service_value or '<unset>'}")
+    print(f"azizam.service TABBY_IDLE_TIMEOUT={service_value or '<unset>'}")
 
     if shell_value is None or service_value is None:
         print("warning: could not read one or both values; skipping comparison")
@@ -90,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     print(
-        "drift: start.sh and openai-proxy.service disagree on "
+        "drift: start.sh and azizam.service disagree on "
         "TABBY_IDLE_TIMEOUT."
     )
     print(

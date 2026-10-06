@@ -7,11 +7,11 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/applications/openai-proxy/services/face-service
+WorkingDirectory=%h/applications/azizam/services/face-service
 Environment=CUDA_VISIBLE_DEVICES=
 Environment="FACE_MODEL_ROOT=%h/models/insightface"
 Environment=FACE_ORT_THREADS=4
-ExecStart=%h/applications/face-service/venv/bin/python %h/applications/openai-proxy/services/face-service/server.py --port 8021 --idle-exit-s 900
+ExecStart=%h/applications/face-service/venv/bin/python %h/applications/azizam/services/face-service/server.py --port 8021 --idle-exit-s 900
 Restart=on-failure
 RestartSec=10
 LimitCORE=0

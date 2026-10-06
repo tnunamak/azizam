@@ -489,7 +489,7 @@ class TestCheckServiceHealth(unittest.TestCase):
                     "name": "Substrate",
                     "enabled": True,
                     "config": {
-                        "base_url_env": "AI_GATEWAY_TEST_SUBSTRATE_BASE_URL",
+                        "base_url_env": "AZIZAM_TEST_SUBSTRATE_BASE_URL",
                         "default_base_url": "http://127.0.0.1:4011",
                         "health_endpoint": "ready",
                     },
@@ -513,7 +513,7 @@ class TestCheckServiceHealth(unittest.TestCase):
                 return _FakeResponse()
 
         with patch.dict(proxy.config, {"backends": {}}, clear=False):
-            with patch.dict("os.environ", {"AI_GATEWAY_TEST_SUBSTRATE_BASE_URL": "http://127.0.0.1:4999"}, clear=False):
+            with patch.dict("os.environ", {"AZIZAM_TEST_SUBSTRATE_BASE_URL": "http://127.0.0.1:4999"}, clear=False):
                 with patch.object(proxy.ADMIN_STORE, "get_service_registry", return_value=registry):
                     with patch("proxy.httpx.AsyncClient", return_value=_FakeClient()):
                         result = self._run(proxy._service_resource_runtime_fact("substrate"))

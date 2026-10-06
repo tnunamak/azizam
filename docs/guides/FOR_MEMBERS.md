@@ -1,6 +1,6 @@
 # Guide for members
 
-Use this guide when someone gives you access to a Vivid Fish AI Gateway.
+Use this guide when someone gives you access to a Azizam.
 The gateway gives your apps one AI endpoint and one key. Your owner decides
 which models, capabilities, and remote providers your account can use.
 

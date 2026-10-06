@@ -60,7 +60,7 @@ def test_route_aliases_and_policies_are_projected_from_catalog() -> None:
 
     aliases = route_registry.canonical_protocol_route_aliases(registry=registry)
     runtime_policy = route_registry.runtime_route_policy(registry=registry)
-    openai_policy = route_registry.openai_proxy_policy(registry=registry)
+    openai_policy = route_registry.azizam_policy(registry=registry)
     asset_policy = route_registry.asset_content_route_policy_by_kind(registry=registry)
 
     assert {
@@ -98,7 +98,7 @@ def test_route_registry_backfills_builtin_route_facts_for_older_db_records() -> 
     )
 
     aliases = route_registry.canonical_protocol_route_aliases(registry=older_registry)
-    openai_policy = route_registry.openai_proxy_policy(registry=older_registry)
+    openai_policy = route_registry.azizam_policy(registry=older_registry)
 
     assert any(
         entry["canonical"] == "/v1/chat/completions"

@@ -594,11 +594,11 @@ class TestOIDCClaimRole(unittest.TestCase):
         self.assertEqual(role, AdminRole.ADMIN)
 
     def test_client_role_claim_can_grant_admin(self) -> None:
-        cfg = make_config(client_id="ai-gateway", admin_roles=frozenset({"trusted"}))
+        cfg = make_config(client_id="azizam", admin_roles=frozenset({"trusted"}))
         role = admin_role_from_oidc_claims(
             {
                 "resource_access": {
-                    "ai-gateway": {"roles": ["trusted"]},
+                    "azizam": {"roles": ["trusted"]},
                     "other-client": {"roles": ["trusted"]},
                 }
             },
@@ -612,11 +612,11 @@ class TestOIDCClaimRole(unittest.TestCase):
                 "groups": ["/local-ai/trusted-users"],
                 "realm_access": {"roles": ["Power Users"]},
                 "resource_access": {
-                    "ai-gateway": {"roles": ["video-team"]},
+                    "azizam": {"roles": ["video-team"]},
                     "other-client": {"roles": ["ignored"]},
                 },
             },
-            client_id="ai-gateway",
+            client_id="azizam",
         )
         self.assertIn("trusted-users", names["oidc_group"])
         self.assertIn("trusted users", names["oidc_group"])

@@ -22,6 +22,7 @@ import proxy  # noqa: E402
 from gateway import model_metadata as mm  # noqa: E402
 from gateway.models_catalog import build_models_catalog  # noqa: E402
 from gateway.capabilities import Capability  # noqa: E402
+from gateway.compat import emit_aliases  # noqa: E402
 
 SNAPSHOT = json.loads((ROOT / "tests" / "fixtures" / "models-list-snapshot-2026-10.json").read_text(encoding="utf-8"))
 
@@ -37,7 +38,7 @@ async def _fake_litellm_payload(*_args, **_kwargs):
     return {
         "object": "list",
         "data": [{"id": model_id, "object": "model", "created": 1_700_000_000, "owned_by": "openai"} for model_id in LITELLM_IDS],
-        "x_ai_gateway_llm_execution": "litellm",
+        "x_azizam_llm_execution": "litellm",
     }
 
 
@@ -280,7 +281,7 @@ class ModelListEndpointTests(unittest.TestCase):
         entries = {entry["id"]: entry for entry in payload["data"]}
         self.assertIn("fast", entries)
         self.assertNotIn("default-fast", entries)
-        self.assertEqual(entries["fast"]["vivid_fish_resolves_to"], {})
+        self.assertEqual(entries["fast"]["azizam_resolves_to"], {})
         # Metadata still resolves against the complete catalog before hiding IDs.
         self.assertEqual(entries["fast"]["architecture"]["input_modalities"], ["text", "image"])
         self.assertIn("vision", entries["fast"]["tags"])
@@ -410,9 +411,15 @@ class RequestLoadedMetadataTests(unittest.TestCase):
             exec(compile(fixture.read_text(), str(fixture), "exec"), namespace)
 
             async def main_filter(data, auth_context, **_kwargs):
-                return await namespace["_filter_model_list_for_profile"](data, auth_context)
+                # Main's frozen readers use the old gateway fields. Supply
+                # their compatibility aliases before comparing behavior.
+                aliased = [emit_aliases(item) if isinstance(item, dict) else item for item in data]
+                return await namespace["_filter_model_list_for_profile"](aliased, auth_context)
 
             async def main_windows(data, **_kwargs):
+                for item in data:
+                    if isinstance(item, dict):
+                        item.update(emit_aliases(item))
                 await namespace["_annotate_model_context_windows"](data)
 
             with patch.object(proxy, "_filter_model_list_for_profile", main_filter), \
@@ -566,9 +573,9 @@ class RequestLoadedMetadataTests(unittest.TestCase):
                     patch.object(proxy, "_profile_model_allowlist", return_value={"current", "private-public"}):
                 payload = self._payload(headers=headers)
             visible_ids = {item["id"] for item in payload["data"]}
-            self.assertLessEqual(set(payload["vivid_fish_current_model_ids"]), visible_ids)
-            self.assertEqual(payload["vivid_fish_current_model_ids"], ["current"])
-            self.assertEqual(payload["vivid_fish_profile_model_allowlist"], ["current"])
+            self.assertLessEqual(set(payload["azizam_current_model_ids"]), visible_ids)
+            self.assertEqual(payload["azizam_current_model_ids"], ["current"])
+            self.assertEqual(payload["azizam_profile_model_allowlist"], ["current"])
             self.assertNotIn("private-public", visible_ids)
 
 

@@ -91,8 +91,8 @@ class TtsRuntimeFallbackTests(RouteCase):
         resp = self._speak()
         self.assertEqual((resp.status_code, resp.content), (200, b"RIFFwav"))
         self.assertEqual([r.url.port for r in seen], list(self._ports()))
-        self.assertEqual(resp.headers["x-vivid-fallback"], "chatterbox->omnivoice (gpu_oom)")
-        self.assertEqual(resp.headers["x-gateway-fallback"], "chatterbox->omnivoice (gpu_oom)")
+        self.assertEqual(resp.headers["x-azizam-fallback"], "chatterbox->omnivoice (gpu_oom)")
+        self.assertEqual(resp.headers["x-azizam-fallback"], "chatterbox->omnivoice (gpu_oom)")
         self.assertEqual(json.loads(seen[1].content)["model"], "k2-fsa/OmniVoice")
 
     def test_skipped_primary_engine_is_reported_without_runtime_retry(self) -> None:
@@ -102,8 +102,8 @@ class TtsRuntimeFallbackTests(RouteCase):
         resp = self._speak()
         self.assertEqual((resp.status_code, resp.content), (200, b"RIFFwav"))
         self.assertEqual([r.url.port for r in seen], [self.cfg["backends"]["tts"]["port"]])
-        self.assertEqual(resp.headers["x-gateway-fallback"], "chatterbox->omnivoice (not_deployed)")
-        self.assertEqual(resp.headers["x-vivid-fallback"], "chatterbox->omnivoice (not_deployed)")
+        self.assertEqual(resp.headers["x-azizam-fallback"], "chatterbox->omnivoice (not_deployed)")
+        self.assertEqual(resp.headers["x-azizam-fallback"], "chatterbox->omnivoice (not_deployed)")
         receipts = [call.args[0] for call in proxy.receipt_store.begin.call_args_list]
         self.assertIn("chatterbox->omnivoice (not_deployed)", receipts[-1].fallback_reasons)
 
@@ -113,7 +113,7 @@ class TtsRuntimeFallbackTests(RouteCase):
         self.use_upstream(lambda r: httpx.Response(200, content=b"RIFFwav", headers={"content-type": "audio/wav"}))
         resp = self._speak()
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.headers["x-vivid-fallback"], "chatterbox->omnivoice (start_failed)")
+        self.assertEqual(resp.headers["x-azizam-fallback"], "chatterbox->omnivoice (start_failed)")
 
     def test_connection_refused_falls_back(self) -> None:
         def refuse(request):
@@ -121,20 +121,20 @@ class TtsRuntimeFallbackTests(RouteCase):
         self._upstream(refuse)
         resp = self._speak()
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.headers["x-vivid-fallback"], "chatterbox->omnivoice (connection_refused)")
+        self.assertEqual(resp.headers["x-azizam-fallback"], "chatterbox->omnivoice (connection_refused)")
 
     def test_a_client_error_does_not_fall_back(self) -> None:
         seen = self._upstream(lambda r: httpx.Response(400, json={"error": {"message": "bad voice"}}))
         resp = self._speak()
         self.assertEqual(resp.status_code, 400)
-        self.assertNotIn("x-vivid-fallback", resp.headers)
+        self.assertNotIn("x-azizam-fallback", resp.headers)
         self.assertEqual(len(seen), 1)
 
     def test_an_engine_id_by_name_never_falls_back(self) -> None:
         seen = self._upstream(lambda r: httpx.Response(503, json={"error": {"message": "busy"}}))
         resp = self._speak(model="chatterbox")
         self.assertEqual(resp.status_code, 503)
-        self.assertNotIn("x-vivid-fallback", resp.headers)
+        self.assertNotIn("x-azizam-fallback", resp.headers)
         self.assertEqual(len(seen), 1)
 
 
@@ -208,7 +208,7 @@ class TtsStreamingTests(RouteCase):
         resp = self._post(response_format="pcm")
         self.assertEqual((resp.status_code, resp.content), (200, b"".join(good)))
         self.assertEqual(len(seen), 2)
-        self.assertTrue(resp.headers["x-vivid-fallback"].startswith("supertonic->chatterbox (busy)"))
+        self.assertTrue(resp.headers["x-azizam-fallback"].startswith("supertonic->chatterbox (busy)"))
 
     def test_stream_that_dies_before_any_audio_is_not_an_empty_200_when_no_engine_is_left(self) -> None:
         self.cfg["model_aliases"]["speech"]["engines"]["supertonic"]["native_sample_rate"] = 24000

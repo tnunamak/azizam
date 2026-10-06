@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Vivid Fish AI Gateway - Unified OpenAI-compatible API for multiple backends.
+Azizam - Unified OpenAI-compatible API for multiple backends.
 Served externally at ai.vivid.fish (Traefik on 192.168.1.4 → 192.168.1.180:5000).
 
 Routes requests to:
@@ -14,6 +14,8 @@ Features:
 - Health monitoring and auto-restart
 - TTS passthrough to external TTS service
 """
+
+from gateway.compat import get_env, emit_aliases, emit_model_list_aliases, read_field, JSON_OLD_NAMES
 
 import asyncio
 import shutil
@@ -343,7 +345,7 @@ from gateway.providers import provider_lookup
 # =============================================================================
 
 _default_config = Path(__file__).parent / "proxy_config.yml"
-CONFIG_PATH = Path(os.environ["AI_GATEWAY_CONFIG_PATH"]) if os.environ.get("AI_GATEWAY_CONFIG_PATH") else _default_config
+CONFIG_PATH = Path(get_env("AZIZAM_CONFIG_PATH")) if get_env("AZIZAM_CONFIG_PATH") else _default_config
 
 
 def load_config() -> dict:
@@ -363,8 +365,7 @@ _bootstrap_config: dict = dict(config)
 def _configured_admin_db_path(admin_config: Mapping[str, Any] | None = None) -> Path:
     admin_config = admin_config or {}
     raw = (
-        os.environ.get("AI_GATEWAY_ADMIN_DB")
-        or os.environ.get("OPENAI_PROXY_ADMIN_DB")
+        get_env("AZIZAM_ADMIN_DB")
         or admin_config.get("db_path")
         or "data/admin.db"
     )
@@ -415,7 +416,7 @@ def _write_litellm_config_artifact(registry: Mapping[str, Any]) -> None:
         path = write_litellm_config_artifact(
             registry,
             # Anchor the artifact to the gateway's state dir (next to admin.db)
-            # so it honors AI_GATEWAY_ADMIN_DB isolation instead of always
+            # so it honors AZIZAM_ADMIN_DB isolation instead of always
             # landing in the repo data/ directory.
             base_dir=ADMIN_DB_PATH.parent,
         )
@@ -446,7 +447,7 @@ def bool_from_config(value, default: bool) -> bool:
 
 # Proxy settings
 PROXY_HOST = config.get("proxy", {}).get("host", "127.0.0.1")
-PROXY_PORT = int(os.environ.get("OPENAI_PROXY_PORT", os.environ.get("LLM_PROXY_PORT", config.get("proxy", {}).get("port", 5000))))
+PROXY_PORT = int(get_env("AZIZAM_PORT", os.environ.get("LLM_PROXY_PORT", config.get("proxy", {}).get("port", 5000))))
 
 # TabbyAPI backend
 tabby_cfg = config.get("backends", {}).get("tabby", {})
@@ -1453,8 +1454,8 @@ async def ensure_target(
 
 TABBY_ADMIN_KEY_ENV = auth_cfg.get("admin_key_env", "TABBY_ADMIN_KEY")
 TABBY_API_KEY_ENV = auth_cfg.get("api_key_env", "TABBY_API_KEY")
-ADMIN_KEY = os.environ.get(TABBY_ADMIN_KEY_ENV, "") or os.environ.get("TABBY_ADMIN_KEY", "")
-API_KEY = os.environ.get(TABBY_API_KEY_ENV, "") or os.environ.get("TABBY_API_KEY", "")
+ADMIN_KEY = get_env(TABBY_ADMIN_KEY_ENV, "") or os.environ.get("TABBY_ADMIN_KEY", "")
+API_KEY = get_env(TABBY_API_KEY_ENV, "") or os.environ.get("TABBY_API_KEY", "")
 
 # Try loading from tabbyapi's api_tokens.yml (disabled when env var not set)
 _tabbyapi_dir_env = os.environ.get("AGW_TABBYAPI_DIR", "")
@@ -1502,8 +1503,7 @@ AUTH_PUBLIC_PATHS = auth_cfg.get("public_paths") or ["/health"]
 
 def _admin_db_path() -> Path:
     raw = (
-        os.environ.get("AI_GATEWAY_ADMIN_DB")
-        or os.environ.get("OPENAI_PROXY_ADMIN_DB")
+        get_env("AZIZAM_ADMIN_DB")
         or admin_cfg.get("db_path")
         or "data/admin.db"
     )
@@ -1518,9 +1518,8 @@ def _admin_session_signing_key_from_config() -> bytes | None:
     raw = admin_cfg.get("session_signing_key") or ""
     env_name = admin_cfg.get("session_signing_key_env") or ""
     if env_name:
-        raw = os.environ.get(str(env_name), raw)
-    raw = os.environ.get("AI_GATEWAY_ADMIN_SESSION_KEY", raw)
-    raw = os.environ.get("OPENAI_PROXY_ADMIN_SESSION_KEY", raw)
+        raw = get_env(str(env_name), raw)
+    raw = get_env("AZIZAM_ADMIN_SESSION_KEY", raw)
     if not raw:
         return None
     key = str(raw).encode("utf-8")
@@ -1543,8 +1542,8 @@ def _admin_session_signing_key() -> bytes | None:
     """Resolve the browser-session signing key.
 
     Order of precedence:
-      1. ``admin.session_signing_key`` / ``AI_GATEWAY_ADMIN_SESSION_KEY`` /
-         ``OPENAI_PROXY_ADMIN_SESSION_KEY`` — explicit operator config.
+      1. ``admin.session_signing_key`` / ``AZIZAM_ADMIN_SESSION_KEY``
+         (with migration env fallbacks) — explicit operator config.
       2. A persistent, restrictive-permission file next to ``admin.db`` —
          auto-generated on first call so the happy path requires no env var.
     """
@@ -1645,10 +1644,10 @@ def _auto_create_personal_app_enabled() -> bool:
 
 def _bootstrap_user_access_defaults() -> dict[str, Any]:
     defaults = dict(user_defaults_cfg) if isinstance(user_defaults_cfg, Mapping) else {}
-    env_self_service = os.environ.get("AI_GATEWAY_USER_SELF_SERVICE")
+    env_self_service = get_env("AZIZAM_USER_SELF_SERVICE")
     if env_self_service is not None:
         defaults["self_service_apps"] = bool_from_config(env_self_service, True)
-    env_auto_create = os.environ.get("AI_GATEWAY_AUTO_CREATE_PERSONAL_APP")
+    env_auto_create = get_env("AZIZAM_AUTO_CREATE_PERSONAL_APP")
     if env_auto_create is not None:
         defaults["auto_create_personal_app"] = bool_from_config(
             env_auto_create,
@@ -2084,7 +2083,7 @@ def get_client_api_key_from_headers(headers, *, ignored_keys: Sequence[str] = ()
 
 
 AUTH_ENABLED = bool_from_config(
-    os.environ.get("OPENAI_PROXY_AUTH_ENABLED", auth_cfg.get("enabled")),
+    get_env("AZIZAM_AUTH_ENABLED", auth_cfg.get("enabled")),
     True,
 )
 
@@ -2127,15 +2126,15 @@ _OLLAMA_DISCOVERY_PUBLIC_PATHS = frozenset({
 # ---------------------------------------------------------------------------
 
 LAN_BYPASS_ENABLED = bool_from_config(
-    os.environ.get("OPENAI_PROXY_LAN_BYPASS", auth_cfg.get("lan_bypass_enabled")),
+    get_env("AZIZAM_LAN_BYPASS", auth_cfg.get("lan_bypass_enabled")),
     False,
 )
 ALLOW_QUERY_PARAM_KEY = bool_from_config(
-    os.environ.get("OPENAI_PROXY_QUERY_PARAM_KEY", auth_cfg.get("allow_query_param_key")),
+    get_env("AZIZAM_QUERY_PARAM_KEY", auth_cfg.get("allow_query_param_key")),
     False,
 )
 CLOUDFLARE_MODE = bool_from_config(
-    os.environ.get("OPENAI_PROXY_CF_MODE", auth_cfg.get("cloudflare_mode")),
+    get_env("AZIZAM_CF_MODE", auth_cfg.get("cloudflare_mode")),
     False,
 )
 
@@ -2155,7 +2154,7 @@ def _parse_cidrs(raw) -> list:
 
 LAN_BYPASS_CIDRS = _parse_cidrs(auth_cfg.get("lan_bypass_cidrs"))
 TRUSTED_PROXIES = _parse_cidrs(auth_cfg.get("trusted_proxies"))
-_setup_cidrs_config = os.environ.get("OPENAI_PROXY_SETUP_ALLOWED_CIDRS", auth_cfg.get("setup_allowed_cidrs"))
+_setup_cidrs_config = get_env("AZIZAM_SETUP_ALLOWED_CIDRS", auth_cfg.get("setup_allowed_cidrs"))
 SETUP_ALLOWED_CIDRS = None if _setup_cidrs_config is None else _parse_cidrs(_setup_cidrs_config)
 PATH_TOKENS = dict(auth_cfg.get("path_tokens") or {})
 
@@ -2473,14 +2472,14 @@ def resolve_secret_value(value) -> str:
         secret = value.get("value", "")
         env_name = value.get("env", "")
         if env_name:
-            secret = os.environ.get(env_name, secret)
+            secret = get_env(env_name, secret)
         prefix = value.get("prefix", "")
         if prefix and secret:
             return f"{prefix} {secret}"
         return str(secret or "")
 
     if isinstance(value, str) and value.startswith("env:"):
-        return os.environ.get(value.removeprefix("env:"), "")
+        return get_env(value.removeprefix("env:"), "")
 
     return str(value or "")
 
@@ -2498,7 +2497,7 @@ def downstream_secret(service_cfg: dict, name: str, default: str = "") -> str:
 
     env_name = service_cfg.get(f"{name}_env", "")
     if env_name:
-        return os.environ.get(env_name, default)
+        return get_env(env_name, default)
 
     return default
 
@@ -2552,7 +2551,7 @@ def _resolve_inject_secret(service_cfg: dict, rule: Mapping) -> str:
             return value
     secret_env = rule.get("secret_env")
     if secret_env:
-        return os.environ.get(str(secret_env), "")
+        return get_env(str(secret_env), "")
     return ""
 
 
@@ -2675,7 +2674,7 @@ def handle_cli_command() -> bool:
         api_key, credential, assignment = create_admin_service_account_key(
             name, role=role, path=ADMIN_DB_PATH
         )
-        print(f"Created AI Gateway admin key for service account {name}.")
+        print(f"Created Azizam admin key for service account {name}.")
         print(f"Stored key hash in {ADMIN_DB_PATH}.")
         print(f"Credential id: {credential['id']} ({credential['prefix']}...)")
         print(f"Role assignment: {assignment['role']}")
@@ -2737,7 +2736,7 @@ except Exception:
 
 compat_cfg = config.get("model_compatibility", {})
 MODEL_COMPAT_ENABLED = bool_from_config(
-    os.environ.get("OPENAI_PROXY_MODEL_COMPAT_ENABLED", compat_cfg.get("enabled")),
+    get_env("AZIZAM_MODEL_COMPAT_ENABLED", compat_cfg.get("enabled")),
     True,
 )
 OPENAI_MODEL_ALIASES_FILE = config_path(
@@ -3788,7 +3787,7 @@ def _service_resource_probe_url(service_config: Mapping[str, Any]) -> str:
         return endpoint
 
     env_name = str(service_config.get("base_url_env") or service_config.get("api_base_env") or "").strip()
-    env_base_url = str(os.environ.get(env_name) or "").strip() if env_name else ""
+    env_base_url = str(get_env(env_name) or "").strip() if env_name else ""
     base_url = str(
         env_base_url
         or service_config.get("base_url")
@@ -4248,7 +4247,7 @@ async def proxy_tts_request(request: Request, auth_context: AuthContext, *, rece
 
     Fallback rules are those of STT (``_speech_fallback_reason``): start failure, connection refused,
     503 and a 5xx that names an allocation failure. An engine id by name has no fallbacks. The
-    fallback engine applies its own voice map, so the voice can differ; ``x-vivid-fallback`` says so.
+    fallback engine applies its own voice map, so the voice can differ; ``x-azizam-fallback`` says so.
     """
     response = await _proxy_tts_once(request, auth_context, receipt=receipt)
     fallbacks, notes = await _tts_tier_fallbacks(request)
@@ -4646,8 +4645,7 @@ def _with_fallback_header(response: Response, notes: Sequence[str]) -> Response:
     """Make a speech fallback visible to old and canonical clients."""
     if notes:
         value = ", ".join(notes)
-        response.headers["x-vivid-fallback"] = value
-        response.headers["x-gateway-fallback"] = value
+        response.headers["x-azizam-fallback"] = value
     return response
 
 
@@ -5466,7 +5464,7 @@ def _record_image_size_adjustment(
             "effective": effective,
         }
         receipt.add_warning(f"size_adjusted:{adjustment}")
-    return {"X-Vivid-Size-Adjusted": adjustment}
+    return {"X-Azizam-Size-Adjusted": adjustment}
 
 
 # =============================================================================
@@ -8172,10 +8170,10 @@ async def _identity_edit_alias(
     """``POST /v1/images/edits`` with ``model=image-identity``.
 
     The reference photos are the ``image[]`` parts. Options (people, attempts,
-    seed, ...) travel in ``extensions["com.vividfish.workflow"]``. The response is
+    seed, ...) travel in ``extensions["com.azizam.workflow"]``. The response is
     the usual image payload plus ``likeness``, ``attempts`` and ``people``.
     """
-    options = ((form_dict.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {})
+    options = (read_field(form_dict.get("extensions") or {}, WORKFLOW_EXTENSION_NAMESPACE) or {})
     if not isinstance(options, Mapping):
         return identity_api.error(400, "invalid_extensions", "the workflow extension must be an object", param="extensions")
     try:
@@ -8859,10 +8857,13 @@ async def proxy_comfy_variations_request(
     # Variations take no workflow controls except the gateway-level metadata
     # control. Read it, then drop it before the strict unknown-field check.
     metadata_field = f"extensions[{WORKFLOW_EXTENSION_NAMESPACE}][{provenance.METADATA_CONTROL}]"
-    if metadata_field in form_dict:
+    legacy_metadata_field = f"extensions[{JSON_OLD_NAMES[WORKFLOW_EXTENSION_NAMESPACE]}][{provenance.METADATA_CONTROL}]"
+    metadata_value = form_dict.pop(metadata_field, form_dict.get(legacy_metadata_field))
+    form_dict.pop(legacy_metadata_field, None)
+    if metadata_value is not None:
         metadata_error = _note_media_metadata_body({
             "extensions": {WORKFLOW_EXTENSION_NAMESPACE: {
-                provenance.METADATA_CONTROL: form_dict.pop(metadata_field)}}
+                provenance.METADATA_CONTROL: metadata_value}}
         })
         if metadata_error is not None:
             return metadata_error
@@ -9188,7 +9189,7 @@ def _tracked_video_fields(prompt_id: str) -> dict[str, Any]:
         if record.get(key) is not None
     }
     if record.get("resolved_model") is not None:
-        fields["vivid_fish_resolved_model"] = record["resolved_model"]
+        fields["azizam_resolved_model"] = record["resolved_model"]
     return fields
 
 
@@ -9200,7 +9201,7 @@ def _hold_video_progress(prompt_id: str, payload: dict[str, Any]) -> dict[str, A
     only moves forward, so keep a high-water mark per job. Terminal states
     report 100 and are left alone.
     """
-    if payload.get("vivid_status") not in ("queued", "running"):
+    if payload.get("azizam_status") not in ("queued", "running"):
         return payload
     entry = _video_progress.get(prompt_id)
     if entry is None:
@@ -9224,9 +9225,9 @@ def _openai_video_payload(
     payload: dict[str, Any] = {
         "id": video_id,
         "object": "video",
-        "vivid_object": "video.generation",
+        "azizam_object": "video.generation",
         "status": _openai_video_status(status),
-        "vivid_status": status,
+        "azizam_status": status,
         "progress": _video_progress_percent(progress),
         "completed_at": None,
         "expires_at": None,
@@ -9251,7 +9252,7 @@ def _openai_video_payload(
             done = index if index is not None else 0
         payload["segments_total"] = total
         payload["segments_completed"] = done
-    return payload
+    return emit_aliases(payload)
 
 
 async def _record_event(event: dict) -> None:
@@ -10148,7 +10149,7 @@ async def _resolve_video_workflow_assets(
     Nothing is uploaded to ComfyUI here, so a request that fails validation
     later leaves no files behind in ComfyUI's input directory.
     """
-    block = (body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {}
+    block = read_field((body.get("extensions") or {}), WORKFLOW_EXTENSION_NAMESPACE) or {}
     if not isinstance(block, Mapping):
         raise _VideoAssetError("extensions must be a mapping", param="extensions")
     specs = manifest.get("inputs") or {}
@@ -10209,7 +10210,7 @@ async def _upload_video_workflow_assets(
     """Upload resolved assets to ComfyUI's input dir; return the body with filenames."""
     updated = dict(body)
     extensions = dict(updated.get("extensions") or {})
-    block = dict(extensions.get(WORKFLOW_EXTENSION_NAMESPACE) or {})
+    block = dict(read_field(extensions, WORKFLOW_EXTENSION_NAMESPACE) or {})
     headers = configured_downstream_headers(auth_context, "comfyui")
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
@@ -10423,7 +10424,7 @@ async def _submit_video_graph(
                 "id": video_id,
                 "object": "video",
                 "model": public_model,
-                "vivid_fish_resolved_model": workflow_name,
+                "azizam_resolved_model": workflow_name,
                 "status": "queued",
                 "progress": 0,
                 "created_at": now,
@@ -10438,7 +10439,7 @@ async def _submit_video_graph(
                 **(payload_extra or {}),
             }
             return Response(
-                content=json.dumps(payload),
+                content=json.dumps(emit_aliases(payload)),
                 status_code=200,
                 media_type="application/json",
                 headers=response_headers,
@@ -10666,7 +10667,7 @@ async def proxy_comfy_video_create(
             )
         try:
             body = merge_workflow_inputs(body)
-            ext_block = (body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE)
+            ext_block = read_field((body.get("extensions") or {}), WORKFLOW_EXTENSION_NAMESPACE)
             if isinstance(ext_block, Mapping):
                 body["extensions"] = {
                     **body["extensions"],
@@ -11012,7 +11013,7 @@ async def proxy_comfy_video_create(
         if upload_error is not None:
             return upload_error
     _workflow_block = (
-        (body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE)
+        read_field((body.get("extensions") or {}), WORKFLOW_EXTENSION_NAMESPACE)
         if isinstance(body.get("extensions"), Mapping)
         else body.get("extensions")
     )
@@ -11072,7 +11073,7 @@ async def proxy_comfy_video_create(
     if workflow_cfg.get("subject_select"):
         # Character replace: pick which person is replaced, and remember how to
         # read how many were tracked once the job is done.
-        block = ((body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {})
+        block = (read_field(body.get("extensions") or {}, WORKFLOW_EXTENSION_NAMESPACE) or {})
         try:
             index_text = str(block.get("subject_index", "0")).strip()
             if not re.fullmatch(r"\d+(,\d+)*", index_text):
@@ -11185,7 +11186,7 @@ def _parse_chain_options(body: Mapping[str, Any], engine: video_extend.ChainEngi
 
     Which options exist depends on the engine (`engine.option_keys`)."""
     merged = merge_workflow_inputs(body)
-    block = (merged.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {}
+    block = read_field((merged.get("extensions") or {}), WORKFLOW_EXTENSION_NAMESPACE) or {}
     if not isinstance(block, Mapping):
         raise video_extend.PlanError("extensions must be a mapping", code="invalid_workflow_extension", param="extensions")
     unknown = [
@@ -11296,7 +11297,7 @@ async def _submit_video_chain(
         shots = _parse_chain_shots(body, default_seconds=8.0, min_seconds=engine.min_shot_seconds)
         if body.get("inputs"):
             raise video_extend.PlanError(
-                "inputs is not supported for long video; use extensions.com.vividfish.workflow",
+                "inputs is not supported for long video; use extensions.com.azizam.workflow",
                 code="invalid_workflow_extension", param="inputs")
     except video_extend.PlanError as exc:
         return _json_error(400, str(exc), code=exc.code, param=exc.param)
@@ -11447,7 +11448,7 @@ async def proxy_comfy_video_extend(request: Request, auth_context: AuthContext) 
     The result is a new video: the source followed by `seconds` of new footage.
     `seconds` on the result is the stitched total. Gateway fields: `context_seconds`
     (overlap window, default 1), `model`, `seed`, `size`, `negative_prompt`, and
-    `extensions.com.vividfish.workflow.{state_ledger,context_strength}`.
+    `extensions.com.azizam.workflow.{state_ledger,context_strength}`.
     """
     if not COMFY_ENABLED:
         return _json_error(503, "Video generation not enabled", kind="service_unavailable")
@@ -11597,14 +11598,14 @@ async def proxy_comfy_video_status(video_id: str, auth_context: AuthContext) -> 
             if sora_status == "succeeded":
                 warnings = _video_job_warnings(_video_job_records.get(prompt_id), job)
                 if warnings:
-                    payload["vivid_fish_warnings"] = warnings
+                    payload["azizam_warnings"] = warnings
             if sora_status == "failed":
                 payload["error"] = _chain_failure_error(
                     _video_job_records.get(prompt_id), job,
                     _comfy_execution_error_message(job) or "ComfyUI execution_error",
                 )
             return Response(
-                content=json.dumps(payload),
+                content=json.dumps(emit_aliases(payload)),
                 status_code=200,
                 media_type="application/json"
             )
@@ -12180,7 +12181,7 @@ async def _submit_video_remix(
             "videos.remix_workflow in proxy_config.yml to enable it.",
             code="video_remix_not_configured",
         )
-    block = (merge_workflow_inputs(body).get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {}
+    block = read_field((merge_workflow_inputs(body).get("extensions") or {}), WORKFLOW_EXTENSION_NAMESPACE) or {}
     if isinstance(block, Mapping) and "source_video" in block:
         return _json_error(
             400,
@@ -12192,7 +12193,7 @@ async def _submit_video_remix(
     create_body.setdefault("model", VIDEO_REMIX_PUBLIC_MODEL)
     extensions = dict(create_body.get("extensions") or {})
     extensions[WORKFLOW_EXTENSION_NAMESPACE] = {
-        **dict(extensions.get(WORKFLOW_EXTENSION_NAMESPACE) or {}),
+        **dict(read_field(extensions, WORKFLOW_EXTENSION_NAMESPACE) or {}),
         "source_video": source,
     }
     create_body["extensions"] = extensions
@@ -12583,7 +12584,7 @@ async def _workflow_drift_loop(stop_event: asyncio.Event) -> None:
 async def lifespan(app: FastAPI):
     """App lifespan manager."""
     providers.recover_provider_spend(path=ADMIN_DB_PATH.parent / "provider_spend.db")
-    print(f"[proxy] Vivid Fish AI Gateway starting on port {PROXY_PORT}", flush=True)
+    print(f"[proxy] Azizam starting on port {PROXY_PORT}", flush=True)
     print(f"[proxy] TabbyAPI backend: {TABBY_HOST}", flush=True)
     print(f"[proxy] TTS backend: {TTS_HOST} (enabled: {TTS_ENABLED})", flush=True)
     print(f"[proxy] STT backend: {STT_HOST} (enabled: {STT_ENABLED})", flush=True)
@@ -13348,24 +13349,24 @@ async def _filter_model_list_for_profile(
             if (
                 normalize_model_id(str(item.get("id") or "")) in loaded_norm
                 or (
-                    bool(item.get("vivid_fish_current_loaded"))
+                    bool(read_field(item, "azizam_current_loaded"))
                     and bool(loaded_norm)
                 )
                 or (
-                    bool(item.get("vivid_fish_workflow"))
-                    and str(item.get("vivid_fish_backend") or "") in {"comfyui", "gateway"}
+                    bool(read_field(item, "azizam_workflow"))
+                    and str(read_field(item, "azizam_backend") or "") in {"comfyui", "gateway"}
                     and comfy_available
                 )
                 or (
-                    str(item.get("vivid_fish_backend") or "") == "embeddings"
+                    str(read_field(item, "azizam_backend") or "") == "embeddings"
                     and EMBEDDINGS_ENABLED
                 )
             )
         ]
-        metadata["vivid_fish_target_visibility"] = "available"
-        metadata["vivid_fish_target_activation"] = _profile_target_activation(auth_context)
-        metadata["vivid_fish_model_access"] = "current_loaded"
-        metadata["vivid_fish_current_model_ids"] = sorted({
+        metadata["azizam_target_visibility"] = "available"
+        metadata["azizam_target_activation"] = _profile_target_activation(auth_context)
+        metadata["azizam_model_access"] = "current_loaded"
+        metadata["azizam_current_model_ids"] = sorted({
             str(item["id"]) for item in filtered
             if item.get("id") and not str(item["id"]).startswith("/")
             and normalize_model_id(str(item["id"])) in loaded_norm
@@ -13373,10 +13374,10 @@ async def _filter_model_list_for_profile(
 
     if allowlist is not None:
         visible_norm = {normalize_model_id(str(item.get("id") or "")) for item in filtered}
-        metadata["vivid_fish_profile_model_allowlist"] = sorted(
+        metadata["azizam_profile_model_allowlist"] = sorted(
             item for item in allowlist if normalize_model_id(item) in visible_norm
         )
-    return filtered, metadata
+    return filtered, emit_aliases(metadata)
 
 
 def _protocol_for_intent(intent: str) -> str:
@@ -13738,7 +13739,7 @@ async def _gateway_resource_lister(*, audience: str) -> list:
 
 _SHOWCASE_STATIC_DIR = Path(__file__).resolve().parent / "showcase"
 _SHOWCASE_EXAMPLES_DIR = Path(
-    os.environ.get("OPENAI_PROXY_SHOWCASE_EXAMPLES_DIR")
+    get_env("AZIZAM_SHOWCASE_EXAMPLES_DIR")
     or Path(__file__).resolve().parent / "data" / "showcase" / "examples"
 )
 
@@ -13825,15 +13826,15 @@ def _stable_alias_model_entries() -> list[dict[str, Any]]:
             entry = entries.setdefault(row["alias"], {
                 "id": row["alias"],
                 "object": "model",
-                "owned_by": "vivid-fish",
-                "vivid_fish_alias": True,
-                "vivid_fish_resolves_to": {},
+                "owned_by": "azizam",
+                "azizam_alias": True,
+                "azizam_resolves_to": {},
             })
-            entry["vivid_fish_resolves_to"][op] = row.get("resolves_to")
+            entry["azizam_resolves_to"][op] = row.get("resolves_to")
             if row.get("candidates"):
-                entry.setdefault("vivid_fish_engine_candidates", {})[op] = row["candidates"]
+                entry.setdefault("azizam_engine_candidates", {})[op] = row["candidates"]
             if row.get("error"):
-                entry.setdefault("vivid_fish_alias_errors", {})[op] = row["error"]
+                entry.setdefault("azizam_alias_errors", {})[op] = row["error"]
     return list(entries.values())
 
 
@@ -14640,9 +14641,9 @@ def _user_action_response_error(exc: UserPortalError) -> JSONResponse:
 
 
 def _require_user_action_header(request: Request, session) -> JSONResponse | None:
-    if request.headers.get("x-ai-gateway-user-action") == "1":
+    if request.headers.get("x-azizam-user-action") == "1":
         expected = _csrf_token_for_oidc_session(session)
-        supplied = request.headers.get("x-ai-gateway-csrf") or ""
+        supplied = request.headers.get("x-azizam-csrf") or ""
         if expected and hmac.compare_digest(supplied, expected):
             return None
         return JSONResponse(
@@ -14650,7 +14651,7 @@ def _require_user_action_header(request: Request, session) -> JSONResponse | Non
             content={
                 "error": {
                     "code": "user_csrf_required",
-                    "message": "valid x-ai-gateway-csrf header required",
+                    "message": "valid x-azizam-csrf header required",
                 }
             },
         )
@@ -14659,7 +14660,7 @@ def _require_user_action_header(request: Request, session) -> JSONResponse | Non
         content={
             "error": {
                 "code": "user_action_header_required",
-                "message": "x-ai-gateway-user-action header required",
+                "message": "x-azizam-user-action header required",
             }
         },
     )
@@ -14734,8 +14735,8 @@ def _instance_presentation_defaults() -> dict[str, str]:
     brand = brand if isinstance(brand, Mapping) else {}
     proxy_cfg = proxy_cfg if isinstance(proxy_cfg, Mapping) else {}
     return {
-        "name": str(os.environ.get("AI_GATEWAY_BRAND") or brand.get("product") or "AI Gateway"),
-        "base_url": str(os.environ.get("OPENAI_PROXY_PUBLIC_URL") or proxy_cfg.get("public_url") or ""),
+        "name": str(get_env("AZIZAM_BRAND") or brand.get("product") or "Azizam"),
+        "base_url": str(get_env("AZIZAM_PUBLIC_URL") or proxy_cfg.get("public_url") or ""),
         "theme_default": "system",
     }
 
@@ -14829,7 +14830,7 @@ def _render_user_portal_response(request: Request, *, login_return_to: str) -> R
     )
     brand_label, brand_wordmark = _brand_settings()
     body = render_user_portal(
-        title="AI Gateway",
+        title="Azizam",
         brand=brand_label,
         wordmark=brand_wordmark,
         public_base_url=_public_base_url(request) or "https://ai.vivid.fish",
@@ -16050,7 +16051,7 @@ async def admin_dashboard(request: Request):
     brand_label, brand_wordmark = _brand_settings()
     body = render_admin_dashboard(
         snapshot,
-        title="AI Gateway Admin",
+        title="Azizam Admin",
         brand=brand_label,
         wordmark=brand_wordmark,
     )
@@ -16866,7 +16867,7 @@ async def setup_create_first_app(request: Request):
         )
     values = await _setup_form_values(request)
     expected = actor.csrf_token or ""
-    supplied = values.get("csrf_token") or request.headers.get("x-ai-gateway-csrf") or ""
+    supplied = values.get("csrf_token") or request.headers.get("x-azizam-csrf") or ""
     if expected and not hmac.compare_digest(supplied, expected):
         return await _setup_page_response(
             request,
@@ -17543,7 +17544,7 @@ def _public_base_url(request: Request) -> str | None:
     """Best-effort public origin for absolute discovery links.
 
     Saved instance settings own the public URL after the first dashboard save.
-    ``OPENAI_PROXY_PUBLIC_URL`` and ``proxy.public_url`` provide initial defaults.
+    ``AZIZAM_PUBLIC_URL`` and ``proxy.public_url`` provide initial defaults.
     Otherwise we honor standard reverse
     proxy headers, then fall back to the request's host. We return
     ``None`` if no candidate is available so the discovery helper can
@@ -17568,12 +17569,12 @@ def _brand_settings() -> tuple[str, tuple[str, str] | None]:
     """Return ``(product_label, wordmark)`` for the shared header chrome.
 
     Saved instance settings own the product name after the first dashboard save.
-    ``admin.brand`` (or ``AI_GATEWAY_BRAND`` / ``AI_GATEWAY_WORDMARK``) seeds
+    ``admin.brand`` (or ``AZIZAM_BRAND`` / ``AZIZAM_WORDMARK``) seeds
     the initial name and provides the optional wordmark:
 
       admin:
         brand:
-          product: "AI Gateway"      # neutral product label (default)
+          product: "Azizam"      # neutral product label (default)
           wordmark: "vivid.fish"     # optional deployment mark, "name.tld"
 
     A generic install with no wordmark shows only the neutral product mark, so
@@ -17583,7 +17584,7 @@ def _brand_settings() -> tuple[str, tuple[str, str] | None]:
     brand_cfg = brand_cfg if isinstance(brand_cfg, Mapping) else {}
     product = instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults())["name"]
     raw_wordmark = (
-        os.environ.get("AI_GATEWAY_WORDMARK")
+        get_env("AZIZAM_WORDMARK")
         or brand_cfg.get("wordmark")
         or ""
     )
@@ -17612,8 +17613,9 @@ async def well_known_ai_gateway(request: Request):
 
 
 @app.get("/.well-known/openai-proxy", include_in_schema=False)
-async def well_known_openai_proxy(request: Request):
-    """Alias of /.well-known/ai-gateway for OpenAI-style SDK clients."""
+@app.get("/.well-known/azizam", include_in_schema=False)
+async def well_known_azizam(request: Request):
+    """Canonical product discovery; the old product path remains an alias."""
     return await well_known_ai_gateway(request)
 
 
@@ -17632,6 +17634,8 @@ _SKILL_ROOT = Path(__file__).resolve().parent / "skills"
 )
 async def well_known_skill_file(skill_id: str):
     """Serve the raw SKILL.md for a published agent skill."""
+    if skill_id == "openai-proxy-gateway":
+        skill_id = "azizam-gateway"
     # Tight allowlist: only flat ``skills/<id>/SKILL.md`` paths, no traversal.
     if "/" in skill_id or skill_id.startswith(".") or not skill_id:
         return Response(status_code=404)
@@ -17882,7 +17886,7 @@ async def _handle_rerank(request: Request, path: str) -> Response:
         )
     except (ValueError, rerank_api.RerankUpstreamError) as exc:
         return _rerank_error(502, str(exc), code="backend_error", tei=tei, kind="api_error")
-    return JSONResponse(payload, headers={"x-vivid-engine": resolution.engine or ""})
+    return JSONResponse(payload, headers={"x-azizam-engine": resolution.engine or ""})
 
 
 @app.post("/openai/v1/rerank")
@@ -19052,7 +19056,7 @@ def _extension_asset_field_references(body: Mapping[str, Any]) -> dict[str, str]
     extensions = body.get("extensions")
     if not isinstance(extensions, Mapping):
         return {}
-    block = extensions.get(WORKFLOW_EXTENSION_NAMESPACE)
+    block = read_field(extensions, WORKFLOW_EXTENSION_NAMESPACE)
     if not isinstance(block, Mapping):
         return {}
 
@@ -19073,7 +19077,7 @@ def _allowed_image_extension_asset_fields(
     """Return multipart transport fields that are valid for this workflow.
 
     OpenAI image edits are multipart. Gateway workflow controls still belong
-    under ``extensions.com.vividfish.workflow``, but asset-valued controls such
+    under ``extensions.com.azizam.workflow``, but asset-valued controls such
     as a future ``control_image`` need a way to point at an additional file
     part without becoming top-level OpenAI parameters themselves.
     """
@@ -19199,9 +19203,10 @@ def _workflow_extensions_present(body: Mapping[str, Any]) -> bool:
     extensions = body.get("extensions")
     if not isinstance(extensions, Mapping):
         return extensions is not None
-    if WORKFLOW_EXTENSION_NAMESPACE not in extensions:
+    missing = object()
+    block = read_field(extensions, WORKFLOW_EXTENSION_NAMESPACE, missing)
+    if block is missing:
         return False
-    block = extensions[WORKFLOW_EXTENSION_NAMESPACE]
     if isinstance(block, Mapping):
         # Gateway-level controls (metadata) are valid on every workflow.
         return not block or any(name not in provenance.RESERVED_GATEWAY_CONTROLS for name in block)
@@ -19212,7 +19217,7 @@ def _workflow_extension_integer(body: Mapping[str, Any], name: str) -> Optional[
     extensions = body.get("extensions")
     if not isinstance(extensions, Mapping):
         return None
-    block = extensions.get(WORKFLOW_EXTENSION_NAMESPACE)
+    block = read_field(extensions, WORKFLOW_EXTENSION_NAMESPACE)
     if not isinstance(block, Mapping):
         return None
     value = block.get(name)
@@ -19269,7 +19274,7 @@ async def _upload_image_workflow_extension_assets(
     extensions = request_body.get("extensions")
     if not isinstance(extensions, Mapping):
         return updated, None
-    block = extensions.get(WORKFLOW_EXTENSION_NAMESPACE)
+    block = read_field(extensions, WORKFLOW_EXTENSION_NAMESPACE)
     if not isinstance(block, Mapping):
         return updated, None
 
@@ -19644,7 +19649,7 @@ def _image_job_body_has_seed(body: Mapping[str, Any]) -> bool:
     extensions = body.get("extensions")
     if not isinstance(extensions, Mapping):
         return False
-    block = extensions.get(WORKFLOW_EXTENSION_NAMESPACE)
+    block = read_field(extensions, WORKFLOW_EXTENSION_NAMESPACE)
     if not isinstance(block, Mapping):
         return False
     seed = block.get("seed")
@@ -21911,14 +21916,16 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
         input_specs = record.manifest.get("inputs") or {}
         _begin_media_delivery(auth_context)
         metadata_field = f"extensions[{WORKFLOW_EXTENSION_NAMESPACE}][{provenance.METADATA_CONTROL}]"
-        metadata_value = form.get(metadata_field)
+        legacy_metadata_field = f"extensions[{JSON_OLD_NAMES[WORKFLOW_EXTENSION_NAMESPACE]}][{provenance.METADATA_CONTROL}]"
+        form_fields = set(form.keys())
+        metadata_value = form.get(metadata_field) if metadata_field in form_fields else form.get(legacy_metadata_field)
         if metadata_value is not None:
             metadata_error = _note_media_metadata_body({
                 "extensions": {WORKFLOW_EXTENSION_NAMESPACE: {provenance.METADATA_CONTROL: metadata_value}}
             })
             if metadata_error is not None:
                 return metadata_error
-        unknown_fields = set(form.keys()) - set(input_specs) - {metadata_field}
+        unknown_fields = form_fields - set(input_specs) - {metadata_field, legacy_metadata_field}
         if unknown_fields:
             raise ValueError(f"unknown workflow input: {sorted(unknown_fields)[0]}")
         supplied: dict[str, Any] = {}
@@ -22814,10 +22821,10 @@ async def audio_models(request: Request):
         })
     payload = {"data": models}
     if _profile_target_visibility(auth_context) == "available":
-        payload["vivid_fish_target_visibility"] = "available"
-        payload["vivid_fish_target_activation"] = _profile_target_activation(auth_context)
+        payload["azizam_target_visibility"] = "available"
+        payload["azizam_target_activation"] = _profile_target_activation(auth_context)
     return Response(
-        content=json.dumps(payload),
+        content=json.dumps(emit_aliases(payload)),
         status_code=200,
         media_type="application/json"
     )
@@ -22982,7 +22989,7 @@ async def _context_window_for_model_id(
 
     backend = None
     if isinstance(entry, Mapping):
-        backend = str(entry.get("vivid_fish_backend") or "").strip() or None
+        backend = str(entry.get("azizam_backend") or "").strip() or None
     configured_backend, record = _configured_model_record_for_id(model_id)
     backend = backend or configured_backend
 
@@ -23191,8 +23198,8 @@ def _build_role_catalog_entries() -> list[dict]:
 
     For local-swap backends (kobold/tabby or any role entry with a ``path``
     key), ``model`` is a GGUF file path and is surfaced as
-    ``vivid_fish_model_path``.  For remote/routed backends the ``model`` field
-    is the upstream model name and is surfaced as ``vivid_fish_model``.  Remote
+    ``azizam_model_path``.  For remote/routed backends the ``model`` field
+    is the upstream model name and is surfaced as ``azizam_model``.  Remote
     role entries that omit ``model`` entirely are skipped (malformed).
     """
     known_backends: frozenset[str] = frozenset(
@@ -23217,13 +23224,13 @@ def _build_role_catalog_entries() -> list[dict]:
                     "id": str(role_name),
                     "object": "model",
                     "created": _entry_created_ts(model_path),
-                    "owned_by": "vivid-fish",
+                    "owned_by": "azizam",
                     "description": str(role_def.get("description", "") or ""),
-                    "vivid_fish_role": True,
-                    "vivid_fish_backend": backend,
+                    "azizam_role": True,
+                    "azizam_backend": backend,
                 }
                 if model_path:
-                    entry["vivid_fish_model_path"] = model_path
+                    entry["azizam_model_path"] = model_path
             else:
                 # Remote/routed backend: model is the upstream model name (required).
                 if not model_value or not str(model_value).strip():
@@ -23234,11 +23241,11 @@ def _build_role_catalog_entries() -> list[dict]:
                     "id": str(role_name),
                     "object": "model",
                     "created": _entry_created_ts(None),
-                    "owned_by": "vivid-fish",
+                    "owned_by": "azizam",
                     "description": str(role_def.get("description", "") or ""),
-                    "vivid_fish_role": True,
-                    "vivid_fish_backend": backend,
-                    "vivid_fish_model": upstream_model,
+                    "azizam_role": True,
+                    "azizam_backend": backend,
+                    "azizam_model": upstream_model,
                 }
             entries.append(entry)
 
@@ -23247,11 +23254,11 @@ def _build_role_catalog_entries() -> list[dict]:
             "id": mid,
             "object": "model",
             "created": _entry_created_ts(cat.get("path")),
-            "owned_by": "vivid-fish",
+            "owned_by": "azizam",
             "description": cat.get("description", ""),
-            "vivid_fish_alias": True,
-            "vivid_fish_backend": cat.get("backend"),
-            "vivid_fish_model_path": cat.get("path"),
+            "azizam_alias": True,
+            "azizam_backend": cat.get("backend"),
+            "azizam_model_path": cat.get("path"),
         })
 
     if EMBEDDINGS_ENABLED and EMBEDDINGS_MODEL:
@@ -23259,11 +23266,11 @@ def _build_role_catalog_entries() -> list[dict]:
             "id": EMBEDDINGS_MODEL,
             "object": "model",
             "created": int(time.time()),
-            "owned_by": "vivid-fish",
+            "owned_by": "azizam",
             "description": "CPU embedding model",
-            "vivid_fish_alias": True,
-            "vivid_fish_backend": "embeddings",
-            "vivid_fish_intent": "text.embeddings",
+            "azizam_alias": True,
+            "azizam_backend": "embeddings",
+            "azizam_intent": "text.embeddings",
             "capabilities": ["embedding"],
         })
 
@@ -23325,16 +23332,16 @@ def _build_workflow_model_entries(
             "id": model_id,
             "object": "model",
             "created": _workflow_model_entry_created(workflow_artifact),
-            "owned_by": "vivid-fish",
+            "owned_by": "azizam",
             "description": str(record.manifest.get("description", "") or ""),
-            "vivid_fish_workflow": True,
-            "vivid_fish_workflow_id": record.id,
-            "vivid_fish_intent": record.intent,
-            "vivid_fish_backend": backend,
+            "azizam_workflow": True,
+            "azizam_workflow_id": record.id,
+            "azizam_intent": record.intent,
+            "azizam_backend": backend,
         }
         version = record.manifest.get("version")
         if version:
-            entry["vivid_fish_manifest_version"] = str(version)
+            entry["azizam_manifest_version"] = str(version)
         entries.append(entry)
     return entries
 
@@ -23433,7 +23440,7 @@ async def _litellm_models_payload(
             return None
         payload = json.loads(content.decode("utf-8") or "{}")
         if isinstance(payload, dict):
-            payload["x_ai_gateway_llm_execution"] = "litellm"
+            payload["x_azizam_llm_execution"] = "litellm"
             return payload
         return None
     except Exception as e:  # noqa: BLE001
@@ -23495,10 +23502,10 @@ def _current_loaded_model_entry(model_id: str = USE_LOADED_MODEL_ALIAS) -> dict[
             "backend or swapping models."
         ),
         "capabilities": ["chat", "completion"],
-        "vivid_fish_alias": True,
-        "vivid_fish_current_loaded": True,
-        "vivid_fish_current_loaded_fast": fast,
-        "vivid_fish_backend": "current",
+        "azizam_alias": True,
+        "azizam_current_loaded": True,
+        "azizam_current_loaded_fast": fast,
+        "azizam_backend": "current",
     }
 
 
@@ -23578,7 +23585,7 @@ async def anthropic_models(request: Request):
     }
     payload.update(metadata)
     response = _json_error_response(payload, status_code=200)
-    response.headers["X-AI-Gateway-Token-Counting"] = "estimated"
+    response.headers["X-Azizam-Token-Counting"] = "estimated"
     return response
 
 
@@ -23625,7 +23632,7 @@ async def list_models(request: Request):
         if isinstance(payload, dict):
             if route_auth.delegated_to_litellm:
                 return Response(
-                    content=json.dumps(payload),
+                    content=json.dumps(emit_model_list_aliases(payload)),
                     status_code=200,
                     media_type="application/json",
                 )
@@ -23638,7 +23645,7 @@ async def list_models(request: Request):
                     error_type="service_unavailable",
                     code="litellm_unavailable",
                 )
-            upstream_payload["vivid_fish_catalog_warning"] = (
+            upstream_payload["azizam_catalog_warning"] = (
                 "LLM model catalog is temporarily unavailable; gateway-native "
                 "aliases and workflows may still be listed."
             )
@@ -23675,16 +23682,16 @@ async def list_models(request: Request):
 
     by_id = {item.get("id"): item for item in data if isinstance(item, dict)}
     for alias_entry in _stable_alias_model_entries():
-        if "decisions" in alias_entry["vivid_fish_resolves_to"]:
+        if "decisions" in alias_entry["azizam_resolves_to"]:
             continue  # Decision models use their own policy and runtime metadata below.
         existing = by_id.get(alias_entry["id"])
         if existing is not None:
-            existing.update({k: v for k, v in alias_entry.items() if k.startswith("vivid_fish_")})
+            existing.update({k: v for k, v in alias_entry.items() if k.startswith("azizam_")})
             continue
         # An LLM alias is only listed when something it points at is listed
         # (LiteLLM owns the LLM catalog); media aliases are gateway-native.
         llm_targets = {
-            t for op, t in alias_entry["vivid_fish_resolves_to"].items()
+            t for op, t in alias_entry["azizam_resolves_to"].items()
             if op in ("chat", "embeddings") and t
         }
         if llm_targets and not llm_targets <= set(by_id):
@@ -23729,7 +23736,7 @@ async def list_models(request: Request):
 
     decision_ids: set[str] = set()
     for decision_model in await asyncio.to_thread(_decision_models_for, auth_context, _profile_for_auth_context(auth_context)):
-        entry = {"id": decision_model.id, "object": "model", "owned_by": "vivid-fish",
+        entry = {"id": decision_model.id, "object": "model", "owned_by": "azizam",
                  "created": 0, "capabilities": decision_model.view()["capabilities"]}
         decision_ids.add(entry["id"])
         if entry["id"] not in {item.get("id") for item in data if isinstance(item, dict)}:
@@ -23758,9 +23765,9 @@ async def list_models(request: Request):
     # caller cannot see. This does not change which alias entries are listed.
     visible_ids = {normalize_model_id(str(item.get("id") or "")) for item in data if isinstance(item, dict)}
     for item in data:
-        if isinstance(item, dict) and isinstance(item.get("vivid_fish_resolves_to"), Mapping):
-            item["vivid_fish_resolves_to"] = {
-                operation: target for operation, target in item["vivid_fish_resolves_to"].items()
+        if isinstance(item, dict) and isinstance(item.get("azizam_resolves_to"), Mapping):
+            item["azizam_resolves_to"] = {
+                operation: target for operation, target in item["azizam_resolves_to"].items()
                 if target and normalize_model_id(str(target)) in visible_ids
             }
 
@@ -23768,7 +23775,7 @@ async def list_models(request: Request):
     upstream_payload["data"] = data
     upstream_payload["object"] = upstream_payload.get("object") or "list"
     return Response(
-        content=json.dumps(upstream_payload),
+        content=json.dumps(emit_model_list_aliases(upstream_payload)),
         status_code=200,
         media_type="application/json",
     )
@@ -24834,10 +24841,10 @@ async def _ollama_loaded_model_summaries(
         entry: dict[str, Any] = {
             "id": name,
             "object": "model",
-            "owned_by": active or "vivid-fish",
+            "owned_by": active or "azizam",
             "created": _entry_created_ts(loaded_id if loaded_id.startswith("/") else None),
-            "vivid_fish_loaded": True,
-            "vivid_fish_backend": active or "",
+            "azizam_loaded": True,
+            "azizam_backend": active or "",
         }
         if loaded_id.startswith("/"):
             try:
@@ -24845,7 +24852,7 @@ async def _ollama_loaded_model_summaries(
                 entry["size_vram"] = entry["size"]
             except OSError:
                 pass
-        summaries.append(entry)
+        summaries.append(emit_aliases(entry))
         seen.add(normalize_model_id(name))
 
     return summaries
@@ -25673,15 +25680,15 @@ _OPENAI_COMPAT_JSON_BODY_OPENAPI = {
     },
 }
 
-_OPENAI_PROXY_POLICY = route_registry.openai_proxy_policy(
+_AZIZAM_POLICY = route_registry.azizam_policy(
     registry=_PROTOCOL_ROUTE_REGISTRY,
     proxy_config=config,
 )
 
-_INTERNAL_PROTOCOL_FORWARD_HEADER = "x-vivid-fish-internal-protocol-forward"
+_INTERNAL_PROTOCOL_FORWARD_HEADER = "x-azizam-internal-protocol-forward"
 _INTERNAL_PROTOCOL_FORWARD_SECRET = secrets.token_urlsafe(32)
 _INTERNAL_PROTOCOL_FORWARD_HOSTS = frozenset({"127.0.0.1", "::1"})
-_INTERNAL_LITELLM_KEY_ENV = "AI_GATEWAY_INTERNAL_LITELLM_KEY"
+_INTERNAL_LITELLM_KEY_ENV = "AZIZAM_INTERNAL_LITELLM_KEY"
 
 
 def _is_internal_protocol_forward(request: Request) -> bool:
@@ -25699,7 +25706,7 @@ def _is_internal_protocol_forward(request: Request) -> bool:
 
 
 def _is_internal_litellm_lifecycle_request(request: Request) -> bool:
-    expected = os.environ.get(_INTERNAL_LITELLM_KEY_ENV, "").strip()
+    expected = get_env(_INTERNAL_LITELLM_KEY_ENV, "").strip()
     if not expected:
         return False
     auth = request.headers.get("authorization", "")
@@ -25762,12 +25769,12 @@ def _litellm_local_activation_target(
     )
 
 
-def _openai_proxy_policy_decision(
+def _azizam_policy_decision(
     auth_context: AuthContext,
     request_path: str,
     body: bytes,
 ) -> PolicyDecision | None:
-    spec = _OPENAI_PROXY_POLICY.get(request_path)
+    spec = _AZIZAM_POLICY.get(request_path)
     if spec is None:
         return None
 
@@ -26003,7 +26010,7 @@ def _start_litellm_route_receipt(
     parent_request_id: str = "",
 ) -> RouteReceipt:
     if protocol is None or intent is None:
-        protocol, intent = _OPENAI_PROXY_POLICY.get(
+        protocol, intent = _AZIZAM_POLICY.get(
             request_path,
             ("openai.chat", "chat.generate"),
         )
@@ -26135,7 +26142,7 @@ def _record_internal_hop_receipt(
     The internal LiteLLM hop (``/internal/litellm/...``) runs in the same
     process but is reached through a second, independent HTTP round trip via
     LiteLLM's sidecar — it never receives the outer route's ``RouteReceipt``
-    object, only the forwarded ``X-AI-Gateway-Request-Id`` string. Recording
+    object, only the forwarded ``X-Azizam-Request-Id`` string. Recording
     a second, small receipt here — linked via ``parent_request_id`` rather
     than overwriting the outer receipt's row — keeps internal_ingress/
     backend_egress/terminal facts queryable through the existing receipt
@@ -26224,7 +26231,7 @@ class _OuterCancellationSpan:
     Registers ``request_id`` in the shared ``CancellationRegistry`` and wires
     every disconnect this span itself observes to ``signal()``, so the
     internal gateway hop's reader (reached through LiteLLM's forwarded
-    ``X-AI-Gateway-Request-Id``) wakes even though it has no direct view of
+    ``X-Azizam-Request-Id``) wakes even though it has no direct view of
     this ASGI connection. ``aclose`` releases the registry handle and closes
     the watcher (a no-op if already stopped) on every terminal path.
     """
@@ -26465,15 +26472,15 @@ async def _forward_current_loaded_openai_request(
                 receipt.metadata, "backend_egress", body,
                 extra={"status_code": resp.status_code},
             )
-            excluded = ("content-length", "transfer-encoding", "content-type", "x-ai-gateway-request-id", "x-ai-gateway-receipt-id")
+            excluded = ("content-length", "transfer-encoding", "content-type", "x-azizam-request-id", "x-azizam-receipt-id")
             response_headers = {
                 k: v for k, v in resp.headers.items() if k.lower() not in excluded
             }
-            response_headers["X-AI-Gateway-LLM-Execution"] = "current-loaded"
-            response_headers["X-AI-Gateway-Request-Id"] = receipt.request_id
-            response_headers["X-AI-Gateway-Receipt-Id"] = receipt.request_id
-            response_headers["X-AI-Gateway-Backend"] = target.backend
-            response_headers["X-AI-Gateway-Resolved-Model"] = target.model
+            response_headers["X-Azizam-LLM-Execution"] = "current-loaded"
+            response_headers["X-Azizam-Request-Id"] = receipt.request_id
+            response_headers["X-Azizam-Receipt-Id"] = receipt.request_id
+            response_headers["X-Azizam-Backend"] = target.backend
+            response_headers["X-Azizam-Resolved-Model"] = target.model
 
             _tc_backend_hint = _toolcall_backend_hint(target.backend)
             _tc_had_tools = (
@@ -26567,7 +26574,7 @@ async def _forward_current_loaded_openai_request(
                                     _tc_family,
                                     _tc_advisory,
                                 )
-                                response_headers["x-gateway-toolcall-advisory"] = _tc_advisory
+                                response_headers["x-azizam-toolcall-advisory"] = _tc_advisory
                         content = json.dumps(response_json).encode()
                 except (json.JSONDecodeError, UnicodeDecodeError):
                     pass
@@ -26810,15 +26817,15 @@ async def _forward_litellm_proxy_request(
                 headers={"Retry-After": "10"},
             )
         content_type = resp.headers.get("content-type", "") or "application/json"
-        excluded = ("content-length", "transfer-encoding", "content-type", "x-ai-gateway-request-id", "x-ai-gateway-receipt-id")
+        excluded = ("content-length", "transfer-encoding", "content-type", "x-azizam-request-id", "x-azizam-receipt-id")
         response_headers = {
             k: v for k, v in resp.headers.items() if k.lower() not in excluded
         }
-        response_headers["X-AI-Gateway-LLM-Execution"] = "litellm"
-        response_headers["X-AI-Gateway-Request-Id"] = receipt.request_id
-        response_headers["X-AI-Gateway-Receipt-Id"] = receipt.request_id
+        response_headers["X-Azizam-LLM-Execution"] = "litellm"
+        response_headers["X-Azizam-Request-Id"] = receipt.request_id
+        response_headers["X-Azizam-Receipt-Id"] = receipt.request_id
         if fallback_reasons:
-            response_headers["x-gateway-fallback"] = ", ".join(fallback_reasons)
+            response_headers["x-azizam-fallback"] = ", ".join(fallback_reasons)
         _attach_litellm_response_metadata(receipt, resp.headers)
         record_request_shape_stage(
             receipt.metadata,
@@ -26952,7 +26959,7 @@ async def _forward_litellm_proxy_request(
                                     _tc_family,
                                     _tc_advisory,
                                 )
-                                response_headers["x-gateway-toolcall-advisory"] = _tc_advisory
+                                response_headers["x-azizam-toolcall-advisory"] = _tc_advisory
                         if (
                             request_path == "/v1/embeddings"
                             and requested_embedding_dimensions is not None
@@ -27027,7 +27034,7 @@ async def _handle_openai_litellm_request(
         if str(reason)
     ]
     if fallback_reasons:
-        response.headers["x-gateway-fallback"] = ", ".join(fallback_reasons)
+        response.headers["x-azizam-fallback"] = ", ".join(fallback_reasons)
     return response
 
 
@@ -27093,7 +27100,7 @@ async def _handle_openai_litellm_request_once(
         not route_auth.delegated_to_litellm
         and not is_trusted_loopback
     ):
-        policy_decision = _openai_proxy_policy_decision(
+        policy_decision = _azizam_policy_decision(
             auth_context,
             request_path,
             body_peek,
@@ -28339,6 +28346,8 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
 app.add_middleware(InflightMiddleware, state=DRAIN_STATE)
 from gateway.request_source import RequestSourceMiddleware
 app.add_middleware(RequestSourceMiddleware)
+from gateway.compat import ProductCompatibilityMiddleware
+app.add_middleware(ProductCompatibilityMiddleware)
 
 
 # =============================================================================
@@ -28383,7 +28392,7 @@ if __name__ == "__main__":
     # responses. Bound that wait so a stuck stream cannot hold the unit open;
     # keep it below the unit's TimeoutStopSec (docs/ops/SAFE_RESTART.md).
     try:
-        graceful_s = int(os.environ.get("AI_GATEWAY_GRACEFUL_SHUTDOWN_S", "120"))
+        graceful_s = int(get_env("AZIZAM_GRACEFUL_SHUTDOWN_S", "120"))
     except ValueError:
         graceful_s = 120
 

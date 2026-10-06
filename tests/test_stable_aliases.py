@@ -412,12 +412,12 @@ class RouteTests(unittest.TestCase):
 
     def test_models_entries_for_stable_aliases(self):
         entries = {e["id"]: e for e in proxy._stable_alias_model_entries()}
-        self.assertEqual(entries["fast"]["vivid_fish_resolves_to"], {"chat": "default-fast"})
+        self.assertEqual(entries["fast"]["azizam_resolves_to"], {"chat": "default-fast"})
         self.assertEqual(
-            entries["image"]["vivid_fish_resolves_to"],
+            entries["image"]["azizam_resolves_to"],
             {"images": "krea2-turbo", "image_edits": "qwen-image-2.1-edit"},
         )
-        self.assertEqual(entries["sfx"]["vivid_fish_resolves_to"], {"audio_generate": "sa3-small-sfx"})
+        self.assertEqual(entries["sfx"]["azizam_resolves_to"], {"audio_generate": "sa3-small-sfx"})
 
     def test_media_resolution_helpers(self):
         res = proxy.resolve_model_for_operation("images", "gpt-image-1")

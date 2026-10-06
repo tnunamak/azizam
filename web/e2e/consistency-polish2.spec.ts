@@ -395,7 +395,7 @@ test("personal access app hides only its exact generated email-based name", asyn
       },
     }),
   );
-  await page.route("**/.well-known/ai-gateway", (route) =>
+  await page.route("**/.well-known/azizam", (route) =>
     route.fulfill({ json: { recipes: {} } }),
   );
   await page.route("**/me/api/apps/app-personal/keys", (route) =>

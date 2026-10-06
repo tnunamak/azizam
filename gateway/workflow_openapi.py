@@ -12,9 +12,9 @@ registry and adds
   that the run route serves, with a multipart body typed from the manifest;
 * a typed request body, 2xx response and error envelope for the other native
   routes that had none (media jobs, remix);
-* ``extensions["com.vividfish.workflow"]`` typed as ``anyOf`` the input schemas
+* ``extensions["com.azizam.workflow"]`` typed as ``anyOf`` the input schemas
   of the workflows each route can serve;
-* the root extension ``x-vividfish-workflows``: for every workflow its aliases,
+* the root extension ``x-azizam-workflows``: for every workflow its aliases,
   typical time, the sync route, the async route, which one to prefer, and where
   each input goes in the request (body field, extension, form file).
 
@@ -32,6 +32,8 @@ The module is pure. It does not import FastAPI or ``proxy.py``.
 
 from __future__ import annotations
 
+from gateway.compat import emit_aliases
+
 import copy
 import re
 from typing import Any, Iterable, Mapping
@@ -46,7 +48,7 @@ from gateway.video_limits import limits_for_workflow
 # makes code generators (datamodel-code-generator) treat it as a module path.
 SCHEMA_PREFIX = "WorkflowInputs_"
 FORM_PREFIX = "WorkflowForm_"
-ROOT_EXTENSION = "x-vividfish-workflows"
+ROOT_EXTENSION = "x-azizam-workflows"
 SLOW_SECONDS = 30  # above this, prefer the async route when there is one
 
 JOBS_SUBMIT = "/gateway/v1/media/jobs"
@@ -111,7 +113,7 @@ def _input_schema(spec: Mapping[str, Any], *, form: bool) -> dict[str, Any]:
                     "asset or video reference."
                 ),
             }
-        out["x-vividfish-asset"] = True
+        out["x-azizam-asset"] = True
     else:
         out = {"type": _JSON_TYPES.get(kind, "string")}
     for key in ("minimum", "maximum", "enum", "default"):
@@ -120,7 +122,7 @@ def _input_schema(spec: Mapping[str, Any], *, form: bool) -> dict[str, Any]:
     if spec.get("description"):
         base = out.get("description")
         out["description"] = f"{base} {spec['description']}" if base else spec["description"]
-    return out
+    return emit_aliases(out)
 
 
 def workflow_inputs_schema(record: WorkflowRecord, *, form: bool = False) -> dict[str, Any]:
@@ -138,13 +140,13 @@ def workflow_inputs_schema(record: WorkflowRecord, *, form: bool = False) -> dic
         "title": record.manifest.get("display_name") or record.id,
         "properties": properties,
         "additionalProperties": False,
-        "x-vividfish-workflow-id": record.id,
+        "x-azizam-workflow-id": record.id,
     }
     if required:
         schema["required"] = required
     if record.manifest.get("description"):
         schema["description"] = " ".join(str(record.manifest["description"]).split())
-    return schema
+    return emit_aliases(schema)
 
 
 # ------------------------------------------------------------- request mapping
@@ -159,7 +161,7 @@ def request_mapping(record: WorkflowRecord, mode: str) -> dict[str, dict[str, An
     * ``{"in": "body", "field": "size", "combine": ["width", "height"]}``:
       ``WIDTHxHEIGHT`` built from two inputs;
     * ``{"in": "extension", "field": name}``: a key under
-      ``extensions["com.vividfish.workflow"]``;
+      ``extensions["com.azizam.workflow"]``;
     * ``{"in": "file", "field": f}``: a multipart file part;
     * ``{"in": "file+extension", ...}``: a multipart file part plus an
       extension value ``{"multipart_field": f}``;
@@ -299,7 +301,7 @@ def _execution(record: WorkflowRecord, typical_seconds: float | None) -> dict[st
                 "output": "JSON (see the route's response schema)"}
         if intent == "image.edit":
             sync["alternate"] = {"method": "POST", "path": "/v1/images/edits", "model": model,
-                                 "note": "options go in extensions['com.vividfish.workflow']"}
+                                 "note": "options go in extensions['com.azizam.workflow']"}
     elif intent == "image.generate":
         sync = {"method": "POST", "path": "/v1/images/generations", "content_type": _JSON,
                 "model": model, "fields": request_mapping(record, "sync"),
@@ -405,7 +407,7 @@ def workflow_catalog(
     aliases: Mapping[str, Any] | None = None,
     limits: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """The ``x-vividfish-workflows`` list.
+    """The ``x-azizam-workflows`` list.
 
     ``limits`` maps a workflow id to its published limits (see ``video_limits``); a workflow
     with limits gets them as ``limits``.
@@ -538,7 +540,7 @@ def _extension_property(records: list[WorkflowRecord]) -> dict[str, Any]:
         "type": "object",
         "description": (
             "Gateway-owned controls. Send only inputs the selected workflow "
-            "lists; see `x-vividfish-workflows` for which inputs belong here."
+            "lists; see `x-azizam-workflows` for which inputs belong here."
         ),
         "properties": {
             WORKFLOW_EXTENSION_NAMESPACE: {
@@ -560,7 +562,8 @@ def _patch_extensions(op: dict[str, Any], records: list[WorkflowRecord]) -> None
 
 
 def _async_extension(op: dict[str, Any], mode: str, **fields: Any) -> None:
-    op[f"x-vividfish-{mode}"] = fields
+    op[f"x-azizam-{mode}"] = fields
+    op.update(emit_aliases(op))
 
 
 def augment_openapi(
@@ -573,10 +576,10 @@ def augment_openapi(
     records = sorted(records, key=lambda r: r.id)
     info = spec.setdefault("info", {})
     if info.get("title") in (None, "FastAPI"):
-        info["title"] = "Vivid Fish AI Gateway"
+        info["title"] = "Azizam"
     info["description"] = (
         "OpenAI-compatible gateway plus native workflow routes. Discover with "
-        "`GET /gateway/v1/workflows` and the `x-vividfish-workflows` list in this "
+        "`GET /gateway/v1/workflows` and the `x-azizam-workflows` list in this "
         "document: each workflow names its sync route, its async route, and where "
         "every input goes. Slow work (video, long music) goes through an async "
         "route: submit, poll, then fetch the content."
@@ -712,7 +715,7 @@ def augment_openapi(
             "Serves `video.edit` workflows only (`GET /gateway/v1/workflows` lists "
             "them). The request blocks until the render ends and returns the video "
             "bytes. For anything slower than a few seconds prefer the async route "
-            "`POST /v1/videos` (see `x-vividfish-workflows`). Every workflow also "
+            "`POST /v1/videos` (see `x-azizam-workflows`). Every workflow also "
             "has a concrete path below with its exact form fields."
         )
         generic["requestBody"] = {
@@ -730,12 +733,12 @@ def augment_openapi(
         path = f"/gateway/v1/workflows/{short_id(record)}/run"
         outputs = (record.manifest.get("outputs") or {})
         media = next((o.get("media_type") for o in outputs.values() if o.get("media_type")), "video/mp4")
-        paths[path] = {"post": {
+        paths[path] = {"post": emit_aliases({
             "tags": ["gateway-workflows"],
             "operationId": f"run_{short_id(record).replace('.', '_').replace('-', '_')}",
             "summary": f"Run {record.manifest.get('display_name') or record.id}",
             "description": " ".join(str(record.manifest.get("description") or "").split()),
-            "x-vividfish-workflow-id": record.id,
+            "x-azizam-workflow-id": record.id,
             "requestBody": {"required": True, "content": {
                 _MULTIPART: {"schema": _ref(_schema_name(record, FORM_PREFIX))}}},
             "responses": {
@@ -743,9 +746,10 @@ def augment_openapi(
                         "content": {media: {"schema": {"type": "string", "format": "binary"}}}},
                 **errors,
             },
-        }}
+        })}
 
     spec[ROOT_EXTENSION] = workflow_catalog(records, aliases, video_limits)
+    spec.update(emit_aliases(spec))
     return spec
 
 

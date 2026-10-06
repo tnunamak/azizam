@@ -14,15 +14,24 @@ from _hermetic import HermeticGuard, assert_hermetic_environment
 # The runner creates exactly one unique, disk-backed state directory before
 # pytest collection.  Refusing a direct pytest invocation prevents import-time
 # gateway stores from falling back to a real operator database.
-if os.environ.get("VIVID_FISH_HERMETIC_TEST_NAMESPACE") != "1":
+if os.environ.get("HERMETIC_TEST_NAMESPACE") != "1":
     pytest.exit("pytest must run through scripts/run-hermetic-pytest.sh", returncode=2)
-_STATE_DIR = Path(os.environ["AI_GATEWAY_TEST_STATE_DIR"])
+_STATE_DIR = Path(os.environ["HERMETIC_TEST_STATE_DIR"])
+
+# These production overrides must be absent before we install test-owned paths.
+# The runner supplies the admin path through its neutral, private contract.
+for _name in ("AZIZAM_ADMIN_DB", "AI_GATEWAY_ADMIN_DB", "OPENAI_PROXY_ADMIN_DB"):
+    if _name in os.environ:
+        pytest.exit(f"production environment variable leaked into pytest: {_name}", returncode=2)
+_ADMIN_DB = Path(os.environ["HERMETIC_ADMIN_DB"])
+if _ADMIN_DB != _STATE_DIR / "admin.db":
+    pytest.exit("pytest admin database must belong to this run's state directory", returncode=2)
 _STORE_PATHS = {
-    "AI_GATEWAY_ADMIN_DB": "admin.db",
-    "AI_GATEWAY_METRICS_DB": "metrics.db",
-    "AI_GATEWAY_RESPONSES_DB": "responses.db",
-    "AI_GATEWAY_RECEIPTS_DB": "receipts.db",
-    "AI_GATEWAY_MEDIA_JOBS_DB": "media_jobs.db",
+    "AZIZAM_ADMIN_DB": "admin.db",
+    "AZIZAM_METRICS_DB": "metrics.db",
+    "AZIZAM_RESPONSES_DB": "responses.db",
+    "AZIZAM_RECEIPTS_DB": "receipts.db",
+    "AZIZAM_MEDIA_JOBS_DB": "media_jobs.db",
 }
 
 # Test modules import proxy during collection.  These must be set while pytest

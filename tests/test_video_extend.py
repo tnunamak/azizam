@@ -198,7 +198,7 @@ class ExtensionRouteTests(RemixReplaceBase):
         # The OpenAPI spec has no extension field; remixed_from_video_id carries the source.
         self.assertEqual(body["remixed_from_video_id"], SOURCE_ID)
         self.assertEqual(body["extended_from_video_id"], SOURCE_ID)
-        self.assertEqual(body["vivid_fish_resolved_model"], "video-ltx-2.5-long")
+        self.assertEqual(body["azizam_resolved_model"], "video-ltx-2.5-long")
         self.assertEqual(body["model"], "ltx-2.5")  # the source's model
         self.assertEqual(body["size"], "960x512")
         # 193 source frames + 192 new frames, stitched
@@ -441,13 +441,13 @@ class CreateLongVideoTests(RemixReplaceBase):
     def test_shots_work_on_the_default_ltx_model_too(self) -> None:
         r = self._create(model="ltx-2.5", shots=[{"prompt": "a", "seconds": 3}, {"prompt": "b", "seconds": 3}])
         self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual(r.json()["vivid_fish_resolved_model"], "video-ltx-2.5-long")
+        self.assertEqual(r.json()["azizam_resolved_model"], "video-ltx-2.5-long")
         self.assertEqual(r.json()["model"], "ltx-2.5")
 
     def test_plain_seconds_past_native_length_is_the_same_chain(self) -> None:
         r = self._create(model="ltx-2.5", prompt="a long take", seconds=25)
         self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual(r.json()["vivid_fish_resolved_model"], "video-ltx-2.5-long")
+        self.assertEqual(r.json()["azizam_resolved_model"], "video-ltx-2.5-long")
         self.assertAlmostEqual(r.json()["total_seconds"], 25, delta=0.4)
         self.assertEqual(r.json()["segments"], 4)
 
@@ -471,7 +471,7 @@ class CreateLongVideoTests(RemixReplaceBase):
     def test_native_length_still_uses_the_template_graph(self) -> None:
         r = self._create(model="ltx-2.5", prompt="short", seconds=5)
         self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual(r.json()["vivid_fish_resolved_model"], "video-ltx-2.5-t2v")
+        self.assertEqual(r.json()["azizam_resolved_model"], "video-ltx-2.5-t2v")
         self.assertNotIn("s0_text", self.graph)
 
     def test_long_names_keep_working(self) -> None:
@@ -480,7 +480,7 @@ class CreateLongVideoTests(RemixReplaceBase):
             r = self._create(model=name, prompt="x", seconds=12)
             self.assertEqual(r.status_code, 200, (name, r.text))
             self.assertEqual(r.json()["model"], name)
-            self.assertEqual(r.json()["vivid_fish_resolved_model"], "video-ltx-2.5-long")
+            self.assertEqual(r.json()["azizam_resolved_model"], "video-ltx-2.5-long")
 
     def test_total_length_cap_applies_to_create(self) -> None:
         r = self._create(model="video-long", prompt="x", seconds=41)

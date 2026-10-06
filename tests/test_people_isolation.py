@@ -70,8 +70,8 @@ def people(monkeypatch, tmp_path):
         key = mint_user_app_key(session, app["id"], path=paths["admin"])
         bearer = {"Authorization": f"Bearer {key['api_key']}"}
         browser = {
-            "X-Test-Member": name, "X-AI-Gateway-User-Action": "1",
-            "X-AI-Gateway-Csrf": "fixture-csrf",
+            "X-Test-Member": name, "X-Azizam-User-Action": "1",
+            "X-Azizam-Csrf": "fixture-csrf",
         }
         receipt = RouteReceipt(
             protocol="openai.images", intent="image.generate", app_id=app["id"],

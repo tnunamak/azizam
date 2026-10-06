@@ -20,6 +20,8 @@ refusing work forever.
 
 from __future__ import annotations
 
+from gateway.compat import get_env
+
 import json
 import os
 import threading
@@ -63,7 +65,7 @@ MAX_LISTED = 50
 
 
 def _retry_after_s() -> int:
-    raw = os.environ.get("AI_GATEWAY_DRAIN_RETRY_AFTER_S", "")
+    raw = get_env("AZIZAM_DRAIN_RETRY_AFTER_S", "")
     try:
         value = int(raw)
     except ValueError:
@@ -335,7 +337,7 @@ class InflightMiddleware:
                     (b"content-type", b"application/json"),
                     (b"content-length", str(len(body)).encode()),
                     (b"retry-after", str(_retry_after_s()).encode()),
-                    (b"x-gateway-draining", b"1"),
+                    (b"x-azizam-draining", b"1"),
                 ],
             }
         )

@@ -1,7 +1,7 @@
 """OpenAI Python SDK Responses and media surface probes.
 
 Local SDK surface checks run without network access. Live calls are opt-in and
-require ``OPENAI_PROXY_BASE_URL`` plus the per-surface flag documented below.
+require ``AZIZAM_BASE_URL`` plus the per-surface flag documented below.
 
 Install with::
 
@@ -13,12 +13,12 @@ Run local checks with::
 
 Optional live checks::
 
-    OPENAI_PROXY_SMOKE_RESPONSES=1            # client.responses.create
-    OPENAI_PROXY_SMOKE_IMAGES=1               # client.images.generate
-    OPENAI_PROXY_SMOKE_AUDIO_SPEECH=1         # client.audio.speech.create
-    OPENAI_PROXY_SMOKE_AUDIO_TRANSCRIPTION=1  # client.audio.transcriptions.create
-    OPENAI_PROXY_SMOKE_AUDIO_TRANSLATION=1    # client.audio.translations.create
-    OPENAI_PROXY_SMOKE_VIDEO=1                # client.videos.create
+    AZIZAM_SMOKE_RESPONSES=1            # client.responses.create
+    AZIZAM_SMOKE_IMAGES=1               # client.images.generate
+    AZIZAM_SMOKE_AUDIO_SPEECH=1         # client.audio.speech.create
+    AZIZAM_SMOKE_AUDIO_TRANSCRIPTION=1  # client.audio.transcriptions.create
+    AZIZAM_SMOKE_AUDIO_TRANSLATION=1    # client.audio.translations.create
+    AZIZAM_SMOKE_VIDEO=1                # client.videos.create
 
 The transcription/translation cases use a tiny in-memory PCM16 WAV
 (``tests.compat.harness.silent_wav_bytes``) so no binary fixture is
@@ -94,8 +94,8 @@ class TestOpenAIResponsesMediaSurfaces(unittest.TestCase):
 
 @unittest.skipUnless(_openai is not None, "openai SDK not installed")
 @unittest.skipUnless(
-    os.environ.get("OPENAI_PROXY_BASE_URL"),
-    "OPENAI_PROXY_BASE_URL not set; live SDK probe disabled",
+    os.environ.get("AZIZAM_BASE_URL"),
+    "AZIZAM_BASE_URL not set; live SDK probe disabled",
 )
 class TestOpenAIResponsesMediaLive(unittest.TestCase):
     """Opt-in live probes for potentially billable or slow SDK calls."""
@@ -117,10 +117,10 @@ class TestOpenAIResponsesMediaLive(unittest.TestCase):
             self.skipTest(f"{name}=1 not set; live probe disabled")
 
     def _text_model(self) -> str:
-        return os.environ.get("OPENAI_PROXY_SMOKE_RESPONSES_MODEL", "default")
+        return os.environ.get("AZIZAM_SMOKE_RESPONSES_MODEL", "default")
 
     def test_responses_create(self) -> None:
-        self._require_flag("OPENAI_PROXY_SMOKE_RESPONSES")
+        self._require_flag("AZIZAM_SMOKE_RESPONSES")
         result = self.client.responses.create(
             model=self._text_model(),
             input="Reply with exactly: compatibility probe",
@@ -132,11 +132,11 @@ class TestOpenAIResponsesMediaLive(unittest.TestCase):
             self.assertIsInstance(output_text, str)
 
     def test_images_generate(self) -> None:
-        self._require_flag("OPENAI_PROXY_SMOKE_IMAGES")
+        self._require_flag("AZIZAM_SMOKE_IMAGES")
         result = self.client.images.generate(
-            model=os.environ.get("OPENAI_PROXY_SMOKE_IMAGE_MODEL", "default"),
+            model=os.environ.get("AZIZAM_SMOKE_IMAGE_MODEL", "default"),
             prompt="A small blue square on a white background.",
-            size=os.environ.get("OPENAI_PROXY_SMOKE_IMAGE_SIZE", "256x256"),
+            size=os.environ.get("AZIZAM_SMOKE_IMAGE_SIZE", "256x256"),
             n=1,
         )
         self.assertGreater(len(result.data), 0)
@@ -144,10 +144,10 @@ class TestOpenAIResponsesMediaLive(unittest.TestCase):
         self.assertTrue(getattr(first, "b64_json", None) or getattr(first, "url", None))
 
     def test_audio_speech_create(self) -> None:
-        self._require_flag("OPENAI_PROXY_SMOKE_AUDIO_SPEECH")
+        self._require_flag("AZIZAM_SMOKE_AUDIO_SPEECH")
         result = self.client.audio.speech.create(
-            model=os.environ.get("OPENAI_PROXY_SMOKE_AUDIO_SPEECH_MODEL", "default"),
-            voice=os.environ.get("OPENAI_PROXY_SMOKE_AUDIO_VOICE", "alloy"),
+            model=os.environ.get("AZIZAM_SMOKE_AUDIO_SPEECH_MODEL", "default"),
+            voice=os.environ.get("AZIZAM_SMOKE_AUDIO_VOICE", "alloy"),
             input="compatibility probe",
             response_format="mp3",
         )
@@ -161,12 +161,12 @@ class TestOpenAIResponsesMediaLive(unittest.TestCase):
         return ("probe.wav", io.BytesIO(silent_wav_bytes()), "audio/wav")
 
     def test_audio_transcriptions_create(self) -> None:
-        self._require_flag("OPENAI_PROXY_SMOKE_AUDIO_TRANSCRIPTION")
+        self._require_flag("AZIZAM_SMOKE_AUDIO_TRANSCRIPTION")
         assert _openai is not None
         try:
             result = self.client.audio.transcriptions.create(
                 model=os.environ.get(
-                    "OPENAI_PROXY_SMOKE_AUDIO_TRANSCRIPTION_MODEL", "default"
+                    "AZIZAM_SMOKE_AUDIO_TRANSCRIPTION_MODEL", "default"
                 ),
                 file=self._wav_upload(),
             )
@@ -190,12 +190,12 @@ class TestOpenAIResponsesMediaLive(unittest.TestCase):
         ``probe_gateway_contract.py`` covers the error envelope.
         """
 
-        self._require_flag("OPENAI_PROXY_SMOKE_AUDIO_TRANSLATION")
+        self._require_flag("AZIZAM_SMOKE_AUDIO_TRANSLATION")
         assert _openai is not None
         try:
             result = self.client.audio.translations.create(
                 model=os.environ.get(
-                    "OPENAI_PROXY_SMOKE_AUDIO_TRANSLATION_MODEL", "default"
+                    "AZIZAM_SMOKE_AUDIO_TRANSLATION_MODEL", "default"
                 ),
                 file=self._wav_upload(),
             )
@@ -221,11 +221,11 @@ class TestOpenAIResponsesMediaLive(unittest.TestCase):
         )
 
     def test_video_create(self) -> None:
-        self._require_flag("OPENAI_PROXY_SMOKE_VIDEO")
+        self._require_flag("AZIZAM_SMOKE_VIDEO")
         if not hasattr(self.client, "videos"):
             self.skipTest(f"OpenAI SDK {_sdk_version()} does not expose client.videos")
         result = self.client.videos.create(
-            model=os.environ.get("OPENAI_PROXY_SMOKE_VIDEO_MODEL", "default"),
+            model=os.environ.get("AZIZAM_SMOKE_VIDEO_MODEL", "default"),
             prompt="A one second shot of a small blue square.",
         )
         self.assertTrue(getattr(result, "id", None))

@@ -30,7 +30,7 @@ class TestCheckDrift(unittest.TestCase):
     def _make_pair(self, shell_value: str, service_value: str) -> tuple[Path, Path]:
         tmp = Path(tempfile.mkdtemp())
         start_sh = tmp / "start.sh"
-        unit = tmp / "openai-proxy.service"
+        unit = tmp / "azizam.service"
         start_sh.write_text(_START_SH_TEMPLATE.format(value=shell_value))
         unit.write_text(_SERVICE_TEMPLATE.format(value=service_value))
         return start_sh, unit

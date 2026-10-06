@@ -108,7 +108,7 @@ class RerankRouteTests(RouteCase):
                 self.assertEqual(data["model"], "rerank-v3.5")
                 self.assertEqual(data["usage"], {"total_tokens": 7})
                 self.assertEqual(data["meta"]["billed_units"], {"search_units": 1})
-                self.assertEqual(resp.headers["x-vivid-engine"], "qwen3-reranker-0.6b")
+                self.assertEqual(resp.headers["x-azizam-engine"], "qwen3-reranker-0.6b")
         self.assertEqual({r.url.port for r in seen}, {8018})
         self.assertEqual({r.url.path for r in seen}, {"/v1/rerank"})
         # The engine scores everything; the gateway cuts to top_n.

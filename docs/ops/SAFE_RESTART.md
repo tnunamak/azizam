@@ -1,7 +1,7 @@
 # Safe restart
 
 **Restart the gateway only with `scripts/safe-restart`.** A bare
-`systemctl --user restart openai-proxy` cuts every streaming (SSE) reply and
+`systemctl --user restart azizam` cuts every streaming (SSE) reply and
 synchronous media call that is running.
 
 ```
@@ -30,9 +30,9 @@ Options: `--timeout SEC` (default 3600), `--quiet-seconds SEC` (default 300, so 
 
 ## Admin key
 
-The script needs an admin bearer key in `AI_GATEWAY_ADMIN_KEY`,
-`VIVID_ADMIN_API_KEY` or `OPENAI_PROXY_ADMIN_KEY`, or in the file named by
-`AI_GATEWAY_ADMIN_KEY_FILE` (default `~/.config/openai-proxy/admin-key`, mode
+The script needs an admin bearer key in `AZIZAM_ADMIN_KEY`,
+or in the file named by
+`AZIZAM_ADMIN_KEY_FILE` (default `~/.config/azizam/admin-key`, mode
 0600). Create one with `python3 proxy.py generate-admin-key safe-restart admin`.
 The key is never printed.
 
@@ -82,10 +82,10 @@ The key is never printed.
 
 ## Plain `systemctl restart`
 
-If someone skips the script, `docs/ops/openai-proxy-reliability.conf` still
+If someone skips the script, `docs/ops/azizam-reliability.conf` still
 gives a bounded graceful stop: `KillMode=mixed` signals `start.sh`, which
 forwards SIGTERM to the proxy and stops LiteLLM only after the proxy exits.
-uvicorn waits up to `AI_GATEWAY_GRACEFUL_SHUTDOWN_S` (default 120 s);
+uvicorn waits up to `AZIZAM_GRACEFUL_SHUTDOWN_S` (default 120 s);
 `TimeoutStopSec=150s` then SIGKILLs the rest. New requests already fail during
 that stop, so use `safe-restart`.
 
@@ -96,5 +96,5 @@ that stop, so use `safe-restart`.
 2. Create the admin key, store it in the key file, then
    `scripts/safe-restart --force`. The old process cannot drain.
 3. After that restart, install the drop-in and reload (no restart needed):
-   `install -m 0644 docs/ops/openai-proxy-reliability.conf ~/.config/systemd/user/openai-proxy.service.d/reliability.conf && systemctl --user daemon-reload`.
+   `install -m 0644 docs/ops/azizam-reliability.conf ~/.config/systemd/user/azizam.service.d/reliability.conf && systemctl --user daemon-reload`.
 4. Check: `scripts/safe-restart --dry-run` should print `dry run: idle`.

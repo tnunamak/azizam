@@ -118,7 +118,7 @@ type Status = {
   errors: Record<string, string>;
 };
 
-const STORAGE_KEY = 'openai-vivid-fish.api-key';
+const STORAGE_KEY = 'azizam.api-key';
 const REFRESH_MS = 8000;
 
 function fmtBytes(n: number): string {

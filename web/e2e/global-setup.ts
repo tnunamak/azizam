@@ -16,7 +16,7 @@ export default async function seed(config: FullConfig) {
   if (owner.status() !== 303)
     throw new Error(`Owner setup returned HTTP ${owner.status()}`);
   const session = await (await api.get("/admin/api/session")).json();
-  const headers = { "x-ai-gateway-csrf": session.actor.csrf_token };
+  const headers = { "x-azizam-csrf": session.actor.csrf_token };
   const post = async (url: string, data: unknown, extra = {}) => {
     const response = await api.post(url, {
       data,

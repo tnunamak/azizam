@@ -204,7 +204,7 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         response, send = await self._execute()
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers["x-gateway-cost-usd"], "0.000123000")
+        self.assertEqual(response.headers["x-azizam-cost-usd"], "0.000123000")
         send.assert_awaited_once()
         self.assertEqual(len(self.receipts), 1)
         receipt = self.receipts[0]

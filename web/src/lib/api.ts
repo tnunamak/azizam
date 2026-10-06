@@ -4,8 +4,8 @@
  * parsed from the `{"error":{code,message}}` envelope.
  *
  * Auth model: same-origin session cookie. Writes additionally require
- *   x-ai-gateway-admin-action: 1
- *   x-ai-gateway-csrf: <token from GET /admin/api/session>
+ *   x-azizam-admin-action: 1
+ *   x-azizam-csrf: <token from GET /admin/api/session>
  * The CSRF token is fetched lazily, cached, and refreshed once on a
  * 403 admin_csrf_required (rolled session). No secret values are ever
  * logged by this module. */
@@ -709,8 +709,8 @@ async function rawFetch(
     headers.set("content-type", "application/json");
   }
   if (method !== "GET") {
-    headers.set("x-ai-gateway-admin-action", "1");
-    if (csrfToken) headers.set("x-ai-gateway-csrf", csrfToken);
+    headers.set("x-azizam-admin-action", "1");
+    if (csrfToken) headers.set("x-azizam-csrf", csrfToken);
   }
   return fetch(path, {
     method,

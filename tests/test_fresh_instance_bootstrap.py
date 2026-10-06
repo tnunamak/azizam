@@ -5,7 +5,7 @@ These tests exercise the pieces that matter for a new self-hoster:
   2. default_profiles.seed_default_profiles() populates profiles into a blank DB.
   3. service_registry.ensure_service_registry() accepts a minimal config without
      touching any live data.
-  4. AI_GATEWAY_ADMIN_DB env override is honoured -- we never touch data/admin.db.
+  4. AZIZAM_ADMIN_DB env override is honoured -- we never touch data/admin.db.
 
 All tests use a TemporaryDirectory so they are hermetic and leave no state.
 """
@@ -119,10 +119,10 @@ class TestFreshInstanceBootstrap(unittest.TestCase):
     # -- 4. env override guard -------------------------------------------------
 
     def test_ai_gateway_admin_db_env_is_respected(self) -> None:
-        """Verify the module honours AI_GATEWAY_ADMIN_DB when set."""
-        saved = os.environ.get("AI_GATEWAY_ADMIN_DB")
+        """Verify the module honours AZIZAM_ADMIN_DB when set."""
+        saved = os.environ.get("AZIZAM_ADMIN_DB")
         try:
-            os.environ["AI_GATEWAY_ADMIN_DB"] = str(self.db)
+            os.environ["AZIZAM_ADMIN_DB"] = str(self.db)
             # Test the lower-level store directly: init at our env-specified path.
             # Re-importing proxy.py to test the full path resolution would have
             # heavy module-level side effects; the env var is documented as the
@@ -133,9 +133,9 @@ class TestFreshInstanceBootstrap(unittest.TestCase):
             self.assertTrue(self.db.exists())
         finally:
             if saved is None:
-                os.environ.pop("AI_GATEWAY_ADMIN_DB", None)
+                os.environ.pop("AZIZAM_ADMIN_DB", None)
             else:
-                os.environ["AI_GATEWAY_ADMIN_DB"] = saved
+                os.environ["AZIZAM_ADMIN_DB"] = saved
 
     # -- 5. live DB isolation --------------------------------------------------
 

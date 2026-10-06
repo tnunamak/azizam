@@ -55,6 +55,8 @@ HttpLoadUnloadDriver  (http-load-unload)
 
 from __future__ import annotations
 
+from gateway.compat import get_env
+
 import asyncio
 import os
 import subprocess
@@ -1117,7 +1119,7 @@ class SystemdDriver:
     @staticmethod
     def _dropin_text(activation: Mapping[str, Any]) -> str:
         text = (
-            "# Managed by openai-proxy. Do not edit by hand; set role `model:`/`mmproj:` in proxy_config.yml.\n"
+            "# Managed by azizam. Do not edit by hand; set role `model:`/`mmproj:` in proxy_config.yml.\n"
         )
         profile = activation.get("profile")
         if profile:
@@ -1449,7 +1451,7 @@ class HttpLoadUnloadDriver:
                 return str(key)
         env_var = dc.get("admin_key_env", "")
         if env_var:
-            return os.environ.get(env_var, "")
+            return get_env(env_var, "")
         return ""
 
     @staticmethod
@@ -1462,7 +1464,7 @@ class HttpLoadUnloadDriver:
                 return str(key)
         env_var = dc.get("api_key_env", "")
         if env_var:
-            return os.environ.get(env_var, "")
+            return get_env(env_var, "")
         return ""
 
     async def _get_loaded_model(self, base_url: str, verify_ep: str, api_key: str) -> Optional[str]:

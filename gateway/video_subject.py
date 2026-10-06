@@ -165,6 +165,6 @@ def warnings_for(count: int | None, *, explicit: bool, subject: str) -> list[str
     if count > 1 and not explicit:
         return [f"{count} people matched '{subject}' in the source video (background people count). "
                 "Only the largest one (subject_index 0) was replaced. To pick another, set "
-                "extensions.com.vividfish.workflow.subject_index (0 = largest at first appearance, 1 = next, ...) or "
+                "extensions.com.azizam.workflow.subject_index (0 = largest at first appearance, 1 = next, ...) or "
                 "source_point_x/source_point_y (0 to 1, a point on the person in the first frame)."]
     return []

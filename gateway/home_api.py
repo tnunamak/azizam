@@ -459,7 +459,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                             response = await client.get(path, headers={"authorization": f"Bearer {key}"})
             ok = response.is_success
             reason = ("A one-token local chat request succeeded." if fast_allowed else "Your key can reach the model catalog. Chat was not tested because a permitted local fast model was not confirmed.") if ok else f"The gateway returned HTTP {response.status_code}. Check your key's access and service status."
-            request_id = response.headers.get("x-ai-gateway-request-id")
+            request_id = response.headers.get("x-azizam-request-id")
         except (TimeoutError, httpx.HTTPError):
             ok, reason, request_id = False, "The connection test timed out or could not reach the gateway.", None
         return _json({"ok": ok, "latency_ms": round((time.perf_counter() - started) * 1000),

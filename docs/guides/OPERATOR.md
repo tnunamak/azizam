@@ -1,6 +1,6 @@
 # Operator guide
 
-Use this guide to run a Vivid Fish AI Gateway for yourself, family, friends,
+Use this guide to run a Azizam for yourself, family, friends,
 or local apps. The gateway gives clients one endpoint and one key while you
 control engines, providers, people, access plans, and spend.
 
@@ -215,7 +215,7 @@ again with the same data volume.
 
 For a running local service managed by systemd, restart the gateway only with
 the `scripts/safe-restart` procedure. Use the dry-run mode described there
-when you need to see in-flight work. A bare `systemctl --user restart openai-proxy` bypasses that procedure. It can cut
+when you need to see in-flight work. A bare `systemctl --user restart azizam` bypasses that procedure. It can cut
 streaming replies and synchronous media calls that are still running. See
 [Safe restart](../ops/SAFE_RESTART.md).
 

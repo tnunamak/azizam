@@ -2,8 +2,8 @@
 
 Date: 2026-05-15
 Status: live gateway integration in progress
-Product: **Vivid Fish AI Gateway** (project directory still named
-`openai-proxy`; public examples use `https://ai.example.com`).
+Product: **Azizam** (project directory still named
+`azizam`; public examples use `https://ai.example.com`).
 
 This document defines the smallest set of stable contracts the gateway needs
 before it grows more endpoints, adapters, or scheduler behavior.
@@ -96,7 +96,7 @@ Anthropic/Ollama protocol frontends:
   extension inputs.
 - `gateway/extensions.py` — typed namespaced request-extension validation with
   accepted/rejected/ignored outcomes. The canonical namespace for
-  gateway-owned controls is `com.vividfish.workflow`.
+  gateway-owned controls is `com.azizam.workflow`.
 - `gateway/image_extensions.py` — image-route extension/manifest binding layer
   consumed by the image handlers when mounted.
 - `gateway/capabilities.py` — pure capability and resource-estimate records
@@ -475,7 +475,7 @@ Profiles are where the gateway maps:
 
 Backend-native power knobs (denoise, controlnet strength, model-specific
 controls) belong under namespaced request extensions
-(`extensions.com.vividfish.workflow.*`), not as global OpenAI fields. Native
+(`extensions.com.azizam.workflow.*`), not as global OpenAI fields. Native
 passthrough remains opt-in, scoped per profile, and is not a blanket ComfyUI
 DSL.
 
@@ -487,7 +487,7 @@ workflow extension.
 
 Non-standard conditioning assets remain workflow extensions. For multipart
 image edits, an extension value such as
-`extensions.com.vividfish.workflow.control_image={"multipart_field":"control_image"}`
+`extensions.com.azizam.workflow.control_image={"multipart_field":"control_image"}`
 may point at an extra uploaded form part. That form part is transport only; the
 selected manifest must still declare and bind `control_image` before the route
 will apply it.

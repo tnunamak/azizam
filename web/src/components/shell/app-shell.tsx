@@ -521,7 +521,7 @@ function CommandPalette({
     setAddressError(false);
     setCopyAddress(null);
     try {
-      const response = await fetch("/.well-known/ai-gateway");
+      const response = await fetch("/.well-known/azizam");
       if (!response.ok) throw new Error();
       const discovery = await response.json();
       const base =
@@ -727,7 +727,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   const { data: instanceData } = useQuery({
     queryKey: ["foundation", "instance"],
     queryFn: async () => {
-      const response = await fetch("/.well-known/ai-gateway");
+      const response = await fetch("/.well-known/azizam");
       if (!response.ok) throw new Error("Instance details are unavailable");
       return response.json() as Promise<{
         service?: { name?: string };

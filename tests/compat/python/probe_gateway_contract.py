@@ -2,7 +2,7 @@
 
 These probes intentionally avoid SDK dependencies so they can gate the
 gateway's OpenAI/Anthropic wire contracts directly. They are skipped unless
-``OPENAI_PROXY_BASE_URL`` and ``OPENAI_PROXY_API_KEY`` are configured.
+``AZIZAM_BASE_URL`` and ``AZIZAM_API_KEY`` are configured.
 """
 
 from __future__ import annotations
@@ -29,8 +29,8 @@ class HttpResponse:
 
 
 @unittest.skipUnless(
-    os.environ.get("OPENAI_PROXY_BASE_URL"),
-    "OPENAI_PROXY_BASE_URL not set; live gateway contract probe disabled",
+    os.environ.get("AZIZAM_BASE_URL"),
+    "AZIZAM_BASE_URL not set; live gateway contract probe disabled",
 )
 class TestGatewayContractHTTP(unittest.TestCase):
     def setUp(self) -> None:

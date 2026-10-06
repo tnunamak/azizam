@@ -1071,7 +1071,7 @@ def _signed_out_hero(
     oidc_enabled: bool,
     login_url: str,
     owner_exists: bool = True,
-    brand: str = "AI Gateway",
+    brand: str = "Azizam",
     wordmark: tuple[str, str] | None = None,
 ) -> str:
     """Signed-out landing hero.
@@ -1508,7 +1508,7 @@ def _base_url_card() -> str:
 
 def render_user_portal(
     *,
-    title: str = "AI Gateway",
+    title: str = "Azizam",
     public_base_url: str = "https://ai.vivid.fish",
     account: Mapping[str, Any] | None = None,
     oidc_enabled: bool = False,
@@ -1516,7 +1516,7 @@ def render_user_portal(
     login_url: str = "/login?return_to=/",
     logout_url: str = "/me/logout",
     csrf_token: str = "",
-    brand: str = "AI Gateway",
+    brand: str = "Azizam",
     wordmark: tuple[str, str] | None = None,
 ) -> str:
     """Return the normal-user HTML portal.
@@ -1889,8 +1889,8 @@ def render_user_portal(
     const method = options.method || "GET";
     const body = options.body;
     const headers = {{
-      "x-ai-gateway-user-action": "1",
-      "x-ai-gateway-csrf": csrfToken
+      "x-azizam-user-action": "1",
+      "x-azizam-csrf": csrfToken
     }};
     if (body !== undefined) headers["content-type"] = "application/json";
     const response = await fetch(path, {{

@@ -69,8 +69,8 @@ async function homeRequest<T>(
   if (body !== undefined) {
     const session = await accountApi.session();
     headers.set("content-type", "application/json");
-    headers.set("x-ai-gateway-user-action", "1");
-    headers.set("x-ai-gateway-csrf", session.csrf_token);
+    headers.set("x-azizam-user-action", "1");
+    headers.set("x-azizam-csrf", session.csrf_token);
   }
   const response = await fetch(path, {
     credentials: "same-origin",

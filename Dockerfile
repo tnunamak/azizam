@@ -25,6 +25,4 @@ VOLUME ["/app/data"]
 
 EXPOSE 5000
 
-ENV OPENAI_PROXY_PORT=5000
-
 CMD ["python3", "proxy.py"]

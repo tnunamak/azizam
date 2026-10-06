@@ -1,25 +1,25 @@
 // Vercel AI SDK Node probe.
 //
 // Run only after `npm install` in this directory and after exporting
-// OPENAI_PROXY_BASE_URL / OPENAI_PROXY_API_KEY.
+// AZIZAM_BASE_URL / AZIZAM_API_KEY.
 //
 //   cd tests/compat/node && npm install
-//   OPENAI_PROXY_BASE_URL=http://127.0.0.1:8080 \
-//   OPENAI_PROXY_API_KEY=sk-... \
-//   OPENAI_PROXY_SMOKE_LIVE_LLM=1 \
-//   OPENAI_PROXY_SMOKE_LIVE_EMBEDDINGS=1 \
+//   AZIZAM_BASE_URL=http://127.0.0.1:8080 \
+//   AZIZAM_API_KEY=sk-... \
+//   AZIZAM_SMOKE_LIVE_LLM=1 \
+//   AZIZAM_SMOKE_LIVE_EMBEDDINGS=1 \
 //   node --test vercel-ai-sdk.test.mjs
 
 import test from "node:test";
 import assert from "node:assert/strict";
 
-const baseURL = process.env.OPENAI_PROXY_BASE_URL;
-const apiKey = process.env.OPENAI_PROXY_API_KEY || "anonymous";
-const liveLLM = process.env.OPENAI_PROXY_SMOKE_LIVE_LLM === "1";
-const liveEmbeddings = process.env.OPENAI_PROXY_SMOKE_LIVE_EMBEDDINGS === "1";
+const baseURL = process.env.AZIZAM_BASE_URL;
+const apiKey = process.env.AZIZAM_API_KEY || "anonymous";
+const liveLLM = process.env.AZIZAM_SMOKE_LIVE_LLM === "1";
+const liveEmbeddings = process.env.AZIZAM_SMOKE_LIVE_EMBEDDINGS === "1";
 
 if (!baseURL) {
-  test("vercel-ai-sdk probe disabled", { skip: "OPENAI_PROXY_BASE_URL not set" }, () => {});
+  test("vercel-ai-sdk probe disabled", { skip: "AZIZAM_BASE_URL not set" }, () => {});
 } else {
   const [{ generateText, embed }, { createOpenAI }] = await Promise.all([
     import("ai"),
@@ -33,10 +33,10 @@ if (!baseURL) {
 
   test(
     "generateText returns text envelope",
-    { skip: liveLLM ? false : "OPENAI_PROXY_SMOKE_LIVE_LLM=1 not set" },
+    { skip: liveLLM ? false : "AZIZAM_SMOKE_LIVE_LLM=1 not set" },
     async () => {
       const result = await generateText({
-        model: openai.chat(process.env.OPENAI_PROXY_SMOKE_OPENAI_MODEL || "default"),
+        model: openai.chat(process.env.AZIZAM_SMOKE_OPENAI_MODEL || "default"),
         prompt: "Reply with the word ok.",
         maxOutputTokens: 8,
         maxRetries: 0,
@@ -52,11 +52,11 @@ if (!baseURL) {
 
   test(
     "embed returns vector envelope",
-    { skip: liveEmbeddings ? false : "OPENAI_PROXY_SMOKE_LIVE_EMBEDDINGS=1 not set" },
+    { skip: liveEmbeddings ? false : "AZIZAM_SMOKE_LIVE_EMBEDDINGS=1 not set" },
     async () => {
       const result = await embed({
         model: openai.embedding(
-          process.env.OPENAI_PROXY_SMOKE_EMBEDDINGS_MODEL || "nomic-embed-text-v1.5",
+          process.env.AZIZAM_SMOKE_EMBEDDINGS_MODEL || "nomic-embed-text-v1.5",
         ),
         value: "compatibility probe",
         maxRetries: 0,

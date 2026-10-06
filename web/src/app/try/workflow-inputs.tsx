@@ -558,7 +558,7 @@ function writeExtensionContainer(
 ) {
   const envelope = {
     ...extensionEnvelope(root),
-    "com.vividfish.workflow": workflowExtension,
+    "com.azizam.workflow": workflowExtension,
   };
   root.extensions =
     typeof root.extensions === "string" ? JSON.stringify(envelope) : envelope;
@@ -576,13 +576,13 @@ function validateExtensionEnvelope(root: JsonObject) {
   if (!envelope) {
     throw new Error("extensions must be a JSON object.");
   }
-  const namespace = envelope["com.vividfish.workflow"];
+  const namespace = envelope["com.azizam.workflow"];
   if (
     namespace !== undefined &&
     namespace !== null &&
     (typeof namespace !== "object" || Array.isArray(namespace))
   ) {
-    throw new Error("extensions.com.vividfish.workflow must be a JSON object.");
+    throw new Error("extensions.com.azizam.workflow must be a JSON object.");
   }
 }
 
@@ -601,7 +601,7 @@ function parseExtensionString(value: string): JsonObject {
 }
 
 function namespaceObject(value: JsonObject) {
-  const namespace = value["com.vividfish.workflow"];
+  const namespace = value["com.azizam.workflow"];
   if (namespace && typeof namespace === "object" && !Array.isArray(namespace)) {
     return namespace as JsonObject;
   }

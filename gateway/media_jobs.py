@@ -27,6 +27,8 @@ see the workstream note for suggested integration points.
 
 from __future__ import annotations
 
+from gateway.compat import get_env
+
 import json
 import os
 import shutil
@@ -44,7 +46,7 @@ from gateway.redaction import (
 )
 
 _default_db = Path(__file__).resolve().parent.parent / "data" / "media_jobs.db"
-DB_PATH = Path(os.environ["AI_GATEWAY_MEDIA_JOBS_DB"]) if os.environ.get("AI_GATEWAY_MEDIA_JOBS_DB") else _default_db
+DB_PATH = Path(get_env("AZIZAM_MEDIA_JOBS_DB")) if get_env("AZIZAM_MEDIA_JOBS_DB") else _default_db
 
 # Retention: 14 days. Match the receipt store; media jobs reference durable
 # assets but the job record itself is a coordination surface, not the archive.

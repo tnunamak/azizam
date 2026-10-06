@@ -2,7 +2,7 @@
 
 This is the canonical product information-architecture and presentation
 contract for the React UI. The shared component contracts live in
-`docs/design/VIVID_FISH_COMPONENT_LIBRARY_SPEC.md`; historical design and
+`docs/design/AZIZAM_COMPONENT_LIBRARY_SPEC.md`; historical design and
 implementation plans remain useful context but do not override these docs.
 
 This document is the binding spec for the React rebuild of the gateway UI.
@@ -23,8 +23,8 @@ that layer structural.
   gateway (FastAPI) serves the built assets; in dev, `next dev` proxies API
   routes to the gateway via `rewrites`.
 - **Data**: existing JSON APIs only (`/admin/api/*`, `/me/api/*`). Same-origin
-  session cookie auth + `x-ai-gateway-admin-action: 1` +
-  `x-ai-gateway-csrf: <token>` headers on writes. NO new server rendering of
+  session cookie auth + `x-azizam-admin-action: 1` +
+  `x-azizam-csrf: <token>` headers on writes. NO new server rendering of
   HTML in Python for these surfaces. If an API gap blocks a surface, extend
   `gateway/admin_api.py` (JSON), never the HTML renderers.
 - **Cutover**: strangler. New surfaces mount under `/ui/` (gateway

@@ -39,8 +39,8 @@ export const productApi = {
       credentials: "same-origin",
       headers: {
         "content-type": "application/json",
-        "x-ai-gateway-user-action": "1",
-        "x-ai-gateway-csrf": session.csrf_token,
+        "x-azizam-user-action": "1",
+        "x-azizam-csrf": session.csrf_token,
       },
       body: JSON.stringify(event),
     });

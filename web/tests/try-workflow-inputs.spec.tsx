@@ -119,7 +119,7 @@ describe("workflow input helpers", () => {
   it("does not replace existing combined size defaults", () => {
     expect(workflowDefaults(mappedInputs, { size: "640x480" })).toEqual({
       size: "640x480",
-      extensions: { "com.vividfish.workflow": { steps: 8 } },
+      extensions: { "com.azizam.workflow": { steps: 8 } },
     });
   });
 
@@ -127,7 +127,7 @@ describe("workflow input helpers", () => {
     const example = {
       request: {
         model: "slow",
-        extensions: { "com.vividfish.workflow": { steps: 4 } },
+        extensions: { "com.azizam.workflow": { steps: 4 } },
       },
     };
 
@@ -137,9 +137,9 @@ describe("workflow input helpers", () => {
     expect(defaults.request).toEqual({
       model: "slow",
       size: "1024x768",
-      extensions: { "com.vividfish.workflow": { steps: 10 } },
+      extensions: { "com.azizam.workflow": { steps: 10 } },
     });
-    expect(example.request.extensions["com.vividfish.workflow"].steps).toBe(4);
+    expect(example.request.extensions["com.azizam.workflow"].steps).toBe(4);
   });
 
   it("parses and validates typed values", () => {
@@ -192,7 +192,7 @@ describe("workflow input helpers", () => {
     expect(body).toEqual({
       model: "extension",
       size: "1024x768",
-      extensions: { "com.vividfish.workflow": { steps: 8 } },
+      extensions: { "com.azizam.workflow": { steps: 8 } },
     });
 
     setWorkflowInputValue(body, mappedInputs, mappedInputs[1], 512, mapping);
@@ -200,7 +200,7 @@ describe("workflow input helpers", () => {
 
     expect(body.size).toBe("512x768");
     expect(body.extensions).toEqual({
-      "com.vividfish.workflow": { steps: 12 },
+      "com.azizam.workflow": { steps: 12 },
     });
     expect(
       readWorkflowInputValue(body, mappedInputs, mappedInputs[1], mapping),
@@ -233,20 +233,20 @@ describe("workflow input helpers", () => {
       prompt: "edit this",
       size: "1024x768",
       extensions:
-        '{"com.example.other":{"kept":true},"com.vividfish.workflow":{"steps":8}}',
+        '{"com.example.other":{"kept":true},"com.azizam.workflow":{"steps":8}}',
     };
 
     setWorkflowInputValue(form, mappedInputs, mappedInputs[3], 10, mapping);
 
     expect(form.extensions).toBe(
-      '{"com.example.other":{"kept":true},"com.vividfish.workflow":{"steps":10}}',
+      '{"com.example.other":{"kept":true},"com.azizam.workflow":{"steps":10}}',
     );
   });
 
   it("rejects invalid extension JSON instead of overwriting it", () => {
     expect(() =>
       parseWorkflowInputs(
-        JSON.stringify({ extensions: '{"com.vividfish.workflow":' }),
+        JSON.stringify({ extensions: '{"com.azizam.workflow":' }),
         mappedInputs,
         mapping,
       ),
@@ -394,7 +394,7 @@ describe("WorkflowInputs", () => {
       <WorkflowInputs
         inputs={mappedInputs}
         mapping={mapping}
-        json={JSON.stringify({ extensions: '{"com.vividfish.workflow":' })}
+        json={JSON.stringify({ extensions: '{"com.azizam.workflow":' })}
         onChange={() => undefined}
       />,
     );

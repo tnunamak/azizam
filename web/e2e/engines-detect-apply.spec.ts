@@ -80,8 +80,8 @@ test.beforeAll(async ({ baseURL }) => {
   });
   const session = await (await registryApi.get("/admin/api/session")).json();
   registryHeaders = {
-    "x-ai-gateway-csrf": session.actor.csrf_token,
-    "x-ai-gateway-admin-action": "1",
+    "x-azizam-csrf": session.actor.csrf_token,
+    "x-azizam-admin-action": "1",
   };
   const response = await registryApi.get(
     "/admin/api/operator/service-registry",
@@ -171,7 +171,7 @@ for (const theme of ["light", "dark"]) {
       const session = await (
         await page.request.get("/admin/api/session")
       ).json();
-      const headers = { "x-ai-gateway-csrf": session.actor.csrf_token };
+      const headers = { "x-azizam-csrf": session.actor.csrf_token };
       const registryResponse = await page.request.get(
         "/admin/api/operator/service-registry",
       );

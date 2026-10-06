@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """Print each allowed capability's projected availability and evidence.
 
-Use AI_GATEWAY_API_KEY for a runtime App key. Only the public capability
+Use AZIZAM_API_KEY for a runtime App key. Only the public capability
 discovery endpoint is read; this command never probes or starts engines.
 """
 
 from __future__ import annotations
+
+import sys as _compat_sys
+from pathlib import Path as _CompatPath
+_compat_sys.path.insert(0, str(_CompatPath(__file__).resolve().parents[2]))
+from gateway.compat import get_env
 
 import argparse
 import json
@@ -20,7 +25,7 @@ from typing import Any, Mapping
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("base_url", help="Gateway base URL, for example http://127.0.0.1:18080")
-    parser.add_argument("--api-key", default=os.environ.get("AI_GATEWAY_API_KEY"), help="Bearer key; defaults to AI_GATEWAY_API_KEY")
+    parser.add_argument("--api-key", default=get_env("AZIZAM_API_KEY"), help="Bearer key; defaults to AZIZAM_API_KEY")
     args = parser.parse_args()
     base_url = args.base_url.rstrip("/")
     parsed = urlsplit(base_url)

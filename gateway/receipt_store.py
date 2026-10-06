@@ -28,6 +28,8 @@ the requested audience.
 
 from __future__ import annotations
 
+from gateway.compat import get_env
+
 import json
 import os
 import shutil
@@ -41,7 +43,7 @@ from gateway.receipts import RouteReceipt, serialize_receipt_for_audience
 from gateway.redaction import assert_safe_mapping, assert_safe_top_level
 
 _default_db = Path(__file__).resolve().parent.parent / "data" / "receipts.db"
-DB_PATH = Path(os.environ["AI_GATEWAY_RECEIPTS_DB"]) if os.environ.get("AI_GATEWAY_RECEIPTS_DB") else _default_db
+DB_PATH = Path(get_env("AZIZAM_RECEIPTS_DB")) if get_env("AZIZAM_RECEIPTS_DB") else _default_db
 
 # Retention: 14 days. Receipts are diagnostics, not audit logs; the cap keeps
 # the database bounded on a long-running gateway.

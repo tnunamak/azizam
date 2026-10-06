@@ -1,4 +1,4 @@
-# Vivid Fish reference UI
+# Azizam reference UI
 
 These PNGs are a user-provided design handoff, curated from the prior
 untracked staging set on 2026-08-11. The stable filenames describe the page,
@@ -40,4 +40,4 @@ values, timestamps, counts, uptime/latency/error metrics, service/provider
 names, chart data, exact dimensions, pixel measurements, UUID source names,
 and any control that is not backed by a current product contract. Product
 requirements remain in [`../../WEB_UI_STEERING.md`](../../WEB_UI_STEERING.md)
-and [`../../VIVID_FISH_COMPONENT_LIBRARY_SPEC.md`](../../VIVID_FISH_COMPONENT_LIBRARY_SPEC.md).
+and [`../../AZIZAM_COMPONENT_LIBRARY_SPEC.md`](../../AZIZAM_COMPONENT_LIBRARY_SPEC.md).
