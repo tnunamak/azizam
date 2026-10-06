@@ -74,6 +74,19 @@ def _loaded(path: str | None):
     return fake
 
 
+def _assert_declared_metadata(test: unittest.TestCase, entry: dict, declaration: dict) -> None:
+    """Compare fallback fields directly with the effective operator declaration."""
+    test.assertIsNotNone(declaration)
+    test.assertEqual(entry["type"], declaration.get("type", "language"))
+    test.assertEqual(entry["architecture"], {
+        "input_modalities": declaration["input_modalities"],
+        "output_modalities": declaration.get("output_modalities", ["text"]),
+    })
+    test.assertEqual(set(entry.get("tags", [])), set(declaration.get("tags", [])))
+    if not declaration.get("tags"):
+        test.assertNotIn("tags", entry)
+
+
 def _strip_contract_fields(payload: dict) -> dict:
     out = copy.deepcopy(payload)
     for entry in out.get("data", []):
@@ -169,17 +182,13 @@ class ModelListEndpointTests(unittest.TestCase):
         self.assertEqual(by_id["embed"]["type"], "embedding")
         self.assertEqual(by_id["decide"]["type"], "decision")
 
-    def test_dynamic_current_aliases_claim_only_text_in_text_out(self) -> None:
-        # Any local LLM can be the loaded one; cydonia-24b is text-only.
-        cydonia = next(m for m in proxy.config["models"] if m["id"] == "cydonia-24b")
-        self.assertIsNone(cydonia["mmproj"])
+    def test_dynamic_current_aliases_use_declared_fallback_when_unobserved(self) -> None:
+        declarations = proxy._model_metadata_sources().declared
         by_id = {entry["id"]: entry for entry in self._list()["data"]}
         for model_id in DYNAMIC:
             with self.subTest(model=model_id):
                 entry = by_id[model_id]
-                self.assertEqual(entry["type"], "language")
-                self.assertEqual(entry["architecture"], {"input_modalities": ["text"], "output_modalities": ["text"]})
-                self.assertNotIn("tags", entry)
+                _assert_declared_metadata(self, entry, declarations(model_id))
                 self.assertNotIn("max_tokens", entry)
 
     def _with_loaded(self, path: str | None) -> None:
@@ -191,6 +200,16 @@ class ModelListEndpointTests(unittest.TestCase):
         self.addCleanup(visibility.stop)
 
     def test_dynamic_current_aliases_inherit_the_loaded_model(self) -> None:
+        # Make fallback distinguishable from the loaded model's vision metadata.
+        roles = copy.deepcopy(proxy.config.get("roles") or {})
+        for alias in DYNAMIC:
+            roles.setdefault(alias, {})["model_metadata"] = {
+                "type": "language", "input_modalities": ["text"],
+                "output_modalities": ["text"], "tags": [],
+            }
+        declaration_patch = patch.dict(proxy.config, {"roles": roles})
+        declaration_patch.start()
+        self.addCleanup(declaration_patch.stop)
         self._with_loaded(QWEN_PATH)
         listed = self._list()
         by_id = {entry["id"]: entry for entry in listed["data"]}
@@ -209,12 +228,14 @@ class ModelListEndpointTests(unittest.TestCase):
 
     def test_dynamic_aliases_fall_back_when_the_loaded_model_is_undeclared(self) -> None:
         cydonia = next(m for m in proxy.config["models"] if m["id"] == "cydonia-24b")
+        self.assertIsNone(cydonia["mmproj"])
         self._with_loaded(cydonia["path"])
+        declarations = proxy._model_metadata_sources().declared
+        self.assertIsNone(declarations("cydonia-24b"))
         by_id = {entry["id"]: entry for entry in self._list()["data"]}
         for model_id in DYNAMIC:
             with self.subTest(model=model_id):
-                self.assertEqual(by_id[model_id]["architecture"]["input_modalities"], ["text"])
-                self.assertNotIn("tags", by_id[model_id])
+                _assert_declared_metadata(self, by_id[model_id], declarations(model_id))
 
     def test_fast_alias_drops_reasoning_because_of_its_policy_data(self) -> None:
         # Remove the `reasoning_effort: none` overlay from the current-fast
@@ -293,13 +314,14 @@ class ModelListEndpointTests(unittest.TestCase):
     def test_member_catalog_uses_declared_current_metadata(self) -> None:
         # Without a loaded observation the dynamic aliases report the operator's
         # declaration for the slot (proxy_config.yml), and no extra lookup runs.
+        registry = proxy.ADMIN_STORE.get_service_registry()
+        declarations = proxy._model_metadata_sources(registry=registry).declared
         with patch.object(proxy, "_current_loaded_llm_model_ids", side_effect=AssertionError("extra loaded-state lookup")) as lookup:
-            index = proxy._catalog_model_metadata(proxy._current_loaded_model_entries(), proxy.ADMIN_STORE.get_service_registry(), [])
+            index = proxy._catalog_model_metadata(proxy._current_loaded_model_entries(), registry, [])
         lookup.assert_not_called()
-        self.assertEqual(index["current"]["architecture"]["input_modalities"], ["text", "image"])
-        self.assertEqual(set(index["current"]["tags"]), {"reasoning", "tool-use", "vision"})
-        self.assertEqual(index["current-fast"]["architecture"]["input_modalities"], ["text", "image"])
-        self.assertEqual(set(index["current-fast"]["tags"]), {"tool-use", "vision"})
+        for alias in DYNAMIC:
+            with self.subTest(model=alias):
+                _assert_declared_metadata(self, index[alias], declarations(alias))
 
 
 class RequestLoadedMetadataTests(unittest.TestCase):
@@ -309,8 +331,11 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         _start_model_list_patches(self, real_loaded_state=True)
         self.requests: list[tuple[str, str]] = []
         self.active = "tabby"
-        declaration = {"type": "language", "input_modalities": ["text"],
-                       "output_modalities": ["text"], "tags": ["tool-use"]}
+        # A text-only fallback exposes stale inheritance after a backend switch
+        # and accidental loaded-state inheritance for catalog-only profiles.
+        fallback = {"type": "language", "input_modalities": ["text"],
+                    "output_modalities": ["text"], "tags": []}
+        declaration = {**fallback, "tags": ["tool-use"]}
         self.backends = {
             "tabby": {"base_url": "http://tabby.test", "health_endpoint": "/health",
                       "priority": 1, "state_type": "tabbyapi",
@@ -319,7 +344,8 @@ class RequestLoadedMetadataTests(unittest.TestCase):
                           {"id": "private-public", "upstream_model": "loaded-tabby",
                            "model": "deployment-tabby", "context_window": 4096,
                            "model_metadata": copy.deepcopy(declaration)},
-                          *[{"id": alias, "context_window": 202752} for alias in sorted(DYNAMIC)],
+                          *[{"id": alias, "context_window": 202752,
+                             "model_metadata": copy.deepcopy(fallback)} for alias in sorted(DYNAMIC)],
                       ]},
             "kobold": {"base_url": "http://kobold.test", "health_endpoint": "/health",
                        "priority": 2, "state_type": "llama_cpp",
@@ -422,8 +448,8 @@ class RequestLoadedMetadataTests(unittest.TestCase):
             target = self._route_current()
             listed = self._list()
         self.assertEqual((target.backend, target.model), ("kobold", "loaded-kobold"))
-        self.assertEqual(listed["current"]["architecture"]["input_modalities"], ["text"])
-        self.assertNotIn("tags", listed["current"])
+        _assert_declared_metadata(
+            self, listed["current"], proxy._model_metadata_sources().declared("current"))
         self.assertGreaterEqual(legacy.call_count, 1)
 
     def test_other_backend_preserves_main_availability_without_inheriting_cached_path(self) -> None:
@@ -440,8 +466,8 @@ class RequestLoadedMetadataTests(unittest.TestCase):
         self.assertEqual(calls, baseline_calls)
         self.assertEqual(calls, [("engine.test", "/health")])
         for alias in DYNAMIC:
-            self.assertEqual(listed[alias]["architecture"]["input_modalities"], ["text"])
-            self.assertNotIn("tags", listed[alias])
+            _assert_declared_metadata(
+                self, listed[alias], proxy._model_metadata_sources().declared(alias))
 
     def test_loaded_window_wins_over_static_alias_window(self) -> None:
         listed = self._list()
@@ -505,12 +531,12 @@ class RequestLoadedMetadataTests(unittest.TestCase):
                         self.assertEqual(calls, baseline_calls)
                         self.assertEqual(len(calls), 2 if visibility == "available" else 0)
 
-    def test_catalog_profile_has_no_identity_and_keeps_conservative_metadata(self) -> None:
+    def test_catalog_profile_has_no_identity_and_keeps_declared_metadata(self) -> None:
         with patch.object(proxy, "_profile_target_visibility", return_value="catalog"):
             listed = self._list()
         for alias in DYNAMIC:
-            self.assertEqual(listed[alias]["architecture"]["input_modalities"], ["text"])
-            self.assertNotIn("tags", listed[alias])
+            _assert_declared_metadata(
+                self, listed[alias], proxy._model_metadata_sources().declared(alias))
         self.assertEqual(self.requests, [])
 
     def test_existing_context_probe_cache_matches_main(self) -> None:
