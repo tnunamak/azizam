@@ -239,7 +239,9 @@ class AdminStore(Protocol):
         self, *, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]: ...
 
-    def recent_audit(self, *, limit: int) -> list[dict[str, Any]]: ...
+    def recent_audit(
+        self, *, limit: int, include_internal: bool = False
+    ) -> list[dict[str, Any]]: ...
 
     def get_audit_event(self, event_id: str) -> dict[str, Any] | None: ...
 
@@ -250,6 +252,7 @@ class AdminStore(Protocol):
         actor_id: str | None = None,
         action_prefix: str | None = None,
         exclude_access_audit: bool = False,
+        include_internal: bool = False,
         before_created_at: int | None = None,
         before_id: str | None = None,
         target_kind: str | None = None,
@@ -287,6 +290,16 @@ _AUDIT_SAFE_DETAIL_FIELDS = frozenset({
 _AUDIT_DETAIL_MAX_KEYS = 24
 _AUDIT_DETAIL_MAX_ITEMS = 24
 _AUDIT_DETAIL_MAX_STRING = 256
+_AUDIT_ACTION_LABELS = {
+    "operator.safe_restart": "Safe restart",
+    "operator.safe-restart": "Safe restart",
+    "safe_restart": "Safe restart",
+    "safe-restart": "Safe restart",
+    "deploy.smoke": "Deploy smoke check",
+    "deploy_smoke": "Deploy smoke check",
+    "service_account.deploy_smoke": "Service account deploy smoke check",
+    "service-account.deploy-smoke": "Service account deploy smoke check",
+}
 _SERVICE_AVAILABILITY_STATES = frozenset(
     {"available", "degraded", "draining", "maintenance", "disabled"}
 )
@@ -353,6 +366,9 @@ def _safe_audit_detail(key: str, value: Any) -> Any:
 def _safe_audit_record(record: Mapping[str, Any]) -> dict[str, Any]:
     """Project a stored audit event into the public, copy-safe contract."""
     out = dict(record)
+    action = str(out.get("action") or "")
+    if action in _AUDIT_ACTION_LABELS:
+        out["action_label"] = _AUDIT_ACTION_LABELS[action]
     kind = str(out.get("actor_kind") or "")
     out["actor_kind"] = kind if kind in _AUDIT_ACTOR_KINDS else None
     label = out.get("actor_label")
@@ -3028,6 +3044,7 @@ def create_admin_router(
         actor_id = request.query_params.get("actor_id") or None
         action_prefix = request.query_params.get("action_prefix") or None
         exclude_access_audit = request.query_params.get("exclude_access_audit") == "true"
+        include_internal = request.query_params.get("show_internal") == "true"
         before_created_at: int | None = None
         before_id: str | None = None
         before_raw = request.query_params.get("before") or None
@@ -3062,6 +3079,7 @@ def create_admin_router(
             limit=limit,
             actor_id=actor_id,
             action_prefix=action_prefix,
+            include_internal=include_internal,
             before_created_at=before_created_at,
             before_id=before_id,
             **page_filters,

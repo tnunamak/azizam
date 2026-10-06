@@ -3002,6 +3002,51 @@ class AdminAuditEventsEndpointTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertLessEqual(len(resp.json()["records"]), 2)
 
+    def test_audit_events_hide_internal_activity_until_filter_enabled(self) -> None:
+        admin_store.record_audit(
+            "operator.safe_restart",
+            actor_kind="system",
+            actor_id="safe-restart",
+            target_kind="gateway",
+            target_id="local",
+            path=self.db,
+        )
+        admin_store.record_audit(
+            "service_account.deploy_smoke",
+            actor_kind="service_account",
+            actor_id="deploy-smoke",
+            target_kind="gateway",
+            target_id="local",
+            path=self.db,
+        )
+        admin_store.record_audit(
+            "app.create",
+            actor_kind="user",
+            actor_id="usr_owner",
+            target_kind="app",
+            target_id="app_visible",
+            path=self.db,
+        )
+
+        default_resp = self.client.get("/admin/api/audit-events", headers=self._auth())
+        self.assertEqual(default_resp.status_code, 200, default_resp.text)
+        default_actions = [event["action"] for event in default_resp.json()["records"]]
+        self.assertIn("app.create", default_actions)
+        self.assertNotIn("operator.safe_restart", default_actions)
+        self.assertNotIn("service_account.deploy_smoke", default_actions)
+
+        filtered_resp = self.client.get(
+            "/admin/api/audit-events?show_internal=true", headers=self._auth()
+        )
+        self.assertEqual(filtered_resp.status_code, 200, filtered_resp.text)
+        events = filtered_resp.json()["records"]
+        labels = {event["action"]: event.get("action_label") for event in events}
+        self.assertEqual(labels["operator.safe_restart"], "Safe restart")
+        self.assertEqual(
+            labels["service_account.deploy_smoke"],
+            "Service account deploy smoke check",
+        )
+
 
 class ConfigExportTests(unittest.TestCase):
     """Tests for GET /admin/api/config/export (Job A, ENGINE_REGISTRY_DESIGN §5.2)."""

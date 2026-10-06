@@ -67,6 +67,16 @@ _RUNTIME_PROFILE_MAPPING_SOURCE_SPEC_BY_ID = {spec["id"]: spec for spec in RUNTI
 # service account are control-plane (used to call admin APIs).
 _DATA_PLANE_SUBJECTS = frozenset({"app"})
 _CONTROL_PLANE_SUBJECTS = frozenset({"user", "service_account"})
+INTERNAL_ACTIVITY_ACTIONS = frozenset({
+    "operator.safe_restart",
+    "operator.safe-restart",
+    "safe_restart",
+    "safe-restart",
+    "deploy.smoke",
+    "deploy_smoke",
+    "service_account.deploy_smoke",
+    "service-account.deploy-smoke",
+})
 
 
 _SCHEMA = """
@@ -1636,6 +1646,7 @@ def list_audit(
     actor_id: str | None = None,
     action_prefix: str | None = None,
     exclude_access_audit: bool = False,
+    exclude_internal_activity: bool = False,
     before_created_at: int | None = None,
     before_id: str | None = None,
     limit: int = 100,
@@ -1674,6 +1685,10 @@ def list_audit(
     if exclude_access_audit:
         clauses.append("action NOT IN (?, ?)")
         params.extend(("media.library.everyone", "usage.summary.everyone"))
+    if exclude_internal_activity:
+        placeholders = ", ".join("?" for _ in INTERNAL_ACTIVITY_ACTIONS)
+        clauses.append(f"action NOT IN ({placeholders})")
+        params.extend(sorted(INTERNAL_ACTIVITY_ACTIONS))
     if before_created_at is not None and before_id is not None:
         # Composite keyset: (created_at, id) < (before_created_at, before_id)
         # This is correct for ORDER BY created_at DESC, id DESC because we

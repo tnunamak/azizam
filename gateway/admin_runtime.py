@@ -1260,8 +1260,17 @@ class AdminSQLiteStore:
                 print(f"[admin_runtime] WARNING: on_credential_revoked callback raised: {exc}", flush=True)
         return _sanitize_credential(record or before)
 
-    def recent_audit(self, *, limit: int) -> list[dict[str, Any]]:
-        return [self._present_audit_event(row) for row in admin_store.list_audit(limit=limit, path=self.path)]
+    def recent_audit(
+        self, *, limit: int, include_internal: bool = False
+    ) -> list[dict[str, Any]]:
+        return [
+            self._present_audit_event(row)
+            for row in admin_store.list_audit(
+                limit=limit,
+                exclude_internal_activity=not include_internal,
+                path=self.path,
+            )
+        ]
 
     def get_audit_event(self, event_id: str) -> dict[str, Any] | None:
         row = admin_store.get_audit_event(event_id, path=self.path)
@@ -1297,6 +1306,7 @@ class AdminSQLiteStore:
         actor_id: str | None = None,
         action_prefix: str | None = None,
         exclude_access_audit: bool = False,
+        include_internal: bool = False,
         before_created_at: int | None = None,
         before_id: str | None = None,
         target_kind: str | None = None,
@@ -1316,6 +1326,7 @@ class AdminSQLiteStore:
             actor_id=actor_id,
             action_prefix=action_prefix,
             exclude_access_audit=exclude_access_audit,
+            exclude_internal_activity=not include_internal,
             before_created_at=before_created_at,
             before_id=before_id,
             limit=fetch_limit,

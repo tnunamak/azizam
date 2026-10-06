@@ -1058,6 +1058,28 @@ class AdminRenderSecurityTests(unittest.TestCase):
         self.assertNotIn("<script>alert", html)
         self.assertIn("&lt;script&gt;alert", html)
 
+    def test_activity_humanizes_internal_audit_actions(self) -> None:
+        snapshot = _snapshot()
+        snapshot["audit"] = [
+            {
+                "at": "2026-05-17T00:00:00Z",
+                "actor": "System",
+                "action": "operator.safe_restart",
+                "target": "gateway",
+            },
+            {
+                "at": "2026-05-17T00:01:00Z",
+                "actor": "Release bot",
+                "action": "service_account.deploy_smoke",
+                "target": "gateway",
+            },
+        ]
+        html = render_admin_dashboard(snapshot)
+        self.assertIn(">Safe restart<", html)
+        self.assertIn(">Service account deploy smoke check<", html)
+        self.assertNotIn(">operator.safe_restart<", html)
+        self.assertNotIn(">service_account.deploy_smoke<", html)
+
     def test_renders_empty_snapshot_without_crashing(self) -> None:
         html = render_admin_dashboard({})
         self.assertTrue(html.startswith("<!doctype html>"))

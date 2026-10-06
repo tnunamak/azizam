@@ -1159,6 +1159,7 @@ class FakeAdminStore:
         actor_id: str | None = None,
         action_prefix: str | None = None,
         exclude_access_audit: bool = False,
+        include_internal: bool = False,
         before_created_at: int | None = None,
         before_id: str | None = None,
         target_kind: str | None = None,
@@ -1186,6 +1187,20 @@ class FakeAdminStore:
             rows = [r for r in rows if str(r.get("action", "")).startswith(action_prefix)]
         if exclude_access_audit:
             rows = [r for r in rows if r.get("action") not in {"media.library.everyone", "usage.summary.everyone"}]
+        if not include_internal:
+            rows = [
+                r for r in rows
+                if r.get("action") not in {
+                    "operator.safe_restart",
+                    "operator.safe-restart",
+                    "safe_restart",
+                    "safe-restart",
+                    "deploy.smoke",
+                    "deploy_smoke",
+                    "service_account.deploy_smoke",
+                    "service-account.deploy-smoke",
+                }
+            ]
         if target_kind is not None:
             rows = [r for r in rows if r.get("target_kind") == target_kind]
         if target_id is not None:

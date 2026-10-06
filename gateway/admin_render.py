@@ -1160,7 +1160,7 @@ def _audit_row(record: Mapping[str, Any]) -> str:
         )
         or "—"
     )
-    action = _esc(record.get("action") or record.get("event") or "—")
+    action = _esc(_audit_action_label(record.get("action") or record.get("event")))
     target = _esc(
         record.get("target")
         or record.get("resource")
@@ -1186,6 +1186,25 @@ def _audit_row(record: Mapping[str, Any]) -> str:
         f"<td>{detail}</td>"
         "</tr>"
     )
+
+
+_AUDIT_ACTION_LABELS = {
+    "operator.safe_restart": "Safe restart",
+    "operator.safe-restart": "Safe restart",
+    "safe_restart": "Safe restart",
+    "safe-restart": "Safe restart",
+    "deploy.smoke": "Deploy smoke check",
+    "deploy_smoke": "Deploy smoke check",
+    "service_account.deploy_smoke": "Service account deploy smoke check",
+    "service-account.deploy-smoke": "Service account deploy smoke check",
+}
+
+
+def _audit_action_label(action: Any) -> str:
+    raw = str(action or "").strip()
+    if not raw:
+        return "—"
+    return _AUDIT_ACTION_LABELS.get(raw, raw)
 
 
 def _api_surface_row(record: Mapping[str, Any]) -> str:
