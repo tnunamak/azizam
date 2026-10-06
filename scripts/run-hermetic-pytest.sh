@@ -9,6 +9,10 @@ repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 state_root="$HOME/.tmp"
 lock_file="$repo_root/tests/requirements-hermetic.lock"
 python_store="$state_root/azizam-hermetic-python"
+# TODO(azizam-rename): drop once every checkout uses the new cache dir.
+if [[ ! -d "$python_store" && -d "$state_root/vivid-fish-hermetic-python" ]]; then
+  python_store="$state_root/vivid-fish-hermetic-python"
+fi
 python_abi=cpython-312
 python_minor=3.12
 platform=linux-x86_64
@@ -108,7 +112,7 @@ exec "$@"'
 
 if [[ ${1:-} == "--check" ]]; then
   shift; (($# == 0)) || { echo "error: --check does not accept pytest arguments" >&2; exit 2; }
-  test_command=("$python_bin" -S -c 'import os, sys; assert sys.executable; assert not os.environ.get("OPENAI_API_KEY"); assert not os.environ.get("AZIZAM_ADMIN_DB")')
+  test_command=("$python_bin" -S -c 'import os, sys; assert sys.executable; assert not os.environ.get("OPENAI_API_KEY"); assert not os.environ.get("AZIZAM_ADMIN_DB"); assert not os.environ.get("AI_GATEWAY_ADMIN_DB")')
 else
   test_command=("$python_bin" -m pytest -p no:cacheprovider "$@")
 fi
