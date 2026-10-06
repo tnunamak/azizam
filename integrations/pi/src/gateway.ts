@@ -8,22 +8,28 @@ export class AzizamError extends Error {
 	override name = "AzizamError";
 }
 
-/** Validate and normalise a base URL (no trailing slash). Never includes secrets: URLs with credentials are rejected. */
+/**
+ * Validate and normalise a base URL (no trailing slash). The raw input is never echoed, because it may carry
+ * credentials: userinfo, query strings and fragments are rejected with a message that does not repeat them.
+ */
 export function normalizeBaseUrl(value: string | undefined): string {
 	const raw = (value ?? "").trim() || DEFAULT_BASE_URL;
 	let url: URL;
 	try {
 		url = new URL(raw);
 	} catch {
-		throw new AzizamError(
-			`AZIZAM_BASE_URL is not a valid URL: "${raw}". Expected something like ${DEFAULT_BASE_URL}`,
-		);
+		throw new AzizamError(`AZIZAM_BASE_URL is not a valid URL. Expected something like ${DEFAULT_BASE_URL}`);
 	}
 	if (url.protocol !== "http:" && url.protocol !== "https:") {
-		throw new AzizamError(`AZIZAM_BASE_URL must start with http:// or https:// (got "${url.protocol}//").`);
+		throw new AzizamError("AZIZAM_BASE_URL must start with http:// or https://.");
 	}
-	if (url.username || url.password) {
-		throw new AzizamError("AZIZAM_BASE_URL must not contain credentials; use AZIZAM_API_KEY instead.");
+	if (url.username || url.password || /^[a-z][a-z0-9+.-]*:\/\/[^/?#]*@/iu.test(raw)) {
+		throw new AzizamError("AZIZAM_BASE_URL must not contain credentials (user:password@); use AZIZAM_API_KEY instead.");
+	}
+	if (raw.includes("?") || raw.includes("#")) {
+		throw new AzizamError(
+			"AZIZAM_BASE_URL must not contain a query string or fragment; pass the key with AZIZAM_API_KEY instead.",
+		);
 	}
 	return raw.replace(/\/+$/u, "");
 }

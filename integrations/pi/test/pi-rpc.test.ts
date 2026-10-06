@@ -1,7 +1,7 @@
 // End-to-end: the real `pi` CLI loads the extension from source and talks to a mock Azizam gateway over RPC.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { after, before, test } from "node:test";
@@ -29,6 +29,20 @@ const azizamModels = async (session: ReturnType<typeof startPi>, until: (models:
 		const models = (response.data.models as any[]).filter((m) => m.provider === "azizam");
 		if (until(models) || Date.now() > deadline) return models;
 		await new Promise((resolve) => setTimeout(resolve, 100));
+	}
+};
+
+/** Wait until Pi has written the azizam catalog to models-store.json (persistence is asynchronous). */
+const waitForStoredCatalog = async (agentDir: string, count: number, timeoutMs = 10000) => {
+	const path = join(agentDir, "models-store.json");
+	const deadline = Date.now() + timeoutMs;
+	for (;;) {
+		try {
+			const stored = JSON.parse(readFileSync(path, "utf8"))?.azizam?.models;
+			if (Array.isArray(stored) && stored.length === count) return;
+		} catch { /* not written yet */ }
+		assert.ok(Date.now() < deadline, `catalog not persisted to ${path}`);
+		await new Promise((resolve) => setTimeout(resolve, 50));
 	}
 };
 
@@ -101,7 +115,10 @@ test("catalog persists for offline start and survives a failed refresh", { skip:
 
 	const first = startPi({ agentDir, env });
 	let online: any[];
-	try { online = await azizamModels(first); } finally { await first.close(); }
+	try {
+		online = await azizamModels(first);
+		await waitForStoredCatalog(agentDir, 2);
+	} finally { await first.close(); }
 	assert.equal(online.length, 2);
 
 	// Offline mode: the network is never touched, the stored catalog is restored.
@@ -133,7 +150,10 @@ test("a refreshed catalog replaces the stored one", { skip: !piAvailable }, asyn
 	const agentDir = freshAgentDir();
 	const env = { AZIZAM_BASE_URL: gateway.baseUrl, AZIZAM_API_KEY: KEY };
 	const first = startPi({ agentDir, env });
-	try { await azizamModels(first); } finally { await first.close(); }
+	try {
+		await azizamModels(first);
+		await waitForStoredCatalog(agentDir, 2);
+	} finally { await first.close(); }
 	gateway.setModels({ data: [{ id: "only-one", type: "language", context_window: 4096 }] });
 	const second = startPi({ agentDir, env });
 	try {
@@ -189,4 +209,35 @@ test("works when installed as a package (settings.json), not just via --extensio
 	try {
 		assert.deepEqual((await azizamModels(session)).map((m) => m.id).sort(), ["chat-small", "coder"]);
 	} finally { await session.close(); }
+});
+
+// Cold start with the key supplied only through Pi (no AZIZAM_API_KEY): T3 Code launches
+// `pi --mode rpc --provider azizam --model X` on a fresh agent dir exactly like this.
+const coldStartResolves = async (agentDir: string, label: string) => {
+	assert.equal(existsSync(join(agentDir, "models-store.json")), false);
+	const session = startPi({
+		agentDir,
+		env: { AZIZAM_BASE_URL: gateway.baseUrl, AZIZAM_API_KEY: "" },
+		args: ["--provider", "azizam", "--model", "chat-small"],
+	});
+	try {
+		const state = await session.send({ type: "get_state" });
+		assert.equal(state.data.model?.id, "chat-small", `${label}: ${session.stderr()}`);
+		assert.ok(!session.stderr().includes(KEY), "key leaked to stderr");
+		assert.ok(gateway.requests.some((r) => r.url === "/v1/models" && r.authorization === `Bearer ${KEY}`));
+	} finally { await session.close(); }
+};
+
+test("cold start resolves --provider/--model with the key in auth.json only", { skip: !piAvailable }, async () => {
+	const agentDir = freshAgentDir();
+	writeFileSync(join(agentDir, "auth.json"), JSON.stringify({ azizam: { type: "api_key", key: KEY } }));
+	await coldStartResolves(agentDir, "auth.json");
+});
+
+test("cold start resolves --provider/--model with a models.json apiKey (literal and !command)", { skip: !piAvailable }, async () => {
+	for (const apiKey of [KEY, `!echo ${KEY}`]) {
+		const agentDir = freshAgentDir();
+		writeFileSync(join(agentDir, "models.json"), JSON.stringify({ providers: { azizam: { apiKey } } }));
+		await coldStartResolves(agentDir, apiKey.startsWith("!") ? "!command" : "literal");
+	}
 });

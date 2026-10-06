@@ -1,4 +1,4 @@
-import { createProvider, envApiKeyAuth, type Model, type Provider } from "@earendil-works/pi-ai";
+import { createProvider, envApiKeyAuth, type Model, type Models, type Provider } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/compat";
 import type { Catalog, ChatModelInfo } from "./catalog.ts";
 import { DEFAULT_TIMEOUT_MS, fetchCatalog, normalizeBaseUrl } from "./gateway.ts";
@@ -14,22 +14,18 @@ export const DEFAULT_COMPAT = {
 	thinkingFormat: "openai",
 } as const;
 
-export interface AzizamProviderOptions {
-	/** Environment source; defaults to process.env. Read on every refresh, so changes apply on the next refresh. */
-	env?: Record<string, string | undefined>;
-	fetch?: typeof fetch;
-}
-
 /** How long the cold-start prefetch may delay Pi startup. */
 export const PREFETCH_TIMEOUT_MS = 3_000;
 
 export interface AzizamProvider extends Provider {
 	/**
-	 * Best-effort fetch used once at extension load so the very first run (no persisted catalog yet) already has models
-	 * for `--provider azizam --model <id>` and the first RPC `get_available_models`. Never throws. Needs AZIZAM_API_KEY
-	 * in the environment (stored `/login` and models.json keys are only visible to Pi's own refresh), skipped when offline.
+	 * Cold-start discovery, called once at extension load with a model collection that already holds this provider
+	 * (Pi's own `ModelRuntime`, which resolves credentials exactly as Pi does: `auth.json`, `models.json` `apiKey`
+	 * including `!command`, `AZIZAM_API_KEY`). Restores the persisted catalog; if none is usable for the configured
+	 * base URL, runs one bounded, provider-scoped refresh so `--provider azizam --model <id>` resolves on the very
+	 * first run. Never throws. Skipped when offline.
 	 */
-	prefetch(): Promise<void>;
+	prefetch(models: Pick<Models, "refresh">): Promise<void>;
 }
 
 export function azizamProvider(options: AzizamProviderOptions = {}): AzizamProvider {
@@ -43,9 +39,6 @@ export function azizamProvider(options: AzizamProviderOptions = {}): AzizamProvi
 		baseUrl: baseUrl(),
 		compat: { ...DEFAULT_COMPAT },
 	});
-
-	const toModels = (catalog: Catalog) => catalog.models.map(toModel);
-	let seed: Model<"openai-completions">[] = [];
 
 	const provider = createProvider<"openai-completions">({
 		id: PROVIDER_ID,
@@ -64,30 +57,37 @@ export function azizamProvider(options: AzizamProviderOptions = {}): AzizamProvi
 			if (env().AZIZAM_DEBUG) {
 				console.error(`[azizam] ${catalog.models.length} chat models (filter: ${catalog.mode}, skipped malformed: ${catalog.malformed})`);
 			}
-			return toModels(catalog);
+			return catalog.models.map(toModel);
 		},
 	});
 
 	// Models persisted by an earlier run keep the base URL they were fetched with; always serve the current one.
-	const rebase = <T extends { baseUrl: string }>(models: readonly T[]): T[] => {
-		const current = baseUrl();
-		return models.map((model) => ({ ...model, baseUrl: current }));
-	};
 	const current = () => {
-		const models = provider.getAllModels?.() ?? provider.getModels();
-		return rebase(models.length > 0 ? models : seed);
+		const url = baseUrl();
+		return (provider.getAllModels?.() ?? provider.getModels()).map((model) => ({ ...model, baseUrl: url }));
 	};
+
+	const hasUsablePersistedCatalog = () => {
+		const url = baseUrl();
+		const models = provider.getAllModels?.() ?? provider.getModels();
+		return models.length > 0 && models.every((model) => model.baseUrl === url);
+	};
+
 	return {
 		...provider,
 		getModels: current,
 		getAllModels: current,
-		prefetch: async () => {
-			const apiKey = env().AZIZAM_API_KEY;
-			if (!apiKey || env().PI_OFFLINE || process.argv.includes("--offline")) return;
+		prefetch: async (models) => {
+			if (env().PI_OFFLINE || process.argv.includes("--offline")) return;
 			try {
-				seed = toModels(
-					await fetchCatalog({ baseUrl: baseUrl(), apiKey, timeoutMs: PREFETCH_TIMEOUT_MS, fetch: options.fetch }),
-				);
+				// A restore failure (unreadable or malformed store) counts as a miss.
+				await models.refresh({ allowNetwork: false, providers: [PROVIDER_ID] });
+				if (hasUsablePersistedCatalog()) return;
+				await models.refresh({
+					allowNetwork: true,
+					providers: [PROVIDER_ID],
+					signal: AbortSignal.timeout(PREFETCH_TIMEOUT_MS),
+				});
 			} catch {
 				// Pi's own refresh reports the error; the persisted catalog (if any) still applies.
 			}

@@ -51,7 +51,9 @@ test("modality mapping: intersect with text/image, default text", () => {
 	const m = (input_modalities: unknown) =>
 		parseModelList({ data: [{ id: "x", type: "language", architecture: { input_modalities } }] }).models[0].input;
 	assert.deepEqual(m(["text", "image", "audio", "video", "file"]), ["text", "image"]);
-	assert.deepEqual(m(["image"]), ["text", "image"]);
+	assert.deepEqual(m(["image"]), ["image"]);
+	assert.deepEqual(m(["audio", "image"]), ["image"]);
+	assert.deepEqual(m(["image", "text"]), ["text", "image"]);
 	assert.deepEqual(m(["audio"]), ["text"]);
 	assert.deepEqual(m([]), ["text"]);
 	assert.deepEqual(m("image"), ["text"]);

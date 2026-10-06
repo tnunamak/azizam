@@ -82,20 +82,98 @@ test("invalid AZIZAM_BASE_URL is reported as an error, not a crash", { skip }, a
 	assert.match(result.errors.get("azizam")?.message ?? "", /not a valid URL/);
 });
 
-test("prefetch seeds models for first run; skipped offline or without a key; never throws", { skip }, async () => {
-	const seeded = await setup(() => json(CONTRACT_LIST), { AZIZAM_API_KEY: KEY });
-	await seeded.provider.prefetch();
-	assert.deepEqual(ids(seeded.provider.getModels()), ["chat-small", "coder"]);
-	assert.equal(seeded.calls[0].authorization, `Bearer ${KEY}`);
+test("prefetch fetches on a cold start with the credential Pi resolves, no AZIZAM_API_KEY in env", { skip }, async () => {
+	const { models, provider, calls, store } = await setup(() => json(CONTRACT_LIST));
+	await provider.prefetch(models);
+	assert.deepEqual(ids(provider.getModels()), ["chat-small", "coder"]);
+	assert.equal(calls.length, 1);
+	assert.equal(calls[0].authorization, `Bearer ${KEY}`);
+	assert.deepEqual(ids((await store.read("azizam"))!.models), ["chat-small", "coder"]);
+});
 
-	for (const env of [{}, { AZIZAM_API_KEY: KEY, PI_OFFLINE: "1" }]) {
-		const skipped = await setup(() => assert.fail("must not fetch"), env);
-		await skipped.provider.prefetch();
-		assert.equal(skipped.calls.length, 0);
-		assert.deepEqual(skipped.provider.getModels(), []);
-	}
+test("prefetch is skipped offline, never throws, and a failed fetch leaves no models", { skip }, async () => {
+	const offline = await setup(() => assert.fail("must not fetch"), { PI_OFFLINE: "1" });
+	await offline.provider.prefetch(offline.models);
+	assert.equal(offline.calls.length, 0);
+	assert.deepEqual(offline.provider.getModels(), []);
 
-	const broken = await setup(() => { throw new Error("boom"); }, { AZIZAM_API_KEY: KEY });
-	await broken.provider.prefetch();
+	const broken = await setup(() => { throw new Error("boom"); });
+	await broken.provider.prefetch(broken.models);
 	assert.deepEqual(broken.provider.getModels(), []);
+
+	const noCredential = await setup(() => assert.fail("must not fetch"));
+	const missing = { read: async () => undefined, list: async () => [], modify: async () => undefined, delete: async () => {} };
+	const piAi = await import("@earendil-works/pi-ai");
+	const bare = piAi.createModels({ credentials: missing as any, modelsStore: new piAi.InMemoryModelsStore() });
+	bare.setProvider(noCredential.provider);
+	await noCredential.provider.prefetch(bare);
+	assert.equal(noCredential.calls.length, 0);
+});
+
+test("prefetch skips the eager fetch when a persisted catalog for the configured base URL exists", { skip }, async () => {
+	const first = await setup(() => json(CONTRACT_LIST));
+	await first.models.refresh();
+	const stored = await first.store.read("azizam");
+
+	const second = await setup(() => assert.fail("must not fetch"));
+	await second.store.write("azizam", stored!);
+	await second.provider.prefetch(second.models);
+	assert.equal(second.calls.length, 0);
+	assert.deepEqual(ids(second.provider.getModels()), ["chat-small", "coder"]);
+});
+
+test("prefetch fetches when the persisted catalog is for another base URL or empty; a malformed store is a miss", { skip }, async () => {
+	const first = await setup(() => json(CONTRACT_LIST));
+	await first.models.refresh();
+	const stored = await first.store.read("azizam");
+
+	const otherUrl = await setup(() => json(CONTRACT_LIST), { AZIZAM_BASE_URL: "http://other.test/v1" });
+	await otherUrl.store.write("azizam", stored!);
+	await otherUrl.provider.prefetch(otherUrl.models);
+	assert.equal(otherUrl.calls.length, 1);
+
+	const empty = await setup(() => json(CONTRACT_LIST));
+	await empty.store.write("azizam", { models: [] });
+	await empty.provider.prefetch(empty.models);
+	assert.equal(empty.calls.length, 1);
+
+	const malformed = await setup(() => json(CONTRACT_LIST));
+	await malformed.store.write("azizam", { models: "garbage" } as any);
+	await malformed.provider.prefetch(malformed.models);
+	// Pi's refresh restores the store before any network call, so a store it cannot read blocks fetching too; the
+	// prefetch must treat that as a miss (not as a usable catalog) and must not throw.
+	assert.deepEqual(malformed.provider.getModels(), []);
+});
+
+test("an authoritative empty refresh does not resurrect earlier models", { skip }, async () => {
+	let body: unknown = CONTRACT_LIST;
+	const { models, provider } = await setup(() => json(body));
+	await provider.prefetch(models);
+	assert.deepEqual(ids(provider.getModels()), ["chat-small", "coder"]);
+	body = { data: [{ id: "dall-e", type: "image" }] };
+	await models.refresh();
+	assert.deepEqual(provider.getModels(), []);
+	assert.deepEqual(models.getModels("azizam"), []);
+});
+
+for (const [name, url] of [
+	["unparseable with userinfo", "http://user:topsecret@"],
+	["userinfo", "http://user:topsecret@gw.test/v1"],
+	["query string", "http://gw.test/v1?api_key=topsecret"],
+	["fragment", "http://gw.test/v1#topsecret"],
+	["empty query", "http://gw.test/v1?"],
+] as const) {
+	test(`AZIZAM_BASE_URL with ${name} is rejected without echoing the input`, { skip }, async () => {
+		const { models } = await setup(() => assert.fail("must not fetch"), { AZIZAM_BASE_URL: url });
+		const result = await models.refresh();
+		const message = result.errors.get("azizam")?.message ?? "";
+		assert.match(message, /AZIZAM_BASE_URL/);
+		assert.ok(!message.includes("topsecret") && !message.includes("api_key"), message);
+	});
+}
+
+test("errors about an unreachable or failing gateway show only the credential-free URL", { skip }, async () => {
+	const { models } = await setup(() => { throw new TypeError("fetch failed"); }, { AZIZAM_BASE_URL: "http://gw.test/v1/" });
+	const message = (await models.refresh()).errors.get("azizam")?.message ?? "";
+	assert.match(message, /http:\/\/gw\.test\/v1[^/]/);
 });

@@ -1,4 +1,5 @@
-// Optional live smoke test against a real gateway. Skips cleanly when it is unreachable or no key file is found.
+// Opt-in live smoke test against a real gateway: runs only with AZIZAM_LIVE_TEST=1, never contacts anything otherwise.
+// Skips cleanly when the gateway is unreachable or no key is found.
 // Key source: $AZIZAM_API_KEY, else the file named by `!cat <file>` in ~/.config/pi-t3/models.json (providers["vivid-fish"].apiKey).
 // The key is never printed.
 import assert from "node:assert/strict";
@@ -8,6 +9,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { fetchCatalog } from "../src/gateway.ts";
 
+const ENABLED = process.env.AZIZAM_LIVE_TEST === "1";
 const BASE_URL = process.env.AZIZAM_LIVE_BASE_URL ?? "http://127.0.0.1:5000/v1";
 
 function readKey(): string | undefined {
@@ -22,7 +24,7 @@ function readKey(): string | undefined {
 	}
 }
 
-test("live gateway: catalog lists chat models via the contract or the documented fallback", async (t) => {
+test("live gateway: catalog lists chat models via the contract or the documented fallback", { skip: ENABLED ? false : "set AZIZAM_LIVE_TEST=1 to run" }, async (t) => {
 	const apiKey = readKey();
 	if (!apiKey) return t.skip("no API key available");
 	let catalog;

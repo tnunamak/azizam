@@ -62,9 +62,8 @@ function readCost(pricing: unknown): ModelCost {
 
 function readInput(architecture: unknown): InputModality[] {
 	const modalities = isObject(architecture) ? stringArray(architecture.input_modalities) : undefined;
-	const input: InputModality[] = ["text"];
-	if (modalities?.includes("image")) input.push("image");
-	return input;
+	const supported = (["text", "image"] as const).filter((modality) => modalities?.includes(modality));
+	return supported.length > 0 ? supported : ["text"];
 }
 
 function toChatModel(entry: Json & { id: string }): ChatModelInfo {

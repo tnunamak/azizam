@@ -83,3 +83,14 @@ test("caller abort is propagated untouched", async () => {
 test("fixture is well-formed contract data", () => {
 	assert.equal(CONTRACT_LIST.data.length, 5);
 });
+
+test("normalizeBaseUrl never echoes secrets and rejects userinfo, query and fragment", () => {
+	for (const bad of ["http://user:topsecret@", "http://u:topsecret@h/v1", "http://h/v1?api_key=topsecret", "http://h/v1#topsecret", "http://h/v1?"]) {
+		assert.throws(
+			() => normalizeBaseUrl(bad),
+			(error: Error) => /AZIZAM_BASE_URL/.test(error.message) && !error.message.includes("topsecret"),
+			bad,
+		);
+	}
+	assert.equal(normalizeBaseUrl("http://h:8080/v1///"), "http://h:8080/v1");
+});

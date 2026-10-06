@@ -16,7 +16,7 @@ pi -e /path/to/openai-proxy/integrations/pi        # try for one run, no install
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `AZIZAM_BASE_URL` | `http://127.0.0.1:5000/v1` | Gateway API root, **including** the `/v1` prefix. Read at every refresh. |
+| `AZIZAM_BASE_URL` | `http://127.0.0.1:5000/v1` | Gateway API root, **including** the `/v1` prefix. Read at every refresh. User info (`user:pass@`), query strings and fragments are rejected, and error messages never repeat the value you set. |
 | `AZIZAM_API_KEY` | none | Bearer key. |
 | `AZIZAM_MODELS_TIMEOUT_MS` | `10000` | Timeout of the model-list request. |
 | `AZIZAM_DEBUG` | unset | Set to `1` to print the filter mode and model count to stderr on each refresh. |
@@ -60,14 +60,16 @@ Override any of them, or any other model field, per model with Pi's normal `~/.p
 4. If a refresh fails (gateway down, 401, bad URL), Pi shows the error and **keeps the last good catalog**.
 5. `--offline` / `PI_OFFLINE=1` skips all network calls and uses the saved catalog.
 
-Pi refreshes in the background, so on a brand-new agent dir the extension also does one 3-second prefetch at load (only when `AZIZAM_API_KEY` is set and Pi is not offline). That makes `--provider azizam --model <id>` work on the very first run. If you supply the key only through `/login` or `models.json`, the first run has no models until the background refresh finishes. Start Pi once, then use `--provider azizam --model <id>`.
+**Cold start.** Pi refreshes in the background, but `--provider azizam --model <id>` is resolved before that refresh finishes. So at load the extension builds a short-lived Pi `ModelRuntime` on the same agent dir. It resolves the key exactly as Pi does (`auth.json` from `/login`, `apiKey` in `models.json` including `!command`, or `AZIZAM_API_KEY`), restores the saved catalog, and, only if no saved catalog exists for the configured `AZIZAM_BASE_URL`, runs one provider-scoped refresh limited to 3 seconds. A usable saved catalog means no extra request at start, so a gateway that is down adds no delay. Pi's normal background refresh still runs afterwards. Nothing is fetched when Pi is offline or no key resolves.
+
+Limits: a key passed only with `--api-key` on the command line is not visible to this early step (the background refresh uses it, so the first run needs the key in env, `/login` or `models.json`). If the gateway is unreachable on the very first run, no models exist until Pi's background refresh succeeds.
 
 Mapping rules (from the contract's client rules):
 
 | Pi field | Source | If missing |
 |---|---|---|
 | list membership | `type == "language"` | no entry has `type`: entries whose `architecture.output_modalities` is exactly `["text"]`; no metadata at all: **all** entries |
-| `input` | `architecture.input_modalities` ∩ {`text`,`image`} | `["text"]` |
+| `input` | `architecture.input_modalities` ∩ {`text`,`image`} | `["text"]` only when the list has neither (`["image"]` stays `["image"]`) |
 | `reasoning` | `tags` contains `reasoning` | `false` |
 | `contextWindow` | `context_window` | `128000` |
 | `maxTokens` | `max_tokens`, capped at the context window | `8192` (conservative; many backends reject larger values) |
@@ -119,7 +121,7 @@ Example entry:
 
 | Symptom | Cause and fix |
 |---|---|
-| No `azizam` models in `/model` | No key: set `AZIZAM_API_KEY`. Or the first refresh has not finished or failed: run with `AZIZAM_DEBUG=1`. |
+| No `azizam` models in `/model` | No key: set `AZIZAM_API_KEY`, run `/login azizam`, or set `apiKey` in `models.json`. Or the first refresh has not finished or failed: run with `AZIZAM_DEBUG=1`. |
 | `Could not reach the Azizam gateway` | Wrong `AZIZAM_BASE_URL`, or the gateway is down. The last saved catalog stays in use. |
 | `rejected the API key (HTTP 401)` | Wrong or expired key. |
 | `returned 404 … include the API prefix` | `AZIZAM_BASE_URL` is missing `/v1`. |
@@ -133,10 +135,10 @@ Example entry:
 No build step: Pi loads the TypeScript source directly.
 
 ```bash
-npm test          # unit + real-Pi RPC tests (+ optional live smoke test)
+npm test          # unit + real-Pi RPC tests (+ opt-in live smoke test)
 ```
 
-Requires Node ≥ 22.18 and an installed `pi` (`PI_BIN` overrides its location). Tests start a mock gateway on a random port and run `pi --mode rpc --no-session` in a temporary agent dir. The live smoke test (`AZIZAM_LIVE_BASE_URL`, default `http://127.0.0.1:5000/v1`) skips itself when the gateway or a key is unavailable.
+Requires Node ≥ 22.18 and an installed `pi` (`PI_BIN` overrides its location). Tests start a mock gateway on a random port and run `pi --mode rpc --no-session` in a temporary agent dir. The live smoke test is opt-in: it runs only with `AZIZAM_LIVE_TEST=1` (gateway from `AZIZAM_LIVE_BASE_URL`, default `http://127.0.0.1:5000/v1`; key from `AZIZAM_API_KEY`) and skips itself when the gateway or key is unavailable. Without the variable it contacts nothing.
 
 Before publishing, replace the `OWNER/REPO` placeholders in `package.json` (`repository`, `homepage`, `bugs`).
 
