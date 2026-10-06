@@ -763,7 +763,7 @@ class MeMediaRouterTests(unittest.TestCase):
 
         self.assertEqual(rows[("transcribe", "/v1/audio/transcriptions")]["requests"], 1)
         self.assertEqual(rows[("chat", "/v1/chat/completions")]["requests"], 1)
-        self.assertEqual(rows[("other", "")]["requests"], 1)
+        self.assertEqual(rows[("other", "/v1/unknown")]["requests"], 1)
         self.assertEqual(usage["paid_requests"], 1)
         self.assertEqual(usage["remote_spend"], 0.25)
 
