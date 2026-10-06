@@ -53,6 +53,7 @@ import {
   type HomeCapability,
   type HomeCreation,
   type HomeSnapshot,
+  hasHomeCreationContent,
 } from "./home-api";
 import { chatAlias, recipeFor, type Client } from "./recipes";
 import { capabilityLabels } from "@/lib/terms";
@@ -756,11 +757,7 @@ function Recent() {
     queryFn: homeApi.creations,
   });
   const recentCreations = (creations?.assets ?? [])
-    .filter((creation) => {
-      if (creation.kind === "image") return Boolean(creation.download_url);
-      if (creation.kind === "video") return Boolean(creation.poster_asset_id);
-      return Boolean(creation.download_url && creation.prompt?.trim());
-    })
+    .filter(hasHomeCreationContent)
     .slice(0, 4);
   if (!creationsPending && !creationsError && recentCreations.length === 0) {
     return null;

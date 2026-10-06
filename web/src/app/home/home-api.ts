@@ -50,6 +50,14 @@ export interface HomeCreation {
 }
 export interface HomeCreationsResponse {
   assets: HomeCreation[];
+  next_cursor?: string | null;
+  has_more?: boolean;
+}
+
+export function hasHomeCreationContent(creation: HomeCreation): boolean {
+  if (creation.kind === "image") return Boolean(creation.download_url);
+  if (creation.kind === "video") return Boolean(creation.poster_asset_id);
+  return Boolean(creation.download_url && creation.prompt?.trim());
 }
 export interface ConnectionResult {
   ok: boolean;
@@ -110,7 +118,22 @@ export const homeApi = {
       throw error;
     }
   },
-  creations: () => homeRequest<HomeCreationsResponse>("/me/api/media?limit=50"),
+  creations: async (): Promise<HomeCreationsResponse> => {
+    const assets: HomeCreation[] = [];
+    let cursor: string | null | undefined;
+    let hasMore = true;
+    while (hasMore && assets.length < 4) {
+      const query = new URLSearchParams({ limit: "50" });
+      if (cursor) query.set("cursor", cursor);
+      const page = await homeRequest<HomeCreationsResponse>(
+        `/me/api/media?${query.toString()}`,
+      );
+      assets.push(...page.assets.filter(hasHomeCreationContent));
+      cursor = page.next_cursor;
+      hasMore = Boolean(page.has_more && cursor);
+    }
+    return { assets: assets.slice(0, 4) };
+  },
   mediaDownload: (assetId: string) =>
     homeRequest<{ download_url?: string }>(
       `/me/api/media/${encodeURIComponent(assetId)}/download?scope=me`,
