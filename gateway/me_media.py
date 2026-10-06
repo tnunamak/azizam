@@ -1293,9 +1293,10 @@ def _usage_model(receipt: Mapping[str, Any], capability: str) -> str:
     )
     if model:
         return model
-    if capability and capability != "other":
-        return f"Model not recorded · {_capability_label(capability)}"
-    return "Unknown model"
+    route = _string_first(receipt.get("route_path"), receipt.get("route"))
+    if route:
+        return route
+    return ""
 
 
 def _capability_label(capability: str) -> str:

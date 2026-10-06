@@ -539,7 +539,6 @@ function ModelTable({
   onToggle: () => void;
 }) {
   const visibleRows = showAll ? rows : rows.slice(0, 5);
-  const hiddenCount = Math.max(0, rows.length - visibleRows.length);
   return (
     <Card className="border-0! bg-transparent! shadow-none!">
       <CardHeader>
@@ -570,9 +569,11 @@ function ModelTable({
                       <div className="font-medium">
                         <CapabilityLabel capability={row.capability} />
                       </div>
-                      <code className="text-muted-foreground mt-1 block truncate text-xs">
-                        {row.model}
-                      </code>
+                      {row.model && (
+                        <code className="text-muted-foreground mt-1 block truncate text-xs">
+                          {row.model}
+                        </code>
+                      )}
                     </td>
                     <td className="py-3 pr-4 text-right tabular-nums">
                       {formatNumber(row.requests)}
@@ -588,9 +589,6 @@ function ModelTable({
               <Button variant="ghost" onClick={onToggle}>
                 {showAll ? "Show top 5" : `View all ${rows.length} models`}
               </Button>
-            ) : null}
-            {hiddenCount ? (
-              <p className="sr-only">{hiddenCount} more models hidden.</p>
             ) : null}
           </div>
         ) : (
