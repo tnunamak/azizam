@@ -4,7 +4,6 @@ Media provenance aliases are permanent: existing assets must remain readable.
 """
 from __future__ import annotations
 
-import json
 import os
 from collections.abc import Mapping
 from typing import Any
@@ -103,57 +102,101 @@ ENV_ALIASES = {'AZIZAM_ADMIN_DB': ['AI_GATEWAY_ADMIN_DB', 'OPENAI_PROXY_ADMIN_DB
 
 
 def get_env(name: str, default: Any = None, *, environ: Mapping[str, str] | None = None) -> Any:
-    """Read the Azizam name first, including when a stored config uses an old name."""
+    """Read the first nonempty new/legacy value; empty strings are unset."""
     env = os.environ if environ is None else environ
     canonical = next((new for new, old in ENV_ALIASES.items() if name in old), name)
     for candidate in (canonical, *ENV_ALIASES.get(canonical, ())):
-        if candidate in env:
+        if env.get(candidate):
             return env[candidate]
     return default
 
 
+# Only gateway-owned field names. Call these helpers at their producers/consumers,
+# never on an arbitrary request, provider payload, schema or metadata tree.
+JSON_ALIASES = {
+    'vivid_fish_alias': 'azizam_alias',
+    'vivid_fish_alias_errors': 'azizam_alias_errors',
+    'vivid_fish_backend': 'azizam_backend',
+    'vivid_fish_catalog_warning': 'azizam_catalog_warning',
+    'vivid_fish_current_loaded': 'azizam_current_loaded',
+    'vivid_fish_current_loaded_fast': 'azizam_current_loaded_fast',
+    'vivid_fish_current_model_ids': 'azizam_current_model_ids',
+    'vivid_fish_engine_candidates': 'azizam_engine_candidates',
+    'vivid_fish_intent': 'azizam_intent',
+    'vivid_fish_loaded': 'azizam_loaded',
+    'vivid_fish_manifest_version': 'azizam_manifest_version',
+    'vivid_fish_model': 'azizam_model',
+    'vivid_fish_model_access': 'azizam_model_access',
+    'vivid_fish_model_path': 'azizam_model_path',
+    'vivid_fish_profile_model_allowlist': 'azizam_profile_model_allowlist',
+    'vivid_fish_resolved_model': 'azizam_resolved_model',
+    'vivid_fish_resolves_to': 'azizam_resolves_to',
+    'vivid_fish_role': 'azizam_role',
+    'vivid_fish_target_activation': 'azizam_target_activation',
+    'vivid_fish_target_visibility': 'azizam_target_visibility',
+    'vivid_fish_warnings': 'azizam_warnings',
+    'vivid_fish_workflow': 'azizam_workflow',
+    'vivid_fish_workflow_id': 'azizam_workflow_id',
+    'x-vividfish-asset': 'x-azizam-asset',
+    'x-vividfish-workflow-id': 'x-azizam-workflow-id',
+    'x-vividfish-workflows': 'x-azizam-workflows',
+    'x_ai_gateway_llm_execution': 'x_azizam_llm_execution',
+    'x-vividfish-sync': 'x-azizam-sync',
+    'x-vividfish-async': 'x-azizam-async',
+    'vivid_object': 'azizam_object',
+    'vivid_status': 'azizam_status',
+    'openai_proxy_policy': 'azizam_policy',
+    'com.vividfish.workflow': 'com.azizam.workflow',
+}
+JSON_OLD_NAMES = {new: old for old, new in JSON_ALIASES.items()}
+
+
 def canonical_key(key: Any) -> Any:
-    if not isinstance(key, str):
-        return key
-    for old, new in (("vivid_fish_", "azizam_"), ("com.vividfish.", "com.azizam."),
-                     ("x_ai_gateway_", "x_azizam_"), ("x-vividfish-", "x-azizam-")):
-        if key.startswith(old):
-            return new + key[len(old):]
-    return {"vivid_object": "azizam_object", "vivid_status": "azizam_status",
-            "openai_proxy_policy": "azizam_policy"}.get(key, key)
+    return JSON_ALIASES.get(key, key)
+
+
+def read_field(value: Mapping[str, Any], name: str, default: Any = None) -> Any:
+    """Read one gateway-owned field; an explicitly present new key wins."""
+    new = canonical_key(name)
+    if new in value:
+        return value[new]
+    return value.get(JSON_OLD_NAMES.get(new, new), default)
 
 
 def accept_aliases(value: Any) -> Any:
-    """Normalize old request keys; explicitly supplied new keys win."""
-    if isinstance(value, list):
-        return [accept_aliases(item) for item in value]
-    if not isinstance(value, dict):
+    """Add canonical names on ONE gateway-owned object, preserving both values."""
+    if not isinstance(value, Mapping):
         return value
-    result = {key: accept_aliases(item) for key, item in value.items() if canonical_key(key) == key}
+    result = dict(value)
     for key, item in value.items():
-        result.setdefault(canonical_key(key), accept_aliases(item))
+        new = canonical_key(key)
+        if new not in result:
+            result[new] = item
     return result
 
 
-def emit_aliases(value: Any) -> Any:
-    """The ONLY place that emits temporary old JSON field names."""
-    if isinstance(value, list):
-        return [emit_aliases(item) for item in value]
-    if not isinstance(value, dict):
-        return value
-    value = accept_aliases(value)
-    result = {key: emit_aliases(item) for key, item in value.items()}
-    for key, item in list(result.items()):
-        if not isinstance(key, str):
+def emit_aliases(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Add temporary aliases on ONE gateway-owned object in O(n); never recurse.
+
+    Existing keys, including collisions, keep their original values. The
+    workflow namespace is accepted on input but generated with the new name.
+    """
+    result = dict(value)
+    for key, item in value.items():
+        if key == "com.azizam.workflow" or key == "com.vividfish.workflow":
             continue
-        if key.startswith("azizam_") and key != "azizam_provenance":
-            old = {"azizam_object": "vivid_object", "azizam_status": "vivid_status",
-                   "azizam_policy": "openai_proxy_policy"}.get(key, "vivid_fish_" + key[len("azizam_"):])
-            result[old] = item
-        elif key.startswith("x_azizam_"):
-            result["x_ai_gateway_" + key[len("x_azizam_"):]] = item
-        elif key.startswith("x-azizam-"):
-            result["x-vividfish-" + key[len("x-azizam-"):]] = item
+        alias = JSON_OLD_NAMES.get(key) or JSON_ALIASES.get(key)
+        if alias is not None and alias not in result:
+            result[alias] = item
+    return result
+
+
+def emit_model_list_aliases(envelope: Mapping[str, Any]) -> dict[str, Any]:
+    """The /v1/models contract owns its envelope and each data entry only."""
+    result = emit_aliases(envelope)
+    if isinstance(envelope.get("data"), list):
+        result["data"] = [emit_aliases(entry) if isinstance(entry, Mapping) else entry
+                          for entry in envelope["data"]]
     return result
 
 
@@ -232,11 +275,7 @@ def emit_header_mapping(headers: Mapping[str, str]) -> dict[str, str]:
 
 
 class ProductCompatibilityMiddleware:
-    """Apply migration aliases at the HTTP boundary, including streamed SSE.
-
-    JSON requests/responses are buffered; SSE is buffered only to each newline.
-    Binary, multipart and all other response bodies pass through unchanged.
-    """
+    """Header compatibility only. Request/response body bytes pass through."""
     def __init__(self, app):
         self.app = app
 
@@ -244,83 +283,10 @@ class ProductCompatibilityMiddleware:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
         scope = dict(scope, headers=normalize_headers(scope.get("headers", [])))
-        content_type = dict(scope["headers"]).get(b"content-type", b"").lower()
-        request_done = False
-
-        async def compatible_receive():
-            nonlocal request_done
-            if request_done or b"application/json" not in content_type:
-                return await receive()
-            message = await receive()
-            if message["type"] != "http.request":
-                return message
-            body = message.get("body", b"")
-            while message.get("more_body"):
-                message = await receive()
-                if message["type"] != "http.request":
-                    return message
-                body += message.get("body", b"")
-            request_done = True
-            try:
-                parsed = json.loads(body)
-                normalized = accept_aliases(parsed)
-                if normalized != parsed:
-                    body = json.dumps(normalized).encode()
-                    scope["headers"][:] = [(k, v) for k, v in scope["headers"] if k.lower() != b"content-length"]
-                    scope["headers"].append((b"content-length", str(len(body)).encode()))
-            except (ValueError, UnicodeError):
-                pass
-            return {"type": "http.request", "body": body, "more_body": False}
-
-        start = None
-        mode = ""
-        pending = b""
 
         async def compatible_send(message):
-            nonlocal start, mode, pending
             if message["type"] == "http.response.start":
-                headers = emit_headers(list(message.get("headers", [])))
-                mime = dict(headers).get(b"content-type", b"").lower()
-                mode = "json" if b"application/json" in mime else "sse" if b"text/event-stream" in mime else ""
-                if scope.get("method") == "HEAD" or message.get("status") in (204, 304):
-                    mode = ""
-                start = dict(message, headers=headers)
-                if mode != "json":
-                    await send(start)
-                return
-            if message["type"] != "http.response.body" or not mode:
-                return await send(message)
-            pending += message.get("body", b"")
-            if mode == "json":
-                if message.get("more_body"):
-                    return
-                try:
-                    parsed = json.loads(pending)
-                    normalized = emit_aliases(parsed)
-                    if normalized != parsed:
-                        pending = json.dumps(normalized).encode()
-                except (ValueError, UnicodeError):
-                    pass
-                start["headers"] = [(k, v) for k, v in start["headers"] if k.lower() != b"content-length"]
-                start["headers"].append((b"content-length", str(len(pending)).encode()))
-                await send(start)
-                await send(dict(message, body=pending))
-                pending = b""
-            else:
-                lines = pending.splitlines(keepends=True)
-                pending = b""
-                if message.get("more_body") and lines and not lines[-1].endswith(b"\n"):
-                    pending = lines.pop()
-                output = []
-                for line in lines:
-                    if line.startswith(b"data:"):
-                        try:
-                            parsed = json.loads(line[5:])
-                            normalized = emit_aliases(parsed)
-                            if normalized != parsed:
-                                line = b"data: " + json.dumps(normalized).encode() + b"\n"
-                        except (ValueError, UnicodeError):
-                            pass
-                    output.append(line)
-                await send(dict(message, body=b"".join(output)))
-        await self.app(scope, compatible_receive, compatible_send)
+                message = dict(message, headers=emit_headers(list(message.get("headers", []))))
+            await send(message)
+
+        return await self.app(scope, receive, compatible_send)

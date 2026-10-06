@@ -33,6 +33,8 @@ the evaluator — that would re-couple discovery to live request context.
 
 from __future__ import annotations
 
+from gateway.compat import read_field
+
 from dataclasses import dataclass, field, replace
 from typing import Any, Iterable, Mapping
 
@@ -309,9 +311,9 @@ def canonicalize_workflow_capabilities(
         if not isinstance(entry, Mapping):
             continue
         public_id = entry.get("id")
-        workflow_id = entry.get("azizam_workflow_id")
-        intent = entry.get("azizam_intent")
-        backend = entry.get("azizam_backend")
+        workflow_id = read_field(entry, "azizam_workflow_id")
+        intent = read_field(entry, "azizam_intent")
+        backend = read_field(entry, "azizam_backend")
         if not all(isinstance(value, str) and value for value in (public_id, workflow_id, intent, backend)):
             continue
         for identity in (public_id, workflow_id):

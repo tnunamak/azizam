@@ -16,7 +16,7 @@ read connection is auto-opened. The sampler holds one long-lived writer via
 from __future__ import annotations
 
 import json
-import os
+from gateway.compat import get_env
 import shutil
 import sqlite3
 import time
@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 _default_db = Path(__file__).parent / "data" / "metrics.db"
-DB_PATH = Path(os.environ["AZIZAM_METRICS_DB"]) if os.environ.get("AZIZAM_METRICS_DB") else _default_db
+DB_PATH = Path(get_env("AZIZAM_METRICS_DB", _default_db))
 
 # Retention windows (seconds).
 RAW_RETAIN_S = 7 * 24 * 3600

@@ -9,6 +9,7 @@ should layer extra env vars on top, not redefine these.
 from __future__ import annotations
 
 import os
+from gateway.compat import get_env
 from dataclasses import dataclass, field
 from typing import Mapping, Optional
 from urllib.parse import urlsplit
@@ -77,7 +78,7 @@ def load_config(
 
     env = os.environ if env is None else env
 
-    base_url = (env.get("AZIZAM_BASE_URL") or "").strip()
+    base_url = (get_env("AZIZAM_BASE_URL", environ=env) or "").strip()
     if not base_url:
         raise ConfigError(
             "AZIZAM_BASE_URL is not set. Example: "
@@ -100,14 +101,14 @@ def load_config(
                 f"protocol prefix. Drop the trailing {suffix!r} from {base_url!r}."
             )
 
-    api_key = (env.get("AZIZAM_API_KEY") or "").strip()
+    api_key = (get_env("AZIZAM_API_KEY", environ=env) or "").strip()
     if not api_key and not allow_anonymous:
         raise ConfigError(
             "AZIZAM_API_KEY is not set. Use allow_anonymous=True "
             "only for probes that exercise unauthenticated endpoints."
         )
 
-    timeout_raw = env.get("AZIZAM_TIMEOUT_S")
+    timeout_raw = get_env("AZIZAM_TIMEOUT_S", environ=env)
     if timeout_raw:
         try:
             request_timeout_s = float(timeout_raw)

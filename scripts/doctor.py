@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from gateway.compat import get_env  # noqa: E402
 from gateway.discovery import WorkflowRegistry  # noqa: E402
 from gateway.manifests import ManifestError, bind_backend_request, load_workflow_manifest, validate_inputs  # noqa: E402
 

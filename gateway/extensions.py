@@ -28,7 +28,7 @@ The contract has three goals:
 
 from __future__ import annotations
 
-from gateway.compat import accept_aliases, canonical_key
+from gateway.compat import read_field, canonical_key
 
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
@@ -82,12 +82,12 @@ def extract_extension_namespace(
     obviously wrong so callers fail fast instead of silently dropping inputs.
     """
     namespace = canonical_key(namespace)
-    container = accept_aliases(request_body.get(container_key))
+    container = request_body.get(container_key)
     if container is None:
         return {}
     if not isinstance(container, Mapping):
         raise ExtensionError(f"{container_key} must be a mapping")
-    block = container.get(namespace)
+    block = read_field(container, namespace)
     if block is None:
         return {}
     if not isinstance(block, Mapping):

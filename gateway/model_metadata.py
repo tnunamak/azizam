@@ -17,7 +17,7 @@ registry, or the network.
 
 from __future__ import annotations
 
-from gateway.compat import accept_aliases
+from gateway.compat import accept_aliases, read_field
 
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Iterable, Mapping
@@ -345,15 +345,15 @@ def base_metadata(entry: Mapping[str, Any], sources: MetadataSources) -> ModelMe
     model_id = str(entry.get("id") or "")
     if model_id in sources.inherited:
         return sources.inherited[model_id]
-    intent = entry.get("azizam_intent")
+    intent = read_field(entry, "azizam_intent")
     derived = None
     if intent:
-        derived = from_intent(intent, sources.manifest(str(entry.get("azizam_workflow_id") or "")))
+        derived = from_intent(intent, sources.manifest(str(read_field(entry, "azizam_workflow_id") or "")))
     if derived is None and sources.origins.get(model_id) == ORIGIN_DECISION:
         derived = _DECISION
     if derived is None:
         derived = from_service_capabilities(sources.service_capabilities(model_id))
-    if derived is None and entry.get("azizam_current_loaded"):
+    if derived is None and read_field(entry, "azizam_current_loaded"):
         derived = _LANGUAGE
     if derived is None:
         derived = from_origin(sources.origins.get(model_id))
@@ -414,7 +414,7 @@ def _metadata_for(
 ) -> ModelMetadata | None:
     model_id = str(entry.get("id") or "")
     own = by_id.get(model_id)
-    resolves_to = entry.get("azizam_resolves_to")
+    resolves_to = read_field(entry, "azizam_resolves_to")
     if not isinstance(resolves_to, Mapping):
         return own
     targets = [(op, str(t)) for op, t in resolves_to.items() if t and str(t) != model_id]

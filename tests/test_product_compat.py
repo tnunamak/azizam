@@ -14,7 +14,7 @@ import unittest
 
 from gateway.compat import (
     ENV_ALIASES, HEADER_ALIASES, ProductCompatibilityMiddleware, accept_aliases, emit_aliases,
-    get_env, header_names, normalize_headers, emit_headers, emit_header_mapping,
+    emit_model_list_aliases, read_field, get_env, header_names, normalize_headers, emit_headers, emit_header_mapping,
 )
 from gateway import provenance
 
@@ -28,7 +28,7 @@ class ProductCompatibilityTests(unittest.TestCase):
                 with self.subTest(new=new, old=old):
                     self.assertEqual(get_env(new, environ={old: "old"}), "old")
                     self.assertEqual(get_env(old, environ={new: "new", old: "old"}), "new")
-                    self.assertEqual(get_env(new, environ={new: "", old: "old"}), "")
+                    self.assertEqual(get_env(new, environ={new: "", old: "old"}), "old")
                     self.assertEqual(get_env(new, "default", environ={}), "default")
 
     def test_all_fallbacks_follow_declared_order(self):
@@ -42,17 +42,18 @@ class ProductCompatibilityTests(unittest.TestCase):
     def test_response_fields_have_identical_aliases(self):
         value = {"data": [{"azizam_alias": True, "azizam_resolves_to": {"chat": "m"}}],
                  "azizam_object": "video", "azizam_status": "running"}
-        out = emit_aliases(value)
+        out = emit_model_list_aliases(value)
         self.assertEqual(out["data"][0]["azizam_resolves_to"], out["data"][0]["vivid_fish_resolves_to"])
         self.assertEqual(out["azizam_object"], out["vivid_object"])
         self.assertEqual(out["azizam_status"], out["vivid_status"])
         self.assertNotIn("vivid_fish_alias", value["data"][0])
 
     def test_old_response_fields_are_accepted_on_input(self):
-        self.assertEqual(accept_aliases({"vivid_fish_alias": True}), {"azizam_alias": True})
-        self.assertEqual(accept_aliases({"vivid_object": "video", "vivid_status": "done"}),
-                         {"azizam_object": "video", "azizam_status": "done"})
-        self.assertEqual(accept_aliases({"vivid_fish_alias": False, "azizam_alias": True}), {"azizam_alias": True})
+        self.assertTrue(read_field({"vivid_fish_alias": True}, "azizam_alias"))
+        self.assertEqual(read_field({"vivid_object": "video"}, "azizam_object"), "video")
+        value = {"vivid_fish_alias": False, "azizam_alias": True}
+        self.assertTrue(read_field(value, "azizam_alias"))
+        self.assertEqual(accept_aliases(value), value)
 
     def test_workflow_namespaces_are_accepted(self):
         for namespace in ("com.azizam.workflow", "com.vividfish.workflow"):
@@ -60,7 +61,7 @@ class ProductCompatibilityTests(unittest.TestCase):
         value = accept_aliases({"extensions": {"com.azizam.workflow": {"metadata": "none"},
                                               "com.vividfish.workflow": {"metadata": "full"}}})
         self.assertEqual(provenance.requested_metadata_mode(value), "none")
-        self.assertNotIn("com.vividfish.workflow", emit_aliases(value)["extensions"])
+        self.assertEqual(emit_aliases(value)["extensions"], value["extensions"])
 
     def test_provenance_reads_old_and_new_permanently(self):
         for key in ("azizam_provenance", "vividfish_provenance"):
@@ -155,7 +156,7 @@ class ProductCompatibilityTests(unittest.TestCase):
         for old, new in (("x-vividfish-workflows", "x-azizam-workflows"),
                          ("x-vividfish-workflow-id", "x-azizam-workflow-id"),
                          ("x-vividfish-asset", "x-azizam-asset")):
-            self.assertEqual(accept_aliases({old: "value"}), {new: "value"})
+            self.assertEqual(accept_aliases({old: "value"}), {old: "value", new: "value"})
             self.assertEqual(emit_aliases({new: "value"}), {new: "value", old: "value"})
 
     def test_status_restart_counter_falls_back_to_old_unit(self):
@@ -181,7 +182,7 @@ class ProductCompatibilityTests(unittest.TestCase):
             (units / "azizam.service").touch()
             self.assertEqual(ns["installed_gateway_unit"]({"HOME": directory}), "azizam")
 
-    def test_json_and_sse_wire_aliases(self):
+    def test_json_and_sse_bodies_pass_through_with_header_aliases(self):
         async def exercise(sse=False):
             seen = []
             sent = []
@@ -204,15 +205,15 @@ class ProductCompatibilityTests(unittest.TestCase):
                     await send({"type": "http.response.body", "body": b'{"azizam_alias":true}', "more_body": False})
             await ProductCompatibilityMiddleware(app)({"type": "http", "headers": [(b"content-type", b"application/json"), (b"x-vivid-engine", b"legacy")]}, receive, send)
             self.assertIn((b"x-azizam-engine", b"legacy"), seen[0]["headers"])
-            self.assertEqual(json.loads(seen[1]["body"]), {"azizam_alias": True})
+            self.assertEqual(json.loads(seen[1]["body"]), {"vivid_fish_alias": True})
             self.assertIn((b"x-vivid-engine", b"engine"), sent[0]["headers"])
             body = b"".join(m.get("body", b"") for m in sent)
-            self.assertIn(b'"vivid_fish_alias": true', body)
+            self.assertIn(b'"azizam_alias":true', body)
+            self.assertNotIn(b'vivid_fish_alias', body)
             if sse:
                 self.assertIn(b"data: [DONE]\n\n", body)
             else:
-                self.assertEqual(json.loads(body)["azizam_alias"], json.loads(body)["vivid_fish_alias"])
-                self.assertEqual(int(dict(sent[0]["headers"])[b"content-length"]), len(body))
+                self.assertEqual(json.loads(body), {"azizam_alias": True})
         asyncio.run(exercise())
         asyncio.run(exercise(True))
 

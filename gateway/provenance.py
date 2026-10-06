@@ -20,7 +20,7 @@ uploaded media must never reach it, so every value passes
 
 from __future__ import annotations
 
-from gateway.compat import accept_aliases
+from gateway.compat import read_field
 
 import json
 import re
@@ -84,12 +84,12 @@ def requested_metadata_mode(body: Mapping[str, Any] | None) -> str | None:
     """
     if not isinstance(body, Mapping):
         return None
-    container = accept_aliases(body.get("extensions"))
+    container = body.get("extensions")
     if container is None:
         return None
     if not isinstance(container, Mapping):
         raise MetadataModeError("extensions must be a mapping")
-    block = container.get(WORKFLOW_EXTENSION_NAMESPACE)
+    block = read_field(container, WORKFLOW_EXTENSION_NAMESPACE)
     if block is None:
         return None
     if not isinstance(block, Mapping):

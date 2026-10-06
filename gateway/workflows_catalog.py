@@ -7,7 +7,6 @@ workflows or inspect backend files.
 
 from __future__ import annotations
 
-from gateway.compat import get_env
 
 import inspect
 import json
@@ -458,7 +457,7 @@ def _python_example(
             "with ExitStack() as stack:\n"
             f"    files = {{\n{file_lines}\n    }}\n"
             f"    response = requests.request({method!r}, {url!r},\n"
-            "        headers={'Authorization': f\"Bearer {get_env('AZIZAM_API_KEY')}\"},\n"
+            "        headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or os.environ.get('AI_GATEWAY_API_KEY') or os.environ.get('OPENAI_PROXY_API_KEY') or os.environ.get('VIVID_API_KEY') or os.environ.get('VIVID_OPENAI_API_KEY') or ''}\"},\n"
             f"        data={dict(form)!r}, files=files, timeout=300)\n"
             "response.raise_for_status()\n"
             + (
@@ -470,7 +469,7 @@ def _python_example(
     return (
         "import os\nimport requests\n\n"
         f"response = requests.request({method!r}, {url!r},\n"
-        "    headers={'Authorization': f\"Bearer {get_env('AZIZAM_API_KEY')}\"},\n"
+        "    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or os.environ.get('AI_GATEWAY_API_KEY') or os.environ.get('OPENAI_PROXY_API_KEY') or os.environ.get('VIVID_API_KEY') or os.environ.get('VIVID_OPENAI_API_KEY') or ''}\"},\n"
         f"    json={dict(body)!r}, timeout=300)\n"
         "response.raise_for_status()\n"
         + (

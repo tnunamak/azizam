@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from gateway.compat import accept_aliases
+from gateway.compat import read_field
 
 import copy
 from collections.abc import Mapping
@@ -31,7 +31,7 @@ def protocol_frontend_records(
     for item in values:
         if not isinstance(item, Mapping):
             continue
-        record = accept_aliases(copy.deepcopy(dict(item)))
+        record = copy.deepcopy(dict(item))
         seed = seed_frontends.get(str(record.get("id") or ""))
         if isinstance(seed, Mapping):
             for key in (
@@ -119,7 +119,7 @@ def azizam_policy(
         proxy_config=proxy_config,
     ):
         path = _path(route.get("canonical") or route.get("path"))
-        policy = route.get("azizam_policy")
+        policy = read_field(route, "azizam_policy")
         if not path or not isinstance(policy, Mapping):
             continue
         protocol = str(policy.get("protocol") or "").strip()

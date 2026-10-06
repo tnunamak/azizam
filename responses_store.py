@@ -15,7 +15,7 @@ Retention: 7 days. A background pruner deletes older rows.
 from __future__ import annotations
 
 import json
-import os
+from gateway.compat import get_env
 import shutil
 import sqlite3
 import time
@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 _default_db = Path(__file__).parent / "data" / "responses.db"
-DB_PATH = Path(os.environ["AZIZAM_RESPONSES_DB"]) if os.environ.get("AZIZAM_RESPONSES_DB") else _default_db
+DB_PATH = Path(get_env("AZIZAM_RESPONSES_DB", _default_db))
 
 # Retention window for stored responses (seconds).
 RETAIN_S = 7 * 24 * 3600

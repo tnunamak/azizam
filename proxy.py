@@ -15,7 +15,7 @@ Features:
 - TTS passthrough to external TTS service
 """
 
-from gateway.compat import get_env, accept_aliases
+from gateway.compat import get_env, emit_aliases, emit_model_list_aliases, read_field, JSON_OLD_NAMES
 
 import asyncio
 import shutil
@@ -8173,7 +8173,7 @@ async def _identity_edit_alias(
     seed, ...) travel in ``extensions["com.azizam.workflow"]``. The response is
     the usual image payload plus ``likeness``, ``attempts`` and ``people``.
     """
-    options = ((form_dict.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {})
+    options = (read_field(form_dict.get("extensions") or {}, WORKFLOW_EXTENSION_NAMESPACE) or {})
     if not isinstance(options, Mapping):
         return identity_api.error(400, "invalid_extensions", "the workflow extension must be an object", param="extensions")
     try:
@@ -8258,8 +8258,6 @@ async def proxy_comfy_edit_request(
                 status_code=400,
                 media_type="application/json",
             )
-    if "extensions" in form_dict:
-        form_dict["extensions"] = accept_aliases(form_dict["extensions"])
     unknown_response = _record_unknown_image_fields(
         receipt,
         form_dict,
@@ -8859,15 +8857,16 @@ async def proxy_comfy_variations_request(
     # Variations take no workflow controls except the gateway-level metadata
     # control. Read it, then drop it before the strict unknown-field check.
     metadata_field = f"extensions[{WORKFLOW_EXTENSION_NAMESPACE}][{provenance.METADATA_CONTROL}]"
-    if metadata_field in form_dict:
+    legacy_metadata_field = f"extensions[{JSON_OLD_NAMES[WORKFLOW_EXTENSION_NAMESPACE]}][{provenance.METADATA_CONTROL}]"
+    metadata_value = form_dict.pop(metadata_field, form_dict.get(legacy_metadata_field))
+    form_dict.pop(legacy_metadata_field, None)
+    if metadata_value is not None:
         metadata_error = _note_media_metadata_body({
             "extensions": {WORKFLOW_EXTENSION_NAMESPACE: {
-                provenance.METADATA_CONTROL: form_dict.pop(metadata_field)}}
+                provenance.METADATA_CONTROL: metadata_value}}
         })
         if metadata_error is not None:
             return metadata_error
-    if "extensions" in form_dict:
-        form_dict["extensions"] = accept_aliases(form_dict["extensions"])
     unknown_response = _record_unknown_image_fields(
         receipt,
         form_dict,
@@ -9253,7 +9252,7 @@ def _openai_video_payload(
             done = index if index is not None else 0
         payload["segments_total"] = total
         payload["segments_completed"] = done
-    return payload
+    return emit_aliases(payload)
 
 
 async def _record_event(event: dict) -> None:
@@ -10150,7 +10149,7 @@ async def _resolve_video_workflow_assets(
     Nothing is uploaded to ComfyUI here, so a request that fails validation
     later leaves no files behind in ComfyUI's input directory.
     """
-    block = (body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {}
+    block = read_field((body.get("extensions") or {}), WORKFLOW_EXTENSION_NAMESPACE) or {}
     if not isinstance(block, Mapping):
         raise _VideoAssetError("extensions must be a mapping", param="extensions")
     specs = manifest.get("inputs") or {}
@@ -10211,7 +10210,7 @@ async def _upload_video_workflow_assets(
     """Upload resolved assets to ComfyUI's input dir; return the body with filenames."""
     updated = dict(body)
     extensions = dict(updated.get("extensions") or {})
-    block = dict(extensions.get(WORKFLOW_EXTENSION_NAMESPACE) or {})
+    block = dict(read_field(extensions, WORKFLOW_EXTENSION_NAMESPACE) or {})
     headers = configured_downstream_headers(auth_context, "comfyui")
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
@@ -10440,7 +10439,7 @@ async def _submit_video_graph(
                 **(payload_extra or {}),
             }
             return Response(
-                content=json.dumps(payload),
+                content=json.dumps(emit_aliases(payload)),
                 status_code=200,
                 media_type="application/json",
                 headers=response_headers,
@@ -10668,7 +10667,7 @@ async def proxy_comfy_video_create(
             )
         try:
             body = merge_workflow_inputs(body)
-            ext_block = (body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE)
+            ext_block = read_field((body.get("extensions") or {}), WORKFLOW_EXTENSION_NAMESPACE)
             if isinstance(ext_block, Mapping):
                 body["extensions"] = {
                     **body["extensions"],
@@ -11014,7 +11013,7 @@ async def proxy_comfy_video_create(
         if upload_error is not None:
             return upload_error
     _workflow_block = (
-        (body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE)
+        read_field((body.get("extensions") or {}), WORKFLOW_EXTENSION_NAMESPACE)
         if isinstance(body.get("extensions"), Mapping)
         else body.get("extensions")
     )
@@ -11074,7 +11073,7 @@ async def proxy_comfy_video_create(
     if workflow_cfg.get("subject_select"):
         # Character replace: pick which person is replaced, and remember how to
         # read how many were tracked once the job is done.
-        block = ((body.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {})
+        block = (read_field(body.get("extensions") or {}, WORKFLOW_EXTENSION_NAMESPACE) or {})
         try:
             index_text = str(block.get("subject_index", "0")).strip()
             if not re.fullmatch(r"\d+(,\d+)*", index_text):
@@ -11187,7 +11186,7 @@ def _parse_chain_options(body: Mapping[str, Any], engine: video_extend.ChainEngi
 
     Which options exist depends on the engine (`engine.option_keys`)."""
     merged = merge_workflow_inputs(body)
-    block = (merged.get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {}
+    block = read_field((merged.get("extensions") or {}), WORKFLOW_EXTENSION_NAMESPACE) or {}
     if not isinstance(block, Mapping):
         raise video_extend.PlanError("extensions must be a mapping", code="invalid_workflow_extension", param="extensions")
     unknown = [
@@ -11606,7 +11605,7 @@ async def proxy_comfy_video_status(video_id: str, auth_context: AuthContext) -> 
                     _comfy_execution_error_message(job) or "ComfyUI execution_error",
                 )
             return Response(
-                content=json.dumps(payload),
+                content=json.dumps(emit_aliases(payload)),
                 status_code=200,
                 media_type="application/json"
             )
@@ -12182,7 +12181,7 @@ async def _submit_video_remix(
             "videos.remix_workflow in proxy_config.yml to enable it.",
             code="video_remix_not_configured",
         )
-    block = (merge_workflow_inputs(body).get("extensions") or {}).get(WORKFLOW_EXTENSION_NAMESPACE) or {}
+    block = read_field((merge_workflow_inputs(body).get("extensions") or {}), WORKFLOW_EXTENSION_NAMESPACE) or {}
     if isinstance(block, Mapping) and "source_video" in block:
         return _json_error(
             400,
@@ -12194,7 +12193,7 @@ async def _submit_video_remix(
     create_body.setdefault("model", VIDEO_REMIX_PUBLIC_MODEL)
     extensions = dict(create_body.get("extensions") or {})
     extensions[WORKFLOW_EXTENSION_NAMESPACE] = {
-        **dict(extensions.get(WORKFLOW_EXTENSION_NAMESPACE) or {}),
+        **dict(read_field(extensions, WORKFLOW_EXTENSION_NAMESPACE) or {}),
         "source_video": source,
     }
     create_body["extensions"] = extensions
@@ -13350,16 +13349,16 @@ async def _filter_model_list_for_profile(
             if (
                 normalize_model_id(str(item.get("id") or "")) in loaded_norm
                 or (
-                    bool(item.get("azizam_current_loaded"))
+                    bool(read_field(item, "azizam_current_loaded"))
                     and bool(loaded_norm)
                 )
                 or (
-                    bool(item.get("azizam_workflow"))
-                    and str(item.get("azizam_backend") or "") in {"comfyui", "gateway"}
+                    bool(read_field(item, "azizam_workflow"))
+                    and str(read_field(item, "azizam_backend") or "") in {"comfyui", "gateway"}
                     and comfy_available
                 )
                 or (
-                    str(item.get("azizam_backend") or "") == "embeddings"
+                    str(read_field(item, "azizam_backend") or "") == "embeddings"
                     and EMBEDDINGS_ENABLED
                 )
             )
@@ -13378,7 +13377,7 @@ async def _filter_model_list_for_profile(
         metadata["azizam_profile_model_allowlist"] = sorted(
             item for item in allowlist if normalize_model_id(item) in visible_norm
         )
-    return filtered, metadata
+    return filtered, emit_aliases(metadata)
 
 
 def _protocol_for_intent(intent: str) -> str:
@@ -19057,7 +19056,7 @@ def _extension_asset_field_references(body: Mapping[str, Any]) -> dict[str, str]
     extensions = body.get("extensions")
     if not isinstance(extensions, Mapping):
         return {}
-    block = extensions.get(WORKFLOW_EXTENSION_NAMESPACE)
+    block = read_field(extensions, WORKFLOW_EXTENSION_NAMESPACE)
     if not isinstance(block, Mapping):
         return {}
 
@@ -19204,9 +19203,10 @@ def _workflow_extensions_present(body: Mapping[str, Any]) -> bool:
     extensions = body.get("extensions")
     if not isinstance(extensions, Mapping):
         return extensions is not None
-    if WORKFLOW_EXTENSION_NAMESPACE not in extensions:
+    missing = object()
+    block = read_field(extensions, WORKFLOW_EXTENSION_NAMESPACE, missing)
+    if block is missing:
         return False
-    block = extensions[WORKFLOW_EXTENSION_NAMESPACE]
     if isinstance(block, Mapping):
         # Gateway-level controls (metadata) are valid on every workflow.
         return not block or any(name not in provenance.RESERVED_GATEWAY_CONTROLS for name in block)
@@ -19217,7 +19217,7 @@ def _workflow_extension_integer(body: Mapping[str, Any], name: str) -> Optional[
     extensions = body.get("extensions")
     if not isinstance(extensions, Mapping):
         return None
-    block = extensions.get(WORKFLOW_EXTENSION_NAMESPACE)
+    block = read_field(extensions, WORKFLOW_EXTENSION_NAMESPACE)
     if not isinstance(block, Mapping):
         return None
     value = block.get(name)
@@ -19274,7 +19274,7 @@ async def _upload_image_workflow_extension_assets(
     extensions = request_body.get("extensions")
     if not isinstance(extensions, Mapping):
         return updated, None
-    block = extensions.get(WORKFLOW_EXTENSION_NAMESPACE)
+    block = read_field(extensions, WORKFLOW_EXTENSION_NAMESPACE)
     if not isinstance(block, Mapping):
         return updated, None
 
@@ -19649,7 +19649,7 @@ def _image_job_body_has_seed(body: Mapping[str, Any]) -> bool:
     extensions = body.get("extensions")
     if not isinstance(extensions, Mapping):
         return False
-    block = extensions.get(WORKFLOW_EXTENSION_NAMESPACE)
+    block = read_field(extensions, WORKFLOW_EXTENSION_NAMESPACE)
     if not isinstance(block, Mapping):
         return False
     seed = block.get("seed")
@@ -21916,14 +21916,15 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
         input_specs = record.manifest.get("inputs") or {}
         _begin_media_delivery(auth_context)
         metadata_field = f"extensions[{WORKFLOW_EXTENSION_NAMESPACE}][{provenance.METADATA_CONTROL}]"
-        metadata_value = form.get(metadata_field)
+        legacy_metadata_field = f"extensions[{JSON_OLD_NAMES[WORKFLOW_EXTENSION_NAMESPACE]}][{provenance.METADATA_CONTROL}]"
+        metadata_value = form.get(metadata_field) if metadata_field in form else form.get(legacy_metadata_field)
         if metadata_value is not None:
             metadata_error = _note_media_metadata_body({
                 "extensions": {WORKFLOW_EXTENSION_NAMESPACE: {provenance.METADATA_CONTROL: metadata_value}}
             })
             if metadata_error is not None:
                 return metadata_error
-        unknown_fields = set(form.keys()) - set(input_specs) - {metadata_field}
+        unknown_fields = set(form.keys()) - set(input_specs) - {metadata_field, legacy_metadata_field}
         if unknown_fields:
             raise ValueError(f"unknown workflow input: {sorted(unknown_fields)[0]}")
         supplied: dict[str, Any] = {}
@@ -22822,7 +22823,7 @@ async def audio_models(request: Request):
         payload["azizam_target_visibility"] = "available"
         payload["azizam_target_activation"] = _profile_target_activation(auth_context)
     return Response(
-        content=json.dumps(payload),
+        content=json.dumps(emit_aliases(payload)),
         status_code=200,
         media_type="application/json"
     )
@@ -23436,7 +23437,7 @@ async def _litellm_models_payload(
         )
         if content is None:
             return None
-        payload = accept_aliases(json.loads(content.decode("utf-8") or "{}"))
+        payload = json.loads(content.decode("utf-8") or "{}")
         if isinstance(payload, dict):
             payload["x_azizam_llm_execution"] = "litellm"
             return payload
@@ -23630,7 +23631,7 @@ async def list_models(request: Request):
         if isinstance(payload, dict):
             if route_auth.delegated_to_litellm:
                 return Response(
-                    content=json.dumps(payload),
+                    content=json.dumps(emit_model_list_aliases(payload)),
                     status_code=200,
                     media_type="application/json",
                 )
@@ -23773,7 +23774,7 @@ async def list_models(request: Request):
     upstream_payload["data"] = data
     upstream_payload["object"] = upstream_payload.get("object") or "list"
     return Response(
-        content=json.dumps(upstream_payload),
+        content=json.dumps(emit_model_list_aliases(upstream_payload)),
         status_code=200,
         media_type="application/json",
     )
@@ -24850,7 +24851,7 @@ async def _ollama_loaded_model_summaries(
                 entry["size_vram"] = entry["size"]
             except OSError:
                 pass
-        summaries.append(entry)
+        summaries.append(emit_aliases(entry))
         seen.add(normalize_model_id(name))
 
     return summaries

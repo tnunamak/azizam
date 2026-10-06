@@ -29,15 +29,21 @@ Exit code is 0 when no checks failed (skips are not failures), else 1.
 
 from __future__ import annotations
 
-from gateway.compat import get_env
-
 import argparse
 import json
 import os
+import sys
+from pathlib import Path
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Callable, List, Mapping, Optional, Tuple
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from gateway.compat import get_env  # noqa: E402
 
 DEFAULT_TIMEOUT_S = 10
 DEFAULT_ANTHROPIC_MODEL = "default"
