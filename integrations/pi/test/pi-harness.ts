@@ -21,10 +21,10 @@ export interface PiSession {
 }
 
 /** Start `pi --mode rpc --no-session` with an isolated agent dir and the extension loaded from source. */
-export function startPi(options: { agentDir: string; env?: Record<string, string>; args?: string[]; viaPackage?: boolean }): PiSession {
+export function startPi(options: { agentDir: string; env?: Record<string, string>; args?: string[]; viaPackage?: boolean; noExtension?: boolean }): PiSession {
 	const child: ChildProcessWithoutNullStreams = spawn(
 		findPi()!,
-		["--mode", "rpc", "--no-session", ...(options.viaPackage ? [] : ["--extension", ENTRY]), ...(options.args ?? [])],
+		["--mode", "rpc", "--no-session", ...(options.viaPackage || options.noExtension ? [] : ["--extension", ENTRY]), ...(options.args ?? [])],
 		{ env: { ...process.env, PI_CODING_AGENT_DIR: options.agentDir, ...options.env }, stdio: "pipe" },
 	);
 	const events: any[] = [];

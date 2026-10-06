@@ -1,7 +1,7 @@
 // End-to-end: the real `pi` CLI loads the extension from source and talks to a mock Azizam gateway over RPC.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { after, before, test } from "node:test";
@@ -240,4 +240,71 @@ test("cold start resolves --provider/--model with a models.json apiKey (literal 
 		writeFileSync(join(agentDir, "models.json"), JSON.stringify({ providers: { azizam: { apiKey } } }));
 		await coldStartResolves(agentDir, apiKey.startsWith("!") ? "!command" : "literal");
 	}
+});
+
+test("cold start resolves even when the model store cannot be read", { skip: !piAvailable }, async () => {
+	const agentDir = freshAgentDir();
+	writeFileSync(join(agentDir, "auth.json"), JSON.stringify({ azizam: { type: "api_key", key: KEY } }));
+	mkdirSync(join(agentDir, "models-store.json")); // reading it fails with EISDIR
+	const session = startPi({
+		agentDir,
+		env: { AZIZAM_BASE_URL: gateway.baseUrl, AZIZAM_API_KEY: "" },
+		args: ["--provider", "azizam", "--model", "chat-small"],
+	});
+	try {
+		const state = await session.send({ type: "get_state" });
+		assert.equal(state.data.model?.id, "chat-small", session.stderr());
+	} finally { await session.close(); }
+});
+
+test("cold start resolves even when the agent dir is read-only", { skip: !piAvailable || process.getuid?.() === 0 }, async () => {
+	const agentDir = freshAgentDir();
+	chmodSync(agentDir, 0o555);
+	const session = startPi({
+		agentDir,
+		env: { AZIZAM_BASE_URL: gateway.baseUrl, AZIZAM_API_KEY: KEY },
+		args: ["--provider", "azizam", "--model", "chat-small"],
+	});
+	try {
+		const state = await session.send({ type: "get_state" });
+		assert.equal(state.data.model?.id, "chat-small", session.stderr());
+	} finally { await session.close(); chmodSync(agentDir, 0o755); }
+});
+
+// Credential commands of unrelated providers (password managers) must not run because this extension is loaded.
+// End-to-end guard only: Pi caches `auth.json` command results per process, so this passes even without the scoped
+// registration. The test that proves the isolation is test/runtime-isolation.test.ts.
+test("loading the extension adds no credential command runs for other providers", { skip: !piAvailable }, async () => {
+	const countRuns = async (withExtension: boolean) => {
+		const agentDir = freshAgentDir();
+		const counter = join(agentDir, "other.count");
+		writeFileSync(join(agentDir, "auth.json"), JSON.stringify({
+			openai: { type: "api_key", key: `!echo run >> ${counter}; echo k-other` },
+			azizam: { type: "api_key", key: KEY },
+		}));
+		const session = startPi({
+			agentDir,
+			noExtension: !withExtension,
+			env: { AZIZAM_BASE_URL: gateway.baseUrl, AZIZAM_API_KEY: "" },
+			args: withExtension ? ["--provider", "azizam", "--model", "chat-small"] : [],
+		});
+		try {
+			await session.send({ type: "get_state" });
+			await session.send({ type: "get_available_models" });
+			await new Promise((resolve) => setTimeout(resolve, 1000));
+		} finally { await session.close(); }
+		return existsSync(counter) ? readFileSync(counter, "utf8").split("\n").filter(Boolean).length : 0;
+	};
+	const baseline = await countRuns(false);
+	assert.equal(await countRuns(true), baseline, "the extension must not trigger extra runs of other providers' commands");
+});
+
+test("a cold-start models.json !command key runs at most twice (prefetch + Pi's own refresh), not more", { skip: !piAvailable }, async () => {
+	const agentDir = freshAgentDir();
+	const counter = join(agentDir, "azizam.count");
+	writeFileSync(join(agentDir, "models.json"), JSON.stringify({ providers: { azizam: { apiKey: `!echo run >> ${counter}; echo ${KEY}` } } }));
+	await coldStartResolves(agentDir, "counted !command");
+	await new Promise((resolve) => setTimeout(resolve, 500));
+	const runs = readFileSync(counter, "utf8").split("\n").filter(Boolean).length;
+	assert.ok(runs >= 1 && runs <= 2, `ran ${runs} times`);
 });
