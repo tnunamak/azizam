@@ -1293,7 +1293,9 @@ def _usage_model(receipt: Mapping[str, Any], capability: str) -> str:
     )
     if model:
         return model
-    route = _string_first(receipt.get("route_path"), receipt.get("route"))
+    route = _string_first(
+        receipt.get("route_path"), receipt.get("route"), receipt.get("path")
+    )
     if route:
         return route
     return ""
