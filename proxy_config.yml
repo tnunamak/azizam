@@ -69,6 +69,13 @@ backends:
     # Version the logical-policy collection independently of the registry as a
     # whole. Existing DB-owned collections must be explicitly migrated.
     model_policy_schema_version: 1
+    # model_metadata: what /v1/models reports (docs/api/MODEL_METADATA.md).
+    # Every record loads the mmproj (image input) and llama-bee runs with
+    # --jinja (native tool calls) and --reasoning on. Only the records with a
+    # `reasoning_effort: none` overlay omit the `reasoning` tag. The 16384
+    # `max_tokens` on `default` is a default, not a cap, so it is not declared.
+    # After first boot these rows live in admin.db; copy edits there with
+    # scripts/local/sync_model_metadata_from_config.py.
     models:
       - id: default
         model_group: default
@@ -87,6 +94,9 @@ backends:
             only_if_destination_absent: true
           - kind: default-params
             set: {max_tokens: 16384}
+        model_metadata:
+          input_modalities: [text, image]
+          tags: [reasoning, tool-use, vision]
       - id: coder
         model_group: coder
         upstream_model: Qwen3.8-27B-Uncensored-Q4_K_M.gguf
@@ -94,6 +104,9 @@ backends:
         activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
         activation_profile: kv-q5-q4
         context_window: 202752
+        model_metadata:
+          input_modalities: [text, image]
+          tags: [reasoning, tool-use, vision]
       - id: coder-q5
         model_group: coder-q5
         base_model_id: coder
@@ -105,6 +118,9 @@ backends:
         activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
         activation_profile: kv-q5-q4
         context_window: 202752
+        model_metadata:
+          input_modalities: [text, image]
+          tags: [reasoning, tool-use, vision]
       - id: coder-q8
         model_group: coder-q8
         base_model_id: coder
@@ -114,6 +130,9 @@ backends:
         activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
         activation_profile: kv-q8
         context_window: 145408
+        model_metadata:
+          input_modalities: [text, image]
+          tags: [reasoning, tool-use, vision]
       - id: coder-unchained
         model_group: coder-unchained
         upstream_model: coder-unchained
@@ -122,6 +141,9 @@ backends:
         activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
         activation_profile: kv-q5-q4
         context_window: 202752
+        model_metadata:
+          input_modalities: [text, image]
+          tags: [reasoning, tool-use, vision]
       # Public aliases inherit the logical base policy by stable id. Physical
       # paths remain routing data; only this overlay distinguishes fast.
       - id: default-fast
@@ -135,12 +157,18 @@ backends:
         policy_overlay:
           - kind: default-params
             set: {reasoning_effort: none}
+        model_metadata:
+          input_modalities: [text, image]
+          tags: [tool-use, vision]
       # These aliases deliberately select the already loaded routing target.
       # Their base references are policy data, not loaded-file inference.
       - id: current
         model_group: current
         base_model_id: default
         upstream_model: Qwen3.8-27B-Uncensored-Q4_K_M.gguf
+        model_metadata:
+          input_modalities: [text, image]
+          tags: [reasoning, tool-use, vision]
       - id: current-fast
         model_group: current-fast
         base_model_id: default
@@ -148,6 +176,9 @@ backends:
         policy_overlay:
           - kind: default-params
             set: {reasoning_effort: none}
+        model_metadata:
+          input_modalities: [text, image]
+          tags: [tool-use, vision]
       - id: rp
         model_group: rp
         # Keep the logical alias across LiteLLM's internal gateway hop so the
@@ -158,6 +189,9 @@ backends:
         activation_mmproj: /media/windows/AI Models/LLMs/GGUF/Qwen3.8-27B-Uncensored-mmproj-F16.gguf
         activation_profile: kv-q5-q4
         context_window: 202752
+        model_metadata:
+          input_modalities: [text, image]
+          tags: [reasoning, tool-use, vision]
     role: required
     capabilities:
       - openai

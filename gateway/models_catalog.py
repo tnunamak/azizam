@@ -9,6 +9,7 @@ Callers supply already-loaded data and an already-authenticated policy view.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import statistics
 import inspect
@@ -136,12 +137,15 @@ def build_models_catalog(
     recent_receipts: Iterable[Mapping[str, Any]] = (),
     health_evidence: Mapping[str, Mapping[str, Any]] | None = None,
     workflow_records: Iterable[Mapping[str, Any]] = (),
+    model_metadata: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build a deterministic catalog for the Models UI.
 
     Capabilities must already reflect the caller's policy.  Rows denied by
     policy are omitted.  Timing is computed only from supplied receipts or
     explicit manifest/config facts; otherwise it is reported as unknown.
+    ``model_metadata`` maps a row id to the `/v1/models` contract fields
+    (``type``, ``architecture``, ``max_tokens``, ``tags``) so both lists agree.
     """
 
     capability_groups = [list(group) for group in capability_sets] if capability_sets is not None else [list(capabilities)]
@@ -177,6 +181,8 @@ def build_models_catalog(
 
     aliases = _dedupe_alias_targets(_merge_rows(alias_rows))
     model_rows = _merge_rows(model_rows)
+    for row in (*aliases, *model_rows):
+        row.update(copy.deepcopy(dict((model_metadata or {}).get(row["id"]) or {})))
 
     return {
         "schema_version": 1,

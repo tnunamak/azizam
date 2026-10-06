@@ -85,6 +85,7 @@ from gateway import decisions_api, decision_provider_execution
 from gateway.decision_routing import DecisionRuntime
 from gateway import rerank as rerank_api
 from gateway import stable_aliases
+from gateway import model_metadata
 from gateway import speech_stream
 from gateway import custom_voices
 from gateway import voice_audio
@@ -14908,6 +14909,7 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
         *_current_loaded_model_entries(),
     ]
     return build_models_catalog(
+        model_metadata=_catalog_model_metadata(model_entries, service_records, capability_sets),
         alias_views=_gateway_aliases_provider(),
         capability_sets=capability_sets,
         model_entries=model_entries,
@@ -14919,6 +14921,31 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
             for record in GATEWAY_WORKFLOW_REGISTRY.records()
         ],
     )
+
+
+def _catalog_model_metadata(
+    model_entries: list[dict[str, Any]],
+    service_records: Mapping[str, Any],
+    capability_sets: list[list[Any]],
+) -> dict[str, dict[str, Any]]:
+    """The same contract fields `/v1/models` reports, keyed by catalog row id.
+
+    The catalog has no LiteLLM payload, so the LiteLLM-routable names compiled
+    from the registry stand in for it as the LLM-catalog origin.
+    """
+    try:
+        llm_names = litellm_known_model_names(service_records)
+    except Exception:  # noqa: BLE001
+        llm_names = frozenset()
+    origins = {name: model_metadata.ORIGIN_LLM_CATALOG for name in llm_names}
+    origins.update({
+        str(capability.model): model_metadata.ORIGIN_DECISION
+        for capabilities in capability_sets
+        for capability in capabilities
+        if capability.model and str(capability.intent).startswith("decision.")
+    })
+    entries = [*model_entries, *({"id": model_id} for model_id in origins)]
+    return model_metadata.metadata_index(entries, _model_metadata_sources(origins))
 
 
 app.include_router(create_models_catalog_router(_user_models_catalog_payload))
@@ -22894,6 +22921,88 @@ async def _annotate_model_context_windows(data: list[Any]) -> None:
             item["context_window"] = found
 
 
+def _service_model_match(model_id: str) -> tuple[Mapping[str, Any], Mapping[str, Any] | None] | None:
+    """The registry service (and model record) that serves a public model id."""
+    normalized = normalize_model_id(model_id)
+    backends = config.get("backends") if isinstance(config.get("backends"), Mapping) else {}
+    for service_cfg in backends.values():
+        if not isinstance(service_cfg, Mapping):
+            continue
+        for record in _service_model_records(service_cfg):
+            names = {
+                normalize_model_id(str(record.get(key) or ""))
+                for key in ("id", "model_group", "public_name")
+            }
+            if normalized in names:
+                return service_cfg, record
+        if normalize_model_id(str(service_cfg.get("model_id") or "")) == normalized:
+            return service_cfg, None
+    return None
+
+
+def _declared_model_metadata(model_id: str) -> Mapping[str, Any] | None:
+    """Operator `model_metadata` declarations for one id, most specific last.
+
+    Service-registry model record < `models:` entry < `roles:` entry, the same
+    surfaces (and order) that already annotate `description`.
+    """
+    normalized = normalize_model_id(model_id)
+    key = model_metadata.DECLARATION_KEY
+    match = _service_model_match(normalized)
+    extra = next(
+        (
+            item for item in (config.get("models") or [])
+            if isinstance(item, Mapping) and normalize_model_id(str(item.get("id") or "")) == normalized
+        ),
+        None,
+    )
+    roles_cfg = config.get("roles") if isinstance(config.get("roles"), Mapping) else {}
+    merged: dict[str, Any] = {}
+    for source in (match[1] if match else None, extra, roles_cfg.get(normalized)):
+        block = source.get(key) if isinstance(source, Mapping) else None
+        if isinstance(block, Mapping):
+            merged.update(block)
+    return merged or None
+
+
+def _service_capabilities_for_model_id(model_id: str) -> list[str] | None:
+    match = _service_model_match(model_id)
+    if match is None:
+        return None
+    capabilities = match[0].get("capabilities")
+    return [str(c) for c in capabilities] if isinstance(capabilities, list) else None
+
+
+def _workflow_public_model_id(manifest: Mapping[str, Any]) -> str | None:
+    """The `model` id a media route accepts for a workflow (as `_build_workflow_model_entries`)."""
+    model_id = _gateway_image_model_id(manifest)
+    if model_id:
+        return model_id
+    bindings = manifest.get("bindings") if isinstance(manifest.get("bindings"), Mapping) else {}
+    comfy = bindings.get("comfyui") if isinstance(bindings.get("comfyui"), Mapping) else {}
+    artifact = comfy.get("workflow")
+    if not isinstance(artifact, str) or not artifact:
+        return None
+    return Path(artifact).stem or None
+
+
+def _model_metadata_sources(origins: Mapping[str, str] | None = None) -> model_metadata.MetadataSources:
+    records = GATEWAY_WORKFLOW_REGISTRY.records()
+    manifests = {record.id: record.manifest for record in records}
+    by_model_id: dict[str, Mapping[str, Any]] = {}
+    for record in records:
+        public_id = _workflow_public_model_id(record.manifest)
+        if public_id:
+            by_model_id.setdefault(public_id, record.manifest)
+    return model_metadata.MetadataSources(
+        declared=_declared_model_metadata,
+        service_capabilities=_service_capabilities_for_model_id,
+        manifest=manifests.get,
+        workflow_for_model=by_model_id.get,
+        origins=dict(origins or {}),
+    )
+
+
 def _build_role_catalog_entries() -> list[dict]:
     """Return configured LLM role handles for admin inventory and policy checks.
 
@@ -23300,6 +23409,9 @@ async def list_models(request: Request):
     """OpenAI-compatible model list. Returns:
       1. LiteLLM's OpenAI-shaped LLM model catalog when the substrate is enabled
       2. Gateway-native media workflow model IDs
+
+    Each entry the gateway can classify also carries `type`, `architecture`
+    and, when known, `max_tokens` and `tags` (docs/api/MODEL_METADATA.md).
     """
     if _is_anthropic_sdk_request(request):
         return await anthropic_models(request)
@@ -23370,6 +23482,7 @@ async def list_models(request: Request):
         )
     ]
 
+    llm_catalog_ids = {item.get("id") for item in data if isinstance(item, dict) and item.get("id")}
     workflow_entries = _build_workflow_model_entries()
     existing_ids = {item.get("id") for item in data if isinstance(item, dict)}
     for current_entry in reversed(_current_loaded_model_entries()):
@@ -23406,6 +23519,9 @@ async def list_models(request: Request):
         if isinstance(item, dict) and type(item.get("created")) is not int:
             item["created"] = 0
 
+    # Alias targets resolve against the whole catalog, so a caller's profile
+    # cannot change what an alias reports.
+    metadata_catalog = list(data)
     data, policy_metadata = await _filter_model_list_for_profile(data, auth_context)
 
     # Annotate each model entry with a description sourced from roles: or
@@ -23429,13 +23545,20 @@ async def list_models(request: Request):
         if desc:
             item["description"] = desc
 
+    decision_ids: set[str] = set()
     for decision_model in await asyncio.to_thread(_decision_models_for, auth_context, _profile_for_auth_context(auth_context)):
         entry = {"id": decision_model.id, "object": "model", "owned_by": "vivid-fish",
                  "created": 0, "capabilities": decision_model.view()["capabilities"]}
+        decision_ids.add(entry["id"])
         if entry["id"] not in {item.get("id") for item in data if isinstance(item, dict)}:
             data.append(entry)
 
     await _annotate_model_context_windows(data)
+    origins = {
+        **{model_id: model_metadata.ORIGIN_LLM_CATALOG for model_id in llm_catalog_ids},
+        **{model_id: model_metadata.ORIGIN_DECISION for model_id in decision_ids},
+    }
+    model_metadata.annotate_entries(data, _model_metadata_sources(origins), catalog=metadata_catalog)
 
     upstream_payload.update(policy_metadata)
     upstream_payload["data"] = data

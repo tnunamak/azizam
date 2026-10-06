@@ -1,0 +1,933 @@
+{
+ "data": [
+  {
+   "created": 1778275419,
+   "description": "Minimal video.generate contract bound to the WAN 2.2 TI2V 5B Q8 ComfyUI workflow.",
+   "id": "video-wan-2.2-ti2v-5b-q8",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_backend": "comfyui",
+   "vivid_fish_intent": "video.generate",
+   "vivid_fish_manifest_version": "0.1.0",
+   "vivid_fish_workflow": true,
+   "vivid_fish_workflow_id": "video.generate.wan-2.2-ti2v-5b-q8"
+  },
+  {
+   "created": 1790878163,
+   "description": "MiniMax H3 FL2VA text-to-video with native stereo audio (int8_convrot, 8-step turbo LoRA). Put sound cues after an 'Audio:' paragraph in the prompt. Request via POST /v1/videos: size multiples of 32 (max 1344x768; default 960x544), seconds 2-10 at 24 fps (frames are 17k+5). 120-250 s for 5 s at 960x544. LICENSE: the MiniMax H3 Community License excludes use in the US, EU, UK and South Korea.",
+   "id": "video-minimax-h3-t2v",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_backend": "comfyui",
+   "vivid_fish_intent": "video.generate",
+   "vivid_fish_manifest_version": "0.1.0",
+   "vivid_fish_workflow": true,
+   "vivid_fish_workflow_id": "video.generate.minimax-h3-t2v"
+  },
+  {
+   "created": 1790971748,
+   "description": "MiniMax H3 long video with native audio. The manifest binds the single-segment (10 s) reference graph; POST /v1/videos builds longer chains (shots, seconds past 10 s) and POST /v1/videos/extensions extends a video, both in code. Each added segment is pinned to the end of the video so far with the H3 Motion Context nodes. LICENSE: the MiniMax H3 Community License excludes use in the US, EU, UK and South Korea.",
+   "id": "video-minimax-h3-long",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_backend": "comfyui",
+   "vivid_fish_intent": "video.generate",
+   "vivid_fish_manifest_version": "0.1.0",
+   "vivid_fish_workflow": true,
+   "vivid_fish_workflow_id": "video.generate.minimax-h3-long"
+  },
+  {
+   "created": 1790878163,
+   "description": "MiniMax H3 FL2VA first-frame image-to-video with native stereo audio. Selected automatically when /v1/videos gets input_reference with model minimax-h3, or by model id. Same size and length rules as minimax-h3. About 185 s for 5 s at 960x544. LICENSE: the MiniMax H3 Community License excludes use in the US, EU, UK and South Korea.",
+   "id": "video-minimax-h3-i2v",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_backend": "comfyui",
+   "vivid_fish_intent": "video.generate",
+   "vivid_fish_manifest_version": "0.1.0",
+   "vivid_fish_workflow": true,
+   "vivid_fish_workflow_id": "video.generate.minimax-h3-i2v"
+  },
+  {
+   "created": 1790878096,
+   "description": "Video from a prompt or image",
+   "id": "video-ltx-2.5-t2v",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_backend": "comfyui",
+   "vivid_fish_intent": "video.generate",
+   "vivid_fish_manifest_version": "0.1.0",
+   "vivid_fish_workflow": true,
+   "vivid_fish_workflow_id": "video.generate.ltx-2.5-t2v"
+  },
+  {
+   "created": 1790963168,
+   "description": "LTX 2.5 long video. The manifest binds the single-segment (8 s) reference graph; POST /v1/videos builds longer chains (shots, seconds past 10 s) and POST /v1/videos/extensions extends a video, both in code.",
+   "id": "video-ltx-2.5-long",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_backend": "comfyui",
+   "vivid_fish_intent": "video.generate",
+   "vivid_fish_manifest_version": "0.1.0",
+   "vivid_fish_workflow": true,
+   "vivid_fish_workflow_id": "video.generate.ltx-2.5-long"
+  },
+  {
+   "created": 1790878163,
+   "description": "LTX-2.5 22B distilled image-to-video with synchronized audio. Selected automatically when /v1/videos gets input_reference with model ltx-2.5, or by model id. Same size and length rules as ltx-2.5 (multiples of 64, max 1280x704, 1-10 s). About 85 s for 5 s at 960x512. image_strength default 0.7. License: LTX-2.x Community License.",
+   "id": "video-ltx-2.5-i2v",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_backend": "comfyui",
+   "vivid_fish_intent": "video.generate",
+   "vivid_fish_manifest_version": "0.1.0",
+   "vivid_fish_workflow": true,
+   "vivid_fish_workflow_id": "video.generate.ltx-2.5-i2v"
+  },
+  {
+   "created": 1778903392,
+   "description": "Portable image generation contract for SDXL texture tiles with manifest-backed seamless postprocessing controls.",
+   "id": "sdxl-seamless-tile",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_backend": "comfyui",
+   "vivid_fish_intent": "image.generate",
+   "vivid_fish_manifest_version": "0.1.1",
+   "vivid_fish_workflow": true,
+   "vivid_fish_workflow_id": "image.generate.sdxl-seamless-tile"
+  },
+  {
+   "created": 1791010009,
+   "description": "Local T2I workflow for uncensored output. Krea 2 Turbo (int8_convrot) plus the SNOFS v1.4 LoKr (Ashen3) loaded with stock LoraLoaderModelOnly at strength 1.0. Bake-off 2026-10-03 showed no visible SFW quality loss and explicit output where stock Krea 2 Turbo returns clothed images. Write natural-language prompts that say 'photograph' (not 'photorealistic'). CFG-distilled turbo model, CFG fixed at 1.0. Only depict adults.",
+   "id": "krea2-turbo-snofs",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_backend": "comfyui",
+   "vivid_fish_intent": "image.generate",
+   "vivid_fish_manifest_version": "0.1.0",
+   "vivid_fish_workflow": true,
+   "vivid_fish_workflow_id": "image.generate.krea2-turbo-snofs"
+  },
+  {
+   "created": 1790817525,
+   "description": "Local T2I workflow bound to Krea 2 Turbo (int8_convrot), the current (Sep 2026) community-consensus realism/prompt-adherence leader on Reddit r/StableDiffusion, overtaking Z-Image-Turbo. CFG-distilled turbo model (negative conditioning is zeroed, CFG fixed at 1.0).",
+   "id": "krea2-turbo",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_backend": "comfyui",
+   "vivid_fish_intent": "image.generate",
+   "vivid_fish_manifest_version": "0.1.0",
+   "vivid_fish_workflow": true,
+   "vivid_fish_workflow_id": "image.generate.krea2-turbo"
+  },
+  {
+   "created": 1778933169,
+   "description": "Gateway-composed seamless texture generation. The proxy generates with Flux2, circularly offsets the image, masks the centered seam cross, repairs it with the Flux2 inpaint workflow, then offsets the result back.",
+   "id": "flux2-klein-4b-seamless-tile",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_backend": "gateway",
+   "vivid_fish_intent": "image.generate",
+   "vivid_fish_manifest_version": "0.1.0",
+   "vivid_fish_workflow": true,
+   "vivid_fish_workflow_id": "image.generate.flux2-klein-4b-seamless-tile"
+  },
+  {
+   "created": 1778702346,
+   "description": "Portable image generation contract bound to the FLUX.2 Klein 4B txt2img ComfyUI workflow.",
+   "id": "flux2-klein-4b",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_backend": "comfyui",
+   "vivid_fish_intent": "image.generate",
+   "vivid_fish_manifest_version": "0.1.0",
+   "vivid_fish_workflow": true,
+   "vivid_fish_workflow_id": "image.generate.flux2-klein-4b"
+  },
+  {
+   "created": 1791010009,
+   "description": "Local anime T2I workflow bound to Anima Turbo v1.1 (2B). Fast (about 3.5 s warm at 1024x1024 on a 3090). Accepts booru tags plus prose. CFG fixed at 1.0. Only depict adults.",
+   "id": "anima-turbo",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_backend": "comfyui",
+   "vivid_fish_intent": "image.generate",
+   "vivid_fish_manifest_version": "0.1.0",
+   "vivid_fish_workflow": true,
+   "vivid_fish_workflow_id": "image.generate.anima-turbo"
+  },
+  {
+   "created": 1790817525,
+   "description": "One-step image upscale/restore via SeedVR2 7B Sharp (int8_convrot, Apache-2.0, ICLR 2026). Verified at 2x (1024->2048) and 4x (1024->4096): both sharp, no grid/halo artifacts, genuinely enhanced fine detail (tested on food photography with fine scallion/noodle texture). steps=1, cfg=1 is the official template default -- SeedVR2 is a one-step flow-matching refine, not a traditional multi-step diffusion upscaler, so this is intentional rather than under-configured.",
+   "id": "seedvr2-upscale",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_backend": "comfyui",
+   "vivid_fish_intent": "image.edit",
+   "vivid_fish_manifest_version": "0.1.0",
+   "vivid_fish_workflow": true,
+   "vivid_fish_workflow_id": "image.edit.seedvr2-upscale"
+  },
+  {
+   "created": 1790965962,
+   "description": "Mask-bound inpaint combining Qwen-Image 2.1 with LanPaint (scraed/LanPaint; no dedicated Qwen 2.1 inpaint checkpoint exists, LanPaint is the community-consensus universal inpainting tool, updated for Qwen 2.1 support Sep 2026). Mask is the source image's own alpha channel (OpenAI edit-API convention: transparent = regenerate). KNOWN LIMITATION, reproduced in our own test and consistent with community reports (research-image.md): a faint horizontal blend seam/haze band can appear at the mask boundary on hard-edged masks. Mask feathering (mask_feather, default 48px) reduces but does not eliminate it -- this is flagged in the community as unresolved (\"neither fix is perfect\") as of Sep 2026. Prefer masks with generous feather/soft edges over pixel-exact cutouts.",
+   "id": "qwen-image-2.1-inpaint",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_backend": "comfyui",
+   "vivid_fish_intent": "image.edit",
+   "vivid_fish_manifest_version": "0.1.0",
+   "vivid_fish_workflow": true,
+   "vivid_fish_workflow_id": "image.edit.qwen-image-2.1-inpaint"
+  },
+  {
+   "created": 1790965962,
+   "description": "2-image reference composite/edit via Qwen-Image 2.1's native multi-image conditioning (TextEncodeQwenImage21's Autogrow `images` input, tested up to 16 slots upstream; this workflow wires exactly 2 as required inputs). Verified: convincingly composites a subject from one reference onto the scene/lighting of another in a single pass, no separate masking/compositing step needed. Reference prompts should tag each image explicitly, e.g. \"<image1> shows X. <image2> shows Y. Combine them by...\". A 3-reference variant is not shipped: the gateway's static node-binding model (gateway/manifests.py _apply_mapping, flat node/input writes) cannot make an Autogrow sub-key conditionally present per request, so a 3rd \"optional\" slot would always inject a placeholder image as a real (if low-signal) reference. A 3-image variant needs gateway support for per-request Autogrow key pruning; this manifest keeps the tested 2-image shape.",
+   "id": "qwen-image-2.1-edit-multiref",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_backend": "comfyui",
+   "vivid_fish_intent": "image.edit",
+   "vivid_fish_manifest_version": "0.1.0",
+   "vivid_fish_workflow": true,
+   "vivid_fish_workflow_id": "image.edit.qwen-image-2.1-edit-multiref"
+  },
+  {
+   "created": 1790965962,
+   "description": "Single-image instruction edit via Qwen-Image 2.1 (int8_convrot) + qwen3vl_8b_w4a8 text encoder + madebyollin texture-fix VAE. Community consensus (Sep 2026, r/StableDiffusion) ranks this the best local editor available, ahead of Flux.2 Klein 9B, especially for edits needing world knowledge. Output resolution tracks the input image. License: Qwen research license (disputed scope on Reddit re: output rights) -- flagged for legal review before commercial-use reliance per research-image.md.",
+   "id": "qwen-image-2.1-edit",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_backend": "comfyui",
+   "vivid_fish_intent": "image.edit",
+   "vivid_fish_manifest_version": "0.1.0",
+   "vivid_fish_workflow": true,
+   "vivid_fish_workflow_id": "image.edit.qwen-image-2.1-edit"
+  },
+  {
+   "created": 1790995784,
+   "description": "Put the real people from one or more reference photos into a new scene or pose and return the best of N seeds with objective likeness scores. The gateway crops a roomy head per person from the ORIGINAL photo (never a tiny face tile), tags every input <imageN> for Qwen-Image 2.1 multi-reference edit, runs up to `attempts` seeds, scores each result with ArcFace (buffalo_l + antelopev2, CPU) against the real faces, and keeps the best. Served at POST /gateway/v1/images/identity (typed; async media job by default, sync with mode=sync, JSON with `likeness`) and at POST /v1/images/edits with model=image-identity (options in extensions[\"com.vividfish.workflow\"]). Infant faces are scored but flagged reliability=low: the score only ranks candidates, so verify a baby by eye. Measured on a family photo: 0.60 adult, 0.48 infant (docs/IDENTITY_LIKENESS.md).",
+   "id": "image-identity",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_alias": true,
+   "vivid_fish_backend": "gateway",
+   "vivid_fish_intent": "image.edit",
+   "vivid_fish_manifest_version": "0.1.0",
+   "vivid_fish_resolves_to": {
+    "image_edits": "image-identity"
+   },
+   "vivid_fish_workflow": true,
+   "vivid_fish_workflow_id": "image.edit.image-identity"
+  },
+  {
+   "created": 1778901193,
+   "description": "Mask-bound FLUX.2 Klein edit workflow. The OpenAI image edit mask is normalized by the gateway and applied inside ComfyUI with SetLatentNoiseMask.",
+   "id": "flux2-klein-4b-inpaint",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_backend": "comfyui",
+   "vivid_fish_intent": "image.edit",
+   "vivid_fish_manifest_version": "0.1.1",
+   "vivid_fish_workflow": true,
+   "vivid_fish_workflow_id": "image.edit.flux2-klein-4b-inpaint"
+  },
+  {
+   "created": 1778884916,
+   "description": "Portable image edit contract bound to the existing ComfyUI workflow.",
+   "id": "flux2-klein-4b-edit",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_backend": "comfyui",
+   "vivid_fish_intent": "image.edit",
+   "vivid_fish_manifest_version": "0.3.0",
+   "vivid_fish_workflow": true,
+   "vivid_fish_workflow_id": "image.edit.flux2-klein-4b"
+  },
+  {
+   "created": 1790968047,
+   "description": "Objective likeness check: detect the faces in a candidate image and score them against the people in reference photos (ArcFace cosine similarity, buffalo_l and antelopev2 averaged, one-to-one matching, margin against the other people). Returns per-person score, verdict (match, uncertain, mismatch, missing), reliability and the thresholds used. Runs on CPU in the face sidecar, about 2 seconds. Infant faces are flagged reliability=low and never reach \"match\": ArcFace-class recognisers are weak on infants. Calibration data and thresholds are in docs/IDENTITY_LIKENESS.md.",
+   "id": "face-likeness",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_backend": "gateway",
+   "vivid_fish_intent": "image.analyze",
+   "vivid_fish_manifest_version": "0.1.0",
+   "vivid_fish_workflow": true,
+   "vivid_fish_workflow_id": "image.analyze.face-likeness"
+  },
+  {
+   "created": 1790879343,
+   "description": "Full song with vocals from a style prompt (tags) and lyrics (YuE2-3B int8_convrot). POST /v1/audio/generate with tags, lyrics, duration. duration is a MAXIMUM in seconds, not an exact length: the model decides the real length, usually shorter. About 50-60 s for a 2-minute song. Output is MP3. LICENSE: CC BY-NC (non-commercial).",
+   "id": "yue2-song",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_backend": "comfyui",
+   "vivid_fish_intent": "audio.generate",
+   "vivid_fish_manifest_version": "0.1.0",
+   "vivid_fish_workflow": true,
+   "vivid_fish_workflow_id": "audio.generate.yue2-song"
+  },
+  {
+   "created": 1778865693,
+   "description": "Create a sound effect from a text prompt.",
+   "id": "tangoflux",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_backend": "comfyui",
+   "vivid_fish_intent": "audio.generate",
+   "vivid_fish_manifest_version": "0.1.0",
+   "vivid_fish_workflow": true,
+   "vivid_fish_workflow_id": "audio.generate.tangoflux"
+  },
+  {
+   "created": 1790879279,
+   "description": "Sound effects from a description",
+   "id": "sa3-small-sfx",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_backend": "comfyui",
+   "vivid_fish_intent": "audio.generate",
+   "vivid_fish_manifest_version": "0.1.0",
+   "vivid_fish_workflow": true,
+   "vivid_fish_workflow_id": "audio.generate.sa3-small-sfx"
+  },
+  {
+   "created": 1778906731,
+   "description": "Songs and instrumentals from a prompt",
+   "id": "ace-step-1.5-xl-turbo",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_backend": "comfyui",
+   "vivid_fish_intent": "audio.generate",
+   "vivid_fish_manifest_version": "0.1.0",
+   "vivid_fish_workflow": true,
+   "vivid_fish_workflow_id": "audio.generate.ace-step-1.5-xl-turbo"
+  },
+  {
+   "created": 1778906735,
+   "description": "Portable audio.generate contract bound to the ACE-Step 1.5 2B Base ComfyUI workflow.",
+   "id": "ace-step-1.5-2b-base",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_backend": "comfyui",
+   "vivid_fish_intent": "audio.generate",
+   "vivid_fish_manifest_version": "0.1.0",
+   "vivid_fish_workflow": true,
+   "vivid_fish_workflow_id": "audio.generate.ace-step-1.5-2b-base"
+  },
+  {
+   "created": 1677610602,
+   "id": "nomic-embed-text-v1.5",
+   "object": "model",
+   "owned_by": "openai"
+  },
+  {
+   "context_window": 202752,
+   "created": 1677610602,
+   "description": "Default LLM (Qwen3.8-27B-Uncensored Q4_K_M via local llama.cpp on :5051)",
+   "id": "default",
+   "object": "model",
+   "owned_by": "openai",
+   "vivid_fish_alias": true,
+   "vivid_fish_resolves_to": {
+    "chat": "default"
+   }
+  },
+  {
+   "context_window": 202752,
+   "created": 1677610602,
+   "description": "Coding LLM (Qwen3.8-27B-Uncensored Q4_K_M via local llama.cpp)",
+   "id": "coder",
+   "object": "model",
+   "owned_by": "openai",
+   "vivid_fish_alias": true,
+   "vivid_fish_resolves_to": {
+    "chat": "coder"
+   }
+  },
+  {
+   "context_window": 202752,
+   "created": 1677610602,
+   "description": "Coding LLM with balanced Q5_0 K / Q4_1 V cache",
+   "id": "coder-q5",
+   "object": "model",
+   "owned_by": "openai"
+  },
+  {
+   "context_window": 145408,
+   "created": 1677610602,
+   "description": "Coding LLM with conservative Q8_0 K / Q8_0 V cache",
+   "id": "coder-q8",
+   "object": "model",
+   "owned_by": "openai"
+  },
+  {
+   "context_window": 202752,
+   "created": 1677610602,
+   "description": "Default LLM, reasoning off (low-latency)",
+   "id": "default-fast",
+   "object": "model",
+   "owned_by": "openai"
+  },
+  {
+   "context_window": 202752,
+   "created": 1677610602,
+   "id": "current",
+   "object": "model",
+   "owned_by": "openai"
+  },
+  {
+   "context_window": 202752,
+   "created": 1677610602,
+   "id": "current-fast",
+   "object": "model",
+   "owned_by": "openai"
+  },
+  {
+   "context_window": 202752,
+   "created": 1677610602,
+   "description": "Roleplay LLM (JonathanColetti Qwen3.8-27B-Uncensored Q4_K_M, MTP-verified)",
+   "id": "rp",
+   "object": "model",
+   "owned_by": "openai",
+   "vivid_fish_alias": true,
+   "vivid_fish_resolves_to": {
+    "chat": "rp"
+   }
+  },
+  {
+   "context_window": 202752,
+   "created": 1677610602,
+   "description": "Coding LLM - abliterated (JonathanColetti Qwen3.8-27B-Uncensored Q4_K_M, MTP-verified)",
+   "id": "coder-unchained",
+   "object": "model",
+   "owned_by": "openai"
+  },
+  {
+   "available": true,
+   "cost_class": "paid-remote",
+   "created": 1677610602,
+   "id": "openrouter/openai/gpt-4.1-nano",
+   "object": "model",
+   "owned_by": "openai",
+   "remote": true
+  },
+  {
+   "created": 0,
+   "id": "fast",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_alias": true,
+   "vivid_fish_resolves_to": {
+    "chat": "default-fast"
+   }
+  },
+  {
+   "context_window": 16384,
+   "created": 0,
+   "description": "Vision-capable EXL3 model (when tabbyapi.service is active on :5050)",
+   "id": "vision",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_alias": true,
+   "vivid_fish_resolves_to": {
+    "chat": "default"
+   }
+  },
+  {
+   "created": 0,
+   "id": "embed",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_alias": true,
+   "vivid_fish_resolves_to": {
+    "embeddings": "nomic-embed-text-v1.5"
+   }
+  },
+  {
+   "created": 0,
+   "id": "image",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_alias": true,
+   "vivid_fish_resolves_to": {
+    "image_edits": "qwen-image-2.1-edit",
+    "images": "krea2-turbo"
+   }
+  },
+  {
+   "created": 0,
+   "id": "image-fast",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_alias": true,
+   "vivid_fish_resolves_to": {
+    "image_edits": "flux2-klein-4b-edit",
+    "images": "flux2-klein-4b"
+   }
+  },
+  {
+   "created": 0,
+   "id": "image-uncensored",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_alias": true,
+   "vivid_fish_resolves_to": {
+    "images": "krea2-turbo-snofs"
+   }
+  },
+  {
+   "created": 0,
+   "id": "image-anime",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_alias": true,
+   "vivid_fish_resolves_to": {
+    "images": "anima-turbo"
+   }
+  },
+  {
+   "created": 0,
+   "id": "image-edit",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_alias": true,
+   "vivid_fish_resolves_to": {
+    "image_edits": "qwen-image-2.1-edit"
+   }
+  },
+  {
+   "created": 0,
+   "id": "image-edit-fast",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_alias": true,
+   "vivid_fish_resolves_to": {
+    "image_edits": "flux2-klein-4b-edit"
+   }
+  },
+  {
+   "created": 0,
+   "id": "video",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_alias": true,
+   "vivid_fish_resolves_to": {
+    "videos": "video-ltx-2.5-t2v"
+   }
+  },
+  {
+   "created": 0,
+   "id": "video-fast",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_alias": true,
+   "vivid_fish_resolves_to": {
+    "videos": "video-ltx-2.5-t2v"
+   }
+  },
+  {
+   "created": 0,
+   "id": "video-long",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_alias": true,
+   "vivid_fish_resolves_to": {
+    "videos": "video-ltx-2.5-long"
+   }
+  },
+  {
+   "created": 0,
+   "id": "video-remix",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_alias": true,
+   "vivid_fish_resolves_to": {
+    "videos": "video-bernini-r-remix"
+   }
+  },
+  {
+   "created": 0,
+   "id": "character-replace",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_alias": true,
+   "vivid_fish_resolves_to": {
+    "videos": "video-scail-2-replace"
+   }
+  },
+  {
+   "created": 0,
+   "id": "tts",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_alias": true,
+   "vivid_fish_engine_candidates": {
+    "speech": [
+     "chatterbox",
+     "omnivoice"
+    ]
+   },
+   "vivid_fish_resolves_to": {
+    "speech": "chatterbox"
+   }
+  },
+  {
+   "created": 0,
+   "id": "tts-fast",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_alias": true,
+   "vivid_fish_engine_candidates": {
+    "speech": [
+     "supertonic",
+     "chatterbox",
+     "omnivoice"
+    ]
+   },
+   "vivid_fish_resolves_to": {
+    "speech": "supertonic"
+   }
+  },
+  {
+   "created": 0,
+   "id": "tts-quality",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_alias": true,
+   "vivid_fish_engine_candidates": {
+    "speech": [
+     "chatterbox",
+     "omnivoice",
+     "kokoro"
+    ]
+   },
+   "vivid_fish_resolves_to": {
+    "speech": "chatterbox"
+   }
+  },
+  {
+   "created": 0,
+   "id": "stt",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_alias": true,
+   "vivid_fish_engine_candidates": {
+    "transcriptions": [
+     "parakeet-gpu",
+     "parakeet"
+    ]
+   },
+   "vivid_fish_resolves_to": {
+    "transcriptions": "parakeet-gpu"
+   }
+  },
+  {
+   "created": 0,
+   "id": "stt-fast",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_alias": true,
+   "vivid_fish_engine_candidates": {
+    "transcriptions": [
+     "nemotron-streaming",
+     "parakeet"
+    ]
+   },
+   "vivid_fish_resolves_to": {
+    "transcriptions": "nemotron-streaming"
+   }
+  },
+  {
+   "created": 0,
+   "id": "stt-quality",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_alias": true,
+   "vivid_fish_engine_candidates": {
+    "transcriptions": [
+     "parakeet-gpu",
+     "parakeet",
+     "canary"
+    ]
+   },
+   "vivid_fish_resolves_to": {
+    "transcriptions": "parakeet-gpu"
+   }
+  },
+  {
+   "created": 0,
+   "id": "stt-diarize",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_alias": true,
+   "vivid_fish_engine_candidates": {
+    "transcriptions": [
+     "nemotron-diarize"
+    ]
+   },
+   "vivid_fish_resolves_to": {
+    "transcriptions": "nemotron-diarize"
+   }
+  },
+  {
+   "created": 0,
+   "id": "music",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_alias": true,
+   "vivid_fish_resolves_to": {
+    "audio_generate": "ace-step-1.5-xl-turbo"
+   }
+  },
+  {
+   "created": 0,
+   "id": "song",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_alias": true,
+   "vivid_fish_resolves_to": {
+    "audio_generate": "yue2-song"
+   }
+  },
+  {
+   "created": 0,
+   "id": "sfx",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_alias": true,
+   "vivid_fish_resolves_to": {
+    "audio_generate": "sa3-small-sfx"
+   }
+  },
+  {
+   "created": 0,
+   "id": "rerank",
+   "object": "model",
+   "owned_by": "vivid-fish",
+   "vivid_fish_alias": true,
+   "vivid_fish_engine_candidates": {
+    "rerank": [
+     "qwen3-reranker-0.6b"
+    ]
+   },
+   "vivid_fish_resolves_to": {
+    "rerank": "qwen3-reranker-0.6b"
+   }
+  },
+  {
+   "capabilities": {
+    "available": true,
+    "backend": "decisions",
+    "backend_kind": "local",
+    "calibrated": true,
+    "cost_class": "free-local",
+    "latency_class": "unknown",
+    "limits": {
+     "calibrated": true,
+     "context_tokens": 4096,
+     "max_levels": 10,
+     "max_options": 255,
+     "max_state_tokens": 4096
+    },
+    "placement": "cpu",
+    "remote": false,
+    "residency": "on_demand"
+   },
+   "created": 0,
+   "id": "decide",
+   "object": "model",
+   "owned_by": "vivid-fish"
+  },
+  {
+   "capabilities": {
+    "available": true,
+    "backend": "decisions-quality",
+    "backend_kind": "local",
+    "calibrated": true,
+    "cost_class": "free-local",
+    "latency_class": "unknown",
+    "limits": {
+     "calibrated": true,
+     "context_tokens": 4096,
+     "max_levels": 10,
+     "max_options": 255,
+     "max_state_tokens": 4096
+    },
+    "placement": "cpu",
+    "remote": false,
+    "residency": "on_demand"
+   },
+   "created": 0,
+   "id": "decide-quality",
+   "object": "model",
+   "owned_by": "vivid-fish"
+  },
+  {
+   "capabilities": {
+    "available": true,
+    "backend": "decisions",
+    "backend_kind": "local",
+    "calibrated": true,
+    "cost_class": "free-local",
+    "latency_class": "unknown",
+    "limits": {
+     "calibrated": true,
+     "context_tokens": 4096,
+     "max_levels": 10,
+     "max_options": 255,
+     "max_state_tokens": 4096
+    },
+    "placement": "cpu",
+    "remote": false,
+    "residency": "on_demand"
+   },
+   "created": 0,
+   "id": "decider-2b",
+   "object": "model",
+   "owned_by": "vivid-fish"
+  },
+  {
+   "capabilities": {
+    "available": true,
+    "backend": "decisions-quality",
+    "backend_kind": "local",
+    "calibrated": true,
+    "cost_class": "free-local",
+    "latency_class": "unknown",
+    "limits": {
+     "calibrated": true,
+     "context_tokens": 4096,
+     "max_levels": 10,
+     "max_options": 255,
+     "max_state_tokens": 4096
+    },
+    "placement": "cpu",
+    "remote": false,
+    "residency": "on_demand"
+   },
+   "created": 0,
+   "id": "decider-4b",
+   "object": "model",
+   "owned_by": "vivid-fish"
+  },
+  {
+   "capabilities": {
+    "available": true,
+    "backend": "decisions",
+    "backend_kind": "local",
+    "calibrated": true,
+    "cost_class": "free-local",
+    "latency_class": "unknown",
+    "limits": {
+     "calibrated": true,
+     "context_tokens": 4096,
+     "max_levels": 10,
+     "max_options": 255,
+     "max_state_tokens": 4096
+    },
+    "placement": "cpu",
+    "remote": false,
+    "residency": "on_demand"
+   },
+   "created": 0,
+   "id": "decider-2b-v11",
+   "object": "model",
+   "owned_by": "vivid-fish"
+  },
+  {
+   "capabilities": {
+    "available": true,
+    "backend": "decisions-quality",
+    "backend_kind": "local",
+    "calibrated": true,
+    "cost_class": "free-local",
+    "latency_class": "unknown",
+    "limits": {
+     "calibrated": true,
+     "context_tokens": 4096,
+     "max_levels": 10,
+     "max_options": 255,
+     "max_state_tokens": 4096
+    },
+    "placement": "cpu",
+    "remote": false,
+    "residency": "on_demand"
+   },
+   "created": 0,
+   "id": "decider-4b-v2.1",
+   "object": "model",
+   "owned_by": "vivid-fish"
+  },
+  {
+   "capabilities": {
+    "available": true,
+    "backend": "decisions",
+    "backend_kind": "local",
+    "calibrated": true,
+    "cost_class": "free-local",
+    "latency_class": "unknown",
+    "limits": {
+     "calibrated": true,
+     "context_tokens": 4096,
+     "max_levels": 10,
+     "max_options": 255,
+     "max_state_tokens": 4096
+    },
+    "placement": "cpu",
+    "remote": false,
+    "residency": "on_demand"
+   },
+   "created": 0,
+   "id": "jev-latest",
+   "object": "model",
+   "owned_by": "vivid-fish"
+  },
+  {
+   "capabilities": {
+    "available": true,
+    "backend": "decisions",
+    "backend_kind": "local",
+    "calibrated": true,
+    "cost_class": "free-local",
+    "latency_class": "unknown",
+    "limits": {
+     "calibrated": true,
+     "context_tokens": 4096,
+     "max_levels": 10,
+     "max_options": 255,
+     "max_state_tokens": 4096
+    },
+    "placement": "cpu",
+    "remote": false,
+    "residency": "on_demand"
+   },
+   "created": 0,
+   "id": "jev-preview",
+   "object": "model",
+   "owned_by": "vivid-fish"
+  },
+  {
+   "capabilities": {
+    "available": true,
+    "backend": "typesafe",
+    "backend_kind": "provider",
+    "calibrated": true,
+    "cost_class": "paid-remote",
+    "limits": {
+     "max_levels": 10,
+     "max_options": 255,
+     "max_state_tokens": 32768
+    },
+    "remote": true
+   },
+   "created": 0,
+   "id": "typesafe/jev-latest",
+   "object": "model",
+   "owned_by": "vivid-fish"
+  }
+ ],
+ "object": "list",
+ "x_ai_gateway_llm_execution": "litellm"
+}
