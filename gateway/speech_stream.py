@@ -22,8 +22,8 @@ from typing import Any, AsyncIterator, Mapping
 from starlette.requests import Request
 
 OPENAI_PCM_RATE = 24000
-# The model field must arrive within this many body bytes or the route falls
-# back to the default STT service. OpenAI SDKs send form fields before the file.
+# Byte budget for peeking body messages before provisional upload admission.
+# When the model cannot be peeked, STT execution resolves it after parsing.
 PEEK_LIMIT_BYTES = 8 * 1024 * 1024
 MAX_FIELD_VALUE_BYTES = 4096
 

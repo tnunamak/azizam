@@ -59,12 +59,15 @@ class SttServiceSelectionTests(SttCase):
         self.assertEqual(self._post([("model", "stt-fast")], file_first=True).status_code, 200)
         self.assertEqual(seen[0].url.port, 8012)
 
-    def test_model_hidden_behind_a_huge_file_is_a_clear_400_not_a_wrong_engine(self) -> None:
-        self._json_upstream()
-        body, ctype = _multipart([("model", "stt-fast")], b"A" * 20000, file_first=True)
+    def _post_file_first_past_peek(self, fields, *, audio=None, operation="transcriptions"):
+        body, ctype = _multipart(
+            fields,
+            audio if audio is not None else _wav_bytes(16000, 1, 1.5),
+            file_first=True,
+        )
         messages = [
-            {"type": "http.request", "body": body[i : i + 1000], "more_body": i + 1000 < len(body)}
-            for i in range(0, len(body), 1000)
+            {"type": "http.request", "body": body[index : index + 1000], "more_body": index + 1000 < len(body)}
+            for index in range(0, len(body), 1000)
         ]
 
         async def receive():
@@ -73,13 +76,122 @@ class SttServiceSelectionTests(SttCase):
             await asyncio.Future()
 
         request = Request(
-            {"type": "http", "method": "POST", "path": "/v1/audio/transcriptions", "headers": [(b"content-type", ctype.encode())]},
+            {"type": "http", "method": "POST", "path": f"/v1/audio/{operation}", "headers": [(b"content-type", ctype.encode())]},
             receive,
         )
+
+        async def dispatch_and_drain():
+            response = await proxy._dispatch_selected_stt_route(request, proxy.NO_AUTH_CONTEXT, operation=operation)
+            captured = b""
+            if getattr(response, "body_iterator", None) is not None:
+                captured = b"".join([chunk async for chunk in response.body_iterator])
+            else:
+                captured = response.body
+            return response, captured
+
         with patch.object(speech_stream, "PEEK_LIMIT_BYTES", 2048):
-            resp = asyncio.run(proxy._dispatch_selected_stt_route(request, proxy.NO_AUTH_CONTEXT, operation="transcriptions"))
-        self.assertEqual(resp.status_code, 400)
-        self.assertEqual(json.loads(resp.body)["error"]["code"], "stt_model_field_order")
+            return asyncio.run(dispatch_and_drain())
+
+    def test_file_first_model_hidden_by_upload_dispatches_to_its_service(self) -> None:
+        seen = self._json_upstream()
+        response, body = self._post_file_first_past_peek([("model", "stt-fast")])
+        self.assertEqual(response.status_code, 200, body)
+        self.assertEqual([request.url.port for request in seen], [8012])
+        self.assertIn(b"\r\n\r\nnemotron-3.5-asr-streaming-0.6b\r\n", seen[0].content)
+
+    def test_file_first_model_for_default_service_keeps_default_dispatch(self) -> None:
+        seen = self._json_upstream()
+        response, body = self._post_file_first_past_peek([("model", "parakeet")])
+        self.assertEqual(response.status_code, 200, body)
+        self.assertEqual([request.url.port for request in seen], [5092])
+
+    def test_file_first_target_policy_denial_applies_to_resolved_service(self) -> None:
+        seen = self._json_upstream()
+
+        class Decision:
+            def __init__(self, denied):
+                self.denied = denied
+                self.reasons = ["target policy denied"] if denied else []
+
+        evaluated = []
+
+        def evaluate(receipt, _auth, *, operation):
+            evaluated.append((receipt.backend, operation))
+            return Decision(receipt.backend == "stt-nemotron")
+
+        with patch.object(proxy, "_apply_selected_stt_policy", side_effect=evaluate):
+            response, _ = self._post_file_first_past_peek([("model", "stt-fast")])
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(evaluated, [("stt-nemotron", "transcriptions")])
+        self.assertEqual(seen, [])
+
+    def test_file_first_handoff_releases_default_lease_before_target_admission(self) -> None:
+        gate = proxy.stt_chunking.GLOBAL_STT_RESOURCE_GATE
+        acquire = gate.acquire
+        acquired = []
+        release_count = 0
+        initial_active = gate._active
+
+        def count_release(lease):
+            original_release = lease.release
+
+            def release():
+                nonlocal release_count
+                if not lease._released:
+                    release_count += 1
+                original_release()
+
+            lease.release = release
+            return lease
+
+        def tracked_acquire(*, request_id, config):
+            if config.service_id == "stt-nemotron":
+                self.assertTrue(acquired and acquired[0]._released)
+            lease = count_release(acquire(request_id=request_id, config=config))
+            acquired.append(lease)
+            return lease
+
+        seen = self._json_upstream()
+        parse = proxy.stt_chunking.parse_bounded_multipart
+        with patch.object(gate, "acquire", side_effect=tracked_acquire), patch.object(
+            proxy.stt_chunking, "parse_bounded_multipart", wraps=parse
+        ) as parse_multipart:
+            response, _ = self._post_file_first_past_peek([("model", "stt-fast")])
+        self.assertEqual(response.status_code, 200, response.body)
+        parse_multipart.assert_awaited_once()
+        self.assertEqual(len(acquired), 2)
+        self.assertTrue(all(lease._released for lease in acquired))
+        self.assertEqual(release_count, 2)
+        self.assertEqual(gate._active, initial_active)
+        self.assertEqual([request.url.port for request in seen], [8012])
+        self.assertEqual(proxy.receipt_store.finalize.call_args.args[0].backend, "stt-nemotron")
+        self.assertEqual(list(Path(self.tmp.name).glob("*")), [])
+
+    def test_file_first_streaming_model_handoff_uses_target_service(self) -> None:
+        events = [b'data: {"type":"transcript.text.done","text":"hello"}\n\n', b"data: [DONE]\n\n"]
+        seen = self.use_upstream(lambda _request: httpx.Response(200, stream=_Chunks(events), headers={"content-type": "text/event-stream"}))
+        response, stream_body = self._post_file_first_past_peek([("model", "stt-fast"), ("stream", "true")])
+        self.assertEqual(response.status_code, 200, stream_body)
+        self.assertEqual([request.url.port for request in seen], [8012])
+        self.assertEqual(stream_body, b"".join(events))
+        self.assertEqual(list(Path(self.tmp.name).glob("*")), [])
+
+    def test_file_first_translation_model_dispatches_to_target_service(self) -> None:
+        self.cfg["backends"]["stt"]["capabilities"].append("translations")
+        self.cfg["backends"]["stt-nemotron"]["capabilities"].append("translations")
+        seen = self._json_upstream()
+        response, _ = self._post_file_first_past_peek([("model", "stt-fast")], operation="translations")
+        self.assertEqual(response.status_code, 200, response.body)
+        self.assertEqual([request.url.port for request in seen], [8012])
+        self.assertEqual(seen[0].url.path, "/v1/audio/translations")
+
+    def test_file_first_handoff_enforces_target_field_byte_limit(self) -> None:
+        seen = self._json_upstream()
+        self.cfg["backends"]["stt-nemotron"]["chunking"]["max_field_bytes"] = 9
+        response, _ = self._post_file_first_past_peek([("model", "stt-fast"), ("prompt", "é" * 5)])
+        self.assertEqual(response.status_code, 413)
+        self.assertEqual(json.loads(response.body)["error"]["code"], "stt_upload_limit")
+        self.assertEqual(seen, [])
 
     def test_down_engine_is_started_through_its_lifecycle_driver(self) -> None:
         self.health.return_value = False

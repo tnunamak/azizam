@@ -378,6 +378,7 @@ class DiskBoundedMultiPartParser(MultiPartParser):
         self._config = config
         self._workspace = workspace
         self._uploaded_bytes = 0
+        self.max_parsed_field_bytes = 0
         self._spool_paths: set[Path] = set()
 
     def on_part_data(self, data: bytes, start: int, end: int) -> None:
@@ -387,6 +388,8 @@ class DiskBoundedMultiPartParser(MultiPartParser):
             if self._uploaded_bytes > self._config.max_input_bytes:
                 raise MultiPartException("Uploaded audio exceeds the configured STT limit.")
         super().on_part_data(data, start, end)
+        if self._current_part.file is None:
+            self.max_parsed_field_bytes = max(self.max_parsed_field_bytes, len(self._current_part.data))
 
     def on_headers_finished(self) -> None:
         disposition, options = parse_options_header(self._current_part.content_disposition)

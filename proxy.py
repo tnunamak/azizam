@@ -2971,8 +2971,8 @@ def default_model_for_operation(operation: str, requested_model: str = "") -> st
 def _alias_engine_available_for(operation: str) -> stable_aliases.EngineAvailable:
     """Engine is usable when its service is enabled in the live registry.
 
-    The STT dispatcher peeks the multipart ``model`` field before it picks a
-    service, so an engine on any enabled service is served by its own backend.
+    STT routing follows the multipart ``model``, from an early peek or the
+    parsed upload, so any enabled service is served by its own backend.
     """
 
     def available(_engine_id: str, spec: Mapping[str, Any]) -> bool:
@@ -4708,10 +4708,11 @@ async def _dispatch_selected_stt_route(
     *,
     operation: str,
 ) -> Response:
-    """Select and authorize exactly one STT service before route dispatch.
+    """Select and authorize an STT service before route dispatch.
 
     The service follows the multipart ``model`` field (an engine alias picks
-    its own service); with no readable ``model`` it is the capability default.
+    its own service); with no readable ``model`` the capability default admits
+    the upload, and execution selects the final service after parsing.
     """
     selected_service: str | None = None
     peeked_engine: str | None = None
@@ -4743,7 +4744,7 @@ async def _dispatch_selected_stt_route(
             return denied
         return await proxy_stt_request(request, auth_context, operation=operation)
     receipt = _stt_receipt(request=request, auth_context=auth_context, operation=operation, service_id=execution.service_id)
-    decision = _apply_selected_stt_policy(receipt, auth_context, operation=operation)
+    decision = None if model_unpeeked else _apply_selected_stt_policy(receipt, auth_context, operation=operation)
     if decision is not None and decision.denied:
         return _policy_denied_response(decision)
     remaining = [(engine, service) for engine, service in fallbacks if service]
@@ -4755,7 +4756,7 @@ async def _dispatch_selected_stt_route(
         receipt.add_fallback_reason(note)
     try:
         while True:
-            not_ready = await _ensure_speech_service_ready(execution.service_id, label="STT engine")
+            not_ready = None if model_unpeeked else await _ensure_speech_service_ready(execution.service_id, label="STT engine")
             if not_ready is None:
                 response = await proxy_stt_request(
                     body.request() if body is not None else request,
@@ -4884,8 +4885,8 @@ async def proxy_stt_request(
     """Forward one bounded STT request using one selected service snapshot.
 
     ``model_unpeeked`` is set when the dispatcher could not read the ``model``
-    field before choosing the service; a model that then names an engine on a
-    different service is refused instead of being served by the wrong backend.
+    field before choosing the service. After parsing, execution can switch to
+    the model's service while retaining the upload workspace and cleanup owner.
     """
     if operation not in {"transcriptions", "translations"}:
         return openai_error_response(f"Unsupported STT operation: {operation}", status_code=400, code="unsupported_stt_operation")
@@ -4900,11 +4901,11 @@ async def proxy_stt_request(
         return audio_translation_unsupported_response() if operation == "translations" else openai_error_response("STT not enabled", status_code=503, error_type="service_unavailable")
 
     receipt = route_receipt or _stt_receipt(request=request, auth_context=auth_context, operation=operation, service_id=execution.service_id)
-    if route_receipt is None:
+    if route_receipt is None and not model_unpeeked:
         decision = _apply_selected_stt_policy(receipt, auth_context, operation=operation)
         if decision is not None and decision.denied:
             return _policy_denied_response(decision)
-    unavailable = _service_availability_response(execution.service_id, service_label=execution.service_id)
+    unavailable = None if model_unpeeked else _service_availability_response(execution.service_id, service_label=execution.service_id)
     if unavailable is not None:
         return unavailable
 
@@ -4921,12 +4922,16 @@ async def proxy_stt_request(
             cancellation_registry().signal(receipt.request_id)
 
     async def execute() -> Response:
+        nonlocal execution
         try:
             if "multipart/form-data" not in request.headers.get("content-type", ""):
                 return openai_error_response("No file part in the request.", status_code=400, param="file", code="missing_file")
-            deadline_at = time.monotonic() + execution.deadline_seconds
+            started_at = time.monotonic()
+            deadline_at = started_at + execution.deadline_seconds
             lease = stt_chunking.GLOBAL_STT_RESOURCE_GATE.acquire(request_id=receipt.request_id, config=execution)
-            cleanup.add("capacity_lease", lease.release)
+            # Follow a replacement lease without changing cleanup order: the
+            # reservation must outlive the form, files, and workspace.
+            cleanup.add("capacity_lease", lambda: lease.release())
             workspace = stt_chunking.create_request_workspace(execution)
             cleanup.add("request_workspace", lambda: stt_chunking.remove_request_workspace(workspace))
             parsed = await stt_chunking.parse_bounded_multipart(
@@ -4943,19 +4948,65 @@ async def proxy_stt_request(
 
             requested_model = model_override or str(parsed.form.get("model", "whisper-1"))
             model_resolution = resolve_model_for_operation(operation, requested_model)
+            watcher = RequestDisconnectWatcher(request.receive)
+            cleanup.add("disconnect_watcher", watcher.aclose)
+            if cancellation is None:
+                raise RuntimeError("STT cancellation registration was not acquired")
+            waiters = (watcher.wait, cancellation.token.wait)
+            if model_unpeeked:
+                # The body has already been consumed. Hand off execution, not
+                # parsing: the same owner keeps the form/workspace alive until
+                # the final response (including a native stream) is finished.
+                target_service = (model_resolution.alias.service if model_resolution.alias is not None else None) or execution.service_id
+                service_changed = target_service != execution.service_id
+                receipt.backend = target_service
+                decision = _apply_selected_stt_policy(receipt, auth_context, operation=operation)
+                if decision is not None and decision.denied:
+                    return _policy_denied_response(decision)
+                if service_changed:
+                    try:
+                        target_execution = _stt_execution_snapshot(operation, target_service)
+                    except stt_chunking.SttConfigurationError:
+                        return _stt_error("The selected STT service has invalid execution limits.", status_code=503, code="stt_configuration_invalid")
+                    if target_execution is None:
+                        return _stt_error("The selected STT service is unavailable.", status_code=503, code="stt_backend_unavailable")
+                    execution = target_execution
+                # Upload time counts against both budgets; redispatch must not
+                # grant a new deadline or bypass the target's multipart limits.
+                deadline_at = min(deadline_at, started_at + execution.deadline_seconds)
+                if len(uploads) > execution.max_files or len(fields) > execution.max_fields:
+                    raise stt_chunking.MultiPartException("Too many multipart parts for the selected STT service.")
+                if sum(upload.size or 0 for _name, upload in uploads) > execution.max_input_bytes:
+                    raise stt_chunking.MultiPartException("Uploaded audio exceeds the configured STT limit.")
+                if parsed.parser.max_parsed_field_bytes > execution.max_field_bytes:
+                    raise stt_chunking.MultiPartException("Multipart field exceeds the configured STT limit.")
+                if time.monotonic() >= deadline_at:
+                    raise stt_chunking.SttDeadlineExceeded("STT request deadline exceeded")
+                not_ready = await stt_chunking.await_with_cancellation(
+                    _ensure_speech_service_ready(execution.service_id, label="STT engine"),
+                    cancellation_waiters=waiters,
+                    deadline_at=deadline_at,
+                    on_cancel=signal_cancellation,
+                )
+                if not_ready is not None:
+                    return not_ready
+                unavailable = _service_availability_response(execution.service_id, service_label=execution.service_id)
+                if unavailable is not None:
+                    return unavailable
+                if service_changed:
+                    # Both gate operations are synchronous, so the transfer
+                    # cannot interleave with another request's admission.
+                    lease.release()
+                    # Execution still uses the original workspace. Reserve the
+                    # target budget on the disk that actually holds the files.
+                    lease = stt_chunking.GLOBAL_STT_RESOURCE_GATE.acquire(
+                        request_id=receipt.request_id, config=replace(execution, spool_dir=workspace.parent),
+                    )
             effective_model = model_resolution.effective_model or execution.default_model or STT_BACKEND_MODEL
             if model_resolution.is_openai_alias and execution.default_model:
                 effective_model = execution.default_model
             fields = stt_chunking.replace_model_field(fields, model=effective_model)
             engine_spec = (model_resolution.alias.engine_spec if model_resolution.alias is not None else None) or {}
-            if model_unpeeked and model_resolution.alias is not None and model_resolution.alias.service not in (None, execution.service_id):
-                return openai_error_response(
-                    "This model is served by a different STT service than the one this request was routed to. "
-                    "Send the `model` form field before the `file` field.",
-                    status_code=400,
-                    param="model",
-                    code="stt_model_field_order",
-                )
             native_stream = bool_from_config(engine_spec.get("streaming"), False)
             wants_stream = any(name == "stream" and value.strip().lower() in {"true", "1"} for name, value in fields)
             if wants_stream and not native_stream:
@@ -4976,11 +5027,6 @@ async def proxy_stt_request(
             pop_header(headers, "content-type")
             pop_header(headers, "content-length")
             url = f"{execution.host}/v1/audio/{operation}"
-            watcher = RequestDisconnectWatcher(request.receive)
-            cleanup.add("disconnect_watcher", watcher.aclose)
-            if cancellation is None:
-                raise RuntimeError("STT cancellation registration was not acquired")
-            waiters = (watcher.wait, cancellation.token.wait)
             client = httpx.AsyncClient(timeout=httpx.Timeout(execution.timeout_seconds, connect=min(10.0, execution.timeout_seconds)))
             cleanup.add("http_client", client.aclose)
 
