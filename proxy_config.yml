@@ -163,15 +163,17 @@ backends:
       # These aliases deliberately select the already loaded routing target.
       # Their base references are policy data, not loaded-file inference.
       # /v1/models reports the loaded model's declared metadata for them. Their
-      # own model_metadata is the fallback when nothing declared is loaded
-      # (models: cydonia-24b is text-only and undeclared): text in, text out.
+      # own model_metadata is the fallback when the loaded model is not observed.
+      # The operator declares what this slot normally runs (the Qwen models:
+      # reasoning, vision, tool use). Loading text-only cydonia-24b here is a
+      # known exception the fallback does not describe.
       - id: current
         model_group: current
         base_model_id: default
         upstream_model: Qwen3.8-27B-Uncensored-Q4_K_M.gguf
         model_metadata:
-          input_modalities: [text]
-          tags: []
+          input_modalities: [text, image]
+          tags: [reasoning, tool-use, vision]
       - id: current-fast
         model_group: current-fast
         base_model_id: default
@@ -180,8 +182,8 @@ backends:
           - kind: default-params
             set: {reasoning_effort: none}
         model_metadata:
-          input_modalities: [text]
-          tags: []
+          input_modalities: [text, image]
+          tags: [tool-use, vision]
       - id: rp
         model_group: rp
         # Keep the logical alias across LiteLLM's internal gateway hop so the
