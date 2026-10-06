@@ -24,8 +24,10 @@ SNAPSHOT = json.loads((ROOT / "tests" / "fixtures" / "models-list-snapshot-2026-
 
 # The LLM ids LiteLLM listed in the live snapshot (owned_by "openai").
 LITELLM_IDS = [e["id"] for e in SNAPSHOT["data"] if e.get("owned_by") == "openai"]
-THINKING = {"default", "coder", "coder-q5", "coder-q8", "coder-unchained", "rp", "current"}
-NON_THINKING = {"default-fast", "current-fast"}
+THINKING = {"default", "coder", "coder-q5", "coder-q8", "coder-unchained", "rp"}
+NON_THINKING = {"default-fast"}
+# Resolve to whichever local LLM is loaded, including text-only models.
+DYNAMIC = {"current", "current-fast"}
 
 
 async def _fake_litellm_payload(*_args, **_kwargs):
@@ -84,7 +86,10 @@ class ModelListEndpointTests(unittest.TestCase):
                 self.assertIn(entry.get("type"), mm.MODEL_TYPES)
                 self.assertTrue(entry["architecture"]["input_modalities"])
                 self.assertTrue(entry["architecture"]["output_modalities"])
-                self.assertEqual("vision" in entry.get("tags", []), "image" in entry["architecture"]["input_modalities"])
+                if entry["type"] == "language":
+                    self.assertEqual("vision" in entry.get("tags", []), "image" in entry["architecture"]["input_modalities"])
+                else:
+                    self.assertNotIn("tags", entry)
 
     def test_list_routes_and_retrieve_agree(self) -> None:
         primary = self._list("/v1/models")
@@ -130,6 +135,19 @@ class ModelListEndpointTests(unittest.TestCase):
         self.assertEqual(by_id["embed"]["type"], "embedding")
         self.assertEqual(by_id["decide"]["type"], "decision")
 
+    def test_dynamic_current_aliases_claim_only_text_in_text_out(self) -> None:
+        # Any local LLM can be the loaded one; cydonia-24b is text-only.
+        cydonia = next(m for m in proxy.config["models"] if m["id"] == "cydonia-24b")
+        self.assertIsNone(cydonia["mmproj"])
+        by_id = {entry["id"]: entry for entry in self._list()["data"]}
+        for model_id in DYNAMIC:
+            with self.subTest(model=model_id):
+                entry = by_id[model_id]
+                self.assertEqual(entry["type"], "language")
+                self.assertEqual(entry["architecture"], {"input_modalities": ["text"], "output_modalities": ["text"]})
+                self.assertNotIn("tags", entry)
+                self.assertNotIn("max_tokens", entry)
+
     def test_openai_sdk_parses_the_payload(self) -> None:
         try:
             from openai.types import Model
@@ -155,6 +173,63 @@ class ModelListEndpointTests(unittest.TestCase):
         for model_id in shared:
             with self.subTest(model=model_id):
                 self.assertEqual(index[model_id], {k: listed[model_id][k] for k in mm.OUTPUT_FIELDS if k in listed[model_id]})
+
+
+def _remote_registry(model_count: int = 1) -> dict:
+    models = [{"id": "text-embedding-3-small", "upstream_model": "text-embedding-3-small",
+               "model_metadata": {"type": "embedding", "input_modalities": ["text"], "output_modalities": ["embedding"]}}]
+    models += [{"id": f"chat-{i}", "upstream_model": f"chat-{i}"} for i in range(model_count - 1)]
+    return {"services": {"openai-remote": {
+        "id": "openai-remote", "kind": "provider", "capabilities": ["openai", "chat"],
+        "config": {
+            "provider_type": "paid-remote", "provider_id": "openai", "protocol": "openai-compatible",
+            "base_url": "https://provider.test/v1", "credential_origin": "https://provider.test:443",
+            "api_key_env": "TEST_PROVIDER_KEY", "models": models,
+        },
+    }}}
+
+
+class ServiceModelIndexTests(unittest.TestCase):
+    def _annotate(self, registry: dict, entries: list[dict], origins: dict) -> mm.MetadataSources:
+        from gateway.service_registry import runtime_backends
+
+        with patch.dict(proxy.config, {"backends": runtime_backends(registry)}), \
+                patch.object(proxy.ADMIN_STORE, "get_service_registry", return_value=registry):
+            sources = proxy._model_metadata_sources(origins)
+            mm.annotate_entries(entries, sources)
+        return sources
+
+    def test_remote_declarations_follow_the_public_prefixed_name(self) -> None:
+        public = "openai/text-embedding-3-small"
+        entries = [{"id": public, "object": "model"}]
+        sources = self._annotate(_remote_registry(), entries, {public: mm.ORIGIN_LLM_CATALOG})
+        self.assertEqual(entries[0]["type"], "embedding")
+        self.assertEqual(entries[0]["architecture"]["output_modalities"], ["embedding"])
+        # The raw registry id is not a name the gateway serves for a remote record.
+        self.assertIsNone(sources.declared("text-embedding-3-small"))
+
+    def test_annotation_work_does_not_grow_with_model_count(self) -> None:
+        calls = {"records": 0}
+        original = proxy._service_model_records
+
+        def counting(service_cfg):
+            calls["records"] += 1
+            return original(service_cfg)
+
+        def run(model_count: int) -> int:
+            origins = {f"openai/chat-{i}": mm.ORIGIN_LLM_CATALOG for i in range(model_count - 1)}
+            entries = [{"id": model_id, "object": "model"} for model_id in origins]
+            calls["records"] = 0
+            registry = _remote_registry(model_count)
+            registry["services"]["local"] = {"id": "local", "capabilities": ["openai", "chat"], "config": {
+                "protocol": "openai-compatible", "base_url": "http://127.0.0.1:9/v1", "models": ["local-chat"]}}
+            with patch.object(proxy, "_service_model_records", counting):
+                self._annotate(registry, entries, origins)
+            self.assertTrue(all(e.get("type") == "language" for e in entries))
+            return calls["records"]
+
+        self.assertGreater(run(10), 0)
+        self.assertEqual(run(10), run(400))
 
 
 class MemberCatalogRowTests(unittest.TestCase):

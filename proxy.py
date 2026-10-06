@@ -284,7 +284,11 @@ from gateway.image_output import (
     parse_quality,
     quality_steps_from_manifest,
 )
-from gateway.litellm_substrate import litellm_known_model_names, write_litellm_config_artifact
+from gateway.litellm_substrate import (
+    litellm_known_model_names,
+    litellm_public_model_records,
+    write_litellm_config_artifact,
+)
 from gateway.manifests import (
     ManifestError,
     bind_backend_request,
@@ -14945,7 +14949,7 @@ def _catalog_model_metadata(
         if capability.model and str(capability.intent).startswith("decision.")
     })
     entries = [*model_entries, *({"id": model_id} for model_id in origins)]
-    return model_metadata.metadata_index(entries, _model_metadata_sources(origins))
+    return model_metadata.metadata_index(entries, _model_metadata_sources(origins, service_records))
 
 
 app.include_router(create_models_catalog_router(_user_models_catalog_payload))
@@ -22921,56 +22925,66 @@ async def _annotate_model_context_windows(data: list[Any]) -> None:
             item["context_window"] = found
 
 
-def _service_model_match(model_id: str) -> tuple[Mapping[str, Any], Mapping[str, Any] | None] | None:
-    """The registry service (and model record) that serves a public model id."""
-    normalized = normalize_model_id(model_id)
+def _service_model_index(
+    registry: Mapping[str, Any] | None,
+) -> dict[str, tuple[Mapping[str, Any], Mapping[str, Any] | None]]:
+    """{normalized public model id: (service, model record)} for every served name.
+
+    LiteLLM-routable records are keyed by the public name LiteLLM serves (a
+    remote provider's records only by their provider-prefixed name). Other
+    services keep their record id, model group, public name and service
+    model id. Built once per model-list annotation.
+    """
+    index: dict[str, tuple[Mapping[str, Any], Mapping[str, Any] | None]] = {}
+    try:
+        public_records = litellm_public_model_records(registry or {})
+    except Exception:  # noqa: BLE001
+        public_records = {}
+    for public_name, (service, record) in public_records.items():
+        index.setdefault(normalize_model_id(public_name), (service, record))
     backends = config.get("backends") if isinstance(config.get("backends"), Mapping) else {}
     for service_cfg in backends.values():
-        if not isinstance(service_cfg, Mapping):
+        if not isinstance(service_cfg, Mapping) or service_registry.is_remote_provider_config(service_cfg):
             continue
         for record in _service_model_records(service_cfg):
-            names = {
-                normalize_model_id(str(record.get(key) or ""))
-                for key in ("id", "model_group", "public_name")
-            }
-            if normalized in names:
-                return service_cfg, record
-        if normalize_model_id(str(service_cfg.get("model_id") or "")) == normalized:
-            return service_cfg, None
-    return None
+            for key in ("id", "model_group", "public_name"):
+                name = normalize_model_id(str(record.get(key) or ""))
+                if name:
+                    index.setdefault(name, (service_cfg, record))
+        service_model = normalize_model_id(str(service_cfg.get("model_id") or ""))
+        if service_model:
+            index.setdefault(service_model, (service_cfg, None))
+    return index
 
 
-def _declared_model_metadata(model_id: str) -> Mapping[str, Any] | None:
-    """Operator `model_metadata` declarations for one id, most specific last.
+def _declared_model_metadata_index(
+    service_index: Mapping[str, tuple[Mapping[str, Any], Mapping[str, Any] | None]],
+) -> dict[str, dict[str, Any]]:
+    """{normalized id: operator `model_metadata`}, most specific source last.
 
     Service-registry model record < `models:` entry < `roles:` entry, the same
     surfaces (and order) that already annotate `description`.
     """
-    normalized = normalize_model_id(model_id)
     key = model_metadata.DECLARATION_KEY
-    match = _service_model_match(normalized)
-    extra = next(
-        (
-            item for item in (config.get("models") or [])
-            if isinstance(item, Mapping) and normalize_model_id(str(item.get("id") or "")) == normalized
-        ),
-        None,
-    )
-    roles_cfg = config.get("roles") if isinstance(config.get("roles"), Mapping) else {}
-    merged: dict[str, Any] = {}
-    for source in (match[1] if match else None, extra, roles_cfg.get(normalized)):
+    declared: dict[str, dict[str, Any]] = {}
+
+    def add(model_id: str, source: Any) -> None:
         block = source.get(key) if isinstance(source, Mapping) else None
         if isinstance(block, Mapping):
-            merged.update(block)
-    return merged or None
+            declared.setdefault(normalize_model_id(model_id), {}).update(block)
 
-
-def _service_capabilities_for_model_id(model_id: str) -> list[str] | None:
-    match = _service_model_match(model_id)
-    if match is None:
-        return None
-    capabilities = match[0].get("capabilities")
-    return [str(c) for c in capabilities] if isinstance(capabilities, list) else None
+    for model_id, (_service, record) in service_index.items():
+        add(model_id, record)
+    extras: dict[str, Mapping[str, Any]] = {}
+    for item in config.get("models") or []:
+        if isinstance(item, Mapping) and item.get("id"):
+            extras.setdefault(normalize_model_id(str(item["id"])), item)
+    for model_id, item in extras.items():
+        add(model_id, item)
+    roles_cfg = config.get("roles") if isinstance(config.get("roles"), Mapping) else {}
+    for role_name, role_cfg in roles_cfg.items():
+        add(str(role_name), role_cfg)
+    return declared
 
 
 def _workflow_public_model_id(manifest: Mapping[str, Any]) -> str | None:
@@ -22986,7 +23000,23 @@ def _workflow_public_model_id(manifest: Mapping[str, Any]) -> str | None:
     return Path(artifact).stem or None
 
 
-def _model_metadata_sources(origins: Mapping[str, str] | None = None) -> model_metadata.MetadataSources:
+def _model_metadata_sources(
+    origins: Mapping[str, str] | None = None,
+    registry: Mapping[str, Any] | None = None,
+) -> model_metadata.MetadataSources:
+    """Lookups for one annotation pass. Every index is built here, once."""
+    if registry is None:
+        try:
+            registry = ADMIN_STORE.get_service_registry()
+        except Exception:  # noqa: BLE001
+            registry = {}
+    service_index = _service_model_index(registry)
+    declared = _declared_model_metadata_index(service_index)
+    capabilities: dict[str, list[str]] = {}
+    for model_id, (service, _record) in service_index.items():
+        raw = service.get("capabilities")
+        if isinstance(raw, list):
+            capabilities[model_id] = [str(c) for c in raw]
     records = GATEWAY_WORKFLOW_REGISTRY.records()
     manifests = {record.id: record.manifest for record in records}
     by_model_id: dict[str, Mapping[str, Any]] = {}
@@ -22995,8 +23025,8 @@ def _model_metadata_sources(origins: Mapping[str, str] | None = None) -> model_m
         if public_id:
             by_model_id.setdefault(public_id, record.manifest)
     return model_metadata.MetadataSources(
-        declared=_declared_model_metadata,
-        service_capabilities=_service_capabilities_for_model_id,
+        declared=lambda model_id: declared.get(normalize_model_id(model_id)),
+        service_capabilities=lambda model_id: capabilities.get(normalize_model_id(model_id)),
         manifest=manifests.get,
         workflow_for_model=by_model_id.get,
         origins=dict(origins or {}),

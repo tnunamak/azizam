@@ -63,6 +63,43 @@ class DerivationTableTests(unittest.TestCase):
         fields = self._workflow_fields("video.generate", {"inputs": {"clip": {"type": "asset", "media_type": "audio/wav"}}, "outputs": {}})
         self.assertEqual(_arch(fields), (["text", "audio"], ["video"]))
 
+    def test_video_edit_with_reference_image_and_source_video(self) -> None:
+        fields = self._workflow_fields("video.edit", {
+            "inputs": {
+                "reference_image": {"type": "asset", "media_type": "image/*"},
+                "source_video": {"type": "asset", "media_type": "video/*"},
+                "prompt": {"type": "string"},
+            },
+            "outputs": {"video": {"media_type": "video/mp4"}},
+        })
+        self.assertEqual(fields["type"], "video")
+        self.assertEqual(_arch(fields), (["text", "image", "video"], ["video"]))
+
+    def test_video_edit_asset_without_media_type_is_the_edited_video(self) -> None:
+        fields = self._workflow_fields("video.edit", {"inputs": {"source_video": {"type": "asset"}}, "outputs": {"video": {"media_type": "video/mp4"}}})
+        self.assertEqual(_arch(fields), (["text", "video"], ["video"]))
+
+    def test_image_edit_asset_media_type_is_respected(self) -> None:
+        fields = self._workflow_fields("image.edit", {"inputs": {"image": {"type": "asset"}, "clip": {"type": "asset", "media_type": "video/mp4"}}, "outputs": {}})
+        self.assertEqual(_arch(fields), (["text", "image", "video"], ["image"]))
+
+    def test_repository_video_edit_manifests_declare_their_inputs(self) -> None:
+        import yaml
+
+        expected = {
+            "video-scail-2-replace": ["text", "image", "video"],
+            "video-bernini-r-remix": ["text", "video"],
+        }
+        for workflow_id, inputs in expected.items():
+            with self.subTest(workflow=workflow_id):
+                manifest = yaml.safe_load((ROOT / "manifests" / "workflows" / f"{workflow_id}.yml").read_text(encoding="utf-8"))
+                derived = mm.from_intent(manifest["intent"], manifest)
+                assert derived is not None
+                self.assertEqual(list(derived.input_modalities), inputs)
+                for name, spec in manifest["inputs"].items():
+                    if spec.get("type") == "asset":
+                        self.assertIn("media_type", spec, f"{workflow_id}.{name}")
+
     def test_audio_generate(self) -> None:
         fields = self._workflow_fields("audio.generate", {"inputs": {}, "outputs": {"audio": {"media_type": "audio/wav"}}})
         self.assertEqual(fields["type"], "audio")
@@ -162,7 +199,8 @@ class OverrideTests(unittest.TestCase):
         self.assertEqual(fields["type"], "image")
         self.assertEqual(_arch(fields), (["text"], ["image"]))
         self.assertEqual(fields["max_tokens"], 4096)
-        self.assertEqual(fields["tags"], ["reasoning"])
+        # Tags are chat-model flags; a declared non-language type drops them.
+        self.assertNotIn("tags", fields)
 
     def test_declaration_alone_classifies_an_unknown_entry(self) -> None:
         declared = {"mystery": {"type": "reranking", "input_modalities": ["text"], "output_modalities": ["text"]}}
@@ -207,7 +245,27 @@ class ConsistencyAndOmissionTests(unittest.TestCase):
     def test_every_typed_entry_is_consistent(self) -> None:
         entries = [{"id": f"a-{op}", "vivid_fish_resolves_to": {op: "t"}} for op in ("chat", "images", "image_edits", "videos", "speech", "transcriptions")]
         for fields in _annotated(entries).values():
-            self.assertEqual("vision" in fields.get("tags", []), "image" in _arch(fields)[0], fields["id"])
+            if fields["type"] == "language":
+                self.assertEqual("vision" in fields.get("tags", []), "image" in _arch(fields)[0], fields["id"])
+            else:
+                self.assertNotIn("tags", fields, fields["id"])
+
+    def test_media_models_take_image_input_without_tags(self) -> None:
+        edit, edit_manifests = _workflow("edit", "image.edit", {"inputs": {"image": {"type": "asset"}}, "outputs": {"image": {"media_type": "image/png"}}})
+        i2v, i2v_manifests = _workflow("i2v", "video.generate", {"inputs": {"image": {"type": "asset"}}, "outputs": {"video": {"media_type": "video/mp4"}}})
+        sources = mm.MetadataSources(manifest={**edit_manifests, **i2v_manifests}.get)
+        out = _annotated([edit, i2v, {"id": "image-edit", "vivid_fish_resolves_to": {"image_edits": "edit"}}], sources)
+        for model_id in ("edit", "i2v", "image-edit"):
+            with self.subTest(model=model_id):
+                self.assertIn("image", _arch(out[model_id])[0])
+                self.assertNotIn("tags", out[model_id])
+
+    def test_declared_tags_on_media_models_are_dropped(self) -> None:
+        entry, manifests = _workflow("edit", "image.edit", {"inputs": {"image": {"type": "asset"}}, "outputs": {}})
+        sources = mm.MetadataSources(manifest=manifests.get, declared={"edit": {"tags": ["vision", "tool-use"]}}.get)
+        fields = _annotated([entry], sources)["edit"]
+        self.assertNotIn("tags", fields)
+        self.assertEqual(_arch(fields), (["text", "image"], ["image"]))
 
     def test_unknown_entry_gets_no_fields(self) -> None:
         fields = _annotated([{"id": "who-knows", "object": "model"}])["who-knows"]

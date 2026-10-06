@@ -4,15 +4,17 @@ After first boot, admin.db owns each service's `models` list and YAML edits to
 `backends.<id>.models` never reach it (see register_service_from_config.py). This script
 changes one key only: for every YAML model record that declares `model_metadata`, it sets
 that key on the registry record with the same `id`. Other fields, records and services stay
-as they are. It writes through the same compare-and-swap call as the admin API, after it
-backs up the database.
+as they are. It writes through the audited compare-and-swap registry writer, after it backs
+up the database. It writes no other file: it does not regenerate LiteLLM's config and does
+not trigger any reload. Running it twice changes nothing the second time.
 
     ./venv/bin/python scripts/local/sync_model_metadata_from_config.py            # dry run
     ./venv/bin/python scripts/local/sync_model_metadata_from_config.py --apply
 
 Options: --db PATH (default data/admin.db), --config PATH (default proxy_config.yml),
 --service ID (limit to one service). Run it from the repository root. The gateway reads the
-change on its next start or service hot reload; this script never restarts anything.
+change on its next start; this script never restarts anything. model_metadata is not part of
+LiteLLM's compiled config, so that restart leaves LiteLLM's config file unchanged.
 """
 
 from __future__ import annotations
@@ -31,8 +33,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from gateway import admin_store  # noqa: E402
-from gateway.admin_api import AdminContext  # noqa: E402
-from gateway.admin_runtime import AdminSQLiteStore  # noqa: E402
+from gateway.service_registry import SERVICE_REGISTRY_SETTING_KEY  # noqa: E402
 from gateway.model_metadata import DECLARATION_KEY  # noqa: E402
 
 
@@ -90,6 +91,38 @@ def plan_changes(
     return updated, changes, warnings
 
 
+def write_model_metadata(
+    db: Path,
+    updated: Mapping[str, Any],
+    changes: list[dict[str, Any]],
+    *,
+    expected_generation: int,
+) -> dict[str, Any]:
+    """Commit the registry, its generation and one audit row, and nothing else.
+
+    This calls the audited compare-and-swap writer directly. The admin API's
+    wrapper would also rewrite LiteLLM's config file (wherever the registry's
+    `config_path` points) and fire the hot reload, which a key-only edit to a
+    possibly copied database must never do.
+    """
+    return admin_store.write_service_registry_with_audit(
+        updated,
+        expected_generation=expected_generation,
+        updated_by="sync-model-metadata-from-config",
+        audit_action="operator.service_registry.update",
+        audit_actor_kind="system",
+        audit_actor_id="sync-model-metadata-from-config",
+        audit_actor_label="sync model_metadata",
+        audit_target_kind="operator_setting",
+        audit_target_id=SERVICE_REGISTRY_SETTING_KEY,
+        audit_metadata={
+            "field": DECLARATION_KEY,
+            "models": sorted(f"{c['service']}/{c['model']}" for c in changes),
+        },
+        path=db,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--db", type=Path, default=Path("data/admin.db"))
@@ -116,18 +149,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     backup = _backup(args.db)
-    actor = AdminContext(
-        subject="sync-model-metadata-from-config",
-        actor_kind="system",
-        actor_label="sync model_metadata",
-        roles=frozenset({"admin"}),
-    )
-    result = AdminSQLiteStore(args.db).update_service_registry(
-        data=updated, actor=actor, expected_generation=generation
-    )
-    print(f"\napplied: generation {generation} -> {result.get('operator_settings_generation')}; backup {backup}", file=sys.stderr)
+    record = write_model_metadata(args.db, updated, changes, expected_generation=generation)
+    print(f"\napplied: generation {generation} -> {record['operator_settings_generation']}; backup {backup}", file=sys.stderr)
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

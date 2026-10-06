@@ -7,7 +7,8 @@ Gateway `type`/`tags`/`context_window`/`max_tokens` names and OpenRouter's `arch
 invent only `audio` and `decision`.
 
 Code: `gateway/model_metadata.py` (pure derivation), wired in `proxy.py` (`list_models`,
-`_model_metadata_sources`, `_declared_model_metadata`, `_catalog_model_metadata`).
+`_model_metadata_sources`, `_service_model_index`, `_declared_model_metadata_index`,
+`_catalog_model_metadata`).
 
 ## Fields
 
@@ -22,20 +23,24 @@ The new fields are additive; OpenAI clients ignore unknown keys (checked against
 | `architecture.output_modalities` | string[] | subset of `text`, `image`, `audio`, `video`, `embedding` | Whenever `type` is present. |
 | `context_window` | int | total tokens | Already emitted before this contract; unchanged. Omitted if unknown. |
 | `max_tokens` | int | max output tokens per request | Only when an operator declares it. Never guessed. |
-| `tags` | string[] | subset of `tool-use`, `reasoning`, `vision`, `file-input` | Only declared or derivable facts. Omitted when empty. |
+| `tags` | string[] | subset of `tool-use`, `reasoning`, `vision`, `file-input` | `language` entries only, and only declared or derivable facts. Omitted when empty. |
 
 Semantics:
 
 - `type: "language"`: callable through `POST /v1/chat/completions` (and `/v1/responses`), text in, text
   out. A chat client lists exactly these.
-- `vision` tag <=> `image` in `input_modalities`. The gateway keeps the two consistent on every entry,
-  including image-edit and image-to-video models.
+- `tags` are chat-model capability flags and appear only on `type: "language"` entries. For those,
+  `vision` tag <=> `image` in `input_modalities`, and the gateway keeps the two consistent. Media
+  models (image edit, image-to-video, ...) state image input in `architecture.input_modalities` only;
+  the gateway drops any tags declared on them.
 - `reasoning`: the model thinks and honours `reasoning_effort` (the gateway maps it to engine budgets,
   see `reasoning:` in `proxy_config.yml`).
 - `tool-use`: OpenAI `tools` / tool calls work through the gateway.
 - An alias (`coder`, `image`, `tts`, ...) is typed by what it resolves to. An alias with several
   operations (`image` -> `images` + `image_edits`) takes the type they share and the union of their
   modalities and tags.
+- A dynamic alias (`current`, `current-fast`: whatever local LLM is loaded) claims only what every
+  model it can resolve to has. See "This machine's declarations".
 - No new field uses a `vivid_fish` name.
 
 Example:
@@ -58,7 +63,7 @@ operator declaration then overrides it field by field.
 | Workflow intent `image.edit` | `image` | text, image -> image |
 | Workflow intent `image.analyze` | `image` | image -> the manifest's output media type (JSON report -> text) |
 | Workflow intent `video.generate` | `video` | text (+ image when the manifest has an `asset` input) -> video |
-| Workflow intent `video.edit` | `video` | text, video -> video |
+| Workflow intent `video.edit` | `video` | text, video (+ each `asset` input's declared media type) -> video |
 | Workflow intent `audio.generate` | `audio` | text -> audio |
 | Alias op `chat` | `language` | text -> text (+ image only when the target declares it) |
 | Alias op `embeddings` | `embedding` | text -> embedding |
@@ -74,8 +79,11 @@ operator declaration then overrides it field by field.
 
 Notes:
 
-- A manifest `asset` input may declare `media_type` (for example `media_type: audio/wav`); without it, an
-  asset input of a `video.generate` workflow counts as an image.
+- Each manifest `asset` input adds its medium to `input_modalities`. An input may declare it with
+  `media_type` (for example `media_type: image/*`). Without it, an asset input counts as an image for
+  `image.*` and `video.generate` workflows, a video for `video.edit`, and audio for `audio.generate`.
+  A manifest that takes assets of different media (for example `video-scail-2-replace`: a reference
+  image and a source video) must declare `media_type` on each one.
 - Output modalities come from the manifest's `outputs.*.media_type` when present.
 - Alias targets resolve against the whole catalog before profile filtering, so a caller's profile never
   changes what an alias reports.
@@ -88,8 +96,10 @@ Declared values win over derived values. Declare them as data on any of these ex
 one id has several, the most specific wins per field:
 
 1. Service-registry model record: `backends.<service>.models[].model_metadata` in `proxy_config.yml`
-   (seed) and the same key on the record in `admin.db` (live). The record matches by `id`,
-   `model_group` or `public_name`.
+   (seed) and the same key on the record in `admin.db` (live). The record matches the public name
+   LiteLLM serves for it (for a remote provider, the provider-prefixed name such as
+   `openai/text-embedding-3-small`, never the raw record id). Records of other services match by
+   `id`, `model_group` or `public_name`.
 2. A `models:` entry in `proxy_config.yml` with the same `id`. An entry with only `id` and
    `model_metadata` is valid: it annotates any listed id (a workflow, an alias, a decision model) and is
    not added to the GGUF catalog.
@@ -106,8 +116,9 @@ model_metadata:
   tags: [reasoning, tool-use, vision]
 ```
 
-Values outside the vocabulary are ignored. Declaring `tags: [vision]` adds `image` input and declaring
-`image` input adds the `vision` tag. Declaring `tags: []` on an alias removes the tags it would inherit.
+Values outside the vocabulary are ignored. On a `language` entry, declaring `tags: [vision]` adds
+`image` input and declaring `image` input adds the `vision` tag. Declaring `tags: []` on an alias
+removes the tags it would inherit. Tags declared on any other type are dropped.
 
 ### Applying a seed change to a running instance
 
@@ -119,8 +130,24 @@ After the first boot, `admin.db` owns each service's `models` list; edits under 
 ./venv/bin/python scripts/local/sync_model_metadata_from_config.py --apply    # backs up admin.db, then writes
 ```
 
-The gateway reads the change on its next start or service hot reload. The script does not restart
-anything. `roles:` and `models:` declarations are read from `proxy_config.yml` at start.
+The script writes one registry revision and one audit row through the audited compare-and-swap writer,
+and nothing else. It does not regenerate LiteLLM's config file and does not trigger a hot reload, so it
+is safe against a copied database whose registry points `config_path` at a live file. A second run
+reports nothing to change. If the registry changed between the plan and the write, the write fails
+with a generation conflict; run the script again.
+
+A running gateway reads the change on its next start. `model_metadata` is not part of LiteLLM's
+compiled config, so the restart rewrites LiteLLM's config with the same content and the LiteLLM
+watcher does not restart LiteLLM. The safe sequence, from the main checkout after merging:
+
+1. `./venv/bin/python scripts/local/sync_model_metadata_from_config.py` and read the plan: it must list
+   only `model_metadata` changes on the records you expect.
+2. `./venv/bin/python scripts/local/sync_model_metadata_from_config.py --apply`.
+3. `scripts/safe-restart` (gateway only; not `--llama`).
+4. `curl -s localhost:5000/v1/models -H "Authorization: Bearer $KEY"` and check the entries.
+
+To undo, stop the gateway, copy the `admin.db.bak.pre-model-metadata-*` backup over `admin.db`, and
+start it again. `roles:` and `models:` declarations are read from `proxy_config.yml` at start.
 
 ### This machine's declarations
 
@@ -128,8 +155,9 @@ anything. `roles:` and `models:` declarations are read from `proxy_config.yml` a
 
 | ids | `input_modalities` | `tags` | why |
 |---|---|---|---|
-| `default`, `coder`, `coder-q5`, `coder-q8`, `coder-unchained`, `rp`, `current` | text, image | reasoning, tool-use, vision | Every record loads the mmproj (image input); llama-bee runs with `--jinja` (native tool calls) and `--reasoning on`, and the gateway maps `reasoning_effort` to a thinking budget. |
-| `default-fast`, `current-fast` | text, image | tool-use, vision | Same weights; the record's `reasoning_effort: none` overlay turns thinking off, so clients should not send an effort. |
+| `default`, `coder`, `coder-q5`, `coder-q8`, `coder-unchained`, `rp` | text, image | reasoning, tool-use, vision | Every record loads the mmproj (image input); llama-bee runs with `--jinja` (native tool calls) and `--reasoning on`, and the gateway maps `reasoning_effort` to a thinking budget. |
+| `default-fast` | text, image | tool-use, vision | Same weights; the record's `reasoning_effort: none` overlay turns thinking off, so clients should not send an effort. |
+| `current`, `current-fast` | text | none | They resolve to whichever local LLM is loaded, which can be a text-only model such as `cydonia-24b` (`models:`, no mmproj) whose tool-call and reasoning support is not declared. Clients also cache `/v1/models` across model swaps, so a value read from the loaded model at list time could be wrong at request time. The records declare `input_modalities: [text]` and `tags: []` so a sync also overwrites older declarations. |
 
 No `max_tokens` is declared: the `max_tokens: 16384` on `default` is a `default-params` default that
 callers override, not a cap. The `vision` and `fast` aliases inherit from `default` and `default-fast`.

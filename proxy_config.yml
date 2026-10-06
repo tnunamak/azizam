@@ -162,13 +162,16 @@ backends:
           tags: [tool-use, vision]
       # These aliases deliberately select the already loaded routing target.
       # Their base references are policy data, not loaded-file inference.
+      # Their model_metadata claims only what every loadable local model has:
+      # text in, text out. Any local LLM can be the loaded one (models:
+      # cydonia-24b is text-only), and clients cache /v1/models across swaps.
       - id: current
         model_group: current
         base_model_id: default
         upstream_model: Qwen3.8-27B-Uncensored-Q4_K_M.gguf
         model_metadata:
-          input_modalities: [text, image]
-          tags: [reasoning, tool-use, vision]
+          input_modalities: [text]
+          tags: []
       - id: current-fast
         model_group: current-fast
         base_model_id: default
@@ -177,8 +180,8 @@ backends:
           - kind: default-params
             set: {reasoning_effort: none}
         model_metadata:
-          input_modalities: [text, image]
-          tags: [tool-use, vision]
+          input_modalities: [text]
+          tags: []
       - id: rp
         model_group: rp
         # Keep the logical alias across LiteLLM's internal gateway hop so the

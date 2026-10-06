@@ -87,6 +87,19 @@ _INTENTS: dict[str, ModelMetadata] = {
     "text.embeddings": _md("embedding", ["text"], ["embedding"]),
 }
 
+# Media an intent's asset inputs carry unless the manifest declares a
+# `media_type` on the input. A generator's asset is its conditioning image; an
+# editor's is the medium it edits. Manifests with mixed assets (a reference
+# image plus a source video) must declare each input's `media_type`.
+_INTENT_ASSET_MODALITY: dict[str, str] = {
+    "image.generate": "image",
+    "image.edit": "image",
+    "image.analyze": "image",
+    "video.generate": "image",
+    "video.edit": "video",
+    "audio.generate": "audio",
+}
+
 # Stable-alias operation (gateway/stable_aliases.OPERATIONS) -> metadata.
 _OPERATIONS: dict[str, ModelMetadata] = {
     "chat": _md("language", ["text"], ["text"]),
@@ -126,10 +139,8 @@ def from_intent(intent: str | None, manifest: Mapping[str, Any] | None = None) -
     if not isinstance(manifest, Mapping):
         return base
     inputs = list(base.input_modalities)
-    if intent == "video.generate" and _asset_inputs(manifest):
-        # A generator's asset input is its conditioning image unless the
-        # manifest declares another media type for it.
-        inputs.extend(_asset_input_modality(spec, default="image") for spec in _asset_inputs(manifest))
+    default_asset = _INTENT_ASSET_MODALITY.get(str(intent))
+    inputs.extend(_asset_input_modality(spec, default=default_asset) or "" for spec in _asset_inputs(manifest))
     outputs = _manifest_output_modalities(manifest) or list(base.output_modalities)
     return replace(
         base,
@@ -185,7 +196,8 @@ def apply_declared(derived: ModelMetadata | None, declared: Mapping[str, Any] | 
     """Overlay operator-declared values on derived ones. Declared wins per field.
 
     Values outside the contract vocabulary are ignored rather than emitted.
-    The `vision` tag and `image` input are then made consistent.
+    Only `language` entries keep tags; for them the `vision` tag and `image`
+    input are then made consistent.
     """
     result = derived or ModelMetadata()
     if isinstance(declared, Mapping):
@@ -202,6 +214,10 @@ def apply_declared(derived: ModelMetadata | None, declared: Mapping[str, Any] | 
         result = replace(result, **updates)
     if result.type is None:
         return None
+    if result.type != "language":
+        # Tags are chat-model capability flags. Media models state image input
+        # through their modalities only.
+        return replace(result, tags=())
     return _consistent_vision(result)
 
 
@@ -315,7 +331,7 @@ def _asset_inputs(manifest: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return [spec for spec in inputs.values() if isinstance(spec, Mapping) and spec.get("type") == "asset"]
 
 
-def _asset_input_modality(spec: Mapping[str, Any], *, default: str) -> str:
+def _asset_input_modality(spec: Mapping[str, Any], *, default: str | None) -> str | None:
     major = str(spec.get("media_type") or "").split("/", 1)[0].strip().lower()
     return major if major in INPUT_MODALITIES else default
 
@@ -342,7 +358,7 @@ def _with_inputs(metadata: ModelMetadata, extra: Iterable[str]) -> ModelMetadata
 
 
 def _consistent_vision(metadata: ModelMetadata) -> ModelMetadata:
-    """`vision` tag <=> `image` input. A declared tag adds the input and vice versa."""
+    """For a language model, `vision` tag <=> `image` input. A declared tag adds the input and vice versa."""
     if "vision" in metadata.tags and "image" not in metadata.input_modalities:
         metadata = _with_inputs(metadata, ("image",))
     if "image" in metadata.input_modalities and "vision" not in metadata.tags:

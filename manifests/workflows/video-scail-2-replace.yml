@@ -12,9 +12,11 @@ typical_seconds: 231
 inputs:
   reference_image:
     type: asset
+    media_type: image/*
     required: true
   source_video:
     type: asset
+    media_type: video/*
     required: true
   source_subject:
     type: string
