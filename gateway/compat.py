@@ -137,6 +137,8 @@ JSON_ALIASES = {
     'vivid_status': 'azizam_status',
     'openai_proxy_policy': 'azizam_policy',
     'com.vividfish.workflow': 'com.azizam.workflow',
+    'com.vividfish.chat': 'com.azizam.chat',
+    'com.vividfish.routing': 'com.azizam.routing',
 }
 JSON_OLD_NAMES = {new: old for old, new in JSON_ALIASES.items()}
 
