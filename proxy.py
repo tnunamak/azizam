@@ -1093,6 +1093,13 @@ TTS_PATHS = [
 # Model routing - detect backend from filesystem
 # =============================================================================
 
+# Routing publishes these observations; metadata readers never refresh them.
+# A short TTL bounds staleness after an out-of-band model/backend change.
+_LOADED_LLM_SNAPSHOT_TTL_S = 5.0
+_active_backend_snapshot: tuple[str | None, float, object] = (None, 0.0, None)
+_loaded_llm_snapshot: dict[str, tuple[str, str | None, float, object]] = {}
+
+
 async def get_active_backend() -> Optional[str]:
     """Check which LLM backend is currently running.
 
@@ -1100,7 +1107,9 @@ async def get_active_backend() -> Optional[str]:
     order and returns the id of the first one that answers healthy.  For the
     current deployment this resolves to 'tabby' or 'kobold' exactly as before.
     """
-    backends = config.get("backends") or {}
+    global _active_backend_snapshot
+    observed_config = config
+    backends = observed_config.get("backends") or {}
     # Sort by priority (lower = higher priority) so the preferred backend wins.
     candidates = sorted(
         LLM_BACKEND_HOSTS.keys(),
@@ -1108,7 +1117,9 @@ async def get_active_backend() -> Optional[str]:
     )
     for bid in candidates:
         if await check_service_health(bid):
+            _active_backend_snapshot = (bid, time.monotonic(), observed_config)
             return bid
+    _active_backend_snapshot = (None, time.monotonic(), observed_config)
     return None
 
 
@@ -3506,6 +3517,18 @@ def _is_use_loaded_model_alias(value: Any) -> bool:
 
 
 async def current_llm_model_for_backend(backend: str) -> str:
+    """Read routing state and publish the same identity for catalog readers."""
+    observed_config = config
+    model = await _probe_current_llm_model_for_backend(backend)
+    loaded_path = (
+        currently_loaded_kobold_model()
+        if model and engine_quarantine.loaded_model_is_path(backend) else None
+    )
+    _loaded_llm_snapshot[backend] = (model, loaded_path, time.monotonic(), observed_config)
+    return model
+
+
+async def _probe_current_llm_model_for_backend(backend: str) -> str:
     """Return the model actually loaded on a backend, never a configured fallback."""
     backend = str(backend or "").strip()
     if engine_quarantine.loaded_model_is_path(backend):
@@ -13172,42 +13195,53 @@ def _role_catalog_ids_for_loaded_path(
     return ids
 
 
-async def _current_loaded_llm_model_ids(active_backend: str | None = None) -> set[str]:
-    """Return public ids that resolve to the currently loaded LLM backend."""
-    try:
+async def _current_loaded_llm_model_ids(
+    active_backend: str | None = None, *, cached_only: bool = False,
+) -> set[str]:
+    """Resolve the routing backend's own loaded state to declared public ids.
+
+    Catalog callers only consume routing observations. Cold, expired or
+    config-reloaded snapshots return no ids, without any health/state probes.
+    """
+    if cached_only:
+        active, observed_at, observed_config = _active_backend_snapshot
+        if (observed_config is not config
+                or time.monotonic() - observed_at >= _LOADED_LLM_SNAPSHOT_TTL_S):
+            return set()
+        snapshot = _loaded_llm_snapshot.get(active or "")
+        if not snapshot:
+            return set()
+        loaded, loaded_path, observed_at, observed_config = snapshot
+        if (observed_config is not config
+                or time.monotonic() - observed_at >= _LOADED_LLM_SNAPSHOT_TTL_S):
+            return set()
+    else:
         active = active_backend or await get_active_backend()
-    except Exception:
-        active = None
-
-    ids: set[str] = set()
-    if active and engine_quarantine.loaded_model_is_http_id(active):
-        loaded = await get_tabby_loaded_model_id()
-        if loaded:
-            ids.update(USE_LOADED_MODEL_ALIASES)
-            ids.add(loaded)
-            ids.update(
-                _role_catalog_ids_for_loaded_path(
-                    backend=active,
-                    loaded_path=None,
-                    loaded_model_id=loaded,
-                )
-            )
-        return {item for item in ids if item}
-
-    loaded_path = currently_loaded_kobold_model()
+        if not active:
+            return set()
+        loaded = await current_llm_model_for_backend(active)
+        snapshot = _loaded_llm_snapshot.get(active)
+        loaded_path = snapshot[1] if snapshot and snapshot[0] == loaded else None
+    if not active or not loaded:
+        return set()
+    ids = {*USE_LOADED_MODEL_ALIASES, loaded}
     if loaded_path:
-        ids.update(USE_LOADED_MODEL_ALIASES)
-        ids.add(loaded_path)
-        basename = os.path.basename(loaded_path)
-        if basename:
-            ids.add(basename)
-        ids.update(
-            _role_catalog_ids_for_loaded_path(
-                backend="kobold",
-                loaded_path=loaded_path,
-                loaded_model_id=basename,
-            )
+        ids.update({loaded_path, os.path.basename(loaded_path)})
+    ids.update(_role_catalog_ids_for_loaded_path(
+        backend=active, loaded_path=loaded_path, loaded_model_id=loaded,
+    ))
+    # Activation identity belongs to registry data, independent of role aliases.
+    backend_cfg = (config.get("backends") or {}).get(active, {})
+    identities = {normalize_model_id(value) for value in ids if value not in USE_LOADED_MODEL_ALIASES}
+    identities.update(normalize_model_id(os.path.basename(value)) for value in list(identities))
+    for record in _service_model_records(backend_cfg):
+        activation = str(
+            record.get("activation_model") or record.get("model_path") or record.get("path")
+            or record.get("model") or record.get("upstream_model") or ""
         )
+        if activation and (normalize_model_id(activation) in identities
+                           or normalize_model_id(os.path.basename(activation)) in identities):
+            ids.update(str(record[key]) for key in ("id", "model_group", "public_name") if record.get(key))
     return {item for item in ids if item}
 
 
@@ -22897,6 +22931,7 @@ def _configured_model_record_for_id(model_id: str) -> tuple[str | None, Mapping[
 async def _context_window_for_model_id(
     model_id: str,
     entry: Mapping[str, Any] | None = None,
+    *, observed_windows: dict[str, int] | None = None,
 ) -> int | None:
     found = _context_window_from_mapping(entry)
     if found is not None:
@@ -22915,19 +22950,26 @@ async def _context_window_for_model_id(
     found = _configured_context_window_for_backend(backend)
     if found is not None:
         return found
+    if model_id in USE_LOADED_MODEL_ALIASES and backend != _active_backend_snapshot[0]:
+        return None  # An alias must not observe another backend's live window.
     if engine_quarantine.context_window_from_live_probe(backend):
-        return await _kobold_context_window()
+        found = await _kobold_context_window()
+        if found is not None and observed_windows is not None:
+            observed_windows[model_id] = found
+        return found
     return None
 
 
-async def _annotate_model_context_windows(data: list[Any]) -> None:
+async def _annotate_model_context_windows(
+    data: list[Any], *, observed_windows: dict[str, int] | None = None,
+) -> None:
     for item in data:
         if not isinstance(item, dict):
             continue
         model_id = item.get("id")
         if not isinstance(model_id, str) or not model_id:
             continue
-        found = await _context_window_for_model_id(model_id, item)
+        found = await _context_window_for_model_id(model_id, item, observed_windows=observed_windows)
         if found is not None:
             item["context_window"] = found
 
@@ -23063,7 +23105,7 @@ def _policy_turns_reasoning_off(model_id: str) -> bool:
 
 async def _loaded_llm_model_ids_or_none() -> set[str]:
     try:
-        return await _current_loaded_llm_model_ids()
+        return await _current_loaded_llm_model_ids(cached_only=True)
     except Exception:  # noqa: BLE001
         return set()
 
@@ -23657,7 +23699,14 @@ async def list_models(request: Request):
         if entry["id"] not in {item.get("id") for item in data if isinstance(item, dict)}:
             data.append(entry)
 
-    await _annotate_model_context_windows(data)
+    # Preserve only upstream observations ahead of loaded-record inheritance;
+    # values added by the annotation pass may be static alias configuration.
+    observed_alias_windows = {
+        item["id"]: window for item in data if isinstance(item, dict)
+        and item.get("id") in USE_LOADED_MODEL_ALIASES
+        and (window := _context_window_from_mapping(item)) is not None
+    }
+    await _annotate_model_context_windows(data, observed_windows=observed_alias_windows)
     origins = {
         **{model_id: model_metadata.ORIGIN_LLM_CATALOG for model_id in llm_catalog_ids},
         **{model_id: model_metadata.ORIGIN_DECISION for model_id in decision_ids},
@@ -23666,7 +23715,7 @@ async def list_models(request: Request):
     # A live-observed context window is more exact than a declared one.
     for item in data:
         if isinstance(item, dict) and item.get("id") in inherited_windows:
-            item.setdefault("context_window", inherited_windows[item["id"]])
+            item["context_window"] = observed_alias_windows.get(item["id"], inherited_windows[item["id"]])
     model_metadata.annotate_entries(data, sources, catalog=metadata_catalog)
 
     upstream_payload.update(policy_metadata)

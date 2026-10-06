@@ -6,11 +6,13 @@ import asyncio
 import copy
 import json
 import sys
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import httpx
 from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -75,7 +77,7 @@ def _strip_contract_fields(payload: dict) -> dict:
     return out
 
 
-def _start_model_list_patches(test: unittest.TestCase) -> None:
+def _start_model_list_patches(test: unittest.TestCase, *, real_loaded_state: bool = False) -> None:
     """Serve /v1/models from the snapshot's LiteLLM ids, with nothing loaded."""
     patches = [
         patch.object(proxy, "AUTH_ENABLED", False),
@@ -84,9 +86,12 @@ def _start_model_list_patches(test: unittest.TestCase) -> None:
         patch.object(proxy, "_service_availability_response", return_value=None),
         patch.object(proxy, "_litellm_models_payload", _fake_litellm_payload),
         patch.object(proxy, "_decision_models_for", _fake_decision_models),
-        patch.object(proxy, "_kobold_context_window", _no_context_probe),
-        patch.object(proxy, "_current_loaded_llm_model_ids", _loaded(None)),
     ]
+    if not real_loaded_state:
+        patches.extend([
+            patch.object(proxy, "_kobold_context_window", _no_context_probe),
+            patch.object(proxy, "_current_loaded_llm_model_ids", _loaded(None)),
+        ])
     for patcher in patches:
         patcher.start()
         test.addCleanup(patcher.stop)
@@ -271,6 +276,152 @@ class ModelListEndpointTests(unittest.TestCase):
         index = asyncio.run(proxy._catalog_model_metadata(proxy._current_loaded_model_entries(), proxy.ADMIN_STORE.get_service_registry(), []))
         self.assertIn("reasoning", index["current"]["tags"])
         self.assertNotIn("reasoning", index["current-fast"]["tags"])
+
+
+class RoutingSnapshotMetadataTests(unittest.TestCase):
+    """Keep real health/state readers; count requests at the HTTP transport."""
+
+    def setUp(self) -> None:
+        _start_model_list_patches(self, real_loaded_state=True)
+        self.requests: list[tuple[str, str]] = []
+        self.active = "engine-a"
+        declaration = {"type": "language", "input_modalities": ["text"],
+                       "output_modalities": ["text"], "tags": ["tool-use"]}
+        self.backends = {
+            name: {"base_url": f"http://{name}.test", "health_endpoint": "/health",
+                   "priority": priority, "state_type": "openai_compatible",
+                   "protocol": "openai-compatible",
+                   "capabilities": ["chat", "openai"], "models": [
+                       {"id": f"public-{name}", "activation_model": f"loaded-{name}",
+                        "context_window": 4096, "model_metadata": copy.deepcopy(declaration)},
+                       *[{"id": alias, "context_window": 202752} for alias in sorted(DYNAMIC)],
+                   ]}
+            for name, priority in (("engine-a", 1), ("engine-b", 2))
+        }
+        self.backends["engine-a"]["models"][0]["model_metadata"].update(
+            input_modalities=["text", "image"], tags=["vision", "reasoning", "tool-use"])
+        registry = {"services": {
+            name: {"id": name, "kind": "llm", "capabilities": ["openai", "chat"], "config": record}
+            for name, record in self.backends.items()
+        }}
+        cfg = {**proxy.config, "backends": self.backends, "roles": {}, "models": []}
+        original_client = httpx.AsyncClient
+        transport = httpx.MockTransport(self._respond)
+        patches = [
+            patch.object(proxy, "config", cfg),
+            patch.object(proxy, "ROLES", {}),
+            patch.object(proxy, "MODELS_CATALOG", {}),
+            patch.object(proxy, "LLM_BACKEND_HOSTS", {
+                name: record["base_url"] for name, record in self.backends.items()}),
+            patch.object(proxy.ADMIN_STORE, "get_service_registry", return_value=registry),
+            patch.object(proxy, "_active_backend_snapshot", (None, 0.0, None)),
+            patch.object(proxy, "_loaded_llm_snapshot", {}),
+            patch.object(proxy.httpx, "AsyncClient",
+                         side_effect=lambda *args, **kwargs: original_client(
+                             *args, **kwargs, transport=transport)),
+        ]
+        for patcher in patches:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.client = TestClient(proxy.app)
+
+    def _respond(self, request: httpx.Request) -> httpx.Response:
+        self.requests.append((request.url.host, request.url.path))
+        backend = request.url.host.removesuffix(".test")
+        if request.url.path == "/health":
+            return httpx.Response(200 if backend == self.active else 503)
+        self.assertEqual(request.url.path, "/v1/models")
+        return httpx.Response(200, json={"data": [{"id": f"loaded-{backend}"}]})
+
+    def _route_current(self) -> proxy.CurrentLoadedLlmTarget:
+        context = proxy._catalog_auth_context_for_profile(proxy.DEFAULT_PROFILE, "default-local")
+        target, error = asyncio.run(proxy._current_loaded_llm_target(
+            context, enforce_gateway_policy=False))
+        self.assertIsNone(error)
+        self.assertIsNotNone(target)
+        return target
+
+    def _list(self, path: str = "/v1/models") -> dict[str, dict]:
+        response = self.client.get(path)
+        self.assertEqual(response.status_code, 200, response.text)
+        return {item["id"]: item for item in response.json()["data"]}
+
+    def test_current_metadata_tracks_execution_backend_not_other_cached_state(self) -> None:
+        self._route_current()
+        self.assertIn("vision", self._list()["current"]["tags"])
+        self.active = "engine-b"
+        with patch.object(proxy, "currently_loaded_kobold_model", return_value=QWEN_PATH) as legacy:
+            target = self._route_current()
+            listed = self._list()
+        self.assertEqual((target.backend, target.model), ("engine-b", "loaded-engine-b"))
+        self.assertEqual(listed["current"]["architecture"]["input_modalities"], ["text"])
+        self.assertEqual(listed["current"]["tags"], ["tool-use"])
+        legacy.assert_not_called()
+
+    def test_loaded_window_wins_over_static_alias_window(self) -> None:
+        self._route_current()
+        listed = self._list()
+        for alias in DYNAMIC:
+            self.assertEqual(listed[alias]["context_window"], 4096)
+
+    def test_live_upstream_window_wins_over_loaded_declaration(self) -> None:
+        async def observed_payload(*args, **kwargs):
+            payload = await _fake_litellm_payload(*args, **kwargs)
+            for entry in payload["data"]:
+                if entry["id"] in DYNAMIC:
+                    entry["context_window"] = 8192
+            return payload
+
+        self._route_current()
+        with patch.object(proxy, "_litellm_models_payload", observed_payload):
+            listed = self._list()
+        for alias in DYNAMIC:
+            self.assertEqual(listed[alias]["context_window"], 8192)
+
+    def test_registry_activation_model_inherits_without_duplicate_role(self) -> None:
+        target = self._route_current()
+        self.assertEqual(target.model, "loaded-engine-a")
+        self.assertEqual(proxy.ROLES, {})
+        self.assertEqual(proxy.MODELS_CATALOG, {})
+        self.assertNotEqual(self.backends["engine-a"]["models"][0]["id"], target.model)
+        listed = self._list()
+        self.assertEqual(listed["current"]["architecture"]["input_modalities"], ["text", "image"])
+        self.assertIn("reasoning", listed["current"]["tags"])
+
+    def test_model_lists_add_zero_backend_probes_with_warm_cold_or_expired_snapshot(self) -> None:
+        self._list()
+        self.assertEqual(self.requests, [])
+        self._route_current()
+        self.assertEqual(self.requests, [("engine-a.test", "/health"), ("engine-a.test", "/v1/models")])
+        baseline = list(self.requests)
+        for path in ("/v1/models", "/openai/v1/models", "/v1/models/current"):
+            response = self.client.get(path)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(self.requests, baseline)
+        member_index = asyncio.run(proxy._catalog_model_metadata(
+            proxy._current_loaded_model_entries(), proxy.ADMIN_STORE.get_service_registry(), []))
+        self.assertIn("vision", member_index["current"]["tags"])
+        self.assertEqual(self.requests, baseline)
+        # A profile that cannot see current must not pay for discovery either.
+        with patch.object(proxy, "_profile_model_allowlist", return_value={"default"}):
+            self.assertNotIn("current", self._list())
+        self.assertEqual(self.requests, baseline)
+        snapshot = proxy._loaded_llm_snapshot["engine-a"]
+        proxy._loaded_llm_snapshot["engine-a"] = (snapshot[0], snapshot[1], time.monotonic() - 6, snapshot[3])
+        self.assertNotIn("tags", self._list()["current"])
+        self.assertEqual(self.requests, baseline)
+        proxy._loaded_llm_snapshot["engine-a"] = snapshot
+        backend, _, cfg = proxy._active_backend_snapshot
+        proxy._active_backend_snapshot = (backend, time.monotonic() - 6, cfg)
+        self.assertNotIn("tags", self._list()["current"])
+        self.assertEqual(self.requests, baseline)
+
+    def test_config_reload_invalidates_snapshot_without_probing(self) -> None:
+        self._route_current()
+        baseline = list(self.requests)
+        with patch.object(proxy, "config", dict(proxy.config)):
+            self.assertNotIn("tags", self._list()["current"])
+        self.assertEqual(self.requests, baseline)
 
 
 # What each `/v1/models` type may show as on the Models page. The oracle for

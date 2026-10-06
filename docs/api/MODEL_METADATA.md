@@ -93,10 +93,12 @@ Notes:
 
 ## Dynamic aliases (`current`, `current-fast`)
 
-These aliases send requests to whichever local LLM is loaded. At list time the gateway asks once per
-request which public ids serve the loaded model (`_current_loaded_llm_model_ids` in `proxy.py`: the
-loaded file, plus every `roles:`, `models:` and service record that points at it). It makes no other
-network call for this.
+These aliases send requests to whichever local LLM is loaded. Chat routing publishes its active
+backend and that backend's own loaded identity to a five-second snapshot. At list time the gateway
+reads this snapshot without health or loaded-state probes, and resolves it against `roles:`, `models:`
+and service records' activation models. A cold or expired snapshot uses the conservative fallback
+until routing observes the loaded model again. Runtime configuration reloads also invalidate the
+snapshot.
 
 - The aliases inherit `type`, `architecture`, `tags` and `max_tokens` from the `model_metadata`
   declarations of those ids. Only declared ids count. When several are declared, the aliases claim
@@ -107,7 +109,7 @@ network call for this.
   is `current-fast`, through its `reasoning_effort: none` overlay. The gateway reads this from the
   policy data, not from the alias name.
 - `context_window`: a value observed from the running engine wins. Without one, the aliases take the
-  smallest `context_window` configured on the loaded model's records.
+  smallest `context_window` configured on the loaded model's records, ahead of static alias values.
 - When nothing is loaded, or no id of the loaded model is declared (for example `cydonia-24b`), the
   aliases keep their own declaration: text in, text out, no tags.
 - The inherited values win over the aliases' own `model_metadata`, which is only the fallback.
