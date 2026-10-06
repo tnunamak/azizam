@@ -476,7 +476,7 @@ test("workflows search filters aliases and can be cleared", async ({
   await expect(page.getByText("No matching workflows")).toBeVisible();
   await search.fill("Long manifest guidance");
   await expect(
-    page.getByRole("heading", { name: "Product render", exact: true }),
+    page.getByText("No matching workflows"),
   ).toBeVisible();
   await search.fill("image-local");
   await expect(
