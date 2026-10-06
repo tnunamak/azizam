@@ -8,10 +8,10 @@ silently disabled (they return empty data rather than crashing).
 
 | Env var | What it controls | Default |
 |---|---|---|
-| `OPENAI_PROXY_PORT` | Listener port | `5000` |
-| `OPENAI_PROXY_SETUP_ALLOWED_CIDRS` | Exact client networks allowed to claim the first password owner; overrides `auth.setup_allowed_cidrs`. Loopback is always allowed. This does not enable anonymous inference access. | `auth.lan_bypass_cidrs` when neither setup setting exists |
-| `AI_GATEWAY_DOCKER_SUBNET` | Compose bridge subnet; configure with its gateway to avoid local subnet conflicts. | `172.30.251.0/24` |
-| `AI_GATEWAY_DOCKER_GATEWAY` | Compose bridge host address; Compose grants first-owner setup to this exact `/32` peer. Its published port remains loopback-only. | `172.30.251.1` |
+| `AZIZAM_PORT` | Listener port | `5000` |
+| `AZIZAM_SETUP_ALLOWED_CIDRS` | Exact client networks allowed to claim the first password owner; overrides `auth.setup_allowed_cidrs`. Loopback is always allowed. This does not enable anonymous inference access. | `auth.lan_bypass_cidrs` when neither setup setting exists |
+| `AZIZAM_DOCKER_SUBNET` | Compose bridge subnet; configure with its gateway to avoid local subnet conflicts. | `172.30.251.0/24` |
+| `AZIZAM_DOCKER_GATEWAY` | Compose bridge host address; Compose grants first-owner setup to this exact `/32` peer. Its published port remains loopback-only. | `172.30.251.1` |
 | `AGW_REPO_PATH` | Absolute path to the checkout; used by the status endpoint for git-describe and drift checks | Detected from `__file__` at startup |
 
 ## Engine integrations
@@ -58,8 +58,8 @@ or passed as environment variables):
 
 | Env var | What it controls | Default |
 |---|---|---|
-| `AI_GATEWAY_LITELLM_BASE_URL` | URL of the LiteLLM sidecar as seen by the gateway container | `http://litellm:4000` |
-| `AI_GATEWAY_LITELLM_API_KEY` | Shared secret between the gateway and the LiteLLM sidecar | `sk-local-litellm` |
+| `AZIZAM_LITELLM_BASE_URL` | URL of the LiteLLM sidecar as seen by the gateway container | `http://litellm:4000` |
+| `AZIZAM_LITELLM_API_KEY` | Shared secret between the gateway and the LiteLLM sidecar | `sk-local-litellm` |
 
 ## Notes
 

@@ -357,7 +357,7 @@ class SyncMediaRouteTests(unittest.TestCase):
                     "voice": "alloy",
                     "input": "hello",
                     "response_format": "wav",
-                    "extensions": {"com.vividfish.workflow": {"metadata": "full"}},
+                    "extensions": {"com.azizam.workflow": {"metadata": "full"}},
                 },
             )
 

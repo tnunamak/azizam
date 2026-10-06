@@ -1,7 +1,7 @@
 # Lifecycle Driver Port — kobold/tabby swap → registry-driven drivers
 
 **Status:** Architect plan (no code written yet).
-**For:** the Vivid Fish AI Gateway.
+**For:** the Azizam.
 **Implements:** `ENGINE_REGISTRY_DESIGN.md` §3 (lifecycle drivers) + §6 (the service-shaped swap work) + Migration Step 6.
 **Foundation in place:** `gateway/lifecycle_drivers.py` (`LifecycleDriver` Protocol, `ExternalDriver`, `DockerDriver`, `driver_for_service`); `proxy.swap_lock_for()` generic per-service lock.
 **Non-negotiable:** BEHAVIOR-IDENTICAL for the current kobold/tabby deployment. The legacy code stays until a golden test proves the driver path byte-identical, behind a feature flag.
@@ -183,7 +183,7 @@ Add `tests/test_lifecycle_swap_golden.py`. A `SideEffectRecorder` patches the fo
 ### 4.2 The golden assertions
 
 **Kobold swap golden** — call BOTH `proxy.swap_kobold_model("/m/a.gguf", "/m/p.gguf")` (legacy) and `SystemdDriver().swap(kobold_svc, {"env": {"LLAMA_BEE_MODEL": "/m/a.gguf", "LLAMA_BEE_MMPROJ": "/m/p.gguf"}})` (new) under the same recorder + scripted-healthy HTTP, and assert the two event lists are **equal**. The decisive assertions:
-- drop-in `write` text is **byte-identical**, including the `# Managed by openai-proxy...` header, `[Service]`, and `Environment="LLAMA_BEE_MODEL=..."` / `Environment="LLAMA_BEE_MMPROJ=..."` lines (this is where the `LLAMA_TURBO` vs `LLAMA_BEE` trap dies).
+- drop-in `write` text is **byte-identical**, including the `# Managed by azizam...` header, `[Service]`, and `Environment="LLAMA_BEE_MODEL=..."` / `Environment="LLAMA_BEE_MMPROJ=..."` lines (this is where the `LLAMA_TURBO` vs `LLAMA_BEE` trap dies).
 - exec sequence == `[("exec", ["systemctl","--user","daemon-reload"]), ("exec", ["systemctl","--user","restart","koboldcpp.service"])]`.
 - health poll hits `{KOBOLD_HOST}/v1/models`.
 - failure paths: scripted non-zero `restart` → both remove the drop-in and return False; scripted health-timeout → both remove the drop-in and return False.

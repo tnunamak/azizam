@@ -8,6 +8,8 @@ values do not appear in YAML, argv, stdout, or logs.
 
 from __future__ import annotations
 
+from gateway.compat import ENV_ALIASES, get_env
+
 import argparse
 import hashlib
 import json
@@ -137,6 +139,14 @@ def build_sidecar_env(
     """Return a child environment with decrypted provider secrets injected."""
 
     child_env = dict(os.environ if base_env is None else base_env)
+    # LiteLLM resolves persisted os.environ/ references itself, so bridge both
+    # spellings in its child environment until registry state is migrated.
+    for name, aliases in ENV_ALIASES.items():
+        value = get_env(name, environ=child_env)
+        if value is not None:
+            child_env[name] = value
+            for alias in aliases:
+                child_env[alias] = value
     registry = _read_service_registry(db_path) or {}
     resolved_map = dict(env_map or provider_secret_env_map_from_registry(registry))
     origin_map = provider_secret_origin_map_from_registry(registry)

@@ -7,6 +7,11 @@ data; no gateway or inference-engine selection lives in the scripts.
 """
 from __future__ import annotations
 
+import sys as _compat_sys
+from pathlib import Path as _CompatPath
+_compat_sys.path.insert(0, str(_CompatPath(__file__).resolve().parents[3]))
+from gateway.compat import get_env
+
 import argparse
 import base64
 import os
@@ -19,7 +24,7 @@ from pathlib import PureWindowsPath
 
 
 def _env(name: str, default: str | None = None) -> str | None:
-    value = os.environ.get(name)
+    value = get_env(name)
     return value if value else default
 
 
@@ -32,7 +37,7 @@ def add_gateway_args(parser: argparse.ArgumentParser) -> None:
     )
     group.add_argument(
         "--gateway-api-key-env",
-        default=_env("AUTOTILE_GATEWAY_API_KEY_ENV", "AI_GATEWAY_API_KEY"),
+        default=_env("AUTOTILE_GATEWAY_API_KEY_ENV", "AZIZAM_API_KEY"),
         help="environment variable holding the bearer token; never pass a token as an argument",
     )
 
@@ -176,7 +181,7 @@ class GatewayImageClient:
 
     def generate(self, *, model: str | None, prompt: str, size: int) -> bytes:
         """Request one image using the documented b64_json response contract."""
-        token = os.environ.get(self.api_key_env, "").strip()
+        token = get_env(self.api_key_env, "").strip()
         if not token:
             raise RuntimeError(
                 f"missing bearer token in ${self.api_key_env}; set that environment variable before a live run"

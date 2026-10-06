@@ -8,7 +8,7 @@ test("uses the global setup static fixture without a gateway", async ({
 
   await page.goto(fixtureUrl!);
 
-  await expect(page).toHaveTitle("Vivid Fish browser smoke");
+  await expect(page).toHaveTitle("Azizam browser smoke");
   const toggle = page.getByRole("button", { name: "Toggle state" });
   await toggle.press("Space");
   await expect(toggle).toHaveAttribute("aria-pressed", "true");

@@ -3,7 +3,7 @@
 Two jobs, both pure (no I/O, no FastAPI, no ``proxy`` import):
 
 1. The delivery control. A request may carry
-   ``extensions["com.vividfish.workflow"].metadata = "full" | "none"``. The
+   ``extensions["com.azizam.workflow"].metadata = "full" | "none"``. The
    gateway always STORES generated media with full metadata. The control (or,
    when absent, the app profile default in ``profile.media_metadata.default``)
    decides whether the bytes DELIVERED to the client keep that metadata.
@@ -20,14 +20,16 @@ uploaded media must never reach it, so every value passes
 
 from __future__ import annotations
 
+from gateway.compat import accept_aliases
+
 import json
 import re
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
-WORKFLOW_EXTENSION_NAMESPACE = "com.vividfish.workflow"
+WORKFLOW_EXTENSION_NAMESPACE = "com.azizam.workflow"
 
-# Name of the control inside ``extensions[com.vividfish.workflow]``.
+# Name of the control inside ``extensions[com.azizam.workflow]``.
 METADATA_CONTROL = "metadata"
 METADATA_FULL = "full"
 METADATA_NONE = "none"
@@ -39,8 +41,22 @@ METADATA_MODES: tuple[str, ...] = (METADATA_FULL, METADATA_NONE)
 RESERVED_GATEWAY_CONTROLS: frozenset[str] = frozenset({METADATA_CONTROL})
 
 # Metadata keys the gateway writes into media bytes.
-PROVENANCE_KEY = "vividfish_provenance"
-PROVENANCE_SCHEMA = "vividfish.provenance/1"
+PROVENANCE_KEY = "azizam_provenance"
+# Permanent compatibility for metadata already embedded in generated assets.
+PROVENANCE_KEYS = (PROVENANCE_KEY, "vividfish_provenance")
+PROVENANCE_SCHEMA = "azizam.provenance/1"
+
+
+def read_provenance_value(values: Mapping[str, Any]) -> Any:
+    return next((values[key] for key in PROVENANCE_KEYS if key in values), None)
+
+
+def read_provenance_lines(text: str, separator: str) -> str | None:
+    for key in PROVENANCE_KEYS:
+        for line in text.splitlines():
+            if line.startswith(key + separator):
+                return line.split(separator, 1)[1]
+    return None
 
 _METADATA_ERROR = (
     f"{METADATA_CONTROL} must be one of " + ", ".join(repr(m) for m in METADATA_MODES)
@@ -68,7 +84,7 @@ def requested_metadata_mode(body: Mapping[str, Any] | None) -> str | None:
     """
     if not isinstance(body, Mapping):
         return None
-    container = body.get("extensions")
+    container = accept_aliases(body.get("extensions"))
     if container is None:
         return None
     if not isinstance(container, Mapping):
@@ -198,7 +214,7 @@ def build_provenance_record(
         receipt_path = f"/gateway/v1/receipts/{request_id}"
     record: dict[str, Any] = {
         "schema": PROVENANCE_SCHEMA,
-        "generator": "vividfish-gateway",
+        "generator": "azizam-gateway",
         "kind": kind,
         "created_at": _iso(created_at if created_at is not None else _now()),
         "request_id": request_id,

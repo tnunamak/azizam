@@ -28,8 +28,8 @@ TINY_PNG_BASE64 = (
 
 @unittest.skipUnless(_anthropic is not None, "anthropic SDK not installed")
 @unittest.skipUnless(
-    os.environ.get("OPENAI_PROXY_BASE_URL"),
-    "OPENAI_PROXY_BASE_URL not set; live SDK probe disabled",
+    os.environ.get("AZIZAM_BASE_URL"),
+    "AZIZAM_BASE_URL not set; live SDK probe disabled",
 )
 class TestAnthropicPythonSDK(unittest.TestCase):
     def setUp(self) -> None:
@@ -258,22 +258,22 @@ class TestAnthropicPythonSDK(unittest.TestCase):
         self.assertIn(status, {400, 404})
 
     def _model(self) -> str:
-        return os.environ.get("OPENAI_PROXY_SMOKE_ANTHROPIC_MODEL", "default")
+        return os.environ.get("AZIZAM_SMOKE_ANTHROPIC_MODEL", "default")
 
     def _skip_without_live_llm(self) -> None:
-        if os.environ.get("OPENAI_PROXY_SMOKE_LIVE_LLM") != "1":
-            self.skipTest("OPENAI_PROXY_SMOKE_LIVE_LLM not set; live LLM probe disabled")
+        if os.environ.get("AZIZAM_SMOKE_LIVE_LLM") != "1":
+            self.skipTest("AZIZAM_SMOKE_LIVE_LLM not set; live LLM probe disabled")
 
     def _skip_without_live_vision(self) -> None:
-        if os.environ.get("OPENAI_PROXY_SMOKE_LIVE_VISION") != "1":
+        if os.environ.get("AZIZAM_SMOKE_LIVE_VISION") != "1":
             self.skipTest(
-                "OPENAI_PROXY_SMOKE_LIVE_VISION not set; live vision probe disabled"
+                "AZIZAM_SMOKE_LIVE_VISION not set; live vision probe disabled"
             )
 
     def _skip_without_live_tools(self) -> None:
-        if os.environ.get("OPENAI_PROXY_SMOKE_LIVE_TOOLS") != "1":
+        if os.environ.get("AZIZAM_SMOKE_LIVE_TOOLS") != "1":
             self.skipTest(
-                "OPENAI_PROXY_SMOKE_LIVE_TOOLS not set; live tools probe disabled"
+                "AZIZAM_SMOKE_LIVE_TOOLS not set; live tools probe disabled"
             )
 
     def _tiny_png_image_block(self) -> dict[str, object]:

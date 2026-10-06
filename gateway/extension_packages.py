@@ -126,7 +126,7 @@ def review_git_package_source(
     subdir = str(source.get("subdir") or source.get("path_in_repo") or "").strip()
     try:
         if install_root is None:
-            with tempfile.TemporaryDirectory(prefix="ai-gateway-extension-") as tmp:
+            with tempfile.TemporaryDirectory(prefix="azizam-extension-") as tmp:
                 clone_dir = Path(tmp) / "repo"
                 resolved_ref = _clone_git_source(url, ref, clone_dir)
                 review = review_local_directory_package(_package_dir_from_clone(clone_dir, subdir))

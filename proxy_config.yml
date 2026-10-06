@@ -5,7 +5,7 @@ llm:
   pin_loaded_model: false
 backends:
   openai-proxy:
-    name: openai-proxy (self)
+    name: Azizam (self)
     native_passthrough: false
     host: 127.0.0.1
     port: 5000
@@ -1097,7 +1097,7 @@ audio:
 # (`openai`) maps OpenAI model names (ordered globs, first match wins) onto
 # layer-2 names, so re-pointing a stable alias also moves the OpenAI names that
 # use it. Concrete names (roles, workflow ids, engine ids) always keep working.
-# Discovery: GET /v1/models (vivid_fish_alias fields), GET /gateway/v1/aliases,
+# Discovery: GET /v1/models (azizam_alias fields), GET /gateway/v1/aliases,
 # and GET /gateway/v1/aliases/resolve?operation=chat&model=gpt-4o (dry run).
 # Code: gateway/stable_aliases.py. Docs: docs/LOCAL_CLIENT_RECIPES.md.
 model_aliases:
@@ -1264,7 +1264,7 @@ model_aliases:
     stable:
       # Parakeet on GPU0 first (fast, on demand). The gateway tries the next engine when the first cannot
       # serve a request (will not start, connection refused, 503, or an allocation/OOM error: GPU0 full), and
-      # answers with `x-vivid-fallback`. A 4xx never falls back, and an engine id by name never does.
+      # answers with `x-azizam-fallback`. A 4xx never falls back, and an engine id by name never does.
       stt: [parakeet-gpu, parakeet]
       stt-fast: [nemotron-streaming, parakeet]
       stt-quality: [parakeet-gpu, parakeet, canary]
@@ -1386,19 +1386,19 @@ auth:
   #      lan_bypass_enabled: true
   #      lan_bypass_cidrs: ["127.0.0.0/8", "::1/128", "192.168.0.0/16", "10.0.0.0/8", "100.64.0.0/10"]
   #      trusted_proxies: ["127.0.0.1"]      # your reverse proxy's IP/CIDR; empty = no proxy
-  #    Env overrides: OPENAI_PROXY_LAN_BYPASS=true
+  #    Env overrides: AZIZAM_LAN_BYPASS=true
   lan_bypass_enabled: true
   lan_bypass_cidrs: ["127.0.0.0/8", "::1/128", "192.168.0.0/16", "10.0.0.0/8", "100.64.0.0/10"]
   trusted_proxies: ["192.168.1.4"]
   #
   # Cloudflare Tunnel: honor CF-Connecting-IP, but ONLY when the connection comes
   # from a verified Cloudflare edge IP (ranges fetched at startup; fail-closed).
-  #   Env override: OPENAI_PROXY_CF_MODE=true
+  #   Env override: AZIZAM_CF_MODE=true
   cloudflare_mode: false
   #
   # 2) Query-param key — for clients with no auth-header field (e.g. dictation
   #    apps): accept ?api_key=<key>. Note: appears in some logs; redact upstream.
-  #    Env override: OPENAI_PROXY_QUERY_PARAM_KEY=true
+  #    Env override: AZIZAM_QUERY_PARAM_KEY=true
   allow_query_param_key: false
   #
   # 3) Per-device path tokens — the URL path IS the credential, e.g. base URL
@@ -1412,5 +1412,5 @@ admin:
   # Deployment brand (data, not product code). A generic install shows only the
   # neutral product label; this deployment opts into the vivid.fish wordmark.
   brand:
-    product: AI Gateway
+    product: Azizam
     wordmark: vivid.fish

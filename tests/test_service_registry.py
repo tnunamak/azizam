@@ -209,7 +209,7 @@ def test_litellm_substrate_service_is_seed_data() -> None:
     assert service["kind"] == "llm-substrate"
     assert service["capabilities"] == ["llm.execution"]
     assert service["config"]["execution_substrate"] == "litellm"
-    assert service["config"]["base_url_env"] == "AI_GATEWAY_LITELLM_BASE_URL"
+    assert service["config"]["base_url_env"] == "AZIZAM_LITELLM_BASE_URL"
     assert service["config"]["default_base_url"] == "http://127.0.0.1:4011"
     assert service["config"]["health_endpoint"] == "/health/liveliness"
 
@@ -1236,7 +1236,7 @@ def test_backfill_seed_catalog_metadata_never_overwrites_operator_edits() -> Non
                 "config": {
                     "execution_substrate": "litellm",
                     "protocol": "litellm",
-                    "base_url_env": "AI_GATEWAY_LITELLM_BASE_URL",
+                    "base_url_env": "AZIZAM_LITELLM_BASE_URL",
                     "default_base_url": "http://127.0.0.1:4011",
                 },
                 "secret_refs": {},
@@ -1308,7 +1308,7 @@ def test_ensure_service_registry_persists_seed_catalog_backfill(tmp_path: Path) 
                 "config": {
                     "execution_substrate": "litellm",
                     "protocol": "litellm",
-                    "base_url_env": "AI_GATEWAY_LITELLM_BASE_URL",
+                    "base_url_env": "AZIZAM_LITELLM_BASE_URL",
                     "default_base_url": "http://127.0.0.1:4011",
                 },
                 "secret_refs": {},

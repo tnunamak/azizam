@@ -33,7 +33,7 @@ def _entry(short, intent, *, aliases=(), props=None, required=(), recommended="s
         "description": f"{short} workflow", "aliases": list(aliases), "typical_seconds": 5.0,
         "outputs": [], "route_inputs": list(route_inputs),
         "inputs": {"type": "object", "properties": props or {}, "required": list(required), "additionalProperties": False,
-                   "x-vividfish-workflow-id": f"{intent}.{short}"},
+                   "x-azizam-workflow-id": f"{intent}.{short}"},
         "execution": {"recommended": recommended, "sync": sync, "async": async_},
     }
 
@@ -229,7 +229,7 @@ def test_modern_discover_lists_versions_and_identity(env):
     result = rpc(env, "server/discover", modern=True).json()["result"]
     assert result["resultType"] == "complete"
     assert result["supportedVersions"][0] == MODERN
-    assert result["_meta"]["io.modelcontextprotocol/serverInfo"]["name"] == "vivid-fish-ai-gateway"
+    assert result["_meta"]["io.modelcontextprotocol/serverInfo"]["name"] == "azizam"
 
 
 def test_modern_request_needs_matching_headers(env):
@@ -294,7 +294,7 @@ def test_capabilities_target_returns_typed_inputs_with_route_fields(env):
     assert detail["target"] == "krea"  # ambiguous alias: generate wins with no inputs
     assert detail["inputs"]["required"] == ["prompt"]
     assert detail["inputs"]["properties"]["n"]["maximum"] == 10
-    assert "x-vividfish-workflow-id" not in detail["inputs"]
+    assert "x-azizam-workflow-id" not in detail["inputs"]
     assert detail["modes_available"] == ["sync", "async"]
 
 
@@ -324,7 +324,7 @@ def test_run_sync_image_builds_the_core_request_and_links_the_result(env):
     assert (method, path) == ("POST", "/v1/images/generations")
     assert kwargs["json"] == {
         "model": "krea", "prompt": "a fish", "n": 2, "size": "512x512", "response_format": "url",
-        "extensions": {"com.vividfish.workflow": {"steps": 4}},
+        "extensions": {"com.azizam.workflow": {"steps": 4}},
     }
     assert result["structuredContent"]["status"] == "succeeded"
     link = result["content"][1]

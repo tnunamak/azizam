@@ -705,15 +705,14 @@ def _embedded_provenance(path: Path | None) -> dict[str, Any]:
             if path.stat().st_size > 32 * 1024 * 1024:
                 return {}
             chunks = media_metadata.png_text_chunks(path.read_bytes())
-            raw = chunks.get(provenance.PROVENANCE_KEY)
+            raw = provenance.read_provenance_value(chunks)
             workflow = chunks.get("workflow")
         elif path.suffix.lower() in {".jpg", ".jpeg", ".webp"}:
             from PIL import Image
             with Image.open(path) as image:
                 exif = image.getexif()
                 description = str(exif.get(0x010E, ""))
-                raw = next((line.split(":", 1)[1] for line in description.splitlines()
-                            if line.startswith(provenance.PROVENANCE_KEY + ":")), None)
+                raw = provenance.read_provenance_lines(description, ":")
                 workflow = str(exif.get(0x010F, ""))
         else:
             probe = subprocess.run(
@@ -727,11 +726,9 @@ def _embedded_provenance(path: Path | None) -> dict[str, Any]:
             tags = {}
             for stream in facts.get("streams", []) + [facts.get("format", {})]:
                 tags.update({k.lower(): v for k, v in stream.get("tags", {}).items()})
-            raw = tags.get(provenance.PROVENANCE_KEY)
+            raw = provenance.read_provenance_value(tags)
             if raw is None:
-                for line in str(tags.get("comment", "")).splitlines():
-                    if line.startswith(provenance.PROVENANCE_KEY + "="):
-                        raw = line.split("=", 1)[1]
+                raw = provenance.read_provenance_lines(str(tags.get("comment", "")), "=")
             workflow = None
         data = json.loads(raw) if isinstance(raw, str) else {}
         if not isinstance(data, dict):

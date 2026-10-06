@@ -1,24 +1,26 @@
 #!/usr/bin/env bash
+
+source "$(dirname "${BASH_SOURCE[0]}")/../azizam-env.sh"
 # Smoke-test the local proxy as an OpenAI-compatible client would see it.
 #
 # Usage:
-#   OPENAI_PROXY_API_KEY=opk_... ./scripts/local/smoke_client.sh
-#   OPENAI_PROXY_API_KEY=opk_... OPENAI_PROXY_BASE=https://ai.example.com ./scripts/local/smoke_client.sh
+#   AZIZAM_API_KEY=opk_... ./scripts/local/smoke_client.sh
+#   AZIZAM_API_KEY=opk_... AZIZAM_BASE=https://ai.example.com ./scripts/local/smoke_client.sh
 #
 # Never paste a real opk_... value as a literal argument; export it from your
 # secret store. This script prints only response prefixes, never the key.
 
 set -euo pipefail
 
-BASE="${OPENAI_PROXY_BASE:-http://127.0.0.1:5000}"
-MODEL="${OPENAI_PROXY_SMOKE_MODEL:-auto}"
+BASE="${AZIZAM_BASE:-http://127.0.0.1:5000}"
+MODEL="${AZIZAM_SMOKE_MODEL:-auto}"
 
-if [[ -z "${OPENAI_PROXY_API_KEY:-}" ]]; then
-  echo "OPENAI_PROXY_API_KEY is not set; create an App key from /setup, /, or /admin." >&2
+if [[ -z "${AZIZAM_API_KEY:-}" ]]; then
+  echo "AZIZAM_API_KEY is not set; create an App key from /setup, /, or /admin." >&2
   exit 2
 fi
 
-auth=(-H "Authorization: Bearer ${OPENAI_PROXY_API_KEY}")
+auth=(-H "Authorization: Bearer ${AZIZAM_API_KEY}")
 
 step() { printf '\n=== %s ===\n' "$*"; }
 preview() { head -c 400; printf '\n'; }

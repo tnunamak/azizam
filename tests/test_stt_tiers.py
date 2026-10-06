@@ -318,7 +318,7 @@ class SttUnreadableUploadTests(SttCase):
             resp = self._post([("model", "stt-fast")], audio=b"this is not audio", filename="notes.txt")
         self._assert_unreadable_audio_is_a_400(resp)
         self.assertEqual(seen, [], "the engine must never see an upload ffmpeg could not read")
-        self.assertNotIn("x-vivid-fallback", resp.headers)
+        self.assertNotIn("x-azizam-fallback", resp.headers)
 
     @unittest.skipUnless(HAVE_FFMPEG, "ffmpeg is required")
     def test_a_text_file_sent_as_whisper_1_audio_is_a_400(self) -> None:
@@ -349,8 +349,8 @@ class SttRuntimeFallbackTests(SttCase):
         resp = self._post([("model", "whisper-1")])
         self.assertEqual((resp.status_code, resp.json()["text"]), (200, "cpu"), resp.text)
         self.assertEqual([r.url.port for r in seen], [8017, 5092])
-        self.assertEqual(resp.headers["x-vivid-fallback"], "parakeet-gpu->parakeet (gpu_oom)")
-        self.assertEqual(resp.headers["x-gateway-fallback"], "parakeet-gpu->parakeet (gpu_oom)")
+        self.assertEqual(resp.headers["x-azizam-fallback"], "parakeet-gpu->parakeet (gpu_oom)")
+        self.assertEqual(resp.headers["x-azizam-fallback"], "parakeet-gpu->parakeet (gpu_oom)")
         # The CPU engine gets the whole upload again, with its own model id.
         self.assertIn(b"\r\n\r\nparakeet-tdt-0.6b-v3\r\n", seen[1].content)
         self.assertIn(b'name="file"', seen[1].content)
@@ -362,7 +362,7 @@ class SttRuntimeFallbackTests(SttCase):
         resp = self._post([("model", "whisper-1")])
         self.assertEqual((resp.status_code, resp.json()["text"]), (200, "cpu"), resp.text)
         self.assertEqual([r.url.port for r in seen], [5092])
-        self.assertEqual(resp.headers["x-gateway-fallback"], "parakeet-gpu->parakeet (not_deployed)")
+        self.assertEqual(resp.headers["x-azizam-fallback"], "parakeet-gpu->parakeet (not_deployed)")
         receipts = [call.args[0] for call in proxy.receipt_store.begin.call_args_list]
         self.assertIn("parakeet-gpu->parakeet (not_deployed)", receipts[-1].fallback_reasons)
 
@@ -390,7 +390,7 @@ class SttRuntimeFallbackTests(SttCase):
         seen = self._engines(refuse)
         resp = self._post([("model", "stt-quality")])
         self.assertEqual((resp.status_code, resp.json()["text"]), (200, "cpu"), resp.text)
-        self.assertEqual(resp.headers["x-vivid-fallback"], "parakeet-gpu->parakeet (connection_refused)")
+        self.assertEqual(resp.headers["x-azizam-fallback"], "parakeet-gpu->parakeet (connection_refused)")
 
     def test_a_unit_that_starts_but_answers_503_falls_back(self) -> None:
         # The live case: systemd starts the unit, /health answers, the model load then fails with 503.
@@ -406,7 +406,7 @@ class SttRuntimeFallbackTests(SttCase):
         self._json_upstream()
         resp = self._post([("model", "whisper-1")])
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.headers["x-vivid-fallback"], "parakeet-gpu->parakeet (start_failed)")
+        self.assertEqual(resp.headers["x-azizam-fallback"], "parakeet-gpu->parakeet (start_failed)")
 
     def test_a_client_error_does_not_fall_back(self) -> None:
         answer = {}
@@ -418,14 +418,14 @@ class SttRuntimeFallbackTests(SttCase):
                 answer.update(status=status, body=body)
                 resp = self._post([("model", "whisper-1")])
                 self.assertEqual(resp.status_code, status)
-                self.assertNotIn("x-vivid-fallback", resp.headers)
+                self.assertNotIn("x-azizam-fallback", resp.headers)
                 self.assertEqual([r.url.port for r in seen], [8017])
 
     def test_an_engine_id_by_name_never_falls_back(self) -> None:
         seen = self._engines(lambda r: httpx.Response(500, json={"error": {"message": "Failed to allocate tensors"}}))
         resp = self._post([("model", "parakeet-gpu")])
         self.assertEqual(resp.status_code, 500)
-        self.assertNotIn("x-vivid-fallback", resp.headers)
+        self.assertNotIn("x-azizam-fallback", resp.headers)
         self.assertEqual([r.url.port for r in seen], [8017])
 
     def test_every_engine_failing_returns_the_last_error_with_the_header(self) -> None:
@@ -433,7 +433,7 @@ class SttRuntimeFallbackTests(SttCase):
         resp = self._post([("model", "stt-quality")])
         self.assertEqual(resp.status_code, 503)
         self.assertEqual([r.url.port for r in seen], [8017, 5092, 8013])
-        self.assertEqual(resp.headers["x-vivid-fallback"],
+        self.assertEqual(resp.headers["x-azizam-fallback"],
                          "parakeet-gpu->parakeet (busy), parakeet->canary (busy)")
 
 
@@ -486,7 +486,7 @@ class SttMidFileFallbackTests(SttCase):
         resp = self._post([("model", "whisper-1")])
         self.assertEqual((resp.status_code, resp.json()["text"]), (200, "cpu whole file"), resp.text)
         self.assertEqual([r.url.port for r in seen], [8017, 8017, 5092])
-        self.assertEqual(resp.headers["x-vivid-fallback"], "parakeet-gpu->parakeet (connection_lost@chunk2)")
+        self.assertEqual(resp.headers["x-azizam-fallback"], "parakeet-gpu->parakeet (connection_lost@chunk2)")
         receipts = [call.args[0] for call in proxy.receipt_store.begin.call_args_list]
         self.assertIn("parakeet-gpu->parakeet (connection_lost@chunk2)", receipts[-1].fallback_reasons)
 
@@ -497,7 +497,7 @@ class SttMidFileFallbackTests(SttCase):
         resp = self._post([("model", "whisper-1")])
         self.assertEqual((resp.status_code, resp.json()["text"]), (200, "cpu whole file"), resp.text)
         self.assertEqual([r.url.port for r in seen], [8017, 8017, 5092])
-        self.assertEqual(resp.headers["x-vivid-fallback"], "parakeet-gpu->parakeet (gpu_oom@chunk2)")
+        self.assertEqual(resp.headers["x-azizam-fallback"], "parakeet-gpu->parakeet (gpu_oom@chunk2)")
 
     def test_a_refused_connection_on_a_later_chunk_falls_back(self) -> None:
         def refuse(request):
@@ -506,11 +506,11 @@ class SttMidFileFallbackTests(SttCase):
         self._gpu_dies_on_second_chunk(refuse)
         resp = self._post([("model", "whisper-1")])
         self.assertEqual((resp.status_code, resp.json()["text"]), (200, "cpu whole file"), resp.text)
-        self.assertEqual(resp.headers["x-vivid-fallback"], "parakeet-gpu->parakeet (connection_refused@chunk2)")
+        self.assertEqual(resp.headers["x-azizam-fallback"], "parakeet-gpu->parakeet (connection_refused@chunk2)")
 
     def test_a_client_error_on_a_later_chunk_does_not_fall_back(self) -> None:
         seen = self._gpu_dies_on_second_chunk(lambda r: httpx.Response(400, json={"error": {"message": "bad audio"}}))
         resp = self._post([("model", "whisper-1")])
         self.assertEqual(resp.status_code, 400)
-        self.assertNotIn("x-vivid-fallback", resp.headers)
+        self.assertNotIn("x-azizam-fallback", resp.headers)
         self.assertEqual([r.url.port for r in seen], [8017, 8017])

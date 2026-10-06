@@ -473,8 +473,8 @@ test("inline reveal-once key tests a real chat request and produces one owned re
 }) => {
   const session = await (await request.get("/admin/api/session")).json();
   const headers = {
-    "x-ai-gateway-admin-action": "1",
-    "x-ai-gateway-csrf": session.actor.csrf_token,
+    "x-azizam-admin-action": "1",
+    "x-azizam-csrf": session.actor.csrf_token,
   };
   // Set the person's inherited plan before they create a key, through the
   // same admin mapping interface an operator uses to grant access.
@@ -687,8 +687,8 @@ test("a new inherited key cannot borrow a broader existing app's recipe", async 
 }) => {
   const session = await (await request.get("/admin/api/session")).json();
   const headers = {
-    "x-ai-gateway-admin-action": "1",
-    "x-ai-gateway-csrf": session.actor.csrf_token,
+    "x-azizam-admin-action": "1",
+    "x-azizam-csrf": session.actor.csrf_token,
   };
   const profileResponse = await request.post("/admin/api/profiles", {
     headers,

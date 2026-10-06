@@ -7,6 +7,8 @@ Keep it narrow so the substrate boundary does not become a second router.
 
 from __future__ import annotations
 
+from gateway.compat import get_env, emit_header_mapping
+
 from dataclasses import dataclass
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping as MappingABC
@@ -29,7 +31,7 @@ LITELLM_BODY_EXECUTION_PATHS = frozenset(
     }
 )
 LITELLM_DELEGATED_KEY_HEADER = "X-Litellm-Key"
-GATEWAY_REQUEST_ID_HEADER = "X-AI-Gateway-Request-Id"
+GATEWAY_REQUEST_ID_HEADER = "X-Azizam-Request-Id"
 
 ASGIReceive = Callable[[], Awaitable[MappingABC[str, Any]]]
 
@@ -183,14 +185,14 @@ def _litellm_service_candidates(
 def _api_key_from_config(config: Mapping[str, Any], env: Mapping[str, str]) -> str:
     env_name = str(config.get("api_key_env") or config.get("api_key_ref") or "").strip()
     if env_name:
-        return env.get(env_name, "")
+        return get_env(env_name, "", environ=env)
     return ""
 
 
 def _base_url_from_config(config: Mapping[str, Any], env: Mapping[str, str]) -> str:
     env_name = str(config.get("base_url_env") or config.get("api_base_env") or "").strip()
     if env_name:
-        env_value = str(env.get(env_name) or "").strip()
+        env_value = str(get_env(env_name, environ=env) or "").strip()
         if env_value:
             return env_value.rstrip("/")
     return str(
@@ -279,8 +281,8 @@ def litellm_headers(
 
     for name, value in (gateway_metadata or {}).items():
         if value:
-            headers[f"x-ai-gateway-{name}"] = value
-    return headers
+            headers[f"x-azizam-{name}"] = value
+    return emit_header_mapping(headers)
 
 
 class RequestDisconnectWatcher:
@@ -356,7 +358,7 @@ async def send_llm_execution_request(
     ``cancellation_token``, when given, races the same connect+send against
     a cross-hop cancel signal (see ``gateway/backends/cancellation.py``).
     This is how the internal gateway hop — which has no local downstream
-    client of its own, only the forwarded ``X-AI-Gateway-Request-Id`` — stops
+    client of its own, only the forwarded ``X-Azizam-Request-Id`` — stops
     a pre-header wait on its own backend once the outer route has already
     signalled the registry; without this, a backend that never returns
     headers (idle, prompt-processing, etc.) leaves the internal hop stuck

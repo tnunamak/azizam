@@ -100,7 +100,7 @@ The added evidence is also significant:
   without a Bee task-start log is consistent with Bee accepting/queueing a
   connection behind the still-active request. It does not establish whether the
   queue is Bee, LiteLLM, or another runtime layer.
-* **Operational proof supplied at 06:26:41:** restarting only openai-proxy
+* **Operational proof supplied at 06:26:41:** restarting only azizam
   closed the upstream sockets, and Bee immediately logged `cancel task` for
   active task 2606 plus queued tasks 28141 and 2795 while the model remained
   loaded. Given that Pi had already aborted, this proves the abandoned work
@@ -157,7 +157,7 @@ pushed progress, and an explicit no-data state rather than inferred health
 ## Second systemic finding: process liveness is not composed readiness
 
 The supplied restart sequence is a separate, proven operator-impacting defect:
-openai-proxy `/health` returned 200 around 06:26:51, but LiteLLM had not finished
+azizam `/health` returned 200 around 06:26:51, but LiteLLM had not finished
 startup/model registration until about 06:27:11, so Daisy retries received LiteLLM
 `503 no available server` responses. The 503 wording is runtime evidence; the
 readiness split is directly established by code:

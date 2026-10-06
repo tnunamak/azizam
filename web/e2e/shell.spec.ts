@@ -57,7 +57,7 @@ test("command palette navigates and runs three real actions", async ({
   // Both desktop shortcuts are supported, independent of the host platform.
   await page.keyboard.press("Meta+k");
   const discovery = page.waitForResponse((response) =>
-    response.url().endsWith("/.well-known/ai-gateway"),
+    response.url().endsWith("/.well-known/azizam"),
   );
   await page
     .getByRole("combobox", { name: "Search your gateway" })
@@ -130,7 +130,7 @@ test("command clipboard denial preserves and focuses the exact gateway address",
     });
   });
   const address = "https://gateway.example/openai/v1?exact=1";
-  await page.route("**/.well-known/ai-gateway", (route) =>
+  await page.route("**/.well-known/azizam", (route) =>
     route.fulfill({
       json: { recipes: { openai: { canonical_base_url: address } } },
     }),
@@ -187,7 +187,7 @@ test("command discovery failure offers retry before attempting clipboard writes"
       },
     });
   });
-  await page.route("**/.well-known/ai-gateway", (route) =>
+  await page.route("**/.well-known/azizam", (route) =>
     route.fulfill({ status: 503, json: { error: "fixture unavailable" } }),
   );
   await page.keyboard.press("Control+k");
@@ -203,7 +203,7 @@ test("command discovery failure offers retry before attempting clipboard writes"
     dialog.getByRole("textbox", { name: "Gateway address", exact: true }),
   ).toHaveCount(0);
   expect(clipboardWrites).toBe(0);
-  await page.unroute("**/.well-known/ai-gateway");
+  await page.unroute("**/.well-known/azizam");
   await dialog.getByRole("button", { name: "Try again", exact: true }).click();
   await expect(dialog).not.toBeVisible();
   expect(clipboardWrites).toBe(1);
@@ -409,7 +409,7 @@ test("phone header navigation has 44px touch targets", async ({ page }) => {
     "Status",
   ]);
   for (const target of [
-    header.getByRole("link", { name: /Vivid Fish.*Home/ }),
+    header.getByRole("link", { name: /Azizam.*Home/ }),
     header.getByRole("button", { name: /Gateway status:/ }),
     header.getByRole("button", { name: "Account menu" }),
   ]) {

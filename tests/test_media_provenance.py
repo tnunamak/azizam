@@ -34,7 +34,7 @@ from gateway.extensions import validate_extension_inputs  # noqa: E402
 from gateway.policy import DEFAULT_PROFILE, MediaMetadataPolicy  # noqa: E402
 from gateway.profiles import ProfileLoadError, load_profile  # noqa: E402
 
-NS = "com.vividfish.workflow"
+NS = "com.azizam.workflow"
 FFMPEG = shutil.which("ffmpeg") is not None
 
 PROMPT_JSON = json.dumps({"3": {"class_type": "KSampler", "inputs": {"seed": 7}}})
@@ -181,14 +181,14 @@ class ControlParsingTests(unittest.TestCase):
 
     def test_other_namespaces_do_not_get_the_control(self) -> None:
         result = validate_extension_inputs(
-            {}, {"metadata": "none"}, namespace="com.vividfish.chat"
+            {}, {"metadata": "none"}, namespace="com.azizam.chat"
         )
         self.assertIn("metadata", result.rejected)
 
     def test_query_forms(self) -> None:
         media_delivery.begin(profile_default="full")
         self.assertEqual(
-            media_delivery.note_query([("extensions[com.vividfish.workflow][metadata]", "none")]),
+            media_delivery.note_query([("extensions[com.azizam.workflow][metadata]", "none")]),
             "none",
         )
         self.assertEqual(media_delivery.current_mode(), "none")
@@ -236,7 +236,7 @@ class ProvenanceRecordTests(unittest.TestCase):
         record = provenance.build_provenance_record(
             receipt=receipt, kind="image", seed=42, parameters={"size": "512x512"}, index=0,
         )
-        self.assertEqual(record["schema"], "vividfish.provenance/1")
+        self.assertEqual(record["schema"], "azizam.provenance/1")
         self.assertEqual(record["requested_model"], "gpt-image-1")
         self.assertEqual(record["model_alias"], "gpt-image-1")
         self.assertEqual(record["resolved_model"], "krea2-turbo")
@@ -301,7 +301,7 @@ class PngDeliveryTests(unittest.TestCase):
         stripped = media_delivery.deliver_bytes(stored, ".png", "none")
         self.assertEqual(media_metadata.png_text_chunks(stripped), {})
         self.assertNotIn(b"KSampler", stripped)
-        self.assertNotIn(b"vividfish", stripped)
+        self.assertNotIn(b"azizam", stripped)
         self.assertEqual(pixels(stripped), pixels(raw))
         self.assertEqual(idat(stripped), idat(raw))
         # the input bytes were not modified
@@ -343,14 +343,14 @@ class ImagePayloadTests(unittest.IsolatedAsyncioTestCase):
         none = self._payload(mode_default="none", requested=None)
         full_bytes = base64.b64decode(full["data"][0]["b64_json"])
         none_bytes = base64.b64decode(none["data"][0]["b64_json"])
-        self.assertEqual(set(media_metadata.png_text_chunks(full_bytes)), {"prompt", "workflow", "vividfish_provenance"})
+        self.assertEqual(set(media_metadata.png_text_chunks(full_bytes)), {"prompt", "workflow", "azizam_provenance"})
         self.assertEqual(media_metadata.png_text_chunks(none_bytes), {})
         self.assertEqual(pixels(full_bytes), pixels(none_bytes))
-        record = json.loads(media_metadata.png_text_chunks(full_bytes)["vividfish_provenance"])
+        record = json.loads(media_metadata.png_text_chunks(full_bytes)["azizam_provenance"])
         self.assertEqual(record["seed"], 11)
         self.assertEqual(record["parameters"]["size"], "8x6")
         # the stored copy is full in both cases
-        self.assertEqual(set(media_metadata.png_text_chunks(self._stored(none["data"][0]))), {"prompt", "workflow", "vividfish_provenance"})
+        self.assertEqual(set(media_metadata.png_text_chunks(self._stored(none["data"][0]))), {"prompt", "workflow", "azizam_provenance"})
 
     def test_request_overrides_profile_both_ways(self) -> None:
         down = self._payload(mode_default="full", requested="none")
@@ -370,7 +370,7 @@ class ImagePayloadTests(unittest.IsolatedAsyncioTestCase):
         got_full = client.get(self._relative(full["data"][0]["asset_url"]))
         self.assertEqual(got_none.status_code, 200)
         self.assertEqual(media_metadata.png_text_chunks(got_none.content), {})
-        self.assertEqual(set(media_metadata.png_text_chunks(got_full.content)), {"prompt", "workflow", "vividfish_provenance"})
+        self.assertEqual(set(media_metadata.png_text_chunks(got_full.content)), {"prompt", "workflow", "azizam_provenance"})
         self.assertEqual(pixels(got_none.content), pixels(got_full.content))
 
     def test_signed_url_cannot_be_flipped_to_full(self) -> None:
@@ -402,7 +402,7 @@ class ImagePayloadTests(unittest.IsolatedAsyncioTestCase):
                 joined = " ".join(str(v) for v in exif.values())
                 self.assertIn("workflow:", joined)
                 self.assertIn("prompt:", joined)
-                self.assertIn("vividfish_provenance:", joined)
+                self.assertIn("azizam_provenance:", joined)
                 delivered = base64.b64decode(item["b64_json"])
                 self.assertEqual(len(Image.open(io.BytesIO(delivered)).getexif()), 0)
                 self.assertNotIn(b"KSampler", delivered)
@@ -482,8 +482,8 @@ class ImageRouteTests(unittest.IsolatedAsyncioTestCase):
                 png = base64.b64decode(payload["data"][0]["b64_json"])
                 chunks = media_metadata.png_text_chunks(png)
                 if expect_full:
-                    self.assertEqual(set(chunks), {"prompt", "workflow", "vividfish_provenance"})
-                    record = json.loads(chunks["vividfish_provenance"])
+                    self.assertEqual(set(chunks), {"prompt", "workflow", "azizam_provenance"})
+                    record = json.loads(chunks["azizam_provenance"])
                     self.assertEqual(record["requested_model"], "krea2-turbo")
                     self.assertEqual(record["parameters"]["size"], "8x6")
                 else:
@@ -544,15 +544,15 @@ class AvDeliveryTests(unittest.TestCase):
                 stored = media_delivery.attach_provenance(raw, suffix, record)
                 tags = media_metadata.read_media_tags(stored, suffix)
                 blob = json.dumps(tags)
-                self.assertIn("vividfish", blob)
+                self.assertIn("azizam", blob)
                 if suffix != ".wav":  # wav has no free-form tag fields
                     self.assertIn("KSampler", blob)
                 self.assertEqual(media_delivery.deliver_bytes(stored, suffix, "full"), stored)
                 stripped = media_delivery.deliver_bytes(stored, suffix, "none")
                 left = json.dumps(media_metadata.read_media_tags(stripped, suffix))
-                for needle in ("KSampler", "vividfish", "prompt", "workflow"):
+                for needle in ("KSampler", "azizam", "prompt", "workflow"):
                     self.assertNotIn(needle, left)
-                for needle in (b"KSampler", b"vividfish_provenance"):
+                for needle in (b"KSampler", b"azizam_provenance"):
                     self.assertNotIn(needle, stripped)
                 self.assertEqual(self._stream_md5(stripped, suffix), self._stream_md5(raw, suffix))
 
@@ -627,14 +627,14 @@ class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self._has_metadata(await self._fetch(query="", record_mode="full", auth=none_auth)))
         self.assertFalse(self._has_metadata(await self._fetch(query="", record_mode="none", auth=full_auth)))
         # the GET's own control beats both
-        q = "extensions[com.vividfish.workflow][metadata]=full"
+        q = "extensions[com.azizam.workflow][metadata]=full"
         self.assertTrue(self._has_metadata(await self._fetch(query=q, record_mode="none", auth=none_auth)))
         q = "metadata=none"
         self.assertFalse(self._has_metadata(await self._fetch(query=q, record_mode="full", auth=full_auth)))
         # full delivery carries the provenance record
         blob = json.dumps(media_metadata.read_media_tags(
             await self._fetch(query="", record_mode=None, auth=full_auth), ".mp4"))
-        self.assertIn("vividfish_provenance", blob)
+        self.assertIn("azizam_provenance", blob)
 
 
 @unittest.skipUnless(FFMPEG, "ffmpeg is required")
@@ -775,12 +775,12 @@ class AudioGenerateRouteTests(unittest.TestCase):
         full = self._generate(extensions={NS: {"metadata": "full"}})
         self.assertEqual(full.status_code, 200, full.text)
         blob = self._tags(full.content)
-        for needle in ("KSampler", "vividfish_provenance", "audio.generate.fx"):
+        for needle in ("KSampler", "azizam_provenance", "audio.generate.fx"):
             self.assertIn(needle, blob)
         none = self._generate(extensions={NS: {"metadata": "none"}})
         self.assertEqual(none.status_code, 200, none.text)
         left = self._tags(none.content)
-        for needle in ("KSampler", "vividfish", "prompt", "workflow"):
+        for needle in ("KSampler", "azizam", "prompt", "workflow"):
             self.assertNotIn(needle, left)
         md5 = lambda c: hashlib.md5(AvDeliveryTests()._stream_md5(c, ".flac").encode()).hexdigest()  # noqa: E731
         self.assertEqual(md5(none.content), md5(self.flac))
@@ -795,9 +795,9 @@ class AudioGenerateRouteTests(unittest.TestCase):
 
         stored = asyncio.run(proxy.proxy_audio_generate(Req(), self.auth, store_full=True))  # type: ignore[arg-type]
         self.assertEqual(stored.status_code, 200)
-        self.assertIn("vividfish_provenance", self._tags(stored.body))
+        self.assertIn("azizam_provenance", self._tags(stored.body))
         delivered = self._generate()  # same profile, delivery path
-        self.assertNotIn("vividfish", self._tags(delivered.content))
+        self.assertNotIn("azizam", self._tags(delivered.content))
 
     def test_provenance_has_no_secrets(self) -> None:
         full = self._generate(extensions={NS: {"metadata": "full"}})
@@ -886,18 +886,18 @@ class NativeWorkflowRunTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200, response.body)
         blob = self._blob(response.body)
         self.assertIn("KSampler", blob)
-        self.assertIn("vividfish_provenance", blob)
+        self.assertIn("azizam_provenance", blob)
         self.assertIn("rife-interpolate", blob)
         none_auth = proxy.AuthContext(identity=proxy.AuthIdentity(name="n", key_hash="sha256:n"))
         stripped, raw = await self._run({}, none_auth)
         self.assertNotIn("KSampler", self._blob(stripped.body))
         explicit, raw = await self._run({self.FIELD: "none"})
         left = self._blob(explicit.body)
-        for needle in ("KSampler", "vividfish", "prompt", "workflow"):
+        for needle in ("KSampler", "azizam", "prompt", "workflow"):
             self.assertNotIn(needle, left)
         self.assertEqual(AvDeliveryTests()._stream_md5(explicit.body, ".mp4"), AvDeliveryTests()._stream_md5(raw, ".mp4"))
         up, _ = await self._run({self.FIELD: "full"}, none_auth)
-        self.assertIn("vividfish_provenance", self._blob(up.body))
+        self.assertIn("azizam_provenance", self._blob(up.body))
 
     async def test_bad_value_is_a_400(self) -> None:
         response, _ = await self._run({self.FIELD: "maybe"})

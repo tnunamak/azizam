@@ -175,7 +175,7 @@ def test_owner_edit_applies_live_to_lan_and_preserves_public_denial(gateway):
     app.include_router(create_settings_router(auth=owner, admin_path=gateway, config_provider=lambda: {}))
     client = TestClient(app)
     url = "/admin/api/settings/lan-placeholder-keys"
-    headers = {"test-owner": "1", "x-ai-gateway-csrf": "csrf-test"}
+    headers = {"test-owner": "1", "x-azizam-csrf": "csrf-test"}
     assert client.get(url, headers=headers).json()["lan_placeholder_keys"] == PLACEHOLDERS
     assert client.put(url, headers=headers, json={"lan_placeholder_keys": ["client-placeholder"]}).status_code == 200
     custom = proxy.authenticate_request(request("client-placeholder"), "/v1/models")

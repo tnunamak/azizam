@@ -1,7 +1,7 @@
 """Chat/Responses extension contract for gateway-native controls.
 
 Standard OpenAI request fields stay at the top level. Gateway-owned knobs live
-under ``extensions.com.vividfish.chat`` or ``extensions.com.vividfish.routing``.
+under ``extensions.com.azizam.chat`` or ``extensions.com.azizam.routing``.
 This module validates that contract without logging prompt or message values.
 """
 
@@ -18,8 +18,8 @@ from gateway.extensions import (
     validate_extension_inputs,
 )
 
-CHAT_EXTENSION_NAMESPACE = "com.vividfish.chat"
-ROUTING_EXTENSION_NAMESPACE = "com.vividfish.routing"
+CHAT_EXTENSION_NAMESPACE = "com.azizam.chat"
+ROUTING_EXTENSION_NAMESPACE = "com.azizam.routing"
 
 STANDARD_CHAT_COMPLETIONS_FIELDS: frozenset[str] = frozenset(
     {

@@ -133,7 +133,7 @@ class StartScriptGracefulStopTests(unittest.TestCase):
                 **os.environ,
                 "FAKE_LOG": str(log),
                 "PATH": f"{bindir}:{os.environ.get('PATH', '/usr/bin:/bin')}",
-                "AI_GATEWAY_LITELLM_RELOAD_INTERVAL": "1",
+                "AZIZAM_LITELLM_RELOAD_INTERVAL": "1",
             }
             result = subprocess.run(
                 ["/bin/bash", "-c", HARNESS, "harness", str(work)],
@@ -193,8 +193,8 @@ class StartScriptGracefulStopTests(unittest.TestCase):
                 "FAKE_LOG": str(log),
                 "EXPECTED_PROVIDER_ENV": env_name,
                 "PATH": f"{bindir}:{os.environ.get('PATH', '/usr/bin:/bin')}",
-                "AI_GATEWAY_ADMIN_DB": str(db_path),
-                "AI_GATEWAY_LITELLM_RELOAD_INTERVAL": "0.2",
+                "AZIZAM_ADMIN_DB": str(db_path),
+                "AZIZAM_LITELLM_RELOAD_INTERVAL": "0.2",
             }
             proc = subprocess.Popen(
                 ["/bin/bash", "-c", WATCHER_HARNESS, "watcher-harness", str(work)],

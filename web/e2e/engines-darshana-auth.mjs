@@ -32,7 +32,7 @@ export default async function login(browser) {
   }
   const session = await (await api.get(`${origin}/admin/api/session`)).json();
   let registry = await api.get(`${origin}/admin/api/operator/service-registry`);
-  const headers = { "x-ai-gateway-csrf": session.actor.csrf_token };
+  const headers = { "x-azizam-csrf": session.actor.csrf_token };
   for (const [id, name, enginePort] of [
     ["review-chat", "Local review engine", port + 1],
     ["review-offline", "Offline review engine", 18498],

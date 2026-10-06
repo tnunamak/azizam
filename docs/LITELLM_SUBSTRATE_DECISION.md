@@ -27,7 +27,7 @@ OpenAI-shaped LLM execution and model-group discovery for:
 - `/v1/embeddings`
 - `/v1/models` LLM entries
 
-The AI Gateway owns the product/control-plane responsibilities around that
+The Azizam owns the product/control-plane responsibilities around that
 substrate:
 
 - runtime App keys, OIDC users, Profiles, and policy gates
@@ -110,7 +110,7 @@ panel under **Services → LiteLLM execution keys** in `/admin`. Properties:
 
 - These routes are master-key protected at the sidecar. The gateway's sidecar
   bearer **is** the master key (`start.sh` sets
-  `LITELLM_MASTER_KEY=$AI_GATEWAY_LITELLM_API_KEY`), so no separate credential is
+  `LITELLM_MASTER_KEY=$AZIZAM_LITELLM_API_KEY`), so no separate credential is
   configured; the admin client authenticates with `runtime_config.api_key`.
 - A minted key's secret is shown exactly once (reveal-once); the gateway never
   persists it. Listing redacts/masks any `sk-` material defensively.

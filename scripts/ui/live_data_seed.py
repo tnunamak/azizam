@@ -2,6 +2,11 @@
 """Seed and serve an isolated live-data browser fixture."""
 from __future__ import annotations
 
+import sys as _compat_sys
+from pathlib import Path as _CompatPath
+_compat_sys.path.insert(0, str(_CompatPath(__file__).resolve().parents[2]))
+from gateway.compat import get_env
+
 import argparse
 import base64
 import hashlib
@@ -73,20 +78,20 @@ def _env(state: Path, port: int, engine_port: int, config: Path) -> dict[str, st
         "HOME": str(home),
         "PYTHONPATH": str(REPO),
         "PYTHONDONTWRITEBYTECODE": "1",
-        "AI_GATEWAY_CONFIG_PATH": str(config),
-        "AI_GATEWAY_GRACEFUL_SHUTDOWN_S": "1",
-        "AI_GATEWAY_LITELLM_BASE_URL": f"http://127.0.0.1:{engine_port}",
-        "AI_GATEWAY_ADMIN_SESSION_KEY": "live-data-session-signing-key-not-production",
+        "AZIZAM_CONFIG_PATH": str(config),
+        "AZIZAM_GRACEFUL_SHUTDOWN_S": "1",
+        "AZIZAM_LITELLM_BASE_URL": f"http://127.0.0.1:{engine_port}",
+        "AZIZAM_ADMIN_SESSION_KEY": "live-data-session-signing-key-not-production",
         "XDG_CONFIG_HOME": str(home / ".config"),
         "XDG_CACHE_HOME": str(home / ".cache"),
         "AGW_IMAGE_CACHE_DIR": str(state / "images"),
     }
     for name, filename in {
-        "AI_GATEWAY_ADMIN_DB": "admin.db",
-        "AI_GATEWAY_METRICS_DB": "metrics.db",
-        "AI_GATEWAY_RESPONSES_DB": "responses.db",
-        "AI_GATEWAY_RECEIPTS_DB": "receipts.db",
-        "AI_GATEWAY_MEDIA_JOBS_DB": "media_jobs.db",
+        "AZIZAM_ADMIN_DB": "admin.db",
+        "AZIZAM_METRICS_DB": "metrics.db",
+        "AZIZAM_RESPONSES_DB": "responses.db",
+        "AZIZAM_RECEIPTS_DB": "receipts.db",
+        "AZIZAM_MEDIA_JOBS_DB": "media_jobs.db",
     }.items():
         env[name] = str(state / filename)
     return env
@@ -143,9 +148,9 @@ def seed(state: Path, port: int) -> dict[str, object]:
     from gateway.receipts import RouteReceipt
     from gateway.runtime_auth import hash_api_key
 
-    admin_path = Path(os.environ["AI_GATEWAY_ADMIN_DB"])
-    receipts_path = Path(os.environ["AI_GATEWAY_RECEIPTS_DB"])
-    jobs_path = Path(os.environ["AI_GATEWAY_MEDIA_JOBS_DB"])
+    admin_path = Path(get_env("AZIZAM_ADMIN_DB"))
+    receipts_path = Path(get_env("AZIZAM_RECEIPTS_DB"))
+    jobs_path = Path(get_env("AZIZAM_MEDIA_JOBS_DB"))
     admin_store.init_db(admin_path)
     accounts.initialize(admin_path)
     receipt_store.init_db(receipts_path)

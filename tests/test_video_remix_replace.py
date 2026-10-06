@@ -31,7 +31,7 @@ from _fake_comfy_video import (  # noqa: E402
 SOURCE_ID = f"video_{SOURCE_PROMPT_ID}"
 NEW_ID = f"video_{NEW_PROMPT_ID}"
 PROBE_24 = video_inputs.VideoProbe(fps=24.0, duration=3.5, frames=84, width=832, height=480)
-NS = "com.vividfish.workflow"
+NS = "com.azizam.workflow"
 PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 64
 
 
@@ -73,7 +73,7 @@ class RemixRouteTests(RemixReplaceBase):
         self.assertEqual((body["status"], body["progress"]), ("queued", 0))
         self.assertEqual(body["remixed_from_video_id"], SOURCE_ID)
         self.assertEqual(body["model"], "video-remix")
-        self.assertEqual(body["vivid_fish_resolved_model"], "video-bernini-r-remix")
+        self.assertEqual(body["azizam_resolved_model"], "video-bernini-r-remix")
         self.assertEqual(body["prompt"], "make it snowy")
         self.assertEqual(body["size"], "832x480")
         self.assertEqual(body["seconds"], "3.4")
@@ -93,13 +93,13 @@ class RemixRouteTests(RemixReplaceBase):
         self.assertEqual(record["model"], "video-remix")
         status = self.client.get(f"/v1/videos/{NEW_ID}").json()
         self.assertEqual(status["remixed_from_video_id"], SOURCE_ID)
-        self.assertEqual(status["vivid_fish_resolved_model"], "video-bernini-r-remix")
+        self.assertEqual(status["azizam_resolved_model"], "video-bernini-r-remix")
 
     def test_client_model_name_is_echoed(self) -> None:
         r = self.client.post(f"/v1/videos/{SOURCE_ID}/remix", json={"prompt": "x", "model": "bernini-r"})
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(r.json()["model"], "bernini-r")
-        self.assertEqual(r.json()["vivid_fish_resolved_model"], "video-bernini-r-remix")
+        self.assertEqual(r.json()["azizam_resolved_model"], "video-bernini-r-remix")
 
     def test_seed_and_seconds_are_accepted(self) -> None:
         r = self.client.post(f"/v1/videos/{SOURCE_ID}/remix", json={"prompt": "x", "seed": 9, "seconds": 2})
@@ -168,7 +168,7 @@ class EditRouteTests(RemixReplaceBase):
         self.assertEqual(r.status_code, 200, r.text)
         body = r.json()
         self.assertIsNone(body["remixed_from_video_id"])
-        self.assertEqual(body["vivid_fish_resolved_model"], "video-bernini-r-remix")
+        self.assertEqual(body["azizam_resolved_model"], "video-bernini-r-remix")
         self.assertEqual(self.comfy.uploads[0][0], "source.mp4")
         self.assertEqual(self.comfy.uploads[0][1], b"uploaded-clip-bytes")
         self.assertEqual(self.graph["10"]["inputs"]["value"], "to watercolor")
@@ -235,7 +235,7 @@ class CharacterReplaceTests(RemixReplaceBase):
         self.assertEqual(r.status_code, 200, r.text)
         body = r.json()
         self.assertEqual(body["model"], "character-replace")
-        self.assertEqual(body["vivid_fish_resolved_model"], "video-scail-2-replace")
+        self.assertEqual(body["azizam_resolved_model"], "video-scail-2-replace")
         self.assertIsNone(body["remixed_from_video_id"])
         self.assertEqual(body["size"], "832x448")
         g = self.graph

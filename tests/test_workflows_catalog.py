@@ -324,7 +324,7 @@ class WorkflowsCatalogTests(unittest.TestCase):
         self.assertNotIn("width", body)
         self.assertNotIn("height", body)
         self.assertEqual(
-            body["extensions"]["com.vividfish.workflow"],
+            body["extensions"]["com.azizam.workflow"],
             {"steps": 8, "seed": 0},
         )
         self.assertEqual(workflow["availability"]["status"], "configured")
@@ -359,7 +359,7 @@ class WorkflowsCatalogTests(unittest.TestCase):
         self.assertEqual(request["content_type"], "multipart/form-data")
         self.assertEqual(request["form"]["model"], "photo")
         self.assertEqual(request["form"]["prompt"], "A small teal fish mark on a clean white card.")
-        self.assertEqual(request["form"]["extensions"], '{"com.vividfish.workflow":{"strength":0.5}}')
+        self.assertEqual(request["form"]["extensions"], '{"com.azizam.workflow":{"strength":0.5}}')
         self.assertEqual(request["files"], {"image": "./source-image.bin"})
         self.assertIn(" -F 'prompt=", request["curl"])
         self.assertIn(" -F 'image=@./source-image.bin'", request["curl"])

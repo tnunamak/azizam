@@ -78,8 +78,8 @@ For the operator-facing first-run story this model implies, see
 > `/setup` and `/admin` create Apps, App keys, Profiles, identity/Profile
 > mappings, and user access defaults in `admin.db`. `admin.user_defaults` in
 > `proxy_config.yml` is a bootstrap seed only; after startup, dashboard/API
-> state is authoritative. The legacy `AI_GATEWAY_USER_SELF_SERVICE` and
-> `AI_GATEWAY_AUTO_CREATE_PERSONAL_APP` env vars are also bootstrap seed
+> state is authoritative. The legacy `AZIZAM_USER_SELF_SERVICE` and
+> `AZIZAM_AUTO_CREATE_PERSONAL_APP` env vars are also bootstrap seed
 > inputs, not live overrides after the setting exists in `admin.db`.
 > Services/providers follow the same rule: YAML/env can seed or provision
 > records, but the DB/UI registry is the live operator surface.

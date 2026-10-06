@@ -10,7 +10,7 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  const EXT_KEY = "com.vividfish.workflow";
+  const EXT_KEY = "com.azizam.workflow";
   const PRIMARY = new Set([
     "prompt", "tags", "lyrics", "duration", "width", "height", "length", "seed",
     "scale", "multiplier", "negative_prompt", "size", "seconds", "image_strength",
@@ -67,7 +67,7 @@
     const fields = [];
     for (const [name, p0] of Object.entries(props)) {
       const p = resolveRef(openapi, p0);
-      const asset = !!p["x-vividfish-asset"];
+      const asset = !!p["x-azizam-asset"];
       fields.push({
         name,
         type: asset ? "asset" : p.type === "integer" || p.type === "number" ? p.type : p.enum ? "enum" : "string",
@@ -106,7 +106,7 @@
   /**
    * Request plan for one workflow.
    *
-   * entry: {ox} (an x-vividfish-workflows item, with execution).
+   * entry: {ox} (an x-azizam-workflows item, with execution).
    * values: field name -> string | number | {filename, type, dataUri|blob}.
    * mode: "sync" | "async"; default is the workflow's recommended mode.
    *
@@ -214,7 +214,7 @@
 
   function shQuote(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
 
-  const AUTH = '-H "Authorization: Bearer $OPENAI_PROXY_API_KEY"';
+  const AUTH = '-H "Authorization: Bearer $AZIZAM_API_KEY"';
 
   function clip(value, max) {
     if (typeof value === "string" && value.length > max) return value.slice(0, 40) + "...";
@@ -263,7 +263,7 @@
   }
 
   function pythonFor(plan, base) {
-    const head = 'import os, requests\n\nBASE = "' + base + '"\nHEADERS = {"Authorization": "Bearer " + os.environ["OPENAI_PROXY_API_KEY"]}\n\n';
+    const head = 'import os, requests\n\nBASE = "' + base + '"\nHEADERS = {"Authorization": "Bearer " + os.environ["AZIZAM_API_KEY"]}\n\n';
     let call;
     if (plan.contentType === "multipart/form-data") {
       const data = {}, files = [];
@@ -286,7 +286,7 @@
   }
 
   function jsFor(plan, base) {
-    const lines = ['const BASE = "' + base + '";', 'const headers = { Authorization: "Bearer " + process.env.OPENAI_PROXY_API_KEY };'];
+    const lines = ['const BASE = "' + base + '";', 'const headers = { Authorization: "Bearer " + process.env.AZIZAM_API_KEY };'];
     if (plan.contentType === "multipart/form-data") {
       lines.push("const form = new FormData();");
       for (const p of plan.form) {
@@ -347,7 +347,7 @@
     const out = sections.map((s) => ({ id: s.id, title: s.title, blurb: s.blurb, cards: [] }));
     const byId = Object.fromEntries(out.map((s) => [s.id, s]));
     const oxById = {};
-    for (const ox of (ctx.openapi && ctx.openapi["x-vividfish-workflows"]) || []) oxById[ox.id] = ox;
+    for (const ox of (ctx.openapi && ctx.openapi["x-azizam-workflows"]) || []) oxById[ox.id] = ox;
     const avail = capabilityIndex(ctx.capabilities);
     const aliasMap = aliasesByWorkflow(ctx.aliases);
 

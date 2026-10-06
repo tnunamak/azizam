@@ -8,7 +8,7 @@ This audit looks at the currently running/configured local stack and asks what a
 
 Configured in `proxy_config.yml`:
 
-- `openai-proxy` on `127.0.0.1:5000`
+- `azizam` on `127.0.0.1:5000`
 - `llama-turbo / kobold` on `127.0.0.1:5051`
 - standby `TabbyAPI (Qwen3-VL)` on `127.0.0.1:5050`
 - `voxtral-int4-tts` on `127.0.0.1:8001`
@@ -17,7 +17,7 @@ Configured in `proxy_config.yml`:
 
 Live services:
 
-- `openai-proxy.service` active
+- `azizam.service` active
 - `llama-turbo.service` active, serving `Qwen3.6-27B-UD-Q4_K_XL.gguf` with mmproj vision support and 131k context
 - `comfyui.service` active with `--reserve-vram 9 --lowvram`
 - `voxtral-int4-tts.service` active

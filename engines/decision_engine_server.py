@@ -11,6 +11,7 @@ single-token answer prompts, call llama-server ``/completion`` with
 
 from __future__ import annotations
 
+
 import argparse
 import http.client
 import json
@@ -31,6 +32,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from gateway.compat import header_names
 
 from gateway import decision_engine
 
@@ -463,7 +465,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("x-vivid-engine", self.engine)
+        for name in header_names("x-azizam-engine"):
+            self.send_header(name, self.engine)
         self.send_header("x-decision-engine", self.engine)
         for name, value in (headers or {}).items():
             self.send_header(name, value)

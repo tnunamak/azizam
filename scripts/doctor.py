@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Safe local diagnostics for the OpenAI proxy gateway.
+"""Safe local diagnostics for the Azizam gateway.
 
 The doctor deliberately avoids local key stores. Auth-related diagnostics only
 report whether relevant environment variables are present, with values redacted.
 """
 
 from __future__ import annotations
+
 
 import argparse
 import json
@@ -31,10 +32,9 @@ MANIFESTS_DIR = ROOT / "manifests" / "workflows"
 CONFIG_PATH = ROOT / "proxy_config.yml"
 AUTH_ENV_NAMES = (
     "OPENAI_API_KEY",
-    "OPENAI_PROXY_API_KEY",
-    "OPENAI_PROXY_ADMIN_TOKEN",
+    "AZIZAM_API_KEY",
+    "AZIZAM_ADMIN_TOKEN",
     "ACCOUNT_ADMIN_API_TOKEN",
-    "VIVID_API_KEY",
 )
 
 
@@ -176,7 +176,7 @@ def check_http_json(name: str, base_url: str | None, path: str, timeout: float) 
 
 def check_auth_env(env: dict[str, str] | None = None) -> CheckResult:
     source = env if env is not None else os.environ
-    present = {name: "<redacted>" for name in AUTH_ENV_NAMES if source.get(name)}
+    present = {name: "<redacted>" for name in AUTH_ENV_NAMES if get_env(name, environ=source)}
     if present:
         return ok("auth_env", "auth environment variables are present", variables=present)
     return warn("auth_env", "no auth environment variables detected")
@@ -209,7 +209,7 @@ def run_doctor(
         check_workflow_bindings(),
         check_auth_env(),
         check_http_json("public_health", base_url, "/health", timeout),
-        check_http_json("well_known_ai_gateway", base_url, "/.well-known/ai-gateway", timeout),
+        check_http_json("well_known_ai_gateway", base_url, "/.well-known/azizam", timeout),
     ]
     if include_comfy:
         checks.append(check_http_json("comfyui_system_stats", resolved_comfy_url, "/system_stats", timeout))

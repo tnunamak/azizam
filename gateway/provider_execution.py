@@ -617,7 +617,7 @@ async def execute_paid_litellm(
                     receipt.cost.update({"reservation_id": reservation.id, "reconciliation_status": "needs_reconciliation"})
                 await watcher.aclose()
         cost = providers.extract_provider_cost(provider, headers=response.headers)
-        headers = {"x-gateway-request-id": receipt.request_id, "x-gateway-remote": "1"}
+        headers = {"x-azizam-request-id": receipt.request_id, "x-azizam-remote": "1"}
         if response.headers.get("retry-after"):
             headers["retry-after"] = response.headers["retry-after"]
         if response.status_code >= 400:
@@ -754,7 +754,7 @@ async def execute_paid_litellm(
                 result = {}
             await finish(result if isinstance(result, Mapping) else {})
             cost_usd = receipt.cost["usd"]
-            headers["x-gateway-cost-usd"] = str(cost_usd) if cost_usd is not None else "unknown"
+            headers["x-azizam-cost-usd"] = str(cost_usd) if cost_usd is not None else "unknown"
             owner.report(status="succeeded", reason="completed")
             return Response(content, status_code=response.status_code, media_type=response.headers.get("content-type", "application/json"), headers=headers)
         except httpx.TimeoutException:

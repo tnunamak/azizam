@@ -15,31 +15,31 @@ from _hermetic import validate_test_environment
 
 
 def test_state_config_and_environment_are_private_to_this_run(gateway_test_state_dir: Path) -> None:
-    assert gateway_test_state_dir.is_relative_to(Path(os.environ["VIVID_FISH_HERMETIC_STATE_DIR"]))
+    assert gateway_test_state_dir.is_relative_to(Path(os.environ["AZIZAM_HERMETIC_STATE_DIR"]))
     assert "/.tmp/" in f"{gateway_test_state_dir}/"
-    config_path = Path(os.environ["AI_GATEWAY_CONFIG_PATH"])
-    assert config_path.parent.is_relative_to(Path(os.environ["VIVID_FISH_HERMETIC_STATE_DIR"]))
+    config_path = Path(os.environ["AZIZAM_CONFIG_PATH"])
+    assert config_path.parent.is_relative_to(Path(os.environ["AZIZAM_HERMETIC_STATE_DIR"]))
     assert config_path.is_file()
     assert os.environ.get("OPENAI_API_KEY") is None
-    assert os.environ.get("OPENAI_PROXY_ADMIN_DB") is None
+    assert os.environ.get("AZIZAM_ADMIN_DB") is None
     assert os.environ.get("PYTHONDONTWRITEBYTECODE") == "1"
 
 
 def test_production_environment_names_cannot_leak_into_the_suite() -> None:
     allowed_gateway_names = {
-        "AI_GATEWAY_ADMIN_DB",
-        "AI_GATEWAY_CONFIG_PATH",
-        "AI_GATEWAY_MEDIA_JOBS_DB",
-        "AI_GATEWAY_METRICS_DB",
-        "AI_GATEWAY_RECEIPTS_DB",
-        "AI_GATEWAY_RESPONSES_DB",
-        "AI_GATEWAY_TEST_STATE_DIR",
+        "AZIZAM_ADMIN_DB",
+        "AZIZAM_CONFIG_PATH",
+        "AZIZAM_MEDIA_JOBS_DB",
+        "AZIZAM_METRICS_DB",
+        "AZIZAM_RECEIPTS_DB",
+        "AZIZAM_RESPONSES_DB",
+        "AZIZAM_TEST_STATE_DIR",
     }
     leaked = {
         name
         for name in os.environ
         if name.startswith(("OPENAI_", "ANTHROPIC_", "AWS_", "DATABASE_"))
-        or (name.startswith("AI_GATEWAY_") and name not in allowed_gateway_names)
+        or (name.startswith("AZIZAM_") and name not in allowed_gateway_names)
     }
     assert leaked == set()
 
@@ -68,7 +68,7 @@ def test_live_and_egress_destinations_are_rejected_before_connect(
 
 
 def test_production_checkout_path_is_not_visible() -> None:
-    production_root = Path(os.environ["VIVID_FISH_HERMETIC_FORBIDDEN_PRODUCTION_PATH"])
+    production_root = Path(os.environ["AZIZAM_HERMETIC_FORBIDDEN_PRODUCTION_PATH"])
     assert not production_root.exists()
     with pytest.raises(FileNotFoundError):
         (production_root / "data" / "admin.db").read_bytes()
@@ -77,9 +77,9 @@ def test_production_checkout_path_is_not_visible() -> None:
 
 
 def test_host_pid_and_ipc_namespaces_are_not_visible() -> None:
-    assert not Path(f"/proc/{os.environ['VIVID_FISH_HERMETIC_HOST_RUNNER_PID']}").exists()
-    assert os.readlink("/proc/1/ns/pid") != os.environ["VIVID_FISH_HERMETIC_HOST_PID_NAMESPACE"]
-    assert os.readlink("/proc/1/ns/ipc") != os.environ["VIVID_FISH_HERMETIC_HOST_IPC_NAMESPACE"]
+    assert not Path(f"/proc/{os.environ['AZIZAM_HERMETIC_HOST_RUNNER_PID']}").exists()
+    assert os.readlink("/proc/1/ns/pid") != os.environ["AZIZAM_HERMETIC_HOST_PID_NAMESPACE"]
+    assert os.readlink("/proc/1/ns/ipc") != os.environ["AZIZAM_HERMETIC_HOST_IPC_NAMESPACE"]
 
 
 def test_interpreter_and_imports_are_inside_fresh_environment() -> None:
@@ -87,7 +87,7 @@ def test_interpreter_and_imports_are_inside_fresh_environment() -> None:
     assert Path(sys.executable).exists()
 
 
-@pytest.mark.parametrize("command", [["systemctl", "--user", "restart", "openai-proxy.service"], ["tmux", "kill-server"]])
+@pytest.mark.parametrize("command", [["systemctl", "--user", "restart", "azizam.service"], ["systemctl", "--user", "restart", "openai-proxy.service"], ["tmux", "kill-server"]])
 def test_service_and_terminal_mutation_are_rejected_before_spawn(command: list[str]) -> None:
     with pytest.raises(pytest.fail.Exception, match="host-control command"):
         subprocess.run(command, check=False)

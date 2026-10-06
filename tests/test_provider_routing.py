@@ -127,7 +127,7 @@ class ProviderRoutingTests(unittest.TestCase):
         with patch.object(proxy, "config", alias_config), patch.object(proxy, "_handle_openai_litellm_request_once", handler):
             response = asyncio.run(proxy._handle_openai_litellm_request(request, "/v1/chat/completions"))
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers["x-gateway-fallback"], "free->paid (http_503)")
+        self.assertEqual(response.headers["x-azizam-fallback"], "free->paid (http_503)")
         self.assertEqual(handler.await_count, 2)
         self.assertEqual(handler.call_args.kwargs["model_override"], "openrouter/openai/gpt-4.1-mini")
         self.assertTrue(request.state.paid_provider_fallback)
@@ -152,7 +152,7 @@ class ProviderRoutingTests(unittest.TestCase):
         with patch.object(proxy, "config", alias_config), patch.object(proxy, "_handle_openai_litellm_request_once", handler):
             response = asyncio.run(proxy._handle_openai_litellm_request(request, "/v1/chat/completions"))
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers["x-gateway-fallback"], "free->paid (not_deployed)")
+        self.assertEqual(response.headers["x-azizam-fallback"], "free->paid (not_deployed)")
         self.assertEqual(getattr(request.state, "gateway_fallback_reasons"), ["free->paid (not_deployed)"])
         self.assertEqual(handler.await_count, 1)
 
@@ -198,7 +198,7 @@ class ProviderRoutingTests(unittest.TestCase):
         with patch.object(proxy, "config", alias_config), patch.object(proxy, "_handle_openai_litellm_request_once", handler):
             response = asyncio.run(proxy._handle_openai_litellm_request(request, "/v1/chat/completions"))
         self.assertEqual(response.status_code, 503)
-        self.assertEqual(response.headers["x-gateway-fallback"], "free->paid (http_503)")
+        self.assertEqual(response.headers["x-azizam-fallback"], "free->paid (http_503)")
         self.assertEqual(getattr(request.state, "gateway_fallback_reasons"), ["free->paid (http_503)"])
         self.assertEqual(handler.await_count, 2)
 
@@ -467,7 +467,7 @@ class ProviderRoutingTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers["x-gateway-fallback"], "free->paid (http_503)")
+        self.assertEqual(response.headers["x-azizam-fallback"], "free->paid (http_503)")
         receipt = receipts[0]
         self.assertEqual(receipt.requested_model, "assistant")
         self.assertEqual(receipt.resolved_model, "paid-chat")

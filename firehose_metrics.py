@@ -1,7 +1,7 @@
 """
 In-process counters + event ring buffer for the firehose status page.
 
-Single-worker assumption (the openai-proxy runs as one uvicorn process).
+Single-worker assumption (the azizam runs as one uvicorn process).
 Counters live in-memory but request events are also append-logged to
 ``cache/key_activity.jsonl`` so they survive process restarts. On startup,
 ``replay_persisted()`` rehydrates the in-memory deques from the tail of that
@@ -27,6 +27,8 @@ Privacy:
 """
 
 from __future__ import annotations
+
+from gateway.compat import get_env
 
 import json
 import os
@@ -64,8 +66,8 @@ _RECENT_EVENTS: deque[dict[str, Any]] = deque(maxlen=200)
 _VIDEO_META: dict[str, dict[str, Any]] = {}
 
 # Append-only persistence path (overridden by env in tests).
-_DEFAULT_CACHE_PATH = Path(os.environ.get(
-    "OPENAI_PROXY_KEY_ACTIVITY_LOG",
+_DEFAULT_CACHE_PATH = Path(get_env(
+    "AZIZAM_KEY_ACTIVITY_LOG",
     str(Path(__file__).parent / "cache" / "key_activity.jsonl"),
 ))
 

@@ -1,5 +1,5 @@
 {
-  "name": "openai-proxy-compat-node",
+  "name": "azizam-compat-node",
   "private": true,
   "version": "0.0.0",
   "description": "Node-side SDK compatibility probes (OpenAI, Anthropic, Ollama, Vercel AI SDK). Not installed by the core Python repo — see tests/compat/node/README.md.",

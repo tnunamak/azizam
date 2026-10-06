@@ -56,7 +56,7 @@ class ShowcaseRouteTests(unittest.TestCase):
         r = _app(self.examples).get("/showcase")
         self.assertEqual(r.status_code, 200)
         self.assertIn("text/html", r.headers["content-type"])
-        self.assertIn("Vivid Fish AI Gateway", r.text)
+        self.assertIn("Azizam", r.text)
         csp = r.headers["content-security-policy"]
         self.assertIn("media-src 'self' blob:", csp)
         self.assertNotIn("unsafe-inline'; style", csp.split("style-src")[0])  # scripts stay external-only

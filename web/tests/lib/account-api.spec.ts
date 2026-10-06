@@ -20,8 +20,8 @@ describe("member account writes", () => {
     expect(fetch.mock.calls[0][0]).toBe("/me/api/session");
     const [path, init] = fetch.mock.calls[1];
     expect(path).toBe("/me/api/apps");
-    expect(init.headers.get("x-ai-gateway-user-action")).toBe("1");
-    expect(init.headers.get("x-ai-gateway-csrf")).toBe("test-csrf");
+    expect(init.headers.get("x-azizam-user-action")).toBe("1");
+    expect(init.headers.get("x-azizam-csrf")).toBe("test-csrf");
     expect(init.credentials).toBe("same-origin");
   });
   it("refreshes a rolled session once and uses the replacement token", async () => {
@@ -39,7 +39,7 @@ describe("member account writes", () => {
     vi.stubGlobal("fetch", fetch);
     await accountApi.mintKey("owned/app", "Laptop");
     expect(fetch.mock.calls[3][0]).toBe("/me/api/apps/owned%2Fapp/keys");
-    expect(fetch.mock.calls[3][1].headers.get("x-ai-gateway-csrf")).toBe("new");
+    expect(fetch.mock.calls[3][1].headers.get("x-azizam-csrf")).toBe("new");
   });
   it("preserves a forbidden ownership response and does not retry it", async () => {
     const fetch = vi

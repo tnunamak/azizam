@@ -1,4 +1,4 @@
-# Vivid Fish Component Library Spec
+# Azizam Component Library Spec
 
 This is the working contract for bringing the gateway UI to the designer's bar
 without duplicating branding, design tokens, or component behavior across routes.
@@ -10,7 +10,7 @@ history but are not competing requirements.
 
 ## Goal
 
-Build one coherent, reusable Vivid Fish component system for the gateway:
+Build one coherent, reusable Azizam component system for the gateway:
 
 - `@vivid-fish/brand` owns tokens, semantic CSS primitives, motion, focus,
   surfaces, row grammar, status grammar, and responsive shell layout.

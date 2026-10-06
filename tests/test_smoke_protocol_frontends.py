@@ -3,7 +3,7 @@
 No network: the HTTP layer is swapped for a fake. The goal is to lock
 in the skip/pass/fail decision tree so future protocol additions don't
 silently regress (e.g. an Anthropic-only LLM probe accidentally firing
-without ``OPENAI_PROXY_SMOKE_LIVE_LLM=1``).
+without ``AZIZAM_SMOKE_LIVE_LLM=1``).
 """
 
 from __future__ import annotations
@@ -70,7 +70,7 @@ class TestSmokeConfigFromEnv(unittest.TestCase):
 
     def test_strips_trailing_slash_from_base_url(self) -> None:
         cfg = smoke.SmokeConfig.from_env(
-            env={"OPENAI_PROXY_BASE_URL": "http://127.0.0.1:5000/"}
+            env={"AZIZAM_BASE_URL": "http://127.0.0.1:5000/"}
         )
         self.assertEqual(cfg.base_url, "http://127.0.0.1:5000")
 
@@ -80,44 +80,44 @@ class TestSmokeConfigFromEnv(unittest.TestCase):
         # spend on a real backend by setting the wrong value.
         for value in ("", "0", "true", "yes", "on"):
             cfg = smoke.SmokeConfig.from_env(
-                env={"OPENAI_PROXY_SMOKE_LIVE_LLM": value}
+                env={"AZIZAM_SMOKE_LIVE_LLM": value}
             )
             self.assertFalse(cfg.live_llm, msg=f"unexpected truthy for {value!r}")
-        cfg = smoke.SmokeConfig.from_env(env={"OPENAI_PROXY_SMOKE_LIVE_LLM": "1"})
+        cfg = smoke.SmokeConfig.from_env(env={"AZIZAM_SMOKE_LIVE_LLM": "1"})
         self.assertTrue(cfg.live_llm)
 
     def test_live_embeddings_requires_literal_one(self) -> None:
         for value in ("", "0", "true", "yes", "on"):
             cfg = smoke.SmokeConfig.from_env(
-                env={"OPENAI_PROXY_SMOKE_LIVE_EMBEDDINGS": value}
+                env={"AZIZAM_SMOKE_LIVE_EMBEDDINGS": value}
             )
             self.assertFalse(
                 cfg.live_embeddings,
                 msg=f"unexpected truthy for {value!r}",
             )
         cfg = smoke.SmokeConfig.from_env(
-            env={"OPENAI_PROXY_SMOKE_LIVE_EMBEDDINGS": "1"}
+            env={"AZIZAM_SMOKE_LIVE_EMBEDDINGS": "1"}
         )
         self.assertTrue(cfg.live_embeddings)
 
     def test_timeout_falls_back_on_bad_value(self) -> None:
         cfg = smoke.SmokeConfig.from_env(
-            env={"OPENAI_PROXY_SMOKE_TIMEOUT": "not-a-number"}
+            env={"AZIZAM_SMOKE_TIMEOUT": "not-a-number"}
         )
         self.assertEqual(cfg.timeout_s, smoke.DEFAULT_TIMEOUT_S)
 
     def test_timeout_clamped_to_min_one(self) -> None:
-        cfg = smoke.SmokeConfig.from_env(env={"OPENAI_PROXY_SMOKE_TIMEOUT": "0"})
+        cfg = smoke.SmokeConfig.from_env(env={"AZIZAM_SMOKE_TIMEOUT": "0"})
         self.assertEqual(cfg.timeout_s, 1)
-        cfg = smoke.SmokeConfig.from_env(env={"OPENAI_PROXY_SMOKE_TIMEOUT": "-5"})
+        cfg = smoke.SmokeConfig.from_env(env={"AZIZAM_SMOKE_TIMEOUT": "-5"})
         self.assertEqual(cfg.timeout_s, 1)
 
     def test_model_overrides(self) -> None:
         cfg = smoke.SmokeConfig.from_env(
             env={
-                "OPENAI_PROXY_SMOKE_ANTHROPIC_MODEL": "claude-x",
-                "OPENAI_PROXY_SMOKE_OLLAMA_MODEL": "tinyllama",
-                "OPENAI_PROXY_SMOKE_EMBEDDINGS_MODEL": "nomic-x",
+                "AZIZAM_SMOKE_ANTHROPIC_MODEL": "claude-x",
+                "AZIZAM_SMOKE_OLLAMA_MODEL": "tinyllama",
+                "AZIZAM_SMOKE_EMBEDDINGS_MODEL": "nomic-x",
             }
         )
         self.assertEqual(cfg.anthropic_model, "claude-x")
@@ -144,7 +144,7 @@ class TestSkipSemantics(unittest.TestCase):
             patched.assert_not_called()
         for r in results:
             self.assertEqual(r.status, "skip", msg=r.format_row())
-            self.assertIn("OPENAI_PROXY_BASE_URL", r.detail)
+            self.assertIn("AZIZAM_BASE_URL", r.detail)
 
     def test_capabilities_and_chat_skip_without_api_key(self) -> None:
         cfg = smoke.SmokeConfig(
@@ -173,7 +173,7 @@ class TestSkipSemantics(unittest.TestCase):
             "ollama.embeddings",
         ):
             self.assertEqual(results[name].status, "skip", msg=name)
-            self.assertIn("OPENAI_PROXY_API_KEY", results[name].detail)
+            self.assertIn("AZIZAM_API_KEY", results[name].detail)
         # Only /health should have been requested.
         self.assertEqual([c["path"] for c in calls], ["/health"])
 
@@ -203,11 +203,11 @@ class TestSkipSemantics(unittest.TestCase):
         self.assertEqual(results["ollama.embed"].status, "skip")
         self.assertEqual(results["ollama.embeddings"].status, "skip")
         self.assertIn(
-            "OPENAI_PROXY_SMOKE_LIVE_LLM",
+            "AZIZAM_SMOKE_LIVE_LLM",
             results["anthropic.messages.nonstream"].detail,
         )
         self.assertIn(
-            "OPENAI_PROXY_SMOKE_LIVE_EMBEDDINGS",
+            "AZIZAM_SMOKE_LIVE_EMBEDDINGS",
             results["openai.embeddings"].detail,
         )
         # Non-LLM probes still ran:
@@ -370,7 +370,7 @@ class TestSummaryAndExitCode(unittest.TestCase):
         # Drive main() with a fake _request that fails health; everything
         # else skips. Exit code must be 1.
         env_patch = {
-            "OPENAI_PROXY_BASE_URL": "http://gw",
+            "AZIZAM_BASE_URL": "http://gw",
         }
         fake, _ = _fake_request({("GET", "/health"): (500, "")})
         buf = io.StringIO()
@@ -396,8 +396,8 @@ class TestSummaryAndExitCode(unittest.TestCase):
     def test_print_config_redacts_api_key(self) -> None:
         buf = io.StringIO()
         env_patch = {
-            "OPENAI_PROXY_BASE_URL": "http://gw",
-            "OPENAI_PROXY_API_KEY": "opk_super_secret",
+            "AZIZAM_BASE_URL": "http://gw",
+            "AZIZAM_API_KEY": "opk_super_secret",
         }
         with mock.patch.dict("os.environ", env_patch, clear=True), \
                 redirect_stdout(buf):

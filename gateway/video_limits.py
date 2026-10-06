@@ -1,7 +1,7 @@
 """Published video limits: what a client may ask for, read from ``videos`` config.
 
 The gateway enforces these in ``proxy.py``; this module only reports them so clients
-(``/gateway/v1/capabilities``, ``x-vividfish-workflows``) need not hard-code them.
+(``/gateway/v1/capabilities``, ``x-azizam-workflows``) need not hard-code them.
 """
 
 from __future__ import annotations

@@ -144,5 +144,5 @@ def test_runner_rejects_invalid_source_before_state_or_provisioning(tmp_path: Pa
     expected_code, expected_message = expected
     assert result.returncode == expected_code
     assert expected_message in result.stderr
-    assert not list((home / ".tmp").glob("vivid-fish-pytest.*"))
+    assert not list((home / ".tmp").glob("azizam-pytest.*"))
     assert not provision_marker.exists()

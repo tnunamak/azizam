@@ -1,6 +1,6 @@
 // Opt-in live smoke test against a real gateway: runs only with AZIZAM_LIVE_TEST=1, never contacts anything otherwise.
 // Skips cleanly when the gateway is unreachable or no key is found.
-// Key source: $AZIZAM_API_KEY, else the file named by `!cat <file>` in ~/.config/pi-t3/models.json (providers["vivid-fish"].apiKey).
+// Key source: $AZIZAM_API_KEY, else the file named by `!cat <file>` in ~/.config/pi-t3/models.json (providers["azizam"].apiKey).
 // The key is never printed.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -16,7 +16,7 @@ function readKey(): string | undefined {
 	if (process.env.AZIZAM_API_KEY) return process.env.AZIZAM_API_KEY;
 	try {
 		const config = JSON.parse(readFileSync(join(homedir(), ".config/pi-t3/models.json"), "utf8"));
-		const command: string = config.providers?.["vivid-fish"]?.apiKey ?? "";
+		const command: string = config.providers?.["azizam"]?.apiKey ?? "";
 		const match = /^!cat\s+(\S+)$/.exec(command);
 		return match ? readFileSync(match[1].replace(/^~/, homedir()), "utf8").trim() : undefined;
 	} catch {

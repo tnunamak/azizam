@@ -156,7 +156,7 @@ describe("Home audit component behavior", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const path = String(input);
-        if (path === "/.well-known/ai-gateway")
+        if (path === "/.well-known/azizam")
           return Response.json({ service: { name: "Family gateway" } });
         if (path === "/me/api/home") return Response.json(home);
         if (path === "/admin/api/setup-progress")
@@ -209,7 +209,7 @@ describe("Home audit component behavior", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const path = String(input);
-        if (path === "/.well-known/ai-gateway")
+        if (path === "/.well-known/azizam")
           return Response.json({ service: { name: "Family gateway" } });
         if (path === "/me/api/home") return Response.json(home);
         if (path === "/admin/api/setup-progress")
@@ -305,7 +305,7 @@ describe("Home audit component behavior", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const path = String(input);
-        if (path === "/.well-known/ai-gateway")
+        if (path === "/.well-known/azizam")
           return Response.json({ service: { name: "Family gateway" } });
         if (path === "/me/api/home")
           return Response.json({ ...home, receipts: [] });
@@ -333,7 +333,7 @@ describe("Home audit component behavior", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const path = String(input);
-        if (path === "/.well-known/ai-gateway")
+        if (path === "/.well-known/azizam")
           return Response.json({ service: { name: "Family gateway" } });
         if (path === "/me/api/home")
           return Response.json({ ...home, receipts: [] });
@@ -398,7 +398,7 @@ describe("Home audit component behavior", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
         const path = String(input);
-        if (path === "/.well-known/ai-gateway")
+        if (path === "/.well-known/azizam")
           return Response.json({ service: { name: "Family gateway" } });
         if (path === "/me/api/home")
           return Response.json({

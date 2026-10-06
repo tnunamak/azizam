@@ -58,8 +58,8 @@ test("real registry journey preserves disabled state and unknown config through 
     `/admin/api/operator/services/${record.id}`,
     {
       headers: {
-        "x-ai-gateway-csrf": session.actor.csrf_token,
-        "x-ai-gateway-admin-action": "1",
+        "x-azizam-csrf": session.actor.csrf_token,
+        "x-azizam-admin-action": "1",
         "if-match": initial.etag,
       },
       data: {
@@ -91,8 +91,8 @@ test("real registry journey preserves disabled state and unknown config through 
     "/admin/api/operator/service-registry",
     {
       headers: {
-        "x-ai-gateway-csrf": session.actor.csrf_token,
-        "x-ai-gateway-admin-action": "1",
+        "x-azizam-csrf": session.actor.csrf_token,
+        "x-azizam-admin-action": "1",
         "if-match": legacyEtag,
       },
       data: legacyRegistry,

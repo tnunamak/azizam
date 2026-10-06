@@ -9,10 +9,10 @@ validated against an explicit contract.
 
 | Namespace | Purpose | Status |
 |---|---|---|
-| `extensions.com.vividfish.workflow` | Manifest-backed workflow controls for local generation/editing jobs. | Implemented for image, audio, and video workflow routes. |
-| `extensions.com.vividfish.chat` | Local chat/runtime behavior that is not an OpenAI field. | Proposed. |
-| `extensions.com.vividfish.routing` | Per-request routing hints that profiles may allow or deny. | Proposed. |
-| `extensions.com.vividfish.telemetry` | Receipt/debug verbosity preferences without prompt/body capture. | Proposed. |
+| `extensions.com.azizam.workflow` | Manifest-backed workflow controls for local generation/editing jobs. | Implemented for image, audio, and video workflow routes. |
+| `extensions.com.azizam.chat` | Local chat/runtime behavior that is not an OpenAI field. | Proposed. |
+| `extensions.com.azizam.routing` | Per-request routing hints that profiles may allow or deny. | Proposed. |
+| `extensions.com.azizam.telemetry` | Receipt/debug verbosity preferences without prompt/body capture. | Proposed. |
 
 Do not use extensions for credentials, profile permissions, backend URLs,
 cloud fallback policy, native passthrough permission, cache TTLs, or status
@@ -31,16 +31,16 @@ The live discovery contract is:
 
 | API | Extension Target | Current State | Notes |
 |---|---|---|---|
-| `POST /v1/images/generations` | `extensions.com.vividfish.workflow` | Implemented | Binds direct workflow controls such as `steps`, `guidance`, `seed`, `batch_size`, `negative_prompt`, `sampler`, `scheduler`, and `seam_blending` on `sdxl-seamless-tile` (`0..0.5`). Also supports gateway-composed controls on `flux2-klein-4b-seamless-tile`, including `seam_mask_width`, `seam_mask_expand`, `seam_mask_feather`, `seam_steps`, `seam_guidance`, `seam_denoise`, and `seam_prompt`. Unknown top-level workflow controls are rejected. |
-| `POST /v1/images/edits` | `extensions.com.vividfish.workflow` | Implemented | Binds `steps`, `guidance`, and `denoise` for `flux2-klein-4b-edit`. Top-level `mask` is a standard OpenAI multipart field, not an extension; masked requests auto-select `flux2-klein-4b-inpaint` when available, which applies the normalized mask inside ComfyUI and exposes `seed`, `mask_expand`, and `mask_feather`. Future conditioning controls such as `control_image` and `controlnet_strength` stay namespaced and manifest-backed; multipart extension assets can reference an extra form field with `{"multipart_field":"control_image"}`. ControlNet is not exposed until a real ControlNet workflow and model are present. |
-| `POST /v1/audio/generate` | `extensions.com.vividfish.workflow` | Implemented | ACE-Step accepts top-level `tags` and `lyrics`; `prompt` remains an alias for ACE-Step `tags` when `tags` is absent. TangoFlux accepts namespaced `steps`, `guidance`, and `batch_size`; standard `duration`, `seed`, `tags`, and `lyrics` stay top-level route-managed fields. |
-| `POST /v1/videos` | `extensions.com.vividfish.workflow` | Implemented | LTX 2.3 distilled accepts namespaced `steps`, `stage1_cfg`, and `stage2_cfg`; standard `size`, `seconds`, `seed`, prompt, and image-reference fields stay top-level. |
-| `POST /v1/chat/completions` | `extensions.com.vividfish.chat`, `extensions.com.vividfish.routing` | Proposed | Candidate controls: local sampler extras, backend role hints, prompt-cache preferences, fallback preference, receipt verbosity. |
-| `POST /v1/responses` | `extensions.com.vividfish.chat`, `extensions.com.vividfish.routing`, `extensions.com.vividfish.responses` | Proposed | Should share chat extension validation where possible. |
-| `POST /v1/completions` | `extensions.com.vividfish.chat`, `extensions.com.vividfish.routing` | Proposed | Same concerns as chat completions, narrower request shape. |
-| `POST /v1/audio/speech` | `extensions.com.vividfish.audio` | Proposed | Candidate controls only if Voxtral exposes stable non-OpenAI voice controls. `voice`, `speed`, and `format` stay top-level. |
-| `POST /v1/audio/transcriptions` | `extensions.com.vividfish.audio` | Proposed | Candidate controls only for stable local STT controls not expressible in OpenAI fields. |
-| `POST /v1/messages` | Native Anthropic shape first | Proposed bridge | Prefer Anthropic-native fields. Gateway-only controls can be translated from `metadata.vividfish` or an explicitly allowed `extensions` block. |
+| `POST /v1/images/generations` | `extensions.com.azizam.workflow` | Implemented | Binds direct workflow controls such as `steps`, `guidance`, `seed`, `batch_size`, `negative_prompt`, `sampler`, `scheduler`, and `seam_blending` on `sdxl-seamless-tile` (`0..0.5`). Also supports gateway-composed controls on `flux2-klein-4b-seamless-tile`, including `seam_mask_width`, `seam_mask_expand`, `seam_mask_feather`, `seam_steps`, `seam_guidance`, `seam_denoise`, and `seam_prompt`. Unknown top-level workflow controls are rejected. |
+| `POST /v1/images/edits` | `extensions.com.azizam.workflow` | Implemented | Binds `steps`, `guidance`, and `denoise` for `flux2-klein-4b-edit`. Top-level `mask` is a standard OpenAI multipart field, not an extension; masked requests auto-select `flux2-klein-4b-inpaint` when available, which applies the normalized mask inside ComfyUI and exposes `seed`, `mask_expand`, and `mask_feather`. Future conditioning controls such as `control_image` and `controlnet_strength` stay namespaced and manifest-backed; multipart extension assets can reference an extra form field with `{"multipart_field":"control_image"}`. ControlNet is not exposed until a real ControlNet workflow and model are present. |
+| `POST /v1/audio/generate` | `extensions.com.azizam.workflow` | Implemented | ACE-Step accepts top-level `tags` and `lyrics`; `prompt` remains an alias for ACE-Step `tags` when `tags` is absent. TangoFlux accepts namespaced `steps`, `guidance`, and `batch_size`; standard `duration`, `seed`, `tags`, and `lyrics` stay top-level route-managed fields. |
+| `POST /v1/videos` | `extensions.com.azizam.workflow` | Implemented | LTX 2.3 distilled accepts namespaced `steps`, `stage1_cfg`, and `stage2_cfg`; standard `size`, `seconds`, `seed`, prompt, and image-reference fields stay top-level. |
+| `POST /v1/chat/completions` | `extensions.com.azizam.chat`, `extensions.com.azizam.routing` | Proposed | Candidate controls: local sampler extras, backend role hints, prompt-cache preferences, fallback preference, receipt verbosity. |
+| `POST /v1/responses` | `extensions.com.azizam.chat`, `extensions.com.azizam.routing`, `extensions.com.azizam.responses` | Proposed | Should share chat extension validation where possible. |
+| `POST /v1/completions` | `extensions.com.azizam.chat`, `extensions.com.azizam.routing` | Proposed | Same concerns as chat completions, narrower request shape. |
+| `POST /v1/audio/speech` | `extensions.com.azizam.audio` | Proposed | Candidate controls only if Voxtral exposes stable non-OpenAI voice controls. `voice`, `speed`, and `format` stay top-level. |
+| `POST /v1/audio/transcriptions` | `extensions.com.azizam.audio` | Proposed | Candidate controls only for stable local STT controls not expressible in OpenAI fields. |
+| `POST /v1/messages` | Native Anthropic shape first | Proposed bridge | Prefer Anthropic-native fields. Gateway-only controls can be translated from `metadata.azizam` or an explicitly allowed `extensions` block. |
 | `POST /api/chat`, `POST /api/generate` | Native Ollama `options` first | Partial native support | Ollama options are not gateway extensions. Use gateway extensions only for gateway routing/diagnostics. |
 | `/gateway/v1/*` | First-class native fields | Implemented | Gateway-native routes should usually use explicit `inputs`, `workflow`, `assets`, and receipt fields instead of an extension envelope. |
 
@@ -48,7 +48,7 @@ ControlNet readiness: there is an audit trail for ControlNet, but the current
 local system is not ready. Do not expose fake `controlnet_*`, conditioning,
 adapter, or preprocessor request controls until a real workflow, model,
 manifest, and readiness check are present. When support is present, put those
-controls under `extensions.com.vividfish.workflow` or a gateway-native media job
+controls under `extensions.com.azizam.workflow` or a gateway-native media job
 shape, not as global OpenAI-compatible fields.
 
 Variant semantics are not a separate extension family. Use top-level `n` where

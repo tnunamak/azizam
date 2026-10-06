@@ -34,7 +34,7 @@ are shown only when the owner creates the reset link.
 ## JSON interface
 
 All account responses use `Cache-Control: no-store`. Owner mutations require
-the existing `x-ai-gateway-csrf` token from `/admin/api/session` for browser
+the existing `x-azizam-csrf` token from `/admin/api/session` for browser
 sessions. Bearer credentials follow existing admin authentication. Ordinary
 members and administrators cannot use the owner-only People/invitation APIs.
 

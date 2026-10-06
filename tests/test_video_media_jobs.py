@@ -160,10 +160,10 @@ class VideoStatusShapeTests(unittest.TestCase):
 
         self.assertEqual(payload["id"], "video_abc")
         self.assertEqual(payload["object"], "video")
-        self.assertEqual(payload["vivid_object"], "video.generation")
+        self.assertEqual(payload["azizam_object"], "video.generation")
         self.assertEqual(payload["model"], "sora-local")
         self.assertEqual(payload["status"], "completed")
-        self.assertEqual(payload["vivid_status"], "succeeded")
+        self.assertEqual(payload["azizam_status"], "succeeded")
         self.assertEqual(payload["progress"], 100)
         self.assertEqual(payload["content_url"], "/v1/videos/video_abc/content")
         self.assertNotIn("metadata", payload)
@@ -187,7 +187,7 @@ class VideoStatusShapeTests(unittest.TestCase):
                 payload = video_media_jobs.video_generation_payload(job)
 
                 self.assertEqual(payload["status"], public)
-                self.assertEqual(payload["vivid_status"], internal)
+                self.assertEqual(payload["azizam_status"], internal)
 
     def test_progress_validation_rejects_out_of_range_values(self) -> None:
         with self.assertRaises(ValueError):

@@ -52,7 +52,7 @@ def _build_registry() -> WorkflowRegistry:
     registry = WorkflowRegistry()
     registry.add_manifest(
         yaml.safe_load(SIMPLE_MANIFEST_YAML),
-        source_path="/srv/openai-proxy/manifests/workflows/simple.yml",
+        source_path="/srv/azizam/manifests/workflows/simple.yml",
     )
     return registry
 

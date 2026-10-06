@@ -240,7 +240,7 @@ class DecisionRuntime:
                 raise DecisionsError(502, "decision_backend_error", "The configured decision engine failed.")
             headers = {"retry-after": response.headers["retry-after"]} if "retry-after" in response.headers else {}
             if fallbacks:
-                headers["x-gateway-fallback"] = ",".join(fallbacks)
+                headers["x-azizam-fallback"] = ",".join(fallbacks)
             return DecisionDispatchResult(payload, status_code=status, backend=service_id,
                                           resolved_model=payload.get("model"), engine=engine,
                                           headers=headers,
@@ -252,7 +252,7 @@ class DecisionRuntime:
         status = 529 if attempts.fallback_declared else 503
         headers = {"retry-after": "5"}
         if attempts.fallback_declared and len(attempts.fallbacks) > 1:
-            headers["x-gateway-fallback"] = ",".join(attempts.fallbacks)
+            headers["x-azizam-fallback"] = ",".join(attempts.fallbacks)
         return DecisionDispatchResult(
             {"error": {"message": "The local decision engines are starting or unavailable." if attempts.fallback_declared else "The configured decision engine is unavailable. No fallback is configured.",
                        "type": "server_error", "code": "overloaded" if attempts.fallback_declared else "model_not_deployed"}},

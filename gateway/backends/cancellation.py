@@ -12,7 +12,7 @@ This registry is the single cross-hop cancellation signal: the outer gateway
 registers a ``request_id`` before dispatch and signals it on any of its own
 disconnect paths (pre-header, streaming generator teardown, non-stream
 delayed disconnect). The internal gateway route — reached through LiteLLM,
-which forwards ``X-AI-Gateway-Request-Id`` via
+which forwards ``X-Azizam-Request-Id`` via
 ``general_settings.forward_client_headers_to_llm_api`` — races its own
 backend read against the same id. Direct/native routes that never go through
 LiteLLM use the same registry with an id minted at the outer hop.

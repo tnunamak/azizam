@@ -1,4 +1,4 @@
-# Agent instructions — Vivid Fish AI Gateway
+# Agent instructions — Azizam
 
 This is a self-hosted, OpenAI-compatible gateway that fronts whatever local AI
 engines an operator runs (llama.cpp, vLLM, Ollama, TabbyAPI, ComfyUI, TTS/STT,
@@ -81,7 +81,7 @@ or migrating anything engine-specific.
 - Python is always `./venv/bin/python` (bare `python` lacks fastapi). Full suite:
   `./venv/bin/python -m pytest -q`. Keep it green; behavior-preserving migrations
   must prove byte-identical output for the current config.
-- The gateway runs live on port 5000 (systemd user service `openai-proxy.service`)
+- The gateway runs live on port 5000 (systemd user service `azizam.service`)
   with the operator's machine-specific paths in a gitignored `.env.local`
   (sourced by `start.sh`). Never touch ports 5000/15000. Never print secret
   values (`opk_`/`oak_`/provider keys). Commit, but push only when asked.

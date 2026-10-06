@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://openai-proxy/compat/compatibility.schema.json",
+  "$id": "https://azizam/compat/compatibility.schema.json",
   "title": "SDK Compatibility Matrix",
   "description": "Machine-readable compatibility report emitted by tests/compat. The top-level value is an array of protocol/SDK reports.",
   "type": "array",

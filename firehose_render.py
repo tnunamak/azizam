@@ -514,7 +514,7 @@ _HTML_FOOT_TEMPLATE = """
 <footer>
   Auto-refreshing every 10s. For programmatic access,
   poll <a href="/v1/status">/v1/status</a> directly (bearer token required).
-  · <a href="https://github.com/Vivid-Fish/openai-proxy" target="_blank" rel="noopener">github.com/Vivid-Fish/openai-proxy</a>
+  · <a href="https://github.com/Vivid-Fish/azizam" target="_blank" rel="noopener">github.com/Vivid-Fish/azizam</a>
   __VERSION_HTML__
 </footer>
 """
@@ -2620,36 +2620,36 @@ def _render_quick_test() -> str:
     examples = [
         ("Chat completion",
          'curl -s https://ai.vivid.fish/openai/v1/chat/completions \\\n'
-         '  -H "Authorization: Bearer $VIVID_OPENAI_API_KEY" \\\n'
+         '  -H "Authorization: Bearer $AZIZAM_API_KEY" \\\n'
          '  -H "Content-Type: application/json" \\\n'
          '  -d \'{"model":"default","messages":[{"role":"user","content":"hi"}]}\''),
         ("Image generation",
          'curl -s https://ai.vivid.fish/openai/v1/images/generations \\\n'
-         '  -H "Authorization: Bearer $VIVID_OPENAI_API_KEY" \\\n'
+         '  -H "Authorization: Bearer $AZIZAM_API_KEY" \\\n'
          '  -H "Content-Type: application/json" \\\n'
          '  -d \'{"model":"flux2-klein-4b","prompt":"a calico cat","size":"512x512"}\''),
         ("Text-to-speech",
          'curl -s https://ai.vivid.fish/openai/v1/audio/speech \\\n'
-         '  -H "Authorization: Bearer $VIVID_OPENAI_API_KEY" \\\n'
+         '  -H "Authorization: Bearer $AZIZAM_API_KEY" \\\n'
          '  -H "Content-Type: application/json" \\\n'
          '  -d \'{"model":"voxtral-4b-tts","voice":"nova","input":"hello"}\' --output out.mp3'),
         ("Speech-to-text",
          'curl -s https://ai.vivid.fish/openai/v1/audio/transcriptions \\\n'
-         '  -H "Authorization: Bearer $VIVID_OPENAI_API_KEY" \\\n'
+         '  -H "Authorization: Bearer $AZIZAM_API_KEY" \\\n'
          '  -F "file=@audio.mp3" -F "model=parakeet-tdt-0.6b-v3"'),
         ("Video — text-to-video",
          'curl -s https://ai.vivid.fish/openai/v1/videos \\\n'
-         '  -H "Authorization: Bearer $VIVID_OPENAI_API_KEY" \\\n'
+         '  -H "Authorization: Bearer $AZIZAM_API_KEY" \\\n'
          '  -H "Content-Type: application/json" \\\n'
          '  -d \'{"model":"ltx-2.5","prompt":"a calico cat playing chess","seconds":5}\''),
         ("Video — image-to-video",
          'curl -s https://ai.vivid.fish/openai/v1/videos \\\n'
-         '  -H "Authorization: Bearer $VIVID_OPENAI_API_KEY" \\\n'
+         '  -H "Authorization: Bearer $AZIZAM_API_KEY" \\\n'
          '  -H "Content-Type: application/json" \\\n'
          '  -d \'{"model":"ltx-2.5","prompt":"camera dolly in","input_image_url":"…"}\''),
     ]
     parts: list[str] = ['<div class="muted small" style="margin-bottom:6px;">'
-                        'Set <code>VIVID_OPENAI_API_KEY</code> in your shell '
+                        'Set <code>AZIZAM_API_KEY</code> in your shell '
                         '(get a key from the proxy admin).</div>']
     for title, body in examples:
         parts.append(

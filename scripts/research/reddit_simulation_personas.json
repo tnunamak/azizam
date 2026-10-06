@@ -4,7 +4,7 @@
     "label": "r/selfhosted operator",
     "subreddit": "selfhosted",
     "archetype": "Runs a small homelab and wants to share local AI with trusted people without handing out raw backend access.",
-    "borrowed_environment": "Docker/Traefik/Keycloak-style setup using the installed Vivid Fish AI Gateway and its connected local services as the operator's own stack.",
+    "borrowed_environment": "Docker/Traefik/Keycloak-style setup using the installed Azizam and its connected local services as the operator's own stack.",
     "goals": [
       "Can I start from a browser-first setup story?",
       "Can I discover what is running without reading source code?",
@@ -13,7 +13,7 @@
     ],
     "probes": [
       {"id": "public_health", "method": "GET", "path": "/health", "auth": "none", "expect_status": [200]},
-      {"id": "public_discovery", "method": "GET", "path": "/.well-known/ai-gateway", "auth": "none", "expect_status": [200]},
+      {"id": "public_discovery", "method": "GET", "path": "/.well-known/azizam", "auth": "none", "expect_status": [200]},
       {"id": "setup_page", "method": "GET", "path": "/setup", "auth": "none", "expect_status": [200, 302]},
       {"id": "admin_login", "method": "GET", "path": "/admin/login", "auth": "none", "expect_status": [200, 302, 501]},
       {"id": "admin_overview", "method": "GET", "path": "/admin/api/overview", "auth": "admin", "expect_status": [200]}
@@ -113,7 +113,7 @@
     ],
     "probes": [
       {"id": "account_home", "method": "GET", "path": "/", "auth": "none", "expect_status": [200, 302, 401]},
-      {"id": "public_discovery", "method": "GET", "path": "/.well-known/ai-gateway", "auth": "none", "expect_status": [200]},
+      {"id": "public_discovery", "method": "GET", "path": "/.well-known/azizam", "auth": "none", "expect_status": [200]},
       {"id": "runtime_models", "method": "GET", "path": "/openai/v1/models", "auth": "runtime", "expect_status": [200]},
       {"id": "runtime_capabilities", "method": "GET", "path": "/gateway/v1/capabilities", "auth": "runtime", "expect_status": [200]}
     ],

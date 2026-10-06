@@ -252,7 +252,7 @@ class InflightMiddlewareTests(unittest.TestCase):
         async def app(scope, receive, send):
             raise AssertionError("must not reach the app")
 
-        with patch.dict(os.environ, {"AI_GATEWAY_DRAIN_RETRY_AFTER_S": "7"}):
+        with patch.dict(os.environ, {"AZIZAM_DRAIN_RETRY_AFTER_S": "7"}):
             sent = asyncio.run(_run(drain.InflightMiddleware(app, state), _scope("POST", "/v1/completions")))
         self.assertEqual(dict(sent[0]["headers"])[b"retry-after"], b"7")
 

@@ -1,0 +1,326 @@
+"""Azizam migration contracts. Remove temporary aliases after the live cutover.
+
+Media provenance aliases are permanent: existing assets must remain readable.
+"""
+from __future__ import annotations
+
+import json
+import os
+from collections.abc import Mapping
+from typing import Any
+
+ENV_ALIASES = {'AZIZAM_ADMIN_DB': ['AI_GATEWAY_ADMIN_DB', 'OPENAI_PROXY_ADMIN_DB'],
+ 'AZIZAM_ADMIN_DB_PATH': ['AI_GATEWAY_ADMIN_DB_PATH'],
+ 'AZIZAM_ADMIN_KEY': ['AI_GATEWAY_ADMIN_KEY', 'OPENAI_PROXY_ADMIN_KEY', 'VIVID_ADMIN_API_KEY'],
+ 'AZIZAM_ADMIN_KEY_FILE': ['AI_GATEWAY_ADMIN_KEY_FILE'],
+ 'AZIZAM_ADMIN_OIDC_ADMIN_GROUPS': ['AI_GATEWAY_ADMIN_OIDC_ADMIN_GROUPS'],
+ 'AZIZAM_ADMIN_SESSION_KEY': ['AI_GATEWAY_ADMIN_SESSION_KEY', 'OPENAI_PROXY_ADMIN_SESSION_KEY'],
+ 'AZIZAM_API_KEY': ['AI_GATEWAY_API_KEY',
+                    'OPENAI_PROXY_API_KEY',
+                    'VIVID_API_KEY',
+                    'VIVID_OPENAI_API_KEY'],
+ 'AZIZAM_AUTO_CREATE_PERSONAL_APP': ['AI_GATEWAY_AUTO_CREATE_PERSONAL_APP'],
+ 'AZIZAM_BASE': ['AI_GATEWAY_BASE', 'OPENAI_PROXY_BASE'],
+ 'AZIZAM_BASE_URL': ['AI_GATEWAY_BASE_URL', 'OPENAI_PROXY_BASE_URL', 'VIVID_OPENAI_BASE_URL'],
+ 'AZIZAM_BRAND': ['AI_GATEWAY_BRAND'],
+ 'AZIZAM_CONFIG_PATH': ['AI_GATEWAY_CONFIG_PATH'],
+ 'AZIZAM_DOCKER_GATEWAY': ['AI_GATEWAY_DOCKER_GATEWAY'],
+ 'AZIZAM_DOCKER_SUBNET': ['AI_GATEWAY_DOCKER_SUBNET'],
+ 'AZIZAM_DOWNSTREAM_API_KEY': ['AI_GATEWAY_DOWNSTREAM_API_KEY'],
+ 'AZIZAM_DRAIN_RETRY_AFTER_S': ['AI_GATEWAY_DRAIN_RETRY_AFTER_S'],
+ 'AZIZAM_GRACEFUL_SHUTDOWN_S': ['AI_GATEWAY_GRACEFUL_SHUTDOWN_S'],
+ 'AZIZAM_INTERNAL_LITELLM_KEY': ['AI_GATEWAY_INTERNAL_LITELLM_KEY'],
+ 'AZIZAM_LITELLM': ['AI_GATEWAY_LITELLM'],
+ 'AZIZAM_LITELLM_API_KEY': ['AI_GATEWAY_LITELLM_API_KEY'],
+ 'AZIZAM_LITELLM_BASE_URL': ['AI_GATEWAY_LITELLM_BASE_URL'],
+ 'AZIZAM_LITELLM_CONFIG_PATH': ['AI_GATEWAY_LITELLM_CONFIG_PATH'],
+ 'AZIZAM_LITELLM_PID_FILE': ['AI_GATEWAY_LITELLM_PID_FILE'],
+ 'AZIZAM_LITELLM_RELOAD_INTERVAL': ['AI_GATEWAY_LITELLM_RELOAD_INTERVAL'],
+ 'AZIZAM_MANAGE_LITELLM': ['AI_GATEWAY_MANAGE_LITELLM'],
+ 'AZIZAM_MEDIA_JOBS_DB': ['AI_GATEWAY_MEDIA_JOBS_DB'],
+ 'AZIZAM_METRICS_DB': ['AI_GATEWAY_METRICS_DB'],
+ 'AZIZAM_OIDC_CLIENT_SECRET': ['AI_GATEWAY_OIDC_CLIENT_SECRET'],
+ 'AZIZAM_PRISMA_PREFLIGHT_TIMEOUT': ['AI_GATEWAY_PRISMA_PREFLIGHT_TIMEOUT'],
+ 'AZIZAM_PROVIDER_LEDGER_DB': ['AI_GATEWAY_PROVIDER_LEDGER_DB'],
+ 'AZIZAM_RECEIPTS_DB': ['AI_GATEWAY_RECEIPTS_DB'],
+ 'AZIZAM_REQUIREMENTS_FILE': ['AI_GATEWAY_REQUIREMENTS_FILE'],
+ 'AZIZAM_REQUIREMENTS_HASHES': ['AI_GATEWAY_REQUIREMENTS_HASHES'],
+ 'AZIZAM_RESPONSES_DB': ['AI_GATEWAY_RESPONSES_DB'],
+ 'AZIZAM_SMOKE_KEY': ['AI_GATEWAY_SMOKE_KEY'],
+ 'AZIZAM_TEST_STATE_DIR': ['AI_GATEWAY_TEST_STATE_DIR'],
+ 'AZIZAM_TEST_SUBSTRATE_BASE_URL': ['AI_GATEWAY_TEST_SUBSTRATE_BASE_URL'],
+ 'AZIZAM_URL': ['AI_GATEWAY_URL'],
+ 'AZIZAM_USER_SELF_SERVICE': ['AI_GATEWAY_USER_SELF_SERVICE'],
+ 'AZIZAM_WORDMARK': ['AI_GATEWAY_WORDMARK'],
+ 'AZIZAM_ADMIN_TOKEN': ['OPENAI_PROXY_ADMIN_TOKEN'],
+ 'AZIZAM_AUTH_ENABLED': ['OPENAI_PROXY_AUTH_ENABLED'],
+ 'AZIZAM_CF_MODE': ['OPENAI_PROXY_CF_MODE'],
+ 'AZIZAM_KEY': ['OPENAI_PROXY_KEY'],
+ 'AZIZAM_KEY_ACTIVITY_LOG': ['OPENAI_PROXY_KEY_ACTIVITY_LOG'],
+ 'AZIZAM_LAN_BYPASS': ['OPENAI_PROXY_LAN_BYPASS'],
+ 'AZIZAM_MODEL_COMPAT_ENABLED': ['OPENAI_PROXY_MODEL_COMPAT_ENABLED'],
+ 'AZIZAM_PORT': ['OPENAI_PROXY_PORT'],
+ 'AZIZAM_PUBLIC_URL': ['OPENAI_PROXY_PUBLIC_URL'],
+ 'AZIZAM_QUERY_PARAM_KEY': ['OPENAI_PROXY_QUERY_PARAM_KEY'],
+ 'AZIZAM_SETUP_ALLOWED_CIDRS': ['OPENAI_PROXY_SETUP_ALLOWED_CIDRS'],
+ 'AZIZAM_SHOWCASE_EXAMPLES_DIR': ['OPENAI_PROXY_SHOWCASE_EXAMPLES_DIR'],
+ 'AZIZAM_SMOKE_ANTHROPIC_MODEL': ['OPENAI_PROXY_SMOKE_ANTHROPIC_MODEL'],
+ 'AZIZAM_SMOKE_AUDIO_SPEECH': ['OPENAI_PROXY_SMOKE_AUDIO_SPEECH'],
+ 'AZIZAM_SMOKE_AUDIO_SPEECH_MODEL': ['OPENAI_PROXY_SMOKE_AUDIO_SPEECH_MODEL'],
+ 'AZIZAM_SMOKE_AUDIO_TRANSCRIPTION': ['OPENAI_PROXY_SMOKE_AUDIO_TRANSCRIPTION'],
+ 'AZIZAM_SMOKE_AUDIO_TRANSCRIPTION_MODEL': ['OPENAI_PROXY_SMOKE_AUDIO_TRANSCRIPTION_MODEL'],
+ 'AZIZAM_SMOKE_AUDIO_TRANSLATION': ['OPENAI_PROXY_SMOKE_AUDIO_TRANSLATION'],
+ 'AZIZAM_SMOKE_AUDIO_TRANSLATION_MODEL': ['OPENAI_PROXY_SMOKE_AUDIO_TRANSLATION_MODEL'],
+ 'AZIZAM_SMOKE_AUDIO_VOICE': ['OPENAI_PROXY_SMOKE_AUDIO_VOICE'],
+ 'AZIZAM_SMOKE_EMBEDDINGS_MODEL': ['OPENAI_PROXY_SMOKE_EMBEDDINGS_MODEL'],
+ 'AZIZAM_SMOKE_IMAGES': ['OPENAI_PROXY_SMOKE_IMAGES'],
+ 'AZIZAM_SMOKE_IMAGE_MODEL': ['OPENAI_PROXY_SMOKE_IMAGE_MODEL'],
+ 'AZIZAM_SMOKE_IMAGE_SIZE': ['OPENAI_PROXY_SMOKE_IMAGE_SIZE'],
+ 'AZIZAM_SMOKE_LIVE_EMBEDDINGS': ['OPENAI_PROXY_SMOKE_LIVE_EMBEDDINGS'],
+ 'AZIZAM_SMOKE_LIVE_LLM': ['OPENAI_PROXY_SMOKE_LIVE_LLM'],
+ 'AZIZAM_SMOKE_LIVE_TOOLS': ['OPENAI_PROXY_SMOKE_LIVE_TOOLS'],
+ 'AZIZAM_SMOKE_LIVE_VISION': ['OPENAI_PROXY_SMOKE_LIVE_VISION'],
+ 'AZIZAM_SMOKE_MODEL': ['OPENAI_PROXY_SMOKE_MODEL'],
+ 'AZIZAM_SMOKE_OLLAMA_EMBED_MODEL': ['OPENAI_PROXY_SMOKE_OLLAMA_EMBED_MODEL'],
+ 'AZIZAM_SMOKE_OLLAMA_MODEL': ['OPENAI_PROXY_SMOKE_OLLAMA_MODEL'],
+ 'AZIZAM_SMOKE_OPENAI_MODEL': ['OPENAI_PROXY_SMOKE_OPENAI_MODEL'],
+ 'AZIZAM_SMOKE_RESPONSES': ['OPENAI_PROXY_SMOKE_RESPONSES'],
+ 'AZIZAM_SMOKE_RESPONSES_MODEL': ['OPENAI_PROXY_SMOKE_RESPONSES_MODEL'],
+ 'AZIZAM_SMOKE_TIMEOUT': ['OPENAI_PROXY_SMOKE_TIMEOUT'],
+ 'AZIZAM_SMOKE_VIDEO': ['OPENAI_PROXY_SMOKE_VIDEO'],
+ 'AZIZAM_SMOKE_VIDEO_MODEL': ['OPENAI_PROXY_SMOKE_VIDEO_MODEL'],
+ 'AZIZAM_SMOKE_VISION_MODEL': ['OPENAI_PROXY_SMOKE_VISION_MODEL'],
+ 'AZIZAM_TIMEOUT_S': ['OPENAI_PROXY_TIMEOUT_S'],
+ 'AZIZAM_HERMETIC_FORBIDDEN_PRODUCTION_PATH': ['VIVID_FISH_HERMETIC_FORBIDDEN_PRODUCTION_PATH'],
+ 'AZIZAM_HERMETIC_HOST_IPC_NAMESPACE': ['VIVID_FISH_HERMETIC_HOST_IPC_NAMESPACE'],
+ 'AZIZAM_HERMETIC_HOST_PID_NAMESPACE': ['VIVID_FISH_HERMETIC_HOST_PID_NAMESPACE'],
+ 'AZIZAM_HERMETIC_HOST_RUNNER_PID': ['VIVID_FISH_HERMETIC_HOST_RUNNER_PID'],
+ 'AZIZAM_HERMETIC_PYTHON_ROOT': ['VIVID_FISH_HERMETIC_PYTHON_ROOT'],
+ 'AZIZAM_HERMETIC_REPO_ROOT': ['VIVID_FISH_HERMETIC_REPO_ROOT'],
+ 'AZIZAM_HERMETIC_STATE_DIR': ['VIVID_FISH_HERMETIC_STATE_DIR'],
+ 'AZIZAM_HERMETIC_TEST_ENV_ROOT': ['VIVID_FISH_HERMETIC_TEST_ENV_ROOT'],
+ 'AZIZAM_HERMETIC_TEST_NAMESPACE': ['VIVID_FISH_HERMETIC_TEST_NAMESPACE']}
+
+
+def get_env(name: str, default: Any = None, *, environ: Mapping[str, str] | None = None) -> Any:
+    """Read the Azizam name first, including when a stored config uses an old name."""
+    env = os.environ if environ is None else environ
+    canonical = next((new for new, old in ENV_ALIASES.items() if name in old), name)
+    for candidate in (canonical, *ENV_ALIASES.get(canonical, ())):
+        if candidate in env:
+            return env[candidate]
+    return default
+
+
+def canonical_key(key: Any) -> Any:
+    if not isinstance(key, str):
+        return key
+    for old, new in (("vivid_fish_", "azizam_"), ("com.vividfish.", "com.azizam."),
+                     ("x_ai_gateway_", "x_azizam_"), ("x-vividfish-", "x-azizam-")):
+        if key.startswith(old):
+            return new + key[len(old):]
+    return {"vivid_object": "azizam_object", "vivid_status": "azizam_status",
+            "openai_proxy_policy": "azizam_policy"}.get(key, key)
+
+
+def accept_aliases(value: Any) -> Any:
+    """Normalize old request keys; explicitly supplied new keys win."""
+    if isinstance(value, list):
+        return [accept_aliases(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    result = {key: accept_aliases(item) for key, item in value.items() if canonical_key(key) == key}
+    for key, item in value.items():
+        result.setdefault(canonical_key(key), accept_aliases(item))
+    return result
+
+
+def emit_aliases(value: Any) -> Any:
+    """The ONLY place that emits temporary old JSON field names."""
+    if isinstance(value, list):
+        return [emit_aliases(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    value = accept_aliases(value)
+    result = {key: emit_aliases(item) for key, item in value.items()}
+    for key, item in list(result.items()):
+        if not isinstance(key, str):
+            continue
+        if key.startswith("azizam_") and key != "azizam_provenance":
+            old = {"azizam_object": "vivid_object", "azizam_status": "vivid_status",
+                   "azizam_policy": "openai_proxy_policy"}.get(key, "vivid_fish_" + key[len("azizam_"):])
+            result[old] = item
+        elif key.startswith("x_azizam_"):
+            result["x_ai_gateway_" + key[len("x_azizam_"):]] = item
+        elif key.startswith("x-azizam-"):
+            result["x-vividfish-" + key[len("x-azizam-"):]] = item
+    return result
+
+
+HEADER_ALIASES = {'x-azizam-admin-action': ('x-ai-gateway-admin-action',),
+ 'x-azizam-backend': ('x-ai-gateway-backend', 'x-gateway-backend'),
+ 'x-azizam-cost-usd': ('x-gateway-cost-usd',),
+ 'x-azizam-csrf': ('x-ai-gateway-csrf',),
+ 'x-azizam-draining': ('x-gateway-draining',),
+ 'x-azizam-engine': ('x-gateway-engine', 'x-vivid-engine'),
+ 'x-azizam-execution': ('x-ai-gateway-execution',),
+ 'x-azizam-fallback': ('x-gateway-fallback', 'x-vivid-fallback'),
+ 'x-azizam-fallback-reasons': ('x-gateway-fallback-reasons',),
+ 'x-azizam-ignored-params': ('x-gateway-ignored-params',),
+ 'x-azizam-internal-protocol-forward': ('x-vivid-fish-internal-protocol-forward',),
+ 'x-azizam-key-prefix': ('x-ai-gateway-key-prefix',),
+ 'x-azizam-llm-execution': ('x-ai-gateway-llm-execution',),
+ 'x-azizam-profile': ('x-ai-gateway-profile',),
+ 'x-azizam-provider': ('x-gateway-provider',),
+ 'x-azizam-receipt-id': ('x-ai-gateway-receipt-id',),
+ 'x-azizam-remote': ('x-gateway-remote',),
+ 'x-azizam-request-id': ('x-ai-gateway-request-id', 'x-gateway-request-id'),
+ 'x-azizam-resolved-model': ('x-ai-gateway-resolved-model',),
+ 'x-azizam-service-id': ('x-ai-gateway-service-id',),
+ 'x-azizam-size-adjusted': ('x-vivid-size-adjusted',),
+ 'x-azizam-token-counting': ('x-ai-gateway-token-counting',),
+ 'x-azizam-toolcall-advisory': ('x-gateway-toolcall-advisory',),
+ 'x-azizam-user-action': ('x-ai-gateway-user-action',)}
+
+def header_names(name: str) -> tuple[str, ...]:
+    if name in HEADER_ALIASES:
+        return (name, *HEADER_ALIASES[name])
+    if name.startswith("x-azizam-"):
+        return (name, "x-ai-gateway-" + name[len("x-azizam-"):])
+    return (name,)
+
+
+def canonical_header_name(name: str) -> str:
+    name = name.lower()
+    for new, old in HEADER_ALIASES.items():
+        if name in old:
+            return new
+    for prefix in ("x-ai-gateway-", "x-gateway-"):
+        if name.startswith(prefix):
+            return "x-azizam-" + name[len(prefix):]
+    return name
+
+
+def normalize_headers(headers: list[tuple[bytes, bytes]]) -> list[tuple[bytes, bytes]]:
+    result = list(headers)
+    present = {key.lower() for key, _ in headers}
+    for key, value in headers:
+        encoded = canonical_header_name(key.decode("latin1")).encode("latin1")
+        if encoded not in present:
+            result.append((encoded, value))
+            present.add(encoded)
+    return result
+
+
+def emit_headers(headers: list[tuple[bytes, bytes]]) -> list[tuple[bytes, bytes]]:
+    """Emit equal old/new headers, replacing any stale upstream old value."""
+    normalized = normalize_headers(headers)
+    result = []
+    for key, value in normalized:
+        name = key.decode("latin1").lower()
+        if canonical_header_name(name) != name:
+            continue
+        result.append((key, value))
+        for alias in header_names(name)[1:]:
+            result.append((alias.encode("latin1"), value))
+    return result
+
+
+def emit_header_mapping(headers: Mapping[str, str]) -> dict[str, str]:
+    return {key.decode("latin1"): value.decode("latin1") for key, value in
+            emit_headers([(k.encode("latin1"), v.encode("latin1")) for k, v in headers.items()])}
+
+
+class ProductCompatibilityMiddleware:
+    """Apply migration aliases at the HTTP boundary, including streamed SSE.
+
+    JSON requests/responses are buffered; SSE is buffered only to each newline.
+    Binary, multipart and all other response bodies pass through unchanged.
+    """
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        scope = dict(scope, headers=normalize_headers(scope.get("headers", [])))
+        content_type = dict(scope["headers"]).get(b"content-type", b"").lower()
+        request_done = False
+
+        async def compatible_receive():
+            nonlocal request_done
+            if request_done or b"application/json" not in content_type:
+                return await receive()
+            message = await receive()
+            if message["type"] != "http.request":
+                return message
+            body = message.get("body", b"")
+            while message.get("more_body"):
+                message = await receive()
+                if message["type"] != "http.request":
+                    return message
+                body += message.get("body", b"")
+            request_done = True
+            try:
+                parsed = json.loads(body)
+                normalized = accept_aliases(parsed)
+                if normalized != parsed:
+                    body = json.dumps(normalized).encode()
+                    scope["headers"][:] = [(k, v) for k, v in scope["headers"] if k.lower() != b"content-length"]
+                    scope["headers"].append((b"content-length", str(len(body)).encode()))
+            except (ValueError, UnicodeError):
+                pass
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        start = None
+        mode = ""
+        pending = b""
+
+        async def compatible_send(message):
+            nonlocal start, mode, pending
+            if message["type"] == "http.response.start":
+                headers = emit_headers(list(message.get("headers", [])))
+                mime = dict(headers).get(b"content-type", b"").lower()
+                mode = "json" if b"application/json" in mime else "sse" if b"text/event-stream" in mime else ""
+                if scope.get("method") == "HEAD" or message.get("status") in (204, 304):
+                    mode = ""
+                start = dict(message, headers=headers)
+                if mode != "json":
+                    await send(start)
+                return
+            if message["type"] != "http.response.body" or not mode:
+                return await send(message)
+            pending += message.get("body", b"")
+            if mode == "json":
+                if message.get("more_body"):
+                    return
+                try:
+                    parsed = json.loads(pending)
+                    normalized = emit_aliases(parsed)
+                    if normalized != parsed:
+                        pending = json.dumps(normalized).encode()
+                except (ValueError, UnicodeError):
+                    pass
+                start["headers"] = [(k, v) for k, v in start["headers"] if k.lower() != b"content-length"]
+                start["headers"].append((b"content-length", str(len(pending)).encode()))
+                await send(start)
+                await send(dict(message, body=pending))
+                pending = b""
+            else:
+                lines = pending.splitlines(keepends=True)
+                pending = b""
+                if message.get("more_body") and lines and not lines[-1].endswith(b"\n"):
+                    pending = lines.pop()
+                output = []
+                for line in lines:
+                    if line.startswith(b"data:"):
+                        try:
+                            parsed = json.loads(line[5:])
+                            normalized = emit_aliases(parsed)
+                            if normalized != parsed:
+                                line = b"data: " + json.dumps(normalized).encode() + b"\n"
+                        except (ValueError, UnicodeError):
+                            pass
+                    output.append(line)
+                await send(dict(message, body=b"".join(output)))
+        await self.app(scope, compatible_receive, compatible_send)

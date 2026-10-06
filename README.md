@@ -1,4 +1,4 @@
-# Vivid Fish AI Gateway
+# Azizam
 
 **Your own AI provider: one endpoint and one key for your apps, local engines, and chosen remote providers.**
 

@@ -145,10 +145,10 @@ class PngTests(unittest.TestCase):
 
     def test_embed_roundtrip_and_replace(self):
         src = _png_with_text()
-        out = mm.embed_png_text(src, {"prompt": "new", "vividfish": BIG, "u": "café ☃"})
+        out = mm.embed_png_text(src, {"prompt": "new", "azizam": BIG, "u": "café ☃"})
         got = mm.png_text_chunks(out)
         self.assertEqual(got["prompt"], "new")
-        self.assertEqual(got["vividfish"], BIG)
+        self.assertEqual(got["azizam"], BIG)
         self.assertEqual(got["u"], "café ☃")
         self.assertEqual(got["workflow"], '{"nodes": []}')  # kept
         self.assertEqual(_idat(out), _idat(src))
@@ -159,9 +159,9 @@ class PngTests(unittest.TestCase):
         first_idat = types.index(b"IDAT")
         text_idx = [i for i, t in enumerate(types) if t in (b"tEXt", b"iTXt")]
         self.assertTrue(all(i < first_idat for i in text_idx if
-                            _chunks_list(out)[i][1].startswith((b"vividfish", b"u\x00"))))
+                            _chunks_list(out)[i][1].startswith((b"azizam", b"u\x00"))))
         # PIL agrees
-        self.assertEqual(Image.open(io.BytesIO(out)).text["vividfish"], BIG)
+        self.assertEqual(Image.open(io.BytesIO(out)).text["azizam"], BIG)
 
     def test_embed_on_stripped(self):
         out = mm.embed_png_text(mm.strip_metadata(_png_with_text(), ".png"), {"a": "b"})
@@ -464,19 +464,19 @@ class FfmpegTests(unittest.TestCase):
         for suffix, inp, codec, sel, custom in cases:
             with self.subTest(suffix=suffix):
                 src = self.make("e" + suffix, inp, codec)
-                out = mm.embed_media_tags(src, suffix, {"vividfish_provenance": BIG}, workdir=self.work)
+                out = mm.embed_media_tags(src, suffix, {"azizam_provenance": BIG}, workdir=self.work)
                 tags = mm.read_media_tags(out, suffix, workdir=self.work)
-                self.assertEqual(tags.get("vividfish_provenance"), BIG)
+                self.assertEqual(tags.get("azizam_provenance"), BIG)
                 self.assertEqual(tags.get("prompt"), '{"1": {}}')  # preserved
                 self.assertEqual(tags.get("workflow"), '{"nodes": []}')
                 self.assertEqual(self.md5(out, suffix, sel), self.md5(src, suffix, sel))
 
     def test_embed_wav_falls_back_to_comment(self):
         src = self.make("e.wav", self.AUDIO, ["-c:a", "pcm_s16le"], tags=False)
-        out = mm.embed_media_tags(src, ".wav", {"vividfish_provenance": BIG}, workdir=self.work)
+        out = mm.embed_media_tags(src, ".wav", {"azizam_provenance": BIG}, workdir=self.work)
         tags = mm.read_media_tags(out, ".wav", workdir=self.work)
-        self.assertNotIn("vividfish_provenance", tags)  # custom keys do not survive in WAV
-        self.assertEqual(tags.get("comment"), "vividfish_provenance=" + BIG)
+        self.assertNotIn("azizam_provenance", tags)  # custom keys do not survive in WAV
+        self.assertEqual(tags.get("comment"), "azizam_provenance=" + BIG)
         self.assertEqual(self.md5(out, ".wav", "0:a"), self.md5(src, ".wav", "0:a"))
 
     def test_embed_image_delegation(self):

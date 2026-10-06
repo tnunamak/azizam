@@ -77,7 +77,7 @@ const workflow = {
       prompt: "A small teal fish on a cream card.",
       size: "512x512",
       extensions: {
-        "com.vividfish.workflow": { steps: 8, seed: 0, style: "studio" },
+        "com.azizam.workflow": { steps: 8, seed: 0, style: "studio" },
       },
     },
   },
@@ -120,7 +120,7 @@ try {
                   })
                 : route.fulfill({
                     headers: {
-                      "x-ai-gateway-request-id": "try-review-receipt",
+                      "x-azizam-request-id": "try-review-receipt",
                     },
                     json: {
                       data: [

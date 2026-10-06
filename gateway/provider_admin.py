@@ -8,6 +8,8 @@ API projections never return their values.
 
 from __future__ import annotations
 
+from gateway.compat import get_env
+
 import hmac
 import math
 import json
@@ -392,7 +394,7 @@ def create_provider_admin_router(
             body = await _read_json_body(request)
             service = provider_configuration.provider_service_from_body(body)
             config = service.get("config") if isinstance(service.get("config"), Mapping) else {}
-            api_key = str(body.get("api_key") or "") if body.get("key_mode") != "env" else os.environ.get(str(config.get("api_key_env") or ""), "")
+            api_key = str(body.get("api_key") or "") if body.get("key_mode") != "env" else get_env(str(config.get("api_key_env") or ""), "")
             result = await provider_listing.probe_provider(config, api_key)
         except provider_configuration.ProviderConfigurationError as exc:
             return _RouteError(exc.status_code, exc.code, exc.message).as_response()
@@ -429,7 +431,7 @@ def create_provider_admin_router(
                 api_key_env = str(config.get("api_key_env") or "")
                 if api_key_env and not _provider_env_ref_origin_matches(config):
                     raise provider_listing.ProviderListingError("The provider key is approved for a different endpoint. Re-enter the key for this endpoint before running Gateway check.")
-                api_key = os.environ.get(api_key_env, "")
+                api_key = get_env(api_key_env, "")
             result = await provider_listing.probe_provider(config, api_key)
         except provider_listing.ProviderListingError as exc:
             with secret_store.provider_mutation_lock(_admin_db_path(store)):
@@ -881,7 +883,7 @@ def _provider_key_fingerprint(config: Mapping[str, Any], db_path: Path) -> tuple
             secret_revision = "unavailable"
         return ("secret", secret_id, secret_revision, config_revision)
     api_key_env = str(config.get("api_key_env") or "").strip()
-    env_value = os.environ.get(api_key_env) if api_key_env else None
+    env_value = get_env(api_key_env) if api_key_env else None
     env_revision = hashlib.sha256(env_value.encode("utf-8")).hexdigest() if env_value is not None else "missing"
     return ("env", api_key_env, env_revision, config_revision)
 
@@ -901,7 +903,7 @@ def _project_key_status(provider_id: str, config: Mapping[str, Any], db_path: Pa
     api_key_env = str(config.get("api_key_env") or "").strip()
     if api_key_env:
         return {
-            "state": "set" if os.environ.get(api_key_env) and _provider_env_ref_origin_matches(config) else "missing",
+            "state": "set" if get_env(api_key_env) and _provider_env_ref_origin_matches(config) else "missing",
             "source": "env",
             "api_key_env": api_key_env,
         }
@@ -1477,7 +1479,7 @@ def _require_admin(auth: AdminAuth, request: Request) -> AdminContext | JSONResp
         )
     if ctx.auth_method == "session" and request.method not in {"GET", "HEAD", "OPTIONS"}:
         if ctx.csrf_token:
-            supplied = request.headers.get("x-ai-gateway-csrf") or ""
+            supplied = request.headers.get("x-azizam-csrf") or ""
             if not hmac.compare_digest(supplied, ctx.csrf_token):
                 return _auth_error_response(
                     AdminAuthError(
@@ -1486,7 +1488,7 @@ def _require_admin(auth: AdminAuth, request: Request) -> AdminContext | JSONResp
                         code="admin_csrf_required",
                     )
                 )
-        elif request.headers.get("x-ai-gateway-admin-action") != "1":
+        elif request.headers.get("x-azizam-admin-action") != "1":
             return _auth_error_response(
                 AdminAuthError(
                     "admin session mutation requires same-origin admin action header",

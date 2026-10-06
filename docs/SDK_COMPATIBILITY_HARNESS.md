@@ -162,7 +162,7 @@ A first pass of this harness lives under `tests/compat/` and
 - Current Python probe coverage includes OpenAI models/embeddings, Anthropic
   Messages create/streaming, and Ollama tags/show/ps/chat/generate/embed/
   embeddings. Chat/generate probes require
-  `OPENAI_PROXY_SMOKE_LIVE_LLM=1`; embedding probes require the normal
+  `AZIZAM_SMOKE_LIVE_LLM=1`; embedding probes require the normal
   harness env plus a reachable embeddings backend.
 - `tests/compat/node/` is an isolated Node project for JS SDK probes
   (OpenAI Node, Anthropic Node, Ollama JS, Vercel AI SDK) — it does not
@@ -185,8 +185,8 @@ $PROXY_PYTHON scripts/compat/run_matrix.py --dry-run
 
 # Optional SDK probe (Python):
 $PROXY_PIP install -r tests/compat/python/requirements-openai.txt
-export OPENAI_PROXY_BASE_URL=http://127.0.0.1:8080
-export OPENAI_PROXY_API_KEY=sk-your-proxy-key
+export AZIZAM_BASE_URL=http://127.0.0.1:8080
+export AZIZAM_API_KEY=sk-your-proxy-key
 $PROXY_PYTHON -m unittest tests.compat.python.probe_openai -v
 ```
 
@@ -195,8 +195,8 @@ Node SDK probes run separately through `tests/compat/node`:
 ```bash
 cd tests/compat/node
 npm install
-OPENAI_PROXY_BASE_URL=http://127.0.0.1:8080 \
-OPENAI_PROXY_API_KEY=sk-your-proxy-key \
+AZIZAM_BASE_URL=http://127.0.0.1:8080 \
+AZIZAM_API_KEY=sk-your-proxy-key \
 npm run probe:all
 ```
 
@@ -220,17 +220,17 @@ When to use which:
 
 Env vars:
 
-- `OPENAI_PROXY_BASE_URL` (e.g. `http://127.0.0.1:5000`)
-- `OPENAI_PROXY_API_KEY` (e.g. `opk_...`)
-- `OPENAI_PROXY_SMOKE_LIVE_LLM=1` to enable the Anthropic `/v1/messages`
+- `AZIZAM_BASE_URL` (e.g. `http://127.0.0.1:5000`)
+- `AZIZAM_API_KEY` (e.g. `opk_...`)
+- `AZIZAM_SMOKE_LIVE_LLM=1` to enable the Anthropic `/v1/messages`
   and Ollama `/api/chat` round-trips. Default off — those checks skip.
-- `OPENAI_PROXY_SMOKE_LIVE_EMBEDDINGS=1` to enable `/v1/embeddings`,
+- `AZIZAM_SMOKE_LIVE_EMBEDDINGS=1` to enable `/v1/embeddings`,
   `/api/embed`, and `/api/embeddings` round-trips. Default off.
-- `OPENAI_PROXY_SMOKE_TIMEOUT` (seconds, default `10`)
-- `OPENAI_PROXY_SMOKE_ANTHROPIC_MODEL`, `OPENAI_PROXY_SMOKE_OLLAMA_MODEL`
+- `AZIZAM_SMOKE_TIMEOUT` (seconds, default `10`)
+- `AZIZAM_SMOKE_ANTHROPIC_MODEL`, `AZIZAM_SMOKE_OLLAMA_MODEL`
   to override the default probe model (`default`, the gateway logical model
   group).
-- `OPENAI_PROXY_SMOKE_EMBEDDINGS_MODEL` to override the default embedding
+- `AZIZAM_SMOKE_EMBEDDINGS_MODEL` to override the default embedding
   probe model.
 
 The script never prints the API key, prompts beyond the fixed string

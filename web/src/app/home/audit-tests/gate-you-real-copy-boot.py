@@ -24,7 +24,7 @@ from typing import Any
 import yaml
 
 ROOT = Path(__file__).resolve().parents[5]
-LIVE_CHECKOUT = Path("/home/tnunamak/applications/openai-proxy")
+LIVE_CHECKOUT = Path("/home/tnunamak/applications/azizam")
 STATE = ROOT / ".ui-e2e-state" / "gate-you-real"
 DATA = STATE / "data"
 PRIVATE = STATE / "runtime"
@@ -209,7 +209,7 @@ def prepare() -> dict[str, Any]:
         config = service.get("config") or {}
         if config.get("gateway_lifecycle"):
             config["gateway_lifecycle_base_url"] = f"http://127.0.0.1:{GATEWAY_PORT}/internal/litellm/local"
-        if sid == "openai-proxy":
+        if sid in {"azizam", "openai-proxy"}:
             config["host"] = "127.0.0.1"
             config["port"] = GATEWAY_PORT
     if "litellm" in registry.get("services", {}):
@@ -271,16 +271,16 @@ def _env(config_path: Path) -> dict[str, str]:
     Path(env["XDG_CACHE_HOME"]).mkdir(parents=True, exist_ok=True)
     env.update(
         {
-            "OPENAI_PROXY_PORT": str(GATEWAY_PORT),
-            "AI_GATEWAY_ADMIN_DB": str(DATA / "admin.db"),
-            "AI_GATEWAY_CONFIG_PATH": str(config_path),
-            "AI_GATEWAY_LITELLM_BASE_URL": f"http://127.0.0.1:{SIDECAR_PORT}",
-            "AI_GATEWAY_LITELLM_API_KEY": "sk-copy-" + secrets.token_urlsafe(32),
-            "AI_GATEWAY_INTERNAL_LITELLM_KEY": secrets.token_urlsafe(32),
-            "AI_GATEWAY_METRICS_DB": str(DATA / "metrics.db"),
-            "AI_GATEWAY_RESPONSES_DB": str(DATA / "responses.db"),
-            "AI_GATEWAY_RECEIPTS_DB": str(DATA / "receipts.db"),
-            "AI_GATEWAY_MEDIA_JOBS_DB": str(DATA / "media_jobs.db"),
+            "AZIZAM_PORT": str(GATEWAY_PORT),
+            "AZIZAM_ADMIN_DB": str(DATA / "admin.db"),
+            "AZIZAM_CONFIG_PATH": str(config_path),
+            "AZIZAM_LITELLM_BASE_URL": f"http://127.0.0.1:{SIDECAR_PORT}",
+            "AZIZAM_LITELLM_API_KEY": "sk-copy-" + secrets.token_urlsafe(32),
+            "AZIZAM_INTERNAL_LITELLM_KEY": secrets.token_urlsafe(32),
+            "AZIZAM_METRICS_DB": str(DATA / "metrics.db"),
+            "AZIZAM_RESPONSES_DB": str(DATA / "responses.db"),
+            "AZIZAM_RECEIPTS_DB": str(DATA / "receipts.db"),
+            "AZIZAM_MEDIA_JOBS_DB": str(DATA / "media_jobs.db"),
             "AGW_IMAGE_CACHE_DIR": str(PRIVATE / "cache" / "images"),
             "IMAGE_MEDIA_JOB_RESUME_ON_START": "false",
             "VIDEO_MEDIA_JOB_RESUME_ON_START": "false",
@@ -288,7 +288,7 @@ def _env(config_path: Path) -> dict[str, str]:
             "PYTHONPATH": str(ROOT),
         }
     )
-    env["LITELLM_MASTER_KEY"] = env["AI_GATEWAY_LITELLM_API_KEY"]
+    env["LITELLM_MASTER_KEY"] = env["AZIZAM_LITELLM_API_KEY"]
     return env
 
 

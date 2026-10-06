@@ -75,45 +75,45 @@ class TestStoreEnvOverrides(unittest.TestCase):
         )
 
     def test_metrics_store_override(self) -> None:
-        self._assert_override("metrics_store", "AI_GATEWAY_METRICS_DB")
+        self._assert_override("metrics_store", "AZIZAM_METRICS_DB")
 
     def test_metrics_store_default(self) -> None:
-        self._assert_default_unchanged("metrics_store", "AI_GATEWAY_METRICS_DB")
+        self._assert_default_unchanged("metrics_store", "AZIZAM_METRICS_DB")
 
     def test_admin_store_override(self) -> None:
-        self._assert_override("gateway.admin_store", "AI_GATEWAY_ADMIN_DB")
+        self._assert_override("gateway.admin_store", "AZIZAM_ADMIN_DB")
 
     def test_admin_store_default(self) -> None:
-        self._assert_default_unchanged("gateway.admin_store", "AI_GATEWAY_ADMIN_DB")
+        self._assert_default_unchanged("gateway.admin_store", "AZIZAM_ADMIN_DB")
 
     def test_responses_store_override(self) -> None:
-        self._assert_override("responses_store", "AI_GATEWAY_RESPONSES_DB")
+        self._assert_override("responses_store", "AZIZAM_RESPONSES_DB")
 
     def test_responses_store_default(self) -> None:
-        self._assert_default_unchanged("responses_store", "AI_GATEWAY_RESPONSES_DB")
+        self._assert_default_unchanged("responses_store", "AZIZAM_RESPONSES_DB")
 
     def test_receipt_store_override(self) -> None:
-        self._assert_override("gateway.receipt_store", "AI_GATEWAY_RECEIPTS_DB")
+        self._assert_override("gateway.receipt_store", "AZIZAM_RECEIPTS_DB")
 
     def test_receipt_store_default(self) -> None:
-        self._assert_default_unchanged("gateway.receipt_store", "AI_GATEWAY_RECEIPTS_DB")
+        self._assert_default_unchanged("gateway.receipt_store", "AZIZAM_RECEIPTS_DB")
 
     def test_media_jobs_override(self) -> None:
-        self._assert_override("gateway.media_jobs", "AI_GATEWAY_MEDIA_JOBS_DB")
+        self._assert_override("gateway.media_jobs", "AZIZAM_MEDIA_JOBS_DB")
 
     def test_media_jobs_default(self) -> None:
-        self._assert_default_unchanged("gateway.media_jobs", "AI_GATEWAY_MEDIA_JOBS_DB")
+        self._assert_default_unchanged("gateway.media_jobs", "AZIZAM_MEDIA_JOBS_DB")
 
 
 class TestConfigPathEnvOverride(unittest.TestCase):
-    """proxy.py CONFIG_PATH must honour AI_GATEWAY_CONFIG_PATH."""
+    """proxy.py CONFIG_PATH must honour AZIZAM_CONFIG_PATH."""
 
     def test_config_path_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             override = os.path.join(tmp, "proxy_config.yml")
             code = (
                 f"import sys; sys.path.insert(0, '{ROOT}');"
-                f"import os; os.environ['AI_GATEWAY_CONFIG_PATH'] = '{override}';"
+                f"import os; os.environ['AZIZAM_CONFIG_PATH'] = '{override}';"
                 f"import importlib.util;"
                 f"spec = importlib.util.spec_from_file_location('proxy_under_test', '{ROOT}/proxy.py');"
                 f"module = importlib.util.module_from_spec(spec);"

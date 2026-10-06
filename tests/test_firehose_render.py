@@ -26,9 +26,9 @@ def test_render_uses_shared_shell_with_active_status_nav_for_actor() -> None:
 
     assert 'class="shell-header"' in html
     assert 'class="shell-main status-firehose"' in html
-    assert 'aria-label="AI Gateway home"' in html
+    assert 'aria-label="Azizam home"' in html
     assert "shell-brand-product" in html
-    assert ">AI Gateway</span>" in html
+    assert ">Azizam</span>" in html
     assert 'href="/status" aria-current="page">Status</a>' in html
     assert 'href="/admin">Admin</a>' in html
     assert 'href="/">Home</a>' in html
@@ -83,7 +83,7 @@ def test_empty_status_sections_are_hidden_until_they_have_signal() -> None:
     assert "/v1/status (raw JSON)" in html
 
 
-def test_quick_test_snippets_use_ai_vivid_fish_host() -> None:
+def test_quick_test_snippets_use_ai_azizam_host() -> None:
     html = firehose_render._render_quick_test()
 
     assert "https://ai.vivid.fish/openai/v1/chat/completions" in html

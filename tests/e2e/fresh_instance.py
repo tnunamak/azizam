@@ -183,14 +183,14 @@ def run(compose):
         env = {"PATH": os.defpath, "HOME": str(root), "LANG": "C.UTF-8",
                "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
                "LITELLM_LOCAL_MODEL_COST_MAP": "True", "DO_NOT_TRACK": "1"}
-        env["AI_GATEWAY_CONFIG_PATH"] = str(source / "first-run.yml")
-        env["AI_GATEWAY_LITELLM_API_KEY"] = "sk-fresh-instance-test"
-        env["LITELLM_MASTER_KEY"] = env["AI_GATEWAY_LITELLM_API_KEY"]
+        env["AZIZAM_CONFIG_PATH"] = str(source / "first-run.yml")
+        env["AZIZAM_LITELLM_API_KEY"] = "sk-fresh-instance-test"
+        env["LITELLM_MASTER_KEY"] = env["AZIZAM_LITELLM_API_KEY"]
         gateway_socket, gateway_port = reserve_port(stack)
         engine_socket, engine_port = reserve_port(stack)
         substrate_socket, substrate_port = reserve_port(stack)
         if not compose:
-            env["AI_GATEWAY_LITELLM_BASE_URL"] = f"http://127.0.0.1:{substrate_port}"
+            env["AZIZAM_LITELLM_BASE_URL"] = f"http://127.0.0.1:{substrate_port}"
         log_path = root / "process.log"
         log = stack.enter_context(log_path.open("wb"))
 
@@ -226,7 +226,7 @@ def run(compose):
                     "volumes": [f"{source / 'tests/e2e/fake_engine.py'}:/fake_engine.py:ro"],
                     "restart": "no"}
             }}))
-            env["OPENAI_PROXY_PORT"] = str(gateway_port)
+            env["AZIZAM_PORT"] = str(gateway_port)
             command = ["docker", "compose", "--project-name", project, "--project-directory", str(source),
                        "-f", str(source / "docker-compose.yml"), "-f", str(override)]
 
@@ -244,7 +244,7 @@ def run(compose):
                            stderr=log, check=True, timeout=90)
             engine_url = "http://fake-engine:18001/v1"
         else:
-            env["OPENAI_PROXY_PORT"] = str(gateway_port)
+            env["AZIZAM_PORT"] = str(gateway_port)
             gateway_socket.close()
             launch([sys.executable, "proxy.py"])
             engine_socket.close()
@@ -270,7 +270,7 @@ def run(compose):
         assert match, "Setup did not return the one-time runtime key"
         key = match.group()
         print("PASS runtime App key created through /setup/first-app (redacted)", flush=True)
-        headers = {"x-ai-gateway-csrf": csrf, "x-ai-gateway-admin-action": "1"}
+        headers = {"x-azizam-csrf": csrf, "x-azizam-admin-action": "1"}
         registry = expect(client.get("/admin/api/operator/service-registry"), 200)
         headers["If-Match"] = registry.headers["etag"]
         created = expect(client.post("/admin/api/operator/services", headers=headers, json={
@@ -290,7 +290,7 @@ def run(compose):
             substrate_socket.close()
             sidecar = launch([str(Path(sys.executable).parent / "litellm"), "--config", "data/litellm.config.yaml",
                               "--host", "127.0.0.1", "--port", str(substrate_port)])
-            wait_litellm_ready(env["AI_GATEWAY_LITELLM_BASE_URL"], env["AI_GATEWAY_LITELLM_API_KEY"], sidecar)
+            wait_litellm_ready(env["AZIZAM_LITELLM_BASE_URL"], env["AZIZAM_LITELLM_API_KEY"], sidecar)
         deadline = time.monotonic() + 120
         while True:
             models = expect(client.get("/openai/v1/models", headers={"Authorization": f"Bearer {key}"}), 200).json()

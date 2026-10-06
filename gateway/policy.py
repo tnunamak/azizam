@@ -152,7 +152,7 @@ class MediaMetadataPolicy:
     ``full`` delivers the stored copy untouched (ComfyUI ``prompt``/``workflow``
     plus the gateway provenance record). ``none`` strips every metadata block
     from the delivered bytes. A request can override this per call with
-    ``extensions["com.vividfish.workflow"].metadata``. ``none`` is the safe
+    ``extensions["com.azizam.workflow"].metadata``. ``none`` is the safe
     default: only profiles that opt in deliver workflow data.
     """
 

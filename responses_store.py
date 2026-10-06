@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 _default_db = Path(__file__).parent / "data" / "responses.db"
-DB_PATH = Path(os.environ["AI_GATEWAY_RESPONSES_DB"]) if os.environ.get("AI_GATEWAY_RESPONSES_DB") else _default_db
+DB_PATH = Path(os.environ["AZIZAM_RESPONSES_DB"]) if os.environ.get("AZIZAM_RESPONSES_DB") else _default_db
 
 # Retention window for stored responses (seconds).
 RETAIN_S = 7 * 24 * 3600

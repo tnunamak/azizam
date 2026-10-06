@@ -7,7 +7,7 @@ Three incident root causes were confirmed and have targeted fixes; two related h
 | Symptom | Proven cause | Owner and landed fix |
 | --- | --- | --- |
 | After hidden reasoning was force-closed, Bee could keep decoding visible output until cancellation or a natural end. | The visible loop-guard region existed but production code never fed it after a force-close. This was visible generation, not prompt replay or a second hidden-reasoning loop. | **BeeLlama** `006023532`: guard post-force-close visible tokens; on periodic/low-entropy detection, use the normal final-response and slot-release path. Ordinary visible output remains unguarded. |
-| Daisy Escape made the UI idle while Bee continued decoding. | The gateway's LiteLLM-to-current-loaded non-stream hop used a non-blocking disconnect check after it had consumed the request body, so it could miss the outer disconnect. | **Vivid Fish gateway** `a22482b`: use the single blocking post-body disconnect watcher, return 499, cancel the read, and close/release the upstream task. |
+| Daisy Escape made the UI idle while Bee continued decoding. | The gateway's LiteLLM-to-current-loaded non-stream hop used a non-blocking disconnect check after it had consumed the request body, so it could miss the outer disconnect. | **Azizam gateway** `a22482b`: use the single blocking post-body disconnect watcher, return 499, cancel the read, and close/release the upstream task. |
 | Pi compaction retained a tail nominally sized at 20,000 tokens but rebuilt a 51,480-token Qwen request. | Pi 0.80.6's `chars / 4` tail estimate undercounted this tool-heavy context by 2.44×. Pi's recorded cut was correct for that algorithm; the estimate was not. | **Daisy** `5c831c7`: retain the 24,576-token response reserve and lower `keepRecentTokens` to 7,500. |
 | A failed Daisy summary could have committed a lossy fallback excerpt. | Compaction preparation and summary failure were not one fail-closed transaction. | **Daisy** `ba2d383`: cancel and preserve the full session on preparation, auth, serialization, or summary failure; use bounded automatic retry backoff and immediate manual retries. |
 | A context-exhausted Pi request could look like a successful one-token `length` response. | Pi can clamp output to one token when input consumes the reserved context space. | Public **pi-context-clamp-recovery** `2bd18a7`, installed by Daisy `42a8dab`, records redacted evidence in audit-only mode. No force setting is configured, so it cannot rewrite responses. |
@@ -29,7 +29,7 @@ Bee's service default may be unlimited, but a request budget overrides it. The i
 
 ### Finite aggregate-output handoff
 
-**Owner:** the Vivid Fish gateway service/model configuration owns the omitted-client aggregate-output default. Pi/Daisy must not infer it from model metadata, LiteLLM must not own it globally, and no Pi or Bee patch owns this policy.
+**Owner:** the Azizam gateway service/model configuration owns the omitted-client aggregate-output default. Pi/Daisy must not infer it from model metadata, LiteLLM must not own it globally, and no Pi or Bee patch owns this policy.
 
 Pi's `model.maxTokens` is capability/listing metadata. Normal Pi turns omit an active `max_tokens` cap unless the caller supplies one, so the displayed 16,384 value alone did not limit a normal Daisy turn. Bee's `thinking_budget_tokens` is a separate reasoning-quality control: it is per recognized reasoning block and re-arms for a later block. It is therefore orthogonal to the aggregate completion ceiling.
 
@@ -63,7 +63,7 @@ These are isolated tests; neither uses the live gateway ports.
 
 ```sh
 # Gateway cancellation: fake ASGI receiver and fake upstream; no network service.
-cd /home/tnunamak/applications/openai-proxy
+cd /home/tnunamak/applications/azizam
 ./venv/bin/python -m pytest -q \
   tests/test_litellm_internal_lifecycle_route.py::InternalCurrentLoadedCancellationTests
 ```
@@ -87,7 +87,7 @@ The Bee scenario forces a hidden-thinking close, biases a repeated visible tail,
 
 ## Remaining limits and next checks
 
-1. **7,500 is calibrated, not a hard bound.** Pi still has no token-accurate retained-tail estimate or postcondition over the rebuilt request. Validate the first post-compaction Vivid Fish request against the 32k operational target.
+1. **7,500 is calibrated, not a hard bound.** Pi still has no token-accurate retained-tail estimate or postcondition over the rebuilt request. Validate the first post-compaction Azizam request against the 32k operational target.
 2. **The exact tokenizer/cancel seam is absent.** A hard request-input ceiling needs authoritative final-payload Qwen tokenization plus a policy to resummarize/truncate long tool-result suffixes. Pi's extension surface also lacks a practical non-patching full replacement-to-compaction-to-retry seam; the clamp extension therefore remains audit-only by default.
 3. **No real MTP-model integration proof yet.** Bee's focused tests cover deterministic server behavior, grammar/reasoning, and MTP replay mechanics, but not the affected production MTP model under a real long-running integration workload.
 4. **Cache reuse is a separate performance problem.** Retaining an early hybrid-safe checkpoint could avoid future short-prefix resets; do not couple that optimization to loop finalization.
@@ -97,7 +97,7 @@ The Bee scenario forces a hidden-thinking close, biases a repeated visible tail,
 Rollback is per component and should be deliberate:
 
 - Gateway: revert `a22482b` to restore the former current-loaded disconnect behavior. `f3f7e35` changes tests only.
-- Finite output default: either restore the exact registry mapping snapshot `/home/tnunamak/.tmp/openai-proxy-registry-before-finite-output-20260714-180841.json` through `AdminSQLiteStore.update_service_registry`, or remove the selected model's output-cap attachment, then perform one gateway-only restart. `/home/tnunamak/.tmp/openai-proxy-admin-before-finite-output-20260714-180841.db` is the separate full database backup, not input to `AdminSQLiteStore.update_service_registry`. No LiteLLM, Pi, or Bee global setting is part of this rollback.
+- Finite output default: either restore the exact registry mapping snapshot `/home/tnunamak/.tmp/azizam-registry-before-finite-output-20260714-180841.json` through `AdminSQLiteStore.update_service_registry`, or remove the selected model's output-cap attachment, then perform one gateway-only restart. `/home/tnunamak/.tmp/azizam-admin-before-finite-output-20260714-180841.db` is the separate full database backup, not input to `AdminSQLiteStore.update_service_registry`. No LiteLLM, Pi, or Bee global setting is part of this rollback.
 - BeeLlama: revert `006023532` to restore pre-fix visible-tail behavior; this also restores the known post-force-close loop risk.
 - Daisy: revert `42a8dab`, `ba2d383`, and `5c831c7` in reverse dependency/order as appropriate. Reverting the 7,500 setting restores a known undercount risk; reverting transactional compaction restores the lossy-fallback risk.
 

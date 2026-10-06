@@ -1,14 +1,16 @@
 #!/bin/bash
-# E2E test for openai-proxy endpoints
-# Usage: OPENAI_PROXY_API_KEY=opk_... ./test_e2e.sh [proxy_url]
+
+source "$(dirname "${BASH_SOURCE[0]}")/scripts/azizam-env.sh"
+# E2E test for azizam endpoints
+# Usage: AZIZAM_API_KEY=opk_... ./test_e2e.sh [proxy_url]
 
 PROXY="${1:-http://127.0.0.1:5000}"
-API_KEY="${OPENAI_PROXY_API_KEY:-${2:-}}"
+API_KEY="${AZIZAM_API_KEY:-${2:-}}"
 PASS=0
 FAIL=0
 
 if [ -z "$API_KEY" ]; then
-    echo "Set OPENAI_PROXY_API_KEY or pass the API key as the second argument."
+    echo "Set AZIZAM_API_KEY or pass the API key as the second argument."
     exit 2
 fi
 

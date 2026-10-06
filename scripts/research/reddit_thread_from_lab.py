@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_LAB = Path("/tmp/ai-gateway-simulations/100x/latest/100x-trial-lab.json")
+DEFAULT_LAB = Path("/tmp/azizam-simulations/100x/latest/100x-trial-lab.json")
 DEFAULT_OUT = Path(
-    "/tmp/ai-gateway-simulations/100x/latest/simulated-reddit-thread-100x.html"
+    "/tmp/azizam-simulations/100x/latest/simulated-reddit-thread-100x.html"
 )
 
 
@@ -31,7 +31,7 @@ def render_thread(data: dict[str, Any]) -> str:
             "<head>",
             '  <meta charset="utf-8">',
             '  <meta name="viewport" content="width=device-width, initial-scale=1">',
-            "  <title>100x Simulated Reddit Thread - Vivid Fish AI Gateway</title>",
+            "  <title>100x Simulated Reddit Thread - Azizam</title>",
             "  <style>",
             CSS,
             "  </style>",
@@ -162,7 +162,7 @@ def build_comments(
     add(comment("u/runtime-is-real", 29, "r/LocalLLaMA", "Credit where due: OpenAI, Anthropic, and Ollama inference all passing in one run is not nothing.", ["Positive minority comment."]))
     add(comment("u/but-why", 27, "r/selfhosted", "I still do not understand the use case.", ["This should appear even after OP explains it."]))
     add(comment("u/use-case-answer", 13, "r/selfhosted", "Use case is one policy/auth/discovery layer over a pile of local AI services. Whether that is worth it depends on admin UX.", ["A concise helpful answer, but buried."]))
-    add(comment("u/name-is-weird", 24, "r/selfhosted", "Vivid Fish sounds like a hosted SaaS, not something I would put in my homelab.", ["Naming/branding friction is real."]))
+    add(comment("u/name-is-weird", 24, "r/selfhosted", "Azizam sounds like a hosted SaaS, not something I would put in my homelab.", ["Naming/branding friction is real."]))
     add(comment("u/too-long-didnt-read", 22, "r/LocalLLaMA", "tl;dr?", ["Runtime works, admin untested, media not generated."]))
     add(comment("u/benchmarks-or-no", 20, "r/LocalLLaMA", "Where are benchmarks versus direct llama.cpp/Ollama/vLLM? If it adds latency, I need to know.", ["Latency skepticism is core."]))
     add(comment("u/explain-value", 18, "r/selfhosted", "The first paragraph should be: 'This is not a chat app. This is auth/policy/discovery for multiple AI backends.' Everything else is noise.", ["Good product copy feedback."]))

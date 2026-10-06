@@ -634,7 +634,7 @@ class TestAceStepAudioGenerateRoute(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("payload", captured)
         error = json.loads(response.body.decode("utf-8"))["error"]
         self.assertEqual(error["param"], "steps")
-        self.assertIn("extensions.com.vividfish.workflow", error["message"])
+        self.assertIn("extensions.com.azizam.workflow", error["message"])
 
     async def test_invalid_duration_is_rejected_before_submit(self) -> None:
         response, captured = await self._call(

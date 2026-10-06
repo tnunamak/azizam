@@ -83,11 +83,11 @@ def run():
             "model_aliases": {"chat": {"stable": {name: "demo-chat" for name in ("fast", "default", "coder", "vision")}}},
             "images": {"cache_dir": str(state / "images"), "vram_estimates_file": str(state / "vram.json")}}))
         env = {"PATH": os.defpath, "HOME": str(state), "PYTHONPATH": str(ROOT),
-               "PYTHONDONTWRITEBYTECODE": "1", "AI_GATEWAY_CONFIG_PATH": str(config),
-               "AI_GATEWAY_GRACEFUL_SHUTDOWN_S": "1", "AI_GATEWAY_LITELLM_BASE_URL": f"http://127.0.0.1:{engine_port}"}
-        for name, filename in {"AI_GATEWAY_ADMIN_DB": "admin.db", "AI_GATEWAY_METRICS_DB": "metrics.db",
-            "AI_GATEWAY_RESPONSES_DB": "responses.db", "AI_GATEWAY_RECEIPTS_DB": "receipts.db",
-            "AI_GATEWAY_MEDIA_JOBS_DB": "media_jobs.db"}.items():
+               "PYTHONDONTWRITEBYTECODE": "1", "AZIZAM_CONFIG_PATH": str(config),
+               "AZIZAM_GRACEFUL_SHUTDOWN_S": "1", "AZIZAM_LITELLM_BASE_URL": f"http://127.0.0.1:{engine_port}"}
+        for name, filename in {"AZIZAM_ADMIN_DB": "admin.db", "AZIZAM_METRICS_DB": "metrics.db",
+            "AZIZAM_RESPONSES_DB": "responses.db", "AZIZAM_RECEIPTS_DB": "receipts.db",
+            "AZIZAM_MEDIA_JOBS_DB": "media_jobs.db"}.items():
             env[name] = str(state / filename)
         log = stack.enter_context((state / "process.log").open("wb"))
         engine_socket.close()
@@ -114,7 +114,7 @@ def run():
         expect(client.post("/setup/local-owner", data={"email": "owner@example.test",
             "password": "Fixture contract password 2026", "password_confirm": "Fixture contract password 2026"}), 303)
         actor = expect(client.get("/admin/api/session")).json()["actor"]
-        headers = {"x-ai-gateway-csrf": actor["csrf_token"]}
+        headers = {"x-azizam-csrf": actor["csrf_token"]}
 
         def post(path, body, extra=None):
             response = client.post(path, json=body, headers={**headers, **(extra or {})})
@@ -170,7 +170,7 @@ def run():
             assert chat[f"idle-{name}"]["availability"]["idle_startable"]
         print("PASS four stopped managed service fixtures are idle-startable without invoking systemd", flush=True)
         report = subprocess.run([sys.executable, str(ROOT / "scripts/local/availability_report.py"), str(client.base_url).rstrip("/")],
-            env={"PATH": os.defpath, "AI_GATEWAY_API_KEY": key}, capture_output=True, text=True, check=True)
+            env={"PATH": os.defpath, "AZIZAM_API_KEY": key}, capture_output=True, text=True, check=True)
         print(report.stdout, end="", flush=True)
         from pydantic import TypeAdapter
         from gateway.product_contracts import CapabilitiesResponse, HomeProjection, MemberStatus, ModelsCatalog, SetupProgress
@@ -187,14 +187,14 @@ def run():
         progress = expect(client.get("/admin/api/setup-progress")).json()
         TypeAdapter(SetupProgress).validate_python(progress)
         assert not next(step for step in progress["steps"] if step["id"] == "connect_app")["done"]
-        post("/admin/api/setup-evidence", {"event": "external_client_confirmed", "app_id": app["id"]}, {"x-ai-gateway-user-action": "1"})
+        post("/admin/api/setup-evidence", {"event": "external_client_confirmed", "app_id": app["id"]}, {"x-azizam-user-action": "1"})
         progress = expect(client.get("/admin/api/setup-progress")).json()
         assert next(step for step in progress["steps"] if step["id"] == "connect_app")["done"]
         print("PASS real internal request leaves connect_app incomplete; explicit owned-app confirmation completes it", flush=True)
         configured = "https://gateway.example.test"
         expect(client.put("/admin/api/settings/instance", headers=headers,
             json={"name": "Fixture gateway", "base_url": configured, "theme_default": "system"}))
-        for endpoint in ("/.well-known/ai-gateway", "/.well-known/openai-proxy"):
+        for endpoint in ("/.well-known/azizam", "/.well-known/azizam"):
             metadata = expect(client.get(endpoint, headers={"x-forwarded-host": "unrelated.test", "x-forwarded-proto": "http"})).json()
             assert metadata["service"]["base_url"] == configured and metadata["service"]["canonical_host"] == configured
             assert "compatibility_aliases" not in metadata["service"]
@@ -210,7 +210,7 @@ if __name__ == "__main__":
     elif len(sys.argv) > 1 and sys.argv[1] == "gateway":
         from scripts.ui.fixture_guard import install
         import yaml
-        fixture_config = yaml.safe_load(Path(os.environ["AI_GATEWAY_CONFIG_PATH"]).read_text())
+        fixture_config = yaml.safe_load(Path(os.environ["AZIZAM_CONFIG_PATH"]).read_text())
         install({int(sys.argv[2]), *(backend["port"] for backend in fixture_config["backends"].values())})
         from gateway import lifecycle_drivers
         async def stopped(self, service):

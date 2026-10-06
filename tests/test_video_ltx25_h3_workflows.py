@@ -56,14 +56,14 @@ class ModelDiscoveryTests(unittest.TestCase):
         self.assertIn("US, EU, UK", by_id["video-minimax-h3-i2v"]["description"])
         self.assertIn("CC BY-NC", by_id["yue2-song"]["description"])
         self.assertIn("MAXIMUM", by_id["yue2-song"]["description"])
-        self.assertEqual(by_id["yue2-song"]["vivid_fish_intent"], "audio.generate")
-        self.assertEqual(by_id["video-ltx-2.5-t2v"]["vivid_fish_intent"], "video.generate")
+        self.assertEqual(by_id["yue2-song"]["azizam_intent"], "audio.generate")
+        self.assertEqual(by_id["video-ltx-2.5-t2v"]["azizam_intent"], "video.generate")
 
     def test_every_listed_media_id_resolves_on_its_route(self) -> None:
         for entry in proxy._build_workflow_model_entries():
-            if entry["vivid_fish_intent"] == "video.generate":
+            if entry["azizam_intent"] == "video.generate":
                 self.assertIsNotNone(proxy._resolve_video_workflow(entry["id"])[1], entry["id"])
-            elif entry["vivid_fish_intent"] == "audio.generate":
+            elif entry["azizam_intent"] == "audio.generate":
                 self.assertIsNotNone(proxy._resolve_audio_workflow(entry["id"])[1], entry["id"])
 
 
@@ -214,7 +214,7 @@ class VideoCreateGraphTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(status, 200, payload)
         self.assertEqual(payload["model"], "video-ltx-2.5-t2v")
-        self.assertEqual(payload["vivid_fish_resolved_model"], "video-ltx-2.5-i2v")
+        self.assertEqual(payload["azizam_resolved_model"], "video-ltx-2.5-i2v")
         self.assertEqual(graph["70"]["inputs"]["image"], "uploaded-ref.png")
         self.assertEqual(graph["79"]["inputs"]["value"], 0.7)
 
@@ -239,7 +239,7 @@ class VideoCreateGraphTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(status, 200, payload)
         self.assertEqual(payload["model"], "minimax-h3")
-        self.assertEqual(payload["vivid_fish_resolved_model"], "video-minimax-h3-t2v")
+        self.assertEqual(payload["azizam_resolved_model"], "video-minimax-h3-t2v")
         self.assertEqual(payload["size"], "960x544")
         self.assertEqual(graph["9"]["inputs"]["prompt"], "a cat walks\n\nAudio: footsteps")
         self.assertNotIn("text", graph["9"]["inputs"])
@@ -255,7 +255,7 @@ class VideoCreateGraphTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(status, 200, payload)
         self.assertEqual(payload["model"], "minimax-h3")
-        self.assertEqual(payload["vivid_fish_resolved_model"], "video-minimax-h3-i2v")
+        self.assertEqual(payload["azizam_resolved_model"], "video-minimax-h3-i2v")
         self.assertEqual(graph["20"]["inputs"]["image"], "uploaded-ref.png")
         self.assertEqual(graph["9"]["inputs"]["prompt"], "x")
 
@@ -266,7 +266,7 @@ class VideoCreateGraphTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(status, 200, payload)
         self.assertEqual(payload["model"], "ltx-2.3")
-        self.assertEqual(payload["vivid_fish_resolved_model"], "video-ltx-2.5-i2v")
+        self.assertEqual(payload["azizam_resolved_model"], "video-ltx-2.5-i2v")
         self.assertEqual(graph["70"]["inputs"]["image"], "uploaded-ref.png")
 
     async def test_long_workflow_builds_a_segment_chain(self) -> None:
@@ -275,7 +275,7 @@ class VideoCreateGraphTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(status, 200, payload)
         self.assertEqual(payload["model"], "video-long")
-        self.assertEqual(payload["vivid_fish_resolved_model"], "video-ltx-2.5-long")
+        self.assertEqual(payload["azizam_resolved_model"], "video-ltx-2.5-long")
         self.assertEqual(graph["s0_text"]["inputs"]["text"], "a long walk")
         self.assertEqual(graph["s0_noise"]["inputs"]["noise_seed"], 5)
         self.assertEqual(graph["s1_noise"]["inputs"]["noise_seed"], 6)
@@ -293,7 +293,7 @@ class VideoCreateGraphTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(status, 200, payload)
         self.assertEqual(payload["model"], "ltx-2.3-long")
-        self.assertEqual(payload["vivid_fish_resolved_model"], "video-ltx-2.5-long")
+        self.assertEqual(payload["azizam_resolved_model"], "video-ltx-2.5-long")
         self.assertEqual(graph["s0_image"]["inputs"]["image"], "uploaded-ref.png")
         self.assertEqual(graph["s0_i2v"]["inputs"]["strength"], 1.0)
 

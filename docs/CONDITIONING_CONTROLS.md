@@ -34,16 +34,16 @@ multipart field:
 
 ```bash
 curl -s http://127.0.0.1:5000/v1/images/edits \
-  -H "Authorization: Bearer $OPENAI_PROXY_API_KEY" \
+  -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -F model=flux2-klein-4b-edit-controlnet \
   -F prompt='preserve the geometry, paint it as underwater rock' \
   -F image=@input.png \
   -F control_image=@edge-map.png \
-  -F 'extensions={"com.vividfish.workflow":{"control_image":{"multipart_field":"control_image"},"controlnet_strength":0.75}}'
+  -F 'extensions={"com.azizam.workflow":{"control_image":{"multipart_field":"control_image"},"controlnet_strength":0.75}}'
 ```
 
 `control_image` in the form is transport only. The actual API control is still
-`extensions.com.vividfish.workflow.control_image`, and it must be listed by the
+`extensions.com.azizam.workflow.control_image`, and it must be listed by the
 selected workflow manifest as an `asset` input.
 
 JSON clients that already have a backend-ready or gateway asset reference can
@@ -54,7 +54,7 @@ send the asset value directly under the same extension name:
   "model": "image.edit.example-controlnet",
   "prompt": "preserve geometry",
   "extensions": {
-    "com.vividfish.workflow": {
+    "com.azizam.workflow": {
       "control_image": {"asset_id": "asset_123"},
       "controlnet_strength": 0.75
     }

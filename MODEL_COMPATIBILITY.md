@@ -106,7 +106,7 @@ OpenAI's official `GET /v1/models` endpoint returns currently available model
 IDs for an API key. The proxy can cache those IDs locally:
 
 ```bash
-cd /path/to/openai-proxy
+cd /path/to/azizam
 OPENAI_MODEL_DISCOVERY_API_KEY='sk-...' ./venv/bin/python proxy.py refresh-openai-models
 ```
 

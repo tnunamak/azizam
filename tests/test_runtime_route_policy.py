@@ -350,7 +350,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         auth_context = proxy.AuthContext(identity=identity)
         body = json.dumps({"model": "test-model"}).encode("utf-8")
 
-        direct_decision = proxy._openai_proxy_policy_decision(
+        direct_decision = proxy._azizam_policy_decision(
             auth_context,
             "/v1/chat/completions",
             body,
@@ -743,7 +743,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         ids = [item["id"] for item in response.json()["data"]]
         self.assertEqual(ids, ["default"])
         self.assertEqual(
-            response.json()["vivid_fish_profile_model_allowlist"],
+            response.json()["azizam_profile_model_allowlist"],
             ["default"],
         )
 
@@ -781,9 +781,9 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         ids = {item["id"] for item in response.json()["data"]}
         self.assertIn("default", ids)
         self.assertNotIn(OTHER_ROLE, ids)
-        self.assertEqual(response.json()["vivid_fish_target_visibility"], "available")
-        self.assertEqual(response.json()["vivid_fish_target_activation"], "existing_only")
-        self.assertEqual(response.json()["vivid_fish_model_access"], "current_loaded")
+        self.assertEqual(response.json()["azizam_target_visibility"], "available")
+        self.assertEqual(response.json()["azizam_target_activation"], "existing_only")
+        self.assertEqual(response.json()["azizam_model_access"], "current_loaded")
 
         with authenticated_profile(current_loaded), patch.object(
             proxy, "ROLES", _roles_with_other_model()
@@ -1245,7 +1245,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertIn("stt", proxy._PROVIDER_NATIVE_TARGETS)
         self.assertIn("embeddings", proxy._PROVIDER_NATIVE_TARGETS)
         self.assertIn("comfyui", proxy._PROVIDER_NATIVE_TARGETS)
-        self.assertNotIn("openai-proxy", proxy._PROVIDER_NATIVE_TARGETS)
+        self.assertNotIn("azizam", proxy._PROVIDER_NATIVE_TARGETS)
 
     def test_provider_native_list_projects_profile_policy(self) -> None:
         profile = AppProfile(

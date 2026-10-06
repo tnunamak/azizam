@@ -16,18 +16,18 @@ def test_gateway_persistent_stores_use_the_pytest_state_directory(
     gateway_test_state_dir: Path,
 ) -> None:
     actual = {
-        "AI_GATEWAY_ADMIN_DB": proxy.ADMIN_DB_PATH,
+        "AZIZAM_ADMIN_DB": proxy.ADMIN_DB_PATH,
         "admin_store default": admin_store.DB_PATH,
-        "AI_GATEWAY_METRICS_DB": metrics_store.DB_PATH,
-        "AI_GATEWAY_RESPONSES_DB": responses_store.DB_PATH,
-        "AI_GATEWAY_RECEIPTS_DB": receipt_store.DB_PATH,
-        "AI_GATEWAY_MEDIA_JOBS_DB": media_jobs.DB_PATH,
+        "AZIZAM_METRICS_DB": metrics_store.DB_PATH,
+        "AZIZAM_RESPONSES_DB": responses_store.DB_PATH,
+        "AZIZAM_RECEIPTS_DB": receipt_store.DB_PATH,
+        "AZIZAM_MEDIA_JOBS_DB": media_jobs.DB_PATH,
     }
     assert actual == {
-        "AI_GATEWAY_ADMIN_DB": gateway_test_state_dir / "admin.db",
+        "AZIZAM_ADMIN_DB": gateway_test_state_dir / "admin.db",
         "admin_store default": gateway_test_state_dir / "admin.db",
-        "AI_GATEWAY_METRICS_DB": gateway_test_state_dir / "metrics.db",
-        "AI_GATEWAY_RESPONSES_DB": gateway_test_state_dir / "responses.db",
-        "AI_GATEWAY_RECEIPTS_DB": gateway_test_state_dir / "receipts.db",
-        "AI_GATEWAY_MEDIA_JOBS_DB": gateway_test_state_dir / "media_jobs.db",
+        "AZIZAM_METRICS_DB": gateway_test_state_dir / "metrics.db",
+        "AZIZAM_RESPONSES_DB": gateway_test_state_dir / "responses.db",
+        "AZIZAM_RECEIPTS_DB": gateway_test_state_dir / "receipts.db",
+        "AZIZAM_MEDIA_JOBS_DB": gateway_test_state_dir / "media_jobs.db",
     }

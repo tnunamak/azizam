@@ -31,6 +31,8 @@ of scope here — this module is the durable substrate those routes call into.
 
 from __future__ import annotations
 
+from gateway.compat import get_env
+
 import json
 import os
 import secrets
@@ -42,7 +44,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 _default_db = Path(__file__).resolve().parent.parent / "data" / "admin.db"
-DB_PATH = Path(os.environ["AI_GATEWAY_ADMIN_DB"]) if os.environ.get("AI_GATEWAY_ADMIN_DB") else _default_db
+DB_PATH = Path(get_env("AZIZAM_ADMIN_DB")) if get_env("AZIZAM_ADMIN_DB") else _default_db
 
 SCHEMA_VERSION = 3
 

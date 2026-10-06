@@ -8,6 +8,8 @@ the already-resolved request facts.
 
 from __future__ import annotations
 
+from gateway.compat import get_env
+
 import json
 import os
 import sqlite3
@@ -29,7 +31,7 @@ USD_QUANTUM = Decimal("0.000000001")
 DEFAULT_PROVIDER_CONCURRENCY_LIMIT = 2
 DEFAULT_PROVIDER_REQUEST_TIMEOUT_S = 120.0
 DEFAULT_LEDGER_PATH = Path(
-    os.environ.get("AI_GATEWAY_PROVIDER_LEDGER_DB", "data/provider_spend.db")
+    get_env("AZIZAM_PROVIDER_LEDGER_DB", "data/provider_spend.db")
 )
 _PROCESS_UUID = uuid.uuid4().hex
 DEFAULT_USAGE_PRICE_REQUIREMENTS = (
@@ -903,7 +905,7 @@ def resolve_provider_api_key(provider: ProviderRef, *, db_path: Path | None = No
             return ""
         if actual_origin != expected_origin:
             return ""
-        value = os.environ.get(provider.api_key_env, "")
+        value = get_env(provider.api_key_env, "")
         if value:
             return value
     return ""

@@ -1,5 +1,5 @@
 """
-/v1/status endpoint for the openai-proxy status dashboard ("firehose" build).
+/v1/status endpoint for the azizam status dashboard ("firehose" build).
 
 Design:
 - Every section is wrapped so a failing probe never propagates.
@@ -14,6 +14,8 @@ Privacy:
 """
 
 from __future__ import annotations
+
+from gateway.compat import get_env
 
 import asyncio
 import json
@@ -94,7 +96,7 @@ _DISK_PARTITIONS_CONFIG = [
 
 # Hot-spot directories the firehose should surface separately from the root partition.
 def _optional_path(env_key: str, default: str | None = None) -> Path | None:
-    val = os.environ.get(env_key, default or "")
+    val = get_env(env_key, default or "")
     return Path(val) if val else None
 
 
@@ -992,7 +994,7 @@ def _ram_attribution() -> dict:
 
 
 def _repo_state() -> dict:
-    """Snapshot the openai-proxy git repo: branch, dirty/clean, ahead/behind
+    """Snapshot the azizam git repo: branch, dirty/clean, ahead/behind
     origin/main, latest commit subject + age, and up to 5 modified files.
     All git invocations have a 2s timeout and the function never raises.
     """
@@ -1949,17 +1951,19 @@ def _reboot_history(n: int = 5) -> list[dict]:
 
 
 def _proxy_restart_count() -> Optional[int]:
-    rc, out, _ = _run(
-        ["systemctl", "--user", "show", "openai-proxy.service", "-p", "NRestarts"],
-        timeout=1.0,
-    )
-    if rc != 0:
-        return None
-    if "=" in out:
-        try:
-            return int(out.strip().split("=", 1)[1])
-        except Exception:
-            return None
+    for unit in ("azizam.service", "openai-proxy.service"):
+        rc, out, _ = _run(
+            ["systemctl", "--user", "show", unit, "-p", "NRestarts", "-p", "LoadState"],
+            timeout=1.0,
+        )
+        if rc != 0 or "LoadState=not-found" in out:
+            continue
+        for line in out.splitlines():
+            if line.startswith("NRestarts="):
+                try:
+                    return int(line.split("=", 1)[1])
+                except ValueError:
+                    return None
     return None
 
 
@@ -2642,7 +2646,7 @@ def _voices_summary(proxy_module) -> Optional[dict]:
             "native_voices": sorted(native_voices),
             "example_curl": (
                 "curl -s http://127.0.0.1:5000/v1/audio/speech "
-                "-H 'Authorization: Bearer $OPENAI_PROXY_KEY' "
+                "-H 'Authorization: Bearer $AZIZAM_KEY' "
                 "-H 'Content-Type: application/json' "
                 "-d '{\"model\":\"voxtral-4b-tts\",\"voice\":\"nova\",\"input\":\"hello\"}' "
                 "--output out.mp3"

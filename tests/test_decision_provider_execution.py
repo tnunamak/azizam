@@ -299,7 +299,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body["id"], "dec_1")
         self.assertEqual(seen["url"], "https://openai.test/v1/decisions")
         self.assertEqual(seen["body"]["input"], "hi")
-        self.assertEqual(response.headers["x-gateway-cost-usd"], "0.000222000")
+        self.assertEqual(response.headers["x-azizam-cost-usd"], "0.000222000")
         with sqlite3.connect(self.ledger) as conn:
             rows = conn.execute("SELECT status, actual_usd FROM provider_spend").fetchall()
         self.assertEqual(rows, [("settled", "0.000222000")])
@@ -411,7 +411,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers["x-gateway-cost-usd"], "unknown")
+        self.assertEqual(response.headers["x-azizam-cost-usd"], "unknown")
         with sqlite3.connect(self.ledger) as conn:
             rows = conn.execute("SELECT status, actual_usd FROM provider_spend").fetchall()
         self.assertEqual(rows, [("needs_reconciliation", None)])
@@ -479,7 +479,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers["x-gateway-cost-usd"], "unknown")
+        self.assertEqual(response.headers["x-azizam-cost-usd"], "unknown")
         with sqlite3.connect(self.ledger) as conn:
             rows = conn.execute("SELECT status, actual_usd FROM provider_spend").fetchall()
         self.assertEqual(rows, [("needs_reconciliation", None)])
@@ -502,7 +502,7 @@ class DecisionProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers["x-gateway-cost-usd"], "unknown")
+        self.assertEqual(response.headers["x-azizam-cost-usd"], "unknown")
         with sqlite3.connect(self.ledger) as conn:
             rows = conn.execute("SELECT status, actual_usd FROM provider_spend").fetchall()
         self.assertEqual(rows, [("needs_reconciliation", None)])

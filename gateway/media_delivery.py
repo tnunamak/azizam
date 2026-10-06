@@ -4,7 +4,7 @@ The gateway keeps every generated asset with full metadata (ComfyUI ``prompt``
 and ``workflow`` plus a gateway provenance record). Whether the bytes sent to
 a client keep that metadata is decided per request, in this order:
 
-1. ``extensions["com.vividfish.workflow"].metadata`` on the request;
+1. ``extensions["com.azizam.workflow"].metadata`` on the request;
 2. the caller's app profile (``media_metadata.default``);
 3. ``none`` (safe default when neither is known).
 
@@ -48,7 +48,7 @@ class DeliveryContext:
 
 
 _CONTEXT: contextvars.ContextVar[DeliveryContext | None] = contextvars.ContextVar(
-    "vividfish_media_delivery", default=None
+    "azizam_media_delivery", default=None
 )
 
 
@@ -83,7 +83,7 @@ def note_body(body: Mapping[str, Any] | None) -> str | None:
 def note_query(items: Iterable[tuple[str, Any]]) -> str | None:
     """Record the control from GET query params.
 
-    Accepts the extension form ``extensions[com.vividfish.workflow][metadata]``
+    Accepts the extension form ``extensions[com.azizam.workflow][metadata]``
     (the same bracket syntax multipart forms use) and the short ``metadata``.
     """
     from gateway.video_inputs import parse_bracket_form
@@ -125,7 +125,7 @@ def attach_provenance(
 ) -> bytes:
     """Embed the provenance record into the bytes that will be stored.
 
-    PNG gets a ``vividfish_provenance`` text chunk; video and audio get a
+    PNG gets a ``azizam_provenance`` text chunk; video and audio get a
     container tag. JPEG and WebP are handled at encode time (EXIF), so they
     pass through unchanged here. Failure to embed never fails the request:
     the original bytes come back and the caller still stores a full copy.

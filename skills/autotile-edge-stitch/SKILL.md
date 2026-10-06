@@ -29,7 +29,7 @@ tiles, a preview, and a manifest.
 Example configuration (replace every value with your own installation):
 
 ```bash
-export AI_GATEWAY_API_KEY='…' # set locally; never commit or paste this value
+export AZIZAM_API_KEY='…' # set locally; never commit or paste this value
 export AUTOTILE_GATEWAY_BASE_URL='https://your-gateway.example/openai/v1'
 export AUTOTILE_TEXTURE_MODEL='my-seamless-image-model'
 export AUTOTILE_COMFY_URL='http://your-comfy-host:your-port'
@@ -49,7 +49,7 @@ export AUTOTILE_INPAINT_STITCH_NODE='InpaintStitchImproved'
 ```
 
 `AUTOTILE_GATEWAY_API_KEY_ENV` can name a different environment variable. The
-builders use `AI_GATEWAY_API_KEY` by default. `AUTOTILE_TEMP_DIR` defaults to
+builders use `AZIZAM_API_KEY` by default. `AUTOTILE_TEMP_DIR` defaults to
 `~/.tmp`; use it for large verification scratch space instead of `/tmp`.
 
 ## Build a two-material set

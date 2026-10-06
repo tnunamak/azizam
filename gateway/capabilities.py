@@ -309,9 +309,9 @@ def canonicalize_workflow_capabilities(
         if not isinstance(entry, Mapping):
             continue
         public_id = entry.get("id")
-        workflow_id = entry.get("vivid_fish_workflow_id")
-        intent = entry.get("vivid_fish_intent")
-        backend = entry.get("vivid_fish_backend")
+        workflow_id = entry.get("azizam_workflow_id")
+        intent = entry.get("azizam_intent")
+        backend = entry.get("azizam_backend")
         if not all(isinstance(value, str) and value for value in (public_id, workflow_id, intent, backend)):
             continue
         for identity in (public_id, workflow_id):

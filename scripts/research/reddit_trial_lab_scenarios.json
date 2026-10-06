@@ -10,7 +10,7 @@
       {"id": "docker_assets", "type": "local_exists", "required": true, "paths": ["Dockerfile", "docker-compose.yml"], "note": "compose-first packaging evidence"},
       {"id": "first_run_docs", "type": "local_exists", "required": true, "paths": ["docs/FIRST_RUN_SETUP.md", "docs/REVERSE_PROXY.md"], "note": "operator setup docs"},
       {"id": "health", "type": "http", "method": "GET", "path": "/health", "auth": "none", "expect_status": [200], "required": true},
-      {"id": "discovery", "type": "http", "method": "GET", "path": "/.well-known/ai-gateway", "auth": "none", "expect_status": [200], "required": true},
+      {"id": "discovery", "type": "http", "method": "GET", "path": "/.well-known/azizam", "auth": "none", "expect_status": [200], "required": true},
       {"id": "setup_page", "type": "http", "method": "GET", "path": "/setup", "auth": "none", "expect_status": [200, 302], "required": true},
       {"id": "admin_login", "type": "http", "method": "GET", "path": "/admin/login", "auth": "none", "expect_status": [200, 302, 501], "required": true},
       {"id": "admin_overview", "type": "http", "method": "GET", "path": "/admin/api/overview", "auth": "admin", "expect_status": [200], "required": false}
@@ -30,7 +30,7 @@
     "why_it_matters": "The product is not just for the operator; normal users should not need Tim-level context to use a key.",
     "steps": [
       {"id": "home", "type": "http", "method": "GET", "path": "/", "auth": "none", "expect_status": [200, 302, 401], "required": true},
-      {"id": "discovery", "type": "http", "method": "GET", "path": "/.well-known/ai-gateway", "auth": "none", "expect_status": [200], "required": true},
+      {"id": "discovery", "type": "http", "method": "GET", "path": "/.well-known/azizam", "auth": "none", "expect_status": [200], "required": true},
       {"id": "models", "type": "http", "method": "GET", "path": "/openai/v1/models", "auth": "runtime", "expect_status": [200], "required": true},
       {"id": "capabilities", "type": "http", "method": "GET", "path": "/gateway/v1/capabilities", "auth": "runtime", "expect_status": [200], "required": true},
       {"id": "runtime_key_cannot_admin", "type": "http", "method": "GET", "path": "/admin/api/overview", "auth": "runtime", "expect_status": [403], "required": true}

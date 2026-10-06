@@ -1,33 +1,33 @@
 // Anthropic Node SDK probe.
 //
 // Run only after `npm install` in this directory and after exporting
-// OPENAI_PROXY_BASE_URL / OPENAI_PROXY_API_KEY. Live model calls are
-// gated behind OPENAI_PROXY_SMOKE_LIVE_LLM=1.
+// AZIZAM_BASE_URL / AZIZAM_API_KEY. Live model calls are
+// gated behind AZIZAM_SMOKE_LIVE_LLM=1.
 
 import test from "node:test";
 import assert from "node:assert/strict";
 
-const baseURL = process.env.OPENAI_PROXY_BASE_URL?.replace(/\/$/, "");
-const apiKey = process.env.OPENAI_PROXY_API_KEY;
-const liveLLM = process.env.OPENAI_PROXY_SMOKE_LIVE_LLM === "1";
-const model = process.env.OPENAI_PROXY_SMOKE_ANTHROPIC_MODEL || "default";
-const timeout = Number(process.env.OPENAI_PROXY_SMOKE_TIMEOUT || "10") * 1000;
+const baseURL = process.env.AZIZAM_BASE_URL?.replace(/\/$/, "");
+const apiKey = process.env.AZIZAM_API_KEY;
+const liveLLM = process.env.AZIZAM_SMOKE_LIVE_LLM === "1";
+const model = process.env.AZIZAM_SMOKE_ANTHROPIC_MODEL || "default";
+const timeout = Number(process.env.AZIZAM_SMOKE_TIMEOUT || "10") * 1000;
 
 function requireApiKey(t) {
   if (!apiKey) {
-    t.skip("OPENAI_PROXY_API_KEY not set; authenticated SDK probe disabled");
+    t.skip("AZIZAM_API_KEY not set; authenticated SDK probe disabled");
   }
 }
 
 function requireLiveLLM(t) {
   requireApiKey(t);
   if (!liveLLM) {
-    t.skip("OPENAI_PROXY_SMOKE_LIVE_LLM not set; live LLM probe disabled");
+    t.skip("AZIZAM_SMOKE_LIVE_LLM not set; live LLM probe disabled");
   }
 }
 
 if (!baseURL) {
-  test("anthropic-node probe disabled", { skip: "OPENAI_PROXY_BASE_URL not set" }, () => {});
+  test("anthropic-node probe disabled", { skip: "AZIZAM_BASE_URL not set" }, () => {});
 } else {
   const { default: Anthropic } = await import("@anthropic-ai/sdk");
   const client = new Anthropic({

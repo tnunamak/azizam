@@ -380,7 +380,7 @@ class ModelsCatalogBuildTests(unittest.TestCase):
                 Capability(intent="image.generate", backend="image-service",
                            workflow="image.poster", policy_available=False),
             ],
-            model_entries=[{"id": "poster", "vivid_fish_workflow_id": "image.poster"}],
+            model_entries=[{"id": "poster", "azizam_workflow_id": "image.poster"}],
         )
         self.assertEqual(catalog["aliases"], [])
 
@@ -522,9 +522,9 @@ class ModelsCatalogBuildTests(unittest.TestCase):
                 {
                     "id": "poster",
                     "description": "Public poster workflow",
-                    "vivid_fish_workflow": True,
-                    "vivid_fish_workflow_id": "image.poster",
-                    "vivid_fish_intent": "image.generate",
+                    "azizam_workflow": True,
+                    "azizam_workflow_id": "image.poster",
+                    "azizam_intent": "image.generate",
                 }
             ],
         )
@@ -825,7 +825,7 @@ class ModelsCatalogBuildTests(unittest.TestCase):
     def test_public_workflow_model_keeps_manifest_metadata_and_own_receipts(self) -> None:
         catalog = build_models_catalog(
             capabilities=[Capability(intent="image.generate", backend="svc", workflow="image.poster")],
-            model_entries=[{"id": "poster", "vivid_fish_workflow_id": "image.poster"}],
+            model_entries=[{"id": "poster", "azizam_workflow_id": "image.poster"}],
             workflow_records=[{"id": "image.poster", "manifest": {
                 "id": "image.poster", "display_name": "Poster image",
                 "description": "Create a poster", "typical_seconds": 12,

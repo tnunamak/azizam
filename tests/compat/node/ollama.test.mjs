@@ -1,19 +1,19 @@
 // Ollama JavaScript SDK probe.
 //
 // Run only after `npm install` in this directory and after exporting
-// OPENAI_PROXY_BASE_URL / OPENAI_PROXY_API_KEY. Live LLM and embedding
+// AZIZAM_BASE_URL / AZIZAM_API_KEY. Live LLM and embedding
 // round-trips are gated behind explicit smoke flags.
 
 import test from "node:test";
 import assert from "node:assert/strict";
 
-const baseURL = process.env.OPENAI_PROXY_BASE_URL?.replace(/\/$/, "");
-const apiKey = process.env.OPENAI_PROXY_API_KEY;
-const liveLLM = process.env.OPENAI_PROXY_SMOKE_LIVE_LLM === "1";
-const liveEmbeddings = process.env.OPENAI_PROXY_SMOKE_LIVE_EMBEDDINGS === "1";
-const model = process.env.OPENAI_PROXY_SMOKE_OLLAMA_MODEL || "default";
+const baseURL = process.env.AZIZAM_BASE_URL?.replace(/\/$/, "");
+const apiKey = process.env.AZIZAM_API_KEY;
+const liveLLM = process.env.AZIZAM_SMOKE_LIVE_LLM === "1";
+const liveEmbeddings = process.env.AZIZAM_SMOKE_LIVE_EMBEDDINGS === "1";
+const model = process.env.AZIZAM_SMOKE_OLLAMA_MODEL || "default";
 const embeddingModel =
-  process.env.OPENAI_PROXY_SMOKE_OLLAMA_EMBED_MODEL || "nomic-embed-text-v1.5";
+  process.env.AZIZAM_SMOKE_OLLAMA_EMBED_MODEL || "nomic-embed-text-v1.5";
 
 function field(value, name) {
   if (value && typeof value === "object" && name in value) {
@@ -24,26 +24,26 @@ function field(value, name) {
 
 function requireApiKey(t) {
   if (!apiKey) {
-    t.skip("OPENAI_PROXY_API_KEY not set; authenticated SDK probe disabled");
+    t.skip("AZIZAM_API_KEY not set; authenticated SDK probe disabled");
   }
 }
 
 function requireLiveLLM(t) {
   requireApiKey(t);
   if (!liveLLM) {
-    t.skip("OPENAI_PROXY_SMOKE_LIVE_LLM not set; live LLM probe disabled");
+    t.skip("AZIZAM_SMOKE_LIVE_LLM not set; live LLM probe disabled");
   }
 }
 
 function requireLiveEmbeddings(t) {
   requireApiKey(t);
   if (!liveEmbeddings) {
-    t.skip("OPENAI_PROXY_SMOKE_LIVE_EMBEDDINGS not set; live embeddings probe disabled");
+    t.skip("AZIZAM_SMOKE_LIVE_EMBEDDINGS not set; live embeddings probe disabled");
   }
 }
 
 if (!baseURL) {
-  test("ollama-js probe disabled", { skip: "OPENAI_PROXY_BASE_URL not set" }, () => {});
+  test("ollama-js probe disabled", { skip: "AZIZAM_BASE_URL not set" }, () => {});
 } else {
   const { Ollama } = await import("ollama");
   const client = new Ollama({

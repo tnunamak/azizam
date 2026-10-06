@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Collect and normalize Reddit-like research corpora.
 
-This script captures the repeatable parts of the AI Gateway Reddit research:
+This script captures the repeatable parts of the Azizam Reddit research:
 
 - run a query plan across target subreddits;
 - prefer Reddit's public JSON endpoints, with Arctic Shift as a fallback;
@@ -29,8 +29,8 @@ from typing import Any, Iterable
 
 
 DEFAULT_PLAN = Path(__file__).with_name("reddit_corpus_queries.json")
-DEFAULT_OUT = Path("/tmp/ai-gateway-reddit-corpus")
-USER_AGENT = "Mozilla/5.0 ai-gateway-research"
+DEFAULT_OUT = Path("/tmp/azizam-reddit-corpus")
+USER_AGENT = "Mozilla/5.0 azizam-research"
 ARCTIC_BASE = "https://arctic-shift.photon-reddit.com"
 REDDIT_BASE = "https://www.reddit.com"
 

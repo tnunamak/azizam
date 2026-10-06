@@ -1,7 +1,7 @@
 """OpenAI Python SDK probe.
 
 Skipped by default unless the optional ``openai`` package is installed
-and ``OPENAI_PROXY_BASE_URL``/``OPENAI_PROXY_API_KEY`` are set.
+and ``AZIZAM_BASE_URL``/``AZIZAM_API_KEY`` are set.
 
 Install with::
 
@@ -27,8 +27,8 @@ except ImportError:  # pragma: no cover - exercised only without the SDK
 
 @unittest.skipUnless(_openai is not None, "openai SDK not installed")
 @unittest.skipUnless(
-    os.environ.get("OPENAI_PROXY_BASE_URL"),
-    "OPENAI_PROXY_BASE_URL not set; live SDK probe disabled",
+    os.environ.get("AZIZAM_BASE_URL"),
+    "AZIZAM_BASE_URL not set; live SDK probe disabled",
 )
 class TestOpenAIPythonSDK(unittest.TestCase):
     """Live SDK probe.
@@ -62,7 +62,7 @@ class TestOpenAIPythonSDK(unittest.TestCase):
     def test_embeddings_create(self) -> None:
         result = self.client.embeddings.create(
             model=os.environ.get(
-                "OPENAI_PROXY_SMOKE_EMBEDDINGS_MODEL",
+                "AZIZAM_SMOKE_EMBEDDINGS_MODEL",
                 "nomic-embed-text-v1.5",
             ),
             input="compatibility probe",
@@ -75,11 +75,11 @@ class TestOpenAIPythonSDK(unittest.TestCase):
         self.assertIsInstance(embedding[0], float)
 
     def _require_live_llm(self) -> None:
-        if os.environ.get("OPENAI_PROXY_SMOKE_LIVE_LLM") != "1":
-            self.skipTest("OPENAI_PROXY_SMOKE_LIVE_LLM=1 not set; live LLM probe disabled")
+        if os.environ.get("AZIZAM_SMOKE_LIVE_LLM") != "1":
+            self.skipTest("AZIZAM_SMOKE_LIVE_LLM=1 not set; live LLM probe disabled")
 
     def _chat_model(self) -> str:
-        return os.environ.get("OPENAI_PROXY_SMOKE_OPENAI_MODEL", "default")
+        return os.environ.get("AZIZAM_SMOKE_OPENAI_MODEL", "default")
 
     def test_chat_completions_create(self) -> None:
         self._require_live_llm()
@@ -192,13 +192,13 @@ class TestOpenAIPythonSDK(unittest.TestCase):
 
         Vision-only opt-in: text-only local backends would 4xx on the image
         content block and that isn't a gateway-shape failure, so this case
-        requires ``OPENAI_PROXY_SMOKE_LIVE_VISION=1`` in addition to the
+        requires ``AZIZAM_SMOKE_LIVE_VISION=1`` in addition to the
         normal live LLM gate.
         """
         self._require_live_llm()
-        if os.environ.get("OPENAI_PROXY_SMOKE_LIVE_VISION") != "1":
+        if os.environ.get("AZIZAM_SMOKE_LIVE_VISION") != "1":
             self.skipTest(
-                "OPENAI_PROXY_SMOKE_LIVE_VISION=1 not set; "
+                "AZIZAM_SMOKE_LIVE_VISION=1 not set; "
                 "vision probe disabled (text-only backends would 4xx the image block)"
             )
         # Smallest possible PNG (1x1 transparent), embedded as a data URL so this
@@ -209,7 +209,7 @@ class TestOpenAIPythonSDK(unittest.TestCase):
         )
         result = self.client.chat.completions.create(
             model=os.environ.get(
-                "OPENAI_PROXY_SMOKE_VISION_MODEL",
+                "AZIZAM_SMOKE_VISION_MODEL",
                 self._chat_model(),
             ),
             messages=[

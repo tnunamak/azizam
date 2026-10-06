@@ -125,10 +125,10 @@ class DoctorTests(unittest.TestCase):
         self.assertNotIn("secret-value", repr(result))
 
     def test_auth_env_reports_only_redacted_presence(self) -> None:
-        result = doctor.check_auth_env({"OPENAI_PROXY_API_KEY": "sk-local-secret"}).to_dict()
+        result = doctor.check_auth_env({"AZIZAM_API_KEY": "sk-local-secret"}).to_dict()
 
         self.assertEqual(result["status"], "ok")
-        self.assertEqual(result["details"]["variables"], {"OPENAI_PROXY_API_KEY": "<redacted>"})
+        self.assertEqual(result["details"]["variables"], {"AZIZAM_API_KEY": "<redacted>"})
         self.assertNotIn("sk-local-secret", repr(result))
 
     def test_run_doctor_does_not_read_local_key_store(self) -> None:

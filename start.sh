@@ -1,5 +1,5 @@
 #!/bin/bash
-# Vivid Fish AI Gateway service starter
+# Azizam service starter
 # Unified local AI API for TabbyAPI/KoboldCpp/TTS/STT/ComfyUI backends
 # Served externally at ai.vivid.fish (via Traefik on 192.168.1.4)
 
@@ -20,13 +20,16 @@ if [ ! -d "venv" ]; then
     uv venv venv --python 3.12
 fi
 
+
+source "$(dirname "${BASH_SOURCE[0]}")/scripts/azizam-env.sh"
+
 source venv/bin/activate
 
-REQ_FILE="${AI_GATEWAY_REQUIREMENTS_FILE:-requirements.txt}"
+REQ_FILE="${AZIZAM_REQUIREMENTS_FILE:-requirements.txt}"
 REQ_HASH="$(sha256sum "$REQ_FILE" | awk '{print $1}')"
 REQ_STAMP="venv/.requirements.sha256"
 if [ ! -f "$REQ_STAMP" ] || [ "$(cat "$REQ_STAMP")" != "$REQ_HASH" ]; then
-    if [ "${AI_GATEWAY_REQUIREMENTS_HASHES:-false}" = "true" ]; then
+    if [ "${AZIZAM_REQUIREMENTS_HASHES:-false}" = "true" ]; then
         uv pip install --python ./venv/bin/python --require-hashes -r "$REQ_FILE"
     else
         uv pip install --python ./venv/bin/python -r "$REQ_FILE"
@@ -35,24 +38,24 @@ if [ ! -f "$REQ_STAMP" ] || [ "$(cat "$REQ_STAMP")" != "$REQ_HASH" ]; then
 fi
 
 # Config via environment (override proxy_config.yml defaults)
-export OPENAI_PROXY_PORT="${OPENAI_PROXY_PORT:-5000}"
+export AZIZAM_PORT="${AZIZAM_PORT:-5000}"
 export TABBY_IDLE_TIMEOUT="${TABBY_IDLE_TIMEOUT:-300}"
 export TTS_ENABLED="${TTS_ENABLED:-true}"
 export TTS_HOST="${TTS_HOST:-http://127.0.0.1:8001}"
-export AI_GATEWAY_LITELLM_BASE_URL="${AI_GATEWAY_LITELLM_BASE_URL:-http://127.0.0.1:4011}"
-export AI_GATEWAY_LITELLM_API_KEY="${AI_GATEWAY_LITELLM_API_KEY:-$(python3 - <<'PY'
+export AZIZAM_LITELLM_BASE_URL="${AZIZAM_LITELLM_BASE_URL:-http://127.0.0.1:4011}"
+export AZIZAM_LITELLM_API_KEY="${AZIZAM_LITELLM_API_KEY:-$(python3 - <<'PY'
 import secrets
 print('sk-local-' + secrets.token_urlsafe(24))
 PY
 )}"
-export LITELLM_MASTER_KEY="${LITELLM_MASTER_KEY:-$AI_GATEWAY_LITELLM_API_KEY}"
-export AI_GATEWAY_INTERNAL_LITELLM_KEY="${AI_GATEWAY_INTERNAL_LITELLM_KEY:-$(python3 - <<'PY'
+export LITELLM_MASTER_KEY="${LITELLM_MASTER_KEY:-$AZIZAM_LITELLM_API_KEY}"
+export AZIZAM_INTERNAL_LITELLM_KEY="${AZIZAM_INTERNAL_LITELLM_KEY:-$(python3 - <<'PY'
 import secrets
 print(secrets.token_urlsafe(32))
 PY
 )}"
 
-if [ "${AI_GATEWAY_MANAGE_LITELLM:-true}" != "false" ]; then
+if [ "${AZIZAM_MANAGE_LITELLM:-true}" != "false" ]; then
     # LiteLLM's virtual-key DB path shells out to the Prisma CLI when
     # DATABASE_URL is set. In systemd, nvm-managed node is not on PATH, so
     # prisma-client-py falls back to ~/.cache/prisma-python/nodeenv. If a prior
@@ -67,20 +70,20 @@ if [ "${AI_GATEWAY_MANAGE_LITELLM:-true}" != "false" ]; then
             echo "[start] Removing incomplete Prisma nodeenv cache: $PRISMA_NODEENV_DIR" >&2
             rm -rf "$PRISMA_NODEENV_DIR"
         fi
-        if ! timeout "${AI_GATEWAY_PRISMA_PREFLIGHT_TIMEOUT:-90}" python3 -m prisma --version >/dev/null; then
+        if ! timeout "${AZIZAM_PRISMA_PREFLIGHT_TIMEOUT:-90}" python3 -m prisma --version >/dev/null; then
             echo "[start] Prisma CLI preflight failed; refusing to start LiteLLM with an unchecked DB schema." >&2
             exit 1
         fi
     fi
 
-    LITELLM_CONFIG_PATH="${AI_GATEWAY_LITELLM_CONFIG_PATH:-data/litellm.config.yaml}"
-    AI_GATEWAY_ADMIN_DB_PATH="${AI_GATEWAY_ADMIN_DB:-data/admin.db}"
+    LITELLM_CONFIG_PATH="${AZIZAM_LITELLM_CONFIG_PATH:-data/litellm.config.yaml}"
+    AZIZAM_ADMIN_DB_PATH="${AZIZAM_ADMIN_DB:-data/admin.db}"
     mkdir -p "$(dirname "$LITELLM_CONFIG_PATH")"
-    LITELLM_PID_FILE="${AI_GATEWAY_LITELLM_PID_FILE:-data/litellm.pid}"
+    LITELLM_PID_FILE="${AZIZAM_LITELLM_PID_FILE:-data/litellm.pid}"
     LITELLM_PID=""
 
     start_litellm() {
-        python3 -m gateway.provider_sidecar run --db "$AI_GATEWAY_ADMIN_DB_PATH" -- \
+        python3 -m gateway.provider_sidecar run --db "$AZIZAM_ADMIN_DB_PATH" -- \
             litellm --config "$LITELLM_CONFIG_PATH" --host 127.0.0.1 --port 4011 &
         LITELLM_PID=$!
         echo "$LITELLM_PID" > "$LITELLM_PID_FILE"
@@ -89,7 +92,7 @@ if [ "${AI_GATEWAY_MANAGE_LITELLM:-true}" != "false" ]; then
     litellm_runtime_hash() {
         {
             sha256sum "$LITELLM_CONFIG_PATH" | awk '{print $1}'
-            python3 -m gateway.provider_sidecar fingerprint --db "$AI_GATEWAY_ADMIN_DB_PATH"
+            python3 -m gateway.provider_sidecar fingerprint --db "$AZIZAM_ADMIN_DB_PATH"
         } | sha256sum | awk '{print $1}'
     }
 
@@ -107,7 +110,7 @@ if [ "${AI_GATEWAY_MANAGE_LITELLM:-true}" != "false" ]; then
                 start_litellm
                 LAST_HASH="$NEXT_HASH"
             fi
-            sleep "${AI_GATEWAY_LITELLM_RELOAD_INTERVAL:-2}"
+            sleep "${AZIZAM_LITELLM_RELOAD_INTERVAL:-2}"
         done
     }
 

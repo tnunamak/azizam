@@ -12,7 +12,7 @@ Code: `gateway/model_metadata.py` (pure derivation), wired in `proxy.py` (`list_
 
 ## Fields
 
-Every entry keeps `id`, `object: "model"`, `created`, `owned_by` and every existing `vivid_fish_*` field.
+Every entry keeps `id`, `object: "model"`, `created`, `owned_by` and every existing `azizam_*` field.
 The new fields are additive; OpenAI clients ignore unknown keys (checked against the `openai` Python SDK
 `Model` type in `tests/test_model_metadata_endpoints.py`).
 

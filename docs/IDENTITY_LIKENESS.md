@@ -6,7 +6,7 @@ Two native routes, one CPU sidecar.
 |---|---|---|
 | `POST /gateway/v1/faces/likeness` | Scores the faces in `candidate` against the people in the `reference` photos. | CPU, about 2 s warm |
 | `POST /gateway/v1/images/identity` | Puts the people from the reference photos into a new scene. Runs up to N seeds, scores each, refines people who still fail, returns the best with its scores. Async media job by default. | GPU, about 2-3 min per attempt |
-| `POST /v1/images/edits` with `model=image-identity` | Same pipeline as the route above. Reference photos are the `image[]` parts. Options go in `extensions["com.vividfish.workflow"]`. | same |
+| `POST /v1/images/edits` with `model=image-identity` | Same pipeline as the route above. Reference photos are the `image[]` parts. Options go in `extensions["com.azizam.workflow"]`. | same |
 
 Both are typed in `/openapi.json`, listed in `/gateway/v1/workflows` and `/gateway/v1/capabilities`
 (`image.edit.image-identity`, `image.analyze.face-likeness`) and in `/v1/models` (`image-identity`).
@@ -82,7 +82,7 @@ warns (`pose_risks_likeness`). A result head turned past |yaw| 0.45 gets a note 
 the scores. The job waits for ComfyUI up to `identity.max_wait_s` (3600) instead of the 300 s image timeout,
 so a prompt queued behind a long video is not cancelled. Jobs live in memory: a gateway restart fails them
 ("submit it again"). `mode=sync` keeps the connection open for the whole run. The `/v1/images/edits` alias
-stays synchronous unless `extensions["com.vividfish.workflow"].mode` is `async`.
+stays synchronous unless `extensions["com.azizam.workflow"].mode` is `async`.
 
 A head-swap LoRA pass (BFS head V1.1) was also tested and lowered scores, so there is no swap pass.
 

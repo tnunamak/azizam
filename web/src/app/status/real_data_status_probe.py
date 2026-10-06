@@ -29,7 +29,7 @@ def fail(message: str) -> None:
 
 
 def configure_environment() -> None:
-    live = Path("/home/tnunamak/applications/openai-proxy/data").resolve()
+    live = Path("/home/tnunamak/applications/azizam/data").resolve()
     if not DATA.exists():
         fail(f"copied data dir missing: {DATA}; run cp -a {live} {DATA}")
     if DATA.resolve() == live:
@@ -58,14 +58,14 @@ def configure_environment() -> None:
             "HOME": str(home),
             "XDG_CONFIG_HOME": str(home / ".config"),
             "XDG_CACHE_HOME": str(home / ".cache"),
-            "AI_GATEWAY_CONFIG_PATH": str(config_path),
-            "AI_GATEWAY_ADMIN_DB": str(DATA / "admin.db"),
-            "AI_GATEWAY_METRICS_DB": str(DATA / "metrics.db"),
-            "AI_GATEWAY_RESPONSES_DB": str(DATA / "responses.db"),
-            "AI_GATEWAY_RECEIPTS_DB": str(DATA / "receipts.db"),
-            "AI_GATEWAY_MEDIA_JOBS_DB": str(DATA / "media_jobs.db"),
-            "AI_GATEWAY_PROVIDER_LEDGER_DB": str(DATA / "provider_spend.db"),
-            "AI_GATEWAY_GRACEFUL_SHUTDOWN_S": "1",
+            "AZIZAM_CONFIG_PATH": str(config_path),
+            "AZIZAM_ADMIN_DB": str(DATA / "admin.db"),
+            "AZIZAM_METRICS_DB": str(DATA / "metrics.db"),
+            "AZIZAM_RESPONSES_DB": str(DATA / "responses.db"),
+            "AZIZAM_RECEIPTS_DB": str(DATA / "receipts.db"),
+            "AZIZAM_MEDIA_JOBS_DB": str(DATA / "media_jobs.db"),
+            "AZIZAM_PROVIDER_LEDGER_DB": str(DATA / "provider_spend.db"),
+            "AZIZAM_GRACEFUL_SHUTDOWN_S": "1",
             "AGW_HOST_TELEMETRY_DISABLED": "1",
             "IMAGE_MEDIA_JOB_RESUME_ON_START": "false",
             "PYTHONDONTWRITEBYTECODE": "1",

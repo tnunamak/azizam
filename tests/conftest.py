@@ -14,15 +14,15 @@ from _hermetic import HermeticGuard, assert_hermetic_environment
 # The runner creates exactly one unique, disk-backed state directory before
 # pytest collection.  Refusing a direct pytest invocation prevents import-time
 # gateway stores from falling back to a real operator database.
-if os.environ.get("VIVID_FISH_HERMETIC_TEST_NAMESPACE") != "1":
+if os.environ.get("AZIZAM_HERMETIC_TEST_NAMESPACE") != "1":
     pytest.exit("pytest must run through scripts/run-hermetic-pytest.sh", returncode=2)
-_STATE_DIR = Path(os.environ["AI_GATEWAY_TEST_STATE_DIR"])
+_STATE_DIR = Path(os.environ["AZIZAM_TEST_STATE_DIR"])
 _STORE_PATHS = {
-    "AI_GATEWAY_ADMIN_DB": "admin.db",
-    "AI_GATEWAY_METRICS_DB": "metrics.db",
-    "AI_GATEWAY_RESPONSES_DB": "responses.db",
-    "AI_GATEWAY_RECEIPTS_DB": "receipts.db",
-    "AI_GATEWAY_MEDIA_JOBS_DB": "media_jobs.db",
+    "AZIZAM_ADMIN_DB": "admin.db",
+    "AZIZAM_METRICS_DB": "metrics.db",
+    "AZIZAM_RESPONSES_DB": "responses.db",
+    "AZIZAM_RECEIPTS_DB": "receipts.db",
+    "AZIZAM_MEDIA_JOBS_DB": "media_jobs.db",
 }
 
 # Test modules import proxy during collection.  These must be set while pytest

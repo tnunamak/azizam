@@ -142,15 +142,15 @@ records:
       - methods: [POST]
         canonical: /v1/chat/completions
         alias: /openai/v1/chat/completions
-        openai_proxy_policy: {protocol: openai.chat, intent: chat.completions}
+        azizam_policy: {protocol: openai.chat, intent: chat.completions}
       - methods: [POST]
         canonical: /v1/completions
         alias: /openai/v1/completions
-        openai_proxy_policy: {protocol: openai.chat, intent: text.completions}
+        azizam_policy: {protocol: openai.chat, intent: text.completions}
       - methods: [POST]
         canonical: /v1/embeddings
         alias: /openai/v1/embeddings
-        openai_proxy_policy: {protocol: openai.embeddings, intent: text.embeddings}
+        azizam_policy: {protocol: openai.embeddings, intent: text.embeddings}
     public_discovery:
       compatibility: openai-compatible
       default: true
@@ -158,7 +158,7 @@ records:
       recipe:
         canonical_base_url: /openai/v1
         compatibility_base_url: /v1
-        auth: "Authorization: Bearer $OPENAI_PROXY_API_KEY"
+        auth: "Authorization: Bearer $AZIZAM_API_KEY"
         models_url: /openai/v1/models
         chat_url: /openai/v1/chat/completions
       streaming:
@@ -338,7 +338,7 @@ records:
         compatibility_base_url: /
         tags_url: /ollama/api/tags
         chat_url: /ollama/api/chat
-        auth: "Authorization: Bearer $OPENAI_PROXY_API_KEY; set auth.ollama_compat_discovery: true (or OLLAMA_COMPAT_DISCOVERY=true) to allow unauthenticated /api/tags and /api/version for local-only deployments"
+        auth: "Authorization: Bearer $AZIZAM_API_KEY; set auth.ollama_compat_discovery: true (or OLLAMA_COMPAT_DISCOVERY=true) to allow unauthenticated /api/tags and /api/version for local-only deployments"
         unsupported_lifecycle:
           - create
           - pull
@@ -404,14 +404,14 @@ records:
       aud: {protocol: openai.audio, intent: audio.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: batch}
       vid: {protocol: openai.video, intent: video.generate, backend: comfyui, capability_exposure: default, capability_trust_tier: stable, capability_resource_tier: expensive}
     public_discovery:
-      compatibility: ai-gateway-native
+      compatibility: azizam-native
       default: false
       base_url_recipe: "{base_url}/gateway/v1"
       recipe:
         canonical_base_url: /gateway/v1
         capabilities_url: /gateway/v1/capabilities
         providers_url: /gateway/v1/providers
-        auth: "Authorization: Bearer $OPENAI_PROXY_API_KEY"
+        auth: "Authorization: Bearer $AZIZAM_API_KEY"
       streaming: {}
       endpoints:
         - /gateway/v1/capabilities
@@ -449,7 +449,7 @@ records:
         discovery_url: /gateway/v1/providers
         provider_url: /gateway/v1/providers/{provider}
         passthrough_url_template: /gateway/v1/providers/{provider}/{path...}
-        auth: "Authorization: Bearer $OPENAI_PROXY_API_KEY plus App profile native_passthrough permission"
+        auth: "Authorization: Bearer $AZIZAM_API_KEY plus App profile native_passthrough permission"
         discovery_facts: Provider rows include caller-projected native_passthrough policy, allowed operations/backends, required gateway auth, non-secret downstream auth classes when known, and live enabled state.
         collision_strategy: Canonical protocol frontends own /openai/v1, /anthropic/v1, /ollama/api, /v1, and /api. Provider-native passthrough is only under /gateway/v1/providers/{provider}/{path...}.
       streaming: {}

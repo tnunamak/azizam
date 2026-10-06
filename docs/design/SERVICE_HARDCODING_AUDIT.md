@@ -128,7 +128,7 @@ management · [routing] request steering · [health] checks/status ·
 | firehose_render.py:716-991 | health | swap-lock keys "tabby_swap_in_progress"/"kobold_swap_in_progress" |
 | firehose_render.py:2514-2531 | health | literal bmap key lookups tabbyapi/tabby, comfyui/comfy |
 | data/litellm.config.yaml | config | generated artifact carries gguf filenames + ports (regenerated from registry, but committed) |
-| start.sh | config | OPENAI_PROXY_PORT and service env plumbing outside the registry |
+| start.sh | config | AZIZAM_PORT and service env plumbing outside the registry |
 
 ## What this means for migration
 

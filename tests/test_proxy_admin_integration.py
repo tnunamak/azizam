@@ -57,8 +57,8 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.old_auth_enabled = proxy.AUTH_ENABLED
         self.env_patcher = patch.dict(os.environ, {}, clear=False)
         self.env_patcher.start()
-        os.environ.pop("AI_GATEWAY_USER_SELF_SERVICE", None)
-        os.environ.pop("AI_GATEWAY_AUTO_CREATE_PERSONAL_APP", None)
+        os.environ.pop("AZIZAM_USER_SELF_SERVICE", None)
+        os.environ.pop("AZIZAM_AUTO_CREATE_PERSONAL_APP", None)
         proxy.ADMIN_STORE.path = self.db
         proxy.ADMIN_OIDC_STATES.clear()
         proxy.AUTH_ENABLED = True
@@ -313,7 +313,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
     def test_admin_dashboard_renders_with_admin_key(self) -> None:
         response = self.client.get("/admin", headers=self._auth())
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertIn("AI Gateway Admin", response.text)
+        self.assertIn("Azizam Admin", response.text)
         self.assertIn("Create App", response.text)
         self.assertIn("No App keys yet", response.text)
         self.assertIn("const policyCatalog=", response.text)
@@ -337,7 +337,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         cfg = OIDCConfig(
             enabled=True,
             issuer="https://idp.example",
-            client_id="ai-gateway",
+            client_id="azizam",
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
@@ -361,7 +361,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         cfg = OIDCConfig(
             enabled=True,
             issuer="https://idp.example",
-            client_id="ai-gateway",
+            client_id="azizam",
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
@@ -426,7 +426,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         cfg = OIDCConfig(
             enabled=True,
             issuer="https://idp.example",
-            client_id="ai-gateway",
+            client_id="azizam",
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
@@ -487,7 +487,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         cfg = OIDCConfig(
             enabled=True,
             issuer="https://idp.example",
-            client_id="ai-gateway",
+            client_id="azizam",
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
@@ -559,7 +559,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         cfg = OIDCConfig(
             enabled=True,
             issuer="https://idp.example",
-            client_id="ai-gateway",
+            client_id="azizam",
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
@@ -614,7 +614,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         cfg = OIDCConfig(
             enabled=True,
             issuer="https://idp.example",
-            client_id="ai-gateway",
+            client_id="azizam",
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
@@ -696,7 +696,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         cfg = OIDCConfig(
             enabled=True,
             issuer="https://idp.example",
-            client_id="ai-gateway",
+            client_id="azizam",
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
@@ -746,7 +746,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         cfg = OIDCConfig(
             enabled=True,
             issuer="https://idp.example",
-            client_id="ai-gateway",
+            client_id="azizam",
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
@@ -812,7 +812,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         cfg = OIDCConfig(
             enabled=True,
             issuer="https://idp.example",
-            client_id="ai-gateway",
+            client_id="azizam",
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
@@ -879,7 +879,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         cfg = OIDCConfig(
             enabled=True,
             issuer="https://idp.example",
-            client_id="ai-gateway",
+            client_id="azizam",
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
@@ -927,7 +927,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         cfg = OIDCConfig(
             enabled=True,
             issuer="https://idp.example",
-            client_id="ai-gateway",
+            client_id="azizam",
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
@@ -1085,7 +1085,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         cfg = OIDCConfig(
             enabled=True,
             issuer="https://idp.example",
-            client_id="ai-gateway",
+            client_id="azizam",
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
@@ -1147,7 +1147,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         cfg = OIDCConfig(
             enabled=True,
             issuer="https://idp.example",
-            client_id="ai-gateway",
+            client_id="azizam",
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
@@ -1223,8 +1223,8 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             f"/me/api/apps/{app_id}/keys",
             json={"label": "Brother laptop"},
             headers={
-                "x-ai-gateway-user-action": "1",
-                "x-ai-gateway-csrf": session_resp.json()["csrf_token"],
+                "x-azizam-user-action": "1",
+                "x-azizam-csrf": session_resp.json()["csrf_token"],
             },
         )
         self.assertEqual(minted.status_code, 201, minted.text)
@@ -1235,8 +1235,8 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         access = self.client.get(
             f"/me/api/credentials/{credential['id']}/access",
             headers={
-                "x-ai-gateway-user-action": "1",
-                "x-ai-gateway-csrf": csrf,
+                "x-azizam-user-action": "1",
+                "x-azizam-csrf": csrf,
             },
         )
         self.assertEqual(access.status_code, 200, access.text)
@@ -1246,8 +1246,8 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         revoked = self.client.delete(
             f"/me/api/credentials/{credential['id']}",
             headers={
-                "x-ai-gateway-user-action": "1",
-                "x-ai-gateway-csrf": csrf,
+                "x-azizam-user-action": "1",
+                "x-azizam-csrf": csrf,
             },
         )
         self.assertEqual(revoked.status_code, 200, revoked.text)
@@ -1267,7 +1267,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         cfg = OIDCConfig(
             enabled=True,
             issuer="https://idp.example",
-            client_id="ai-gateway",
+            client_id="azizam",
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
@@ -1373,7 +1373,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         cfg = OIDCConfig(
             enabled=True,
             issuer="https://idp.example",
-            client_id="ai-gateway",
+            client_id="azizam",
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
@@ -1479,8 +1479,8 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
                     encode_session_cookie(session, signing_key=cfg.signing_key),
                 )
                 return {
-                    "x-ai-gateway-user-action": "1",
-                    "x-ai-gateway-csrf": csrf_token_for_session(
+                    "x-azizam-user-action": "1",
+                    "x-azizam-csrf": csrf_token_for_session(
                         session, signing_key=cfg.signing_key
                     ),
                 }
@@ -1653,7 +1653,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         cfg = OIDCConfig(
             enabled=True,
             issuer="https://idp.example",
-            client_id="ai-gateway",
+            client_id="azizam",
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
@@ -1721,7 +1721,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         cfg = OIDCConfig(
             enabled=True,
             issuer="https://idp.example",
-            client_id="ai-gateway",
+            client_id="azizam",
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
@@ -1759,8 +1759,8 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             "/me/api/apps",
             json={"name": "New user laptop"},
             headers={
-                "x-ai-gateway-user-action": "1",
-                "x-ai-gateway-csrf": csrf,
+                "x-azizam-user-action": "1",
+                "x-azizam-csrf": csrf,
             },
         )
         self.assertEqual(requested.status_code, 201, requested.text)
@@ -1775,8 +1775,8 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             f"/me/api/apps/{requested.json()['app']['id']}/keys",
             json={"label": "New user laptop"},
             headers={
-                "x-ai-gateway-user-action": "1",
-                "x-ai-gateway-csrf": csrf,
+                "x-azizam-user-action": "1",
+                "x-azizam-csrf": csrf,
             },
         )
         self.assertEqual(minted.status_code, 201, minted.text)
@@ -1795,8 +1795,8 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         deleted = self.client.delete(
             f"/me/api/apps/{requested.json()['app']['id']}",
             headers={
-                "x-ai-gateway-user-action": "1",
-                "x-ai-gateway-csrf": csrf,
+                "x-azizam-user-action": "1",
+                "x-azizam-csrf": csrf,
             },
         )
         self.assertEqual(deleted.status_code, 200, deleted.text)
@@ -1810,7 +1810,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         cfg = OIDCConfig(
             enabled=True,
             issuer="https://idp.example",
-            client_id="ai-gateway",
+            client_id="azizam",
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),
@@ -1854,8 +1854,8 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
                 "/me/api/apps",
                 json={"name": "Blocked"},
                 headers={
-                    "x-ai-gateway-user-action": "1",
-                    "x-ai-gateway-csrf": csrf,
+                    "x-azizam-user-action": "1",
+                    "x-azizam-csrf": csrf,
                 },
             )
             self.assertEqual(created.status_code, 403)
@@ -1865,8 +1865,8 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
                 f"/me/api/apps/{app['id']}/keys",
                 json={"label": "Blocked"},
                 headers={
-                    "x-ai-gateway-user-action": "1",
-                    "x-ai-gateway-csrf": csrf,
+                    "x-azizam-user-action": "1",
+                    "x-azizam-csrf": csrf,
                 },
             )
             self.assertEqual(minted.status_code, 403)
@@ -1875,8 +1875,8 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             deleted = self.client.delete(
                 f"/me/api/apps/{app['id']}",
                 headers={
-                    "x-ai-gateway-user-action": "1",
-                    "x-ai-gateway-csrf": csrf,
+                    "x-azizam-user-action": "1",
+                    "x-azizam-csrf": csrf,
                 },
             )
             self.assertEqual(deleted.status_code, 403)
@@ -2042,8 +2042,8 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         with patch.object(proxy, "user_defaults_cfg", {}), patch.dict(
             os.environ,
             {
-                "AI_GATEWAY_USER_SELF_SERVICE": "false",
-                "AI_GATEWAY_AUTO_CREATE_PERSONAL_APP": "false",
+                "AZIZAM_USER_SELF_SERVICE": "false",
+                "AZIZAM_AUTO_CREATE_PERSONAL_APP": "false",
             },
             clear=False,
         ):
@@ -2059,7 +2059,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
 
         with patch.dict(
             os.environ,
-            {"AI_GATEWAY_USER_SELF_SERVICE": "true"},
+            {"AZIZAM_USER_SELF_SERVICE": "true"},
             clear=False,
         ):
             self.assertFalse(proxy._user_self_service_enabled())
@@ -2190,7 +2190,7 @@ class SetupRouteIntegrationTests(unittest.TestCase):
         cfg = OIDCConfig(
             enabled=True,
             issuer="https://idp.example",
-            client_id="ai-gateway",
+            client_id="azizam",
             client_secret="secret",
             redirect_uri="http://testserver/admin/oidc/callback",
             scopes=("openid", "email", "profile"),

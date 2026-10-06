@@ -2,7 +2,7 @@
 
 This module keeps ``POST /v1/audio/generate`` strict without coupling the route
 to manifest internals. Standard audio request fields stay at the top level;
-gateway workflow controls live under ``extensions.com.vividfish.workflow`` and
+gateway workflow controls live under ``extensions.com.azizam.workflow`` and
 are validated/bound through the workflow manifest.
 """
 
@@ -19,7 +19,7 @@ from gateway.extensions import (
 )
 from gateway.manifests import BackendBindingResult, bind_backend_request
 
-WORKFLOW_EXTENSION_NAMESPACE = "com.vividfish.workflow"
+WORKFLOW_EXTENSION_NAMESPACE = "com.azizam.workflow"
 
 
 STANDARD_AUDIO_GENERATE_FIELDS: frozenset[str] = frozenset(

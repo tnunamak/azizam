@@ -77,7 +77,7 @@ export default function InvitePage() {
           : { token, name, email: inviteData?.email || email, password },
         oidc
           ? {
-              "x-ai-gateway-csrf":
+              "x-azizam-csrf":
                 optionsData?.signed_in_oidc?.csrf_token || "",
             }
           : undefined,

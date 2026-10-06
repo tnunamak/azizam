@@ -73,7 +73,7 @@ _KOBOLD_DROPIN: Path = proxy.KOBOLD_MODEL_DROPIN
 
 # Expected drop-in text for (_GGUF, _MMPROJ).
 _EXPECTED_DROPIN_TEXT = (
-    "# Managed by openai-proxy. Do not edit by hand; "
+    "# Managed by azizam. Do not edit by hand; "
     "set role `model:`/`mmproj:` in proxy_config.yml.\n"
     "[Service]\n"
     f'Environment="LLAMA_BEE_MODEL={_GGUF}"\n'
@@ -82,7 +82,7 @@ _EXPECTED_DROPIN_TEXT = (
 
 # Expected drop-in text when mmproj is empty (text-only model).
 _EXPECTED_DROPIN_TEXT_NO_MMPROJ = (
-    "# Managed by openai-proxy. Do not edit by hand; "
+    "# Managed by azizam. Do not edit by hand; "
     "set role `model:`/`mmproj:` in proxy_config.yml.\n"
     "[Service]\n"
     f'Environment="LLAMA_BEE_MODEL={_GGUF}"\n'

@@ -24,7 +24,7 @@ def validate_test_environment() -> None:
     """The runner owns fresh provisioning; assert only process-local roots."""
     import sys
     from pathlib import Path
-    root = Path(os.environ["VIVID_FISH_HERMETIC_REPO_ROOT"])
+    root = Path(os.environ["AZIZAM_HERMETIC_REPO_ROOT"])
     if not root.is_dir() or not Path(sys.executable).exists():
         raise HermeticEnvironmentError("runner roots are unavailable")
 
@@ -99,7 +99,7 @@ class HermeticGuard:
                 self._allowed_tcp.add((listener.family, str(host), port))
         elif listener.family == socket.AF_UNIX:
             path = listener.getsockname()
-            state_dir = os.environ["VIVID_FISH_HERMETIC_STATE_DIR"]
+            state_dir = os.environ["AZIZAM_HERMETIC_STATE_DIR"]
             if isinstance(path, str) and Path(path).is_relative_to(state_dir):
                 self._allowed_unix.add(path)
 
@@ -144,34 +144,34 @@ class HermeticGuard:
 def assert_hermetic_environment() -> None:
     """Fail session startup before collection can import gateway runtime code."""
     required = (
-        "VIVID_FISH_HERMETIC_TEST_NAMESPACE",
-        "VIVID_FISH_HERMETIC_STATE_DIR",
-        "VIVID_FISH_HERMETIC_FORBIDDEN_PRODUCTION_PATH",
-        "VIVID_FISH_HERMETIC_HOST_RUNNER_PID",
-        "VIVID_FISH_HERMETIC_HOST_PID_NAMESPACE",
-        "VIVID_FISH_HERMETIC_HOST_IPC_NAMESPACE",
-        "VIVID_FISH_HERMETIC_TEST_ENV_ROOT",
-        "VIVID_FISH_HERMETIC_REPO_ROOT",
-        "VIVID_FISH_HERMETIC_PYTHON_ROOT",
+        "AZIZAM_HERMETIC_TEST_NAMESPACE",
+        "AZIZAM_HERMETIC_STATE_DIR",
+        "AZIZAM_HERMETIC_FORBIDDEN_PRODUCTION_PATH",
+        "AZIZAM_HERMETIC_HOST_RUNNER_PID",
+        "AZIZAM_HERMETIC_HOST_PID_NAMESPACE",
+        "AZIZAM_HERMETIC_HOST_IPC_NAMESPACE",
+        "AZIZAM_HERMETIC_TEST_ENV_ROOT",
+        "AZIZAM_HERMETIC_REPO_ROOT",
+        "AZIZAM_HERMETIC_PYTHON_ROOT",
     )
     missing = [name for name in required if not os.environ.get(name)]
-    if os.environ.get("VIVID_FISH_HERMETIC_TEST_NAMESPACE") != "1" or missing:
+    if os.environ.get("AZIZAM_HERMETIC_TEST_NAMESPACE") != "1" or missing:
         pytest.exit("pytest must run through scripts/run-hermetic-pytest.sh", returncode=2)
-    state_dir = Path(os.environ["VIVID_FISH_HERMETIC_STATE_DIR"])
+    state_dir = Path(os.environ["AZIZAM_HERMETIC_STATE_DIR"])
     if not state_dir.is_dir() or "/.tmp/" not in f"{state_dir}/":
         pytest.exit("pytest state must be a unique disk-backed directory below ~/.tmp", returncode=2)
-    if Path(os.environ["VIVID_FISH_HERMETIC_FORBIDDEN_PRODUCTION_PATH"]).exists():
+    if Path(os.environ["AZIZAM_HERMETIC_FORBIDDEN_PRODUCTION_PATH"]).exists():
         pytest.exit("pytest namespace exposes the production checkout", returncode=2)
     if [name for _, name in socket.if_nameindex()] != ["lo"]:
         pytest.exit("pytest namespace must expose only loopback", returncode=2)
     with open("/proc/net/route", encoding="utf-8") as routes:
         if any(line.strip() for line in list(routes)[1:]):
             pytest.exit("pytest namespace must not have an IPv4 route", returncode=2)
-    if Path(f"/proc/{os.environ['VIVID_FISH_HERMETIC_HOST_RUNNER_PID']}").exists():
+    if Path(f"/proc/{os.environ['AZIZAM_HERMETIC_HOST_RUNNER_PID']}").exists():
         pytest.exit("pytest namespace exposes the host runner process", returncode=2)
-    if os.readlink("/proc/1/ns/pid") == os.environ["VIVID_FISH_HERMETIC_HOST_PID_NAMESPACE"]:
+    if os.readlink("/proc/1/ns/pid") == os.environ["AZIZAM_HERMETIC_HOST_PID_NAMESPACE"]:
         pytest.exit("pytest namespace shares the host PID namespace", returncode=2)
-    if os.readlink("/proc/1/ns/ipc") == os.environ["VIVID_FISH_HERMETIC_HOST_IPC_NAMESPACE"]:
+    if os.readlink("/proc/1/ns/ipc") == os.environ["AZIZAM_HERMETIC_HOST_IPC_NAMESPACE"]:
         pytest.exit("pytest namespace shares the host IPC namespace", returncode=2)
     try:
         validate_test_environment()

@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve Vivid Fish AI Gateway. This project is a self-hosted,
+Thanks for helping improve Azizam. This project is a self-hosted,
 OpenAI-compatible gateway for local and remote AI backends.
 
 ## Development setup

@@ -191,8 +191,8 @@ Calibration and prompt mapping:
 |---|---|---|---|---|
 | LiteLLM proxy | `model` = `provider/model` or an alias; `pass_through_endpoints` for other APIs | `os.environ/VAR` (OSS); secret managers need Enterprise (https://docs.litellm.ai/docs/secret) | `x-litellm-response-cost` header | Opt-in `router_settings.fallbacks`, budget re-checked (https://docs.litellm.ai/docs/proxy/reliability) |
 | OpenRouter | `model` slug plus a `provider` object (`order`, `only`, `ignore`, `max_price`, `data_collection`, `sort`) and `:nitro`/`:floor` suffixes (https://openrouter.ai/docs/guides/routing/provider-selection) | Account credits or BYOK | `usage.cost` in every response | **On by default** (`allow_fallbacks: true`) |
-| Portkey | Config `strategy.mode` = fallback, loadbalance or conditional, with targets (https://portkey.ai/docs/product/ai-gateway/fallbacks) | Virtual keys | Logged per trace | Opt-in by config |
-| Cloudflare AI Gateway | Provider path passthrough in native format (https://developers.cloudflare.com/ai-gateway/usage/providers/) | Request key, else stored BYOK, else Unified Billing credits | Analytics | Requests can land on paid credits without notice (https://developers.cloudflare.com/ai-gateway/features/unified-billing/) |
+| Portkey | Config `strategy.mode` = fallback, loadbalance or conditional, with targets (https://portkey.ai/docs/product/azizam/fallbacks) | Virtual keys | Logged per trace | Opt-in by config |
+| Cloudflare Azizam | Provider path passthrough in native format (https://developers.cloudflare.com/azizam/usage/providers/) | Request key, else stored BYOK, else Unified Billing credits | Analytics | Requests can land on paid credits without notice (https://developers.cloudflare.com/azizam/features/unified-billing/) |
 
 Lesson: copy LiteLLM's and OpenRouter's `provider/model` naming and OpenRouter's
 per-response `usage.cost`. Do **not** copy OpenRouter's default-on fallback or
@@ -221,8 +221,8 @@ not a decisions endpoint, so it does not change D7.
   really answered (`decider-2b-v11`, `jev-1.13.0`). TypeSafe does the same.
   Extra fields from decider (`x_p_max`, `certainty`, `level_fit`) pass through.
   TypeSafe clients ignore unknown fields.
-- Gateway headers: `x-gateway-request-id`, `x-gateway-backend`, `x-gateway-remote: 0|1`,
-  `x-gateway-cost-usd`.
+- Gateway headers: `x-azizam-request-id`, `x-azizam-backend`, `x-azizam-remote: 0|1`,
+  `x-azizam-cost-usd`.
 
 ### 3.2 OpenAI Decisions facade (schema unknown)
 
@@ -234,7 +234,7 @@ not a decisions endpoint, so it does not change D7.
     does not enable this route. Provider credentials remain environment references.
   - Return OpenAI's status and body, including its 403 "not enabled". The
     receipt records reported actual cost when available; otherwise cost stays
-    unknown with `source: unknown` and `x-gateway-cost-usd: unknown`. Opaque
+    unknown with `source: unknown` and `x-azizam-cost-usd: unknown`. Opaque
     requests have no safe preflight cost estimate, so capped plans fail closed.
     Unknown final charges retain the reservation for reconciliation.
   - Without that configured capability, return an OpenAI-shaped 501 with
@@ -467,7 +467,7 @@ Profile addition (stored in admin.db as Profile JSON, edited in `/admin`):
   - `calibrated: true`
   - `available` plus `reason`
 - Remote chat models get the same `cost_class` and `remote` fields.
-- List `/typesafe/v1/*`, `/v1/systemone` and `/v1/decisions` in `/.well-known/ai-gateway`
+- List `/typesafe/v1/*`, `/v1/systemone` and `/v1/decisions` in `/.well-known/azizam`
   and `llms.txt` with their support tier (`docs/API_TARGETS.md`).
 
 ## 9. Failure and fallback semantics

@@ -54,16 +54,16 @@ re-map them onto each SDK's own knobs.
 
 | Variable | Required | Notes |
 |---|---|---|
-| `OPENAI_PROXY_BASE_URL` | yes | Gateway root, e.g. `http://127.0.0.1:8080`. Must **not** include `/v1` or `/api`. |
-| `OPENAI_PROXY_API_KEY` | yes (default) | Bearer token. Optional when the probe declares `allow_anonymous=True`. |
-| `OPENAI_PROXY_TIMEOUT_S` | no | Per-request timeout in seconds. Default `30`. |
-| `OPENAI_PROXY_SMOKE_LIVE_EMBEDDINGS` | no | Raw HTTP smoke opt-in for embedding backend round-trips. Default off. |
-| `OPENAI_PROXY_SMOKE_EMBEDDINGS_MODEL` | no | OpenAI embeddings probe model. Default `nomic-embed-text-v1.5`. |
-| `OPENAI_PROXY_SMOKE_OLLAMA_EMBED_MODEL` | no | Ollama embed/embeddings probe model. Default `nomic-embed-text-v1.5`. |
-| `OPENAI_PROXY_SMOKE_LIVE_VISION` | no | Opt-in for the chat image-input-block SDK probe. Default off — text-only local backends 4xx an image content block, which would be a false negative for gateway shape conformance. |
-| `OPENAI_PROXY_SMOKE_LIVE_TOOLS` | no | Opt-in for the Anthropic `messages.create.tool_use` SDK probe. Default off — local backends without tools-capable models would 4xx the request and that isn't a gateway-shape failure. |
-| `OPENAI_PROXY_SMOKE_AUDIO_TRANSCRIPTION` | no | Opt-in for the OpenAI Python `audio.transcriptions.create` SDK probe. Uses a stdlib-generated tiny PCM16 WAV (no committed binary fixture). |
-| `OPENAI_PROXY_SMOKE_AUDIO_TRANSLATION` | no | Opt-in for the OpenAI Python `audio.translations.create` SDK probe. Auto-skips when the gateway's STT backend does not advertise translation; the shape contract is still gated by `probe_gateway_contract.py`. |
+| `AZIZAM_BASE_URL` | yes | Gateway root, e.g. `http://127.0.0.1:8080`. Must **not** include `/v1` or `/api`. |
+| `AZIZAM_API_KEY` | yes (default) | Bearer token. Optional when the probe declares `allow_anonymous=True`. |
+| `AZIZAM_TIMEOUT_S` | no | Per-request timeout in seconds. Default `30`. |
+| `AZIZAM_SMOKE_LIVE_EMBEDDINGS` | no | Raw HTTP smoke opt-in for embedding backend round-trips. Default off. |
+| `AZIZAM_SMOKE_EMBEDDINGS_MODEL` | no | OpenAI embeddings probe model. Default `nomic-embed-text-v1.5`. |
+| `AZIZAM_SMOKE_OLLAMA_EMBED_MODEL` | no | Ollama embed/embeddings probe model. Default `nomic-embed-text-v1.5`. |
+| `AZIZAM_SMOKE_LIVE_VISION` | no | Opt-in for the chat image-input-block SDK probe. Default off — text-only local backends 4xx an image content block, which would be a false negative for gateway shape conformance. |
+| `AZIZAM_SMOKE_LIVE_TOOLS` | no | Opt-in for the Anthropic `messages.create.tool_use` SDK probe. Default off — local backends without tools-capable models would 4xx the request and that isn't a gateway-shape failure. |
+| `AZIZAM_SMOKE_AUDIO_TRANSCRIPTION` | no | Opt-in for the OpenAI Python `audio.transcriptions.create` SDK probe. Uses a stdlib-generated tiny PCM16 WAV (no committed binary fixture). |
+| `AZIZAM_SMOKE_AUDIO_TRANSLATION` | no | Opt-in for the OpenAI Python `audio.translations.create` SDK probe. Auto-skips when the gateway's STT backend does not advertise translation; the shape contract is still gated by `probe_gateway_contract.py`. |
 
 ## Running the core unit tests
 
@@ -82,8 +82,8 @@ and an app API key:
 
 ```bash
 PROXY_PYTHON=${PROXY_PYTHON:-venv/bin/python}
-export OPENAI_PROXY_BASE_URL=http://127.0.0.1:8080
-export OPENAI_PROXY_API_KEY=sk-your-proxy-key
+export AZIZAM_BASE_URL=http://127.0.0.1:8080
+export AZIZAM_API_KEY=sk-your-proxy-key
 $PROXY_PYTHON -m unittest tests.compat.python.probe_gateway_contract -v
 ```
 
@@ -101,14 +101,14 @@ PROXY_PYTHON=${PROXY_PYTHON:-venv/bin/python}
 PROXY_PIP=${PROXY_PIP:-venv/bin/pip}
 
 $PROXY_PIP install -r tests/compat/python/requirements-openai.txt
-export OPENAI_PROXY_BASE_URL=http://127.0.0.1:8080
-export OPENAI_PROXY_API_KEY=sk-your-proxy-key
+export AZIZAM_BASE_URL=http://127.0.0.1:8080
+export AZIZAM_API_KEY=sk-your-proxy-key
 $PROXY_PYTHON -m unittest tests.compat.python.probe_openai -v
 ```
 
 Replace `requirements-openai.txt` with `requirements-anthropic.txt` or
 `requirements-ollama.txt` as needed. Probes auto-skip when their SDK
-is missing or when `OPENAI_PROXY_BASE_URL` is unset. The OpenAI probe
+is missing or when `AZIZAM_BASE_URL` is unset. The OpenAI probe
 covers `/v1/embeddings`; the Ollama probe covers both current
 `/api/embed` and legacy `/api/embeddings`.
 
@@ -117,8 +117,8 @@ covers `/v1/embeddings`; the Ollama probe covers both current
 ```bash
 cd tests/compat/node
 npm install
-OPENAI_PROXY_BASE_URL=http://127.0.0.1:8080 \
-OPENAI_PROXY_API_KEY=sk-your-proxy-key \
+AZIZAM_BASE_URL=http://127.0.0.1:8080 \
+AZIZAM_API_KEY=sk-your-proxy-key \
 npm run probe:all
 ```
 
@@ -149,7 +149,7 @@ The output is validated against
 2. Add a Python module under `tests/compat/python/probe_<sdk>.py` or a
    Node test under `tests/compat/node/<sdk>.test.mjs`.
 3. Auto-skip when the SDK is not installed and when
-   `OPENAI_PROXY_BASE_URL` is unset.
+   `AZIZAM_BASE_URL` is unset.
 4. For Python probes, emit `ProbeResult` values for each case in the
    relevant per-protocol case grid (see
    `docs/SDK_COMPATIBILITY_HARNESS.md`) and register the probe in

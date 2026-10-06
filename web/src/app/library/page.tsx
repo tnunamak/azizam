@@ -779,8 +779,8 @@ export default function LibraryPage() {
         {
           method: "DELETE",
           headers: {
-            "x-ai-gateway-user-action": "1",
-            "x-ai-gateway-csrf": session.csrf_token,
+            "x-azizam-user-action": "1",
+            "x-azizam-csrf": session.csrf_token,
           },
         },
       );

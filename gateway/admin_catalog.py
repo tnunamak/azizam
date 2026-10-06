@@ -248,7 +248,7 @@ def _policy_values(record: Mapping[str, Any]) -> list[str]:
     for route in record.get("routes") or []:
         if not isinstance(route, Mapping):
             continue
-        for key in ("runtime_policy", "openai_proxy_policy"):
+        for key in ("runtime_policy", "azizam_policy"):
             policy = route.get(key)
             if isinstance(policy, Mapping) and isinstance(policy.get("intent"), str):
                 values.append(policy["intent"])

@@ -9,25 +9,27 @@ default.
 
 Environment::
 
-    OPENAI_PROXY_BASE_URL       e.g. http://127.0.0.1:5000   (required for non-skip)
-    OPENAI_PROXY_API_KEY        e.g. opk_...                 (required for auth checks)
-    OPENAI_PROXY_SMOKE_LIVE_LLM 1 to enable LLM round-trips  (default: off)
-    OPENAI_PROXY_SMOKE_LIVE_EMBEDDINGS 1 to enable embedding round-trips
-    OPENAI_PROXY_SMOKE_TIMEOUT  request timeout seconds      (default: 10)
-    OPENAI_PROXY_SMOKE_ANTHROPIC_MODEL   override Anthropic probe model
-    OPENAI_PROXY_SMOKE_OLLAMA_MODEL      override Ollama probe model
-    OPENAI_PROXY_SMOKE_EMBEDDINGS_MODEL  override embedding probe model
+    AZIZAM_BASE_URL       e.g. http://127.0.0.1:5000   (required for non-skip)
+    AZIZAM_API_KEY        e.g. opk_...                 (required for auth checks)
+    AZIZAM_SMOKE_LIVE_LLM 1 to enable LLM round-trips  (default: off)
+    AZIZAM_SMOKE_LIVE_EMBEDDINGS 1 to enable embedding round-trips
+    AZIZAM_SMOKE_TIMEOUT  request timeout seconds      (default: 10)
+    AZIZAM_SMOKE_ANTHROPIC_MODEL   override Anthropic probe model
+    AZIZAM_SMOKE_OLLAMA_MODEL      override Ollama probe model
+    AZIZAM_SMOKE_EMBEDDINGS_MODEL  override embedding probe model
 
 Each check prints a single compact row:
 
     [PASS] anthropic.messages.nonstream  status=200
-    [SKIP] ollama.chat.nonstream         reason=OPENAI_PROXY_SMOKE_LIVE_LLM not set
+    [SKIP] ollama.chat.nonstream         reason=AZIZAM_SMOKE_LIVE_LLM not set
     [FAIL] gateway.capabilities          status=500
 
 Exit code is 0 when no checks failed (skips are not failures), else 1.
 """
 
 from __future__ import annotations
+
+from gateway.compat import get_env
 
 import argparse
 import json
@@ -70,15 +72,15 @@ class SmokeConfig:
     def from_env(cls, env: Optional[Mapping[str, str]] = None) -> "SmokeConfig":
         if env is None:
             env = os.environ
-        raw_base = env.get("OPENAI_PROXY_BASE_URL", "").strip()
+        raw_base = get_env("AZIZAM_BASE_URL", "", environ=env).strip()
         base = raw_base.rstrip("/") if raw_base else None
-        api_key = env.get("OPENAI_PROXY_API_KEY", "").strip() or None
-        live = env.get("OPENAI_PROXY_SMOKE_LIVE_LLM", "").strip() == "1"
+        api_key = get_env("AZIZAM_API_KEY", "", environ=env).strip() or None
+        live = get_env("AZIZAM_SMOKE_LIVE_LLM", "", environ=env).strip() == "1"
         live_embeddings = (
-            env.get("OPENAI_PROXY_SMOKE_LIVE_EMBEDDINGS", "").strip() == "1"
+            get_env("AZIZAM_SMOKE_LIVE_EMBEDDINGS", "", environ=env).strip() == "1"
         )
         try:
-            timeout = int(env.get("OPENAI_PROXY_SMOKE_TIMEOUT", "").strip() or DEFAULT_TIMEOUT_S)
+            timeout = int(get_env("AZIZAM_SMOKE_TIMEOUT", "", environ=env).strip() or DEFAULT_TIMEOUT_S)
         except ValueError:
             timeout = DEFAULT_TIMEOUT_S
         return cls(
@@ -87,11 +89,11 @@ class SmokeConfig:
             live_llm=live,
             live_embeddings=live_embeddings,
             timeout_s=max(1, timeout),
-            anthropic_model=env.get("OPENAI_PROXY_SMOKE_ANTHROPIC_MODEL", "").strip()
+            anthropic_model=get_env("AZIZAM_SMOKE_ANTHROPIC_MODEL", "", environ=env).strip()
             or DEFAULT_ANTHROPIC_MODEL,
-            ollama_model=env.get("OPENAI_PROXY_SMOKE_OLLAMA_MODEL", "").strip()
+            ollama_model=get_env("AZIZAM_SMOKE_OLLAMA_MODEL", "", environ=env).strip()
             or DEFAULT_OLLAMA_MODEL,
-            embeddings_model=env.get("OPENAI_PROXY_SMOKE_EMBEDDINGS_MODEL", "").strip()
+            embeddings_model=get_env("AZIZAM_SMOKE_EMBEDDINGS_MODEL", "", environ=env).strip()
             or DEFAULT_EMBEDDINGS_MODEL,
         )
 
@@ -140,7 +142,7 @@ def _request(
 def check_health(cfg: SmokeConfig) -> CheckResult:
     name = "gateway.health"
     if not cfg.base_url:
-        return CheckResult(name, "skip", "reason=OPENAI_PROXY_BASE_URL not set")
+        return CheckResult(name, "skip", "reason=AZIZAM_BASE_URL not set")
     status, err = _request(base_url=cfg.base_url, path="/health", timeout=cfg.timeout_s)
     if status == 200:
         return CheckResult(name, "pass", f"status={status}")
@@ -150,9 +152,9 @@ def check_health(cfg: SmokeConfig) -> CheckResult:
 def check_capabilities(cfg: SmokeConfig) -> CheckResult:
     name = "gateway.capabilities"
     if not cfg.base_url:
-        return CheckResult(name, "skip", "reason=OPENAI_PROXY_BASE_URL not set")
+        return CheckResult(name, "skip", "reason=AZIZAM_BASE_URL not set")
     if not cfg.api_key:
-        return CheckResult(name, "skip", "reason=OPENAI_PROXY_API_KEY not set")
+        return CheckResult(name, "skip", "reason=AZIZAM_API_KEY not set")
     status, err = _request(
         base_url=cfg.base_url,
         path="/gateway/v1/capabilities",
@@ -167,11 +169,11 @@ def check_capabilities(cfg: SmokeConfig) -> CheckResult:
 def check_anthropic_messages(cfg: SmokeConfig) -> CheckResult:
     name = "anthropic.messages.nonstream"
     if not cfg.base_url:
-        return CheckResult(name, "skip", "reason=OPENAI_PROXY_BASE_URL not set")
+        return CheckResult(name, "skip", "reason=AZIZAM_BASE_URL not set")
     if not cfg.api_key:
-        return CheckResult(name, "skip", "reason=OPENAI_PROXY_API_KEY not set")
+        return CheckResult(name, "skip", "reason=AZIZAM_API_KEY not set")
     if not cfg.live_llm:
-        return CheckResult(name, "skip", "reason=OPENAI_PROXY_SMOKE_LIVE_LLM not set")
+        return CheckResult(name, "skip", "reason=AZIZAM_SMOKE_LIVE_LLM not set")
     body = json.dumps(
         {
             "model": cfg.anthropic_model,
@@ -200,9 +202,9 @@ def check_anthropic_messages(cfg: SmokeConfig) -> CheckResult:
 def check_ollama_tags(cfg: SmokeConfig) -> CheckResult:
     name = "ollama.tags"
     if not cfg.base_url:
-        return CheckResult(name, "skip", "reason=OPENAI_PROXY_BASE_URL not set")
+        return CheckResult(name, "skip", "reason=AZIZAM_BASE_URL not set")
     if not cfg.api_key:
-        return CheckResult(name, "skip", "reason=OPENAI_PROXY_API_KEY not set")
+        return CheckResult(name, "skip", "reason=AZIZAM_API_KEY not set")
     status, err = _request(
         base_url=cfg.base_url,
         path="/api/tags",
@@ -217,11 +219,11 @@ def check_ollama_tags(cfg: SmokeConfig) -> CheckResult:
 def check_ollama_chat(cfg: SmokeConfig) -> CheckResult:
     name = "ollama.chat.nonstream"
     if not cfg.base_url:
-        return CheckResult(name, "skip", "reason=OPENAI_PROXY_BASE_URL not set")
+        return CheckResult(name, "skip", "reason=AZIZAM_BASE_URL not set")
     if not cfg.api_key:
-        return CheckResult(name, "skip", "reason=OPENAI_PROXY_API_KEY not set")
+        return CheckResult(name, "skip", "reason=AZIZAM_API_KEY not set")
     if not cfg.live_llm:
-        return CheckResult(name, "skip", "reason=OPENAI_PROXY_SMOKE_LIVE_LLM not set")
+        return CheckResult(name, "skip", "reason=AZIZAM_SMOKE_LIVE_LLM not set")
     body = json.dumps(
         {
             "model": cfg.ollama_model,
@@ -254,14 +256,14 @@ def _check_embedding_post(
     payload: dict,
 ) -> CheckResult:
     if not cfg.base_url:
-        return CheckResult(name, "skip", "reason=OPENAI_PROXY_BASE_URL not set")
+        return CheckResult(name, "skip", "reason=AZIZAM_BASE_URL not set")
     if not cfg.api_key:
-        return CheckResult(name, "skip", "reason=OPENAI_PROXY_API_KEY not set")
+        return CheckResult(name, "skip", "reason=AZIZAM_API_KEY not set")
     if not cfg.live_embeddings:
         return CheckResult(
             name,
             "skip",
-            "reason=OPENAI_PROXY_SMOKE_LIVE_EMBEDDINGS not set",
+            "reason=AZIZAM_SMOKE_LIVE_EMBEDDINGS not set",
         )
     status, err = _request(
         base_url=cfg.base_url,

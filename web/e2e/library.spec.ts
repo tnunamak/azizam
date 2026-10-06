@@ -202,8 +202,8 @@ test("library delete confirms before mutation", async ({ page }) => {
   );
   await page.route("**/me/api/media/asset_image_1", (route) => {
     if (route.request().method() !== "DELETE") return route.continue();
-    expect(route.request().headers()["x-ai-gateway-user-action"]).toBe("1");
-    expect(route.request().headers()["x-ai-gateway-csrf"]).toBeTruthy();
+    expect(route.request().headers()["x-azizam-user-action"]).toBe("1");
+    expect(route.request().headers()["x-azizam-csrf"]).toBeTruthy();
     deleted = true;
     return route.fulfill({ json: { ok: true } });
   });

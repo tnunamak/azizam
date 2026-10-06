@@ -332,7 +332,7 @@ class ExtensionRouteTests(H3RouteBase):
         self.assertEqual(body["id"], NEW_ID)
         self.assertEqual(body["object"], "video")
         self.assertEqual((body["status"], body["progress"]), ("queued", 0))
-        self.assertEqual(body["vivid_fish_resolved_model"], "video-minimax-h3-long")
+        self.assertEqual(body["azizam_resolved_model"], "video-minimax-h3-long")
         self.assertEqual(body["model"], "minimax-h3")
         self.assertEqual(body["remixed_from_video_id"], SOURCE_ID)
         self.assertEqual(body["extended_from_video_id"], SOURCE_ID)
@@ -350,13 +350,13 @@ class ExtensionRouteTests(H3RouteBase):
         proxy._video_job_records[SOURCE_PROMPT_ID].update({"model": "ltx-2.5", "size": "960x512"})
         r = self._extend(seconds=4)
         self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual(r.json()["vivid_fish_resolved_model"], "video-ltx-2.5-long")
+        self.assertEqual(r.json()["azizam_resolved_model"], "video-ltx-2.5-long")
 
     def test_a_model_without_a_chain_falls_back_to_the_default_extender(self) -> None:
         proxy._video_job_records[SOURCE_PROMPT_ID].update({"model": "video-remix"})
         r = self._extend(seconds=4)
         self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual(r.json()["vivid_fish_resolved_model"], "video-ltx-2.5-long")
+        self.assertEqual(r.json()["azizam_resolved_model"], "video-ltx-2.5-long")
 
     def test_model_can_be_named_and_aliases_work(self) -> None:
         proxy._video_job_records[SOURCE_PROMPT_ID].update({"model": "ltx-2.5"})
@@ -364,7 +364,7 @@ class ExtensionRouteTests(H3RouteBase):
             self.comfy.submitted.clear()
             r = self._extend(model=alias, seconds=4)
             self.assertEqual(r.status_code, 200, (alias, r.text))
-            self.assertEqual(r.json()["vivid_fish_resolved_model"], "video-minimax-h3-long", alias)
+            self.assertEqual(r.json()["azizam_resolved_model"], "video-minimax-h3-long", alias)
             self.assertEqual(r.json()["model"], alias)
 
     def test_context_seconds_sets_the_window_in_whole_latent_steps(self) -> None:
@@ -443,7 +443,7 @@ class CreateLongVideoTests(H3RouteBase):
                 {"prompt": "the boat leaves", "seconds": 4}])
             self.assertEqual(r.status_code, 200, (model, r.text))
             body = r.json()
-            self.assertEqual(body["vivid_fish_resolved_model"], "video-minimax-h3-long", model)
+            self.assertEqual(body["azizam_resolved_model"], "video-minimax-h3-long", model)
             self.assertEqual(body["model"], model)
             self.assertEqual(body["segments"], 3)
             self.assertAlmostEqual(body["total_seconds"], 13, delta=0.9)
@@ -457,14 +457,14 @@ class CreateLongVideoTests(H3RouteBase):
     def test_plain_seconds_past_the_native_length_is_the_same_chain(self) -> None:
         r = self._create(model="minimax-h3", prompt="a long take", seconds=25)
         self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual(r.json()["vivid_fish_resolved_model"], "video-minimax-h3-long")
+        self.assertEqual(r.json()["azizam_resolved_model"], "video-minimax-h3-long")
         self.assertAlmostEqual(r.json()["total_seconds"], 25, delta=0.9)
         self.assertEqual(r.json()["segments"], 3)  # 10 s first segment, then two added ones
 
     def test_native_length_still_uses_the_template_graph(self) -> None:
         r = self._create(model="minimax-h3", prompt="a dog", seconds=5)
         self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual(r.json()["vivid_fish_resolved_model"], "video-minimax-h3-t2v")
+        self.assertEqual(r.json()["azizam_resolved_model"], "video-minimax-h3-t2v")
         self.assertEqual(self.graph["9"]["class_type"], "MiniMaxH3ImageToVideo")
         self.assertNotIn("s0_cond", self.graph)
 
@@ -472,7 +472,7 @@ class CreateLongVideoTests(H3RouteBase):
         r = self._create(model="minimax-h3", prompt="x", seconds=14,
                          input_reference="data:image/png;base64," + base64.b64encode(PNG).decode())
         self.assertEqual(r.status_code, 200, r.text)
-        self.assertEqual(r.json()["vivid_fish_resolved_model"], "video-minimax-h3-long")
+        self.assertEqual(r.json()["azizam_resolved_model"], "video-minimax-h3-long")
         self.assertEqual(self.graph["s0_image"]["inputs"]["image"], "up1_" + self.comfy.uploads[0][0])
 
     def test_state_ledger_prefixes_every_segment(self) -> None:

@@ -164,35 +164,35 @@ def test_txt2img_builds_the_core_image_request_from_the_manifest_fields(env):
     assert (method, path) == ("POST", "/v1/images/generations")
     assert kwargs["json"] == {
         "model": "krea", "prompt": "a fish", "size": "512x768", "response_format": "b64_json",
-        "extensions": {"com.vividfish.workflow": {"steps": 20, "seed": 7}},
+        "extensions": {"com.azizam.workflow": {"steps": 20, "seed": 7}},
     }
 
 
 def test_txt2img_reports_the_seed_it_used_when_none_was_given(env):
     body = env.client.post("/sdapi/v1/txt2img", json={**ST_PAYLOAD, "seed": -1}, headers=H).json()
-    sent = env.core.calls[0][2]["json"]["extensions"]["com.vividfish.workflow"]["seed"]
+    sent = env.core.calls[0][2]["json"]["extensions"]["com.azizam.workflow"]["seed"]
     assert json.loads(body["info"])["seed"] == sent and sent >= 0
 
 
 def test_ignored_knobs_are_named_in_a_header_not_dropped_silently(env):
     resp = env.client.post("/sdapi/v1/txt2img", json=ST_PAYLOAD, headers=H)
-    ignored = resp.headers["x-gateway-ignored-params"].split(",")
+    ignored = resp.headers["x-azizam-ignored-params"].split(",")
     assert {"negative_prompt", "cfg_scale", "sampler_name", "scheduler"} <= set(ignored)
 
 
 def test_a_model_that_uses_the_knobs_receives_them(env):
     env.client.post("/sdapi/v1/options", json={"sd_model_checkpoint": "image-fast"}, headers=H)
     resp = env.client.post("/sdapi/v1/txt2img", json={**ST_PAYLOAD, "sampler_name": "Euler a", "scheduler": "karras"}, headers=H)
-    ext = env.core.calls[0][2]["json"]["extensions"]["com.vividfish.workflow"]
+    ext = env.core.calls[0][2]["json"]["extensions"]["com.azizam.workflow"]
     assert ext["sampler"] == "euler_ancestral" and ext["scheduler"] == "karras" and ext["guidance"] == 7.0
     assert ext["negative_prompt"] == "bad quality"
-    assert "x-gateway-ignored-params" not in resp.headers
+    assert "x-azizam-ignored-params" not in resp.headers
 
 
 def test_steps_over_the_model_limit_are_clamped_and_say_so(env):
     resp = env.client.post("/sdapi/v1/txt2img", json={**ST_PAYLOAD, "steps": 50}, headers=H)
-    assert env.core.calls[0][2]["json"]["extensions"]["com.vividfish.workflow"]["steps"] == 20
-    assert "steps(clamped to 20)" in resp.headers["x-gateway-ignored-params"]
+    assert env.core.calls[0][2]["json"]["extensions"]["com.azizam.workflow"]["steps"] == 20
+    assert "steps(clamped to 20)" in resp.headers["x-azizam-ignored-params"]
 
 
 @pytest.mark.parametrize("field,value,needle", [
@@ -215,10 +215,10 @@ def test_unknown_sd_vae_is_ignored_and_named_like_real_a1111(env):
     payload = {**ST_PAYLOAD, "override_settings": {"sd_vae": "sdxl.vae.safetensors"}}
     resp = env.client.post("/sdapi/v1/txt2img", json=payload, headers=H)
     assert resp.status_code == 200
-    assert "override_settings.sd_vae" in resp.headers["x-gateway-ignored-params"].split(",")
+    assert "override_settings.sd_vae" in resp.headers["x-azizam-ignored-params"].split(",")
     for automatic in ("Automatic", "None", ""):
         resp = env.client.post("/sdapi/v1/txt2img", json={**ST_PAYLOAD, "override_settings": {"sd_vae": automatic}}, headers=H)
-        assert resp.status_code == 200 and "sd_vae" not in resp.headers.get("x-gateway-ignored-params", "")
+        assert resp.status_code == 200 and "sd_vae" not in resp.headers.get("x-azizam-ignored-params", "")
 
 
 def test_size_outside_the_model_range_is_a_422_not_a_silent_resize(env):

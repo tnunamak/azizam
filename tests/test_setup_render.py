@@ -97,7 +97,7 @@ class SetupRenderTests(unittest.TestCase):
         self.assertIn("Create the local owner account", html)
         self.assertNotIn('action="/setup/claim"', html)
         # No leftover "set this env var" copy from the legacy admin-key path.
-        self.assertNotIn("AI_GATEWAY_ADMIN_SESSION_KEY", html)
+        self.assertNotIn("AZIZAM_ADMIN_SESSION_KEY", html)
 
     def test_create_error_surfaces_above_form_with_prefill(self) -> None:
         html = render_setup_page(

@@ -194,7 +194,7 @@ def test_internal_litellm_local_route_activates_and_forwards_directly() -> None:
 
     with patch.dict(
         os.environ,
-        {"AI_GATEWAY_INTERNAL_LITELLM_KEY": "internal-secret"},
+        {"AZIZAM_INTERNAL_LITELLM_KEY": "internal-secret"},
         clear=False,
     ), patch.dict(
         proxy.LLM_BACKEND_HOSTS,
@@ -242,7 +242,7 @@ def test_internal_litellm_local_route_still_closes_client_when_response_close_fa
 
     with patch.dict(
         os.environ,
-        {"AI_GATEWAY_INTERNAL_LITELLM_KEY": "internal-secret"},
+        {"AZIZAM_INTERNAL_LITELLM_KEY": "internal-secret"},
         clear=False,
     ), patch.dict(
         proxy.LLM_BACKEND_HOSTS,
@@ -279,7 +279,7 @@ def test_internal_litellm_local_route_reports_activation_failure() -> None:
 
     with patch.dict(
         os.environ,
-        {"AI_GATEWAY_INTERNAL_LITELLM_KEY": "internal-secret"},
+        {"AZIZAM_INTERNAL_LITELLM_KEY": "internal-secret"},
         clear=False,
     ), patch.dict(
         proxy.LLM_BACKEND_HOSTS,
@@ -316,7 +316,7 @@ def test_internal_litellm_local_route_resolves_activation_path_from_model_data()
 
     with patch.dict(
         os.environ,
-        {"AI_GATEWAY_INTERNAL_LITELLM_KEY": "internal-secret"},
+        {"AZIZAM_INTERNAL_LITELLM_KEY": "internal-secret"},
         clear=False,
     ), patch.dict(
         proxy.LLM_BACKEND_HOSTS,
@@ -380,7 +380,7 @@ def test_internal_litellm_route_preserves_q8_profile_alias_and_forwards_backend_
 
     with patch.dict(
         os.environ,
-        {"AI_GATEWAY_INTERNAL_LITELLM_KEY": "internal-secret"},
+        {"AZIZAM_INTERNAL_LITELLM_KEY": "internal-secret"},
         clear=False,
     ), patch.dict(
         proxy.LLM_BACKEND_HOSTS,
@@ -446,7 +446,7 @@ def test_internal_litellm_route_preserves_rp_context_profile_and_huihui_model() 
 
     with patch.dict(
         os.environ,
-        {"AI_GATEWAY_INTERNAL_LITELLM_KEY": "internal-secret"},
+        {"AZIZAM_INTERNAL_LITELLM_KEY": "internal-secret"},
         clear=False,
     ), patch.dict(
         proxy.LLM_BACKEND_HOSTS,
@@ -525,7 +525,7 @@ def test_internal_litellm_current_route_does_not_enforce_gateway_profile_policy(
     client = TestClient(proxy.app)
     with patch.dict(
         os.environ,
-        {"AI_GATEWAY_INTERNAL_LITELLM_KEY": "internal-secret"},
+        {"AZIZAM_INTERNAL_LITELLM_KEY": "internal-secret"},
         clear=False,
     ), patch.object(
         proxy,

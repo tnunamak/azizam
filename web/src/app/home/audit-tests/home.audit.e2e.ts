@@ -124,7 +124,7 @@ async function setupRoutes(
   state: "seeded" | "empty" | "error",
   role: "owner" | "member" = "owner",
 ) {
-  await page.route("**/.well-known/ai-gateway", (route) =>
+  await page.route("**/.well-known/azizam", (route) =>
     route.fulfill({ json: { service: { name: "Family gateway" } } }),
   );
   await page.route("**/me/api/media?limit=50", (route) =>
@@ -295,8 +295,8 @@ test("real gateway setup evidence stays separate from gateway check", async ({
     "/admin/api/operator/services/capture-engine",
     {
       headers: {
-        "x-ai-gateway-admin-action": "1",
-        "x-ai-gateway-csrf": adminSession.actor.csrf_token,
+        "x-azizam-admin-action": "1",
+        "x-azizam-csrf": adminSession.actor.csrf_token,
         "if-match": registry.headers().etag,
       },
       data: { gateway_lifecycle: true },
@@ -306,8 +306,8 @@ test("real gateway setup evidence stays separate from gateway check", async ({
   const session = await (await request.get("/me/api/session")).json();
   const minted = await request.post(`/me/api/apps/${seededApp.id}/keys`, {
     headers: {
-      "x-ai-gateway-user-action": "1",
-      "x-ai-gateway-csrf": session.csrf_token,
+      "x-azizam-user-action": "1",
+      "x-azizam-csrf": session.csrf_token,
     },
     data: { label: "Home audit evidence key" },
   });
@@ -369,8 +369,8 @@ test("real gateway setup evidence stays separate from gateway check", async ({
 
   const confirmedReceipt = await request.post("/admin/api/setup-evidence", {
     headers: {
-      "x-ai-gateway-user-action": "1",
-      "x-ai-gateway-csrf": session.csrf_token,
+      "x-azizam-user-action": "1",
+      "x-azizam-csrf": session.csrf_token,
     },
     data: { event: "receipt_viewed", request_id: connection.request_id },
   });

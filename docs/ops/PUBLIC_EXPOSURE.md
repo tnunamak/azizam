@@ -51,7 +51,7 @@ grants no exemptions. Audit records contain the count, not the strings.
 ## Claim the first owner
 
 Password-based first-owner claiming accepts a resolved loopback client or a
-client in `auth.setup_allowed_cidrs` (`OPENAI_PROXY_SETUP_ALLOWED_CIDRS`). When
+client in `auth.setup_allowed_cidrs` (`AZIZAM_SETUP_ALLOWED_CIDRS`). When
 that setting is absent, it uses `auth.lan_bypass_cidrs`. This rule applies even when runtime
 LAN bypass is disabled. Public or unresolved clients receive 403. A browser
 form from a different origin is also refused. Setup accepts `localhost`, an
@@ -63,7 +63,7 @@ first owners or replace the winner's password.
 Compose defines a bridge network and grants setup to its exact host gateway
 address. The published port remains loopback-only, and runtime LAN bypass is
 not enabled by this grant. If the default subnet conflicts with your networks,
-set `AI_GATEWAY_DOCKER_SUBNET` and `AI_GATEWAY_DOCKER_GATEWAY` together.
+set `AZIZAM_DOCKER_SUBNET` and `AZIZAM_DOCKER_GATEWAY` together.
 
 If you add a host reverse proxy, include its translated socket peer in
 `auth.trusted_proxies` and require it to forward the real client address;

@@ -31,12 +31,12 @@ def test_env_overrides_are_represented_without_reading_process_env():
         {"proxy": {"host": "127.0.0.1", "port": 8080}},
         env={
             "DATABASE_URL": "sqlite:///admin.db",
-            "AI_GATEWAY_USER_SELF_SERVICE": "false",
+            "AZIZAM_USER_SELF_SERVICE": "false",
             "REPORTING_DSN": "postgres://reporter:secret@example.test/db",
         },
         env_names=[
             "DATABASE_URL",
-            "AI_GATEWAY_USER_SELF_SERVICE",
+            "AZIZAM_USER_SELF_SERVICE",
             "ANTHROPIC_API_KEY",
             "REPORTING_DSN",
         ],
@@ -69,8 +69,8 @@ def test_env_overrides_are_represented_without_reading_process_env():
     assert by_id["env:REPORTING_DSN"]["current_value_summary"] == "<redacted>"
     assert by_id["env:ANTHROPIC_API_KEY"]["current_value_summary"] == "<not set>"
     assert by_id["env:ANTHROPIC_API_KEY"]["secret"] is True
-    assert by_id["env:AI_GATEWAY_USER_SELF_SERVICE"]["domain"] == "auth/admin"
-    assert by_id["env:AI_GATEWAY_USER_SELF_SERVICE"]["recommendation"] == (
+    assert by_id["env:AZIZAM_USER_SELF_SERVICE"]["domain"] == "auth/admin"
+    assert by_id["env:AZIZAM_USER_SELF_SERVICE"]["recommendation"] == (
         "Bootstrap seed for admin.db user access defaults; manage runtime policy in the dashboard."
     )
 

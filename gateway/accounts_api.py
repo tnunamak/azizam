@@ -80,7 +80,7 @@ def signin_options(path, oidc: dict) -> dict:
     return {"mode": mode, "built_in": mode in {"built-in", "both"},
             "oidc": mode in {"oidc", "both"} and oidc["enabled"],
             "oidc_label": oidc.get("label") or "your identity provider",
-            "oidc_url": "/admin/login?return_to=/ui/invite/", "instance_name": "AI Gateway",
+            "oidc_url": "/admin/login?return_to=/ui/invite/", "instance_name": "Azizam",
             "owner_name": "The gateway owner"}
 
 
@@ -163,7 +163,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
             if not opts["oidc"] or not session:
                 raise accounts.AccountError("login_required", "Sign in with your identity provider first.", 401)
             expected = csrf_token_for_session(session, signing_key=signing_key_provider())
-            if not hmac.compare_digest(expected, request.headers.get("x-ai-gateway-csrf", "")):
+            if not hmac.compare_digest(expected, request.headers.get("x-azizam-csrf", "")):
                 raise accounts.AccountError("csrf_required", "Refresh this page before accepting your invitation.", 403)
             user = admin_store.get_user(session.subject, path=path)
             if not user or user["issuer"] == "local":

@@ -173,7 +173,7 @@ class TestBuildRoleCatalogEntries(unittest.TestCase):
     # --- Golden for kobold/tabby (byte-identical) ----------------------------
 
     def test_kobold_role_with_model_path_listed(self) -> None:
-        """kobold role with model path produces vivid_fish_model_path (unchanged)."""
+        """kobold role with model path produces azizam_model_path (unchanged)."""
         roles = {
             "default": {
                 "backend": "kobold",
@@ -185,9 +185,9 @@ class TestBuildRoleCatalogEntries(unittest.TestCase):
         ids = {e["id"] for e in entries}
         self.assertIn("default", ids)
         entry = next(e for e in entries if e["id"] == "default")
-        self.assertEqual(entry["vivid_fish_backend"], "kobold")
-        self.assertEqual(entry["vivid_fish_model_path"], "/models/q4.gguf")
-        self.assertTrue(entry["vivid_fish_role"])
+        self.assertEqual(entry["azizam_backend"], "kobold")
+        self.assertEqual(entry["azizam_model_path"], "/models/q4.gguf")
+        self.assertTrue(entry["azizam_role"])
 
     def test_tabby_role_without_model_listed(self) -> None:
         """Tabby role without a pinned model is still listed (unpinned backend role)."""
@@ -196,8 +196,8 @@ class TestBuildRoleCatalogEntries(unittest.TestCase):
         ids = {e["id"] for e in entries}
         self.assertIn("assistant", ids)
         entry = next(e for e in entries if e["id"] == "assistant")
-        self.assertNotIn("vivid_fish_model_path", entry)
-        self.assertEqual(entry["vivid_fish_backend"], "tabby")
+        self.assertNotIn("azizam_model_path", entry)
+        self.assertEqual(entry["azizam_backend"], "tabby")
 
     def test_tabby_role_with_model_path_has_model_path_field(self) -> None:
         roles = {
@@ -208,7 +208,7 @@ class TestBuildRoleCatalogEntries(unittest.TestCase):
         }
         entries = _role_entries(roles, backends=_backends_with("tabby"))
         entry = next(e for e in entries if e["id"] == "vision")
-        self.assertEqual(entry["vivid_fish_model_path"], "/models/vision.gguf")
+        self.assertEqual(entry["azizam_model_path"], "/models/vision.gguf")
 
     # --- New backend now participates ----------------------------------------
 
@@ -225,10 +225,10 @@ class TestBuildRoleCatalogEntries(unittest.TestCase):
         ids = {e["id"] for e in entries}
         self.assertIn("coder", ids)
         entry = next(e for e in entries if e["id"] == "coder")
-        self.assertEqual(entry["vivid_fish_backend"], "my-vllm")
-        self.assertEqual(entry["vivid_fish_model"], "meta-llama/Llama-3-8B-Instruct")
-        self.assertNotIn("vivid_fish_model_path", entry)
-        self.assertTrue(entry["vivid_fish_role"])
+        self.assertEqual(entry["azizam_backend"], "my-vllm")
+        self.assertEqual(entry["azizam_model"], "meta-llama/Llama-3-8B-Instruct")
+        self.assertNotIn("azizam_model_path", entry)
+        self.assertTrue(entry["azizam_role"])
 
     # --- Unknown backend still skipped ----------------------------------------
 

@@ -16,6 +16,8 @@ enabled state, and note remain editable.
 
 from __future__ import annotations
 
+from gateway.compat import accept_aliases
+
 import copy
 import hashlib
 import json
@@ -149,6 +151,7 @@ def build_service_registry_seed(proxy_config: Mapping[str, Any]) -> dict[str, An
 
 
 def normalize_service_registry(value: Mapping[str, Any]) -> dict[str, Any]:
+    value = accept_aliases(dict(value))
     services = {}
     for raw_id, raw in (value.get("services") or {}).items():
         if not isinstance(raw, Mapping):

@@ -234,10 +234,10 @@ def video_generation_payload(
     payload: dict[str, Any] = {
         "id": public_id or job.get("job_id"),
         "object": VIDEO_OBJECT,
-        "vivid_object": LEGACY_VIDEO_OBJECT,
+        "azizam_object": LEGACY_VIDEO_OBJECT,
         "model": metadata.get("model") or job.get("workflow"),
         "status": openai_video_status(internal_status),
-        "vivid_status": internal_status,
+        "azizam_status": internal_status,
         "progress": _progress(job.get("progress", 0)),
         "created_at": job.get("created_at"),
         "updated_at": job.get("updated_at"),
@@ -250,7 +250,7 @@ def video_generation_payload(
         "error": None,
     }
     if job.get("workflow") is not None:
-        payload["vivid_fish_resolved_model"] = job["workflow"]
+        payload["azizam_resolved_model"] = job["workflow"]
     for key in ("size", "seconds", "actual_seconds"):
         if key in metadata:
             payload[key] = metadata[key]

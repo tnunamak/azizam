@@ -612,7 +612,7 @@ test("people lane OIDC invitation resumes its private token and accepts with ses
       name: "Sam Rivera",
       email: invitation.email,
     });
-    expect(route.request().headers()["x-ai-gateway-csrf"]).toBe(
+    expect(route.request().headers()["x-azizam-csrf"]).toBe(
       "test-oidc-csrf",
     );
     return route.fulfill({
@@ -646,7 +646,7 @@ test("people lane real invitation creates an account, app and working key, then 
   const memberPage = await memberContext.newPage();
   try {
     const session = await (await request.get("/admin/api/session")).json();
-    const headers = { "x-ai-gateway-csrf": session.actor.csrf_token };
+    const headers = { "x-azizam-csrf": session.actor.csrf_token };
     const profiles = await (await request.get("/admin/api/profiles")).json();
     const local = profiles.profiles.find(
       (p: { name: string }) => p.name === "Local chat",

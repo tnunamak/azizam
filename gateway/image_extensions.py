@@ -14,7 +14,7 @@ Why this exists:
     - Standard OpenAI fields stay where they are at the top level. They are
       *not* extensions; this module is not in their path.
     - Gateway-native controls (denoise, controlnet strength, sampler, etc.)
-      live under ``extensions.com.vividfish.workflow``. They are validated
+      live under ``extensions.com.azizam.workflow``. They are validated
       against the resolved workflow manifest's ``inputs`` and applied to the
       backend request via the manifest's bindings.
     - Unknown extension names are rejected. Manifest inputs that exist but the
@@ -48,7 +48,7 @@ from gateway.manifests import (
 # Namespace gateway-native workflow controls live under in the request body's
 # ``extensions`` container. Reserved namespaces should be dotted to make
 # collisions with caller-owned extensions unambiguous.
-WORKFLOW_EXTENSION_NAMESPACE = "com.vividfish.workflow"
+WORKFLOW_EXTENSION_NAMESPACE = "com.azizam.workflow"
 
 # Top-level fields the OpenAI image routes officially accept. Anything else at
 # the top level is *not* a valid passthrough and must be flagged so callers

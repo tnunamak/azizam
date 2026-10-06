@@ -37,7 +37,7 @@ async def _fake_litellm_payload(*_args, **_kwargs):
     return {
         "object": "list",
         "data": [{"id": model_id, "object": "model", "created": 1_700_000_000, "owned_by": "openai"} for model_id in LITELLM_IDS],
-        "x_ai_gateway_llm_execution": "litellm",
+        "x_azizam_llm_execution": "litellm",
     }
 
 
@@ -280,7 +280,7 @@ class ModelListEndpointTests(unittest.TestCase):
         entries = {entry["id"]: entry for entry in payload["data"]}
         self.assertIn("fast", entries)
         self.assertNotIn("default-fast", entries)
-        self.assertEqual(entries["fast"]["vivid_fish_resolves_to"], {})
+        self.assertEqual(entries["fast"]["azizam_resolves_to"], {})
         # Metadata still resolves against the complete catalog before hiding IDs.
         self.assertEqual(entries["fast"]["architecture"]["input_modalities"], ["text", "image"])
         self.assertIn("vision", entries["fast"]["tags"])
@@ -566,9 +566,9 @@ class RequestLoadedMetadataTests(unittest.TestCase):
                     patch.object(proxy, "_profile_model_allowlist", return_value={"current", "private-public"}):
                 payload = self._payload(headers=headers)
             visible_ids = {item["id"] for item in payload["data"]}
-            self.assertLessEqual(set(payload["vivid_fish_current_model_ids"]), visible_ids)
-            self.assertEqual(payload["vivid_fish_current_model_ids"], ["current"])
-            self.assertEqual(payload["vivid_fish_profile_model_allowlist"], ["current"])
+            self.assertLessEqual(set(payload["azizam_current_model_ids"]), visible_ids)
+            self.assertEqual(payload["azizam_current_model_ids"], ["current"])
+            self.assertEqual(payload["azizam_profile_model_allowlist"], ["current"])
             self.assertNotIn("private-public", visible_ids)
 
 

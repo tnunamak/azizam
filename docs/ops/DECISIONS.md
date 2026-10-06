@@ -55,8 +55,8 @@ requested placement. Cold services report placement as unknown until observed.
 
 ## Receipts and limits
 
-Response headers include `x-gateway-request-id`, `x-gateway-backend`,
-`x-gateway-remote`, `x-gateway-cost-usd`, and the observed `x-gateway-engine`.
+Response headers include `x-azizam-request-id`, `x-azizam-backend`,
+`x-azizam-remote`, `x-azizam-cost-usd`, and the observed `x-azizam-engine`.
 Local cost is zero. Receipt views expose the question count, actual CPU/GPU
 engine, latency, requested model, resolved model, and local cost without state
 or question text. The App owns the persisted receipt. Failures also get receipts.

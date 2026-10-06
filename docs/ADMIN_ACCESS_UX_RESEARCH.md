@@ -3,7 +3,7 @@
 Date: 2026-05-18
 
 This note records the design research behind the admin access-management UI for
-Vivid Fish AI Gateway. It is intentionally product-facing: the durable backend
+Azizam. It is intentionally product-facing: the durable backend
 model can stay explicit, but the UI should help operators complete access tasks
 without hand-authoring policy documents.
 

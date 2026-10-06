@@ -5,7 +5,7 @@ real user discussions.
 
 ## Reddit Corpus
 
-Default output is `/tmp/ai-gateway-reddit-corpus`.
+Default output is `/tmp/azizam-reddit-corpus`.
 
 Collect target-subreddit threads with the committed query plan:
 
@@ -42,7 +42,7 @@ python3 scripts/research/reddit_simulation.py
 ```
 
 The default output is a timestamped directory under
-`/tmp/ai-gateway-simulations/live` containing:
+`/tmp/azizam-simulations/live` containing:
 
 - `live-probes.json`
 - `persona-trials.md`
@@ -58,9 +58,8 @@ python3 scripts/research/reddit_simulation.py --include-generative
 The default request timeout is 60 seconds because local LLM cold starts and
 queued responses can legitimately exceed typical web-service timeouts.
 
-Runtime keys are read from `AI_GATEWAY_API_KEY`, `VIVID_OPENAI_API_KEY`, or
-`OPENAI_PROXY_API_KEY`. Admin keys are read from `AI_GATEWAY_ADMIN_KEY`,
-`VIVID_ADMIN_API_KEY`, or `OPENAI_PROXY_ADMIN_KEY`. Missing keys are recorded
+Runtime keys are read from `AZIZAM_API_KEY`. Admin keys are read from
+`AZIZAM_ADMIN_KEY`. Both accept the migration env fallbacks. Missing keys are recorded
 as trial findings rather than guessed.
 
 Persona definitions live in `scripts/research/reddit_simulation_personas.json`.
@@ -76,7 +75,7 @@ python3 scripts/research/reddit_trial_lab.py --include-costly
 ```
 
 The default output is a timestamped directory under
-`/tmp/ai-gateway-simulations/100x` containing:
+`/tmp/azizam-simulations/100x` containing:
 
 - `100x-trial-lab.json`
 - `100x-journey-transcripts.md`

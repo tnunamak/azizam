@@ -214,9 +214,10 @@ def test_litellm_headers_do_not_forward_client_runtime_key() -> None:
 
     assert headers["X-Litellm-Key"] == "Bearer sk-litellm-internal"
     assert headers["content-type"] == "application/json"
-    assert headers["x-ai-gateway-execution"] == "litellm"
-    assert headers["x-ai-gateway-profile"] == "family"
-    assert headers["x-ai-gateway-key-prefix"] == "sha256:abcdef"
+    assert headers["x-azizam-execution"] == "litellm"
+    assert headers["x-ai-gateway-execution"] == headers["x-azizam-execution"]
+    assert headers["x-azizam-profile"] == "family"
+    assert headers["x-azizam-key-prefix"] == "sha256:abcdef"
     assert "authorization" not in headers
     assert "x-api-key" not in headers
 
@@ -258,9 +259,9 @@ def test_litellm_runtime_uses_registry_default_when_env_override_is_absent() -> 
                     "enabled": True,
                     "capabilities": ["llm.execution"],
                     "config": {
-                        "base_url_env": "AI_GATEWAY_LITELLM_BASE_URL",
+                        "base_url_env": "AZIZAM_LITELLM_BASE_URL",
                         "default_base_url": "http://127.0.0.1:4011/",
-                        "api_key_env": "AI_GATEWAY_LITELLM_API_KEY",
+                        "api_key_env": "AZIZAM_LITELLM_API_KEY",
                     },
                 }
             }
@@ -283,13 +284,13 @@ def test_litellm_runtime_env_override_wins_over_registry_default() -> None:
                     "enabled": True,
                     "capabilities": ["llm.execution"],
                     "config": {
-                        "base_url_env": "AI_GATEWAY_LITELLM_BASE_URL",
+                        "base_url_env": "AZIZAM_LITELLM_BASE_URL",
                         "default_base_url": "http://127.0.0.1:4011",
                     },
                 }
             }
         },
-        env={"AI_GATEWAY_LITELLM_BASE_URL": "http://127.0.0.1:4999/"},
+        env={"AZIZAM_LITELLM_BASE_URL": "http://127.0.0.1:4999/"},
     )
 
     assert runtime.enabled

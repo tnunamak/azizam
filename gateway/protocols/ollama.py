@@ -28,7 +28,7 @@ from typing import Any, Iterable, Mapping
 
 # Clients compare this to semver floors, so it must parse as a version. The
 # number is the Ollama API revision the translators were checked against.
-DEFAULT_VERSION = "0.12.6+vivid-fish"
+DEFAULT_VERSION = "0.12.6+azizam"
 
 
 class OllamaTranslationError(ValueError):

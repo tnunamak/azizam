@@ -183,7 +183,7 @@ def test_keeps_litellm_settings_minimal() -> None:
 def test_forwards_gateway_request_id_header_through_litellm() -> None:
     """LiteLLM 1.86.2 is a separate sidecar; the gateway relies on this
     setting to carry its cancellation-correlation header
-    (X-AI-Gateway-Request-Id) through to the internal gateway hop behind
+    (X-Azizam-Request-Id) through to the internal gateway hop behind
     LiteLLM, since LiteLLM does not propagate a cancel signal of its own on
     this version. See gateway/backends/cancellation.py.
     """
@@ -211,7 +211,7 @@ def test_lifecycle_service_exposes_current_loaded_aliases() -> None:
     assert entries["current"]["litellm_params"] == {
         "model": "openai/current",
         "api_base": "http://127.0.0.1:5000/internal/litellm/current/v1",
-        "api_key": "os.environ/AI_GATEWAY_INTERNAL_LITELLM_KEY",
+        "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY",
     }
     assert entries["current"]["model_info"]["gateway_current_loaded"] is True
     assert entries["current-fast"]["litellm_params"]["model"] == "openai/current-fast"
@@ -239,7 +239,7 @@ def test_references_external_secrets_without_exposing_secret_values() -> None:
     rendered = repr(compiled)
     assert "sk-should-not-leak" not in rendered
     assert compiled["model_list"][0]["litellm_params"]["api_key"] == (
-        "os.environ/AI_GATEWAY_DOWNSTREAM_API_KEY"
+        "os.environ/AZIZAM_DOWNSTREAM_API_KEY"
     )
     assert "metadata" not in compiled
 
@@ -713,7 +713,7 @@ def test_lifecycle_backed_models_route_through_gateway_internal_target() -> None
     assert entry["litellm_params"] == {
         "model": "openai/Qwen3.6-27B-UD-Q4_K_XL-mtp.gguf",
         "api_base": "http://127.0.0.1:5000/internal/litellm/local/kobold/v1",
-        "api_key": "os.environ/AI_GATEWAY_INTERNAL_LITELLM_KEY",
+        "api_key": "os.environ/AZIZAM_INTERNAL_LITELLM_KEY",
     }
     assert entry["model_info"] == {
         "gateway_lifecycle": True,

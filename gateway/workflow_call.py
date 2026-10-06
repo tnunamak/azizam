@@ -2,7 +2,7 @@
 
 Both the MCP server and the A1111 facade need the same few steps: check inputs
 against the manifest-derived schema, turn them into the request the core route
-expects (using the ``fields`` map from ``x-vividfish-workflows``), and turn a
+expects (using the ``fields`` map from ``x-azizam-workflows``), and turn a
 core error into something the adapter can report. Nothing here talks HTTP or
 knows a vendor protocol.
 """
@@ -82,7 +82,7 @@ def effective_schema(entry: Mapping[str, Any]) -> dict[str, Any]:
     for extra in entry.get("route_inputs") or []:
         spec = {k: v for k, v in extra.items() if k in ("type", "minimum", "maximum", "description", "enum")}
         props.setdefault(extra["name"], spec)
-    schema = {k: v for k, v in base.items() if k not in ("x-vividfish-workflow-id", "description")}
+    schema = {k: v for k, v in base.items() if k not in ("x-azizam-workflow-id", "description")}
     schema["properties"] = props
     return schema
 

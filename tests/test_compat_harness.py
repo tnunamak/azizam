@@ -51,8 +51,8 @@ class TestLoadConfig(unittest.TestCase):
     def test_happy_path(self) -> None:
         cfg = load_config(
             env={
-                "OPENAI_PROXY_BASE_URL": "http://127.0.0.1:8080",
-                "OPENAI_PROXY_API_KEY": "sk-test",
+                "AZIZAM_BASE_URL": "http://127.0.0.1:8080",
+                "AZIZAM_API_KEY": "sk-test",
             }
         )
         self.assertEqual(cfg.base_url, "http://127.0.0.1:8080")
@@ -65,8 +65,8 @@ class TestLoadConfig(unittest.TestCase):
     def test_strips_trailing_slash(self) -> None:
         cfg = load_config(
             env={
-                "OPENAI_PROXY_BASE_URL": "http://127.0.0.1:8080/",
-                "OPENAI_PROXY_API_KEY": "sk-test",
+                "AZIZAM_BASE_URL": "http://127.0.0.1:8080/",
+                "AZIZAM_API_KEY": "sk-test",
             }
         )
         self.assertEqual(cfg.base_url, "http://127.0.0.1:8080")
@@ -74,15 +74,15 @@ class TestLoadConfig(unittest.TestCase):
 
     def test_missing_base_url(self) -> None:
         with self.assertRaises(ConfigError):
-            load_config(env={"OPENAI_PROXY_API_KEY": "sk-test"})
+            load_config(env={"AZIZAM_API_KEY": "sk-test"})
 
     def test_missing_api_key(self) -> None:
         with self.assertRaises(ConfigError):
-            load_config(env={"OPENAI_PROXY_BASE_URL": "http://127.0.0.1:8080"})
+            load_config(env={"AZIZAM_BASE_URL": "http://127.0.0.1:8080"})
 
     def test_allow_anonymous(self) -> None:
         cfg = load_config(
-            env={"OPENAI_PROXY_BASE_URL": "http://127.0.0.1:8080"},
+            env={"AZIZAM_BASE_URL": "http://127.0.0.1:8080"},
             allow_anonymous=True,
         )
         self.assertEqual(cfg.api_key, "")
@@ -94,15 +94,15 @@ class TestLoadConfig(unittest.TestCase):
         with self.assertRaises(ConfigError):
             load_config(
                 env={
-                    "OPENAI_PROXY_BASE_URL": "http://127.0.0.1:8080/v1",
-                    "OPENAI_PROXY_API_KEY": "sk-test",
+                    "AZIZAM_BASE_URL": "http://127.0.0.1:8080/v1",
+                    "AZIZAM_API_KEY": "sk-test",
                 }
             )
         with self.assertRaises(ConfigError):
             load_config(
                 env={
-                    "OPENAI_PROXY_BASE_URL": "http://127.0.0.1:8080/api",
-                    "OPENAI_PROXY_API_KEY": "sk-test",
+                    "AZIZAM_BASE_URL": "http://127.0.0.1:8080/api",
+                    "AZIZAM_API_KEY": "sk-test",
                 }
             )
 
@@ -110,8 +110,8 @@ class TestLoadConfig(unittest.TestCase):
         with self.assertRaises(ConfigError):
             load_config(
                 env={
-                    "OPENAI_PROXY_BASE_URL": "ftp://127.0.0.1",
-                    "OPENAI_PROXY_API_KEY": "sk-test",
+                    "AZIZAM_BASE_URL": "ftp://127.0.0.1",
+                    "AZIZAM_API_KEY": "sk-test",
                 }
             )
 
@@ -119,17 +119,17 @@ class TestLoadConfig(unittest.TestCase):
         with self.assertRaises(ConfigError):
             load_config(
                 env={
-                    "OPENAI_PROXY_BASE_URL": "http://",
-                    "OPENAI_PROXY_API_KEY": "sk-test",
+                    "AZIZAM_BASE_URL": "http://",
+                    "AZIZAM_API_KEY": "sk-test",
                 }
             )
 
     def test_custom_timeout(self) -> None:
         cfg = load_config(
             env={
-                "OPENAI_PROXY_BASE_URL": "http://127.0.0.1:8080",
-                "OPENAI_PROXY_API_KEY": "sk-test",
-                "OPENAI_PROXY_TIMEOUT_S": "5",
+                "AZIZAM_BASE_URL": "http://127.0.0.1:8080",
+                "AZIZAM_API_KEY": "sk-test",
+                "AZIZAM_TIMEOUT_S": "5",
             }
         )
         self.assertEqual(cfg.request_timeout_s, 5.0)
@@ -140,9 +140,9 @@ class TestLoadConfig(unittest.TestCase):
                 with self.assertRaises(ConfigError):
                     load_config(
                         env={
-                            "OPENAI_PROXY_BASE_URL": "http://127.0.0.1:8080",
-                            "OPENAI_PROXY_API_KEY": "sk-test",
-                            "OPENAI_PROXY_TIMEOUT_S": bad,
+                            "AZIZAM_BASE_URL": "http://127.0.0.1:8080",
+                            "AZIZAM_API_KEY": "sk-test",
+                            "AZIZAM_TIMEOUT_S": bad,
                         }
                     )
 
@@ -318,9 +318,9 @@ class TestRunMatrixCLI(unittest.TestCase):
         old = {
             k: os.environ.pop(k)
             for k in (
-                "OPENAI_PROXY_BASE_URL",
-                "OPENAI_PROXY_API_KEY",
-                "OPENAI_PROXY_TIMEOUT_S",
+                "AZIZAM_BASE_URL",
+                "AZIZAM_API_KEY",
+                "AZIZAM_TIMEOUT_S",
             )
             if k in os.environ
         }
@@ -512,8 +512,8 @@ class TestExecuteProbe(unittest.TestCase):
         def loader(*, allow_anonymous: bool = False):
             return load_config(
                 env={
-                    "OPENAI_PROXY_BASE_URL": "http://127.0.0.1:8080",
-                    "OPENAI_PROXY_API_KEY": "sk-test",
+                    "AZIZAM_BASE_URL": "http://127.0.0.1:8080",
+                    "AZIZAM_API_KEY": "sk-test",
                 },
                 allow_anonymous=allow_anonymous,
             )
@@ -541,8 +541,8 @@ class TestExecuteProbe(unittest.TestCase):
         def loader(*, allow_anonymous: bool = False):
             return load_config(
                 env={
-                    "OPENAI_PROXY_BASE_URL": "http://127.0.0.1:8080",
-                    "OPENAI_PROXY_API_KEY": "sk-test",
+                    "AZIZAM_BASE_URL": "http://127.0.0.1:8080",
+                    "AZIZAM_API_KEY": "sk-test",
                 },
                 allow_anonymous=allow_anonymous,
             )
@@ -571,8 +571,8 @@ class TestExecuteProbe(unittest.TestCase):
         def loader(*, allow_anonymous: bool = False):
             return load_config(
                 env={
-                    "OPENAI_PROXY_BASE_URL": "http://127.0.0.1:8080",
-                    "OPENAI_PROXY_API_KEY": "sk-test",
+                    "AZIZAM_BASE_URL": "http://127.0.0.1:8080",
+                    "AZIZAM_API_KEY": "sk-test",
                 },
                 allow_anonymous=allow_anonymous,
             )

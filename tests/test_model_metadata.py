@@ -23,7 +23,7 @@ def _annotated(entries: list[dict], sources: mm.MetadataSources | None = None, *
 
 
 def _workflow(model_id: str, intent: str, manifest: dict | None = None) -> tuple[dict, dict]:
-    entry = {"id": model_id, "object": "model", "vivid_fish_intent": intent, "vivid_fish_workflow_id": f"{intent}.{model_id}"}
+    entry = {"id": model_id, "object": "model", "azizam_intent": intent, "azizam_workflow_id": f"{intent}.{model_id}"}
     return entry, {f"{intent}.{model_id}": manifest or {}}
 
 
@@ -119,7 +119,7 @@ class DerivationTableTests(unittest.TestCase):
         }
         for op, (type_, inputs, outputs) in expected.items():
             with self.subTest(op=op):
-                fields = _annotated([{"id": "a", "vivid_fish_resolves_to": {op: "unlisted-target"}}])["a"]
+                fields = _annotated([{"id": "a", "azizam_resolves_to": {op: "unlisted-target"}}])["a"]
                 self.assertEqual(fields["type"], type_)
                 self.assertEqual(_arch(fields), (inputs, outputs))
 
@@ -128,8 +128,8 @@ class DerivationTableTests(unittest.TestCase):
         sources = mm.MetadataSources(declared=declared.get, origins={"vlm": mm.ORIGIN_LLM_CATALOG, "llm": mm.ORIGIN_LLM_CATALOG})
         out = _annotated([
             {"id": "vlm"}, {"id": "llm"},
-            {"id": "vision", "vivid_fish_resolves_to": {"chat": "vlm"}},
-            {"id": "plain", "vivid_fish_resolves_to": {"chat": "llm"}},
+            {"id": "vision", "azizam_resolves_to": {"chat": "vlm"}},
+            {"id": "plain", "azizam_resolves_to": {"chat": "llm"}},
         ], sources)
         self.assertEqual(_arch(out["vision"])[0], ["text", "image"])
         self.assertIn("vision", out["vision"]["tags"])
@@ -137,25 +137,25 @@ class DerivationTableTests(unittest.TestCase):
         self.assertNotIn("tags", out["plain"])
 
     def test_alias_with_two_operations_takes_shared_type(self) -> None:
-        fields = _annotated([{"id": "image", "vivid_fish_resolves_to": {"images": "g", "image_edits": "e"}}])["image"]
+        fields = _annotated([{"id": "image", "azizam_resolves_to": {"images": "g", "image_edits": "e"}}])["image"]
         self.assertEqual(fields["type"], "image")
         self.assertEqual(_arch(fields), (["text", "image"], ["image"]))
 
     def test_alias_with_no_shared_type_is_untyped(self) -> None:
-        fields = _annotated([{"id": "mixed", "vivid_fish_resolves_to": {"chat": "x", "speech": "y"}}])["mixed"]
+        fields = _annotated([{"id": "mixed", "azizam_resolves_to": {"chat": "x", "speech": "y"}}])["mixed"]
         self.assertNotIn("type", fields)
         self.assertNotIn("architecture", fields)
 
     def test_alias_target_listed_in_catalog_wins_over_operation_default(self) -> None:
         entry, manifests = _workflow("i2v", "video.generate", {"inputs": {"image": {"type": "asset"}}, "outputs": {}})
         sources = mm.MetadataSources(manifest=manifests.get)
-        out = _annotated([{"id": "video", "vivid_fish_resolves_to": {"videos": "i2v"}}], sources, catalog=[entry])
+        out = _annotated([{"id": "video", "azizam_resolves_to": {"videos": "i2v"}}], sources, catalog=[entry])
         self.assertEqual(_arch(out["video"]), (["text", "image"], ["video"]))
 
     def test_alias_target_resolves_through_workflow_registry_when_unlisted(self) -> None:
         manifest = {"intent": "video.edit", "inputs": {"source_video": {"type": "asset"}}, "outputs": {"video": {"media_type": "video/mp4"}}}
         sources = mm.MetadataSources(workflow_for_model={"remix-wf": manifest}.get)
-        out = _annotated([{"id": "video-remix", "vivid_fish_resolves_to": {"videos": "remix-wf"}}], sources)
+        out = _annotated([{"id": "video-remix", "azizam_resolves_to": {"videos": "remix-wf"}}], sources)
         self.assertEqual(_arch(out["video-remix"]), (["text", "video"], ["video"]))
 
     def test_decision_models(self) -> None:
@@ -172,7 +172,7 @@ class DerivationTableTests(unittest.TestCase):
 
     def test_current_loaded_entries_are_language(self) -> None:
         for model_id in ("current", "current-fast"):
-            fields = _annotated([{"id": model_id, "vivid_fish_current_loaded": True}])[model_id]
+            fields = _annotated([{"id": model_id, "azizam_current_loaded": True}])[model_id]
             self.assertEqual(fields["type"], "language")
 
     def test_registry_service_capabilities_override_llm_catalog_origin(self) -> None:
@@ -187,7 +187,7 @@ class DerivationTableTests(unittest.TestCase):
         self.assertEqual(out["vlm"]["tags"], ["vision"])
 
     def test_embeddings_intent_entry(self) -> None:
-        fields = _annotated([{"id": "e", "vivid_fish_intent": "text.embeddings"}])["e"]
+        fields = _annotated([{"id": "e", "azizam_intent": "text.embeddings"}])["e"]
         self.assertEqual(fields["type"], "embedding")
 
 
@@ -210,7 +210,7 @@ class OverrideTests(unittest.TestCase):
     def test_declaration_on_alias_wins_over_target(self) -> None:
         declared = {"t": {"tags": ["reasoning"]}, "a": {"tags": []}}
         sources = mm.MetadataSources(declared=declared.get, origins={"t": mm.ORIGIN_LLM_CATALOG})
-        out = _annotated([{"id": "t"}, {"id": "a", "vivid_fish_resolves_to": {"chat": "t"}}], sources)
+        out = _annotated([{"id": "t"}, {"id": "a", "azizam_resolves_to": {"chat": "t"}}], sources)
         self.assertEqual(out["t"]["tags"], ["reasoning"])
         self.assertNotIn("tags", out["a"])
 
@@ -226,7 +226,7 @@ class OverrideTests(unittest.TestCase):
     def test_profile_filtered_catalog_does_not_change_alias_values(self) -> None:
         declared = {"vlm": {"tags": ["vision"]}}
         sources = mm.MetadataSources(declared=declared.get, origins={"vlm": mm.ORIGIN_LLM_CATALOG})
-        catalog = [{"id": "vlm"}, {"id": "vision", "vivid_fish_resolves_to": {"chat": "vlm"}}]
+        catalog = [{"id": "vlm"}, {"id": "vision", "azizam_resolves_to": {"chat": "vlm"}}]
         visible = _annotated([catalog[1]], sources, catalog=catalog)
         self.assertIn("image", _arch(visible["vision"])[0])
 
@@ -269,21 +269,21 @@ class LoadedModelInheritanceTests(unittest.TestCase):
     def test_inherited_wins_over_the_alias_declaration(self) -> None:
         loaded = mm.loaded_model_metadata(["big"], self._sources())
         inherited = {"current": loaded, "current-fast": mm.without_reasoning(loaded)}
-        entries = [{"id": "current", "vivid_fish_current_loaded": True}, {"id": "current-fast", "vivid_fish_current_loaded": True}]
+        entries = [{"id": "current", "azizam_current_loaded": True}, {"id": "current-fast", "azizam_current_loaded": True}]
         out = _annotated(entries, self._sources(inherited=inherited))
         self.assertEqual(out["current"]["tags"], ["tool-use", "reasoning", "vision"])
         self.assertEqual(out["current-fast"]["tags"], ["tool-use", "vision"])
         self.assertEqual(_arch(out["current-fast"]), (["text", "image"], ["text"]))
 
     def test_without_inheritance_the_alias_declaration_is_the_fallback(self) -> None:
-        out = _annotated([{"id": "current", "vivid_fish_current_loaded": True}], self._sources())
+        out = _annotated([{"id": "current", "azizam_current_loaded": True}], self._sources())
         self.assertEqual(_arch(out["current"]), (["text"], ["text"]))
         self.assertNotIn("tags", out["current"])
 
     def test_alias_resolving_to_a_dynamic_alias_inherits_too(self) -> None:
         loaded = mm.loaded_model_metadata(["big"], self._sources())
         out = _annotated(
-            [{"id": "current"}, {"id": "here", "vivid_fish_resolves_to": {"chat": "current"}}],
+            [{"id": "current"}, {"id": "here", "azizam_resolves_to": {"chat": "current"}}],
             self._sources(inherited={"current": loaded}),
         )
         self.assertIn("reasoning", out["here"]["tags"])
@@ -301,7 +301,7 @@ class ConsistencyAndOmissionTests(unittest.TestCase):
         self.assertIn("vision", fields["tags"])
 
     def test_every_typed_entry_is_consistent(self) -> None:
-        entries = [{"id": f"a-{op}", "vivid_fish_resolves_to": {op: "t"}} for op in ("chat", "images", "image_edits", "videos", "speech", "transcriptions")]
+        entries = [{"id": f"a-{op}", "azizam_resolves_to": {op: "t"}} for op in ("chat", "images", "image_edits", "videos", "speech", "transcriptions")]
         for fields in _annotated(entries).values():
             if fields["type"] == "language":
                 self.assertEqual("vision" in fields.get("tags", []), "image" in _arch(fields)[0], fields["id"])
@@ -312,7 +312,7 @@ class ConsistencyAndOmissionTests(unittest.TestCase):
         edit, edit_manifests = _workflow("edit", "image.edit", {"inputs": {"image": {"type": "asset"}}, "outputs": {"image": {"media_type": "image/png"}}})
         i2v, i2v_manifests = _workflow("i2v", "video.generate", {"inputs": {"image": {"type": "asset"}}, "outputs": {"video": {"media_type": "video/mp4"}}})
         sources = mm.MetadataSources(manifest={**edit_manifests, **i2v_manifests}.get)
-        out = _annotated([edit, i2v, {"id": "image-edit", "vivid_fish_resolves_to": {"image_edits": "edit"}}], sources)
+        out = _annotated([edit, i2v, {"id": "image-edit", "azizam_resolves_to": {"image_edits": "edit"}}], sources)
         for model_id in ("edit", "i2v", "image-edit"):
             with self.subTest(model=model_id):
                 self.assertIn("image", _arch(out[model_id])[0])
@@ -331,25 +331,25 @@ class ConsistencyAndOmissionTests(unittest.TestCase):
             self.assertNotIn(key, fields)
 
     def test_max_tokens_and_tags_omitted_unless_known(self) -> None:
-        fields = _annotated([{"id": "c", "vivid_fish_current_loaded": True}])["c"]
+        fields = _annotated([{"id": "c", "azizam_current_loaded": True}])["c"]
         self.assertNotIn("max_tokens", fields)
         self.assertNotIn("tags", fields)
         self.assertNotIn("context_window", fields)
 
     def test_context_window_passes_through_untouched(self) -> None:
-        fields = _annotated([{"id": "c", "vivid_fish_current_loaded": True, "context_window": 1234}])["c"]
+        fields = _annotated([{"id": "c", "azizam_current_loaded": True, "context_window": 1234}])["c"]
         self.assertEqual(fields["context_window"], 1234)
 
-    def test_existing_vivid_fish_fields_are_untouched(self) -> None:
-        entry = {"id": "image", "vivid_fish_alias": True, "vivid_fish_resolves_to": {"images": "x"}, "owned_by": "vivid-fish"}
+    def test_existing_azizam_fields_are_untouched(self) -> None:
+        entry = {"id": "image", "azizam_alias": True, "azizam_resolves_to": {"images": "x"}, "owned_by": "azizam"}
         fields = _annotated([entry])["image"]
         for key, value in entry.items():
             self.assertEqual(fields[key], value)
 
-    def test_no_new_field_uses_a_vivid_fish_name(self) -> None:
+    def test_no_new_field_uses_a_legacy_name(self) -> None:
         for name in (*mm.OUTPUT_FIELDS, *mm.DECLARABLE_FIELDS, mm.DECLARATION_KEY):
             self.assertNotIn("vivid_fish", name)
-        entry = {"id": "a", "vivid_fish_resolves_to": {"chat": "t"}}
+        entry = {"id": "a", "azizam_resolves_to": {"chat": "t"}}
         fields = _annotated([entry])["a"]
         self.assertEqual(
             {k for k in fields if "vivid_fish" in k},
@@ -363,10 +363,10 @@ class ConsistencyAndOmissionTests(unittest.TestCase):
         self.assertEqual(set(mm.TAGS), {"tool-use", "reasoning", "vision", "file-input"})
 
     def test_metadata_index_matches_annotation(self) -> None:
-        entries = [{"id": "embed", "vivid_fish_resolves_to": {"embeddings": "e"}}]
+        entries = [{"id": "embed", "azizam_resolves_to": {"embeddings": "e"}}]
         index = mm.metadata_index(entries, mm.MetadataSources())
         self.assertEqual(index["embed"]["type"], "embedding")
-        self.assertNotIn("vivid_fish_resolves_to", index["embed"])
+        self.assertNotIn("azizam_resolves_to", index["embed"])
 
 
 class EngineAgnosticTests(unittest.TestCase):

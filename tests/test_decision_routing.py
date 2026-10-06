@@ -89,7 +89,7 @@ def test_configured_fallback_discloses_skipped_primary_in_http_and_receipt(monke
     with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"model": "small-v1", "answers": {"q": {"type": "noul", "noul": .9}}, "usage": {"input_tokens": 9, "output_tokens": 0}})))):
         response = TestClient(proxy.app).post("/v1/systemone", json={**BODY, "model": "decide-quality"})
     assert response.status_code == 200, response.text
-    assert response.headers["x-gateway-fallback"] == "large:not_deployed"
+    assert response.headers["x-azizam-fallback"] == "large:not_deployed"
     receipt = records[0].to_dict(audience="client")
     assert receipt["requested_model"] == "decide-quality"
     assert receipt["resolved_model"] == "small-v1"
@@ -104,7 +104,7 @@ def test_unavailable_single_target_returns_503_without_substitution(model):
     assert result.body["error"]["code"] == "model_not_deployed"
     assert "No fallback is configured" in result.body["error"]["message"]
     assert result.resolved_model is None
-    assert "x-gateway-fallback" not in result.headers
+    assert "x-azizam-fallback" not in result.headers
 
 
 def test_missing_single_target_is_503():
@@ -166,7 +166,7 @@ def test_mounted_gateway_path_and_owned_receipt(monkeypatch):
     with patch("gateway.decision_routing.httpx.AsyncClient", lambda **kw: real(transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"model": "small-v1", "answers": {"q": {"type": "noul", "noul": .9}}, "usage": {"input_tokens": 9, "output_tokens": 0}}, headers={"x-decision-engine": "cpu"})))):
         response = TestClient(proxy.app).post("/typesafe/v1/systemone", json=BODY)
     assert response.status_code == 200, response.text
-    assert response.headers["x-gateway-engine"] == "cpu"
+    assert response.headers["x-azizam-engine"] == "cpu"
     assert records[0].app_id == "app-test"
     assert records[0].requested_model == "decide"
     assert records[0].resolved_model == "small-v1"
@@ -235,7 +235,7 @@ def test_exhausted_fallback_retains_attempt_receipt_context():
         result = asyncio.run(rt.dispatch(None, None, {**BODY, "model": "decide-quality"}, "r"))
     assert result.status_code == 529
     assert result.fallback_reasons == ("large:overloaded", "small:overloaded")
-    assert result.headers["x-gateway-fallback"] == "large:overloaded,small:overloaded"
+    assert result.headers["x-azizam-fallback"] == "large:overloaded,small:overloaded"
     assert result.backend == "small"
     assert result.engine is None and result.resolved_model is None
 

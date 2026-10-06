@@ -150,7 +150,7 @@ Known limits:
 
 - Only synchronous `image.generate` workflows appear as A1111 checkpoints.
 - Output-changing fields that the gateway cannot honor are rejected with `422`. This includes hires fix, face restoration, ADetailer and scripts, styles, refiner checkpoint, tiling, variation seeds, seed resizing, LoRA/LyCORIS and hypernetwork prompt tags.
-- Model-specific knobs with no effect on the selected workflow are ignored and named in `x-gateway-ignored-params`.
+- Model-specific knobs with no effect on the selected workflow are ignored and named in `x-azizam-ignored-params`.
 - Upscaling and img2img are not implemented in this facade. Use the gateway's native image edit or workflow routes for those operations.
 
 Evidence:

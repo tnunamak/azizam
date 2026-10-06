@@ -60,7 +60,7 @@ const seededCatalog = {
       ],
       use: {
         model: "chat",
-        curl: 'curl $AI_GATEWAY_BASE/v1/chat/completions -H "Authorization: Bearer $AI_GATEWAY_API_KEY" -H "Content-Type: application/json" -d \'{"model":"chat","messages":[{"role":"user","content":"Hello"}]}\'',
+        curl: 'curl $AZIZAM_BASE/v1/chat/completions -H "Authorization: Bearer $AZIZAM_API_KEY" -H "Content-Type: application/json" -d \'{"model":"chat","messages":[{"role":"user","content":"Hello"}]}\'',
         python: { path: "/v1/chat/completions", model: "chat" },
         javascript: { path: "/v1/chat/completions", model: "chat" },
       },
@@ -108,7 +108,7 @@ const seededCatalog = {
       recent_receipts: [],
       use: {
         model: "image",
-        curl: 'curl $AI_GATEWAY_BASE/v1/images/generations -H "Authorization: Bearer $AI_GATEWAY_API_KEY" -H "Content-Type: application/json" -d \'{"model":"image","prompt":"A small red cabin"}\'',
+        curl: 'curl $AZIZAM_BASE/v1/images/generations -H "Authorization: Bearer $AZIZAM_API_KEY" -H "Content-Type: application/json" -d \'{"model":"image","prompt":"A small red cabin"}\'',
         python: { path: "/v1/images/generations", model: "image" },
         javascript: { path: "/v1/images/generations", model: "image" },
       },
@@ -223,7 +223,7 @@ const seededCatalog = {
       recent_receipts: [],
       use: {
         model: "demo-chat",
-        curl: 'curl $AI_GATEWAY_BASE/v1/chat/completions -H "Authorization: Bearer $AI_GATEWAY_API_KEY"',
+        curl: 'curl $AZIZAM_BASE/v1/chat/completions -H "Authorization: Bearer $AZIZAM_API_KEY"',
         python: { path: "/v1/chat/completions", model: "demo-chat" },
         javascript: { path: "/v1/chat/completions", model: "demo-chat" },
       },
@@ -261,7 +261,7 @@ const seededCatalog = {
       recent_receipts: [],
       use: {
         model: "provider/image-fast",
-        curl: 'curl $AI_GATEWAY_BASE/v1/images/generations -H "Authorization: Bearer $AI_GATEWAY_API_KEY"',
+        curl: 'curl $AZIZAM_BASE/v1/images/generations -H "Authorization: Bearer $AZIZAM_API_KEY"',
         python: {
           path: "/v1/images/generations",
           model: "provider/image-fast",

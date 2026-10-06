@@ -1,6 +1,6 @@
 # VRAM profiles for GPU-budget-aware workflows — design notes
 
-> **Restart rule: restart the gateway only with `scripts/safe-restart`** (`--llama` for llama-bee). Never run a bare `systemctl --user restart openai-proxy`: it kills in-flight streams and media calls. See `docs/ops/SAFE_RESTART.md`.
+> **Restart rule: restart the gateway only with `scripts/safe-restart`** (`--llama` for llama-bee). Never run a bare `systemctl --user restart azizam`: it kills in-flight streams and media calls. See `docs/ops/SAFE_RESTART.md`.
 
 **Status:** draft for discussion (2026-06-09). Not implemented.
 **Author:** drafted with Claude, grounded in the live systems below.

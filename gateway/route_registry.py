@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from gateway.compat import accept_aliases
+
 import copy
 from collections.abc import Mapping
 from typing import Any
@@ -29,7 +31,7 @@ def protocol_frontend_records(
     for item in values:
         if not isinstance(item, Mapping):
             continue
-        record = copy.deepcopy(dict(item))
+        record = accept_aliases(copy.deepcopy(dict(item)))
         seed = seed_frontends.get(str(record.get("id") or ""))
         if isinstance(seed, Mapping):
             for key in (
@@ -106,7 +108,7 @@ def runtime_route_policy(
     return policies
 
 
-def openai_proxy_policy(
+def azizam_policy(
     *,
     registry: Mapping[str, Any] | None = None,
     proxy_config: Mapping[str, Any] | None = None,
@@ -117,7 +119,7 @@ def openai_proxy_policy(
         proxy_config=proxy_config,
     ):
         path = _path(route.get("canonical") or route.get("path"))
-        policy = route.get("openai_proxy_policy")
+        policy = route.get("azizam_policy")
         if not path or not isinstance(policy, Mapping):
             continue
         protocol = str(policy.get("protocol") or "").strip()

@@ -198,9 +198,9 @@ def _error_result(
     reconciliation_status: str | None = None,
     ledger_path: Path | None = None,
 ) -> DecisionDispatchResult:
-    headers = {"x-gateway-request-id": request_id, "x-gateway-remote": "1", **error.headers}
+    headers = {"x-azizam-request-id": request_id, "x-azizam-remote": "1", **error.headers}
     if provider is not None:
-        headers["x-gateway-provider"] = provider.id
+        headers["x-azizam-provider"] = provider.id
     pending = None
     if provider is not None and ledger_path is not None and ledger_path.exists():
         pending = next((row for row in providers.list_provider_reconciliations(
@@ -333,10 +333,10 @@ async def systemone(
         )
     cost_usd = str(cost.usd) if cost.usd is not None else None
     headers = {
-        "x-gateway-request-id": request_id,
-        "x-gateway-remote": "1",
-        "x-gateway-provider": provider.id,
-        "x-gateway-cost-usd": cost_usd if cost_usd is not None else "unknown",
+        "x-azizam-request-id": request_id,
+        "x-azizam-remote": "1",
+        "x-azizam-provider": provider.id,
+        "x-azizam-cost-usd": cost_usd if cost_usd is not None else "unknown",
     }
     payload_model = payload.get("model") if isinstance(payload, Mapping) else None
     resolved = str(payload_model) if isinstance(payload_model, str) and payload_model else (requested_model.split("/", 1)[1] if "/" in requested_model else requested_model)
@@ -443,10 +443,10 @@ async def openai(
             receipt.set_policy_decision("allowed", source="gateway:remote-provider")
             owner.report(status="succeeded" if upstream_status < 400 else "failed", reason="completed" if upstream_status < 400 else "failed")
             headers = {
-                "x-gateway-request-id": receipt.request_id,
-                "x-gateway-remote": "1",
-                "x-gateway-provider": provider.id,
-                "x-gateway-cost-usd": str(receipt.cost["usd"]) if receipt.cost and receipt.cost.get("usd") is not None else "unknown",
+                "x-azizam-request-id": receipt.request_id,
+                "x-azizam-remote": "1",
+                "x-azizam-provider": provider.id,
+                "x-azizam-cost-usd": str(receipt.cost["usd"]) if receipt.cost and receipt.cost.get("usd") is not None else "unknown",
             }
             if upstream_headers.get("retry-after"):
                 headers["retry-after"] = upstream_headers["retry-after"]

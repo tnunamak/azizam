@@ -64,10 +64,10 @@ def main():
     config_path = state / "config.yml"
     config_path.write_text(yaml.safe_dump(config))
     env = {"PATH": os.environ["PATH"], "HOME": str(state), "PYTHONPATH": str(repo),
-           "AI_GATEWAY_CONFIG_PATH": str(config_path), "PYTHONDONTWRITEBYTECODE": "1"}
+           "AZIZAM_CONFIG_PATH": str(config_path), "PYTHONDONTWRITEBYTECODE": "1"}
     for name, filename in (("ADMIN", "admin"), ("METRICS", "metrics"), ("RESPONSES", "responses"),
                            ("RECEIPTS", "receipts"), ("MEDIA_JOBS", "media_jobs")):
-        env[f"AI_GATEWAY_{name}_DB"] = str(state / f"{filename}.db")
+        env[f"AZIZAM_{name}_DB"] = str(state / f"{filename}.db")
     # Bootstrap only this temporary App with a generated key that is never printed.
     launcher = state / "launch.py"
     launcher.write_text('''import hashlib, os, sys
@@ -124,11 +124,11 @@ uvicorn.run(proxy.app, host="127.0.0.1", port=int(sys.argv[1]), lifespan="off", 
             elapsed = (time.perf_counter() - started) * 1000
             actual = answer["answers"]["q"].get("choice") if question["type"] == "choice" else answer["answers"]["q"]["noul"] >= .5
             assert answer["model"] == "decider-2b-v11"
-            assert headers["x-gateway-cost-usd"] == "0.0"
-            assert headers["x-gateway-engine"] in ("cpu", "gpu")
+            assert headers["x-azizam-cost-usd"] == "0.0"
+            assert headers["x-azizam-engine"] in ("cpu", "gpu")
             results.append({"case": index + 1, "expected": expected, "actual": actual, "correct": actual == expected,
-                            "latency_ms": round(elapsed, 2), "engine": headers["x-gateway-engine"],
-                            "request_id": headers["x-gateway-request-id"], "usage": answer["usage"]})
+                            "latency_ms": round(elapsed, 2), "engine": headers["x-azizam-engine"],
+                            "request_id": headers["x-azizam-request-id"], "usage": answer["usage"]})
         models, _ = call("/v1/models")
         assert "decide" in {model["id"] for model in models["data"]}
         capabilities, _ = call("/gateway/v1/capabilities")

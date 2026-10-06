@@ -85,7 +85,7 @@ beforeEach(() => {
     vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/me/api/session")) return jsonResponse(ownerSession);
-      if (url.endsWith("/.well-known/ai-gateway")) {
+      if (url.endsWith("/.well-known/azizam")) {
         return jsonResponse({
           service: { name: "Kitchen Gateway" },
           presentation: { theme_default: "light" },
@@ -128,12 +128,12 @@ describe("AppShell accessible names", () => {
       }),
     ).not.toHaveLength(0);
     const brandLinks = screen.getAllByRole("link", {
-      name: "Vivid Fish Kitchen Gateway Home",
+      name: "Azizam Kitchen Gateway Home",
     });
     expect(brandLinks).toHaveLength(2);
     for (const link of brandLinks) {
       expect(link).toBeVisible();
-      expect(link).toHaveTextContent("Vivid Fish");
+      expect(link).toHaveTextContent("Azizam");
       expect(link).toHaveTextContent("Kitchen Gateway");
     }
     expect(screen.getByRole("button", { name: /^Search$/ })).toBeVisible();

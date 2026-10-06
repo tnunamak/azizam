@@ -181,10 +181,10 @@ def test_systemone_accepts_typesafe_noul_fixture_and_records_receipt(env):
     resp = env.client.post("/v1/systemone", json=fixture["request"], headers=H)
     assert resp.status_code == 200, resp.text
     assert resp.json() == fixture["response"]
-    assert resp.headers["x-gateway-backend"] == "decider-cpu"
-    assert resp.headers["x-gateway-remote"] == "0"
-    assert resp.headers["x-gateway-cost-usd"] == "0.0"
-    assert resp.headers["x-gateway-engine"] == "cpu"
+    assert resp.headers["x-azizam-backend"] == "decider-cpu"
+    assert resp.headers["x-azizam-remote"] == "0"
+    assert resp.headers["x-azizam-cost-usd"] == "0.0"
+    assert resp.headers["x-azizam-engine"] == "cpu"
     assert resp.headers["x-decision-engine"] == "cpu"
     auth, receipt = env.fakes.receipts[0]
     assert auth.app_profile == "family"
@@ -460,7 +460,7 @@ def test_malformed_json_returns_422_and_records_receipt(env):
     )
     assert resp.status_code == 422
     _assert_detail_error(resp, needle="valid JSON")
-    assert resp.headers["x-gateway-request-id"].startswith("req_")
+    assert resp.headers["x-azizam-request-id"].startswith("req_")
     assert env.fakes.calls == []
     assert env.fakes.receipts[0][1].status_code == 422
     assert env.fakes.receipts[0][1].error_code == "invalid_json"
@@ -469,7 +469,7 @@ def test_authentication_runs_before_models_and_systemone(env):
     assert env.client.get("/typesafe/v1/models").status_code == 401
     resp = env.client.post("/v1/systemone", json=_fixture("typesafe_systemone_noul.json")["request"])
     assert resp.status_code == 401
-    assert resp.headers["x-gateway-request-id"].startswith("req_")
+    assert resp.headers["x-azizam-request-id"].startswith("req_")
 
 
 def test_policy_denial_from_dispatch_is_safe_error(env):
@@ -616,7 +616,7 @@ def test_backend_error_statuses_are_relayed_without_response_validation(env, sta
         _assert_detail_error(resp, needle="backend says no")
     else:
         assert resp.json() == body
-    assert resp.headers["x-gateway-request-id"].startswith("req_")
+    assert resp.headers["x-azizam-request-id"].startswith("req_")
     for key, value in headers.items():
         assert resp.headers[key] == value
     assert env.fakes.receipts[0][1].status_code == status
@@ -878,8 +878,8 @@ def test_free_fallback_reasons_are_reported_in_headers_and_receipts(env):
     )
     resp = env.client.post("/v1/systemone", json=fixture["request"], headers=H)
     assert resp.status_code == 200
-    assert resp.headers["x-gateway-fallback"] == "decider-gpu:529"
-    assert resp.headers["x-gateway-fallback-reasons"] == "decider-gpu:529"
+    assert resp.headers["x-azizam-fallback"] == "decider-gpu:529"
+    assert resp.headers["x-azizam-fallback-reasons"] == "decider-gpu:529"
     assert env.fakes.receipts[0][1].fallback_reasons == ("decider-gpu:529",)
 
 

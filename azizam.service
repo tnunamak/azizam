@@ -1,23 +1,23 @@
 [Unit]
-Description=Vivid Fish AI Gateway - Unified local AI API for TabbyAPI/KoboldCpp/TTS/STT/ComfyUI
+Description=Azizam - Unified local AI API for TabbyAPI/KoboldCpp/TTS/STT/ComfyUI
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/applications/openai-proxy
-ExecStart=%h/applications/openai-proxy/start.sh
+WorkingDirectory=%h/applications/azizam
+ExecStart=%h/applications/azizam/start.sh
 Restart=on-failure
 RestartSec=10
 
 # Environment
-Environment="OPENAI_PROXY_PORT=5000"
+Environment="AZIZAM_PORT=5000"
 Environment="TABBY_IDLE_TIMEOUT=300"
 Environment="TTS_ENABLED=true"
 Environment="TTS_HOST=http://127.0.0.1:8001"
 
 # Graceful stop: SIGTERM goes to start.sh only, which forwards it to the proxy
 # and stops LiteLLM after the proxy exits. uvicorn waits up to
-# AI_GATEWAY_GRACEFUL_SHUTDOWN_S (120) for in-flight responses; systemd
+# AZIZAM_GRACEFUL_SHUTDOWN_S (120) for in-flight responses; systemd
 # SIGKILLs everything left at TimeoutStopSec. See docs/ops/SAFE_RESTART.md.
 KillMode=mixed
 KillSignal=SIGTERM
