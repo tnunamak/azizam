@@ -154,7 +154,7 @@ Tested with Pi 1.0.4. The peer range is `>=1.0.4 <2` for `@earendil-works/pi-ai`
 
 ## Before publishing
 
-- [ ] Replace the `OWNER/REPO` placeholders in `package.json` (`repository.url`, `homepage`, `bugs.url`) with the real repository URL.
+- [x] `package.json` points at `tnunamak/azizam` (`repository.url`, `homepage`, `bugs.url`).
 - [ ] Confirm that you own the npm name `pi-provider-azizam` (or choose another and update the install commands above).
 - [ ] Run `npm test` against the newest Pi in the supported range.
 

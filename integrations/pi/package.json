@@ -17,12 +17,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/OWNER/REPO.git",
+    "url": "git+https://github.com/tnunamak/azizam.git",
     "directory": "integrations/pi"
   },
-  "homepage": "https://github.com/OWNER/REPO/tree/main/integrations/pi#readme",
+  "homepage": "https://github.com/tnunamak/azizam/tree/main/integrations/pi#readme",
   "bugs": {
-    "url": "https://github.com/OWNER/REPO/issues"
+    "url": "https://github.com/tnunamak/azizam/issues"
   },
   "pi": {
     "extensions": [

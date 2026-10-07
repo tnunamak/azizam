@@ -514,7 +514,7 @@ _HTML_FOOT_TEMPLATE = """
 <footer>
   Auto-refreshing every 10s. For programmatic access,
   poll <a href="/v1/status">/v1/status</a> directly (bearer token required).
-  · <a href="https://github.com/Vivid-Fish/azizam" target="_blank" rel="noopener">github.com/Vivid-Fish/azizam</a>
+  · <a href="https://github.com/tnunamak/azizam" target="_blank" rel="noopener">github.com/tnunamak/azizam</a>
   __VERSION_HTML__
 </footer>
 """

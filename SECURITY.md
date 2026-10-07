@@ -6,10 +6,10 @@ Please report security issues privately. Do not open a public issue for a
 suspected vulnerability.
 
 Preferred route: open a private GitHub security advisory draft for
-`Vivid-Fish/azizam` at:
+`tnunamak/azizam` at:
 
 ```text
-https://github.com/Vivid-Fish/azizam/security/advisories/new
+https://github.com/tnunamak/azizam/security/advisories/new
 ```
 
 If GitHub private vulnerability reporting is not enabled for the repository,
