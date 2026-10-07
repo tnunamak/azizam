@@ -7818,22 +7818,13 @@ async def proxy_comfy_request(
     )
     if output_shape_error is not None:
         return output_shape_error
-    try:
-        n = int(body.get("n", 1))
-    except (TypeError, ValueError):
+    n = body.get("n", 1)
+    if isinstance(n, bool) or not isinstance(n, int):
         _record_image_input(receipt, "n", rejected_reason="not_integer")
-        return Response(
-            content=json.dumps({"error": {"message": "n must be an integer", "type": "invalid_request_error"}}),
-            status_code=400,
-            media_type="application/json",
-        )
+        return openai_error_response("n must be an integer", param="n")
     if n < 1 or n > 10:
         _record_image_input(receipt, "n", rejected_reason="out_of_range")
-        return Response(
-            content=json.dumps({"error": {"message": "n must be between 1 and 10", "type": "invalid_request_error"}}),
-            status_code=400,
-            media_type="application/json",
-        )
+        return openai_error_response("n must be between 1 and 10", param="n")
     _record_image_input(receipt, "n")
     response_format = body.get(
         "response_format",
@@ -8246,7 +8237,21 @@ async def proxy_comfy_edit_request(
     requested_model = form.get("model", IMAGE_EDIT_DEFAULT_MODEL)
     model = requested_model
     requested_size = form.get("size")
-    size = requested_size or ""
+    size = requested_size
+    requested_dimensions: tuple[int, int] | None = None
+    if size is not None and size != "auto":
+        try:
+            if not isinstance(size, str) or not re.fullmatch(r"[0-9]+x[0-9]+", size):
+                raise ValueError
+            width, height = (int(part) for part in size.split("x"))
+            if width <= 0 or height <= 0:
+                raise ValueError
+            requested_dimensions = (width, height)
+        except (TypeError, ValueError, OverflowError):
+            _record_image_input(receipt, "size", rejected_reason="invalid_dimensions")
+            return openai_error_response(
+                "size must be 'auto' or WIDTHxHEIGHT with positive integers", param="size",
+            )
     if receipt is not None:
         receipt.requested_model = str(requested_model) if requested_model is not None else None
     _record_image_input(receipt, "model")
@@ -8346,6 +8351,16 @@ async def proxy_comfy_edit_request(
             )
         )
     manifest = _find_image_manifest("image.edit", str(model))
+    if requested_dimensions is not None and manifest is not None:
+        for field, value in zip(("width", "height"), requested_dimensions):
+            spec = (manifest.get("inputs") or {}).get(field) or {}
+            if (("minimum" in spec and value < spec["minimum"])
+                    or ("maximum" in spec and value > spec["maximum"])):
+                _record_image_input(receipt, "size", rejected_reason="out_of_range")
+                return openai_error_response(
+                    f"size {field} is outside the workflow dimension limits", param="size",
+                )
+
     prompt_ignored_by_workflow = _manifest_ignores_prompt(manifest)
     if not prompt and not prompt_ignored_by_workflow:
         _record_image_input(receipt, "prompt", rejected_reason="missing")
@@ -8380,6 +8395,38 @@ async def proxy_comfy_edit_request(
             }),
             status_code=400,
             media_type="application/json",
+        )
+
+    workflow = copy.deepcopy(workflow)
+    meta = workflow.pop("_meta", {})
+    workflow_name = str(meta.get("name") or model)
+    if receipt is not None:
+        receipt.requested_workflow = str(model) if model is not None else None
+        receipt.resolved_workflow = workflow_name
+    image_slots = _image_edit_node_slots(meta)
+    if len(image_files) > len(image_slots):
+        _record_image_input(receipt, "image[]", rejected_reason="too_many_images")
+        return openai_error_response(
+            f"workflow {workflow_name} accepts at most {len(image_slots)} "
+            f"input image(s); {len(image_files)} were provided",
+            param="image[]", code="too_many_images",
+        )
+    if manifest is not None:
+        identity = manifest_identity(manifest)
+        if receipt is not None:
+            receipt.attach_manifest(
+                manifest_id=identity.id,
+                manifest_version=identity.version,
+                manifest_hash=identity.manifest_hash,
+            )
+    else:
+        _attach_image_manifest_if_available(receipt, "image.edit", str(model))
+    required_mask_input = _manifest_required_route_mask_input(manifest)
+    if not mask_file and required_mask_input:
+        _record_image_input(receipt, "mask", rejected_reason="missing")
+        return openai_error_response(
+            f"mask is required for workflow input {required_mask_input}",
+            param="mask", code="missing_required_parameter",
         )
 
     try:
@@ -8431,63 +8478,10 @@ async def proxy_comfy_edit_request(
                 print(f"[proxy] Could not detect image size: {e}, using default 1024x1024", flush=True)
                 img_width, img_height = 1024, 1024
 
-            if size:
-                try:
-                    w, h = size.lower().split("x")
-                    img_width, img_height = int(w), int(h)
-                except:
-                    pass
+            if requested_dimensions is not None:
+                img_width, img_height = requested_dimensions
             effective_size = f"{img_width}x{img_height}"
 
-            workflow = copy.deepcopy(workflow)
-            meta = workflow.pop("_meta", {})
-            workflow_name = str(meta.get("name") or model)
-            if receipt is not None:
-                receipt.requested_workflow = str(model) if model is not None else None
-                receipt.resolved_workflow = workflow_name
-            image_slots = _image_edit_node_slots(meta)
-            if len(image_files) > len(image_slots):
-                _record_image_input(receipt, "image[]", rejected_reason="too_many_images")
-                return Response(
-                    content=json.dumps({
-                        "error": {
-                            "message": (
-                                f"workflow {workflow_name} accepts at most {len(image_slots)} "
-                                f"input image(s); {len(image_files)} were provided"
-                            ),
-                            "type": "invalid_request_error",
-                            "param": "image[]",
-                            "code": "too_many_images",
-                        }
-                    }),
-                    status_code=400,
-                    media_type="application/json",
-                )
-            if manifest is not None:
-                identity = manifest_identity(manifest)
-                if receipt is not None:
-                    receipt.attach_manifest(
-                        manifest_id=identity.id,
-                        manifest_version=identity.version,
-                        manifest_hash=identity.manifest_hash,
-                    )
-            else:
-                _attach_image_manifest_if_available(receipt, "image.edit", str(model))
-            required_mask_input = _manifest_required_route_mask_input(manifest)
-            if mask_context is None and required_mask_input:
-                _record_image_input(receipt, "mask", rejected_reason="missing")
-                return Response(
-                    content=json.dumps({
-                        "error": {
-                            "message": f"mask is required for workflow input {required_mask_input}",
-                            "type": "invalid_request_error",
-                            "param": "mask",
-                            "code": "missing_required_parameter",
-                        }
-                    }),
-                    status_code=400,
-                    media_type="application/json",
-                )
             if receipt is not None:
                 decision = _apply_image_route_policy(
                     receipt,
@@ -22518,6 +22512,17 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
     duration = body.get("duration")
     seed = body.get("seed")
     audio_type = body.get("type", "music")  # music | sfx | ambient
+    if not isinstance(audio_type, str) or audio_type not in ("music", "sfx", "ambient"):
+        return openai_error_response("type must be music, sfx, or ambient", param="type")
+    if "response_format" in body and body["response_format"] != "native":
+        return openai_error_response(
+            "response_format must be 'native'; audio generation does not convert encodings",
+            param="response_format",
+        )
+    if "seed" in body and (
+        isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 2**32 - 1
+    ):
+        return openai_error_response("seed must be an integer between 0 and 4294967295", param="seed")
 
     if not prompt:
         return Response(
@@ -22545,18 +22550,10 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
         if isinstance(duration, bool):
             raise ValueError
         duration_value = float(duration)
-    except (TypeError, ValueError):
-        return Response(
-            content=json.dumps({
-                "error": {
-                    "message": "duration must be a number",
-                    "type": "invalid_request_error",
-                    "param": "duration",
-                }
-            }),
-            status_code=400,
-            media_type="application/json",
-        )
+        if not math.isfinite(duration_value):
+            raise ValueError
+    except (TypeError, ValueError, OverflowError):
+        return openai_error_response("duration must be a finite number", param="duration")
     min_seconds = float(workflow_cfg.get("min_seconds", 1))
     max_seconds = float(workflow_cfg.get("max_seconds", 300))
     if duration_value < min_seconds or duration_value > max_seconds:
@@ -22649,10 +22646,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
     seed_targets = _injection_targets(meta.get("seed_node"), "seed")
     seed_val: int | None = None
     if seed_targets:
-        try:
-            seed_val = int(seed) if seed is not None else random.randint(0, 2**32 - 1)
-        except (TypeError, ValueError):
-            seed_val = random.randint(0, 2**32 - 1)
+        seed_val = seed if "seed" in body else random.randint(0, 2**32 - 1)
         for node_id, key in seed_targets:
             if node_id in workflow:
                 workflow[node_id]["inputs"][key] = seed_val
@@ -23568,6 +23562,7 @@ def _is_anthropic_sdk_request(request: Request) -> bool:
     return "anthropic-version" in request.headers
 
 
+@app.get("/openai/v1/models/{model_id:path}")
 @app.get("/anthropic/v1/models/{model_id:path}")
 @app.get("/v1/models/{model_id:path}")
 async def anthropic_model_retrieve(model_id: str, request: Request):
