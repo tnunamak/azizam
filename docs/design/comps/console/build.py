@@ -141,6 +141,8 @@ SHELL_CSS = """
 .search{display:flex;align-items:center;gap:8px;width:320px;height:44px;padding:0 12px;
   border:1px solid var(--accent);border-radius:4px}
 .search input{all:unset;flex:1;font-size:16px;line-height:24px;color:var(--text)}
+.search:focus-within{outline:2px solid var(--accent);outline-offset:2px}
+.search input:focus-visible{outline:none}
 .search input::placeholder{color:var(--text);opacity:1}
 .account{display:flex;align-items:center;gap:12px;min-height:44px;padding:0 8px;border:1px solid transparent;
   background:none;color:var(--text);font:500 16px/24px "IBM Plex Sans",sans-serif;cursor:pointer}
@@ -186,47 +188,24 @@ def shell(current, admin_open, content, search_label="Search"):
 
 
 # ---------------------------------------------------------------- status
-USAGE = [  # owner usage page, "Requests by day and capability"
-    ("Oct 1", 15, 10, 2, 10, 3, 2, 42),
-    ("Oct 2", 14, 7, 3, 9, 3, 1, 37),
-    ("Oct 3", 12, 4, 4, 9, 5, 0, 34),
-    ("Oct 4", 17, 9, 3, 11, 6, 0, 46),
-    ("Oct 5", 14, 10, 2, 9, 6, 0, 41),
-    ("Oct 6", 13, 9, 2, 8, 5, 0, 37),
-    ("Oct 7", 14, 7, 1, 5, 3, 0, 30),
-]
-CAPS = ["Chat", "Images", "Video", "Audio", "Transcription", "Embeddings"]
-
 STATUS_CSS = """
-.incident{border:1px solid var(--line);border-radius:8px;padding:24px;margin-top:16px;
-  display:grid;grid-template-columns:1fr auto;gap:16px 48px;align-items:start}
+.incident{border:1px solid var(--line);border-radius:8px;padding:24px;margin-top:16px}
 .verdict{display:flex;align-items:center;gap:12px;font-size:40px;line-height:44px}
 .verdict .ic{width:32px;height:32px}
-.facts{grid-column:1;display:grid;grid-template-columns:168px 1fr;gap:8px 24px;max-width:760px}
+.facts{display:grid;grid-template-columns:168px 1fr;gap:8px 24px;max-width:760px;margin-top:16px}
 .facts dt{font-size:14px;line-height:20px;font-weight:500;align-self:center}
-.facts dd{align-self:center;min-height:24px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
-.incident .act{grid-column:2;grid-row:1 / span 2;align-self:center}
-.region{margin-top:32px}
-.region-head{display:flex;align-items:baseline;justify-content:space-between;gap:24px;margin-bottom:12px}
-.region-head p{margin-top:4px}
-.matrix{width:100%;border-collapse:collapse;table-layout:fixed}
-.matrix th,.matrix td{height:32px;padding:0 12px 0 0;text-align:left;vertical-align:middle}
-.matrix thead th{font-size:14px;line-height:20px;font-weight:500;height:28px}
-.matrix tbody th{font-weight:500;width:152px}
-.cell{display:flex;align-items:center;gap:8px}
-.bar{height:12px;background:var(--text);flex:none}
-.cell .num{width:24px;text-align:right;flex:none;order:-1}
-.matrix tfoot th,.matrix tfoot td{border-top:1px solid var(--sep);height:40px}
-.matrix col.cap{width:152px}
-.legend{margin-top:8px}
-.lower{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:48px;margin-top:32px;padding-top:24px;border-top:1px solid var(--line)}
-.paths{width:100%;border-collapse:collapse}
+.facts dd{align-self:center}
+.incident .act{margin-top:24px}
+.evidence-row{display:flex;align-items:center;gap:16px;margin-top:16px;padding-top:16px;border-top:1px solid var(--sep)}
+.lower{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:48px;margin-top:32px}
+.paths{width:100%;border-collapse:collapse;margin-top:12px}
 .paths th,.paths td{padding:12px 16px;text-align:left;height:48px}
 .paths td:first-child,.paths td:last-child{white-space:nowrap}
 .paths th:first-child,.paths td:first-child{padding-left:0}
 .paths thead th{font-size:14px;line-height:20px;font-weight:500;border-bottom:1px solid var(--sep)}
 .reading{display:flex;align-items:baseline;gap:12px;margin-top:24px;flex-wrap:wrap}
 .reading .big{font-size:24px;line-height:28px}
+.usage-link{display:flex;align-items:center;gap:16px;margin-top:16px}
 .history h2+p{margin-top:8px}
 .changes{margin-top:12px}
 .changes li{padding:12px 0}
@@ -236,19 +215,6 @@ STATUS_CSS = """
 
 
 def status_html():
-    maxv = max(max(r[1:7]) for r in USAGE)
-    head = "".join(f'<th scope="col">{d}</th>' for d, *_ in USAGE)
-    rows = []
-    for ci, cap in enumerate(CAPS):
-        cells = []
-        for r in USAGE:
-            v = r[1 + ci]
-            w = round(v / maxv * 96)
-            bar = f'<span class="bar" style="width:{w}px"></span>' if v else ""
-            cells.append(f'<td><span class="cell"><span class="num">{v}</span>{bar}</span></td>')
-        rows.append(f'<tr><th scope="row">{cap}</th>{"".join(cells)}</tr>')
-    totals = "".join(f'<td><span class="num">{r[7]}</span></td>' for r in USAGE)
-
     paths = [
         ("Gateway", "Gateway", "All requests", state("ok", "Reachable")),
         ("Execution gateway (chat)", "Engine", "Chat", state("ok", "Ready")),
@@ -259,7 +225,6 @@ def status_html():
         ("Remote backup", "Provider", "Chat", state("unknown", "We haven't checked yet")),
     ]
     prow = "".join(f"<tr><td>{a}</td><td>{b}</td><td>{c}</td><td>{d}</td></tr>" for a, b, c, d in paths)
-
     content = f"""
 <h1>Status</h1>
 <section class="incident" aria-labelledby="verdict">
@@ -267,33 +232,20 @@ def status_html():
   <dl class="facts">
     <dt>Where it stopped</dt><dd>Engine: Video studio (video)</dd>
     <dt>Who is affected</dt><dd>Everyone who makes video. It is the only engine that serves Video.</dd>
-    <dt>Last failed request</dt><dd><span>From Open WebUI, 21h ago</span><a class="btn btn-secondary" href="#">{icon("receipt")}Open receipt</a></dd>
   </dl>
   <a class="btn btn-primary act" href="#">Check engine</a>
-</section>
-
-<section class="region" aria-labelledby="hist">
-  <div class="region-head">
-    <div><h2 id="hist">Requests by capability, Oct 1 to Oct 7</h2></div>
-    <a class="btn btn-secondary" href="#">View requests</a>
-  </div>
-  <table class="matrix">
-    <colgroup><col class="cap"><col span="7"></colgroup>
-    <thead><tr><th scope="col"><span class="vh">Capability</span></th>{head}</tr></thead>
-    <tbody>{"".join(rows)}</tbody>
-    <tfoot><tr><th scope="row">All requests</th>{totals}</tr></tfoot>
-  </table>
-  <p class="small legend">Bar length is the number of requests that day, for everyone. Each request's outcome is on its receipt.</p>
+  <p class="evidence-row"><span><span class="label">Last failed request</span><br>Video, from Open WebUI, 21h ago</span><a class="btn btn-secondary" href="#">{icon("receipt")}Open receipt</a></p>
 </section>
 
 <div class="lower">
   <section aria-labelledby="paths">
-    <h2 id="paths">Other paths</h2>
-    <table class="paths" style="margin-top:12px">
-      <thead><tr><th scope="col">Name</th><th scope="col">Layer</th><th scope="col">Serves</th><th scope="col">State</th></tr></thead>
+    <h2 id="paths">Other capabilities and paths</h2>
+    <table class="paths">
+      <thead><tr><th scope="col">Name</th><th scope="col">Layer</th><th scope="col">Serves</th><th scope="col">State now</th></tr></thead>
       <tbody>{prow}</tbody>
     </table>
     <p class="reading"><span class="label">Provider spend this month</span><span class="num big">USD 0.45</span><span>of USD 8.00. Cost recorded for 249 of 267 requests.</span></p>
+    <p class="usage-link"><span>Request volume by day is on Usage.</span><a class="btn btn-secondary" href="#">Open usage</a></p>
   </section>
   <section class="history" aria-labelledby="resolved">
     <h2 id="resolved">Resolved incidents</h2>
@@ -330,75 +282,78 @@ LIB_CSS = """
 .toolbar{display:flex;align-items:center;gap:16px}
 .toolbar .search{width:280px}
 .field{display:flex;align-items:center;gap:8px}
-.select{display:flex;align-items:center;gap:8px;height:44px;padding:0 8px 0 12px;border:1px solid var(--accent);
-  border-radius:4px;min-width:140px;justify-content:space-between}
-.cols{display:grid;grid-template-columns:224px 632px 264px;gap:24px;margin-top:24px;align-items:start}
-.browse{height:calc(100vh - 56px - 24px - 40px - 24px - 24px);overflow:auto;padding:2px;margin:-2px}
-.browse li a{display:grid;grid-template-columns:56px 1fr;gap:12px;padding:8px;border-radius:4px;
-  text-decoration:none;border:2px solid transparent}
-.browse li a[aria-current="true"]{border-color:var(--accent)}
-.thumb{width:56px;height:56px;object-fit:cover}
-.athumb{width:56px;height:56px;display:grid;place-items:center;border:1px solid var(--line)}
-.rtitle{font-size:14px;line-height:20px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.browse li a[aria-current="true"] .rtitle{font-weight:500}
-.rmeta{display:block;font-size:14px;line-height:20px}
-.viewer{border:1px solid var(--line);border-radius:8px;padding:16px}
-.viewer img{width:598px;height:598px;object-fit:cover;border-radius:0}
-.viewer .prompt{margin-top:16px}
-.viewer .pager{display:flex;gap:12px;margin-top:16px}
-.details h2{margin-bottom:8px}
-.details dl{display:grid;grid-template-columns:auto 1fr;gap:4px 16px}
-.details dt{font-size:14px;line-height:20px;font-weight:500;padding-top:2px}
-.details .actions{display:flex;flex-direction:column;gap:12px;margin:24px 0}
-.details .actions .btn{justify-content:flex-start}
-body.capture-full .browse{height:auto;overflow:visible}
-.details .cost{padding-top:16px;border-top:1px solid var(--line)}
+.selwrap{position:relative;display:inline-flex}
+.selwrap select{appearance:none;-webkit-appearance:none;height:44px;min-width:150px;padding:0 40px 0 12px;
+  border:1px solid var(--accent);border-radius:4px;background:var(--bg);color:var(--text);
+  font:400 16px/24px "IBM Plex Sans",sans-serif;cursor:pointer}
+.selwrap .ic{position:absolute;right:10px;top:12px;pointer-events:none}
+.cols{display:grid;grid-template-columns:minmax(0,1fr) 384px;gap:24px;margin-top:24px;align-items:start}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.grid a{display:block;padding:6px;border:2px solid transparent;border-radius:4px;text-decoration:none}
+.grid a[aria-current="true"]{border-color:var(--accent)}
+.frame{aspect-ratio:1/1;width:100%;overflow:hidden;border-radius:0}
+.frame img{width:100%;height:100%;object-fit:cover}
+.frame.audio{display:grid;place-items:center;border:1px solid var(--line)}
+.frame.audio .ic{width:40px;height:40px}
+.ctitle{margin-top:8px;font-size:14px;line-height:20px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.grid a[aria-current="true"] .ctitle{font-weight:500}
+.cmeta{display:block;font-size:14px;line-height:20px}
+.detail{border:1px solid var(--line);border-radius:8px;padding:16px}
+.detail img{width:350px;height:350px;object-fit:cover;border-radius:0}
+.detail h2{margin-top:16px}
+.detail .prompt{margin-top:8px}
+.detail dl{display:grid;grid-template-columns:auto 1fr;gap:4px 16px;margin-top:16px}
+.detail dt{font-size:14px;line-height:20px;font-weight:500;padding-top:2px}
+.detail .actions{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}
+.detail .actions .btn:first-child{grid-column:1 / -1}
+.detail .cost{margin-top:16px;padding-top:16px;border-top:1px solid var(--line)}
 """
 
 
-def lib_row(f, t, selected):
+def lib_cell(f, t, selected):
     e = MANIFEST[f]
     text = html.escape(e["prompt"])
     if e["kind"] == "image":
-        thumb = f'<img class="thumb" src="assets/{f}" alt="" width="56" height="56">'
+        frame = f'<span class="frame"><img src="assets/{f}" alt="" width="768" height="768"></span>'
         meta = t
     elif e["kind"] == "video":
-        thumb = f'<img class="thumb" src="assets/garden-breeze-poster.webp" alt="" width="56" height="56">'
+        frame = '<span class="frame"><img src="assets/garden-breeze-poster.webp" alt="" width="768" height="512"></span>'
         meta = f"Video, {DUR[f]}, {t}"
     else:
-        thumb = f'<span class="athumb">{icon("audio")}</span>'
+        frame = f'<span class="frame audio">{icon("audio")}</span>'
         meta = f"Audio, {DUR[f]}, {t}"
     cur = ' aria-current="true"' if selected else ""
-    return (f'<li><a href="#"{cur}>{thumb}<span><span class="rtitle">{text}</span>'
-            f'<span class="rmeta">{meta}</span></span></a></li>')
+    return (f'<li><a href="#"{cur}>{frame}<span class="ctitle">{text}</span>'
+            f'<span class="cmeta">{meta}</span></a></li>')
+
+
+def select(label, sid, options):
+    opts = "".join(f"<option>{o}</option>" for o in options)
+    return (f'<div class="field"><label class="label" for="{sid}">{label}</label>'
+            f'<span class="selwrap"><select id="{sid}">{opts}</select>{icon("chev-down")}</span></div>')
 
 
 def library_html():
     sel = MANIFEST["kitchen-morning.webp"]
-    rows = "".join(lib_row(f, t, i == 0) for i, (f, t) in enumerate(LIB))
+    cells = "".join(lib_cell(f, t, i == 0) for i, (f, t) in enumerate(LIB))
     content = f"""
 <div class="lib-head">
   <h1>Library</h1>
   <div class="toolbar">
     <label class="search">{icon("search")}<span class="vh">Search creations</span><input placeholder="Search creations"></label>
-    <div class="field"><span class="label">Type</span><span class="select" role="button" aria-haspopup="listbox">All kinds{icon("chev-down")}</span></div>
-    <div class="field"><span class="label">Person</span><span class="select" role="button" aria-haspopup="listbox">Everyone{icon("chev-down")}</span></div>
+    {select("Type", "f-type", ["All kinds", "Images", "Video", "Audio"])}
+    {select("Person", "f-person", ["Everyone", "Sam", "Robin", "Alex"])}
   </div>
 </div>
 <div class="cols">
-  <nav class="browse" aria-label="Creations, newest first"><ul>{rows}</ul></nav>
-  <section class="viewer" aria-label="Selected creation">
-    <img src="assets/kitchen-morning.webp" alt="{html.escape(sel['prompt'])}" width="598" height="598">
-    <p class="prompt">{html.escape(sel['prompt'])}</p>
-    <div class="pager"><a class="btn btn-secondary" href="#">Previous</a><a class="btn btn-secondary" href="#">Next</a></div>
-  </section>
-  <aside class="details" aria-label="File and receipt">
+  <nav aria-label="Creations, newest first"><ul class="grid">{cells}</ul></nav>
+  <aside class="detail" aria-label="Selected creation">
+    <img src="assets/kitchen-morning.webp" alt="{html.escape(sel['prompt'])}" width="350" height="350">
     <h2>Image</h2>
+    <p class="prompt">{html.escape(sel['prompt'])}</p>
     <dl>
-      <dt>File</dt><dd>WebP</dd>
-      <dt>Size</dt><dd class="num">768 × 768</dd>
-      <dt>Made by</dt><dd>Sam</dd>
-      <dt>Made</dt><dd>just now</dd>
+      <dt>File</dt><dd>WebP, <span class="num">768 × 768</span></dd>
+      <dt>Made by</dt><dd>Sam, just now</dd>
     </dl>
     <div class="actions">
       <a class="btn btn-primary" href="#">{icon("download")}Download</a>
@@ -423,13 +378,17 @@ HOME_CSS = """
 main{padding:16px 16px calc(64px + env(safe-area-inset-bottom) + 24px)}
 h1{font-size:26px;line-height:32px}
 .task{margin-top:12px;border:1px solid var(--line);border-radius:8px;padding:16px}
-.task-top{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.ready{font-size:30px;line-height:34px;display:flex;align-items:center;gap:6px;white-space:nowrap}
+.ready{font-size:30px;line-height:34px;display:flex;align-items:center;gap:8px}
 .ready .ic{width:24px;height:24px}
 .evidence{margin-top:4px}
-.art{width:96px;height:80px;object-fit:cover;border-radius:4px;flex:none}
-.task .actions{display:grid;gap:8px;margin-top:16px}
-.task .btn{min-height:48px;width:100%}
+.task .primary{min-height:48px;width:100%;margin-top:16px}
+.also{margin-top:16px;padding-top:8px;border-top:1px solid var(--sep)}
+.also li{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:52px}
+.also li+li{border-top:1px solid var(--sep)}
+.also .btn{min-height:44px;min-width:164px;justify-content:flex-start}
+.also .note{display:grid;grid-template-columns:20px 1fr;gap:12px;align-items:start;padding:12px 0}
+.also .note .ic{margin-top:2px}
+.connect{min-height:48px;width:100%;margin-top:16px}
 .block{margin-top:24px}
 .block-head{display:flex;align-items:center;justify-content:space-between;min-height:44px}
 .rows li{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:48px}
@@ -438,9 +397,6 @@ h1{font-size:26px;line-height:32px}
 .recent img{width:64px;height:64px;object-fit:cover}
 .recent .small{display:block}
 .recent .t{font-size:14px;line-height:20px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.limits{margin-top:24px;padding-top:16px;border-top:1px solid var(--line);display:grid;gap:16px}
-.limits li{display:grid;grid-template-columns:20px 1fr;gap:12px}
-.limits li .ic{margin-top:2px}
 .tabbar{position:fixed;left:0;right:0;bottom:0;background:var(--bg);border-top:1px solid var(--line);
   display:grid;grid-template-columns:repeat(4,1fr);height:calc(64px + env(safe-area-inset-bottom));
   padding-bottom:env(safe-area-inset-bottom)}
@@ -453,12 +409,17 @@ body.capture-full .tabbar{position:static}
 body.capture-full main{padding-bottom:24px}
 """
 
+ALSO = [("Images", "Make an image"), ("Speech", "Read aloud"), ("Transcription", "Transcribe audio"),
+        ("Music", "Make music"), ("Sound effects", "Make a sound")]
+
 
 def home_html():
     garden = MANIFEST["garden-plan.webp"]["prompt"]
     tabs = [("home", "Home", True), ("key", "Apps & keys", False), ("library", "Library", False), ("more", "More", False)]
     tabbar = "".join(
         f'<a href="#"{" aria-current=\"page\"" if c else ""}>{icon(i, size=24)}<span>{n}</span></a>' for i, n, c in tabs)
+    also = "".join(f'<li><span class="state">{icon("check", "ok", label="Ready")}<span>{cap}</span></span>'
+                   f'<a class="btn btn-secondary" href="#">{act}</a></li>' for cap, act in ALSO)
     body = f"""<header class="top">
   <span class="brand">Azizam</span>
   <button class="acct" type="button" aria-label="Account, Robin"><span class="avatar">R</span></button>
@@ -466,16 +427,17 @@ def home_html():
 <main>
   <h1>Home</h1>
   <section class="task" aria-labelledby="ready">
-    <div class="task-top">
-      <p class="ready display" id="ready">{icon("check", "ok", 24, "OK")}Chat is ready.</p>
-      <img class="art" src="assets/fin-art-crop.png" alt="" width="96" height="80">
-    </div>
-    <p class="small evidence">Your last chat request worked 20h ago.</p>
-    <div class="actions">
-      <a class="btn btn-primary" href="#">Open chat</a>
-      <a class="btn btn-secondary" href="#">Connect an app</a>
-    </div>
+    <p class="ready display" id="ready">{icon("check", "ok", 24, "Ready")}Chat is ready.</p>
+    <p class="small evidence">Last used 20h ago</p>
+    <a class="btn btn-primary primary" href="#">Open chat</a>
+    <h2 class="vh" id="also-h">Also ready</h2>
+    <ul class="also" aria-labelledby="also-h">
+      {also}
+      <li class="note">{icon("cross", "fail", label="Unavailable")}<p>Video isn't working right now. Ask Sam if you need it.</p></li>
+      <li class="note">{icon("pause", label="Paused")}<p>Embeddings are paused. Ask Sam to turn them back on.</p></li>
+    </ul>
   </section>
+  <a class="btn btn-secondary connect" href="#">Connect an app</a>
 
   <section class="block" aria-labelledby="apps">
     <div class="block-head"><h2 id="apps">Your apps</h2><a class="btn btn-secondary" href="#">View all</a></div>
@@ -494,11 +456,6 @@ def home_html():
       <a class="btn btn-secondary" href="#">Open</a>
     </div>
   </section>
-
-  <ul class="limits">
-    <li>{icon("cross", "fail", label="Failed")}<p>Video is unavailable. The problem is in Sam's video engine, not your app.</p></li>
-    <li>{icon("pause", label="Paused")}<p>Embeddings are paused. Ask Sam to turn them back on.</p></li>
-  </ul>
 </main>
 <nav class="tabbar" aria-label="Main">{tabbar}</nav>"""
     return page("Home · Azizam (Console comp)", HOME_CSS, body)

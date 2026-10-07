@@ -13,34 +13,40 @@ All data comes from the seeded household. The sources are `~/.tmp/azizam-househo
 - `status.html`: desktop, 1440 px, owner view (Sam), with the Video incident.
 - `library.html`: desktop, 1440 px, owner view (Sam), with `kitchen-morning` selected.
 - PNGs follow the pattern `<surface>-<light|dark>-<width>.png`, and `-full.png` for full-page captures. Viewports: home 390×844, status and library 1440×1000.
-- `assets/`: 18 creation images, the video poster, and `fin-art-crop.png`.
+- `assets/`: 18 creation images and the video poster.
 - `build.py`: generates the HTML. `render.mjs`: renders the PNGs with Playwright Chromium from `azizam/web`.
+
+## Fix pass 2 (judge and text review)
+
+1. **Home art:** the fin-art thumbnail is deleted. Open chat now spans the full width.
+2. **Home readiness:** "Chat is ready." rests on current engine state; the owner Status capture shows both chat engines as Ready. The receipt is now only secondary evidence, labelled "Last used 20h ago".
+3. **What else works:** a list directly under Open chat. Each row pairs a capability with a task-named action: Images "Make an image", Speech "Read aloud", Transcription "Transcribe audio", Music "Make music", Sound effects "Make a sound". The member Status capture shows all five as Ready. The Video exception and the Embeddings pause close the list. All of this comes before apps and the creation, in both DOM and visual order.
+4. **Member video line:** now "Video isn't working right now. Ask Sam if you need it." It gives no diagnosis.
+5. **Status:** the request-count matrix is removed, using the spec's fallback. The scoped verdict is the only bold element. Then come the layer, who is affected and Check engine. The last failed request sits directly under the action. Current states for each capability and path follow, and a line links to Usage for request volume.
+6. **Library:** the left column is now a 4-column grid of square frames, cropped with `object-fit: cover`, so nothing is letterboxed. The 768x512 video poster is cropped too. Every cell keeps its title (the prompt, two lines). The selected cell has a 2 px accent outline and a heavier title. A detail panel on the right shows a 350 px preview, the full prompt, file facts, Download, Copy prompt, Open receipt and "Cost not recorded".
+7. **Accessibility:** Type and Person are native `<select>` elements with associated `<label>`s. Person options are the real household members: Everyone, Sam, Robin, Alex. Search fields show focus on their wrapper through `:focus-within`. A tab-through script found every stop on all three pages has a solid 2 px outline with a 2 px offset (14, 18 and 37 stops).
 
 ## What matches the spec
 
-- **Tokens:** exactly six UI colours per theme. Dark is the default. Light comes from `prefers-color-scheme`.
-- **Fonts:** IBM Plex Sans (UI and tabular numerals) and IBM Plex Sans Condensed (verdicts only). The comps load them from Google Fonts. The fonts are also installed locally, and the renders confirm they loaded.
-- **Sizes:** the type scale follows the spec. Controls have a 4 px radius and enclosing regions 8 px. Borders only, no shadows. Structural lines use 24% text opacity and row separators 16%. Controls and focus use the full accent.
-- **Shell:** sidebar 208 px, top rail 56 px, 24 px gutters. Admin is a disclosure. The phone has a 56 px header and a 64 px labelled bottom bar plus the safe area. Full-page captures make the bar static.
-- **States:** every state has words and its own icon: check (OK), cross (failed), question mark (unknown, in the accent colour), and pause (Paused).
-- **Home:** an 80 px-high fin-art crop sits inside the opening task region, then the actions, apps, recent creation and restrictions. No KPI band. The disabled embeddings engine reads "Paused".
-- **Status:** the verdict comes first. The incident shows its layer (the engine), who is affected, its evidence and one action. The incident engine does not appear again in the paths table. A separate history column follows.
-- **Library:** three columns of 224, 632 and 264 px. The viewport is 0 px radius inside an 8 px viewer. File and receipt facts sit in the slim right rail. The missing cost reads "Cost not recorded". Filters sit in one toolbar.
+- **Tokens:** six UI colours per theme. Dark is the default; light comes from `prefers-color-scheme`.
+- **Fonts:** IBM Plex Sans and Sans Condensed, loaded from Google Fonts. They are also installed locally.
+- **Sizes:** the type scale follows the spec. Controls have a 4 px radius and regions 8 px. Borders only. Lines are 24% and separators 16%. Controls and focus use the accent.
+- **Shell:** sidebar 208 px, top rail 56 px, 24 px gutters, Admin disclosure. The phone has a 56 px header and a 64 px labelled bottom bar plus the safe area. Full-page captures make the bar static.
+- **States:** every state has words and a distinct icon: check, cross, question mark (accent colour), and pause for Paused.
+- **Status:** the incident's engine does not repeat in the paths table, and resolved history is separate.
 
 ## What I could not match, and why
 
-- **History matrix:** the seed has no saved capability checks. A 7-day check matrix would be invented data. The spec's fallback is "No history saved". Instead, I kept the matrix form but filled it with real request counts (owner Usage, Oct 1–7, by capability; total 267). Bars are in the neutral text colour, and the legend says outcomes are on receipts. The matrix is about 290 px tall, not 128 px, because there are 6 real capability rows, not 4. **Reviewers should decide** whether this matrix or the spec fallback is right.
-- **Paths table:** it has 7 rows, not 8 or more. The data has only that many paths outside the incident.
-- **Evidence and check times:** there are no per-row evidence times and no "Checked 1m ago", because the data has no check times. The incident cites the last failed video request (Open WebUI, 21h ago) instead.
-- **Resolved incidents:** none exist, so the column says "No resolved incidents saved." To avoid an empty column, I added three real change events from Activity under "Recent changes". This region is not in the spec.
-- **Creation titles:** creations have no titles. The prompt is the title: two lines, cut short, in the row, and in full under the viewer. Fix 2 makes the selected row repeat what the viewer shows. This overrides the spec's timestamp-only rule.
-- **Home order:** the art is beside "Chat is ready." (fix 1), not above it as in the wireframe. The art is 96×80 px. "Chat is ready." stays on one line.
-- **"Inspect selected path" and video/audio transport:** not shown. No path is selected, and the selected creation is an image.
-- **Library full-page captures:** the browse list scrolls on its own in the viewport captures. In full-page captures it expands, which leaves empty space under the viewer. That gap comes from the capture, not the layout.
+- **Home art:** removed on instruction, so Home no longer has the spec's single art element.
+- **Status memorable element:** with the matrix removed, the verdict is the only bold element. This is the spec's own fallback.
+- **Paths table:** 7 rows, not 8 or more, because the data has only 7. There are no per-row check times, because the data has none.
+- **Resolved incidents:** none exist. I added three real Activity changes so the column is not empty.
+- **Creation titles:** creations have no titles, so the prompt is used.
+- **Library layout:** it no longer follows the spec's 224/632/264 viewer layout; it follows fix 6 instead.
+- **Library full-page captures:** these show an empty area under the detail panel, because the panel is not sticky.
 
 ## Choices where the spec is silent
 
-- **Fin art:** a crop of the fish from `reference-ui/portal-overview-mobile-welcome.png`, the only copy of the approved art. It is a dark navy block in both themes.
 - **Selected items:** a 1 px accent outline for nav items and a 2 px accent outline for Library rows. The phone tab bar uses accent text and a heavier stroke.
 - **Secondary buttons:** a transparent fill, an accent border and text-colour labels. Primary buttons are filled with the accent.
 - **Navigation:** I followed the spec's lists. The real nav also has Models and Workflows, and its phone bar has Status, not Library. The Try icon is a speech bubble. Engines is a server stack, Providers a cloud, People two figures, and Settings sliders.
@@ -52,7 +58,6 @@ All data comes from the seeded household. The sources are `~/.tmp/azizam-househo
 - **Inferences (please confirm):**
   - Remote backup "Serves: Chat" comes from the Engines page entry "Backup (chat)".
   - Telegram helper reads "Not used yet" because the real UI shows no "Last used" value for it.
-  - The member video sentence ("The problem is in Sam's video engine, not your app.") rests on Video studio being the only video engine and being Unavailable.
-  - "Your last chat request worked 20h ago" is Robin's real completed chat receipt.
+  - "Last used 20h ago" is Robin's real completed chat receipt.
 - **Library:** I used the owner view, because only the owner has a detail capture with Download, Copy prompt and View receipt. I added a "Person" select next to "Type". The detail rail shows WebP and 768 × 768 from the fixture. I left out the "Video studio unavailable" banner, because Status owns that fact.
 - **Contrast** (WCAG, computed): text 13.98/12.50, accent 7.76/6.39, OK 8.15/6.51, failed 7.07/6.22, and primary-button text 7.76/6.39 (dark/light). All exceed 4.5:1. I changed control borders, including the search fields, from the 24% line (1.58:1 in light) to the accent, so every control outline is at least 3:1.
