@@ -49,6 +49,8 @@ class MediaContractValidationTests(unittest.IsolatedAsyncioTestCase):
     def assert_invalid(self, response, param):
         self.assertEqual(response.status_code, 400, response.body)
         error = json.loads(response.body)["error"]
+        self.assertEqual(set(error), {"message", "type", "param", "code"})
+        self.assertTrue(isinstance(error["message"], str) and error["message"])
         self.assertEqual(error["type"], "invalid_request_error")
         self.assertEqual(error["param"], param)
         self.assertEqual(_FakeAsyncClient.uploads, 0)
@@ -102,12 +104,12 @@ class MediaContractValidationTests(unittest.IsolatedAsyncioTestCase):
             proxy, "resolve_image_background_decision",
             AsyncMock(return_value=proxy.ImageBackgroundRemovalDecision(False)),
         ):
-            for size in (None, "auto", "512x768"):
+            for size in (None, "auto", "512x768", "512X768", " 512 x 768 "):
                 with self.subTest(size=size):
                     response = await self.edit(size=size)
                     self.assertEqual(response.status_code, 200, response.body)
                     dimensions = (generate.call_args.kwargs["width"], generate.call_args.kwargs["height"])
-                    self.assertEqual(dimensions, (512, 768) if size == "512x768" else (2, 1))
+                    self.assertEqual(dimensions, (2, 1) if size in (None, "auto") else (512, 768))
 
     async def test_http3_04_excess_images_do_not_upload(self):
         workflow = {"_meta": {"image_node": "1"}, "1": {"inputs": {"image": ""}}}
@@ -196,3 +198,11 @@ class ModelRetrieveContractTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(model.id, entry["id"])
         routes = {route.path: route.endpoint for route in proxy.app.routes}
         self.assertIs(routes["/openai/v1/models/{model_id:path}"], routes["/v1/models/{model_id:path}"])
+
+
+class OpenAIErrorEnvelopeTests(unittest.TestCase):
+    def test_every_error_carries_all_four_keys(self):
+        error = json.loads(proxy.openai_error_response("bad").body)["error"]
+        self.assertEqual(error, {"message": "bad", "type": "invalid_request_error", "param": None, "code": None})
+        error = json.loads(proxy.openai_error_response("bad", param="n", code="x").body)["error"]
+        self.assertEqual((error["param"], error["code"]), ("n", "x"))

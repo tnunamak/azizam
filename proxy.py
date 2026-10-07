@@ -3063,14 +3063,13 @@ def openai_error_response(
     param: str | None = None,
     code: str | None = None,
 ) -> Response:
+    # OpenAI error objects always carry all four keys; param and code are null when not applicable.
     error: dict[str, Any] = {
         "message": message,
         "type": error_type,
+        "param": param,
+        "code": code,
     }
-    if param is not None:
-        error["param"] = param
-    if code is not None:
-        error["code"] = code
     return Response(
         content=json.dumps({"error": error}),
         status_code=status_code,
@@ -8302,9 +8301,11 @@ async def proxy_comfy_edit_request(
     requested_dimensions: tuple[int, int] | None = None
     if size is not None and size != "auto":
         try:
-            if not isinstance(size, str) or not re.fullmatch(r"[0-9]+x[0-9]+", size):
+            # Accept the spellings that worked before strict validation: "512X768", "512 x 768".
+            normalized = re.sub(r"\s*[xX]\s*", "x", size.strip()) if isinstance(size, str) else None
+            if normalized is None or not re.fullmatch(r"[0-9]+x[0-9]+", normalized):
                 raise ValueError
-            width, height = (int(part) for part in size.split("x"))
+            width, height = (int(part) for part in normalized.split("x"))
             if width <= 0 or height <= 0:
                 raise ValueError
             requested_dimensions = (width, height)
