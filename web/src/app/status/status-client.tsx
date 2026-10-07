@@ -411,10 +411,10 @@ export function StatusClient() {
   const apiSignal = observedStatus?.current_health?.signals?.find(
     (signal) => signal.source === "api",
   );
-  const hostWarning = apiSignal?.reasons[0]
-    ? apiSignal.reasons[0]
+  const warningSignal = apiSignal?.reasons[0]
+    ? { source: apiSignal.source, reason: apiSignal.reasons[0] }
     : firstHostWarning
-      ? firstHostWarning.reason
+      ? firstHostWarning
       : null;
   const refreshAll = () => {
     void refetchStatus();
@@ -455,24 +455,16 @@ export function StatusClient() {
           href: "/providers",
         }
       : null,
-    hostWarning
+    warningSignal
       ? {
           key: "hardware",
-          title: "Hardware needs attention",
-          detail: hostWarning,
+          source: warningSignal.source,
+          title: warningSignal.source === "api" ? "Gateway needs attention" : "Hardware needs attention",
+          detail: warningSignal.reason,
           href: null,
         }
       : null,
-  ].filter(
-    (
-      row,
-    ): row is {
-      key: string;
-      title: string;
-      detail: string;
-      href: string | null;
-    } => row != null,
-  );
+  ].filter((row) => row != null);
   const health = observedStatus?.current_health;
   const incomplete = Object.values(health?.incomplete ?? {}).some(
     (gaps) => gaps?.length,
@@ -581,7 +573,7 @@ export function StatusClient() {
                     <Link href={row.href}>Open</Link>
                   </Button>
                 )}
-                {row.key === "hardware" && hostWarnings.some(({ source }) => /disk/i.test(source)) && (
+                {"source" in row && /disk/i.test(row.source) && (
                   <Button variant="outline" size="sm" onClick={() => setDiskHelpOpen(true)}>
                     Free disk space
                   </Button>
