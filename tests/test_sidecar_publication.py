@@ -135,8 +135,10 @@ python3() { "$test_python" "$@"; }
 ''' + source[start:end] + '\nlitellm_runtime_hash\n'
 
     def watcher_hash():
-        return subprocess.run(["bash", "-c", script, "hash-test", str(artifact), str(db), sys.executable],
-                              cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
+        result = subprocess.run(["bash", "-c", script, "hash-test", str(artifact), str(db), sys.executable],
+                                cwd=ROOT, capture_output=True, text=True, check=False)
+        assert result.returncode == 0, f"watcher hash failed ({result.returncode}): {result.stderr}"
+        return result.stdout.strip()
 
     assert receipt.read_text().strip() == watcher_hash()
     old_secret_hash = provider_sidecar.provider_secret_fingerprint(db, registry=registry)
