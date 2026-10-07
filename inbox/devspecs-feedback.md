@@ -1,5 +1,14 @@
 # devspecs feedback
 
+## 2026-10-07 — principal ownership implementation lane
+
+`ds tldr` and `ds recent` returned useful workflow and recent repository context.
+A two-slice `ds task` produced no task ID or progress while implementation
+continued. `ds task list` reported that it was waiting for another index update.
+I stopped those two exact processes with SIGTERM and continued from the binding
+brief and direct source inspection. Shared index state was not reset. A bounded
+wait with the index lock owner's progress would make the stall diagnosable.
+
 ## 2026-10-06 — retirement review fixes
 
 - `ds tldr` and `ds recent` returned promptly. Recent topics identified the two naming commits and their affected files, which helped confirm the branch context for the explicit review findings.

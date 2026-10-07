@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from gateway import media_jobs
+from gateway.ownership import stored_owner_key
 
 MIGRATION_NAME = "video_job_records_v1"
 
@@ -65,6 +66,8 @@ def _connect(path: Path | None) -> sqlite3.Connection:
 
 
 def save(prompt_id: str, record: Mapping[str, Any], *, path: Path | None = None) -> None:
+    record = dict(record)
+    record["owner_key_hash"] = stored_owner_key(record.get("owner_key_hash"), app_id=record.get("app_id"))
     conn = _connect(path)
     try:
         conn.execute(

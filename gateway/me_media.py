@@ -21,7 +21,7 @@ from typing import Any, Callable, Iterable, Mapping
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, media_jobs, media_metadata, provenance, receipt_store
+from gateway import admin_store, media_jobs, media_metadata, ownership, provenance, receipt_store
 from gateway.admin_oidc import AdminSession
 from gateway.user_runtime import UserPortalError
 
@@ -165,7 +165,7 @@ def create_me_media_router(
             jobs_path = _resolve_path(media_jobs_path)
             receipt_path = _resolve_path(receipts_path)
             actor = _actor_from_session(session, admin_path)
-            scope = _MediaScope(app_ids=_owned_app_ids(actor.user_id, admin_path), user_ids=[actor.user_id])
+            scope = _member_media_scope(actor.user_id, admin_path)
             item = _find_asset(
                 asset_id,
                 scope=scope,
@@ -267,6 +267,7 @@ class _MediaScope:
     app_ids: list[str] | None
     person_id: str | None = None
     user_ids: list[str] | None = None
+    owner_keys: frozenset[str] | None = None
     audit_everyone: bool = False
     owner_default: bool = False
 
@@ -387,10 +388,10 @@ def _media_scope(request: Request, actor: _Actor, admin_db_path: Path) -> _Media
         if person == "all":
             return _MediaScope(app_ids=None, person_id="all", user_ids=None, audit_everyone=True)
         if person == "self":
-            return _MediaScope(app_ids=_owned_app_ids(actor.user_id, admin_db_path), person_id=actor.user_id, user_ids=[actor.user_id])
+            return _member_media_scope(actor.user_id, admin_db_path, person_id=actor.user_id)
         if person == "local-network":
             return _MediaScope(app_ids=None, person_id="local-network", user_ids=None, audit_everyone=True)
-        return _MediaScope(app_ids=_owned_app_ids(person, admin_db_path), person_id=person, user_ids=[person])
+        return _member_media_scope(person, admin_db_path, person_id=person)
     if raw_scope is None and actor.owner:
         return _MediaScope(app_ids=None, user_ids=None, audit_everyone=True, owner_default=True)
     scope = str(raw_scope or "me")
@@ -398,7 +399,21 @@ def _media_scope(request: Request, actor: _Actor, admin_db_path: Path) -> _Media
         if not actor.owner:
             raise _ApiError("owner_required", "Only owners can view everyone's media", 403)
         return _MediaScope(app_ids=None, user_ids=None, audit_everyone=True)
-    return _MediaScope(app_ids=_owned_app_ids(actor.user_id, admin_db_path), user_ids=[actor.user_id])
+    return _member_media_scope(actor.user_id, admin_db_path)
+
+
+def _member_media_scope(user_id: str, admin_db_path: Path, *, person_id: str | None = None) -> _MediaScope:
+    scope = _MediaScope(
+        app_ids=_owned_app_ids(user_id, admin_db_path),
+        person_id=person_id,
+        user_ids=[user_id],
+    )
+    return _MediaScope(
+        app_ids=scope.app_ids,
+        person_id=scope.person_id,
+        user_ids=scope.user_ids,
+        owner_keys=frozenset(_credential_hashes_for_scope(scope, admin_db_path) or ()),
+    )
 
 
 def _list_media(
@@ -517,7 +532,9 @@ def _media_items(
     deleted = _deleted_asset_ids(scope, admin_db_path)
     for job in jobs:
         receipt = receipts.get(str(job.get("request_id") or ""))
-        if not _receipt_in_scope(receipt, scope):
+        if receipt is not None and not _receipt_in_scope(receipt, scope):
+            continue
+        if receipt is None and not _job_in_scope(job, scope):
             continue
         for asset in _iter_job_assets(job):
             asset_id = str(asset.get("asset_id") or asset.get("id") or "")
@@ -652,27 +669,42 @@ def _receipt_for_embedded_cache_asset(embedded: Mapping[str, Any], receipts_path
 def _credential_hashes_for_scope(scope: _MediaScope, path: Path) -> set[str] | None:
     if scope.user_ids is None:
         return None
-    app_ids: set[str] = set(scope.app_ids or [])
-    hashes: set[str] = set()
+    principals = {
+        owner
+        for owner in (
+            *(ownership.principal_key("app", app_id) for app_id in scope.app_ids or []),
+            *(ownership.principal_key("user", user_id) for user_id in scope.user_ids),
+        )
+        if owner is not None
+    }
+    hashes = set(principals)
     for credential in admin_store.list_credentials(path=path):
-        app_id = str(credential.get("app_id") or credential.get("subject_id") or "")
-        if credential.get("subject_kind") == "app" and app_id in app_ids:
-            key_hash = credential.get("hash")
-            if isinstance(key_hash, str) and key_hash:
-                hashes.add(key_hash)
+        if ownership.principal_key_for_credential(credential) not in principals:
+            continue
+        key_hash = credential.get("hash")
+        if isinstance(key_hash, str) and key_hash:
+            hashes.add(key_hash)
     return hashes
 
 
 def _credential_app_by_hash(path: Path) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
+    apps = {
+        str(app.get("id") or ""): app
+        for app in admin_store.list_apps(path=path)
+        if app.get("id")
+    }
+    for app_id, app in apps.items():
+        principal = ownership.principal_key("app", app_id)
+        if principal is not None:
+            out[principal] = app
     for credential in admin_store.list_credentials(path=path):
         key_hash = credential.get("hash")
-        app_id = credential.get("app_id")
-        if not isinstance(key_hash, str) or not key_hash or not isinstance(app_id, str) or not app_id:
+        principal = ownership.principal_key_for_credential(credential)
+        app = apps.get(principal.removeprefix("app:") if isinstance(principal, str) and principal.startswith("app:") else "")
+        if not isinstance(key_hash, str) or not key_hash or app is None:
             continue
-        app = admin_store.get_app(app_id, path=path)
-        if app is not None:
-            out[key_hash] = app
+        out[key_hash] = app
     return out
 
 
@@ -745,7 +777,19 @@ def _receipt_in_scope(receipt: Mapping[str, Any] | None, scope: _MediaScope) -> 
         return True
     if receipt is None:
         return False
-    return str(receipt.get("app_id") or "") in set(scope.app_ids)
+    if receipt.get("app_id"):
+        return str(receipt["app_id"]) in set(scope.app_ids)
+    owner_key = receipt.get("owner_key_hash")
+    return isinstance(owner_key, str) and owner_key in (scope.owner_keys or frozenset())
+
+
+def _job_in_scope(job: Mapping[str, Any], scope: _MediaScope) -> bool:
+    if scope.app_ids is None:
+        return True
+    if job.get("app_id"):
+        return str(job["app_id"]) in set(scope.app_ids)
+    owner_key = job.get("owner_key_hash")
+    return isinstance(owner_key, str) and owner_key in (scope.owner_keys or frozenset())
 
 
 def _source_projection(
@@ -768,6 +812,17 @@ def _source_projection(
                 "client_hint": _client_hint(receipt),
             }
         return {"kind": "app", "app_id": app_id, "label": "Unknown app", "profile": (receipt or {}).get("app_profile"), "client_hint": _client_hint(receipt)}
+    receipt_owner_app = _app_from_asset_owner_hashes(receipt, admin_db_path, visible_app_ids=visible_app_ids)
+    if receipt_owner_app is not None:
+        recovered_app_id = str(receipt_owner_app.get("id") or "")
+        return {
+            "kind": "app",
+            "app_id": recovered_app_id,
+            "label": str(receipt_owner_app.get("name") or recovered_app_id or "App"),
+            "profile": None,
+            "client_hint": _client_hint(receipt),
+            "recovered_from": "receipt_owner_key",
+        }
     profile = str((receipt or {}).get("app_profile") or "")
     if receipt is None:
         trusted_app_id = str((metadata or {}).get("app_id") or "")
@@ -1035,13 +1090,24 @@ def _usage_summary(
     start = int(now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
     clauses = ["created_at >= ?", "parent_request_id IS NULL"]
     params: list[Any] = [start]
+    media_scope = _MediaScope(app_ids=app_ids, user_ids=scoped_users)
+    owner_keys = _credential_hashes_for_scope(media_scope, admin_db_path)
+    media_scope = _MediaScope(
+        app_ids=app_ids, user_ids=scoped_users,
+        owner_keys=frozenset(owner_keys) if owner_keys is not None else None,
+    )
     if app_ids is not None:
-        clauses.append("app_id IN (" + ",".join("?" for _ in app_ids) + ")" if app_ids else "0")
-        params.extend(app_ids)
-    if source_filter:
-        source_clause, source_params = _source_filter_sql(source_filter)
-        clauses.append(source_clause)
-        params.extend(source_params)
+        ownership_clauses: list[str] = []
+        if app_ids:
+            ownership_clauses.append("app_id IN (" + ",".join("?" for _ in app_ids) + ")")
+            params.extend(app_ids)
+        if owner_keys:
+            ownership_clauses.append(
+                "json_extract(receipt_json, '$.owner_key_hash') IN ("
+                + ",".join("?" for _ in owner_keys) + ")"
+            )
+            params.extend(sorted(owner_keys))
+        clauses.append("(" + " OR ".join(ownership_clauses) + ")" if ownership_clauses else "0")
     # Aggregate every retained row in the period, rather than a recent-feed cap.
     with sqlite3.connect(str(receipts_path)) as conn:
         rows = conn.execute(
@@ -1052,9 +1118,12 @@ def _usage_summary(
     for raw, stored_at in rows:
         value = json.loads(raw)
         if isinstance(value, dict):
+            if not _receipt_in_scope(value, media_scope):
+                continue
             value["_stored_at"] = stored_at
-            _annotate_receipt_source(value, sources)
-            receipts.append(value)
+            _annotate_receipt_source(value, sources, admin_db_path)
+            if _source_matches_filter(value.get("source"), source_filter):
+                receipts.append(value)
     by_day: dict[str, dict[str, Any]] = {}
     by_model: dict[tuple[str, str], dict[str, Any]] = {}
     spend = 0.0
@@ -1079,8 +1148,7 @@ def _usage_summary(
                 paid_requests += 1
         elif _receipt_is_paid_remote(receipt):
             unknown_paid_requests += 1
-    media_scope = _MediaScope(app_ids=app_ids, user_ids=scoped_users)
-    hashes = _credential_hashes_for_scope(media_scope, admin_db_path)
+    hashes = owner_keys
     made: set[str] = set()
     receipt_ids = {str(r["request_id"]) for r in receipts}
     for job in media_jobs.recent(limit=media_jobs.count(path=media_jobs_path), audience="internal",
@@ -1090,7 +1158,7 @@ def _usage_summary(
         if job_receipt is None and request_id:
             job_receipt = receipt_store.get(request_id, audience="internal", path=receipts_path)
             if job_receipt is not None:
-                _annotate_receipt_source(job_receipt, sources)
+                _annotate_receipt_source(job_receipt, sources, admin_db_path)
         if job_receipt is not None:
             if (
                 int(job_receipt.get("_stored_at") or 0) >= start
@@ -1099,7 +1167,7 @@ def _usage_summary(
             ):
                 made.update(str(a.get("asset_id") or a.get("id")) for a in _iter_job_assets(job))
             continue
-        if app_ids is None and int(job.get("created_at") or 0) >= start:
+        if _job_in_scope(job, media_scope) and int(job.get("created_at") or 0) >= start:
             source = _source_projection(None, admin_db_path, metadata=job, visible_app_ids=app_ids)
             if _source_matches_filter(source, source_filter):
                 made.update(str(a.get("asset_id") or a.get("id")) for a in _iter_job_assets(job))
@@ -1216,12 +1284,6 @@ def _source_filter(request: Request) -> str | None:
     raise _ApiError("invalid_source", "Source filter must be local-network, app:<id>, or all", 400)
 
 
-def _source_filter_sql(source: str) -> tuple[str, list[Any]]:
-    if source == "local-network":
-        return "app_id IS NULL", []
-    return "app_id = ?", [source.removeprefix("app:")]
-
-
 def _reject_forbidden_source_filter(source: str | None, app_ids: list[str] | None) -> None:
     if source is None or app_ids is None:
         return
@@ -1235,23 +1297,20 @@ def _source_matches_filter(source: Any, source_filter: str | None) -> bool:
     return source_filter is None or _source_id(source) == source_filter
 
 
-def _annotate_receipt_source(receipt: dict[str, Any], sources: list[Mapping[str, Any]]) -> None:
-    app_id = receipt.get("app_id")
-    if isinstance(app_id, str) and app_id:
-        source = next((item for item in sources if item.get("id") == f"app:{app_id}"), None)
-        label = source.get("label") if isinstance(source, Mapping) else None
-        receipt["source"] = {"kind": "app", "label": str(label or receipt.get("api_key_name") or "App"), "app_id": app_id}
-        receipt.setdefault("source_kind", "app")
-        receipt.setdefault("source_label", receipt["source"]["label"])
-        return
-    receipt.setdefault("source_kind", "local-network")
-    receipt.setdefault("source_label", "Local network · no key")
-    receipt["source"] = {
-        "kind": "local-network",
-        "label": str(receipt.get("source_label") or "Local network · no key"),
-        "app_id": None,
-        "client_hint": receipt.get("client_hint") if isinstance(receipt.get("client_hint"), str) else None,
-    }
+def _annotate_receipt_source(
+    receipt: dict[str, Any],
+    sources: list[Mapping[str, Any]],
+    admin_db_path: Path,
+) -> None:
+    visible_app_ids = [
+        str(source["app_id"])
+        for source in sources
+        if isinstance(source.get("app_id"), str) and source["app_id"]
+    ]
+    source = _source_projection(receipt, admin_db_path, visible_app_ids=visible_app_ids)
+    receipt["source"] = source
+    receipt.setdefault("source_kind", source["kind"])
+    receipt.setdefault("source_label", source["label"])
 
 
 def _receipt_cost(receipt: Mapping[str, Any]) -> float | None:

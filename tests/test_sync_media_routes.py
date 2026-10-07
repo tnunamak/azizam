@@ -459,7 +459,7 @@ class SyncMediaRouteTests(unittest.TestCase):
         self.assertEqual(job["app_profile"], "default-local")
         self.assertEqual(job["app_id"], "app_video")
         self.assertEqual(job["api_key_name"], "Video app")
-        self.assertEqual(job["owner_key_hash"], "sha256:video-owner")
+        self.assertEqual(job["owner_key_hash"], "app:app_video")
         self.assertEqual(job["metadata"], {"mode": "sync_video_delivery"})
         self.assertEqual(job["assets"][0]["kind"], "video")
         self.assertEqual(job["assets"][0]["media_type"], "video/mp4")

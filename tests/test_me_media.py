@@ -13,7 +13,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-from gateway import admin_store, media_delivery, media_jobs, media_metadata, me_media, provenance, receipt_store
+from gateway import admin_store, media_delivery, media_jobs, media_metadata, me_media, ownership, provenance, receipt_store
 from gateway.admin_oidc import AdminSession
 from gateway.admin_oidc import CookieConfig, OIDCConfig, encode_session_cookie, session_from_claims
 from gateway.receipts import RouteReceipt
@@ -180,6 +180,7 @@ class MeMediaRouterTests(unittest.TestCase):
         requested_model: str | None = "image",
         resolved_model: str | None = "local-image",
         cost_class: str | None = None,
+        owner_key_hash: str | None = None,
     ) -> None:
         receipt = RouteReceipt(
             protocol="openai.images",
@@ -190,6 +191,7 @@ class MeMediaRouterTests(unittest.TestCase):
             requested_model=requested_model,
             resolved_model=resolved_model,
             status="succeeded",
+            owner_key_hash=owner_key_hash,
         )
         receipt.accepted_at_ms = 1_700_000_000_000
         receipt.updated_at_ms = 1_700_000_001_000
@@ -451,6 +453,88 @@ class MeMediaRouterTests(unittest.TestCase):
         usage = self.client.get(f"/me/api/usage/summary?source=app:{self.app_a['id']}")
         self.assertEqual(usage.status_code, 200, usage.text)
         self.assertEqual(usage.json()["media_count"], 1)
+
+    def test_principal_owned_media_includes_rotated_app_and_personal_user_credentials(self) -> None:
+        app_principal = ownership.principal_key("app", self.app_a["id"])
+        user_principal = ownership.principal_key("user", self.alice["id"])
+        self.assertIsNotNone(app_principal)
+        self.assertIsNotNone(user_principal)
+        retired = admin_store.create_credential_hash(
+            subject_kind="app", subject_id=self.app_a["id"], app_id=self.app_a["id"],
+            hash="sha256:alice-retired", prefix="test_retired", path=self.admin_db,
+        )
+        admin_store.revoke_credential(retired["id"], path=self.admin_db)
+        admin_store.create_credential_hash(
+            subject_kind="app", subject_id=self.app_a["id"], app_id=self.app_a["id"],
+            hash="sha256:alice-current", prefix="test_current", path=self.admin_db,
+        )
+        admin_store.create_credential_hash(
+            subject_kind="user", subject_id=self.alice["id"],
+            hash="sha256:alice-personal", prefix="test_personal", path=self.admin_db,
+        )
+        app_cache = "img_" + "1" * 64
+        legacy_cache = "img_" + "2" * 64
+        app_job = "img_" + "3" * 64
+        user_job = "img_" + "4" * 64
+        app_cache_only = "img_" + "5" * 64
+        user_cache_only = "img_" + "6" * 64
+        self._write_asset(app_cache, [app_principal], request_id="req_app_principal", created_at=time.time())
+        self._write_asset(legacy_cache, ["sha256:alice-retired"], request_id="req_legacy_key", created_at=time.time())
+        self._write_asset(app_job, [app_principal], request_id="req_app_job", created_at=time.time())
+        self._write_asset(user_job, [user_principal], request_id="req_user_job", created_at=time.time())
+        self._write_asset(app_cache_only, [app_principal], request_id="req_app_cache_only", created_at=time.time())
+        self._write_asset(user_cache_only, [user_principal], request_id="req_user_cache_only", created_at=time.time())
+        self._receipt(None, "req_app_principal", owner_key_hash=app_principal)
+        self._receipt(None, "req_legacy_key", owner_key_hash="sha256:alice-retired")
+        self._receipt(None, "req_user_job", owner_key_hash=user_principal)
+        media_jobs.create(media_jobs.MediaJob(
+            request_id="req_app_principal", intent="image.generate", workflow="wf.image",
+            status=media_jobs.STATUS_SUCCEEDED, progress=100,
+            assets=[{"asset_id": app_cache}], owner_key_hash=app_principal,
+        ), path=self.jobs_db)
+        media_jobs.create(media_jobs.MediaJob(
+            request_id="req_legacy_key", intent="image.generate", workflow="wf.image",
+            status=media_jobs.STATUS_SUCCEEDED, progress=100,
+            assets=[{"asset_id": legacy_cache}], owner_key_hash="sha256:alice-retired",
+        ), path=self.jobs_db)
+        media_jobs.create(media_jobs.MediaJob(
+            request_id="req_app_job", intent="image.generate", workflow="wf.image",
+            status=media_jobs.STATUS_SUCCEEDED, progress=100,
+            assets=[{"asset_id": app_job}], owner_key_hash=app_principal,
+        ), path=self.jobs_db)
+        media_jobs.create(media_jobs.MediaJob(
+            request_id="req_user_job", intent="image.generate", workflow="wf.image",
+            status=media_jobs.STATUS_SUCCEEDED, progress=100,
+            assets=[{"asset_id": user_job}], owner_key_hash=user_principal,
+        ), path=self.jobs_db)
+
+        alice_media = self.client.get("/me/api/media")
+        self.assertEqual(alice_media.status_code, 200, alice_media.text)
+        self.assertEqual(
+            {item["asset_id"] for item in alice_media.json()["assets"]},
+            {app_cache, legacy_cache, app_job, user_job, app_cache_only, user_cache_only},
+        )
+        self.assertEqual(
+            me_media._source_projection(None, self.admin_db, metadata={"owner_key_hash": app_principal}, visible_app_ids=[self.app_a["id"]])["app_id"],
+            self.app_a["id"],
+        )
+        self.assertEqual(self.client.get("/me/api/usage/summary").json()["requests"], 3)
+        self.assertEqual(
+            self.client.get(f"/me/api/usage/summary?source=app:{self.app_a['id']}").json()["requests"],
+            2,
+        )
+
+        self.current_user = self.bob
+        self.assertEqual(self.client.get("/me/api/media").json()["assets"], [])
+        self.assertEqual(self.client.get("/me/api/usage/summary").json()["requests"], 0)
+
+    def test_app_attribution_overrides_conflicting_owner_fallback(self) -> None:
+        scope = me_media._member_media_scope(self.alice["id"], self.admin_db)
+        record = {"app_id": self.app_b["id"], "owner_key_hash": self.cred_a["hash"]}
+        self.assertFalse(me_media._receipt_in_scope(record, scope))
+        self.assertFalse(me_media._job_in_scope(record, scope))
+        self._receipt(self.app_b["id"], "req_conflicting_owner", owner_key_hash=self.cred_a["hash"])
+        self.assertEqual(self.client.get("/me/api/usage/summary").json()["requests"], 0)
 
     def test_usage_summary_scopes_by_user_and_owner_person_all(self) -> None:
         self._receipt(self.app_a["id"], "req_alice", cost=0.25)

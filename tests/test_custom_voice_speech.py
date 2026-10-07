@@ -284,13 +284,12 @@ class QualityProbeTests(CustomVoiceRouteCase):
         self.assertEqual((result, calls), ({"error": "engine_would_not_start"}, 0))
 
 
-class RevocationCleanupTests(CustomVoiceRouteCase):
-    def test_revoking_a_credential_removes_its_voices_and_only_its_voices(self) -> None:
+class RevocationOwnershipTests(CustomVoiceRouteCase):
+    def test_revoking_a_credential_preserves_its_voices(self) -> None:
         gone = self.make_voice(owner="hash-gone")
         keep = self.make_voice(owner="hash-keep")
         proxy._purge_voices_for_credential({"hash": "hash-gone", "prefix": "opk_x"})
-        with self.assertRaises(cv.VoiceError):
-            self.store.get_voice("hash-gone", gone["id"])
+        self.assertTrue(self.store.get_voice("hash-gone", gone["id"]))
         self.assertTrue(self.store.get_voice("hash-keep", keep["id"]))
 
     def test_the_admin_store_fires_the_hook_on_revoke(self) -> None:
