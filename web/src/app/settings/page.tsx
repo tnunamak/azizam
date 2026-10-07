@@ -180,11 +180,11 @@ function Section({
     </section>
   );
 }
-function Loading() {
+function Loading({ label = "Loading settings" }: { label?: string }) {
   return (
     <div
       role="status"
-      aria-label="Loading settings"
+      aria-label={label}
       aria-busy="true"
       className="space-y-4"
     >
@@ -439,7 +439,7 @@ function SignInSection() {
     >
       <div className="space-y-7">
         {signInIsPending ? (
-          <Loading />
+          <Loading label="Loading sign-in choices" />
         ) : signInIsError ? (
           <SettingsError
             error={signInError}
@@ -450,7 +450,7 @@ function SignInSection() {
           <SignInChoiceForm signIn={signInData} />
         )}
         {oidcIsPending ? (
-          <Loading />
+          <Loading label="Loading identity provider" />
         ) : oidcIsError ? (
           <SettingsError
             error={oidcError}

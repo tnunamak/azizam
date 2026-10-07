@@ -266,6 +266,32 @@ describe("People and Settings red-team regressions", () => {
       ),
     );
   });
+  it("names independently loading sign-in forms for assistive technology", async () => {
+    let resolveSignIn!: (value: unknown) => void;
+    const pending = new Promise((resolve) => {
+      resolveSignIn = resolve;
+    });
+    vi.mocked(adminFetch).mockImplementation(async (path) =>
+      path === "/admin/api/operator/sign-in"
+        ? ((await pending) as never)
+        : (responses[path] as never),
+    );
+    mount(<SettingsPage />);
+    expect(
+      await screen.findByRole("status", { name: "Loading sign-in choices" }),
+    ).toHaveAttribute("aria-busy", "true");
+    expect(
+      screen.getAllByRole("status", { name: "Loading sign-in choices" }),
+    ).toHaveLength(1);
+    await act(async () => {
+      resolveSignIn(responses["/admin/api/operator/sign-in"]);
+    });
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("status", { name: "Loading sign-in choices" }),
+      ).not.toBeInTheDocument(),
+    );
+  });
   it("explains email sign-in exceptions and first-owner bootstrap", async () => {
     mount(<SettingsPage />);
     await edit("Sign-in");

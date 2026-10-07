@@ -399,7 +399,9 @@ test("settings announces delayed loading states for assistive technology", async
   });
   await page.goto("/ui/settings/");
   const signIn = page.getByRole("region", { name: "Sign-in", exact: true });
-  const status = signIn.getByRole("status", { name: "Loading settings" });
+  const status = signIn.getByRole("status", {
+    name: "Loading sign-in choices",
+  });
   await expect(status).toHaveAttribute("aria-busy", "true");
   releaseSignIn();
   await expect(status).toHaveCount(0);
