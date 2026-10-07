@@ -137,6 +137,7 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | `POST` | `/openai/v1/images/variations` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `images_variations` |
 | `GET` | `/openai/v1/images/{image_id}/content` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `images_content` |
 | `GET` | `/openai/v1/models` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `list_models` |
+| `GET` | `/openai/v1/models/{model_id:path}` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `anthropic_model_retrieve` |
 | `WS` | `/openai/v1/realtime` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `realtime_v1` |
 | `DELETE` | `/openai/v1/realtime{rest:path}` | unsupported | 400 unsupported_operation (not 501) | [proxy.py](../proxy.py) `openai_realtime_unsupported` |
 | `GET` | `/openai/v1/realtime{rest:path}` | unsupported | 400 unsupported_operation (not 501) | [proxy.py](../proxy.py) `openai_realtime_unsupported` |
