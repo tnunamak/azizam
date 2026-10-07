@@ -466,9 +466,15 @@ function Preview({
                 setRecovered(true);
                 setMediaFailed(false);
                 setRetryKey((value) => value + 1);
+              } else {
+                setMediaFailed(true);
+                setPosterFailed(true);
               }
             },
-            () => undefined,
+            () => {
+              setMediaFailed(true);
+              setPosterFailed(true);
+            },
           );
           void queryClient.invalidateQueries({ queryKey: ["library"] });
         }}
