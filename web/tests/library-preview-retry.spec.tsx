@@ -195,3 +195,91 @@ it("pauses every other audio player when a card or drawer starts playing", async
     client.clear();
   }
 });
+
+it.each([
+  ["source_unavailable", "source unavailable"],
+  [null, "Preview unavailable"],
+  [undefined, "Preview unavailable"],
+  ["   ", "Preview unavailable"],
+])("shows unavailable reason %s with a working retry", async (reason, message) => {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input).includes("/unavailable/download")) {
+      return Response.json({ download_url: "/recovered.png" });
+    }
+    return Response.json({
+      assets: [{
+        asset_id: "unavailable",
+        kind: "image",
+        prompt: "Unavailable image",
+        model: "",
+        available: false,
+        unavailable_reason: reason,
+      }],
+      next_cursor: null,
+    });
+  }));
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <LibraryPage />
+    </QueryClientProvider>,
+  );
+  expect(await screen.findByText(message!)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(
+    new URL(
+      (await screen.findByRole("img", { name: "Unavailable image" })).getAttribute("src")!,
+      window.location.href,
+    ).pathname,
+  ).toBe("/recovered.png");
+  expect(screen.queryByText(message!)).toBeNull();
+  client.clear();
+});
+
+it("marks retained results as updating until changed filter results arrive", async () => {
+  let finish!: () => void;
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const filtered = new URL(String(input), "http://localhost").searchParams.get("kind") === "image";
+    const payload = {
+      assets: [{
+        asset_id: filtered ? "new" : "old",
+        kind: "image",
+        prompt: filtered ? "New result" : "Old result",
+        model: "",
+        download_url: filtered ? "/new.png" : "/old.png",
+      }],
+      next_cursor: null,
+    };
+    if (filtered) {
+      return new Promise<Response>((resolve) => {
+        finish = () => resolve(Response.json(payload));
+      });
+    }
+    return Response.json(payload);
+  }));
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { container } = render(
+    <QueryClientProvider client={client}>
+      <LibraryPage />
+    </QueryClientProvider>,
+  );
+  await screen.findByRole("button", { name: "Open Old result" });
+  expect(screen.queryByText("Updating")).toBeNull();
+  expect(container.querySelector("article")?.parentElement).toHaveAttribute("aria-busy", "false");
+  fireEvent.click(screen.getByRole("button", { name: "Images" }));
+  await waitFor(() => expect(finish).toBeTypeOf("function"));
+  expect(screen.getByRole("button", { name: "Open Old result" })).toBeVisible();
+  expect(container.querySelector("article")?.parentElement).toHaveAttribute("aria-busy", "true");
+  expect(screen.getByText("Updating")).toBeVisible();
+  expect(screen.getByText("Updating")).toHaveAttribute("role", "status");
+  finish();
+  await screen.findByRole("button", { name: "Open New result" });
+  expect(screen.queryByRole("button", { name: "Open Old result" })).toBeNull();
+  expect(container.querySelector("article")?.parentElement).toHaveAttribute("aria-busy", "false");
+  expect(screen.queryByText("Updating")).toBeNull();
+  client.clear();
+});

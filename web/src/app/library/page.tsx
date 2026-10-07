@@ -210,9 +210,11 @@ function usePreviewVisible() {
 
 function UnavailablePreview({
   kind,
+  reason,
   onRetry,
 }: {
   kind: MediaKind;
+  reason?: string | null;
   onRetry?: (event: MouseEvent<HTMLButtonElement>) => void;
 }) {
   const Icon = kindIcon(kind);
@@ -220,8 +222,10 @@ function UnavailablePreview({
     <div className="bg-muted text-muted-foreground flex h-full min-h-32 flex-col items-center justify-center gap-3 p-4 text-center">
       <div role="img" aria-label={`${kindLabel(kind)} preview unavailable`}>
         <Icon aria-hidden="true" className="mx-auto size-8" />
-        <p className="mt-3 text-sm">Preview unavailable</p>
       </div>
+      <p className="mt-3 text-sm">
+        {reason?.trim().replace(/[_-]+/g, " ") || "Preview unavailable"}
+      </p>
       {onRetry ? (
         <Button
           type="button"
@@ -458,6 +462,7 @@ function Preview({
     return (
       <UnavailablePreview
         kind={asset.kind}
+        reason={asset.unavailable_reason}
         onRetry={(event) => {
           event.stopPropagation();
           setMediaFailed(false);
@@ -889,6 +894,7 @@ export default function LibraryPage() {
     [mediaPages],
   );
   const hasLoadedAssets = assets.length > 0;
+  const updating = isFetching && isPlaceholderData && hasLoadedAssets;
   const showInitialError = isError && !hasLoadedAssets && !isFetchNextPageError;
   const showRetainedError =
     (isError || isFetchNextPageError) && hasLoadedAssets;
@@ -1107,7 +1113,10 @@ export default function LibraryPage() {
         />
       ) : null}
       {!isLoading && !showInitialError && assets.length > 0 ? (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div
+          aria-busy={updating}
+          className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
+        >
           {assets.map((asset) => (
             <AssetCard
               key={asset.asset_id}
@@ -1118,6 +1127,11 @@ export default function LibraryPage() {
             />
           ))}
         </div>
+      ) : null}
+      {updating ? (
+        <p role="status" className="text-muted-foreground mt-3 text-sm">
+          Updating
+        </p>
       ) : null}
       {showRetainedError ? (
         <div
