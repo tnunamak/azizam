@@ -10,9 +10,15 @@ function canonicalFields(value: unknown): unknown {
   return value;
 }
 
-/** Keep unique real IDs; reserve all IDs before assigning fallback keys. */
+/**
+ * Keep unique real IDs; reserve all IDs before assigning fallback keys.
+ * Fallback keys come from content only (receipt plus optional row context such
+ * as person, app and time), never from list position, so a refresh that
+ * removes or reorders rows cannot hand one row's key to another.
+ */
 export function receiptSelectionKeys(
   receipts: Record<string, unknown>[],
+  contexts?: unknown[],
 ): string[] {
   const ids = receipts.map((receipt) => {
     const id = receipt.request_id ?? receipt.id;
@@ -28,7 +34,9 @@ export function receiptSelectionKeys(
     const id = ids[index];
     let key = id && counts.get(id) === 1 ? id : null;
     if (key === null) {
-      const base = `receipt:${index}:${JSON.stringify(canonicalFields(receipt))}`;
+      const identity =
+        contexts === undefined ? receipt : { receipt, context: contexts[index] };
+      const base = `receipt:${JSON.stringify(canonicalFields(identity))}`;
       key = base;
       let suffix = 1;
       while (reserved.has(key) || used.has(key)) key = `${base}:${suffix++}`;

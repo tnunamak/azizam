@@ -208,7 +208,15 @@ export function Requests() {
     return () => window.removeEventListener("focus", refresh);
   }, [refetch]);
   const rows = data?.pages.flatMap((page) => page.records) ?? [];
-  const keys = receiptSelectionKeys(rows.map((row) => row.receipt));
+  const keys = receiptSelectionKeys(
+    rows.map((row) => row.receipt),
+    rows.map((row) => ({
+      person_label: row.person_label,
+      app_label: row.app_label,
+      created_at: row.created_at,
+      source: row.source,
+    })),
+  );
   const people = data?.pages[0]?.people ?? [];
   const record = rows.find((_, index) => keys[index] === selectedReceiptKey) ?? null;
   useEffect(() => {

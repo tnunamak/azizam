@@ -24,13 +24,25 @@ test("receipt selection preserves real IDs and avoids duplicate and fallback col
   expect(receiptSelectionKeys([{ id: "legacy" }])).toEqual(["legacy"]);
 });
 
-test("reordering duplicate real IDs cannot redirect an existing selection", () => {
+test("reordering duplicate real IDs keeps each key on its own receipt", () => {
   const receipts = [
     { request_id: "duplicate", status: "failed" },
     { request_id: "duplicate", status: "succeeded" },
   ];
   const before = receiptSelectionKeys(receipts);
   const after = receiptSelectionKeys([...receipts].reverse());
+  expect(after[1]).toBe(before[0]);
+  expect(after[0]).toBe(before[1]);
+  expect(before).not.toContain("duplicate");
+});
+
+test("removing a row cannot hand its key to an ID-less row that shifts up", () => {
+  const receipt = { status: "succeeded" };
+  const alice = { person_label: "Alice", app_label: "Chat", created_at: 1 };
+  const bob = { person_label: "Bob", app_label: "Images", created_at: 2 };
+  const before = receiptSelectionKeys([receipt, { ...receipt }], [alice, bob]);
+  expect(new Set(before).size).toBe(2);
+  const after = receiptSelectionKeys([{ ...receipt }], [bob]);
   expect(after).not.toContain(before[0]);
-  expect(after).not.toContain(before[1]);
+  expect(after[0]).toBe(before[1]);
 });
