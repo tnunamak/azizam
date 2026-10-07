@@ -159,3 +159,38 @@ test("USAGE-03 anonymous people have distinct safe labels and retain filter IDs"
       .mock.calls.some(([url]) => String(url).includes("person=person-002")),
   ).toBe(true);
 });
+
+test.each([
+  { emails: ["first@example.com", "second@example.com"], suffixes: ["first", "second"] },
+  { emails: [undefined, undefined], suffixes: ["#1", "#2"] },
+])("USAGE-03 duplicate explicit names have stable accessible labels and retain filter IDs: $suffixes", async ({ emails, suffixes }) => {
+  const people = [
+    { id: "person-002", name: "Mira", email: emails[1] },
+    { id: "person-001", name: "Mira", email: emails[0] },
+    { id: "person-003", name: "Azizam" },
+  ];
+  renderUsage({ people });
+  await screen.findByText("Requests");
+  const user = userEvent.setup();
+  const labels = suffixes.map((suffix) => `Mira · ${suffix}`);
+  for (const [index, label] of labels.entries()) {
+    const filter = screen.getByRole("combobox", { name: "Person" });
+    filter.focus();
+    await user.keyboard("{Enter}");
+    const option = await screen.findByRole("option", { name: label });
+    expect(option).toHaveAccessibleName(label);
+    expect(screen.getByRole("option", { name: "Azizam" })).toBeVisible();
+    expect(screen.getAllByRole("option").map((item) => item.textContent).join(" ")).not.toContain("@");
+    expect(screen.getByRole("option", { name: labels[1 - index] })).toBeVisible();
+    // A different response order must not change which person a label identifies.
+    people.reverse();
+    vi.mocked(fetch).mockClear();
+    await user.click(option);
+    expect(
+      vi.mocked(fetch).mock.calls.some(([url]) =>
+        new URL(String(url), "https://azizam.test").searchParams.get("person") === `person-00${index + 1}`,
+      ),
+    ).toBe(true);
+    expect(await screen.findByRole("combobox", { name: "Person" })).toHaveTextContent(label);
+  }
+});

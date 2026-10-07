@@ -1060,7 +1060,13 @@ function normalizeSummary(raw: unknown): UsageSummary {
 
 function normalizePeople(raw: unknown): UsagePerson[] {
   const usedLabels = new Set<string>();
-  return array(raw)
+  const emailSuffixes = new Map(
+    array(raw).map((item) => {
+      const row = object(item);
+      return [string(row.id, ""), string(row.email, "").trim().match(/^([^\s@]+)@[^\s@]+$/)?.[1]];
+    }),
+  );
+  const people = array(raw)
     .map((item) => {
       const person = object(item);
       const id = string(person.id, "");
@@ -1081,6 +1087,28 @@ function normalizePeople(raw: unknown): UsagePerson[] {
       return { id, label };
     })
     .filter((person) => person.id);
+  const counts = new Map<string, number>();
+  for (const { label } of people) {
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+    usedLabels.add(label);
+  }
+  const ordinals = new Map<string, number>();
+  // Assign in ID order so response ordering cannot swap a person's suffix.
+  for (const person of [...people].sort((a, b) =>
+    a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
+  )) {
+    if (counts.get(person.label) === 1) continue;
+    const ordinal = (ordinals.get(person.label) ?? 0) + 1;
+    ordinals.set(person.label, ordinal);
+    const suffix = emailSuffixes.get(person.id) || `#${ordinal}`;
+    const base = `${person.label} · ${suffix}`;
+    let label = base;
+    let collision = 2;
+    while (usedLabels.has(label)) label = `${base} · #${collision++}`;
+    usedLabels.add(label);
+    person.label = label;
+  }
+  return people;
 }
 
 function normalizeReceipt(raw: unknown): UsageReceipt {
