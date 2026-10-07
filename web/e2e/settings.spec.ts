@@ -157,7 +157,7 @@ for (const theme of ["light", "dark"] as const) {
         if (state === "error") {
           await expect(
             page.getByRole("button", { name: "Try again" }),
-          ).toHaveCount(6);
+          ).toHaveCount(8);
         } else {
           await expect(
             page.getByText("Our gateway", { exact: true }),
@@ -538,4 +538,188 @@ test("extension enable uses the validated source and waits for explicit code tru
   await expect(
     page.getByText("Extension enabled", { exact: true }),
   ).toBeVisible();
+});
+
+test("403 settings states do not retry and administrator app defaults stay usable", async ({
+  page,
+}) => {
+  await seed(page, "seeded");
+  await page.route("**/me/api/session", (route) =>
+    route.fulfill({
+      json: {
+        authenticated: true,
+        user: {
+          id: "admin",
+          name: "Admin",
+          role: "admin",
+          email: "admin@example.test",
+        },
+      },
+    }),
+  );
+  await page.route("**/admin/api/settings/**", (route) =>
+    route.fulfill({
+      status: 403,
+      json: { error: { code: "owner_required", message: "Owner required" } },
+    }),
+  );
+  await page.route("**/admin/api/operator/sign-in", (route) =>
+    route.fulfill({
+      status: 403,
+      json: { error: { code: "owner_required", message: "Owner required" } },
+    }),
+  );
+  await page.goto("/ui/settings/");
+  const instance = page.getByRole("region", { name: "Instance", exact: true });
+  await expect(instance).toContainText("Only the owner can change this.");
+  await expect(instance.getByRole("button", { name: "Try again" })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("button", { name: "Save sign-in", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("switch", { name: "Let people create their own apps" }),
+  ).toBeEnabled();
+  await expect(
+    page.getByRole("button", { name: "Save app defaults" }),
+  ).toBeEnabled();
+});
+
+test("independent sign-in and defaults saves retain the other form's drafts", async ({
+  page,
+}) => {
+  await seed(page, "seeded");
+  await page.goto("/ui/settings/");
+  await editSection(page, "Sign-in");
+  await page.getByLabel("Client ID", { exact: true }).fill("unsaved-provider");
+  await page.getByRole("button", { name: "Save sign-in choice" }).click();
+  await expect(
+    page.getByText("Sign-in choice saved", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Client ID", { exact: true })).toHaveValue(
+    "unsaved-provider",
+  );
+  await page.getByLabel("Available sign-in methods").click();
+  await page
+    .getByRole("option", { name: "Built-in accounts only", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Save sign-in", exact: true }).click();
+  await expect(
+    page.getByText("Identity provider saved", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Available sign-in methods")).toContainText(
+    "Built-in accounts only",
+  );
+  await page
+    .getByText("Provider details and access rules", { exact: true })
+    .click();
+  await expect(page.getByLabel("Sign-in email exceptions")).toBeVisible();
+  await expect(
+    page.getByText(/Once any grant exists, this list grants no role/),
+  ).toBeVisible();
+  await editSection(page, "Defaults");
+  await page
+    .getByRole("switch", { name: "Let people create their own apps" })
+    .click();
+  await page.getByRole("button", { name: "Save default plan" }).click();
+  await expect(
+    page.getByText("Default access plan saved", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("switch", { name: "Let people create their own apps" }),
+  ).not.toBeChecked();
+  await page.getByLabel("Default access plan").click();
+  await page
+    .getByRole("option", { name: "No default plan", exact: true })
+    .click();
+  await page.route("**/admin/api/operator/user-access-defaults", (route) =>
+    route.fulfill({
+      json: {
+        user_access_defaults: {
+          self_service_apps: false,
+          auto_create_personal_app: true,
+        },
+      },
+    }),
+  );
+  await page.getByRole("button", { name: "Save app defaults" }).click();
+  await expect(
+    page.getByText("Personal app defaults saved", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Default access plan")).toContainText(
+    "No default plan",
+  );
+});
+
+for (const width of [390, 1440]) {
+  test(`long instance names and public URLs wrap at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await seed(page, "seeded");
+    const name = "n".repeat(300);
+    const url = `https://example.test/${"path".repeat(100)}`;
+    await page.route("**/admin/api/settings/instance", (route) =>
+      route.fulfill({
+        json: { instance: { name, base_url: url, theme_default: "system" } },
+      }),
+    );
+    await page.goto("/ui/settings/");
+    const section = page.getByRole("region", { name: "Instance", exact: true });
+    for (const text of [name, url]) {
+      const field = section.getByText(text, { exact: text === name });
+      await expect(field).toBeVisible();
+      expect(
+        await field.evaluate(
+          (el) =>
+            el.scrollWidth <= el.clientWidth &&
+            el.getBoundingClientRect().right <= innerWidth,
+        ),
+      ).toBe(true);
+    }
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+  });
+}
+
+test("cached owner settings do not expose owner-only forms to administrators", async ({
+  page,
+}) => {
+  await seed(page, "seeded");
+  await page.route("**/me/api/session", (route) =>
+    route.fulfill({
+      json: {
+        authenticated: true,
+        user: {
+          id: "admin",
+          name: "Admin",
+          role: "admin",
+          email: "admin@example.test",
+        },
+      },
+    }),
+  );
+  await page.goto("/ui/settings/");
+  await editSection(page, "Sign-in");
+  await expect(
+    page.getByRole("button", { name: "Save sign-in choice", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Save sign-in", exact: true }),
+  ).toHaveCount(0);
+  await editSection(page, "Instance");
+  await expect(
+    page.getByRole("button", { name: "Save instance", exact: true }),
+  ).toHaveCount(0);
+  await editSection(page, "Defaults");
+  await expect(
+    page.getByRole("button", { name: "Save default plan", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Save app defaults", exact: true }),
+  ).toBeEnabled();
 });

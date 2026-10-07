@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { useViewer } from "@/components/shell/session";
 import { useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, Loader2, Puzzle } from "lucide-react";
 import { toast } from "sonner";
 import {
   adminFetch,
+  ApiError,
   adminRegistryMutation,
   api,
   type EffectiveOidcConfig,
@@ -79,6 +81,7 @@ const keys = {
   oidc: ["settings", "oidc"],
   signIn: ["settings", "sign-in"],
   defaults: ["settings", "defaults"],
+  accessDefaults: ["settings", "access-defaults"],
   media: ["settings", "media"],
   extensions: ["settings", "extensions"],
   effective: ["settings", "effective"],
@@ -91,6 +94,42 @@ const split = (value: string) =>
 const LEGACY_ACCESS_PLAN_NAMES = new Set(["legacy simon", "legacy daisy"]);
 const isLegacyAccessPlan = (name: string) =>
   LEGACY_ACCESS_PLAN_NAMES.has(name.trim().toLowerCase());
+
+function useDraft<T>(initial: T) {
+  const source = JSON.stringify(initial);
+  const [state, setState] = useState({ source, draft: initial });
+  if (state.source !== source) {
+    setState({
+      source,
+      draft:
+        JSON.stringify(state.draft) === state.source ? initial : state.draft,
+    });
+  }
+  const setDraft = (draft: T) => setState((current) => ({ ...current, draft }));
+  return [state.draft, setDraft] as const;
+}
+function SettingsError({
+  error,
+  message,
+  onRetry,
+}: {
+  error: unknown;
+  message: string;
+  onRetry: () => void;
+}) {
+  return error instanceof ApiError && error.status === 403 ? (
+    <p role="alert" className="text-muted-foreground text-sm">
+      Only the owner can change this.
+    </p>
+  ) : (
+    <ErrorState
+      heading="Couldn’t load this"
+      error={error}
+      message={message}
+      onRetry={onRetry}
+    />
+  );
+}
 
 function Section({
   title,
@@ -110,7 +149,7 @@ function Section({
       className="grid min-w-0 gap-5 border-t py-8 xl:grid-cols-[220px_minmax(0,1fr)] xl:gap-10"
     >
       <h2 className="text-base font-semibold">{title}</h2>
-      <div className="max-w-2xl min-w-0">
+      <div className="max-w-2xl min-w-0 [overflow-wrap:anywhere]">
         {showSummary ? (
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="min-w-0 text-sm leading-6">{summary}</div>
@@ -221,15 +260,17 @@ function MutationError({ error }: { error: unknown }) {
   return error ? (
     <p role="alert" className="text-destructive text-sm">
       <span className="font-medium">Unsaved changes. </span>
-      {error instanceof Error
-        ? error.message
-        : "Changes could not be saved. Try again."}
+      {error instanceof ApiError && error.status === 403
+        ? "Only the owner can change this."
+        : error instanceof Error
+          ? error.message
+          : "Changes could not be saved. Try again."}
     </p>
   ) : null;
 }
 
 function InstanceSection() {
-  const { data, isPending, isError, refetch } = useQuery({
+  const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: keys.instance,
     queryFn: () =>
       adminFetch<{ instance: Instance }>("/admin/api/settings/instance"),
@@ -261,22 +302,21 @@ function InstanceSection() {
       {isPending ? (
         <Loading />
       ) : isError ? (
-        <ErrorState
+        <SettingsError
+          error={error}
           message="Instance settings could not be loaded."
           onRetry={() => void refetch()}
         />
       ) : (
-        <InstanceForm
-          key={JSON.stringify(data.instance)}
-          initial={data.instance}
-        />
+        <InstanceForm initial={data.instance} />
       )}
     </Section>
   );
 }
 function InstanceForm({ initial }: { initial: Instance }) {
+  const owner = useViewer().role === "owner";
   const client = useQueryClient();
-  const [form, setForm] = useState(initial);
+  const [form, setForm] = useDraft(initial);
   const mutation = useMutation({
     mutationFn: () =>
       adminFetch<{ instance: Instance }>("/admin/api/settings/instance", {
@@ -290,6 +330,12 @@ function InstanceForm({ initial }: { initial: Instance }) {
       toast.success("Instance settings saved");
     },
   });
+  if (!owner)
+    return (
+      <p role="status" className="text-muted-foreground text-sm">
+        Only the owner can change this.
+      </p>
+    );
   return (
     <form
       className="space-y-5"
@@ -350,6 +396,7 @@ function SignInSection() {
     data: oidcData,
     isPending: oidcIsPending,
     isError: oidcIsError,
+    error: oidcError,
     refetch: refetchOidc,
   } = useQuery({
     queryKey: keys.oidc,
@@ -362,6 +409,7 @@ function SignInSection() {
     data: signInData,
     isPending: signInIsPending,
     isError: signInIsError,
+    error: signInError,
     refetch: refetchSignIn,
   } = useQuery({
     queryKey: keys.signIn,
@@ -389,40 +437,99 @@ function SignInSection() {
         ) : undefined
       }
     >
-      {oidcIsPending || signInIsPending ? (
-        <Loading />
-      ) : oidcIsError || signInIsError ? (
-        <ErrorState
-          message="Sign-in settings could not be loaded."
-          onRetry={() => {
-            void refetchOidc();
-            void refetchSignIn();
-          }}
-        />
-      ) : (
-        <OidcForm
-          key={JSON.stringify({
-            oidc: oidcData.oidc_config,
-            signIn: signInData,
-          })}
-          config={oidcData.oidc_config}
-          signIn={signInData}
-        />
-      )}
+      <div className="space-y-7">
+        {signInIsPending ? (
+          <Loading />
+        ) : signInIsError ? (
+          <SettingsError
+            error={signInError}
+            message="Sign-in choices could not be loaded."
+            onRetry={() => void refetchSignIn()}
+          />
+        ) : (
+          <SignInChoiceForm signIn={signInData} />
+        )}
+        {oidcIsPending ? (
+          <Loading />
+        ) : oidcIsError ? (
+          <SettingsError
+            error={oidcError}
+            message="Sign-in settings could not be loaded."
+            onRetry={() => void refetchOidc()}
+          />
+        ) : (
+          <OidcForm config={oidcData.oidc_config} />
+        )}
+      </div>
     </Section>
   );
 }
-function OidcForm({
-  config,
-  signIn,
-}: {
-  config: EffectiveOidcConfig | null;
-  signIn: SignInOptions;
-}) {
+function SignInChoiceForm({ signIn }: { signIn: SignInOptions }) {
+  const owner = useViewer().role === "owner";
   const client = useQueryClient();
-  const [mode, setMode] = useState<SignInMode>(signIn.mode);
-  const [enabled, setEnabled] = useState(config?.enabled ?? false);
-  const [fields, setFields] = useState({
+  const [mode, setMode] = useDraft<SignInMode>(signIn.mode);
+  const modeMutation = useMutation({
+    mutationFn: () =>
+      adminFetch<SignInOptions>("/admin/api/operator/sign-in", {
+        method: "PUT",
+        body: { mode },
+      }),
+    onSuccess: (data) => {
+      client.setQueryData(keys.signIn, data);
+      toast.success("Sign-in choice saved");
+    },
+  });
+  if (!owner)
+    return (
+      <p role="status" className="text-muted-foreground text-sm">
+        Only the owner can change this.
+      </p>
+    );
+  return (
+    <form
+      className="space-y-5"
+      onSubmit={(e) => {
+        e.preventDefault();
+        modeMutation.mutate();
+      }}
+    >
+      <div className="flex flex-wrap items-center gap-3">
+        <Badge variant={signIn.built_in ? "default" : "secondary"}>
+          Built-in accounts {signIn.built_in ? "on" : "off"}
+        </Badge>
+        <Badge variant={signIn.oidc ? "default" : "secondary"}>
+          OIDC {signIn.oidc ? "on" : "off"}
+        </Badge>
+      </div>
+      <Field
+        id="sign-in-mode"
+        label="Available sign-in methods"
+        help="This setting controls the methods shown on the sign-in page. The provider switch below only configures OIDC."
+      >
+        <Select
+          value={mode}
+          onValueChange={(value) => setMode(value as SignInMode)}
+        >
+          <SelectTrigger id="sign-in-mode" className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="built-in">Built-in accounts only</SelectItem>
+            <SelectItem value="oidc">OIDC only</SelectItem>
+            <SelectItem value="both">Built-in accounts and OIDC</SelectItem>
+          </SelectContent>
+        </Select>
+      </Field>
+      <MutationError error={modeMutation.error} />
+      <Save pending={modeMutation.isPending} label="Save sign-in choice" />
+    </form>
+  );
+}
+function OidcForm({ config }: { config: EffectiveOidcConfig | null }) {
+  const owner = useViewer().role === "owner";
+  const client = useQueryClient();
+  const [fields, setFields] = useDraft({
+    enabled: config?.enabled ?? false,
     issuer: config?.issuer ?? "",
     client_id: config?.client_id ?? "",
     redirect_uri: config?.redirect_uri ?? "",
@@ -443,7 +550,7 @@ function OidcForm({
   const mutation = useMutation({
     mutationFn: () => {
       const body: OidcConfigUpdate = {
-        enabled,
+        enabled: fields.enabled,
         issuer: fields.issuer.trim(),
         client_id: fields.client_id.trim(),
         redirect_uri: fields.redirect_uri.trim(),
@@ -472,190 +579,161 @@ function OidcForm({
       toast.success("Identity provider saved");
     },
   });
-  const modeMutation = useMutation({
-    mutationFn: () =>
-      adminFetch<SignInOptions>("/admin/api/operator/sign-in", {
-        method: "PUT",
-        body: { mode },
-      }),
-    onSuccess: (data) => {
-      client.setQueryData(keys.signIn, data);
-      toast.success("Sign-in choice saved");
-    },
-  });
+  if (!owner)
+    return (
+      <p role="status" className="text-muted-foreground text-sm">
+        Only the owner can change this.
+      </p>
+    );
   return (
-    <div className="space-y-7">
-      <form
-        className="space-y-5"
-        onSubmit={(e) => {
-          e.preventDefault();
-          modeMutation.mutate();
-        }}
-      >
-        <div className="flex flex-wrap items-center gap-3">
-          <Badge variant={signIn.built_in ? "default" : "secondary"}>
-            Built-in accounts {signIn.built_in ? "on" : "off"}
-          </Badge>
-          <Badge variant={signIn.oidc ? "default" : "secondary"}>
-            OIDC {signIn.oidc ? "on" : "off"}
-          </Badge>
-        </div>
-        <Field
-          id="sign-in-mode"
-          label="Available sign-in methods"
-          help="This setting controls the methods shown on the sign-in page. The provider switch below only configures OIDC."
-        >
-          <Select
-            value={mode}
-            onValueChange={(value) => setMode(value as SignInMode)}
-          >
-            <SelectTrigger id="sign-in-mode" className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="built-in">Built-in accounts only</SelectItem>
-              <SelectItem value="oidc">OIDC only</SelectItem>
-              <SelectItem value="both">Built-in accounts and OIDC</SelectItem>
-            </SelectContent>
-          </Select>
-        </Field>
-        <MutationError error={modeMutation.error} />
-        <Save pending={modeMutation.isPending} label="Save sign-in choice" />
-      </form>
-      <form
-        className="space-y-5 border-t pt-7"
-        onSubmit={(e) => {
-          e.preventDefault();
-          mutation.mutate();
-        }}
-      >
-        {!config && (
-          <p className="text-muted-foreground text-sm">
-            No identity provider is connected yet. Add its details below to
-            enable sign-in.
-          </p>
-        )}
-        <Toggle
-          id="oidc-enabled"
-          label="Enable identity provider"
-          checked={enabled}
-          onChange={setEnabled}
+    <form
+      className="space-y-5 border-t pt-7"
+      onSubmit={(e) => {
+        e.preventDefault();
+        mutation.mutate();
+      }}
+    >
+      {!config && (
+        <p className="text-muted-foreground text-sm">
+          No identity provider is connected yet. Add its details below to enable
+          sign-in.
+        </p>
+      )}
+      <Toggle
+        id="oidc-enabled"
+        label="Enable identity provider"
+        checked={fields.enabled}
+        onChange={(enabled) => setFields({ ...fields, enabled })}
+      />
+      <Field id="oidc-issuer" label="Issuer URL">
+        <Input
+          id="oidc-issuer"
+          type="url"
+          required={fields.enabled}
+          value={fields.issuer}
+          onChange={(e) => update("issuer", e.target.value)}
         />
-        <Field id="oidc-issuer" label="Issuer URL">
-          <Input
-            id="oidc-issuer"
-            type="url"
-            required={enabled}
-            value={fields.issuer}
-            onChange={(e) => update("issuer", e.target.value)}
-          />
-        </Field>
-        <Field id="oidc-client" label="Client ID">
-          <Input
-            id="oidc-client"
-            required={enabled}
-            value={fields.client_id}
-            onChange={(e) => update("client_id", e.target.value)}
-          />
-        </Field>
-        <Field
+      </Field>
+      <Field id="oidc-client" label="Client ID">
+        <Input
+          id="oidc-client"
+          required={fields.enabled}
+          value={fields.client_id}
+          onChange={(e) => update("client_id", e.target.value)}
+        />
+      </Field>
+      <Field
+        id="oidc-secret"
+        label="Client secret"
+        help={
+          config?.client_secret_set
+            ? "A secret is saved. Leave this blank to keep it."
+            : "Write-only. The saved value is never shown."
+        }
+      >
+        <Input
           id="oidc-secret"
-          label="Client secret"
-          help={
-            config?.client_secret_set
-              ? "A secret is saved. Leave this blank to keep it."
-              : "Write-only. The saved value is never shown."
-          }
-        >
-          <Input
-            id="oidc-secret"
-            type="password"
-            autoComplete="new-password"
-            value={fields.client_secret}
-            onChange={(e) => update("client_secret", e.target.value)}
-          />
-        </Field>
-        <Field id="oidc-redirect" label="Redirect URL">
-          <Input
-            id="oidc-redirect"
-            type="url"
-            required={enabled}
-            value={fields.redirect_uri}
-            onChange={(e) => update("redirect_uri", e.target.value)}
-          />
-        </Field>
-        <details>
-          <summary className="min-h-11 cursor-pointer py-3 text-sm font-medium">
-            Provider details and access rules
-          </summary>
-          <div className="space-y-5 pb-2">
-            {(
-              [
-                ["scopes", "Scopes"],
-                ["groups_claim", "Groups claim"],
-                ["allowed_email_domains", "Allowed email domains"],
-                ["admin_emails", "Admin emails"],
-                ["admin_groups", "Admin groups"],
-                ["admin_roles", "Admin roles"],
-                ["authorization_endpoint", "Authorization endpoint"],
-                ["token_endpoint", "Token endpoint"],
-                ["jwks_uri", "Signing keys URL"],
-              ] as const
-            ).map(([key, label]) => (
-              <Field key={key} id={`oidc-${key}`} label={label}>
-                <Input
-                  id={`oidc-${key}`}
-                  value={fields[key]}
-                  onChange={(e) => update(key, e.target.value)}
-                />
-              </Field>
-            ))}
-            <p className="text-muted-foreground text-xs">
-              Separate list values with commas. Leave endpoint overrides blank
-              to use provider discovery.
-            </p>
-            <Field id="oidc-clock" label="Clock tolerance (seconds)">
+          type="password"
+          autoComplete="new-password"
+          value={fields.client_secret}
+          onChange={(e) => update("client_secret", e.target.value)}
+        />
+      </Field>
+      <Field id="oidc-redirect" label="Redirect URL">
+        <Input
+          id="oidc-redirect"
+          type="url"
+          required={fields.enabled}
+          value={fields.redirect_uri}
+          onChange={(e) => update("redirect_uri", e.target.value)}
+        />
+      </Field>
+      <details>
+        <summary className="min-h-11 cursor-pointer py-3 text-sm font-medium">
+          Provider details and access rules
+        </summary>
+        <div className="space-y-5 pb-2">
+          {(
+            [
+              ["scopes", "Scopes"],
+              ["groups_claim", "Groups claim"],
+              ["allowed_email_domains", "Allowed email domains"],
+              ["admin_emails", "Sign-in email exceptions"],
+              ["admin_groups", "Admin groups"],
+              ["admin_roles", "Admin roles"],
+              ["authorization_endpoint", "Authorization endpoint"],
+              ["token_endpoint", "Token endpoint"],
+              ["jwks_uri", "Signing keys URL"],
+            ] as const
+          ).map(([key, label]) => (
+            <Field
+              key={key}
+              id={`oidc-${key}`}
+              label={label}
+              help={
+                key === "admin_emails"
+                  ? "These emails can sign in even outside the allowed domains. When no role grant exists, a verified email from the configured issuer can bootstrap the first owner. Once any grant exists, this list grants no role. Use Admin groups or Admin roles to grant administrator access."
+                  : undefined
+              }
+            >
               <Input
-                id="oidc-clock"
-                type="number"
-                min={0}
-                step={1}
-                value={fields.clock_skew_seconds}
-                onChange={(e) => update("clock_skew_seconds", e.target.value)}
+                id={`oidc-${key}`}
+                aria-describedby={
+                  key === "admin_emails" ? `oidc-${key}-help` : undefined
+                }
+                value={fields[key]}
+                onChange={(e) => update(key, e.target.value)}
               />
             </Field>
-          </div>
-        </details>
-        <MutationError error={mutation.error} />
-        <Save pending={mutation.isPending} label="Save sign-in" />
-        <p className="text-muted-foreground text-xs">
-          Changes apply to future sign-ins. Keep this session open until you
-          test the provider.{" "}
-          <a className="text-primary underline" href="/setup">
-            Owner recovery
-          </a>
-        </p>
-      </form>
-    </div>
+          ))}
+          <p className="text-muted-foreground text-xs">
+            Separate list values with commas. Leave endpoint overrides blank to
+            use provider discovery.
+          </p>
+          <Field id="oidc-clock" label="Clock tolerance (seconds)">
+            <Input
+              id="oidc-clock"
+              type="number"
+              min={0}
+              step={1}
+              value={fields.clock_skew_seconds}
+              onChange={(e) => update("clock_skew_seconds", e.target.value)}
+            />
+          </Field>
+        </div>
+      </details>
+      <MutationError error={mutation.error} />
+      <Save pending={mutation.isPending} label="Save sign-in" />
+      <p className="text-muted-foreground text-xs">
+        Changes apply to future sign-ins. Keep this session open until you test
+        the provider.{" "}
+        <a className="text-primary underline" href="/setup">
+          Owner recovery
+        </a>
+      </p>
+    </form>
   );
 }
 function DefaultsSection() {
-  const { data, isPending, isError, refetch } = useQuery({
+  const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: keys.defaults,
     queryFn: async () => {
-      const [defaults, access, profiles] = await Promise.all([
+      const [defaults, profiles] = await Promise.all([
         adminFetch<DefaultsResponse>("/admin/api/settings/defaults"),
-        api.userAccessDefaults.get(),
         api.profiles.list(),
       ]);
-      return { ...defaults, access, profiles };
+      return { ...defaults, profiles };
     },
+  });
+  const accessQuery = useQuery({
+    queryKey: keys.accessDefaults,
+    queryFn: api.userAccessDefaults.get,
   });
   return (
     <Section
       title="Defaults"
       summary={
-        data ? (
+        data && accessQuery.data ? (
           <>
             {data.defaults.profile_id ? (
               data.profiles.find((p) => p.id === data.defaults.profile_id)
@@ -671,11 +749,11 @@ function DefaultsSection() {
               <p>No default access plan</p>
             )}
             <p className="text-muted-foreground">
-              {data.access.self_service_apps
+              {accessQuery.data?.self_service_apps
                 ? "People can create apps"
                 : "Only owners create apps"}{" "}
               ·{" "}
-              {data.access.auto_create_personal_app
+              {accessQuery.data?.auto_create_personal_app
                 ? "Personal app created at sign-in"
                 : "No automatic personal app"}
             </p>
@@ -686,12 +764,24 @@ function DefaultsSection() {
       {isPending ? (
         <Loading />
       ) : isError ? (
-        <ErrorState
+        <SettingsError
+          error={error}
           message="Defaults could not be loaded."
           onRetry={() => void refetch()}
         />
       ) : (
-        <DefaultsForm key={JSON.stringify(data)} data={data} />
+        <DefaultsForm data={data} />
+      )}
+      {accessQuery.isPending ? (
+        <Loading />
+      ) : accessQuery.isError ? (
+        <SettingsError
+          error={accessQuery.error}
+          message="Personal app defaults could not be loaded."
+          onRetry={() => void accessQuery.refetch()}
+        />
+      ) : (
+        <AccessDefaultsForm initial={accessQuery.data} />
       )}
     </Section>
   );
@@ -700,16 +790,15 @@ function DefaultsForm({
   data,
 }: {
   data: DefaultsResponse & {
-    access: UserAccessDefaults;
     profiles: { id: string; name: string }[];
   };
 }) {
+  const owner = useViewer().role === "owner";
   const client = useQueryClient();
-  const [plan, setPlan] = useState(data.defaults.profile_id ?? "none");
+  const [plan, setPlan] = useDraft(data.defaults.profile_id ?? "none");
   const selectedPlan = data.profiles.find((profile) => profile.id === plan);
   const selectedPlanIsLegacy =
     selectedPlan !== undefined && isLegacyAccessPlan(selectedPlan.name);
-  const [access, setAccess] = useState(data.access);
   // Different authorities have separate saves: a failed app-options write cannot claim a plan was saved.
   const planSave = useMutation({
     mutationFn: () =>
@@ -723,14 +812,12 @@ function DefaultsForm({
       toast.success("Default access plan saved");
     },
   });
-  const accessSave = useMutation({
-    mutationFn: () => api.userAccessDefaults.update(access),
-    onSuccess: () => {
-      void client.invalidateQueries({ queryKey: keys.defaults });
-      void client.invalidateQueries({ queryKey: keys.effective });
-      toast.success("Personal app defaults saved");
-    },
-  });
+  if (!owner)
+    return (
+      <p role="status" className="text-muted-foreground text-sm">
+        Only the owner can change this.
+      </p>
+    );
   return (
     <div className="space-y-7">
       <form
@@ -780,32 +867,7 @@ function DefaultsForm({
           <Link href="/people">Manage access plans</Link>
         </Button>
       </form>
-      <form
-        className="space-y-4"
-        onSubmit={(e) => {
-          e.preventDefault();
-          accessSave.mutate();
-        }}
-      >
-        <Toggle
-          id="self-service"
-          label="Let people create their own apps"
-          checked={access.self_service_apps}
-          onChange={(value) =>
-            setAccess({ ...access, self_service_apps: value })
-          }
-        />
-        <Toggle
-          id="personal-app"
-          label="Create a personal app at sign-in"
-          checked={access.auto_create_personal_app}
-          onChange={(value) =>
-            setAccess({ ...access, auto_create_personal_app: value })
-          }
-        />
-        <MutationError error={accessSave.error} />
-        <Save pending={accessSave.isPending} label="Save app defaults" />
-      </form>
+
       <details>
         <summary className="min-h-11 cursor-pointer py-3 text-sm font-medium">
           Default model aliases
@@ -832,8 +894,46 @@ function DefaultsForm({
     </div>
   );
 }
+function AccessDefaultsForm({ initial }: { initial: UserAccessDefaults }) {
+  const client = useQueryClient();
+  const [access, setAccess] = useDraft(initial);
+  const accessSave = useMutation({
+    mutationFn: () => api.userAccessDefaults.update(access),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: keys.accessDefaults });
+      void client.invalidateQueries({ queryKey: keys.effective });
+      toast.success("Personal app defaults saved");
+    },
+  });
+  return (
+    <form
+      className="space-y-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        accessSave.mutate();
+      }}
+    >
+      <Toggle
+        id="self-service"
+        label="Let people create their own apps"
+        checked={access.self_service_apps}
+        onChange={(value) => setAccess({ ...access, self_service_apps: value })}
+      />
+      <Toggle
+        id="personal-app"
+        label="Create a personal app at sign-in"
+        checked={access.auto_create_personal_app}
+        onChange={(value) =>
+          setAccess({ ...access, auto_create_personal_app: value })
+        }
+      />
+      <MutationError error={accessSave.error} />
+      <Save pending={accessSave.isPending} label="Save app defaults" />
+    </form>
+  );
+}
 function MediaSection() {
-  const { data, isPending, isError, refetch } = useQuery({
+  const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: keys.media,
     queryFn: () =>
       adminFetch<{
@@ -876,22 +976,20 @@ function MediaSection() {
       {isPending ? (
         <Loading />
       ) : isError ? (
-        <ErrorState
+        <SettingsError
+          error={error}
           message="Media admission settings could not be loaded."
           onRetry={() => void refetch()}
         />
       ) : (
-        <MediaForm
-          key={JSON.stringify(data.overrides.media_job_admission)}
-          initial={data.overrides.media_job_admission ?? {}}
-        />
+        <MediaForm initial={data.overrides.media_job_admission ?? {}} />
       )}
     </Section>
   );
 }
 function MediaForm({ initial }: { initial: Partial<MediaAdmission> }) {
   const client = useQueryClient();
-  const [form, setForm] = useState({
+  const [form, setForm] = useDraft({
     disabled_intents: (initial.disabled_intents ?? []).join(", "),
     disabled_resource_classes: (initial.disabled_resource_classes ?? []).join(
       ", ",
@@ -992,7 +1090,7 @@ function MediaForm({ initial }: { initial: Partial<MediaAdmission> }) {
 }
 function ExtensionsSection() {
   const client = useQueryClient();
-  const { data, isPending, isError, refetch } = useQuery({
+  const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: keys.extensions,
     queryFn: () =>
       adminFetch<{
@@ -1070,7 +1168,8 @@ function ExtensionsSection() {
       {isPending ? (
         <Loading />
       ) : isError ? (
-        <ErrorState
+        <SettingsError
+          error={error}
           message="Extensions could not be loaded."
           onRetry={() => void refetch()}
         />
@@ -1246,7 +1345,7 @@ function ExtensionsSection() {
 }
 function AdvancedSection() {
   const [open, setOpen] = useState(false);
-  const { data, isPending, isError, refetch } = useQuery({
+  const { data, isPending, isError, error, refetch } = useQuery({
     queryKey: keys.effective,
     queryFn: () =>
       adminFetch<{ config: Record<string, unknown>; export_url: string }>(
@@ -1280,7 +1379,8 @@ function AdvancedSection() {
             (isPending ? (
               <Loading />
             ) : isError ? (
-              <ErrorState
+              <SettingsError
+                error={error}
                 message="Effective configuration could not be loaded."
                 onRetry={() => void refetch()}
               />
