@@ -21,7 +21,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it.each(["rejected", "missing URL"])(
+it.each(["rejected", "missing URL", "JSON null", "invalid JSON"])(
   "keeps the failed image preview visible after %s retry metadata",
   async (failure) => {
     let finish!: () => void;
@@ -31,7 +31,11 @@ it.each(["rejected", "missing URL"])(
           finish = () =>
             failure === "rejected"
               ? reject(new Error("Metadata failed"))
-              : resolve(Response.json({}));
+              : failure === "missing URL"
+                ? resolve(Response.json({}))
+                : failure === "JSON null"
+                  ? resolve(Response.json(null))
+                  : resolve(new Response("not JSON"));
         });
       }
       return Response.json({

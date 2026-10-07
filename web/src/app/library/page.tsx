@@ -461,7 +461,7 @@ function Preview({
             `/me/api/media/${encodeURIComponent(asset.asset_id)}/download?scope=${everyone ? "everyone" : "me"}`,
           ).then(
             (payload) => {
-              if (payload.download_url) {
+              if (payload?.download_url) {
                 setRetrySrc(payload.download_url);
                 setRecovered(true);
                 setMediaFailed(false);
