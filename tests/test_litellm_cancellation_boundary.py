@@ -196,7 +196,8 @@ class _IsolatedMetricsSinks:
         # any earlier-run test already triggered that cache against the real
         # DB_PATH, this patch alone wouldn't help — force a fresh writer so
         # this harness's connection is provably against the tempdir DB.
-        self._writer_patch = patch.object(metrics_sampler, "_writer_conn", None)
+        from gateway import metrics_writer
+        self._writer_patch = patch.object(metrics_writer, "_writer", None)
 
     def start(self) -> None:
         self._firehose_patch.start()

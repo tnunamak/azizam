@@ -14,6 +14,7 @@ from typing import Optional
 
 import metrics_store
 import status_endpoint  # reuse existing probes
+from gateway.metrics_writer import close_writer, get_writer, start_writer
 
 
 # When the disk holding metrics.db falls below this we pause writes and warn.
@@ -21,7 +22,6 @@ _DISK_PAUSE_BYTES = 1 * 1024 * 1024 * 1024  # 1 GB
 _DISK_PAUSE_WARN_INTERVAL_S = 600  # 10 min
 
 
-_writer_conn = None
 _state = {
     "paused_for_disk": False,
     "last_disk_warn_ts": 0,
@@ -32,29 +32,7 @@ _state = {
 }
 
 
-def get_writer():
-    """Module-level writer used both by the sampler loop and the request middleware."""
-    global _writer_conn
-    if _writer_conn is None:
-        _writer_conn = metrics_store.open_writer()
-    return _writer_conn
-
-
-def close_writer() -> None:
-    global _writer_conn
-    if _writer_conn is not None:
-        try:
-            _writer_conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
-        except Exception:
-            pass
-        try:
-            _writer_conn.close()
-        except Exception:
-            pass
-        _writer_conn = None
-
-
-def _emit_fast(conn, now: int) -> None:
+def _emit_fast(writer, now: int) -> None:
     """GPU/CPU/RAM samples + ComfyUI queue + llama slots. Synchronous probes."""
     samples: list[tuple] = []
 
@@ -124,20 +102,20 @@ def _emit_fast(conn, now: int) -> None:
 
     if samples:
         try:
-            metrics_store.record_samples(conn, samples)
+            writer.record_samples(samples)
         except Exception as e:  # noqa: BLE001
             print(f"[metrics_sampler] record_samples (fast) failed: {e}", flush=True)
 
 
-async def _emit_fast_async(conn, now: int) -> None:
+async def _emit_fast_async(writer, now: int) -> None:
     """ComfyUI queue depth (async) + llama slots."""
     try:
         queue, _stats = await status_endpoint._comfy_queue_and_stats()
         if isinstance(queue, dict):
             running = int(queue.get("running") or 0)
             pending = int(queue.get("pending") or 0)
-            metrics_store.record_sample(conn, now, "comfy_queue_running", float(running))
-            metrics_store.record_sample(conn, now, "comfy_queue_pending", float(pending))
+            writer.record_sample(now, "comfy_queue_running", float(running))
+            writer.record_sample(now, "comfy_queue_pending", float(pending))
     except Exception as e:  # noqa: BLE001
         print(f"[metrics_sampler] comfy queue probe failed: {e}", flush=True)
 
@@ -145,13 +123,13 @@ async def _emit_fast_async(conn, now: int) -> None:
         _props, slots = await status_endpoint._llama_props_and_slots()
         if isinstance(slots, list):
             active = sum(1 for s in slots if isinstance(s, dict) and s.get("is_processing"))
-            metrics_store.record_sample(conn, now, "llama_slots_active", float(active))
-            metrics_store.record_sample(conn, now, "llama_slots_total", float(len(slots)))
+            writer.record_sample(now, "llama_slots_active", float(active))
+            writer.record_sample(now, "llama_slots_total", float(len(slots)))
     except Exception as e:  # noqa: BLE001
         print(f"[metrics_sampler] llama slots probe failed: {e}", flush=True)
 
 
-def _emit_slow(conn, now: int) -> None:
+def _emit_slow(writer, now: int) -> None:
     """Disk avail per partition + per-service RSS + per-GPU per-service VRAM."""
     samples: list[tuple] = []
 
@@ -214,7 +192,7 @@ def _emit_slow(conn, now: int) -> None:
 
     if samples:
         try:
-            metrics_store.record_samples(conn, samples)
+            writer.record_samples(samples)
         except Exception as e:  # noqa: BLE001
             print(f"[metrics_sampler] record_samples (slow) failed: {e}", flush=True)
 
@@ -238,7 +216,7 @@ async def sampler_loop():
             now_int = int(cycle_start)
             try:
                 # Disk-pressure guard: pause writes when partition is < 1GB free.
-                avail = metrics_store.disk_avail_bytes()
+                avail = await asyncio.to_thread(metrics_store.disk_avail_bytes, metrics_store.DB_PATH)
                 if avail and avail < _DISK_PAUSE_BYTES:
                     if not _state["paused_for_disk"] or (
                         now_int - _state["last_disk_warn_ts"] >= _DISK_PAUSE_WARN_INTERVAL_S
@@ -256,22 +234,22 @@ async def sampler_loop():
                     _state["paused_for_disk"] = False
 
                 if not _state["paused_for_disk"]:
-                    conn = get_writer()
+                    writer = get_writer()
                     # Fast tier (synchronous probes).
-                    _emit_fast(conn, now_int)
+                    await asyncio.to_thread(_emit_fast, writer, now_int)
                     # Fast tier (async probes).
-                    await _emit_fast_async(conn, now_int)
+                    await _emit_fast_async(writer, now_int)
 
                     # Slow tier piggybacked at the top of each minute.
                     if (now_int % 60) < 10:
-                        _emit_slow(conn, now_int)
+                        await asyncio.to_thread(_emit_slow, writer, now_int)
 
                     # Per-minute rollup at the start of each new minute.
                     cur_min = now_int // 60
                     if cur_min != _state["last_minute_rolled"] and (now_int % 60) < 15:
                         try:
-                            metrics_store.downsample_minute(conn)
-                            _state["last_minute_rolled"] = cur_min
+                            if writer.maintain("minute", now_int):
+                                _state["last_minute_rolled"] = cur_min
                         except Exception as e:  # noqa: BLE001
                             print(f"[metrics_sampler] downsample_minute failed: {e}", flush=True)
 
@@ -279,8 +257,8 @@ async def sampler_loop():
                     cur_hour = now_int // 3600
                     if cur_hour != _state["last_hour_rolled"] and (now_int % 3600) < 30:
                         try:
-                            metrics_store.downsample_hour(conn)
-                            _state["last_hour_rolled"] = cur_hour
+                            if writer.maintain("hour", now_int):
+                                _state["last_hour_rolled"] = cur_hour
                         except Exception as e:  # noqa: BLE001
                             print(f"[metrics_sampler] downsample_hour failed: {e}", flush=True)
 
@@ -288,9 +266,8 @@ async def sampler_loop():
                     cur_day = now_int // 86400
                     if cur_day != _state["last_prune_day"] and (now_int % 86400) < 60:
                         try:
-                            counts = metrics_store.prune_old(conn)
-                            print(f"[metrics_sampler] prune: {counts}", flush=True)
-                            _state["last_prune_day"] = cur_day
+                            if writer.maintain("prune", now_int):
+                                _state["last_prune_day"] = cur_day
                         except Exception as e:  # noqa: BLE001
                             print(f"[metrics_sampler] prune failed: {e}", flush=True)
             except asyncio.CancelledError:
@@ -304,18 +281,19 @@ async def sampler_loop():
             await asyncio.sleep(max(0.1, 10.0 - elapsed))
     except asyncio.CancelledError:
         print("[metrics_sampler] cancelled; closing writer", flush=True)
-        close_writer()
         raise
+    finally:
+        await asyncio.to_thread(close_writer)
 
 
 def record_request(metric: str, latency_ms: float, *, key: Optional[str], path: str, status: int) -> None:
     """Sync helper used by the request-counter middleware. Best-effort; never raises."""
     try:
-        conn = get_writer()
+        writer = get_writer()
         tags = {"path": path, "status": int(status)}
         if key:
             tags["key"] = key
-        metrics_store.record_sample(conn, int(time.time()), metric, float(latency_ms), tags)
-        _state["request_writes"] += 1
+        if writer.record_sample(int(time.time()), metric, float(latency_ms), tags):
+            _state["request_writes"] += 1
     except Exception:
         pass

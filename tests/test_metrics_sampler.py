@@ -33,8 +33,7 @@ class TestMetricsSampler(unittest.TestCase):
         metrics_store.init_db(self.db)
         # Force the sampler to use a fresh writer pointed at our temp db.
         metrics_sampler.close_writer()
-        self._writer = metrics_store.open_writer(self.db)
-        metrics_sampler._writer_conn = self._writer
+        self._writer = metrics_sampler.start_writer()
 
     def tearDown(self) -> None:
         try:
@@ -78,6 +77,7 @@ class TestMetricsSampler(unittest.TestCase):
             path="/v1/chat/completions",
             status=200,
         )
+        self._writer.flush()
         # Read back.
         with metrics_store.reader(self.db) as c:
             rows = c.execute(
@@ -98,6 +98,7 @@ class TestMetricsSampler(unittest.TestCase):
             path="/health",
             status=200,
         )
+        self._writer.flush()
         with metrics_store.reader(self.db) as c:
             rows = c.execute(
                 "SELECT tags FROM samples WHERE metric='request' AND value=5.0"

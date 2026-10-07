@@ -9,8 +9,8 @@ Layout:
     samples_1hour   - per-hour rollup, retained 365 days
 
 All public functions accept an optional connection. When omitted, a short-lived
-read connection is auto-opened. The sampler holds one long-lived writer via
-``open_writer()``.
+read connection is auto-opened. ``gateway.metrics_writer`` owns the long-lived writer on a dedicated thread.
+Direct callers of ``open_writer()`` must keep their connection on one thread.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ RAW_RETAIN_S = 7 * 24 * 3600
 MINUTE_RETAIN_S = 30 * 24 * 3600
 HOUR_RETAIN_S = 365 * 24 * 3600
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS samples (
@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS samples_1min (
   count INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS samples_1min_metric_ts ON samples_1min(metric, ts);
+CREATE INDEX IF NOT EXISTS samples_1min_ts ON samples_1min(ts);
 
 CREATE TABLE IF NOT EXISTS samples_1hour (
   ts INTEGER NOT NULL,
@@ -70,6 +71,7 @@ CREATE TABLE IF NOT EXISTS samples_1hour (
   count INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS samples_1hour_metric_ts ON samples_1hour(metric, ts);
+CREATE INDEX IF NOT EXISTS samples_1hour_ts ON samples_1hour(ts);
 
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
 """
@@ -431,12 +433,12 @@ def query_series(
         return _run(c)
 
 
-def downsample_minute(conn: Optional[sqlite3.Connection] = None) -> int:
+def downsample_minute(conn: Optional[sqlite3.Connection] = None, *, now: Optional[int] = None) -> int:
     """Aggregate raw samples from last fully-elapsed minute into samples_1min.
 
     Returns the number of rollup rows written.
     """
-    now = int(time.time())
+    now = int(time.time()) if now is None else int(now)
     # Aggregate the minute that just finished, i.e. [now - now%60 - 60, now - now%60).
     bucket_end = now - (now % 60)
     bucket_start = bucket_end - 60
@@ -470,9 +472,9 @@ def downsample_minute(conn: Optional[sqlite3.Connection] = None) -> int:
         return _run(c)
 
 
-def downsample_hour(conn: Optional[sqlite3.Connection] = None) -> int:
+def downsample_hour(conn: Optional[sqlite3.Connection] = None, *, now: Optional[int] = None) -> int:
     """Aggregate samples_1min from last fully-elapsed hour into samples_1hour."""
-    now = int(time.time())
+    now = int(time.time()) if now is None else int(now)
     bucket_end = now - (now % 3600)
     bucket_start = bucket_end - 3600
 
@@ -507,9 +509,9 @@ def downsample_hour(conn: Optional[sqlite3.Connection] = None) -> int:
         return _run(c)
 
 
-def prune_old(conn: Optional[sqlite3.Connection] = None) -> dict:
+def prune_old(conn: Optional[sqlite3.Connection] = None, *, now: Optional[int] = None) -> dict:
     """Delete rows older than each table's retention window. Returns counts."""
-    now = int(time.time())
+    now = int(time.time()) if now is None else int(now)
     raw_cut = now - RAW_RETAIN_S
     min_cut = now - MINUTE_RETAIN_S
     hr_cut = now - HOUR_RETAIN_S

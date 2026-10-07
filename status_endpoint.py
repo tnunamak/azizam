@@ -3142,19 +3142,15 @@ def _record_backend_health_samples(backends: Optional[list[dict]]) -> None:
         samples.append((now, "service_error_kind", tags, error_kind))
     if not samples:
         return
-    conn = None
     try:
-        conn = metrics_store.open_writer()
-        metrics_store.record_samples(conn, samples)
-        conn.commit()
+        from gateway.metrics_writer import get_writer
+        writer = get_writer()
+        if writer.record_samples(samples):
+            # This helper runs in sync_section's worker. Keep history visible to
+            # the immediately following status queries without a second writer.
+            writer.flush()
     except Exception:
         return
-    finally:
-        try:
-            if conn is not None:
-                conn.close()
-        except Exception:
-            pass
 
 
 def _backend_p95_latency_ms(tags_filter: dict, since_s: int) -> Optional[int]:
@@ -3429,6 +3425,8 @@ def _metrics_section(gpus: Optional[list[dict]], disk: Optional[dict], backends:
     # DB health.
     try:
         out["db_health"] = metrics_store.db_health()
+        from gateway.metrics_writer import writer_stats
+        out["db_health"]["writer"] = writer_stats()
     except Exception as e:  # noqa: BLE001
         out["db_health"] = {"error": _safe_err(e)}
 

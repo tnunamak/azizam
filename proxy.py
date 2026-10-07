@@ -12662,7 +12662,8 @@ async def lifespan(app: FastAPI):
     # short-lived connections via metrics_store.reader().
     metrics_task = None
     try:
-        metrics_store.init_db()
+        metrics_writer = metrics_sampler.start_writer()
+        await asyncio.to_thread(metrics_writer.wait_ready)
         # The full integrity scan takes seconds on a large file; keep it off the startup path.
         asyncio.get_running_loop().run_in_executor(None, metrics_store.verify_integrity, metrics_store.DB_PATH)
         metrics_task = asyncio.create_task(metrics_sampler.sampler_loop())
@@ -12823,7 +12824,7 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
     try:
-        metrics_sampler.close_writer()
+        await asyncio.to_thread(metrics_sampler.close_writer)
     except Exception:
         pass
     if responses_prune_task is not None:

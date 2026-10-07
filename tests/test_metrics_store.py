@@ -148,7 +148,7 @@ class TestMetricsStore(unittest.TestCase):
         metrics_store.init_db(self.db)
         metrics_store.init_db(self.db)
         with sqlite3.connect(self.db) as conn:
-            self.assertEqual(conn.execute("SELECT version FROM schema_version").fetchone()[0], 2)
+            self.assertEqual(conn.execute("SELECT version FROM schema_version").fetchone()[0], metrics_store.SCHEMA_VERSION)
             self.assertEqual(conn.execute("SELECT value FROM samples").fetchone()[0], 42)
             plan = conn.execute(
                 "EXPLAIN QUERY PLAN SELECT value FROM samples "
@@ -156,6 +156,29 @@ class TestMetricsStore(unittest.TestCase):
                 (0, "{}"),
             ).fetchall()
             self.assertTrue(any("COVERING INDEX samples_latency_tags_ts" in row[3] for row in plan), plan)
+
+    def test_rollup_timestamp_indexes_migrate_without_changing_rows(self) -> None:
+        import sqlite3
+
+        with sqlite3.connect(self.db) as conn:
+            for table in ("samples_1min", "samples_1hour"):
+                conn.execute(f"DROP INDEX {table}_ts")
+                conn.execute(f"INSERT INTO {table} VALUES (60, 'x', '', 2, 1, 3, 2)")
+            conn.execute("UPDATE schema_version SET version=2")
+        metrics_store.init_db(self.db)
+        metrics_store.init_db(self.db)
+        with sqlite3.connect(self.db) as conn:
+            self.assertEqual(conn.execute("SELECT version FROM schema_version").fetchone()[0], 3)
+            for table in ("samples_1min", "samples_1hour"):
+                self.assertEqual(conn.execute(f"SELECT * FROM {table}").fetchall(), [(60, 'x', '', 2, 1, 3, 2)])
+                for sql, params in (
+                    (f"SELECT 1 FROM {table} WHERE ts = ? LIMIT 1", (60,)),
+                    (f"SELECT * FROM {table} WHERE ts >= ? AND ts < ?", (0, 120)),
+                    (f"DELETE FROM {table} WHERE ts < ?", (0,)),
+                ):
+                    plan = conn.execute("EXPLAIN QUERY PLAN " + sql, params).fetchall()
+                    self.assertTrue(any(f"SEARCH {table} USING" in row[3] and f"{table}_ts" in row[3]
+                                        for row in plan), plan)
 
     def test_db_health_empty_and_old_samples(self) -> None:
         health = metrics_store.db_health(self.db)

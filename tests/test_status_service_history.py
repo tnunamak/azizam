@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import metrics_store  # noqa: E402
+from gateway import metrics_writer
 import status_endpoint  # noqa: E402
 
 
@@ -19,10 +20,13 @@ class StatusServiceHistoryTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.db = Path(self.tmp.name) / "metrics.db"
         self._orig_db = metrics_store.DB_PATH
+        metrics_writer.close_writer()
         metrics_store.DB_PATH = self.db
         metrics_store.init_db(self.db)
+        metrics_writer.start_writer().wait_ready()
 
     def tearDown(self) -> None:
+        metrics_writer.close_writer()
         metrics_store.DB_PATH = self._orig_db
         self.tmp.cleanup()
 

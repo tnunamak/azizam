@@ -175,3 +175,13 @@ waiting for another index update. I terminated both task processes by their
 literal PIDs and continued from the supplied brief and source evidence. No
 shared index was removed. Task creation needs a bounded wait and visible lock
 owner or progress so a lane can distinguish an active refresh from a stall.
+
+## 2026-10-06 — sampler persistence outage fix
+
+`ds tldr` and `ds recent` completed and identified recent gateway changes.
+The two-slice task for queued metrics persistence returned no task ID or
+progress during implementation. I stopped that exact process with SIGTERM;
+it reported `task index preflight failed before repository mutation` and
+`Repository files written: no`, with an index integrity check canceled.
+The binding brief and source reads remained usable. Task creation needs a
+bounded wait and progress before it can help an incident lane.
