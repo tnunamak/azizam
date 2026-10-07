@@ -1241,11 +1241,17 @@ function AddProviderDialog({
   onOpenChange,
   catalog,
   plans,
+  metadataLoading,
+  metadataError,
+  onRetry,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   catalog: CatalogProvider[];
   plans: AccessPlan[];
+  metadataLoading: boolean;
+  metadataError: unknown;
+  onRetry: () => void;
 }) {
   const queryClient = useQueryClient();
   const [step, setStep] = useState<Step>("catalog");
@@ -1410,6 +1416,7 @@ function AddProviderDialog({
     (baseUrl.trim() || selected.baseUrl) &&
     (mode === "env" ? envName.trim() : secret.trim());
   const canSave = selected && models.some((model) => model.enabled);
+  const metadataUnavailable = metadataLoading || Boolean(metadataError);
 
   return (
     <Dialog open={open} onOpenChange={closeDialog}>
@@ -1431,6 +1438,7 @@ function AddProviderDialog({
                 key={item}
                 type="button"
                 onClick={() => setStep(item)}
+                disabled={metadataUnavailable}
                 className={cn(
                   "rounded-lg border px-3 py-2 text-left text-sm capitalize",
                   step === item && "border-primary bg-primary/10 text-primary",
@@ -1441,7 +1449,38 @@ function AddProviderDialog({
             ),
           )}
         </div>
-        {step === "catalog" && (
+        {metadataLoading ? (
+          <div
+            role="status"
+            aria-label="Loading providers"
+            aria-busy="true"
+            className="space-y-4"
+          >
+            <Skeleton className="h-32 w-full" />
+            <Skeleton className="h-64 w-full" />
+          </div>
+        ) : metadataError ? (
+          <div
+            role="alert"
+            className="border-danger/30 bg-danger/10 text-danger rounded-lg border p-4 text-sm"
+          >
+            <p>
+              {metadataError instanceof Error
+                ? metadataError.message
+                : "Provider status failed."}
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              onClick={onRetry}
+            >
+              <RefreshCw aria-hidden="true" /> Retry providers
+            </Button>
+          </div>
+        ) : null}
+        {!metadataUnavailable && step === "catalog" && (
           <div className="space-y-4">
             <label className="relative block">
               <Search
@@ -1495,7 +1534,7 @@ function AddProviderDialog({
             </div>
           </div>
         )}
-        {step === "credentials" && selected && (
+        {!metadataUnavailable && step === "credentials" && selected && (
           <div className="space-y-4">
             <div className="rounded-lg border p-4">
               <div className="font-medium">{selected.name}</div>
@@ -1598,7 +1637,7 @@ function AddProviderDialog({
             </div>
           </div>
         )}
-        {step === "models" && (
+        {!metadataUnavailable && step === "models" && (
           <div className="space-y-3">
             {!models.length ? (
               <EmptyState
@@ -1659,7 +1698,7 @@ function AddProviderDialog({
             )}
           </div>
         )}
-        {step === "limits" && (
+        {!metadataUnavailable && step === "limits" && (
           <div className="space-y-5">
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="space-y-2 text-sm font-medium">
@@ -1731,6 +1770,7 @@ function AddProviderDialog({
           {step !== "catalog" && (
             <Button
               variant="outline"
+              disabled={metadataUnavailable}
               onClick={() =>
                 setStep(
                   step === "credentials"
@@ -1756,6 +1796,7 @@ function AddProviderDialog({
                 )
               }
               disabled={
+                metadataUnavailable ||
                 (step === "catalog" && !selected) ||
                 (step === "credentials" && testResult?.ok !== true)
               }
@@ -1765,7 +1806,9 @@ function AddProviderDialog({
           ) : (
             <Button
               onClick={() => saveProvider.mutate()}
-              disabled={!canSave || saveProvider.isPending}
+              disabled={
+                metadataUnavailable || !canSave || saveProvider.isPending
+              }
             >
               {saveProvider.isPending ? (
                 <Loader2 className="animate-spin" />
@@ -2179,6 +2222,9 @@ export default function ProvidersPage() {
         onOpenChange={setAddOpen}
         catalog={catalogRows}
         plans={planRows}
+        metadataLoading={catalogIsPending || plansIsPending}
+        metadataError={catalogError ?? plansError}
+        onRetry={() => queryClient.refetchQueries({ queryKey: ["providers"] })}
       />
       <ReconciliationDialog
         provider={reconcileTarget}
