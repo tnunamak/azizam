@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/sheet";
 import { EmptyState, ErrorState, RelativeTime } from "@/components/product";
 import { errorCopy } from "@/lib/error-copy";
+import { receiptSelectionKeys } from "@/lib/receipt-selection";
 
 type Receipt = {
   request_id: string;
@@ -174,7 +175,7 @@ function duration(ms?: number | null) {
 export function Requests() {
   const [person, setPerson] = useState("");
   const [source, setSource] = useState("all");
-  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
+  const [selectedReceiptKey, setSelectedReceiptKey] = useState<string | null>(null);
   const {
     data,
     isPending,
@@ -207,8 +208,12 @@ export function Requests() {
     return () => window.removeEventListener("focus", refresh);
   }, [refetch]);
   const rows = data?.pages.flatMap((page) => page.records) ?? [];
+  const keys = receiptSelectionKeys(rows.map((row) => row.receipt));
   const people = data?.pages[0]?.people ?? [];
-  const record = rows.find((row) => row.receipt.request_id === selectedRequestId) ?? null;
+  const record = rows.find((_, index) => keys[index] === selectedReceiptKey) ?? null;
+  useEffect(() => {
+    if (selectedReceiptKey !== null && record === null) setSelectedReceiptKey(null);
+  }, [selectedReceiptKey, record]);
   return (
     <div className="space-y-6">
       <p className="text-muted-foreground text-sm">
@@ -319,13 +324,13 @@ export function Requests() {
             />
           )}
           <div className="divide-border divide-y">
-            {rows.map((row) => (
+            {rows.map((row, index) => (
               <button
-                key={row.receipt.request_id}
+                key={keys[index]}
                 type="button"
                 aria-label={`Request details: ${requestSummary(row.receipt)} by ${row.person_label}`}
                 className="hover:bg-muted/40 focus-visible:outline-ring flex w-full min-w-0 items-center gap-3 py-4 text-left focus-visible:outline-2"
-                onClick={() => setSelectedRequestId(row.receipt.request_id)}
+                onClick={() => setSelectedReceiptKey(keys[index])}
               >
                 <div className="bg-muted hidden size-9 shrink-0 items-center justify-center rounded-full sm:flex">
                   <ReceiptText
@@ -404,7 +409,7 @@ export function Requests() {
       <Sheet
         open={record !== null}
         onOpenChange={(open) => {
-          if (!open) setSelectedRequestId(null);
+          if (!open) setSelectedReceiptKey(null);
         }}
       >
         <SheetContent className="w-full overflow-y-auto sm:max-w-lg">

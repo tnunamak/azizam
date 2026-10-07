@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Bar,
@@ -27,6 +27,7 @@ import {
 import { useViewer } from "@/components/shell/session";
 import { cn } from "@/lib/cn";
 import { errorCopy } from "@/lib/error-copy";
+import { receiptSelectionKeys } from "@/lib/receipt-selection";
 import { capabilityLabels as sharedCapabilityLabels } from "@/lib/terms";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -80,6 +81,7 @@ interface UsageModel {
 }
 
 interface UsageReceipt {
+  selectionKey: string;
   requestId: string;
   createdAt: number | string | null;
   capability: UsageCapability;
@@ -170,14 +172,17 @@ export default function UsagePage() {
   const owner = ["owner", "superadmin"].includes(viewer.role);
   const effectivePerson =
     person === "default" ? (owner ? "all" : "self") : person;
-  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
+  const [selectedReceiptKey, setSelectedReceiptKey] = useState<string | null>(null);
   const { data, isPending, isFetching, isError, refetch } = useQuery({
     queryKey: ["usage", "summary", effectivePerson, source, owner],
     queryFn: () =>
       fetchUsageSummary(owner ? effectivePerson : "default", source),
     retry: false,
   });
-  const selected = data?.receipts.find((receipt) => receipt.requestId === selectedRequestId) ?? null;
+  const selected = data?.receipts.find((receipt) => receipt.selectionKey === selectedReceiptKey) ?? null;
+  useEffect(() => {
+    if (selectedReceiptKey !== null && selected === null) setSelectedReceiptKey(null);
+  }, [selectedReceiptKey, selected]);
   const hasUsage = Boolean(
     data && (data.requests > 0 || data.mediaCount > 0 || data.receipts.length),
   );
@@ -291,7 +296,7 @@ export default function UsagePage() {
             <ReceiptsList
               receipts={data.receipts}
               loading={isFetching}
-              onSelect={(receipt) => setSelectedRequestId(receipt.requestId)}
+              onSelect={(receipt) => setSelectedReceiptKey(receipt.selectionKey)}
             />
           ) : null}
           <CoverageNote summary={data} />
@@ -306,7 +311,7 @@ export default function UsagePage() {
       <ReceiptSheet
         receipt={selected}
         onOpenChange={(open) => {
-          if (!open) setSelectedRequestId(null);
+          if (!open) setSelectedReceiptKey(null);
         }}
       />
     </div>
@@ -665,7 +670,7 @@ function ReceiptsList({
             {receipts.map((receipt) => (
               <button
                 type="button"
-                key={receipt.requestId}
+                key={receipt.selectionKey}
                 aria-label={`Receipt details for ${receipt.summary}`}
                 onClick={() => onSelect(receipt)}
                 className="hover:bg-muted/40 focus-visible:outline-ring flex w-full items-center gap-3 py-4 text-left focus-visible:outline-2"
@@ -1005,7 +1010,9 @@ async function fetchUsageSummary(
 
 function normalizeSummary(raw: unknown): UsageSummary {
   const data = object(raw);
-  const receipts = array(data.receipts).map(normalizeReceipt);
+  const rawReceipts = array(data.receipts);
+  const keys = receiptSelectionKeys(rawReceipts.map(object));
+  const receipts = rawReceipts.map((raw, index) => normalizeReceipt(raw, keys[index]));
   const byDay = array(data.by_day ?? data.days ?? data.series).map(
     normalizeDay,
   );
@@ -1112,7 +1119,7 @@ function normalizePeople(raw: unknown): UsagePerson[] {
   return people;
 }
 
-function normalizeReceipt(raw: unknown): UsageReceipt {
+function normalizeReceipt(raw: unknown, selectionKey: string): UsageReceipt {
   const data = object(raw);
   const metadata = object(data.metadata);
   const capability = normalizeCapability(
@@ -1142,6 +1149,7 @@ function normalizeReceipt(raw: unknown): UsageReceipt {
       metadata.cost_usd,
   );
   return {
+    selectionKey,
     requestId,
     createdAt: nullableDate(
       data.created_at ?? data.createdAt ?? data.accepted_at_ms,
