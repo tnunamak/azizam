@@ -224,6 +224,14 @@ function decimalInputValid(value: string): boolean {
   return Number.isFinite(parsed) && parsed >= 0;
 }
 
+function capInput(value: string): number | null {
+  if (!value.trim()) return null;
+  if (!decimalInputValid(value)) {
+    throw new Error("Caps must be non-negative numbers or blank for no cap.");
+  }
+  return Number(value);
+}
+
 function formatIdentity(value: string): string {
   return value || "Not recorded";
 }
@@ -1327,7 +1335,9 @@ function AddProviderDialog({
     mutationFn: async () => {
       if (!selected) throw new Error("Choose a provider first.");
       const generation = checkGeneration.current;
-      const raw = await adminFetch<Record<string, unknown>>(
+      setTestResult(null);
+      setModels([]);
+      const raw = await adminFetch<unknown>(
         `/admin/api/providers/-/test`,
         {
           method: "POST",
@@ -1343,10 +1353,18 @@ function AddProviderDialog({
           },
         },
       );
+      const response =
+        raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+      const ok = bool(response.ok);
       const result: TestResult = {
-        ok: bool(raw.ok) ?? true,
-        message: text(raw.message, "Connection worked."),
-        models: Array.isArray(raw.models) ? raw.models.map(mapModel) : [],
+        ok: ok === true,
+        message:
+          ok === null
+            ? "Connection not confirmed."
+            : text(response.message, ok ? "Connection worked." : "Connection failed."),
+        models: ok === true && Array.isArray(response.models)
+          ? response.models.map(mapModel)
+          : [],
       };
       if (generation === checkGeneration.current) {
         setTestResult(result);
@@ -1381,8 +1399,8 @@ function AddProviderDialog({
           api_key_env: mode === "env" ? envName : undefined,
           models: modelPayload(models.filter((model) => model.enabled)),
           caps: {
-            daily_usd: Number(dailyCap),
-            monthly_usd: Number(monthlyCap),
+            daily_usd: capInput(dailyCap),
+            monthly_usd: capInput(monthlyCap),
           },
           allowed_plans: allowedPlans,
           expected_generation: null,
@@ -1415,7 +1433,8 @@ function AddProviderDialog({
     selected &&
     (baseUrl.trim() || selected.baseUrl) &&
     (mode === "env" ? envName.trim() : secret.trim());
-  const canSave = selected && models.some((model) => model.enabled);
+  const canSave =
+    selected && testResult?.ok === true && models.some((model) => model.enabled);
   const metadataUnavailable = metadataLoading || Boolean(metadataError);
 
   return (
@@ -1438,7 +1457,11 @@ function AddProviderDialog({
                 key={item}
                 type="button"
                 onClick={() => setStep(item)}
-                disabled={metadataUnavailable}
+                disabled={
+                  metadataUnavailable ||
+                  ((item === "models" || item === "limits") &&
+                    (testConnection.isPending || testResult?.ok === false))
+                }
                 className={cn(
                   "rounded-lg border px-3 py-2 text-left text-sm capitalize",
                   step === item && "border-primary bg-primary/10 text-primary",
@@ -2046,7 +2069,7 @@ export default function ProvidersPage() {
         `/admin/api/providers/${encodeURIComponent(provider.id)}/caps`,
         {
           method: "PUT",
-          body: { daily_usd: Number(daily), monthly_usd: Number(monthly) },
+          body: { daily_usd: capInput(daily), monthly_usd: capInput(monthly) },
         },
       ),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["providers"] }),
@@ -2072,7 +2095,7 @@ export default function ProvidersPage() {
     mutationFn: ({ daily, monthly }: { daily: string; monthly: string }) =>
       adminFetch("/admin/api/providers/-/global-caps", {
         method: "PUT",
-        body: { daily_usd: Number(daily), monthly_usd: Number(monthly) },
+        body: { daily_usd: capInput(daily), monthly_usd: capInput(monthly) },
       }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["providers"] }),
   });
