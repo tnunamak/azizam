@@ -6,6 +6,7 @@ import {
 } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import type { HomeSnapshot } from "../src/app/home/home-api";
+import { readFile } from "node:fs/promises";
 
 test("the real seeded registry agrees on chat readiness across Home and Models", async ({
   page,
@@ -368,9 +369,100 @@ test("Home recent media carries content while requests stay in receipts", async 
     page.getByText("A river moves beneath the willow trees"),
   ).toBeVisible();
   await expect(
-    page.getByLabel("Play A river moves beneath the willow trees"),
-  ).toHaveAttribute("controls");
+    page.getByRole("button", {
+      name: "Play A river moves beneath the willow trees",
+    }),
+  ).toBeVisible();
+  await expect(
+    page.locator('audio[src="/signed/polish-audio"]'),
+  ).toHaveAttribute("preload", "metadata");
   await expect(page.locator("main")).not.toContainText(
     "audio.generate.ace-step-1.5-2b-base",
   );
+});
+
+test("Home and Library render a frame from posterless video", async ({
+  page,
+}) => {
+  const videoBytes = await readFile("src/app/library/preview-test.mp4");
+  await page.addInitScript(() => {
+    const currentTime = Object.getOwnPropertyDescriptor(
+      HTMLMediaElement.prototype,
+      "currentTime",
+    );
+    if (!currentTime?.get || !currentTime.set) return;
+    Object.defineProperty(HTMLMediaElement.prototype, "currentTime", {
+      configurable: true,
+      get() {
+        return currentTime.get!.call(this);
+      },
+      set(value: number) {
+        (window as Window & { lastPreviewSeek?: number }).lastPreviewSeek =
+          value;
+        currentTime.set!.call(this, value);
+      },
+    });
+  });
+  await page.route("**/me/api/media?**", (route) =>
+    route.fulfill({
+      json: {
+        assets: [
+          {
+            asset_id: "posterless-video",
+            kind: "video",
+            prompt: "A short test clip",
+            model: "local-video",
+            created_at: 1_760_000_000,
+            download_url: "/preview-test.mp4",
+            poster_asset_id: null,
+            duration_s: 1,
+            width: 160,
+            height: 120,
+          },
+        ],
+        models: ["local-video"],
+        next_cursor: null,
+      },
+    }),
+  );
+  await page.route("**/preview-test.mp4", (route) =>
+    route.fulfill({ body: videoBytes, contentType: "video/mp4" }),
+  );
+
+  for (const route of ["home", "library"]) {
+    await page.goto(`/ui/${route}/`);
+    const video = page.locator("main video");
+    await expect(video).toBeVisible();
+    await expect(video).toHaveAttribute("preload", "metadata");
+    await expect(video).toHaveJSProperty("muted", true);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as Window & { lastPreviewSeek?: number }).lastPreviewSeek,
+        ),
+      )
+      .toBe(0.1);
+    await expect
+      .poll(() =>
+        video.evaluate((element) => (element as HTMLVideoElement).videoWidth),
+      )
+      .toBeGreaterThan(0);
+    await expect
+      .poll(() =>
+        video.evaluate((element) => (element as HTMLVideoElement).readyState),
+      )
+      .toBeGreaterThanOrEqual(2);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    const violations = (
+      await new AxeBuilder({ page }).analyze()
+    ).violations.filter((violation) =>
+      ["serious", "critical"].includes(violation.impact ?? ""),
+    );
+    expect(violations).toEqual([]);
+  }
 });

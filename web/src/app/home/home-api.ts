@@ -55,9 +55,17 @@ export interface HomeCreationsResponse {
 }
 
 export function hasHomeCreationContent(creation: HomeCreation): boolean {
-  if (creation.kind === "image") return Boolean(creation.download_url);
-  if (creation.kind === "video") return Boolean(creation.poster_asset_id);
-  return Boolean(creation.download_url && creation.prompt?.trim());
+  return ["image", "video", "audio"].includes(creation.kind);
+}
+
+export function homeCreationPreviewRank(creation: HomeCreation): number {
+  if (creation.kind === "image") return creation.download_url ? 3 : 0;
+  if (creation.kind === "video") {
+    if (creation.poster_asset_id) return 3;
+    return creation.download_url ? 2 : 0;
+  }
+  if (creation.download_url && creation.prompt?.trim()) return 3;
+  return creation.download_url ? 2 : 0;
 }
 export interface ConnectionResult {
   ok: boolean;
@@ -119,20 +127,24 @@ export const homeApi = {
     }
   },
   creations: async (): Promise<HomeCreationsResponse> => {
-    const assets: HomeCreation[] = [];
+    const previewable: HomeCreation[] = [];
+    const fallback: HomeCreation[] = [];
     let cursor: string | null | undefined;
     let hasMore = true;
-    while (hasMore && assets.length < 4) {
+    while (hasMore && previewable.length < 4) {
       const query = new URLSearchParams({ limit: "50" });
       if (cursor) query.set("cursor", cursor);
       const page = await homeRequest<HomeCreationsResponse>(
         `/me/api/media?${query.toString()}`,
       );
-      assets.push(...page.assets.filter(hasHomeCreationContent));
+      for (const asset of page.assets.filter(hasHomeCreationContent)) {
+        if (homeCreationPreviewRank(asset) > 0) previewable.push(asset);
+        else if (fallback.length < 4) fallback.push(asset);
+      }
       cursor = page.next_cursor;
       hasMore = Boolean(page.has_more && cursor);
     }
-    return { assets: assets.slice(0, 4) };
+    return { assets: [...previewable, ...fallback].slice(0, 4) };
   },
   mediaDownload: (assetId: string) =>
     homeRequest<{ download_url?: string }>(

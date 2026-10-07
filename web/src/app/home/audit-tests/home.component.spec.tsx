@@ -68,7 +68,12 @@ const home = {
       reason_code: "ready",
     },
   ],
-  status: { state: "ready", reason_code: "ready", affected_capability_ids: [], counts: { total: 1, available: 1, affected: 0 } },
+  status: {
+    state: "ready",
+    reason_code: "ready",
+    affected_capability_ids: [],
+    counts: { total: 1, available: 1, affected: 0 },
+  },
   receipts: [
     {
       request_id: "req-1",
@@ -151,7 +156,7 @@ beforeAll(() => {
 });
 
 describe("Home audit component behavior", () => {
-  it("renders recent audio controls and video poster previews with prompts", async () => {
+  it("renders audio playback and video frames in Recent", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -181,10 +186,18 @@ describe("Home audit component behavior", () => {
                 download_url: "https://media.example/video.mp4",
                 poster_asset_id: "poster-1",
               },
+              {
+                asset_id: "video-no-poster",
+                kind: "video",
+                prompt: "a small boat crossing a lake",
+                download_url: "https://media.example/video-no-poster.mp4",
+              },
             ],
           });
         if (path === "/me/api/media/poster-1/download?scope=me")
-          return Response.json({ download_url: "https://media.example/poster.jpg" });
+          return Response.json({
+            download_url: "https://media.example/poster.jpg",
+          });
         throw new Error(`Unexpected request: ${path}`);
       }),
     );
@@ -194,17 +207,26 @@ describe("Home audit component behavior", () => {
       await screen.findByText("gentle rain over a quiet porch"),
     ).toBeVisible();
     const audio = document.querySelector("audio");
-    expect(audio).toHaveAttribute("controls");
     expect(audio).toHaveAttribute("src", "https://media.example/audio.wav");
     expect(
-      await screen.findByText("a fox walking through snow"),
+      screen.getByRole("button", {
+        name: "Play gentle rain over a quiet porch",
+      }),
     ).toBeVisible();
-    const poster = document.querySelector('img[src="https://media.example/poster.jpg"]');
+    expect(await screen.findByText("a fox walking through snow")).toBeVisible();
+    const poster = document.querySelector(
+      'img[src="https://media.example/poster.jpg"]',
+    );
     expect(poster).not.toBeNull();
+    const video = document.querySelector(
+      'video[src="https://media.example/video-no-poster.mp4"]',
+    );
+    expect(video).toHaveAttribute("preload", "metadata");
+    expect((video as HTMLVideoElement).muted).toBe(true);
     expect(screen.queryByText("Video preview unavailable")).toBeNull();
   });
 
-  it("hides Recent when no item includes useful media content", async () => {
+  it("keeps neutral fallback tiles when media previews are unavailable", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -217,9 +239,17 @@ describe("Home audit component behavior", () => {
         if (path === "/me/api/media?limit=50")
           return Response.json({
             assets: [
-              { asset_id: "audio-no-prompt", kind: "audio", download_url: "/audio.wav" },
               { asset_id: "image-no-content", kind: "image" },
-              { asset_id: "video-no-poster", kind: "video", download_url: "/video.mp4" },
+              {
+                asset_id: "video-no-source",
+                kind: "video",
+                poster_asset_id: null,
+              },
+              {
+                asset_id: "audio-no-prompt",
+                kind: "audio",
+                download_url: "/audio.wav",
+              },
             ],
           });
         throw new Error(`Unexpected request: ${path}`);
@@ -227,17 +257,28 @@ describe("Home audit component behavior", () => {
     );
 
     renderHome();
-    await screen.findByRole("button", { name: "Open WebUI" });
+    expect(
+      await screen.findByRole("heading", { name: "Recent" }),
+    ).toBeVisible();
     await waitFor(() =>
-      expect(screen.queryByLabelText("Loading recent creations")).toBeNull(),
+      expect(document.querySelector('audio[src="/audio.wav"]')).not.toBeNull(),
     );
-    expect(screen.queryByRole("heading", { name: "Recent" })).toBeNull();
-    expect(screen.queryByRole("button", { name: /Play/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "Play Audio" })).toBeVisible();
+    expect(
+      screen.getByRole("img", { name: "Video preview unavailable" }),
+    ).toBeVisible();
+    expect(document.querySelector('audio[src="/audio.wav"]')).not.toBeNull();
+    expect(document.querySelector('video[src="/video.mp4"]')).toBeNull();
   });
   it("uses server capability names, model recommendations, icons and summary", async () => {
     const serverHome = {
       ...home,
-      status: { state: "ready", reason_code: "ready", affected_capability_ids: [], counts: { total: 1, available: 1, affected: 0 } },
+      status: {
+        state: "ready",
+        reason_code: "ready",
+        affected_capability_ids: [],
+        counts: { total: 1, available: 1, affected: 0 },
+      },
       capabilities: [
         {
           capability: "music",
@@ -325,7 +366,6 @@ describe("Home audit component behavior", () => {
       screen.queryByRole("heading", { name: "Finish setting up" }),
     ).toBeNull();
   });
-
 
   it("does not show manual setup evidence confirmation buttons", async () => {
     const evidencePosts: unknown[] = [];
