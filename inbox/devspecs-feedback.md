@@ -165,3 +165,13 @@ progress would make this workflow easier to observe. No index state was reset.
 ## 2026-10-05 — Try, Workflows, Library, Activity and Home Recent lane
 
 `ds tldr` and `ds recent` completed and supplied useful task-flow and recent-change context. `ds map` produced no output in its 30-second command window, and the multi-slice `ds task` waited on another index update without returning a task ID. The command ended before I captured an exit status. I continued from the binding lane brief and direct source inspection; shared DevSpecs state was not reset. A bounded wait with visible lock owner/progress would help identify whether the index is working or stalled.
+
+## 2026-10-06 — status rebuild stall lane
+
+`ds tldr` and `ds recent` completed. A two-slice `ds task` for the status rebuild
+fix produced no task ID or progress for about five minutes. A second attempt
+with `--dir cache/devspecs/tasks --id status-stall --json` reported that it was
+waiting for another index update. I terminated both task processes by their
+literal PIDs and continued from the supplied brief and source evidence. No
+shared index was removed. Task creation needs a bounded wait and visible lock
+owner or progress so a lane can distinguish an active refresh from a stall.
