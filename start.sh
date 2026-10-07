@@ -24,7 +24,7 @@ fi
 source venv/bin/activate
 
 REQ_FILE="${AZIZAM_REQUIREMENTS_FILE:-requirements.txt}"
-REQ_HASH="$(sha256sum "$REQ_FILE" | awk '{print $1}')"
+REQ_HASH="$(sha256sum "$REQ_FILE" | cut -d' ' -f1)"
 REQ_STAMP="venv/.requirements.sha256"
 if [ ! -f "$REQ_STAMP" ] || [ "$(cat "$REQ_STAMP")" != "$REQ_HASH" ]; then
     if [ "${AZIZAM_REQUIREMENTS_HASHES:-false}" = "true" ]; then
@@ -82,7 +82,7 @@ if [ "${AZIZAM_MANAGE_LITELLM:-true}" != "false" ]; then
         echo "[start] LiteLLM Prisma schema is missing; refusing to start." >&2
         exit 1
     fi
-    PRISMA_HASH="$(sha256sum "$PRISMA_SCHEMA" | awk '{print $1}'):$REQ_HASH"
+    PRISMA_HASH="$(sha256sum "$PRISMA_SCHEMA" | cut -d' ' -f1):$REQ_HASH"
     PRISMA_STAMP="venv/.prisma-generated.sha256"
     if [ ! -f "$PRISMA_STAMP" ] || [ "$(cat "$PRISMA_STAMP")" != "$PRISMA_HASH" ] \
         || ! python3 -c 'from prisma import Prisma' >/dev/null 2>&1; then
@@ -123,9 +123,9 @@ if [ "${AZIZAM_MANAGE_LITELLM:-true}" != "false" ]; then
 
     litellm_runtime_hash() {
         {
-            sha256sum "$LITELLM_CONFIG_PATH" | awk '{print $1}'
+            sha256sum "$LITELLM_CONFIG_PATH" | cut -d' ' -f1
             python3 -m gateway.provider_sidecar fingerprint --db "$AZIZAM_ADMIN_DB_PATH"
-        } | sha256sum | awk '{print $1}'
+        } | sha256sum | cut -d' ' -f1
     }
 
     watch_litellm_config() {
