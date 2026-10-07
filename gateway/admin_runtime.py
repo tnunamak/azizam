@@ -1558,63 +1558,67 @@ def runtime_identity_for_app_credential_hash(
     accept only active App credentials from that store; user/service-account
     admin keys remain control-plane-only.
     """
-    credential = admin_store.find_credential_by_hash(key_hash, path=path)
-    if credential is None or not _credential_active(credential):
-        return None
-    if credential.get("subject_kind") != "app":
-        return None
+    with admin_store.runtime_auth_connection(path) as connection:
+        credential = admin_store.find_credential_by_hash(key_hash, path=path, connection=connection)
+        if credential is None or not _credential_active(credential):
+            return None
+        if credential.get("subject_kind") != "app":
+            return None
 
-    # Record that this key was just used so the portal can show real "used N
-    # ago" recency. Debounced in the store (at most one write per key per
-    # minute) and best-effort: a recency write must never fail a live request.
-    cred_id = credential.get("id")
-    if cred_id:
-        try:
-            admin_store.touch_credential_last_used(str(cred_id), path=path)
-        except Exception:
-            pass
+        # Record that this key was just used so the portal can show real "used N
+        # ago" recency. Debounced in the store (at most one write per key per
+        # minute) and best-effort: a recency write must never fail a live request.
+        cred_id = credential.get("id")
+        if cred_id:
+            try:
+                admin_store.touch_credential_last_used(str(cred_id), path=path, connection=connection)
+            except Exception:
+                # A failed best-effort write must not leave a transaction open
+                # over the remaining auth reads on this connection.
+                try:
+                    connection.rollback()
+                except Exception:
+                    return None
 
-    app_id = str(credential.get("app_id") or credential.get("subject_id") or "")
-    if not app_id:
-        return None
-    app = admin_store.get_app(app_id, path=path)
-    if app is None or app.get("disabled_at"):
-        return None
+        app_id = str(credential.get("app_id") or credential.get("subject_id") or "")
+        if not app_id:
+            return None
+        app = admin_store.get_app(app_id, path=path, connection=connection)
+        if app is None or app.get("disabled_at"):
+            return None
 
-    if app.get("owner_user_id"):
-        with admin_store._conn(path) as conn:
-            has_accounts = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'").fetchone()
-            owner = conn.execute(
+        if app.get("owner_user_id"):
+            has_accounts = connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'").fetchone()
+            owner = connection.execute(
                 "SELECT disabled_at, removed_at FROM account_access WHERE user_id = ?",
                 (app["owner_user_id"],),
             ).fetchone() if has_accounts else None
-        if owner and (owner["disabled_at"] is not None or owner["removed_at"] is not None):
-            return None
+            if owner and (owner["disabled_at"] is not None or owner["removed_at"] is not None):
+                return None
 
-    profile = DEFAULT_PROFILE
-    profile_id = credential.get("profile_id") or app.get("default_profile_id")
-    if not profile_id and inherited_profile_id_for_app is not None:
-        profile_id = inherited_profile_id_for_app(app)
-    if profile_id:
-        profile_record = admin_store.get_profile(str(profile_id), path=path)
-        if profile_record is None:
-            return None
-        try:
-            profile = load_profile(
-                profile_record.get("profile"),
-                default_id=str(profile_id),
-            )
-        except ProfileLoadError:
-            return None
+        profile = DEFAULT_PROFILE
+        profile_id = credential.get("profile_id") or app.get("default_profile_id")
+        if not profile_id and inherited_profile_id_for_app is not None:
+            profile_id = inherited_profile_id_for_app(app)
+        if profile_id:
+            profile_record = admin_store.get_profile(str(profile_id), path=path, connection=connection)
+            if profile_record is None:
+                return None
+            try:
+                profile = load_profile(
+                    profile_record.get("profile"),
+                    default_id=str(profile_id),
+                )
+            except ProfileLoadError:
+                return None
 
-    return RuntimeIdentity(
-        name=str(app.get("name") or credential.get("display_name") or app_id),
-        key_hash=key_hash,
-        downstream={},
-        profile=profile,
-        app_id=app_id,
-    )
-
+        return RuntimeIdentity(
+            name=str(app.get("name") or credential.get("display_name") or app_id),
+            key_hash=key_hash,
+            downstream={},
+            profile=profile,
+            app_id=app_id,
+        )
 
 def create_admin_service_account_key(
     name: str,

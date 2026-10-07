@@ -23,6 +23,7 @@ import json
 import re
 import time
 from collections.abc import Mapping
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -106,10 +107,33 @@ def ensure_service_registry(
 
 
 def load_service_registry(*, path: Path = admin_store.DB_PATH) -> dict[str, Any] | None:
-    record = admin_store.get_operator_setting(SERVICE_REGISTRY_SETTING_KEY, path=path)
-    if record is None or not isinstance(record.get("value"), Mapping):
+    record = admin_store.get_service_registry_json_with_generation(path=path)
+    if record is None:
         return None
-    return normalize_service_registry(record["value"])
+    snapshot, default_timestamp = _normalized_registry_snapshot(
+        record["operator_settings_generation"], record["value_json"],
+    )
+    # Existing callers may edit these dictionaries before submitting a CAS
+    # write. Never expose the cached object to a caller's mutations.
+    registry = copy.deepcopy(snapshot)
+    if default_timestamp:
+        registry["updated_at"] = int(time.time())
+    return registry
+
+
+@lru_cache(maxsize=16)
+def _normalized_registry_snapshot(generation: int, document: str) -> tuple[dict[str, Any], bool]:
+    # The CAS generation and JSON are read by one SELECT. Including the JSON
+    # also separates databases and protects against a restored/recreated DB
+    # reusing a generation. No TTL or process-local writer notification.
+    # Match get_operator_setting's treatment of damaged/non-object JSON.
+    try:
+        value = json.loads(document)
+    except json.JSONDecodeError:
+        value = {}
+    if not isinstance(value, dict):
+        value = {}
+    return normalize_service_registry(value), not bool(value.get("updated_at"))
 
 
 def build_service_registry_seed(proxy_config: Mapping[str, Any]) -> dict[str, Any]:

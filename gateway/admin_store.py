@@ -39,7 +39,7 @@ import secrets
 import shutil
 import sqlite3
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
@@ -439,6 +439,18 @@ def _conn(path: Path = DB_PATH):
         yield conn
     finally:
         conn.close()
+
+
+@contextmanager
+def runtime_auth_connection(path: Path = DB_PATH):
+    """Own one connection for a synchronous runtime identity lookup.
+
+    This scope must not span an await or escape to another thread. SELECTs
+    remain in autocommit, so later reads see committed changes; there is no
+    request-spanning transaction or cached authorization state.
+    """
+    with _conn(path) as conn:
+        yield conn
 
 
 def schema_version(path: Path = DB_PATH) -> int | None:
@@ -914,9 +926,10 @@ def create_profile(
 
 
 def get_profile(
-    profile_id: str, *, path: Path = DB_PATH
+    profile_id: str, *, path: Path = DB_PATH,
+    connection: sqlite3.Connection | None = None,
 ) -> dict[str, Any] | None:
-    with _conn(path) as conn:
+    with _conn(path) if connection is None else nullcontext(connection) as conn:
         row = conn.execute(
             "SELECT * FROM profiles WHERE id = ?", (profile_id,)
         ).fetchone()
@@ -1118,8 +1131,11 @@ def ensure_personal_app_for_user(
     )
 
 
-def get_app(app_id: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:
-    with _conn(path) as conn:
+def get_app(
+    app_id: str, *, path: Path = DB_PATH,
+    connection: sqlite3.Connection | None = None,
+) -> dict[str, Any] | None:
+    with _conn(path) if connection is None else nullcontext(connection) as conn:
         row = conn.execute(
             "SELECT * FROM apps WHERE id = ?", (app_id,)
         ).fetchone()
@@ -1336,6 +1352,7 @@ def touch_credential_last_used(
     now: int | None = None,
     min_interval: int = TOUCH_LAST_USED_INTERVAL_SECONDS,
     path: Path = DB_PATH,
+    connection: sqlite3.Connection | None = None,
 ) -> bool:
     """Record that a credential was just used (debounced).
 
@@ -1346,7 +1363,7 @@ def touch_credential_last_used(
     """
     ts = _now() if now is None else int(now)
     cutoff = ts - max(0, int(min_interval))
-    with _conn(path) as conn:
+    with _conn(path) if connection is None else nullcontext(connection) as conn:
         cur = conn.execute(
             "UPDATE credentials SET last_used_at = ? "
             "WHERE id = ? AND (last_used_at IS NULL OR last_used_at <= ?)",
@@ -1367,10 +1384,11 @@ def get_credential(
 
 
 def find_credential_by_hash(
-    hash: str, *, path: Path = DB_PATH
+    hash: str, *, path: Path = DB_PATH,
+    connection: sqlite3.Connection | None = None,
 ) -> dict[str, Any] | None:
     """Look up a credential by stored hash. Caller hashes the secret first."""
-    with _conn(path) as conn:
+    with _conn(path) if connection is None else nullcontext(connection) as conn:
         row = conn.execute(
             "SELECT * FROM credentials WHERE hash = ?", (hash,)
         ).fetchone()
@@ -2141,6 +2159,15 @@ class OperatorSettingsGenerationConflict(ValueError):
 
 def get_service_registry_with_generation(*, path: Path = DB_PATH) -> dict[str, Any] | None:
     """Return the one active registry document and its server-owned CAS value."""
+    record = get_service_registry_json_with_generation(path=path)
+    if record is None:
+        return None
+    record["value"] = json.loads(record.pop("value_json"))
+    return record
+
+
+def get_service_registry_json_with_generation(*, path: Path = DB_PATH) -> dict[str, Any] | None:
+    """Read the encoded document and generation together, without parsing JSON."""
     # One statement, so the document and its CAS generation come from the same
     # snapshot. Two SELECTs could straddle a concurrent commit and pair stale
     # JSON with the new generation, letting a later CAS write overwrite it.
@@ -2153,10 +2180,9 @@ def get_service_registry_with_generation(*, path: Path = DB_PATH) -> dict[str, A
         ).fetchone()
     if row is None:
         return None
-    value = json.loads(row["value_json"])
     generation = row["operator_settings_generation"]
     return {
-        "key": "service_registry", "value": value, "updated_at": row["updated_at"],
+        "key": "service_registry", "value_json": row["value_json"], "updated_at": row["updated_at"],
         "updated_by": row["updated_by"],
         "operator_settings_generation": int(generation) if generation is not None else 0,
     }
