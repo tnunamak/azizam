@@ -14,6 +14,8 @@ import contextlib
 from typing import Iterable, Mapping
 from urllib.parse import urlencode
 
+from gateway.outbound_request import backend_query_string
+
 from starlette.websockets import WebSocket, WebSocketDisconnect, WebSocketState
 
 # Browsers cannot set headers on a WebSocket, so OpenAI lets them carry the key as a subprotocol.
@@ -40,8 +42,8 @@ def accepted_subprotocol(offered: Iterable[str]) -> str | None:
 
 def upstream_url(host: str, port: int, query: Mapping[str, str]) -> str:
     """Service URL for one client connection. The client's own key never goes upstream."""
-    kept = [(k, v) for k, v in query.items() if k != "api_key"]
-    suffix = "?" + urlencode(kept) if kept else ""
+    kept = backend_query_string(urlencode(query))
+    suffix = "?" + kept if kept else ""
     return f"ws://{host}:{port}/v1/realtime{suffix}"
 
 

@@ -21,6 +21,7 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 
 from gateway.backends.cancellation import CancellationToken
+from gateway.outbound_request import backend_query_string
 from gateway.service_registry import is_litellm_service_record
 
 LITELLM_BODY_EXECUTION_PATHS = frozenset(
@@ -205,6 +206,7 @@ def _base_url_from_config(config: Mapping[str, Any], env: Mapping[str, str]) -> 
 
 def litellm_url(*, base_url: str, path: str, query: str = "") -> str:
     url = f"{str(base_url).rstrip('/')}/{path.lstrip('/')}"
+    query = backend_query_string(query)
     if query:
         url = f"{url}?{query}"
     return url
