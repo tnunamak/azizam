@@ -213,6 +213,12 @@ function WorkflowInputControl({
   );
 }
 
+// Short one-line values keep the compact field and submit on Enter. Long or
+// multi-line values (a pasted paragraph) get a growing field so no line is hidden.
+function isShortSingleLine(value: string) {
+  return value.length <= 80 && !value.includes("\n");
+}
+
 function controlFor(
   input: WorkflowInput,
   id: string,
@@ -317,7 +323,7 @@ function controlFor(
       id={id}
       rows={1}
       className={
-        String(value ?? "").length <= 80
+        isShortSingleLine(String(value ?? ""))
           ? "h-11 min-h-11 resize-none field-sizing-fixed py-1 shadow-none"
           : undefined
       }
@@ -330,7 +336,7 @@ function controlFor(
         if (
           event.key === "Enter" &&
           !event.nativeEvent.isComposing &&
-          event.currentTarget.value.length <= 80
+          isShortSingleLine(event.currentTarget.value)
         ) {
           event.preventDefault();
           event.currentTarget.form

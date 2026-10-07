@@ -333,6 +333,14 @@ describe("WorkflowInputs", () => {
     await user.keyboard("{Enter}");
     expect(prompt).toHaveValue("x".repeat(81) + "\n");
     expect(submitted).toHaveBeenCalledTimes(1);
+    // A short pasted multi-line prompt keeps its newline, grows instead of
+    // hiding the second line, and Enter adds a line rather than submitting.
+    await user.clear(prompt);
+    await user.paste("a cat\non a mat");
+    expect(prompt).toHaveValue("a cat\non a mat");
+    expect(prompt.className).not.toContain("h-11");
+    await user.keyboard("{Enter}");
+    expect(submitted).toHaveBeenCalledTimes(1);
     await user.clear(prompt);
     screen.getByRole("button", { name: "Run" }).setAttribute("disabled", "");
     await user.keyboard("{Enter}");
