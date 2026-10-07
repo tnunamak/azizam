@@ -82,9 +82,23 @@ export default function ActivityPage() {
   const [showAutomated, setShowAutomated] = useState(false);
   const [actor, setActor] = useState("");
   const [actorInput, setActorInput] = useState("");
+  function clearFilters() {
+    setCategory("");
+    setActor("");
+    setActorInput("");
+  }
+  const {
+    data: people,
+    isPending: peoplePending,
+    isError: peopleError,
+    refetch: refetchPeople,
+  } = useQuery({
+    queryKey: ["users"],
+    queryFn: api.users.list,
+  });
   const [entry, setEntry] = useState<AuditEntry | null>(null);
-  // Filter choices come from an unfiltered page; labels never infer identity
-  // from an opaque actor ID. The filter itself is applied by the server.
+  // People supply names beyond the audit window; recent events also supply
+  // labels for system actors. IDs are only used as server filter values.
   const { data: optionsData } = useQuery({
     queryKey: ["activity", "actors", showAccessAudit, showAutomated],
     queryFn: () =>
@@ -120,12 +134,18 @@ export default function ActivityPage() {
   });
   const entries = auditData?.pages.flatMap((page) => page.records) ?? [];
   const actors = Array.from(
-    new Map(
-      (optionsData?.records ?? []).map((row) => [
-        row.actor_id,
-        activityActorName(row.actor_label, row.actor_kind),
-      ]),
-    ),
+    new Map([
+      ...(people ?? []).map((person) => [
+        person.id,
+        person.display_name || person.name || person.email || "Person",
+      ] as const),
+      ...(optionsData?.records ?? [])
+        .filter((row) => !people?.some((person) => person.id === row.actor_id))
+        .map((row) => [
+          row.actor_id,
+          activityActorName(row.actor_label, row.actor_kind),
+        ] as const),
+    ]),
   );
   const automatedCount =
     auditData?.pages[0]?.automated_count ?? optionsData?.automated_count ?? 0;
@@ -214,16 +234,14 @@ export default function ActivityPage() {
             {(category || actor) && (
               <Button
                 variant="ghost"
-                onClick={() => {
-                  setActor("");
-                  setActorInput("");
-                  setCategory("");
-                }}
+                onClick={clearFilters}
               >
                 Clear filters
               </Button>
             )}
           </div>
+          {peoplePending && <p className="text-muted-foreground text-sm">Loading people…</p>}
+          {peopleError && <ErrorState message="People could not be loaded. Recent activity names are still available." onRetry={() => void refetchPeople()} />}
           <div className="flex flex-wrap items-center gap-3">
             {automatedCount > 0 && (
               <div
@@ -255,7 +273,7 @@ export default function ActivityPage() {
               {showAccessAudit ? "Hide access audit" : "Show access audit"}
             </Button>
             <details className="text-muted-foreground text-sm">
-              <summary className="cursor-pointer">Find a person</summary>
+              <summary className="cursor-pointer">Technical: filter by person ID</summary>
             <form
               className="mt-3 flex max-w-md gap-2"
               onSubmit={(e) => {
@@ -264,7 +282,7 @@ export default function ActivityPage() {
               }}
             >
               <Input
-                aria-label="Person ID"
+                aria-label="Technical person ID"
                 value={actorInput}
                 onChange={(e) => setActorInput(e.target.value)}
                 placeholder="Person ID"
@@ -309,10 +327,7 @@ export default function ActivityPage() {
                 category || actor ? (
                   <Button
                     variant="outline"
-                    onClick={() => {
-                      setCategory("");
-                      setActor("");
-                    }}
+                    onClick={clearFilters}
                   >
                     Clear filters
                   </Button>
