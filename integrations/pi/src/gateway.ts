@@ -54,15 +54,16 @@ export async function fetchCatalog(options: FetchCatalogOptions): Promise<Catalo
 
 	let response: Response;
 	try {
-		response = await doFetch(url, { headers, signal: combined });
+		response = await doFetch(url, { headers, signal: combined, redirect: "error" });
 	} catch (error) {
-		if (signal?.aborted) throw error;
+		if (signal?.aborted) throw signal.reason ?? error;
 		if (timeout.aborted) {
 			throw new AzizamError(`Timed out after ${timeoutMs} ms fetching ${url}. Is the Azizam gateway reachable?`);
 		}
-		const cause = error instanceof Error && error.cause instanceof Error ? ` (${error.cause.message})` : "";
+		const code = getCauseCode(error);
+		const cause = TRANSPORT_CAUSES.get(code ?? "") ?? " A network error occurred.";
 		throw new AzizamError(
-			`Could not reach the Azizam gateway at ${baseUrl}${cause}. Check AZIZAM_BASE_URL and that the gateway is running.`,
+			`Could not reach the Azizam gateway at ${baseUrl}.${cause} Check AZIZAM_BASE_URL and that the gateway is running.`,
 		);
 	}
 
@@ -81,7 +82,11 @@ export async function fetchCatalog(options: FetchCatalogOptions): Promise<Catalo
 	let body: unknown;
 	try {
 		body = await response.json();
-	} catch {
+	} catch (error) {
+		if (signal?.aborted) throw signal.reason ?? error;
+		if (timeout.aborted) {
+			throw new AzizamError(`Timed out after ${timeoutMs} ms fetching ${url}. Is the Azizam gateway reachable?`);
+		}
 		throw new AzizamError(`${url} did not return JSON. AZIZAM_BASE_URL may point at a web page instead of the API.`);
 	}
 	try {
@@ -89,4 +94,21 @@ export async function fetchCatalog(options: FetchCatalogOptions): Promise<Catalo
 	} catch (error) {
 		throw new AzizamError(`${url}: ${error instanceof Error ? error.message : String(error)}`);
 	}
+}
+
+const TRANSPORT_CAUSES = new Map<string, string>([
+	["ETIMEDOUT", " The connection timed out."],
+	["ECONNREFUSED", " The connection was refused."],
+	["ENOTFOUND", " DNS lookup failed."],
+	["EAI_AGAIN", " DNS lookup failed."],
+	["CERT_HAS_EXPIRED", " A TLS certificate has expired."],
+	["ERR_TLS_CERT_ALTNAME_INVALID", " The TLS certificate does not match the host."],
+	["SELF_SIGNED_CERT_IN_CHAIN", " The TLS certificate is not trusted."],
+]);
+
+function getCauseCode(error: unknown): string | undefined {
+	if (typeof error !== "object" || error === null) return undefined;
+	const cause = "cause" in error ? error.cause : undefined;
+	if (typeof cause !== "object" || cause === null || !("code" in cause)) return undefined;
+	return typeof cause.code === "string" ? cause.code : undefined;
 }

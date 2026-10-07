@@ -28,6 +28,8 @@ export interface MockGateway {
 	requests: { method: string; url: string; authorization?: string; body?: string; status?: number }[];
 	setModels(list: unknown): void;
 	setStatus(status: number): void;
+	setRedirect(enabled: boolean): void;
+	setPartialBody(enabled: boolean): void;
 	close(): Promise<void>;
 }
 
@@ -37,6 +39,8 @@ const sse = (chunk: unknown) => `data: ${JSON.stringify(chunk)}\n\n`;
 export async function startMockGateway(options: { apiKey?: string } = {}): Promise<MockGateway> {
 	let list: unknown = CONTRACT_LIST;
 	let status = 200;
+	let redirect = false;
+	let partialBody = false;
 	const requests: MockGateway["requests"] = [];
 	const server: Server = createServer(async (req: IncomingMessage, res) => {
 		let body = "";
@@ -53,6 +57,15 @@ export async function startMockGateway(options: { apiKey?: string } = {}): Promi
 			return;
 		}
 		if (req.method === "GET" && req.url === "/v1/models") {
+			if (redirect) {
+				res.writeHead(302, { location: "/v1/redirect-target" }).end();
+				return;
+			}
+			if (partialBody) {
+				res.writeHead(200, { "content-type": "application/json" });
+				res.write('{"data":[');
+				return;
+			}
 			res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(list));
 		} else if (req.method === "POST" && req.url === "/v1/chat/completions") {
 			res.writeHead(200, { "content-type": "text/event-stream" });
@@ -74,6 +87,8 @@ export async function startMockGateway(options: { apiKey?: string } = {}): Promi
 		requests,
 		setModels: (next) => { list = next; },
 		setStatus: (next) => { status = next; },
+		setRedirect: (enabled) => { redirect = enabled; },
+		setPartialBody: (enabled) => { partialBody = enabled; },
 		close: () => new Promise((resolve) => { server.closeAllConnections(); server.close(() => resolve()); }),
 	};
 }

@@ -14,7 +14,7 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 async function setup(
 	handler: (url: string, init: RequestInit) => Response | Promise<Response>,
 	env: Record<string, string> = {},
-	extra: { store?: any; prefetchTimeoutMs?: number; credentials?: any } = {},
+	extra: { store?: any; prefetchTimeoutMs?: number; credentials?: any; configuredBaseUrl?: () => Promise<string | undefined> } = {},
 ) {
 	const piAi = await import("@earendil-works/pi-ai");
 	const { azizamProvider } = await import("../src/provider.ts");
@@ -30,7 +30,7 @@ async function setup(
 		modify: async (_id: string, fn: any) => fn({ type: "api_key", key: KEY }),
 		delete: async () => {},
 	};
-	const provider = azizamProvider({ env: { AZIZAM_BASE_URL: "http://gw.test/v1", ...env }, fetch: fetchImpl, prefetchTimeoutMs: extra.prefetchTimeoutMs });
+	const provider = azizamProvider({ env: { AZIZAM_BASE_URL: "http://gw.test/v1", ...env }, fetch: fetchImpl, prefetchTimeoutMs: extra.prefetchTimeoutMs, configuredBaseUrl: extra.configuredBaseUrl });
 	const models = piAi.createModels({ credentials, modelsStore: store });
 	models.setProvider(provider);
 	return { models, store, calls, provider };
@@ -340,4 +340,33 @@ test("prefetch falls back to AZIZAM_API_KEY when Pi's credential store cannot be
 	const none = await setup(() => assert.fail("must not fetch"), {}, { credentials });
 	await none.provider.prefetch(none.models);
 	assert.equal(none.calls.length, 0);
+});
+
+test("cold start reports missing credentials separately from lookup failure", { skip }, async (t) => {
+	const errors: string[] = [];
+	t.mock.method(console, "error", (message: string) => errors.push(message));
+	const missing = { read: async () => undefined, list: async () => [], modify: async () => undefined, delete: async () => {} };
+	const first = await setup(() => assert.fail("must not fetch"), {}, { credentials: missing });
+	await first.provider.prefetch(first.models);
+	assert.match(errors.pop() ?? "", /Missing Azizam credential.*AZIZAM_API_KEY.*\/login azizam.*models.json/);
+	const broken = { ...missing, read: async () => { throw new Error(`lookup failed ${KEY}`); } };
+	const second = await setup(() => assert.fail("must not fetch"), {}, { credentials: broken });
+	await second.provider.prefetch(second.models);
+	const message = errors.pop() ?? "";
+	assert.match(message, /Azizam credential lookup failed.*AZIZAM_API_KEY.*\/login azizam.*models.json/);
+	assert.ok(!message.includes(KEY));
+});
+
+test("ordinary refresh blocks conflicting URL sources before sending a credential", { skip }, async () => {
+	const { models, calls } = await setup(() => json(CONTRACT_LIST), {}, { configuredBaseUrl: async () => "http://configured.test/v1" });
+	const result = await models.refresh();
+	assert.equal(calls.length, 0);
+	assert.match(result.errors.get("azizam")?.message ?? "", /AZIZAM_BASE_URL.*models.json.*conflict/);
+});
+
+test("ordinary refresh never surfaces a credential from a transport cause", { skip }, async () => {
+	const { models } = await setup(() => { throw new TypeError("fetch failed", { cause: Object.assign(new Error(`request contained ${KEY}`), { code: "ECONNREFUSED" }) }); });
+	const message = (await models.refresh()).errors.get("azizam")?.message ?? "";
+	assert.match(message, /connection was refused/);
+	assert.ok(!message.includes(KEY));
 });

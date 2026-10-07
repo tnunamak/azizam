@@ -5,11 +5,12 @@ import {
 	type Models,
 	type ModelsRefreshOptions,
 	type ModelsRefreshResult,
+	type ModelsStore,
 	type Provider,
 } from "@earendil-works/pi-ai";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/compat";
 import type { Catalog, ChatModelInfo } from "./catalog.ts";
-import { DEFAULT_TIMEOUT_MS, fetchCatalog, normalizeBaseUrl } from "./gateway.ts";
+import { AzizamError, DEFAULT_TIMEOUT_MS, fetchCatalog, normalizeBaseUrl } from "./gateway.ts";
 
 export const PROVIDER_ID = "azizam";
 
@@ -38,6 +39,9 @@ export interface AzizamProviderOptions {
 	fetch?: typeof fetch;
 	/** Cold-start budget in ms. Defaults to {@link PREFETCH_TIMEOUT_MS}. */
 	prefetchTimeoutMs?: number;
+	/** Pi's configured URL, read before startup restore and each network refresh. */
+	configuredBaseUrl?: () => Promise<string | undefined>;
+	modelsStore?: ModelsStore;
 }
 
 /** The slice of Pi's `ModelRuntime` (or pi-ai `Models`) that the cold-start prefetch uses. */
@@ -68,7 +72,20 @@ function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T | und
 
 export function azizamProvider(options: AzizamProviderOptions = {}): AzizamProvider {
 	const env = () => options.env ?? process.env;
-	const baseUrl = () => normalizeBaseUrl(env().AZIZAM_BASE_URL);
+	let configuredUrl: string | undefined;
+	const baseUrl = () => {
+		const environment = env().AZIZAM_BASE_URL?.trim() || undefined;
+		const configured = configuredUrl === undefined ? undefined : normalizeBaseUrl(configuredUrl);
+		const environmentUrl = environment === undefined ? undefined : normalizeBaseUrl(environment);
+		if (configured && environmentUrl && configured !== environmentUrl) {
+			throw new AzizamError("AZIZAM_BASE_URL and models.json baseUrl conflict. Make them match or remove one before sending credentials.");
+		}
+		return configured ?? environmentUrl ?? normalizeBaseUrl(undefined);
+	};
+	const readBaseUrl = async () => {
+		configuredUrl = await options.configuredBaseUrl?.();
+		return baseUrl();
+	};
 
 	const toModel = (info: ChatModelInfo): Model<"openai-completions"> => ({
 		...info,
@@ -85,8 +102,9 @@ export function azizamProvider(options: AzizamProviderOptions = {}): AzizamProvi
 	let latest: Model<"openai-completions">[] | undefined;
 
 	const discover = async (apiKey: string | undefined, signal: AbortSignal | undefined) => {
+		const url = await readBaseUrl();
 		const catalog: Catalog = await fetchCatalog({
-			baseUrl: baseUrl(),
+			baseUrl: url,
 			apiKey,
 			signal,
 			timeoutMs: Number(env().AZIZAM_MODELS_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS,
@@ -121,17 +139,21 @@ export function azizamProvider(options: AzizamProviderOptions = {}): AzizamProvi
 		const models = piAllModels();
 		return models.length > 0 && models.every((model) => model.baseUrl === url);
 	};
+	const streams: Provider = provider;
 
 	return {
 		...provider,
 		getModels: () => rebased(latest ?? piModels()),
 		getAllModels: () => rebased(latest ?? piAllModels()),
+		stream: (model, context, streamOptions) => streams.stream({ ...model, baseUrl: baseUrl() }, context, streamOptions),
+		streamSimple: (model, context, streamOptions) => streams.streamSimple({ ...model, baseUrl: baseUrl() }, context, streamOptions),
 		prefetch: async (models) => {
-			if (env().PI_OFFLINE || process.argv.includes("--offline")) return;
 			const budgetMs = options.prefetchTimeoutMs ?? PREFETCH_TIMEOUT_MS;
 			const signal = AbortSignal.timeout(budgetMs);
 			const phase = () => AbortSignal.any([signal, AbortSignal.timeout(budgetMs * PHASE_SHARE)]);
 			try {
+				await readBaseUrl();
+				if (env().PI_OFFLINE || process.argv.includes("--offline")) return;
 				// A restore failure or stall (locked, unreadable or malformed store) counts as a miss.
 				const restore = phase();
 				await untilAborted(models.refresh({ allowNetwork: false, providers: [PROVIDER_ID], signal: restore }), restore);
@@ -139,12 +161,24 @@ export function azizamProvider(options: AzizamProviderOptions = {}): AzizamProvi
 				signal.throwIfAborted();
 				// Pi's credential store needs a writable agent dir even to read; the environment key needs nothing.
 				const lookup = phase();
-				const resolved = await untilAborted(models.getAuth(PROVIDER_ID, { signal: lookup }), lookup);
+				let lookupFailed = false;
+				const resolved = await untilAborted(models.getAuth(PROVIDER_ID, { signal: lookup }).catch(() => {
+					lookupFailed = true;
+					return undefined;
+				}), lookup);
 				const apiKey = resolved?.auth.apiKey ?? (env().AZIZAM_API_KEY || undefined);
 				signal.throwIfAborted();
-				if (!apiKey) return;
-				await discover(apiKey, signal);
-			} catch {
+				if (!apiKey) {
+					const reason = lookupFailed || lookup.aborted ? "Azizam credential lookup failed" : "Missing Azizam credential";
+					console.error(`[azizam] ${reason}; no saved catalog is available. Set AZIZAM_API_KEY, run /login azizam, or set apiKey in models.json.`);
+					return;
+				}
+				const fetched = await discover(apiKey, signal);
+				// Persistence is optional; retain the fetched models even when storage is unavailable.
+				if (options.modelsStore) {
+					await untilAborted(options.modelsStore.write(PROVIDER_ID, { models: fetched, checkedAt: Date.now() }, { signal }), signal);
+				}
+			} catch (error) {
 				// Short-lived CLI commands can exit before Pi's background refresh reports anything. Always show a
 				// safe error here; arbitrary fetch/store exceptions may contain credentials and must not be echoed.
 				const reason = signal.aborted ? ` exceeded the ${budgetMs} ms startup budget` : " failed";
@@ -153,6 +187,11 @@ export function azizamProvider(options: AzizamProviderOptions = {}): AzizamProvi
 					"Check that the gateway is reachable, AZIZAM_BASE_URL and your Azizam credentials, then retry Pi. " +
 					"Use AZIZAM_MODELS_TIMEOUT_MS to adjust the request timeout (startup is still bounded).",
 				);
+				if (error instanceof AzizamError && error.message.includes("conflict")) {
+					console.error("[azizam] AZIZAM_BASE_URL and models.json baseUrl conflict. Make them match or remove one before sending credentials.");
+				} else if (error instanceof AzizamError && error.message.includes("configuration in models.json")) {
+					console.error("[azizam] Could not read Azizam configuration in models.json. Fix the file before sending credentials.");
+				}
 			}
 		},
 	};

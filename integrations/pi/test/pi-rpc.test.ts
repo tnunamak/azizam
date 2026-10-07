@@ -351,3 +351,31 @@ test("a cold-start models.json !command key runs at most twice (prefetch + Pi's 
 	const runs = readFileSync(counter, "utf8").split("\n").filter(Boolean).length;
 	assert.ok(runs >= 1 && runs <= 2, `ran ${runs} times`);
 });
+
+test("models.json baseUrl drives discovery and chat; conflicting env URL sends no credentials", { skip: !piAvailable }, async () => {
+	const agentDir = freshAgentDir();
+	writeFileSync(join(agentDir, "models.json"), JSON.stringify({ providers: { azizam: { baseUrl: gateway.baseUrl, apiKey: KEY } } }));
+	const session = startPi({ agentDir, env: { AZIZAM_BASE_URL: "", AZIZAM_API_KEY: "" }, args: ["--provider", "azizam", "--model", "coder"] });
+	try {
+		const state = await session.send({ type: "get_state" });
+		assert.equal(state.data.model?.baseUrl, gateway.baseUrl, session.stderr());
+		const started = await session.send({ type: "prompt", message: "Say hello" });
+		assert.equal(started.success, true);
+		await session.waitFor((e) => e.type === "agent_settled" || e.type === "agent_end");
+		assert.ok(gateway.requests.some((r) => r.url === "/v1/chat/completions"));
+	} finally { await session.close(); }
+
+	const decoy = await startMockGateway();
+	const before = gateway.requests.length;
+	const conflictDir = freshAgentDir();
+	writeFileSync(join(conflictDir, "models.json"), JSON.stringify({ providers: { azizam: { baseUrl: gateway.baseUrl, apiKey: KEY } } }));
+	const blocked = startPi({ agentDir: conflictDir, env: { AZIZAM_BASE_URL: decoy.baseUrl, AZIZAM_API_KEY: "" } });
+	try {
+		await blocked.send({ type: "get_state" });
+		await new Promise((r) => setTimeout(r, 300));
+		assert.equal(decoy.requests.length, 0);
+		assert.equal(gateway.requests.length, before);
+		assert.match(blocked.stderr(), /AZIZAM_BASE_URL.*models.json.*conflict/);
+		assert.ok(!blocked.stderr().includes(KEY));
+	} finally { await blocked.close(); await decoy.close(); }
+});

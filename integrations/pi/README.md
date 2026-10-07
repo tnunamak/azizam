@@ -21,7 +21,7 @@ root, so `tnunamak/pi-provider-azizam` mirrors this directory.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `AZIZAM_BASE_URL` | `http://127.0.0.1:5000/v1` | Gateway API root, **including** the `/v1` prefix. Read at every refresh. User info (`user:pass@`), query strings and fragments are rejected, and error messages never repeat the value you set. |
+| `AZIZAM_BASE_URL` | `http://127.0.0.1:5000/v1` | Gateway API root, **including** the `/v1` prefix. Used when `models.json` has no provider `baseUrl`. Read at every refresh. User info (`user:pass@`), query strings and fragments are rejected, and validation errors never repeat the value you set. |
 | `AZIZAM_API_KEY` | none | Bearer key. |
 | `AZIZAM_MODELS_TIMEOUT_MS` | `10000` | Timeout of the model-list request. |
 | `AZIZAM_DEBUG` | unset | Set to `1` to print the filter mode and model count to stderr on each refresh. |
@@ -33,6 +33,8 @@ The key can also come from the usual Pi sources: `/login azizam` (stored in `aut
 ```
 
 The key is never logged and never appears in error messages. A keyless gateway still needs any non-empty key, because Pi hides providers without credentials.
+
+Discovery and chat use one gateway URL: `providers.azizam.baseUrl` in Pi's `models.json`, then `AZIZAM_BASE_URL`, then the default above. If both configured sources are set, they must match after trimming whitespace and trailing slashes. A conflict blocks discovery before credentials are sent and reports the two configuration names without their values. Remove one setting or make them match. The package reads `models.json` through Pi's own parser before discovery, including on each refresh.
 
 ### Override model metadata (`models.json`)
 
@@ -59,15 +61,15 @@ Override any of them, or any other model field, per model with Pi's normal `~/.p
 
 ### How models are discovered
 
-1. `GET {AZIZAM_BASE_URL}/models` with `Authorization: Bearer <key>`.
+1. `GET {effective gateway URL}/models` with `Authorization: Bearer <key>`. Redirects are rejected, including redirects within the same origin. Configure the final API URL directly.
 2. Keep the chat models (rules below), map them to Pi models, and save the catalog in Pi's `models-store.json`.
 3. On the next start Pi restores the saved catalog first, so models are available offline, then refreshes in the background.
 4. If a refresh fails (gateway down, 401, bad URL), Pi shows the error and **keeps the last good catalog**.
 5. `--offline` / `PI_OFFLINE=1` skips all network calls and uses the saved catalog.
 
-**Cold start.** Pi refreshes in the background, but `--provider azizam --model <id>` is resolved before that refresh finishes. So at load the extension builds a short-lived Pi `ModelRuntime` on the same agent dir. It restores the saved catalog and, only if no saved catalog exists for the configured `AZIZAM_BASE_URL`, resolves the key exactly as Pi does (`auth.json` from `/login`, `apiKey` in `models.json` including `!command`, or `AZIZAM_API_KEY`) and fetches once. A usable saved catalog means no extra request at start, so a gateway that is down adds no delay. Pi's normal background refresh still runs afterwards. Nothing is fetched when Pi is offline or no key resolves.
+**Cold start.** Pi refreshes in the background, but `--provider azizam --model <id>` is resolved before that refresh finishes. So at load the extension builds a short-lived Pi `ModelRuntime` on the same agent dir. It restores the saved catalog and, only if no saved catalog exists for the effective gateway URL, resolves the key exactly as Pi does (`auth.json` from `/login`, `apiKey` in `models.json` including `!command`, or `AZIZAM_API_KEY`) and fetches once. A usable saved catalog means no extra request at start, so a gateway that is down adds no delay. Pi's normal background refresh still runs afterwards. Nothing is fetched when Pi is offline or no key resolves. Without a usable catalog, a missing key prints a message naming `AZIZAM_API_KEY`, `/login azizam` and `models.json`; a failed or stalled credential lookup prints a distinct lookup-failure message. Neither message includes credential or exception text.
 
-- **Model storage is optional.** An unreadable, locked or corrupt `models-store.json` counts as "no saved catalog". If Pi cannot save the catalog, the fetched models are still served from memory for that run. An empty list from the gateway stays empty.
+- **Model storage is optional.** An unreadable or locked `models-store.json` counts as "no saved catalog". Invalid JSON or a malformed Azizam catalog is renamed under Pi's file lock to `models-store.json.corrupt-<timestamp>-<unique suffix>` in the same directory with permissions `0600`. Recovery is reported once, and a successful early fetch saves a fresh catalog so later refreshes and offline starts work. If Pi cannot save the catalog, the fetched models are still served from memory for that run. An empty list from the gateway stays empty.
 - **Credential storage is required for prompting.** If Pi cannot read `auth.json` (for example a read-only agent dir), the early fetch falls back to `AZIZAM_API_KEY`, so the models are still discovered and `--provider azizam --model <id>` resolves. That is all this guarantees: Pi reads the same store again to list available models and to authenticate each request, so prompting fails (`Credential store read failed`) until the store is readable.
 - **Time limit.** Restore, key lookup and fetch share one 10 second budget, matching the default model-list request timeout. Restore and key lookup get a quarter each, so a stalled store cannot starve the fetch, and the `AZIZAM_API_KEY` fallback always has at least half of the budget. `AZIZAM_MODELS_TIMEOUT_MS` controls the request timeout but does not extend the startup budget. If discovery fails or exceeds the budget without a usable cache, the extension prints an actionable error to stderr even without `AZIZAM_DEBUG`; short-lived commands such as `--list-models` cannot rely on Pi's background refresh to report it. Pi still starts, and its background refresh can recover. One step has no limit we can set: Pi runs a `models.json` `!command` key with a blocking call (Pi caps it at 10 seconds), and nothing can interrupt that. A slow password-manager command can therefore exceed the shared startup budget by up to 10 seconds. Use `auth.json` (`/login azizam`) or `AZIZAM_API_KEY` to avoid it.
 - **Other providers are not touched.** Registering a provider in Pi's `ModelRuntime` normally starts a refresh that checks credentials for every provider, including `!command` keys of unrelated providers. The extension suppresses that one call, so only Azizam's key is resolved. This relies on Pi 1.0.x calling it synchronously inside `registerNativeProvider`; Pi has no scoped registration API.
@@ -138,6 +140,8 @@ Example entry:
 | `rejected the API key (HTTP 401)` | Wrong or expired key. |
 | `returned 404 … include the API prefix` | `AZIZAM_BASE_URL` is missing `/v1`. |
 | `did not return JSON` | The URL points at a web page, not the API. |
+| `Timed out after … ms` | The request or response body stalled. Transport diagnostics use only allowlisted error codes for timeout, connection refusal, DNS or TLS; other failures are reported as network errors. Arbitrary transport-cause text is never included. |
+| `AZIZAM_BASE_URL and models.json baseUrl conflict` | Remove one URL setting or make both match before retrying. No discovery credentials are sent. |
 | Every model of the gateway is listed, including image/audio | The gateway does not emit contract metadata yet. Run with `AZIZAM_DEBUG=1` to see `filter: unfiltered`. |
 | Requests fail with `max_tokens` or `developer` role errors | Override `compat` / `maxTokens` per model in `models.json` (see above). |
 | Models disappear after changing the gateway | Pi restores the old catalog until the next successful refresh. Restart Pi with the new `AZIZAM_BASE_URL`. |
@@ -156,7 +160,7 @@ See [Before publishing](#before-publishing) for the release checklist.
 
 ## Compatibility
 
-Tested with Pi 1.0.4. The peer range is `>=1.0.4 <2` for `@earendil-works/pi-ai` and `@earendil-works/pi-coding-agent`. The cold start uses Pi's `ModelRuntime` and relies on `registerNativeProvider` calling `refresh()` synchronously. The real-runtime control test (`test/runtime-isolation.test.ts`) is the upgrade gate: run `npm test` against a new Pi version before you widen the range.
+Tested with Pi 1.0.4. The peer range is `>=1.0.4 <2` for `@earendil-works/pi-ai` and `@earendil-works/pi-coding-agent`. The cold start uses Pi's `ModelRuntime` and relies on `registerNativeProvider` calling `refresh()` synchronously. URL resolution and catalog recovery use Pi's internal `ModelConfig`, `FileModelsStore` and `FileAuthStorageBackend` modules, located through its public `getPackageDir()`. The real-runtime control test (`test/runtime-isolation.test.ts`) and the real-Pi URL and store recovery tests are the upgrade gates: run `npm test` against a new Pi version before you widen the range.
 
 ## Before publishing
 

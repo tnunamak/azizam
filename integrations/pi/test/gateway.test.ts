@@ -71,6 +71,54 @@ test("gateway down: clear message, no key; timeout: clear message", async () => 
 	await assert.rejects(fetchCatalog({ baseUrl, fetch: hang, timeoutMs: 20 }), /Timed out after 20 ms/);
 });
 
+test("transport errors expose only allowlisted cause categories", async () => {
+	const cases: [string, string][] = [
+		["ETIMEDOUT", "timed out"], ["ECONNREFUSED", "connection was refused"], ["ENOTFOUND", "DNS lookup failed"],
+		["CERT_HAS_EXPIRED", "TLS certificate"], ["EOTHER", "network error"], ["__proto__", "network error"], ["toString", "network error"],
+	];
+	for (const [code, expected] of cases) {
+		const fetcher: typeof fetch = async () => { throw Object.assign(new Error("secret arbitrary transport detail"), { cause: { code, message: "secret arbitrary transport detail" } }); };
+		await assert.rejects(fetchCatalog({ baseUrl: "http://gateway/v1", fetch: fetcher }), (error: Error) => {
+			assert.match(error.message, new RegExp(expected));
+			assert.ok(!error.message.includes("secret arbitrary transport detail"));
+			return true;
+		});
+	}
+});
+
+test("fetch rejects same-origin redirects without requesting the target", async () => {
+	const gw = await startMockGateway();
+	try {
+		gw.setRedirect(true);
+		await assert.rejects(fetchCatalog({ baseUrl: gw.baseUrl }));
+		assert.deepEqual(gw.requests.map((request) => request.url), ["/v1/models"]);
+	} finally {
+		await gw.close();
+	}
+});
+
+test("body-read caller abort is propagated untouched", async () => {
+	const bodyResponse = (json: () => Promise<unknown>) => ({ ok: true, status: 200, json }) as Response;
+	const ctrl = new AbortController();
+	const callerAbort = fetchCatalog({ baseUrl: "http://gateway/v1", signal: ctrl.signal, fetch: async () => bodyResponse(() => new Promise((_r, reject) => {
+		if (ctrl.signal.aborted) reject(new Error("body aborted"));
+		else ctrl.signal.addEventListener("abort", () => reject(new Error("body aborted")), { once: true });
+	})) });
+	ctrl.abort();
+	await assert.rejects(callerAbort, (error: Error) => error.name === "AbortError");
+});
+
+test("partial response body timeout is reported as timeout", async () => {
+	const gw = await startMockGateway();
+	try {
+		gw.setPartialBody(true);
+		await assert.rejects(fetchCatalog({ baseUrl: gw.baseUrl, timeoutMs: 30 }), /Timed out after 30 ms/);
+		assert.deepEqual(gw.requests.map((request) => request.url), ["/v1/models"]);
+	} finally {
+		await gw.close();
+	}
+});
+
 test("caller abort is propagated untouched", async () => {
 	const ctrl = new AbortController();
 	const hang: typeof fetch = (_url, init) =>
