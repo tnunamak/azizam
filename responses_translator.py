@@ -13,6 +13,8 @@ Mapping summary (Responses -> Chat Completions, on request):
   tools[type=function]          -> tools[type=function]  (shape differs)
   tools[type=custom]            -> function with one string `input` parameter
                                    (grammar is advisory description text)
+  tools[type=namespace]         -> flattened functions with request-local aliases
+  tools[type=tool_search]       -> function when execution=client; hosted search rejected
   tools[type=hosted]            -> 400 not_supported_error
   tool_choice                   -> tool_choice (compatible shapes pass through)
   parallel_tool_calls           -> parallel_tool_calls
@@ -31,7 +33,8 @@ Mapping summary (Responses -> Chat Completions, on request):
 Mapping back (Chat Completions -> Responses, on response):
   choices[0].message.content    -> output: [ {type: message, role: assistant,
                                               content: [{type: output_text, text: ...}]} ]
-  choices[0].message.tool_calls -> function_call or custom_tool_call, by request tool name
+  choices[0].message.tool_calls -> function_call, custom_tool_call, or client tool_search_call;
+                                   original namespace/name restored by the request mapping
   usage                         -> usage (input_tokens / output_tokens / total_tokens)
   finish_reason=length          -> status=incomplete, incomplete_details
 
@@ -48,6 +51,7 @@ Notes:
 from __future__ import annotations
 
 import codecs
+import copy
 import hashlib
 import json
 import secrets
@@ -199,6 +203,20 @@ def _input_item_to_messages(item: dict, *, param: str = "input") -> list[dict]:
         )
     if itype == "custom_tool_call" and not isinstance(item.get("input"), str):
         raise ResponsesTranslationError("Custom tool call input must be a string.", param=f"{param}.input")
+    if itype in ("tool_search_call", "tool_search_output"):
+        if item.get("execution") != "client":
+            raise ResponsesTranslationError(
+                "Azizam supports client-executed tool_search only; hosted search is unavailable.",
+                code="hosted_tool_not_supported", param=f"{param}.execution",
+            )
+        if itype == "tool_search_call":
+            if not isinstance(item.get("arguments"), dict):
+                raise ResponsesTranslationError("tool_search arguments must be an object.", param=f"{param}.arguments")
+            return _input_item_to_messages({**item, "type": "function_call", "name": "tool_search",
+                                           "arguments": json.dumps(item["arguments"], ensure_ascii=False)}, param=param)
+        return [{"role": "tool", "tool_call_id": item.get("call_id") or "",
+                 "content": json.dumps({"tools": item.get("tools", [])}, ensure_ascii=False),
+                 "_azizam_discovered_tools": item.get("tools", [])}]
     # "message" is the common case. Easy-input messages without an explicit
     # type still have role + content and should be treated as messages.
     if itype == "message" or (itype is None and "role" in item):
@@ -218,6 +236,7 @@ def _input_item_to_messages(item: dict, *, param: str = "input") -> list[dict]:
                 "type": "function",
                 "function": {
                     "name": item.get("name", ""),
+                    **({"namespace": item["namespace"]} if item.get("namespace") is not None else {}),
                     "arguments": (
                         json.dumps({"input": item["input"]}, ensure_ascii=False)
                         if itype == "custom_tool_call"
@@ -277,6 +296,154 @@ def _input_to_messages(input_value: Any) -> list[dict]:
     )
 
 
+class ToolMapping:
+    """One request's reversible tool identities, including replay and discovery.
+
+    Chat function names have no namespace and must fit 64 ASCII characters.
+    Flat names retain their spelling; namespaced identities get a deterministic
+    digest alias. Reserve flat/history names first and resolve any alias clash.
+    The mapping stays in the gateway and is shared by both translation directions.
+    """
+
+    def __init__(self, req: dict, prior_messages: Optional[list[dict]] = None):
+        self.tools: list[dict] = []
+        self.identities: dict[tuple[Optional[str], str], str] = {}
+        definitions: dict[tuple[Optional[str], str], dict] = {}
+
+        def add_tools(tools: Any, param: str, *, discovered: bool = False) -> None:
+            if tools is None:
+                return
+            if not isinstance(tools, list):
+                raise ResponsesTranslationError("Tools must be an array.", param=param)
+            for index, tool in enumerate(tools):
+                path = f"{param}[{index}]"
+                if not isinstance(tool, dict):
+                    raise ResponsesTranslationError("Tool must be an object.", param=path)
+                if tool.get("type") == "namespace":
+                    namespace = tool.get("name")
+                    if not isinstance(namespace, str) or not namespace:
+                        raise ResponsesTranslationError("Namespace requires a non-empty name.", param=path + ".name")
+                    if tool.get("description") is not None and not isinstance(tool["description"], str):
+                        raise ResponsesTranslationError("Namespace description must be a string.", param=path + ".description")
+                    nested = tool.get("tools")
+                    if not isinstance(nested, list):
+                        raise ResponsesTranslationError("Namespace tools must be an array.", param=path + ".tools")
+                    for child_index, child in enumerate(nested):
+                        child_path = f"{path}.tools[{child_index}]"
+                        if not isinstance(child, dict) or child.get("type") not in ("function", "custom"):
+                            raise ResponsesTranslationError("Namespace members must be function or custom tools.", param=child_path)
+                        add(child, namespace, tool.get("description") or "", child_path, discovered)
+                else:
+                    add(tool, None, "", path, discovered)
+
+        def add(tool: dict, namespace: Optional[str], description: str, path: str, discovered: bool) -> None:
+            kind = tool.get("type")
+            if kind == "tool_search":
+                if tool.get("execution") != "client":
+                    raise ResponsesTranslationError(
+                        "Azizam supports tool_search with execution='client' only. Codex performs discovery; hosted search is unavailable.",
+                        code="hosted_tool_not_supported", param=path + ".execution",
+                    )
+                name = "tool_search"
+            else:
+                inner = tool.get("function") if isinstance(tool.get("function"), dict) else {}
+                name = tool.get("name") or inner.get("name")
+            # Retain the established hosted/unknown-tool errors.
+            if kind not in ("function", "custom", "tool_search"):
+                try:
+                    _translate_tools([tool])
+                except ResponsesTranslationError as error:
+                    error.param = (error.param or "tools[0]").replace("tools[0]", path, 1)
+                    raise
+            if not isinstance(name, str) or not name:
+                raise ResponsesTranslationError("Tool requires a non-empty name.", param=path + ".name")
+            if (namespace is not None or kind == "tool_search") and "parameters" in tool and not isinstance(tool["parameters"], dict):
+                raise ResponsesTranslationError("Tool parameter schema must be an object.", param=path + ".parameters")
+            identity = (namespace, name)
+            if identity in definitions:
+                if discovered:
+                    return
+                if namespace is not None or self.identities[identity] != kind or kind != "function":
+                    raise ResponsesTranslationError("Tool identities must be unique.", param=path)
+            definitions[identity] = tool
+            self.identities[identity] = kind
+            self.tools.append({"identity": identity, "tool": tool, "description": description, "path": path})
+
+        add_tools(req.get("tools"), "tools")
+        for message in prior_messages or []:
+            if "_azizam_discovered_tools" in message:
+                add_tools(message["_azizam_discovered_tools"], "previous_response_id.tools", discovered=True)
+        input_items = req.get("input") if isinstance(req.get("input"), list) else []
+        for index, item in enumerate(input_items):
+            if isinstance(item, dict) and item.get("type") == "tool_search_output":
+                if item.get("execution") != "client":
+                    raise ResponsesTranslationError("Hosted tool_search output is unavailable.", code="hosted_tool_not_supported", param=f"input[{index}].execution")
+                add_tools(item.get("tools"), f"input[{index}].tools", discovered=True)
+        # Replayed calls need an alias even if their declaration is no longer active.
+        history = list(prior_messages or [])
+        for item in input_items:
+            if isinstance(item, dict) and item.get("type") in ("function_call", "custom_tool_call", "tool_search_call"):
+                history.extend(_input_item_to_messages(item))
+        for message in history:
+            for call in message.get("tool_calls") or []:
+                fn = call.get("function") or {}
+                namespace, name = fn.get("namespace"), fn.get("name", "")
+                if namespace is not None and (not isinstance(namespace, str) or not namespace):
+                    raise ResponsesTranslationError("Call namespace must be a non-empty string.", param="input")
+                if not isinstance(name, str):
+                    raise ResponsesTranslationError("Call name must be a string.", param="input")
+                self.identities.setdefault((namespace, name), "function")
+
+        reserved = {name for namespace, name in self.identities if namespace is None}
+        self.forward: dict[tuple[Optional[str], str], str] = {}
+        for identity in sorted(self.identities, key=lambda value: (value[0] or "", value[1])):
+            namespace, name = identity
+            alias = name
+            if namespace is not None:
+                salt = 0
+                while True:
+                    encoded = json.dumps([namespace, name, salt], ensure_ascii=False).encode()
+                    alias = "ns__" + hashlib.sha256(encoded).hexdigest()[:60]
+                    if alias not in reserved:
+                        break
+                    salt += 1
+                reserved.add(alias)
+            self.forward[identity] = alias
+        self.reverse = {alias: identity for identity, alias in self.forward.items()}
+        self.custom_names = {self.forward[identity] for identity, kind in self.identities.items() if kind == "custom"}
+        self.search_names = {self.forward[identity] for identity, kind in self.identities.items() if kind == "tool_search"}
+        self.buffer_calls = bool(self.custom_names or self.search_names or any(namespace is not None for namespace, _ in self.identities))
+
+    def chat_tools(self) -> list[dict]:
+        result = []
+        for entry in self.tools:
+            tool = entry["tool"]
+            if tool["type"] == "tool_search":
+                tool = {**tool, "type": "function", "name": "tool_search"}
+            try:
+                translated = copy.deepcopy(_translate_tools([tool])[0])
+            except ResponsesTranslationError as error:
+                error.param = (error.param or "tools[0]").replace("tools[0]", entry["path"], 1)
+                raise
+            fn = translated["function"]
+            fn["name"] = self.forward[entry["identity"]]
+            namespace, name = entry["identity"]
+            if namespace is not None:
+                fn["description"] = f"Namespace: {namespace}. Tool: {name}.\n{entry['description']}\n{fn.get('description', '')}".strip()
+            result.append(translated)
+        return result
+
+    def chat_messages(self, messages: list[dict]) -> list[dict]:
+        messages = copy.deepcopy(messages)
+        for message in messages:
+            message.pop("_azizam_discovered_tools", None)
+            for call in message.get("tool_calls") or []:
+                fn = call.get("function") or {}
+                identity = (fn.pop("namespace", None), fn.get("name", ""))
+                fn["name"] = self.forward.get(identity, identity[1])
+        return messages
+
+
 def _translate_tools(tools: Any) -> list[dict]:
     """Translate Responses `tools` -> Chat Completions `tools`.
 
@@ -300,7 +467,7 @@ def _translate_tools(tools: Any) -> list[dict]:
         if ttype in HOSTED_TOOL_TYPES:
             raise ResponsesTranslationError(
                 f"Hosted tool '{ttype}' is not supported by this proxy. "
-                f"Only function and custom tools are accepted; the gateway has no first-party search, "
+                f"Function, custom, namespace and client tool_search tools are accepted; the gateway has no first-party search, "
                 f"file search, code interpreter, or computer-use surface.",
                 code="hosted_tool_not_supported",
                 param=f"tools[{i}].type",
@@ -462,6 +629,7 @@ def to_chat_completions(
     req: dict,
     *,
     prior_messages: Optional[list[dict]] = None,
+    tool_mapping: Optional[ToolMapping] = None,
 ) -> dict:
     """Translate a Responses request body to a Chat Completions request body.
 
@@ -471,6 +639,7 @@ def to_chat_completions(
     """
     if not isinstance(req, dict):
         raise ResponsesTranslationError("Request body must be a JSON object.")
+    tool_mapping = tool_mapping or ToolMapping(req, prior_messages)
 
     for field, what in (
         ("background", "background responses"),
@@ -512,7 +681,7 @@ def to_chat_completions(
 
     cc: dict = {
         "model": req.get("model") or "default",
-        "messages": messages,
+        "messages": tool_mapping.chat_messages(messages),
     }
 
     # Streaming. Ask for the usage chunk so the final response reports tokens.
@@ -541,12 +710,24 @@ def to_chat_completions(
         cc["max_tokens"] = req["max_completion_tokens"]
 
     # Tools
-    tools = _translate_tools(req.get("tools"))
+    tools = tool_mapping.chat_tools()
     if tools:
         cc["tools"] = tools
 
     tc = _translate_tool_choice(req.get("tool_choice"))
+    if isinstance(req.get("tool_choice"), dict) and req["tool_choice"].get("type") == "tool_search":
+        if not any(entry["tool"]["type"] == "tool_search" for entry in tool_mapping.tools):
+            raise ResponsesTranslationError("tool_search choice requires a client tool_search declaration.", param="tool_choice")
+        tc = {"type": "function", "function": {"name": next(iter(tool_mapping.search_names))}}
     if tc is not None:
+        if isinstance(tc, dict) and tc.get("type") == "function":
+            choice = req.get("tool_choice") or {}
+            if choice.get("namespace") is not None and (not isinstance(choice["namespace"], str) or not choice["namespace"]):
+                raise ResponsesTranslationError("Tool choice namespace must be a non-empty string.", param="tool_choice.namespace")
+            identity = (choice.get("namespace"), tc["function"]["name"])
+            if identity[0] is not None and not any(entry["identity"] == identity for entry in tool_mapping.tools):
+                raise ResponsesTranslationError("Namespaced tool choice must name a declared tool.", param="tool_choice")
+            tc["function"]["name"] = tool_mapping.forward.get(identity, identity[1])
         cc["tool_choice"] = tc
 
     # text.format -> response_format
@@ -577,6 +758,8 @@ def _echo_tools(tools: Any) -> list:
     """
     out: list = []
     for tool in tools if isinstance(tools, list) else []:
+        if isinstance(tool, dict) and tool.get("type") == "namespace":
+            tool = {**tool, "description": tool.get("description", ""), "tools": _echo_tools(tool.get("tools"))}
         if isinstance(tool, dict) and tool.get("type") == "function":
             tool = {
                 **tool,
@@ -622,12 +805,6 @@ def _reasoning_item(item_id: str, text: str, status: str = "completed") -> dict:
     }
 
 
-def _custom_tool_names(req: dict) -> set[str]:
-    """Request-local identity; never send translation metadata to a backend."""
-    return {tool["name"] for tool in req.get("tools") or []
-            if isinstance(tool, dict) and tool.get("type") == "custom" and isinstance(tool.get("name"), str)}
-
-
 def _custom_tool_input(arguments: str) -> str:
     """Decode only the advertised wrapper, never guess at a malformed tool call."""
     try:
@@ -640,20 +817,31 @@ def _custom_tool_input(arguments: str) -> str:
 
 
 def _tool_call_item(*, item_id: str, call_id: str, name: str, arguments: str,
-                    custom_names: set[str], status: str = "completed") -> dict:
+                    custom_names: set[str], status: str = "completed", tool_mapping: Optional[ToolMapping] = None) -> dict:
+    if tool_mapping is not None and name in tool_mapping.search_names:
+        try:
+            value = json.loads(arguments) if status == "completed" else {}
+        except (ValueError, TypeError) as error:
+            raise ValueError("Upstream tool_search arguments must be a JSON object.") from error
+        if not isinstance(value, dict):
+            raise ValueError("Upstream tool_search arguments must be a JSON object.")
+        return {"id": item_id, "type": "tool_search_call", "call_id": call_id,
+                "status": status, "execution": "client", "arguments": value}
     custom = name in custom_names
+    namespace, original_name = tool_mapping.reverse.get(name, (None, name)) if tool_mapping else (None, name)
     return {
         "id": item_id,
         "type": "custom_tool_call" if custom else "function_call",
         **({} if custom else {"status": status}),
         "call_id": call_id,
-        "name": name,
+        "name": original_name,
+        **({"namespace": namespace} if namespace is not None else {}),
         **({"input": _custom_tool_input(arguments) if status == "completed" else ""}
            if custom else {"arguments": arguments}),
     }
 
 
-def _build_output_items_from_message(msg: dict, custom_names: set[str]) -> list[dict]:
+def _build_output_items_from_message(msg: dict, custom_names: set[str], tool_mapping: Optional[ToolMapping] = None) -> list[dict]:
     """Map a Chat Completions assistant message to Responses output items.
 
     llama-server returns reasoning in a separate `reasoning_content` field
@@ -691,7 +879,7 @@ def _build_output_items_from_message(msg: dict, custom_names: set[str]) -> list[
         items.append(_tool_call_item(
             item_id=("ctc_" if name in custom_names else "fc_") + secrets.token_hex(12),
             call_id=tc.get("id") or ("call_" + secrets.token_hex(8)),
-            name=name, arguments=fn.get("arguments", "") or "", custom_names=custom_names,
+            name=name, arguments=fn.get("arguments", "") or "", custom_names=custom_names, tool_mapping=tool_mapping,
         ))
     return items
 
@@ -743,12 +931,14 @@ def from_chat_completions(
     response_id: str,
     created_at: int,
     original_request: dict,
+    tool_mapping: Optional[ToolMapping] = None,
 ) -> dict:
     """Translate a Chat Completions response body to a Responses response body."""
     choices = cc_resp.get("choices") or []
     first = choices[0] if choices else {}
     msg = first.get("message") or {}
-    output = _build_output_items_from_message(msg, _custom_tool_names(original_request))
+    tool_mapping = tool_mapping or ToolMapping(original_request)
+    output = _build_output_items_from_message(msg, tool_mapping.custom_names, tool_mapping)
 
     finish_reason = first.get("finish_reason")
     status = "completed"
@@ -829,7 +1019,7 @@ def stored_chain_to_messages(chain: list[dict]) -> list[dict]:
             if itype == "message":
                 text = _coerce_content_to_text(item.get("content"))
                 messages.append({"role": "assistant", "content": text})
-            elif itype in ("function_call", "custom_tool_call"):
+            elif itype in ("function_call", "custom_tool_call", "tool_search_call", "tool_search_output"):
                 messages.extend(_input_item_to_messages(item))
     return messages
 
@@ -880,11 +1070,13 @@ class StreamTranslator:
     The translator tracks output-item indexes so deltas can reference them.
     """
 
-    def __init__(self, *, response_id: str, created_at: int, original_request: dict):
+    def __init__(self, *, response_id: str, created_at: int, original_request: dict, tool_mapping: Optional[ToolMapping] = None):
         self.response_id = response_id
         self.created_at = int(created_at)
         self.original_request = original_request
-        self._custom_names = _custom_tool_names(original_request)
+        self._tool_mapping = tool_mapping or ToolMapping(original_request)
+        self._custom_names = self._tool_mapping.custom_names
+        self._buffer_calls = self._tool_mapping.buffer_calls
         self._seq = 0
         self._started = False
         self._buf = ""
@@ -1082,7 +1274,7 @@ class StreamTranslator:
 
     def _ensure_tool_call_item(self, tc_index: int, tc_id: Optional[str], name: Optional[str]) -> tuple[list[bytes], dict]:
         out_events: list[bytes] = self._close_reasoning()
-        if self._custom_names:
+        if self._buffer_calls:
             # Buffer mixed tool calls until names and JSON wrappers are complete.
             # A name can itself arrive in fragments; announcing it early could
             # incorrectly commit a custom call to the function-call wire shape.
@@ -1259,7 +1451,7 @@ class StreamTranslator:
                 events.extend(ev)
                 if args_chunk:
                     entry["arguments"] += args_chunk
-                    if self._custom_names:
+                    if self._buffer_calls:
                         continue
                     events.append(sse_pack("response.function_call_arguments.delta", {
                         "type": "response.function_call_arguments.delta",
@@ -1292,12 +1484,12 @@ class StreamTranslator:
                 events.extend(self.fail("Upstream stream ended with incomplete UTF-8."))
         if not self._error and self._finish_reason is None:
             events.extend(self.fail("Upstream stream ended without a finish_reason."))
-        if self._custom_names and not self._error:
+        if self._buffer_calls and not self._error:
             try:
                 for entry in self._tool_calls.values():
                     entry["item"] = _tool_call_item(
                         item_id=entry["item_id"], call_id=entry["call_id"], name=entry["name"],
-                        arguments=entry["arguments"], custom_names=self._custom_names,
+                        arguments=entry["arguments"], custom_names=self._custom_names, tool_mapping=self._tool_mapping,
                     )
             except ValueError as error:
                 events.extend(self.fail(str(error), code="upstream_error"))
@@ -1342,16 +1534,33 @@ class StreamTranslator:
 
         # Close tool-call items.
         for tc_index, entry in self._tool_calls.items():
-            if self._custom_names and self._error:
+            if self._buffer_calls and self._error:
                 continue
             item = entry.get("item") or _tool_call_item(
                 item_id=entry["item_id"], call_id=entry["call_id"], name=entry["name"],
-                arguments=entry["arguments"], custom_names=self._custom_names,
+                arguments=entry["arguments"], custom_names=self._custom_names, tool_mapping=self._tool_mapping,
             )
+            if item["type"] == "tool_search_call":
+                entry["order_index"] = len(self._output_order)
+                self._output_order.append(("function_call", tc_index))
+                events.append(sse_pack("response.output_item.added", {
+                    "type": "response.output_item.added", "sequence_number": self._next_seq(),
+                    "output_index": entry["order_index"],
+                    "item": _tool_call_item(
+                        item_id=entry["item_id"], call_id=entry["call_id"], name=entry["name"],
+                        arguments="", custom_names=self._custom_names, tool_mapping=self._tool_mapping, status="in_progress",
+                    ),
+                }))
+                events.append(sse_pack("response.output_item.done", {
+                    "type": "response.output_item.done", "sequence_number": self._next_seq(),
+                    "output_index": entry["order_index"], "item": item,
+                }))
+                entry["emitted"] = True
+                continue
             custom = item["type"] == "custom_tool_call"
             event_prefix = "response.custom_tool_call_input" if custom else "response.function_call_arguments"
             field = "input" if custom else "arguments"
-            if self._custom_names:
+            if self._buffer_calls:
                 # Do not reserve an output slot before its added event. SDK
                 # accumulators append items and index subsequent deltas directly.
                 entry["order_index"] = len(self._output_order)
@@ -1362,7 +1571,7 @@ class StreamTranslator:
                     "output_index": entry["order_index"],
                     "item": _tool_call_item(
                         item_id=entry["item_id"], call_id=entry["call_id"], name=entry["name"],
-                        arguments="", custom_names=self._custom_names, status="in_progress",
+                        arguments="", custom_names=self._custom_names, tool_mapping=self._tool_mapping, status="in_progress",
                     ),
                 }))
                 if item[field]:
@@ -1428,11 +1637,11 @@ class StreamTranslator:
                 })
             elif kind == "function_call":
                 entry = self._tool_calls.get(key)
-                if not entry or (self._custom_names and not entry.get("emitted")):
+                if not entry or (self._buffer_calls and not entry.get("emitted")):
                     continue
                 output.append(entry.get("item") or _tool_call_item(
                     item_id=entry["item_id"], call_id=entry["call_id"], name=entry["name"],
-                    arguments=entry["arguments"], custom_names=self._custom_names,
+                    arguments=entry["arguments"], custom_names=self._custom_names, tool_mapping=self._tool_mapping,
                 ))
 
         status = "completed"
