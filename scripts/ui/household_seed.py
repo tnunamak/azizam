@@ -813,7 +813,15 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
         "provider_admin",
         {
             "providers": {
-                "household-remote": {"caps": {"daily_usd": 1, "monthly_usd": 8}}
+                "household-remote": {
+                    "caps": {"daily_usd": 1, "monthly_usd": 8},
+                    # The last connection test failed; only this scenario stores one.
+                    **(
+                        {"connection": {"reachable": False, "checked_at": now - 120}}
+                        if scenario == "provider-down"
+                        else {}
+                    ),
+                }
             },
             "global_caps": {"daily_usd": 1, "monthly_usd": 8},
         },
@@ -1086,6 +1094,8 @@ def _media(state, paths, apps, hashes, now, rng):
             rng, {"image": 14000, "audio": 1400, "video": 95000}[kind], 0.35, 300, 600000
         )
         request_id = f"req_household_asset_{index:02}"
+        # The cache ages files by mtime; match it to the asset's own creation time.
+        os.utime(cache / f"{digest}{source.suffix}", (ts, ts))
         (cache / f"{digest}.meta.json").write_text(
             json.dumps(
                 {

@@ -31,12 +31,25 @@ if os.environ.get("UI_SEED_PROFILE") == "household":
         def time():
             return int(os.environ.get("UI_HOUSEHOLD_NOW") or FIXED_NOW) + 0.0
 
+    import datetime as _datetime
+
+    class _FrozenDatetime(_datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls.fromtimestamp(_FrozenTime.time(), tz)
+
+        @classmethod
+        def utcnow(cls):
+            return cls.fromtimestamp(_FrozenTime.time(), _datetime.timezone.utc).replace(tzinfo=None)
+
     import proxy  # noqa: F401  (load repo modules before freezing them)
 
     for _module in list(sys.modules.values()):
         _file = getattr(_module, "__file__", None) or ""
         if getattr(_module, "time", None) is _time and "/venv/" not in _file and "scripts/ui" not in _file and _file.startswith(os.environ["PYTHONPATH"]):
             _module.time = _FrozenTime()
+        if getattr(_module, "datetime", None) is _datetime.datetime and _file.startswith(os.environ["PYTHONPATH"]) and "/venv/" not in _file and "scripts/ui" not in _file:
+            _module.datetime = _FrozenDatetime
     # Keep the profile's thirty-day operational history across startup pruning.
     from gateway import receipt_store, media_jobs, media_delivery
     from pathlib import Path

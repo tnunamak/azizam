@@ -272,6 +272,9 @@ def test_provider_down_scenario(tmp_path):
     assert len(failed) == details["failed_requests"] == 5
     assert all(r["remote"] and r["metadata"]["status_code"] == 503 for r in failed)
     assert all(r["accepted_at_ms"] // 1000 > details["last_success_at"] for r in failed)
+    with sqlite3.connect(tmp_path / "admin.db") as conn:
+        setting = json.loads(conn.execute("SELECT value_json FROM operator_settings WHERE key='provider_admin'").fetchone()[0])
+    assert setting["providers"]["household-remote"]["connection"]["reachable"] is False
     from scripts.ui.household_seed import registry
 
     caps = registry(18185, "provider-down")
