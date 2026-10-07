@@ -1823,43 +1823,62 @@ def _stored_oidc_access_names_for_user(user_id: str) -> dict[str, list[str]]:
     return out
 
 
-def _default_profile_id_for_user(
+def _default_plan_for_user(
     *,
     email: str,
     role: str,
     oidc_groups: Iterable[str] = (),
     oidc_roles: Iterable[str] = (),
-) -> str | None:
+) -> dict[str, Any]:
     normalized_email = email.strip().lower()
-    mapped_profile = admin_store.resolve_runtime_profile_mapping(
+    mapping = admin_store.resolve_runtime_profile_mapping_details(
         email=normalized_email,
         gateway_role=role,
         oidc_groups=oidc_groups,
         oidc_roles=oidc_roles,
         path=ADMIN_STORE.path,
     )
-    if mapped_profile:
-        return _profile_ref_to_store_id(mapped_profile)
+    if mapping:
+        source = {"oidc_group": "group", "oidc_role": "role", "gateway_role": "role",
+                  "all_users": "gateway_default"}.get(mapping["source_kind"], mapping["source_kind"])
+        return {"profile_id": _profile_ref_to_store_id(mapping["profile_id"]), "plan_source": source}
 
     if _user_defaults_seeded_in_admin_db():
-        return None
+        return {"profile_id": None, "plan_source": "gateway_default"}
 
     if normalized_email:
         profile_id = _profile_from_map("email_profile_ids", normalized_email)
         if profile_id:
-            return profile_id
+            return {"profile_id": profile_id, "plan_source": "email"}
         _, _, domain = normalized_email.partition("@")
         if domain:
             profile_id = _profile_from_map("domain_profile_ids", domain)
             if profile_id:
-                return profile_id
+                return {"profile_id": profile_id, "plan_source": "domain"}
 
     normalized_role = (role or "none").strip().lower() or "none"
     profile_id = _profile_from_map("role_profile_ids", normalized_role)
     if profile_id:
-        return profile_id
+        return {"profile_id": profile_id, "plan_source": "role"}
 
-    return _profile_ref_to_store_id(user_defaults_cfg.get("default_profile_id"))
+    return {"profile_id": _profile_ref_to_store_id(user_defaults_cfg.get("default_profile_id")),
+            "plan_source": "gateway_default"}
+
+
+def _default_profile_id_for_user(**kwargs) -> str | None:
+    return _default_plan_for_user(**kwargs)["profile_id"]
+
+
+def _effective_plan_for_person(person: Mapping[str, Any]) -> dict[str, Any]:
+    user_id = str(person["id"])
+    assigned = accounts.profile_for_user(user_id, path=ADMIN_STORE.path)
+    if assigned:
+        return {"profile_id": _profile_ref_to_store_id(assigned), "plan_source": "assigned"}
+    oidc_access = _stored_oidc_access_names_for_user(user_id)
+    return _default_plan_for_user(
+        email=str(person.get("email") or ""), role=_admin_role_for_user_id(user_id),
+        oidc_groups=oidc_access["oidc_group"], oidc_roles=oidc_access["oidc_role"],
+    )
 
 
 def _admin_role_for_user_id(user_id: str) -> str:
@@ -1879,16 +1898,7 @@ def _admin_role_for_user_id(user_id: str) -> str:
 
 def _default_profile_id_for_session(session) -> str | None:
     user_id = str(getattr(session, "subject", "") or "")
-    account_profile = accounts.profile_for_user(user_id, path=ADMIN_STORE.path)
-    if account_profile:
-        return _profile_ref_to_store_id(account_profile)
-    oidc_access = _stored_oidc_access_names_for_user(user_id)
-    return _default_profile_id_for_user(
-        email=str(getattr(session, "email", "") or ""),
-        role=_admin_role_for_user_id(user_id),
-        oidc_groups=oidc_access["oidc_group"],
-        oidc_roles=oidc_access["oidc_role"],
-    )
+    return _effective_plan_for_person({"id": user_id, "email": getattr(session, "email", "")})["profile_id"]
 
 
 def _inherited_profile_id_for_app(app: Mapping[str, Any]) -> str | None:
@@ -1900,16 +1910,7 @@ def _inherited_profile_id_for_app(app: Mapping[str, Any]) -> str | None:
     user = admin_store.get_user(owner_user_id, path=ADMIN_STORE.path)
     if user is None or not is_human_user_record(user):
         return None
-    account_profile = accounts.profile_for_user(owner_user_id, path=ADMIN_STORE.path)
-    if account_profile:
-        return _profile_ref_to_store_id(account_profile)
-    oidc_access = _stored_oidc_access_names_for_user(owner_user_id)
-    return _default_profile_id_for_user(
-        email=str(user.get("email") or ""),
-        role=_admin_role_for_user_id(owner_user_id),
-        oidc_groups=oidc_access["oidc_group"],
-        oidc_roles=oidc_access["oidc_role"],
-    )
+    return _effective_plan_for_person(user)["profile_id"]
 
 
 def _provision_existing_user_personal_apps() -> int:
@@ -14559,10 +14560,10 @@ def _merged_admin_oidc_config_candidate(db_value: Mapping[str, Any] | None) -> d
     return merged
 
 
-def _validate_admin_oidc_db_candidate(db_value: Mapping[str, Any]) -> None:
+def _validate_admin_oidc_db_candidate(db_value: Mapping[str, Any]) -> bool:
     """Reject a write unless the live runtime parser accepts its merge."""
     validate_oidc_stored_override(db_value)
-    load_oidc_config(_merged_admin_oidc_config_candidate(db_value), env=os.environ)
+    return load_oidc_config(_merged_admin_oidc_config_candidate(db_value), env=os.environ).enabled
 
 
 async def _admin_oidc_config_with_discovery():
@@ -14849,6 +14850,7 @@ app.include_router(create_account_router(
     oidc_provider=lambda: {"enabled": _resolved_admin_oidc_config()[0].enabled},
     instance_provider=lambda: instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults()),
     client_ip_resolver=resolve_real_client_ip,
+    effective_plan_resolver=_effective_plan_for_person,
 ))
 
 
@@ -15779,6 +15781,8 @@ def _admin_service_override_controls(
 
 
 def _admin_media_job_admission_controls() -> list[dict[str, Any]]:
+    revision = admin_store.operator_setting_revision(admin_store.get_operator_setting(
+        "media_job_admission_overrides", path=ADMIN_STORE.path))
     effective = _effective_media_job_admission_cfg()
     override_present = bool(_operator_media_job_admission_overrides())
     summary_parts = []
@@ -15796,6 +15800,7 @@ def _admin_media_job_admission_controls() -> list[dict[str, Any]]:
             "key": "media-job-admission",
             "label": "Media job admission",
             "form": "media_job_admission",
+            "revision": revision,
             "action_url": "/admin/api/operator/media-job-admission",
             "method": "PUT",
             "current": effective,
@@ -16121,6 +16126,9 @@ async def admin_dashboard(request: Request):
     snapshot["model_visibility"] = _admin_model_visibility(status_payload)
     snapshot["identity_mappings"] = _admin_identity_mappings()
     try:
+        # Capture revision before values so a concurrent update fails closed.
+        snapshot["oidc_config_revision"] = admin_store.operator_setting_revision(
+            admin_store.get_operator_setting("oidc_provider_config", path=ADMIN_STORE.path))
         snapshot["oidc_config"] = _admin_oidc_config_snapshot()
     except Exception as exc:  # noqa: BLE001
         print(f"[proxy] admin OIDC setting read failed: {exc}", flush=True)
@@ -17151,13 +17159,7 @@ async def admin_oidc_callback(request: Request):
         role = "owner" if "owner" in effective_roles else "admin" if "admin" in effective_roles else "none"
         if _user_self_service_enabled() and _auto_create_personal_app_enabled():
             label = user.get("email") or user.get("display_name") or user["id"]
-            default_profile_id = accounts.profile_for_user(str(user["id"]), path=ADMIN_STORE.path) or _default_profile_id_for_user(
-                email=str(user.get("email") or ""),
-                role=role,
-                oidc_groups=oidc_access_names["oidc_group"],
-                oidc_roles=oidc_access_names["oidc_role"],
-            )
-            default_profile_id = _profile_ref_to_store_id(default_profile_id)
+            default_profile_id = _effective_plan_for_person(user)["profile_id"]
             app = admin_store.ensure_personal_app_for_user(
                 str(user["id"]),
                 name=f"{label} personal access",

@@ -261,7 +261,7 @@ test("expired invite links ask for a new invitation without retry", async ({
       },
     }),
   );
-  await page.route("**/auth/api/invite?**", (route) =>
+  await page.route("**/auth/api/invite", (route) =>
     route.fulfill({
       status: 404,
       json: {

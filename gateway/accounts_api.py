@@ -50,6 +50,10 @@ class Accept(_Body):
     password: str | None = None
 
 
+class InspectInvite(_Body):
+    token: str
+
+
 class Reset(_Body):
     token: str
     password: str
@@ -87,7 +91,8 @@ def signin_options(path, oidc: dict) -> dict:
 def create_account_router(*, path_provider: Callable, auth, session_reader, cookie_provider,
                           signing_key_provider, oidc_provider: Callable,
                           instance_provider: Callable | None = None,
-                          client_ip_resolver: Callable | None = None) -> APIRouter:
+                          client_ip_resolver: Callable | None = None,
+                          effective_plan_resolver: Callable | None = None) -> APIRouter:
     router = APIRouter(route_class=_AccountRoute, tags=["accounts"])
 
     def client_ip(request: Request) -> str:
@@ -152,9 +157,10 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         user = accounts.login(body.email, body.password, client_ip(request), path=path_provider())
         return issue(user, {"next": safe_browser_return_to(body.return_to)})
 
-    @router.get("/auth/api/invite")
-    def inspect(token: str = ""):
-        invite = accounts.inspect_invite(token, path=path_provider())
+    @router.post("/auth/api/invite")
+    def inspect(request: Request, body: InspectInvite):
+        same_origin(request)
+        invite = accounts.inspect_invite(body.token, path=path_provider())
         plan = admin_store.get_profile(invite["profile_id"], path=path_provider())
         return {"plan": plan, "email": invite["email"], "expires_at": invite["expires_at"],
                 "owner_name": "The gateway owner", "instance_name": options()["instance_name"]}
@@ -202,7 +208,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         ctx = owner(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        return {"people": accounts.people(path=path_provider()), "profiles": admin_store.list_profiles(path=path_provider())}
+        return {"people": accounts.people(path=path_provider(), effective_plan_resolver=effective_plan_resolver), "profiles": admin_store.list_profiles(path=path_provider())}
 
     @router.patch("/admin/api/people/{user_id}")
     def update_person(request: Request, user_id: str, body: Person):
@@ -211,7 +217,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
             return ctx
         if body.profile_id is None and body.disabled is None:
             raise accounts.AccountError("empty_update", "Choose an access plan or account state.")
-        accounts.change_person(user_id, ctx.subject, profile_id=body.profile_id, disabled=body.disabled, path=path_provider())
+        accounts.change_person(user_id, ctx.audit_actor_id, profile_id=body.profile_id, disabled=body.disabled, path=path_provider(), actor_kind=ctx.actor_kind, actor_label=ctx.actor_label)
         return {"ok": True}
 
     @router.delete("/admin/api/people/{user_id}")
@@ -219,7 +225,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         ctx = owner(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        accounts.change_person(user_id, ctx.subject, remove=True, path=path_provider())
+        accounts.change_person(user_id, ctx.audit_actor_id, remove=True, path=path_provider(), actor_kind=ctx.actor_kind, actor_label=ctx.actor_label)
         return {"ok": True}
 
     @router.post("/admin/api/people/{user_id}/reset")
@@ -227,7 +233,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         ctx = owner(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        link, token = accounts.create_link("reset", ctx.subject, user_id=user_id, expires_in=body.expires_in, path=path_provider())
+        link, token = accounts.create_link("reset", ctx.audit_actor_id, user_id=user_id, expires_in=body.expires_in, path=path_provider(), actor_kind=ctx.actor_kind, actor_label=ctx.actor_label)
         return {"url": f"/ui/sign-in/#reset={token}", "expires_at": link["expires_at"]}
 
     @router.get("/admin/api/invites")
@@ -245,8 +251,8 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         key = signing_key_provider()
         if not key:
             raise accounts.AccountError("sessions_unavailable", "Browser sessions are unavailable.", 503)
-        invite, token = accounts.create_link("invite", ctx.subject, token_factory=lambda link_id: accounts.invite_token(link_id, key), profile_id=body.profile_id,
-                                             email=body.email, expires_in=body.expires_in, path=path_provider())
+        invite, token = accounts.create_link("invite", ctx.audit_actor_id, token_factory=lambda link_id: accounts.invite_token(link_id, key), profile_id=body.profile_id,
+                                             email=body.email, expires_in=body.expires_in, path=path_provider(), actor_kind=ctx.actor_kind, actor_label=ctx.actor_label)
         return {"invite": invite, "url": f"/ui/invite/#token={token}"}
 
     @router.get("/admin/api/invites/{link_id}/link")
@@ -254,7 +260,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         ctx = owner(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        token = accounts.copy_invite(link_id, ctx.subject, signing_key_provider(), path=path_provider())
+        token = accounts.copy_invite(link_id, ctx.audit_actor_id, signing_key_provider(), path=path_provider(), actor_kind=ctx.actor_kind, actor_label=ctx.actor_label)
         return {"url": f"/ui/invite/#token={token}"}
 
     @router.delete("/admin/api/invites/{link_id}")
@@ -262,7 +268,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         ctx = owner(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        accounts.revoke_invite(link_id, ctx.subject, path=path_provider())
+        accounts.revoke_invite(link_id, ctx.audit_actor_id, path=path_provider(), actor_kind=ctx.actor_kind, actor_label=ctx.actor_label)
         return {"ok": True}
 
     @router.get("/admin/api/operator/sign-in")
@@ -275,12 +281,14 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         ctx = owner(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        if body.mode in {"oidc", "both"} and not oidc_provider()["enabled"]:
-            raise accounts.AccountError("oidc_unavailable", "Configure an identity provider before enabling this sign-in option.", 409)
-        admin_store.put_operator_setting_with_audit("sign_in", {"mode": body.mode}, updated_by=ctx.subject, audit_action="operator.sign_in.update",
-                                                   audit_actor_kind=ctx.actor_kind, audit_actor_id=ctx.subject,
+        def validate_sign_in(conn):
+            # Hold the same write lock as OIDC configuration changes.
+            if body.mode in {"oidc", "both"} and not oidc_provider()["enabled"]:
+                raise accounts.AccountError("oidc_unavailable", "Configure an identity provider before enabling this sign-in option.", 409)
+        admin_store.put_operator_setting_with_audit("sign_in", {"mode": body.mode}, updated_by=ctx.audit_actor_id, audit_action="operator.sign_in.update",
+                                                   audit_actor_kind=ctx.actor_kind, audit_actor_id=ctx.audit_actor_id,
                                                    audit_actor_label=ctx.actor_label, audit_target_kind="operator_setting",
-                                                   audit_target_id="sign_in", path=path_provider())
+                                                   audit_target_id="sign_in", validate_in_transaction=validate_sign_in, path=path_provider())
         return options()
 
     return router

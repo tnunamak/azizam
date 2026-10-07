@@ -46,7 +46,7 @@ def test_instance_save_reload_and_audit(settings):
     client, path, config = settings
     body = {"name": "Our gateway", "base_url": "https://gateway.test/", "theme_default": "dark"}
     assert client.put("/admin/api/settings/instance", json=body, headers={"test-role": "owner"}).status_code == 403
-    response = client.put("/admin/api/settings/instance", json=body, headers=OWNER)
+    response = client.put("/admin/api/settings/instance", json=body, headers={**OWNER, "If-Match": "0"})
     assert response.status_code == 200
     assert response.json()["instance"] == {**body, "base_url": "https://gateway.test"}
     assert client.get("/admin/api/settings/instance", headers=OWNER).json() == response.json()

@@ -161,7 +161,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         )
         clear = {field: [] for field in fields}
         with patch.object(proxy, "_bootstrap_admin_oidc_cfg", return_value=bootstrap):
-            response = self.client.put("/admin/api/oidc-config", json=clear, headers=self._auth())
+            response = self.client.put("/admin/api/oidc-config", json=clear, headers={**self._auth(), "If-Match": proxy.ADMIN_STORE.setting_revision("oidc_provider_config")})
             self.assertEqual(response.status_code, 200, response.text)
             self.assertEqual(proxy._effective_admin_oidc_config().scopes, ())
             for field in fields:
@@ -169,7 +169,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
 
             # A later PUT that omits the fields retains the explicit clears.
             response = self.client.put(
-                "/admin/api/oidc-config", json={"client_id": "changed"}, headers=self._auth()
+                "/admin/api/oidc-config", json={"client_id": "changed"}, headers={**self._auth(), "If-Match": proxy.ADMIN_STORE.setting_revision("oidc_provider_config")}
             )
             self.assertEqual(response.status_code, 200, response.text)
             response = self.client.get("/admin/api/oidc-config", headers=self._auth())

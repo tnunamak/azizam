@@ -74,6 +74,13 @@ class AdminRuntimeTests(unittest.TestCase):
         )
         client = TestClient(app)
         client.headers.update({"Authorization": f"Bearer {key}"})
+        original_put = client.put
+        def put_current_settings(url, **kwargs):
+            setting = {"/admin/api/oidc-config": "oidc_provider_config", "/admin/api/operator/media-job-admission": "media_job_admission_overrides"}.get(url)
+            if setting:
+                kwargs["headers"] = {"If-Match": self.store.setting_revision(setting), **kwargs.get("headers", {})}
+            return original_put(url, **kwargs)
+        client.put = put_current_settings
         return client
 
     def _session_client(self, *, user_id: str, role: str = "owner") -> TestClient:
@@ -901,6 +908,13 @@ class AdminOidcSettingsTests(unittest.TestCase):
         )
         client = TestClient(app)
         client.headers.update({"Authorization": f"Bearer {key}"})
+        original_put = client.put
+        def put_current_settings(url, **kwargs):
+            setting = {"/admin/api/oidc-config": "oidc_provider_config", "/admin/api/operator/media-job-admission": "media_job_admission_overrides"}.get(url)
+            if setting:
+                kwargs["headers"] = {"If-Match": self.store.setting_revision(setting), **kwargs.get("headers", {})}
+            return original_put(url, **kwargs)
+        client.put = put_current_settings
         return client
 
     def test_get_returns_none_when_no_setting(self) -> None:

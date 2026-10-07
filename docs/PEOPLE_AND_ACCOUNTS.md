@@ -42,10 +42,10 @@ members and administrators cannot use the owner-only People/invitation APIs.
 | --- | --- |
 | `GET /auth/api/options` | Available built-in/OIDC methods; signed-in OIDC identity and its CSRF token when present |
 | `POST /auth/api/login` | `{email,password}`; sets browser session, returns Home destination |
-| `GET /auth/api/invite?token=...` | Invitation email, expiry and existing access plan |
+| `POST /auth/api/invite` | JSON `{token}`; returns invitation email, expiry and existing access plan |
 | `POST /auth/api/invite/accept` | `{token,email,name,password}` for built-in; omit password and send session CSRF for OIDC |
 | `POST /auth/api/password-reset` | `{token,password}`; consumes reset link and invalidates earlier sessions |
-| `GET /admin/api/people` | People, assigned plan, last active, builtin/protected/role flags, profiles |
+| `GET /admin/api/people` | People, effective plan and source, grant provenance, last active, builtin/protected/role flags, profiles |
 | `PATCH /admin/api/people/{id}` | `{profile_id?,disabled?}`; updates member policy or availability |
 | `DELETE /admin/api/people/{id}` | Removes member from People and revokes access |
 | `POST /admin/api/people/{id}/reset` | `{expires_in:3600}`; generates a built-in password reset link |
@@ -139,3 +139,40 @@ exists. The diagnostic receipt store retains 14 days, so the UI says
 or claim that cloud fallback permission is a paid-provider spending policy.
 Optional passkeys are deferred because no WebAuthn library is in the locked
 dependencies. Links are shared by the owner; email delivery is not added.
+
+Settings updates for instance presentation, OIDC trust and media admission
+require `If-Match` with the revision returned by their GET response. OIDC and
+instance responses include `revision`; operator overrides include
+`overrides.revisions.media_job_admission_overrides`. Missing revisions return
+428 (`settings_revision_required`), including for existing automation clients.
+Stale revisions return 409 (`settings_conflict`), preserve the current settings,
+and create no success audit event. Reload before resubmitting a draft. Revisions
+advance on every write, even if two writes occur in the same second.
+
+Disabling OIDC while the saved sign-in choice is OIDC-only is rejected. Select
+built-in or both first. Sign-in choice writes and OIDC writes validate this under
+the database write lock. The existing owner recovery flow through admin-key
+sign-in remains available and unchanged.
+
+Existing settings receive their first revision automatically during database
+initialization at startup. The idempotent `INSERT OR IGNORE` backfill uses the
+existing settings generation table and preserves existing registry generations.
+No operator script or schema column change is required.
+
+Invitation inspection uses `POST /auth/api/invite` with a JSON `token` field.
+The former GET query-token endpoint returns 405. The invitation page captures
+and clears the fragment immediately, retains it in tab session storage for
+OIDC sign-in and reloads, and clears that stored token after acceptance.
+
+Account suspension now blocks access through account state without changing
+individual app disable flags. Re-enabling an account leaves independently
+disabled apps disabled; revoked keys and sessions remain revoked. Existing app
+disable flags are preserved, including flags set before this change, because
+their original intent cannot be recovered safely.
+
+People shows the effective access plan from the same resolver used by session
+and app authorization, with its assigned, email, domain, group, role or gateway
+default source. Each active administrator grant shows its manual or OIDC-claim
+source. Grant and revoke audit events include provenance; invitation acceptance
+also records its first credential, without key material. Account actions record
+the authenticated actor kind, including owner service accounts.

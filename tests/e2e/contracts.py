@@ -192,7 +192,8 @@ def run():
         assert next(step for step in progress["steps"] if step["id"] == "connect_app")["done"]
         print("PASS real internal request leaves connect_app incomplete; explicit owned-app confirmation completes it", flush=True)
         configured = "https://gateway.example.test"
-        expect(client.put("/admin/api/settings/instance", headers=headers,
+        instance_revision = expect(client.get("/admin/api/settings/instance")).json()["revision"]
+        expect(client.put("/admin/api/settings/instance", headers={**headers, "If-Match": instance_revision},
             json={"name": "Fixture gateway", "base_url": configured, "theme_default": "system"}))
         for endpoint in ("/.well-known/azizam", "/.well-known/azizam"):
             metadata = expect(client.get(endpoint, headers={"x-forwarded-host": "unrelated.test", "x-forwarded-proto": "http"})).json()

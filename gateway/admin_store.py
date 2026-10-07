@@ -41,7 +41,7 @@ import sqlite3
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 _default_db = Path(__file__).resolve().parent.parent / "data" / "admin.db"
 DB_PATH = Path(get_env("AZIZAM_ADMIN_DB")) if get_env("AZIZAM_ADMIN_DB") else _default_db
@@ -210,9 +210,8 @@ CREATE TABLE IF NOT EXISTS operator_settings (
 CREATE INDEX IF NOT EXISTS operator_settings_updated_at
   ON operator_settings(updated_at);
 
--- This table is deliberately scoped to the one document currently protected
--- by this CAS protocol.  Its key makes a future, explicit setting opt-in
--- possible without silently turning unrelated settings into registry writers.
+-- Each setting has an independent server-owned revision. The registry keeps
+-- its existing generation contract; forms opt in to revisions per resource.
 CREATE TABLE IF NOT EXISTS operator_settings_generations (
   setting_key TEXT PRIMARY KEY,
   operator_settings_generation INTEGER NOT NULL
@@ -280,14 +279,12 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         )
     if migrate_legacy_claims:
         _migrate_legacy_identity_profiles(conn)
-    # A database created before registry generations existed may already have
-    # the document.  Seed its first server-owned value during migration rather
-    # than exposing a synthetic zero until the next write.
+    # Seed existing documents once. INSERT OR IGNORE preserves every revision
+    # across restarts, including the registry's existing CAS generation.
     conn.execute(
         "INSERT OR IGNORE INTO operator_settings_generations("
         "setting_key, operator_settings_generation) "
-        "SELECT 'service_registry', 1 WHERE EXISTS ("
-        "SELECT 1 FROM operator_settings WHERE key='service_registry')"
+        "SELECT key, 1 FROM operator_settings"
     )
     conn.commit()
 
@@ -1448,6 +1445,8 @@ def assign_admin_role(
     scope_app_id: str | None = None,
     granted_by: str | None = None,
     provenance: str = "manual",
+    actor: Any = None,
+    actor_kind: str = "system",
     now: int | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
@@ -1469,6 +1468,7 @@ def assign_admin_role(
         raise ValueError("provenance must be manual or oidc")
     ts = _now() if now is None else int(now)
     with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             "SELECT * FROM admin_role_assignments "
             "WHERE role = ? AND subject_kind = ? AND subject_id = ? "
@@ -1492,6 +1492,9 @@ def assign_admin_role(
                 (role, subject_kind, subject_id, scope_app_id, ts, granted_by, provenance),
             )
             assignment_id = cur.lastrowid
+        granted = conn.execute("SELECT * FROM admin_role_assignments WHERE id=?", (assignment_id,)).fetchone()
+        _audit_admin_role(conn, "admin_role.grant", granted, ts, actor=actor,
+                          actor_kind=actor_kind, actor_id=granted_by)
         conn.commit()
         out = conn.execute(
             "SELECT * FROM admin_role_assignments WHERE id = ?",
@@ -1520,27 +1523,36 @@ def reconcile_oidc_admin_roles(
             (subject_id,),
         ).fetchall()
         for row in rows:
-            if row["provenance"] == "oidc" and row["role"] not in desired:
+            if row["provenance"] == "oidc" and row["role"] not in desired and row["revoked_at"] is None:
                 conn.execute(
                     "UPDATE admin_role_assignments SET revoked_at=? "
                     "WHERE id=? AND revoked_at IS NULL", (ts, row["id"]),
                 )
+                _audit_admin_role(conn, "admin_role.revoke", row, ts,
+                                  actor_kind="system", actor_id="oidc")
         for role in sorted(desired):
             matching = [row for row in rows if row["role"] == role]
             if any(row["provenance"] == "manual" and row["revoked_at"] is None for row in matching):
                 continue
             existing = next((row for row in matching if row["provenance"] == "oidc"), None)
             if existing is not None:
+                if existing["revoked_at"] is None:
+                    continue
                 conn.execute(
                     "UPDATE admin_role_assignments SET revoked_at=NULL, granted_at=? "
                     "WHERE id=?", (ts, existing["id"]),
                 )
+                assignment_id = existing["id"]
             else:
-                conn.execute(
+                cur = conn.execute(
                     "INSERT INTO admin_role_assignments(role,subject_kind,subject_id,"
                     "scope_app_id,granted_at,granted_by,provenance) "
                     "VALUES (?,'user',?,NULL,?,'oidc','oidc')", (role, subject_id, ts),
                 )
+                assignment_id = cur.lastrowid
+            granted = conn.execute("SELECT * FROM admin_role_assignments WHERE id=?", (assignment_id,)).fetchone()
+            _audit_admin_role(conn, "admin_role.grant", granted, ts,
+                              actor_kind="system", actor_id="oidc")
         conn.commit()
         return [_row_to_dict(row) for row in conn.execute(
             "SELECT * FROM admin_role_assignments WHERE subject_kind='user' "
@@ -1549,17 +1561,36 @@ def reconcile_oidc_admin_roles(
 
 
 def revoke_admin_role(
-    assignment_id: int, *, now: int | None = None, path: Path = DB_PATH
+    assignment_id: int, *, actor: Any = None, actor_kind: str = "system",
+    actor_id: str | None = None, now: int | None = None, path: Path = DB_PATH
 ) -> bool:
     ts = _now() if now is None else int(now)
     with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT * FROM admin_role_assignments WHERE id=?", (assignment_id,)).fetchone()
         cur = conn.execute(
             "UPDATE admin_role_assignments SET revoked_at = ? "
             "WHERE id = ? AND revoked_at IS NULL",
             (ts, assignment_id),
         )
+        if cur.rowcount:
+            _audit_admin_role(conn, "admin_role.revoke", row, ts, actor=actor,
+                              actor_kind=actor_kind, actor_id=actor_id)
         conn.commit()
         return cur.rowcount > 0
+
+
+def _audit_admin_role(conn, action, row, now, *, actor=None, actor_kind="system", actor_id=None):
+    _record_audit_in_transaction(
+        conn, action, actor_kind=actor.actor_kind if actor else actor_kind,
+        actor_id=actor.audit_actor_id if actor else actor_id,
+        actor_label=actor.actor_label if actor else None,
+        target_kind="admin_role_assignment", target_id=str(row["id"]),
+        metadata={"role": row["role"], "subject_kind": row["subject_kind"],
+                  "subject_id": row["subject_id"], "scope_app_id": row["scope_app_id"],
+                  "provenance": "oidc-claim" if row["provenance"] == "oidc" else "manual"},
+        now=now,
+    )
 
 
 def list_admin_roles(
@@ -1732,14 +1763,14 @@ def replace_default_runtime_profile_mapping(
         conn.commit()
 
 
-def resolve_runtime_profile_mapping(
+def resolve_runtime_profile_mapping_details(
     *,
     email: str,
     gateway_role: str,
     oidc_groups: Iterable[str] = (),
     oidc_roles: Iterable[str] = (),
     path: Path = DB_PATH,
-) -> str | None:
+) -> dict[str, Any] | None:
     email_value = _normalize_access_value(email)
     _, _, domain = email_value.partition("@")
     candidates: set[tuple[str, str]] = {("all_users", "*")}
@@ -1767,8 +1798,19 @@ def resolve_runtime_profile_mapping(
             value = _normalize_identity_value(kind, value)
         pair = (kind, value)
         if pair in candidates:
-            return str(row.get("profile_id") or "") or None
+            return row
     return None
+
+
+def resolve_runtime_profile_mapping(
+    *, email: str, gateway_role: str, oidc_groups: Iterable[str] = (),
+    oidc_roles: Iterable[str] = (), path: Path = DB_PATH,
+) -> str | None:
+    mapping = resolve_runtime_profile_mapping_details(
+        email=email, gateway_role=gateway_role, oidc_groups=oidc_groups,
+        oidc_roles=oidc_roles, path=path,
+    )
+    return str(mapping["profile_id"]) if mapping and mapping.get("profile_id") else None
 
 
 # ---------------------------------------------------------------------------
@@ -1984,6 +2026,7 @@ def put_operator_setting(
     ts = _now() if now is None else int(now)
     payload = json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
     with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
         conn.execute(
             "INSERT INTO operator_settings(key, value_json, updated_at, updated_by) "
             "VALUES (?, ?, ?, ?) "
@@ -1993,9 +2036,10 @@ def put_operator_setting(
             "updated_by = excluded.updated_by",
             (setting_key, payload, ts, updated_by),
         )
+        _advance_setting_revision(conn, setting_key)
         conn.commit()
         row = conn.execute(
-            "SELECT * FROM operator_settings WHERE key = ?", (setting_key,)
+            _SETTING_SELECT + " WHERE s.key = ?", (setting_key,)
         ).fetchone()
     return _operator_setting_row_to_dict(row)
 
@@ -2012,6 +2056,8 @@ def put_operator_setting_with_audit(
     audit_target_kind: str | None,
     audit_target_id: str | None,
     audit_metadata: Mapping[str, Any] | None = None,
+    expected_revision: str | None = None,
+    validate_in_transaction: Callable[[sqlite3.Connection], None] | None = None,
     now: int | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
@@ -2030,6 +2076,15 @@ def put_operator_setting_with_audit(
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
+            current = conn.execute(
+                "SELECT operator_settings_generation FROM operator_settings_generations WHERE setting_key=?",
+                (setting_key,),
+            ).fetchone()
+            revision = str(current[0]) if current else "0"
+            if expected_revision is not None and expected_revision != revision:
+                raise SettingsConflictError("Settings changed elsewhere; reload to see the latest")
+            if validate_in_transaction is not None:
+                validate_in_transaction(conn)
             conn.execute(
                 "INSERT INTO operator_settings(key, value_json, updated_at, updated_by) "
                 "VALUES (?, ?, ?, ?) "
@@ -2037,6 +2092,7 @@ def put_operator_setting_with_audit(
                 "updated_at = excluded.updated_at, updated_by = excluded.updated_by",
                 (setting_key, payload, ts, updated_by),
             )
+            _advance_setting_revision(conn, setting_key)
             _record_audit_in_transaction(
                 conn, audit_action,
                 actor_kind=audit_actor_kind,
@@ -2047,14 +2103,36 @@ def put_operator_setting_with_audit(
                 metadata=audit_metadata,
                 now=ts,
             )
+            row = conn.execute(
+                _SETTING_SELECT + " WHERE s.key = ?", (setting_key,)
+            ).fetchone()
             conn.commit()
         except Exception:
             conn.rollback()
             raise
-        row = conn.execute(
-            "SELECT * FROM operator_settings WHERE key = ?", (setting_key,)
-        ).fetchone()
     return _operator_setting_row_to_dict(row)
+
+
+class SettingsConflictError(ValueError):
+    """An operator setting changed since the client loaded its draft."""
+
+
+_SETTING_SELECT = (
+    "SELECT s.*, COALESCE(g.operator_settings_generation, 0) AS revision "
+    "FROM operator_settings s LEFT JOIN operator_settings_generations g ON g.setting_key=s.key"
+)
+
+
+def _advance_setting_revision(conn: sqlite3.Connection, key: str) -> None:
+    conn.execute(
+        "INSERT INTO operator_settings_generations(setting_key,operator_settings_generation) VALUES(?,1) "
+        "ON CONFLICT(setting_key) DO UPDATE SET operator_settings_generation=operator_settings_generation+1",
+        (key,),
+    )
+
+
+def operator_setting_revision(record: Mapping[str, Any] | None) -> str:
+    return str(record["revision"]) if record else "0"
 
 
 class OperatorSettingsGenerationConflict(ValueError):
@@ -2215,7 +2293,7 @@ def get_operator_setting(
         return None
     with _conn(path) as conn:
         row = conn.execute(
-            "SELECT * FROM operator_settings WHERE key = ?", (setting_key,)
+            _SETTING_SELECT + " WHERE s.key = ?", (setting_key,)
         ).fetchone()
     return _operator_setting_row_to_dict(row) if row is not None else None
 
@@ -2223,7 +2301,7 @@ def get_operator_setting(
 def list_operator_settings(*, path: Path = DB_PATH) -> list[dict[str, Any]]:
     with _conn(path) as conn:
         rows = conn.execute(
-            "SELECT * FROM operator_settings ORDER BY key ASC"
+            _SETTING_SELECT + " ORDER BY s.key ASC"
         ).fetchall()
     return [_operator_setting_row_to_dict(row) for row in rows]
 
@@ -2240,6 +2318,7 @@ def _operator_setting_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "value": value,
         "updated_at": row["updated_at"],
         "updated_by": row["updated_by"],
+        "revision": str(row["revision"]),
     }
 
 

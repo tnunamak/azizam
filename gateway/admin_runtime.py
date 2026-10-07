@@ -14,6 +14,7 @@ It intentionally keeps two planes separate:
 from __future__ import annotations
 
 import secrets
+import json
 import time
 from pathlib import Path
 from collections.abc import Callable
@@ -262,10 +263,10 @@ class AdminSQLiteStore:
         self.on_service_registry_changed: "Callable[[], None] | None" = None
         # Called with the credential record (including its stored hash) after a
         # credential is revoked, so data keyed by that key (custom voices) can be removed.
-        self.on_credential_revoked: "Callable[[Mapping[str, Any]], None] | None" = None
+        self.on_credential_revoked: "Callable[[Mapping[str, Any]], bool | None] | None" = None
         # The live host supplies this so a candidate DB override is accepted
         # only when the same parser used by login accepts its effective merge.
-        self.oidc_config_validator: "Callable[[Mapping[str, Any]], None] | None" = None
+        self.oidc_config_validator: "Callable[[Mapping[str, Any]], bool | None] | None" = None
 
     def init_db(self) -> None:
         admin_store.init_db(self.path)
@@ -618,6 +619,7 @@ class AdminSQLiteStore:
             subject_kind="service_account",
             subject_id=service_account["id"],
             granted_by=actor.subject,
+            actor=actor,
             path=self.path,
         )
         admin_store.record_audit(
@@ -643,6 +645,11 @@ class AdminSQLiteStore:
     def list_runtime_profile_mappings(self) -> list[dict[str, Any]]:
         return admin_store.list_runtime_profile_mappings(path=self.path)
 
+    def setting_revision(self, key: str) -> str:
+        return admin_store.operator_setting_revision(
+            admin_store.get_operator_setting(key, path=self.path)
+        )
+
     def operator_overrides(self) -> dict[str, Any]:
         service_setting = admin_store.get_operator_setting(
             SERVICE_AVAILABILITY_OVERRIDES_KEY,
@@ -661,6 +668,7 @@ class AdminSQLiteStore:
                 media_setting["value"] if media_setting is not None else {}
             ),
             "extension_package_index": self.get_extension_package_index(),
+            "revisions": {MEDIA_JOB_ADMISSION_OVERRIDES_KEY: admin_store.operator_setting_revision(media_setting)},
         }
 
     def user_access_defaults(self) -> dict[str, bool]:
@@ -728,26 +736,21 @@ class AdminSQLiteStore:
         return record["value"]
 
     def update_media_job_admission_overrides(
-        self, *, data: Mapping[str, Any], actor: AdminContext
+        self, *, data: Mapping[str, Any], actor: AdminContext,
+        expected_revision: str | None = None,
     ) -> dict[str, Any]:
         value = _copy_override_value(data)
-        record = admin_store.put_operator_setting(
-            MEDIA_JOB_ADMISSION_OVERRIDES_KEY,
-            value,
-            updated_by=actor.subject,
-            path=self.path,
+        record = admin_store.put_operator_setting_with_audit(
+            MEDIA_JOB_ADMISSION_OVERRIDES_KEY, value,
+            updated_by=actor.subject, expected_revision=expected_revision,
+            audit_action="operator.media_job_admission.update",
+            audit_actor_kind=actor.actor_kind, audit_actor_id=actor.audit_actor_id,
+            audit_actor_label=actor.actor_label,
+            audit_target_kind="operator_setting",
+            audit_target_id=MEDIA_JOB_ADMISSION_OVERRIDES_KEY,
+            audit_metadata={"fields": sorted(value)}, path=self.path,
         )
-        admin_store.record_audit(
-            "operator.media_job_admission.update",
-            actor_kind=actor.actor_kind,
-            actor_id=actor.audit_actor_id,
-            actor_label=actor.actor_label,
-            target_kind="operator_setting",
-            target_id=MEDIA_JOB_ADMISSION_OVERRIDES_KEY,
-            metadata={"fields": sorted(value.keys())},
-            path=self.path,
-        )
-        return record["value"]
+        return {**record["value"], "revision": admin_store.operator_setting_revision(record)}
 
     def get_service_registry(self) -> dict[str, Any]:
         registry = service_registry.load_service_registry(path=self.path)
@@ -1124,7 +1127,8 @@ class AdminSQLiteStore:
         return dict(value)
 
     def update_oidc_config_setting(
-        self, *, data: Mapping[str, Any], actor: AdminContext
+        self, *, data: Mapping[str, Any], actor: AdminContext,
+        expected_revision: str | None = None,
     ) -> dict[str, Any]:
         """Persist the DB-stored OIDC provider config.
 
@@ -1139,15 +1143,31 @@ class AdminSQLiteStore:
             raise ValueError(
                 f"unknown oidc_provider_config fields: {sorted(unknown)}"
             )
-        current_raw = self.get_oidc_config_setting_raw() or {}
+        current = admin_store.get_operator_setting(OIDC_PROVIDER_SETTING_KEY, path=self.path)
+        current_revision = admin_store.operator_setting_revision(current)
+        if expected_revision is not None and expected_revision != current_revision:
+            raise admin_store.SettingsConflictError()
+        current_raw = current["value"] if current else {}
         merged = _merge_oidc_setting(current_raw, data)
         _validate_merged_oidc_setting(merged)
+        candidate_enabled = merged.get("enabled", True)
         if self.oidc_config_validator is not None:
-            self.oidc_config_validator(merged)
+            validated_enabled = self.oidc_config_validator(merged)
+            if validated_enabled is not None:
+                candidate_enabled = validated_enabled
+
+        def validate_sign_in(conn):
+            row = conn.execute("SELECT value_json FROM operator_settings WHERE key = 'sign_in'").fetchone()
+            mode = json.loads(row["value_json"]).get("mode", "both") if row else "both"
+            if mode == "oidc" and not candidate_enabled:
+                raise ValueError("Enable built-in sign-in before disabling the identity provider; at least one working sign-in method is required.")
+
         record = admin_store.put_operator_setting_with_audit(
             OIDC_PROVIDER_SETTING_KEY,
             merged,
             updated_by=actor.subject,
+            expected_revision=current_revision,
+            validate_in_transaction=validate_sign_in,
             audit_action="operator.oidc_provider_config.update",
             audit_actor_kind=actor.actor_kind,
             audit_actor_id=actor.audit_actor_id,
@@ -1160,10 +1180,10 @@ class AdminSQLiteStore:
             },
             path=self.path,
         )
-        return _redact_oidc_setting(
-            record["value"],
-            updated_at=record.get("updated_at"),
-        )
+        return {
+            **_redact_oidc_setting(record["value"], updated_at=record.get("updated_at")),
+            "revision": admin_store.operator_setting_revision(record),
+        }
 
     def create_runtime_profile_mapping(
         self, *, data: Mapping[str, Any], actor: AdminContext
@@ -1561,6 +1581,16 @@ def runtime_identity_for_app_credential_hash(
     if app is None or app.get("disabled_at"):
         return None
 
+    if app.get("owner_user_id"):
+        with admin_store._conn(path) as conn:
+            has_accounts = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'").fetchone()
+            owner = conn.execute(
+                "SELECT disabled_at, removed_at FROM account_access WHERE user_id = ?",
+                (app["owner_user_id"],),
+            ).fetchone() if has_accounts else None
+        if owner and (owner["disabled_at"] is not None or owner["removed_at"] is not None):
+            return None
+
     profile = DEFAULT_PROFILE
     profile_id = credential.get("profile_id") or app.get("default_profile_id")
     if not profile_id and inherited_profile_id_for_app is not None:
@@ -1610,6 +1640,7 @@ def create_admin_service_account_key(
         subject_kind="service_account",
         subject_id=service_account["id"],
         granted_by="cli",
+        actor_kind="cli",
         path=path,
     )
     admin_store.record_audit(

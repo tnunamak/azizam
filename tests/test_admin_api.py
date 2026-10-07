@@ -982,7 +982,7 @@ class FakeAdminStore:
         return dict(self.service_availability)
 
     def update_media_job_admission_overrides(
-        self, *, data: Mapping[str, Any], actor: AdminContext
+        self, *, data: Mapping[str, Any], actor: AdminContext, expected_revision: str | None = None
     ) -> dict[str, Any]:
         self.media_job_admission = dict(data)
         self.audit.append(
@@ -993,7 +993,7 @@ class FakeAdminStore:
                 "target": "media_job_admission_overrides",
             }
         )
-        return dict(self.media_job_admission)
+        return {**self.media_job_admission, "revision": "os-1"}
 
     def get_service_registry(self) -> dict[str, Any]:
         return dict(self.service_registry)
@@ -1243,8 +1243,11 @@ class FakeAdminStore:
             redacted["client_secret_set"] = False
         return redacted
 
+    def setting_revision(self, key: str) -> str:
+        return "os-1"
+
     def update_oidc_config_setting(
-        self, *, data: Mapping[str, Any], actor: AdminContext
+        self, *, data: Mapping[str, Any], actor: AdminContext, expected_revision: str | None = None
     ) -> dict[str, Any]:
         current: dict[str, Any] = getattr(self, "_oidc_config", {}) or {}
         merged = {**current, **data}
@@ -1257,7 +1260,7 @@ class FakeAdminStore:
             redacted.setdefault("client_secret", "")
             redacted["client_secret_set"] = False
         self._oidc_config = merged  # type: ignore[attr-defined]
-        return redacted
+        return {**redacted, "revision": "os-1"}
 
 
 def _admin_auth(request: Request) -> AdminContext:

@@ -216,7 +216,7 @@ def test_disable_and_remove_revoke_apps_keys_sessions_and_pending_resets(account
     assert not accounts.session_allowed(user["id"], "old-session", path=path)
     assert rows(path, "SELECT * FROM account_sessions") == []
     assert all(row["revoked_at"] is not None for row in rows(path, "SELECT * FROM credentials"))
-    assert all(row["disabled_at"] is not None for row in rows(path, "SELECT * FROM apps"))
+    assert all((row["disabled_at"] is not None) == remove for row in rows(path, "SELECT * FROM apps"))
     expect_error("link_unavailable", lambda: accounts.reset_password(reset, PASSWORD, path=path))
     expect_error("invalid_login", lambda: accounts.login(user["email"], PASSWORD, "ip", path=path))
     if remove:
@@ -257,7 +257,10 @@ def account_client(account_db):
         role = request.headers.get("x-test-role")
         if not role:
             raise AdminAuthError("sign in", status_code=401, code="login_required")
-        return AdminContext(subject="owner", roles=frozenset({role}), auth_method="session", csrf_token="owner-csrf")
+        return AdminContext(subject="owner", roles=frozenset({role}), auth_method="session", csrf_token="owner-csrf",
+                            actor_kind=request.headers.get("x-test-actor-kind", "user"),
+                            actor_id=request.headers.get("x-test-actor-id"),
+                            actor_label=request.headers.get("x-test-actor-label"))
 
     app = FastAPI()
     app.include_router(accounts_api.create_account_router(
@@ -305,7 +308,7 @@ def test_owner_invite_api_create_inspect_revoke_and_no_secret_list(account_db, a
     assert response.status_code == 200
     body = response.json()
     token = body["url"].split("token=", 1)[1]
-    public = client.get("/auth/api/invite", params={"token": token})
+    public = client.post("/auth/api/invite", json={"token": token})
     assert public.status_code == 200
     assert public.json()["email"] == "person@example.test"
     assert public.json()["plan"]["id"] == plan["id"]
@@ -313,7 +316,7 @@ def test_owner_invite_api_create_inspect_revoke_and_no_secret_list(account_db, a
     assert token not in listing.text
     assert "token_hash" not in listing.text
     assert client.delete(f'/admin/api/invites/{body["invite"]["id"]}', headers=OWNER_HEADERS).status_code == 200
-    assert client.get("/auth/api/invite", params={"token": token}).status_code == 404
+    assert client.post("/auth/api/invite", json={"token": token}).status_code == 404
 
 
 def test_builtin_invite_login_session_cookie_and_no_store(account_db, account_client, fast_password_work):
@@ -482,7 +485,7 @@ def test_proxy_http_full_member_lifecycle_from_owner_invitation_through_reset_an
     invitation = admin.post("/admin/api/invites", headers=owner_csrf, json={"profile_id": plan["id"], "email": "member@example.test"})
     assert invitation.status_code == 200
     token = invitation.json()["url"].split("token=", 1)[1]
-    assert member.get("/auth/api/invite", params={"token": token}).status_code == 200
+    assert member.post("/auth/api/invite", json={"token": token}).status_code == 200
     accepted = member.post("/auth/api/invite/accept", json={"token": token, "email": "member@example.test", "name": "Member", "password": PASSWORD})
     assert accepted.status_code == 200
     first_key = accepted.json()["credential"]["id"]
@@ -533,7 +536,7 @@ def test_oidc_users_with_same_email_in_different_issuers_do_not_share_account_pl
     _, token = accounts.create_link("invite", "owner", profile_id=plan["id"], email=first["email"], path=path)
     accounts.accept_invite(token, first["email"], "First", None, oidc_user_id=first["id"], path=path)
     monkeypatch.setattr(proxy, "ADMIN_STORE", AdminSQLiteStore(path))
-    monkeypatch.setattr(proxy, "_default_profile_id_for_user", lambda **kwargs: "unassigned-fallback")
+    monkeypatch.setattr(proxy, "_default_plan_for_user", lambda **kwargs: {"profile_id": "unassigned-fallback", "plan_source": "gateway_default"})
     sessions = [session_from_claims({"sub": user["id"], "email": user["email"]}, role="none", cookie=CookieConfig()) for user in (first, second)]
     assert accounts.profile_for_user(first["id"], path=path) == plan["id"]
     assert accounts.profile_for_user(second["id"], path=path) is None
@@ -669,7 +672,7 @@ def test_public_signin_options_and_invite_inspection_use_saved_instance_name_liv
 
     def assert_public_name(name):
         options = client.get("/auth/api/options")
-        invite = client.get("/auth/api/invite", params={"token": token})
+        invite = client.post("/auth/api/invite", json={"token": token})
         assert options.status_code == invite.status_code == 200
         assert options.json()["instance_name"] == name
         assert invite.json()["instance_name"] == name
@@ -701,3 +704,79 @@ def test_builtin_login_uses_safe_product_return_path(account_db, account_client,
     response = client.post("/auth/api/login", json={"email": user["email"], "password": PASSWORD, "return_to": target})
     assert response.status_code == 200
     assert response.json()["next"] == expected
+
+
+def test_invite_inspection_requires_post_body(account_client, account_db):
+    client, _ = account_client
+    path, plan = account_db
+    _, token = accounts.create_link("invite", "owner", profile_id=plan["id"], path=path)
+    assert client.get("/auth/api/invite", params={"token": token}).status_code == 405
+    response = client.post("/auth/api/invite", json={"token": token})
+    assert response.status_code == 200
+    assert token not in response.text
+    assert client.post("/auth/api/invite", json={"token": token}, headers={"origin": "https://other.test"}).status_code == 403
+
+
+def test_reenable_preserves_independently_disabled_apps(account_db, fast_password_work):
+    path, _ = account_db
+    user, app, _ = invited_member(account_db)
+    independently_disabled = admin_store.create_app("Independent", kind="personal", owner_user_id=user["id"], path=path)
+    with accounts.connection(path) as conn:
+        conn.execute("UPDATE apps SET disabled_at=123 WHERE id=?", (independently_disabled["id"],))
+    accounts.change_person(user["id"], "owner", disabled=True, path=path)
+    assert admin_store.get_app(app["id"], path=path)["disabled_at"] is None
+    accounts.change_person(user["id"], "owner", disabled=False, path=path)
+    assert admin_store.get_app(independently_disabled["id"], path=path)["disabled_at"] == 123
+    assert admin_store.get_app(app["id"], path=path)["disabled_at"] is None
+
+
+def test_invitation_audits_first_credential_in_acceptance_transaction(account_db, fast_password_work):
+    import json
+    path, _ = account_db
+    user, app, credential = invited_member(account_db)
+    acceptance = rows(path, "SELECT * FROM audit_events WHERE action='account.invite.accept'")[0]
+    creation = rows(path, "SELECT * FROM audit_events WHERE action='credential.create'")[0]
+    assert json.loads(acceptance["metadata_json"])["credential_id"] == credential["id"]
+    assert creation["actor_id"] == user["id"]
+    assert creation["target_kind"] == "credential"
+    assert creation["target_id"] == credential["id"]
+    assert json.loads(creation["metadata_json"]) == {"app_id": app["id"], "prefix": credential["prefix"], "source": "invite"}
+    assert credential["api_key"] not in str(creation)
+
+
+def test_invite_audit_failure_rolls_back_first_credential(account_db, fast_password_work, monkeypatch):
+    path, plan = account_db
+    _, token = accounts.create_link("invite", "owner", profile_id=plan["id"], path=path)
+    original = admin_store._record_audit_in_transaction
+    def fail_creation(conn, action, **kwargs):
+        if action == "credential.create":
+            raise RuntimeError("audit write failed")
+        return original(conn, action, **kwargs)
+    monkeypatch.setattr(admin_store, "_record_audit_in_transaction", fail_creation)
+    with pytest.raises(RuntimeError, match="audit write failed"):
+        accounts.accept_invite(token, "person@example.test", "Person", PASSWORD, path=path)
+    assert rows(path, "SELECT * FROM users") == []
+    assert rows(path, "SELECT * FROM credentials") == []
+    assert accounts.inspect_invite(token, path=path)["used_at"] is None
+
+
+def test_people_and_invite_audits_preserve_service_actor(account_db, fast_password_work):
+    path, plan = account_db
+    user, _, _ = invited_member(account_db)
+    actor = {"actor_kind": "service_account", "actor_label": "Owner automation"}
+    invite, _ = accounts.create_link("invite", "svc_owner", profile_id=plan["id"], path=path, **actor)
+    accounts.revoke_invite(invite["id"], "svc_owner", path=path, **actor)
+    accounts.change_person(user["id"], "svc_owner", disabled=True, path=path, **actor)
+    events = rows(path, "SELECT * FROM audit_events WHERE actor_id='svc_owner'")
+    assert len(events) == 3
+    assert all(event["actor_kind"] == "service_account" and event["actor_label"] == "Owner automation" for event in events)
+
+
+def test_invite_api_audits_owner_service_principal(account_client, account_db):
+    client, _ = account_client
+    path, plan = account_db
+    headers = {**OWNER_HEADERS, "x-test-actor-kind": "service_account", "x-test-actor-id": "svc_owner", "x-test-actor-label": "Owner service"}
+    response = client.post("/admin/api/invites", json={"profile_id": plan["id"]}, headers=headers)
+    assert response.status_code == 200
+    event = rows(path, "SELECT * FROM audit_events WHERE action='account.invite.create'")[0]
+    assert (event["actor_kind"], event["actor_id"], event["actor_label"]) == ("service_account", "svc_owner", "Owner service")

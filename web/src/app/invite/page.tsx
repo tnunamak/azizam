@@ -33,12 +33,15 @@ export default function InvitePage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   useEffect(() => {
-    setToken(
+    const capturedToken =
       new URLSearchParams(window.location.hash.slice(1)).get("token") ||
-        new URLSearchParams(window.location.search).get("token") ||
         sessionStorage.getItem("gateway-invitation") ||
-        "",
-    );
+        "";
+    if (capturedToken) sessionStorage.setItem("gateway-invitation", capturedToken);
+    setToken(capturedToken);
+    if (window.location.hash) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
   }, []);
   const {
     data: optionsData,
@@ -59,7 +62,8 @@ export default function InvitePage() {
     queryKey: ["auth", "invite", token],
     queryFn: () =>
       authFetch<Invitation>(
-        `/auth/api/invite?token=${encodeURIComponent(token || "")}`,
+        "/auth/api/invite",
+        { token: token || "" },
       ),
     enabled: !!token,
     retry: false,

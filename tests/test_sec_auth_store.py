@@ -63,11 +63,13 @@ def test_sec05_owner_can_reissue_existing_owner_identity(db):
 
 def test_sec06_oidc_trust_changes_require_owner(db):
     admin = client_for(db, "admin")
-    assert admin.get("/admin/api/oidc-config").status_code == 200
-    assert admin.put("/admin/api/oidc-config", json={"enabled": False}).status_code == 403
+    settings = admin.get("/admin/api/oidc-config")
+    assert settings.status_code == 200
+    headers = {"If-Match": settings.json()["revision"]}
+    assert admin.put("/admin/api/oidc-config", json={"enabled": False}, headers=headers).status_code == 403
     assert AdminSQLiteStore(db).get_oidc_config_setting() is None
     owner = client_for(db, "owner")
-    assert owner.put("/admin/api/oidc-config", json={"enabled": False}).status_code == 200
+    assert owner.put("/admin/api/oidc-config", json={"enabled": False}, headers=headers).status_code == 200
 
 
 def test_sec08_oidc_grants_are_removed_but_manual_grants_survive(db):

@@ -9,7 +9,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import json
 import re
 import secrets
 import sqlite3
@@ -119,11 +118,14 @@ def _id(prefix: str) -> str:
     return f"{prefix}_{secrets.token_hex(12)}"
 
 
-def _audit(conn, action: str, actor: str, target: str, now: int, metadata=None):
-    conn.execute("INSERT INTO audit_events(id,created_at,actor_kind,actor_id,action,"
-                 "target_kind,target_id,metadata_json) VALUES(?,?,?,?,?,?,?,?)",
-                 (_id("evt"), now, "user", actor, action, "user" if action.startswith("people.") else "account_link",
-                  target, json.dumps(metadata or {})))
+def _audit(conn, action: str, actor: str, target: str, now: int, metadata=None,
+           *, actor_kind: str = "user", actor_label: str | None = None,
+           target_kind: str | None = None):
+    admin_store._record_audit_in_transaction(
+        conn, action, actor_kind=actor_kind, actor_id=actor, actor_label=actor_label,
+        target_kind=target_kind or ("user" if action.startswith("people.") else "account_link"),
+        target_id=target, metadata=metadata, now=now,
+    )
 
 
 def _valid_profile(conn, profile_id: str):
@@ -239,7 +241,8 @@ def _public_link(row) -> dict:
 
 
 def create_link(kind: str, actor: str, *, path: Path, profile_id: str | None = None,
-                user_id: str | None = None, email: str | None = None, expires_in: int = 604800, token_factory: Callable[[str], str] | None = None) -> tuple[dict, str]:
+                user_id: str | None = None, email: str | None = None, expires_in: int = 604800, token_factory: Callable[[str], str] | None = None,
+                actor_kind: str = "user", actor_label: str | None = None) -> tuple[dict, str]:
     if kind not in {"invite", "reset"}:
         raise AccountError("invalid_link", "Invalid link type.")
     if isinstance(expires_in, bool) or not isinstance(expires_in, int) or not 60 <= expires_in <= 30 * 86400:
@@ -263,7 +266,7 @@ def create_link(kind: str, actor: str, *, path: Path, profile_id: str | None = N
         conn.execute("INSERT INTO account_links VALUES(?,?,?,?,?,?,?,?,?,NULL,NULL)",
                      (link_id, kind, hashlib.sha256(token.encode()).hexdigest(), profile_id, user_id, email, actor, ts, ts + expires_in,
                       ))
-        _audit(conn, f"account.{kind}.create", actor, link_id, ts)
+        _audit(conn, f"account.{kind}.create", actor, link_id, ts, actor_kind=actor_kind, actor_label=actor_label)
         row = conn.execute("SELECT * FROM account_links WHERE id=?", (link_id,)).fetchone()
         return _public_link(row), token
 
@@ -292,14 +295,14 @@ def list_invites(*, path: Path) -> list[dict]:
         return [_public_link(row) for row in rows]
 
 
-def revoke_invite(link_id: str, actor: str, *, path: Path):
+def revoke_invite(link_id: str, actor: str, *, path: Path, actor_kind: str = "user", actor_label: str | None = None):
     with connection(path) as conn:
         ts = int(time.time())
         cur = conn.execute("UPDATE account_links SET revoked_at=? WHERE id=? AND kind='invite' AND used_at IS NULL",
                            (ts, link_id))
         if not cur.rowcount:
             raise AccountError("invite_not_found", "Pending invite not found.", 404)
-        _audit(conn, "account.invite.revoke", actor, link_id, ts)
+        _audit(conn, "account.invite.revoke", actor, link_id, ts, actor_kind=actor_kind, actor_label=actor_label)
 
 
 def accept_invite(token: str, email: str, name: str, password: str | None, *, path: Path,
@@ -341,7 +344,9 @@ def accept_invite(token: str, email: str, name: str, password: str | None, *, pa
         conn.execute("INSERT INTO credentials(id,subject_kind,subject_id,app_id,profile_id,hash,prefix,display_name,created_at) "
                      "VALUES(?,?,?,?,?,?,?,?,?)", (credential_id, "app", app_id, app_id, link["profile_id"], hash_api_key(api_key), api_key[:18], "First app key", ts))
         conn.execute("UPDATE account_links SET used_at=?,user_id=? WHERE id=?", (ts, user_id, link["id"]))
-        _audit(conn, "account.invite.accept", user_id, link["id"], ts, {"profile_id": link["profile_id"], "app_id": app_id})
+        _audit(conn, "account.invite.accept", user_id, link["id"], ts, {"profile_id": link["profile_id"], "app_id": app_id, "credential_id": credential_id})
+        _audit(conn, "credential.create", user_id, credential_id, ts,
+               {"app_id": app_id, "prefix": api_key[:18], "source": "invite"}, target_kind="credential")
         user = dict(conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone())
         app = dict(conn.execute("SELECT * FROM apps WHERE id=?", (app_id,)).fetchone())
     return user, app, {"id": credential_id, "app_id": app_id, "api_key": api_key, "prefix": api_key[:18]}
@@ -366,7 +371,7 @@ def reset_password(token: str, password: str, *, path: Path):
         _audit(conn, "account.password.reset", user_id, link["id"], ts)
 
 
-def people(*, path: Path) -> list[dict]:
+def people(*, path: Path, effective_plan_resolver: Callable | None = None) -> list[dict]:
     with connection(path) as conn:
         rows = conn.execute("SELECT u.id,u.issuer,u.subject,u.display_name name,u.email,COALESCE(a.profile_id,l.profile_id) profile_id,p.name plan_name,"
                             "a.disabled_at,MAX(u.last_login_at,(SELECT COALESCE(MAX(c.last_used_at),0) FROM credentials c "
@@ -379,18 +384,26 @@ def people(*, path: Path) -> list[dict]:
         for row in rows:
             if not is_human_user_record(dict(row)):
                 continue
-            roles = conn.execute("SELECT role FROM admin_role_assignments WHERE subject_kind='user' AND subject_id=? AND revoked_at IS NULL", (row["id"],)).fetchall()
+            roles = conn.execute("SELECT role,provenance,scope_app_id FROM admin_role_assignments WHERE subject_kind='user' AND subject_id=? AND revoked_at IS NULL", (row["id"],)).fetchall()
             person = {key: value for key, value in dict(row).items() if key not in {"issuer", "subject"}}
             person.update(disabled=row["disabled_at"] is not None, requests_this_month=None,
                           builtin=conn.execute("SELECT 1 FROM local_password_credentials WHERE user_id=?", (row["id"],)).fetchone() is not None,
                           protected=any(role[0] in {"owner", "admin", "superadmin"} for role in roles),
                           role="owner" if any(role[0] == "owner" for role in roles) else "admin" if any(role[0] in {"admin", "superadmin"} for role in roles) else "member")
+            person["grants"] = [{"role": role["role"], "source": "oidc-claim" if role["provenance"] == "oidc" else "manual",
+                                 "scope_app_id": role["scope_app_id"]} for role in roles]
+            person["plan_source"] = "assigned" if person["profile_id"] else "gateway_default"
+            if effective_plan_resolver is not None:
+                person.update(effective_plan_resolver(person))
+                plan = conn.execute("SELECT name FROM profiles WHERE id=?", (person["profile_id"],)).fetchone()
+                person["plan_name"] = plan[0] if plan else None
             people.append(person)
         return people
 
 
 def change_person(user_id: str, actor: str, *, path: Path, profile_id: str | None = None,
-                  disabled: bool | None = None, remove: bool = False):
+                  disabled: bool | None = None, remove: bool = False,
+                  actor_kind: str = "user", actor_label: str | None = None):
     ts = int(time.time())
     with connection(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -417,17 +430,18 @@ def change_person(user_id: str, actor: str, *, path: Path, profile_id: str | Non
                          (ts if disabled or remove else None, ts if remove else None, user_id))
             conn.execute("DELETE FROM account_sessions WHERE user_id=?", (user_id,))
             if disabled or remove:
-                conn.execute("UPDATE apps SET disabled_at=? WHERE owner_user_id=?", (ts, user_id))
+                # Account suspension is independent of per-App disablement.
+                # Removal is permanent and also disables the owned Apps.
+                if remove:
+                    conn.execute("UPDATE apps SET disabled_at=? WHERE owner_user_id=?", (ts, user_id))
                 conn.execute("UPDATE credentials SET revoked_at=? WHERE (app_id IN (SELECT id FROM apps WHERE owner_user_id=?) "
                              "OR (subject_kind='user' AND subject_id=?)) AND revoked_at IS NULL", (ts, user_id, user_id))
                 conn.execute("UPDATE account_links SET revoked_at=? WHERE user_id=? AND used_at IS NULL", (ts, user_id))
                 conn.execute("UPDATE admin_role_assignments SET revoked_at=? WHERE subject_kind='user' AND subject_id=?", (ts, user_id))
-            else:
-                conn.execute("UPDATE apps SET disabled_at=NULL WHERE owner_user_id=?", (user_id,))
             if remove:
                 conn.execute("DELETE FROM local_password_credentials WHERE user_id=?", (user_id,))
         _audit(conn, "people.remove" if remove else "people.update", actor, user_id, ts,
-               {"profile_id": profile_id, "disabled": disabled})
+               {"profile_id": profile_id, "disabled": disabled}, actor_kind=actor_kind, actor_label=actor_label)
 
 
 def record_oidc_verification(user_id: str, verified: bool, *, path: Path):
@@ -456,14 +470,15 @@ def invite_token(link_id: str, signing_key: bytes) -> str:
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
 
 
-def copy_invite(link_id: str, actor: str, signing_key: bytes, *, path: Path) -> str:
+def copy_invite(link_id: str, actor: str, signing_key: bytes, *, path: Path,
+                actor_kind: str = "user", actor_label: str | None = None) -> str:
     token = invite_token(link_id, signing_key)
     ts = int(time.time())
     with connection(path) as conn:
         link = _usable_link(conn, token, "invite", ts)
         if link["id"] != link_id:
             raise AccountError("link_unavailable", "This link is no longer available.", 404)
-        _audit(conn, "account.invite.copy", actor, link_id, ts)
+        _audit(conn, "account.invite.copy", actor, link_id, ts, actor_kind=actor_kind, actor_label=actor_label)
     return token
 
 
