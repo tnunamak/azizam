@@ -75,6 +75,71 @@ class TestMetricsStore(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_tag_matching_is_cached_per_query_without_changing_results(self) -> None:
+        from unittest.mock import patch
+
+        now = int(time.time())
+        with metrics_store.reader(self.db) as conn:
+            rows = [(now - i, "cache", '{"key":"alpha","extra":1}', float(i))
+                    for i in range(20)]
+            rows += [(now, "cache", '{"key":"beta"}', 99.0),
+                     (now, "cache", "invalid-json", 99.0)]
+            metrics_store.record_samples(conn, rows)
+            metrics_store.downsample_minute(conn)
+            conn.commit()
+            for op in ("avg", "min", "max", "sum", "count"):
+                with patch.object(metrics_store.json, "loads", wraps=metrics_store.json.loads) as loads:
+                    value = metrics_store.query_aggregate(
+                        "cache", since_s=60, tags_filter={"key": "alpha"}, op=op, conn=conn
+                    )
+                    self.assertEqual(loads.call_count, 3)
+                expected = {"avg": 9.5, "min": 0.0, "max": 19.0,
+                            "sum": 190.0, "count": 20.0}[op]
+                self.assertEqual(value, expected)
+                with patch.object(metrics_store.json, "loads", wraps=metrics_store.json.loads) as loads:
+                    series = metrics_store.query_series(
+                        "cache", since_s=60, points=1, tags_filter={"key": "alpha"},
+                        op=op, conn=conn
+                    )
+                    self.assertEqual(loads.call_count, 3)
+                    self.assertTrue(series)
+            # A subsequent query must use its own filter rather than a cached prior decision.
+            self.assertEqual(metrics_store.query_aggregate(
+                "cache", since_s=60, tags_filter={"key": "beta"}, conn=conn
+            ), 99.0)
+
+    def test_index_migration_is_idempotent_and_covers_latency_lookup(self) -> None:
+        import sqlite3
+
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("DROP INDEX samples_latency_tags_ts")
+            conn.execute("UPDATE schema_version SET version=1")
+            conn.execute("INSERT INTO samples VALUES (100,'service_latency_ms','{}',42)")
+        metrics_store.init_db(self.db)
+        metrics_store.init_db(self.db)
+        with sqlite3.connect(self.db) as conn:
+            self.assertEqual(conn.execute("SELECT version FROM schema_version").fetchone()[0], 2)
+            self.assertEqual(conn.execute("SELECT value FROM samples").fetchone()[0], 42)
+            plan = conn.execute(
+                "EXPLAIN QUERY PLAN SELECT value FROM samples "
+                "WHERE metric='service_latency_ms' AND ts>=? AND tags=? ORDER BY value",
+                (0, "{}"),
+            ).fetchall()
+            self.assertTrue(any("COVERING INDEX samples_latency_tags_ts" in row[3] for row in plan), plan)
+
+    def test_db_health_empty_and_old_samples(self) -> None:
+        health = metrics_store.db_health(self.db)
+        self.assertIsNone(health["oldest_sample_ts"])
+        self.assertEqual(health["total_rows"], 0)
+        self.assertFalse(health["recent_write_ok"])
+        with metrics_store.reader(self.db) as conn:
+            metrics_store.record_samples(conn, [(100, "old", "", 1), (200, "old", "", 2)])
+            conn.commit()
+        health = metrics_store.db_health(self.db)
+        self.assertEqual(health["oldest_sample_ts"], 100)
+        self.assertEqual(health["total_rows"], 2)
+        self.assertFalse(health["recent_write_ok"])
+
     def test_query_series(self) -> None:
         conn = metrics_store.open_writer(self.db)
         try:
