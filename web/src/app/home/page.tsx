@@ -23,6 +23,7 @@ import { formatAppName } from "@/lib/format";
 import { availabilityReason, statusSummaryCopy } from "@/lib/status-copy";
 import { useOwnerAlertTarget } from "@/components/shell/use-owner-alert";
 import { accountApi, type AccountApp } from "@/lib/account-api";
+import { ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -323,9 +324,13 @@ function Connect({ home }: { home: HomeSnapshot }) {
         queryClient.invalidateQueries({ queryKey: homeKey }),
         queryClient.invalidateQueries({ queryKey: setupKey }),
       ]);
-    } catch {
+    } catch (error) {
       setTestError(
-        "The gateway check could not finish. Check your key and try again.",
+        error instanceof ApiError
+          ? error.status === 401 || error.status === 403
+            ? "The gateway check could not finish. Check your key and try again."
+            : `The gateway check failed (HTTP ${error.status}). Try again.`
+          : "The server could not be reached. Try again.",
       );
     } finally {
       setTesting(false);

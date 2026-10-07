@@ -359,3 +359,89 @@ describe("Home audio Library navigation", () => {
     ).toBeVisible();
   });
 });
+
+describe("Home connection check errors", () => {
+  it.each([
+    {
+      failure: 401,
+      message:
+        "The gateway check could not finish. Check your key and try again.",
+    },
+    {
+      failure: 403,
+      message:
+        "The gateway check could not finish. Check your key and try again.",
+    },
+    {
+      failure: 500,
+      message: "The gateway check failed (HTTP 500). Try again.",
+    },
+    {
+      failure: "network",
+      message: "The server could not be reached. Try again.",
+    },
+  ])("HA-05 classifies $failure connection failures", async ({ failure, message }) => {
+    const connectionTest = vi.fn(() => {
+      if (typeof failure !== "number") {
+        return Promise.reject(new TypeError("Failed to fetch"));
+      }
+      return Response.json(
+        { error: { code: "connection_failed", message: "Check failed" } },
+        { status: failure },
+      );
+    });
+    mockHomeMedia([], (path) => {
+      if (path === "/me/api/home") {
+        return Response.json({
+          ...home,
+          apps: [
+            {
+              id: "test-app",
+              name: "Test app",
+              can_mint_keys: true,
+              credentials: [
+                {
+                  id: "test-key",
+                  display_name: "Test key",
+                  revoked_at: null,
+                  expires_at: null,
+                },
+              ],
+            },
+          ],
+        });
+      }
+      if (path === "/me/api/session") {
+        return Response.json({ csrf_token: "t" });
+      }
+      if (path === "/me/api/connection-test") return connectionTest();
+    });
+    renderHome();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Open WebUI" }),
+    );
+    await userEvent.click(screen.getByLabelText("API key", { exact: true }));
+    await userEvent.click(
+      await screen.findByRole("option", { name: "Test app · Test key" }),
+    );
+    await userEvent.type(screen.getByLabelText(/^Paste your /), "test-secret");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Check connection" }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(connectionTest).toHaveBeenCalledOnce();
+    const request = vi.mocked(fetch).mock.calls.find(
+      ([input]) => String(input) === "/me/api/connection-test",
+    );
+    expect(request?.[1]?.method).toBe("POST");
+    expect(JSON.parse(request?.[1]?.body as string)).toEqual({
+      api_key: "test-secret",
+      credential_id: "test-key",
+    });
+    expect(
+      screen.getByRole("button", { name: "Check connection" }),
+    ).toBeEnabled();
+  });
+});
