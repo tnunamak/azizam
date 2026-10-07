@@ -60,7 +60,12 @@ Spec: `docs/design/directions/blind-codex.md`, "Direction 2: Workspace" and "Rul
 2. **Readiness:** "Ready" now comes from the current engine and capability state in the Status captures. Real receipts appear only as a secondary "Last used" line: Chat 20h ago, Images 11h ago, Speech 21h ago, Transcription 20h ago. Music and Sound effects have no receipts for Robin, so they show no line.
 3. **Row actions:** each capability has one task label in a single text-link style ("Make an image", "Read aloud", "Transcribe audio", "Make music", "Make a sound").
 4. **Embeddings:** now Unavailable on both Home and Status, following "Video and embeddings are unavailable." The Paused glyph is removed. Status still leads with Video, because the owner capture reports "1 problem needs you".
-5. **Home app rows:** used apps have no action. Telegram helper (not used yet) keeps "Set up". A single "Manage apps and keys" link gives access to configuration.
+5. **Home app rows:** used apps have no action. Telegram helper keeps "Set up". A single "Manage apps and keys" link gives access to configuration.
 6. **Status:** the incident is now a plain section under a rule. The failed receipt row sits directly under the incident actions. The by-day chart is in a `<details>` element, closed by default. The completed receipt from 2d ago is removed because it only repeated older evidence. The page now ends at about y=600 of 1000, which is below the top third.
 7. **Library:** frames are now square (aspect-ratio 1), so square images have no gutters. The video poster (3:2) still shows a band inside its square frame. The rail is the only large preview. The selected cell keeps its thumbnail, selection outline and bold title (coordinator correction: the "Shown in the preview" placeholder was removed).
 8. **Accessibility:** both search boxes are labelled `<input type="search">` elements, and Type and Person are labelled native `<select>` elements. Each audio and video cell has a native `<button>` named "Play audio: ..." or "Play video: ..." as a sibling of the selection link, not inside it.
+
+## Fix pass 3 (data honesty)
+
+1. **Telegram helper** has no usage line. The data has no last-used time for it, so the earlier "Not used yet" was an inference and is removed. Robin's personal app (1h ago) and Open WebUI (4h ago) keep their real times from the member Apps capture.
+2. **Video chart:** the Failed lane is removed, because the receipts do not cover failures for all of Oct 1 to 7. The chart is now one series titled "All video requests by day, Oct 1 to Oct 7", with counts from Usage. The note under it states only the observed receipt: "Latest failed request: 21h ago, Open WebUI." This supersedes the chart description in "What I could not match".

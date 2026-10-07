@@ -88,13 +88,10 @@
   .legend span { display: inline-flex; align-items: center; gap: 6px; }
   .key { width: 14px; height: 14px; border-radius: 2px; display: inline-block; }
   .key-all { background: var(--text); }
-  .key-fail { background: var(--fail); }
-  .chart { display: block; margin-top: 12px; width: 836px; height: 236px; font: 400 14px "Source Sans 3", sans-serif; }
+    .chart { display: block; margin-top: 12px; width: 836px; height: 176px; font: 400 14px "Source Sans 3", sans-serif; }
   .chart text { fill: var(--text); }
   .chart .axis { stroke: var(--line); stroke-width: 1; }
   .chart .bar { fill: var(--text); }
-  .chart .failbar { fill: var(--fail); }
-  .chart .failtext { fill: var(--fail); font-weight: 600; }
   .chart .lane { font-weight: 600; }
   .note { margin-top: 8px; font-size: 14px; line-height: 20px; }
 
@@ -195,20 +192,14 @@
             </table>
 
             <details class="more">
-              <summary>Video requests by day, Oct 1 to Oct 7</summary>
+              <summary>All video requests by day, Oct 1 to Oct 7</summary>
             <div class="chart-head">
               <span></span>
-              <div class="legend" aria-hidden="true">
-                <span><i class="key key-all"></i>All video requests</span>
-                <span><i class="key key-fail"></i>Failed</span>
-              </div>
             </div>
-            <!-- Counts from Usage (Requests by day and capability, Video column). Failed: the one failed video receipt (req_household_00_27). -->
-            <svg class="chart" viewBox="0 0 836 236" role="img" aria-labelledby="chart-desc">
-              <desc id="chart-desc">Video requests per day: Oct 1, 2; Oct 2, 3; Oct 3, 4; Oct 4, 3; Oct 5, 2; Oct 6, 2; Oct 7, 1. One failed request, on Oct 7.</desc>
+            <!-- Counts from Usage (Requests by day and capability, Video column). -->
+            <svg class="chart" viewBox="0 0 836 176" role="img" aria-labelledby="chart-desc">
+              <desc id="chart-desc">Video requests per day: Oct 1, 2; Oct 2, 3; Oct 3, 4; Oct 4, 3; Oct 5, 2; Oct 6, 2; Oct 7, 1.</desc>
               <!-- lane labels -->
-              <text class="lane" x="0" y="22">All requests</text>
-              <text class="lane" x="0" y="190">Failed</text>
               <!-- lane 1 scale: 0..4 over 120 px, baseline y=140 -->
               <text x="118" y="144" text-anchor="end">0</text>
               <text x="118" y="84" text-anchor="end">2</text>
@@ -226,21 +217,16 @@
                 <rect class="bar" x="646" y="80" width="40" height="60"/><text x="666" y="72" text-anchor="middle">2</text>
                 <rect class="bar" x="746" y="110" width="40" height="30"/><text x="766" y="102" text-anchor="middle">1</text>
               </g>
-              <!-- lane 2: failed, baseline y=196, 1 = 30 px -->
-              <line class="axis" x1="128" y1="196" x2="836" y2="196"/>
-              <text x="118" y="200" text-anchor="end">0</text>
-              <rect class="failbar" x="746" y="166" width="40" height="30"/>
-              <text class="failtext" x="766" y="158" text-anchor="middle">1</text>
               <!-- day axis -->
-              <text x="166" y="226" text-anchor="middle">Oct 1</text>
-              <text x="266" y="226" text-anchor="middle">Oct 2</text>
-              <text x="366" y="226" text-anchor="middle">Oct 3</text>
-              <text x="466" y="226" text-anchor="middle">Oct 4</text>
-              <text x="566" y="226" text-anchor="middle">Oct 5</text>
-              <text x="666" y="226" text-anchor="middle">Oct 6</text>
-              <text x="766" y="226" text-anchor="middle">Oct 7</text>
+              <text x="166" y="166" text-anchor="middle">Oct 1</text>
+              <text x="266" y="166" text-anchor="middle">Oct 2</text>
+              <text x="366" y="166" text-anchor="middle">Oct 3</text>
+              <text x="466" y="166" text-anchor="middle">Oct 4</text>
+              <text x="566" y="166" text-anchor="middle">Oct 5</text>
+              <text x="666" y="166" text-anchor="middle">Oct 6</text>
+              <text x="766" y="166" text-anchor="middle">Oct 7</text>
             </svg>
-            <p class="note">Daily totals come from Usage. Failed comes from receipts.</p>
+            <p class="note">Daily totals come from Usage. Latest failed request: 21h ago, Open WebUI.</p>
             </details>
           </section>
 
