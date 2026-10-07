@@ -64,12 +64,21 @@ def exception_reason(path: str, line: str, token: str) -> str | None:
     return None
 
 
+def tracked_paths(root: Path) -> list[str]:
+    if (root / ".git").exists():
+        files = subprocess.run(["git", "ls-files", "-z"], cwd=root, check=True, capture_output=True).stdout
+        return [raw.decode() for raw in files.split(b"\0") if raw]
+    # The hermetic runner tests a `git archive` of HEAD: every file is tracked,
+    # except the venv/ and cache/ mounts the runner adds.
+    return sorted(
+        str(path.relative_to(root))
+        for path in root.rglob("*")
+        if path.is_file() and path.relative_to(root).parts[0] not in {"venv", "cache"}
+    )
+
+
 def tracked_hits(root: Path = ROOT):
-    files = subprocess.run(["git", "ls-files", "-z"], cwd=root, check=True, capture_output=True).stdout
-    for raw in files.split(b"\0"):
-        if not raw:
-            continue
-        path = raw.decode()
+    for path in tracked_paths(root):
         target = root / path
         if not target.is_file():  # deletions in an uncommitted worktree
             continue
