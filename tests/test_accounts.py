@@ -536,7 +536,7 @@ def test_oidc_users_with_same_email_in_different_issuers_do_not_share_account_pl
     _, token = accounts.create_link("invite", "owner", profile_id=plan["id"], email=first["email"], path=path)
     accounts.accept_invite(token, first["email"], "First", None, oidc_user_id=first["id"], path=path)
     monkeypatch.setattr(proxy, "ADMIN_STORE", AdminSQLiteStore(path))
-    monkeypatch.setattr(proxy, "_default_profile_id_for_user", lambda **kwargs: "unassigned-fallback")
+    monkeypatch.setattr(proxy, "_default_plan_for_user", lambda **kwargs: {"profile_id": "unassigned-fallback", "plan_source": "gateway_default"})
     sessions = [session_from_claims({"sub": user["id"], "email": user["email"]}, role="none", cookie=CookieConfig()) for user in (first, second)]
     assert accounts.profile_for_user(first["id"], path=path) == plan["id"]
     assert accounts.profile_for_user(second["id"], path=path) is None

@@ -159,3 +159,20 @@ initialization at startup. The idempotent `INSERT OR IGNORE` backfill uses the
 existing settings generation table and preserves existing registry generations.
 No operator script or schema column change is required.
 
+Invitation inspection uses `POST /auth/api/invite` with a JSON `token` field.
+The former GET query-token endpoint returns 405. The invitation page captures
+and clears the fragment immediately, retains it in tab session storage for
+OIDC sign-in and reloads, and clears that stored token after acceptance.
+
+Account suspension now blocks access through account state without changing
+individual app disable flags. Re-enabling an account leaves independently
+disabled apps disabled; revoked keys and sessions remain revoked. Existing app
+disable flags are preserved, including flags set before this change, because
+their original intent cannot be recovered safely.
+
+People shows the effective access plan from the same resolver used by session
+and app authorization, with its assigned, email, domain, group, role or gateway
+default source. Each active administrator grant shows its manual or OIDC-claim
+source. Grant and revoke audit events include provenance; invitation acceptance
+also records its first credential, without key material. Account actions record
+the authenticated actor kind, including owner service accounts.

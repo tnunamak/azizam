@@ -1763,14 +1763,14 @@ def replace_default_runtime_profile_mapping(
         conn.commit()
 
 
-def resolve_runtime_profile_mapping(
+def resolve_runtime_profile_mapping_details(
     *,
     email: str,
     gateway_role: str,
     oidc_groups: Iterable[str] = (),
     oidc_roles: Iterable[str] = (),
     path: Path = DB_PATH,
-) -> str | None:
+) -> dict[str, Any] | None:
     email_value = _normalize_access_value(email)
     _, _, domain = email_value.partition("@")
     candidates: set[tuple[str, str]] = {("all_users", "*")}
@@ -1798,8 +1798,19 @@ def resolve_runtime_profile_mapping(
             value = _normalize_identity_value(kind, value)
         pair = (kind, value)
         if pair in candidates:
-            return str(row.get("profile_id") or "") or None
+            return row
     return None
+
+
+def resolve_runtime_profile_mapping(
+    *, email: str, gateway_role: str, oidc_groups: Iterable[str] = (),
+    oidc_roles: Iterable[str] = (), path: Path = DB_PATH,
+) -> str | None:
+    mapping = resolve_runtime_profile_mapping_details(
+        email=email, gateway_role=gateway_role, oidc_groups=oidc_groups,
+        oidc_roles=oidc_roles, path=path,
+    )
+    return str(mapping["profile_id"]) if mapping and mapping.get("profile_id") else None
 
 
 # ---------------------------------------------------------------------------

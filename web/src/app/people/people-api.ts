@@ -10,12 +10,23 @@ export interface Person {
   email: string | null;
   profile_id: string | null;
   plan_name: string | null;
+  plan_source?: "assigned" | "email" | "domain" | "group" | "role" | "gateway_default";
+  grants?: { role: string; source: "manual" | "oidc-claim"; scope_app_id: string | null }[];
   disabled: boolean;
   last_active: number | null;
   requests_this_month: number | null;
   builtin?: boolean;
   protected?: boolean;
   role?: "owner" | "admin" | "member";
+}
+
+export function planSourceLabel(source: Person["plan_source"]): string {
+  return { assigned: "Assigned", email: "Email mapping", domain: "Domain mapping",
+    group: "Group mapping", role: "Role mapping", gateway_default: "Gateway default" }[source ?? "gateway_default"];
+}
+
+export function grantSourceLabel(source: "manual" | "oidc-claim"): string {
+  return source === "oidc-claim" ? "OIDC claim" : "Manual";
 }
 export interface Invite {
   id: string;

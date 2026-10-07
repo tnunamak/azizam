@@ -45,6 +45,8 @@ import {
   peopleApi,
   planSummary,
   planCounts,
+  planSourceLabel,
+  grantSourceLabel,
   type Person,
   type Invite,
 } from "./people-api";
@@ -204,7 +206,7 @@ export default function PeoplePage() {
                       : "Disable access?",
                     description: person.disabled
                       ? "This person can sign in again. Previously revoked keys stay revoked; create new keys for their apps."
-                      : "This person cannot sign in. Their apps are disabled and their keys are permanently revoked.",
+                      : "This person cannot sign in. Access to their apps is suspended and their keys are permanently revoked.",
                     run: () =>
                       peopleApi.change(person.id, {
                         disabled: !person.disabled,
@@ -327,6 +329,11 @@ export default function PeoplePage() {
                               : "Protected account"}
                         </Badge>
                       )}
+                      {person.grants?.map((grant, index) => (
+                        <Badge key={`${grant.role}-${grant.source}-${index}`} variant="outline">
+                          {grant.role} · {grantSourceLabel(grant.source)}
+                        </Badge>
+                      ))}
                     </div>
                     {person.email && (
                       <p className="text-muted-foreground text-sm break-all">
@@ -339,6 +346,9 @@ export default function PeoplePage() {
                       Access plan ·{" "}
                     </span>
                     {person.plan_name || "Gateway default"}
+                    <div className="text-muted-foreground text-xs">
+                      {planSourceLabel(person.plan_source)}
+                    </div>
                   </div>
                   {person.last_active ? (
                     <div className="text-muted-foreground col-start-1 text-sm md:col-auto">
