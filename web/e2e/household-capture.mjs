@@ -226,7 +226,10 @@ async function captureInteractions(page, { view, theme, width, base }) {
   } else skip("status", "show-disabled", "Show disabled control was not rendered");
   const alert = page.locator("section").filter({ has: page.getByRole("heading", { name: "Needs attention" }) }).getByRole("link", { name: "Open" }).first();
   if (await alert.count()) { await alert.click(); await shot("status", "alert"); }
-  else await shot("status", "alert-state");
+  else {
+    await shot("status", "alert-state");
+    skip("status", "alert", "No Needs attention alert with an Open action was rendered");
+  }
 
   await page.goto(`${base}/ui/engines/`);
   await settled(page);
@@ -297,6 +300,7 @@ async function captureActivityViews(page, { view, theme, width }) {
       if (await receipt.count()) {
         await receipt.click();
         await capture(page, { route: "activity", view, interaction: isFailure ? "failure-receipt" : "receipt", theme, width, state: "settled" });
+        if (!isFailure) skipped.push({ route: "activity", view, interaction: "failure-receipt", theme, width, reason: "No failed Activity receipt was rendered" });
       } else skipped.push({ route: "activity", view, interaction: "receipt", theme, width, reason: "No request receipt row was rendered" });
     }
   }
