@@ -268,7 +268,7 @@ def test_provider_down_scenario(tmp_path):
         )
         assert history[FIXED_NOW - 4 * 3600] == 1
         assert sorted(ts for ts, up in history.items() if not up) == sorted(FIXED_NOW - h * 3600 for h in range(4))
-    failed = [r for _, r in _receipts(tmp_path) if r["status"] == "failed"]
+    failed = [r for _, r in _receipts(tmp_path) if r["request_id"].startswith("req_household_down_")]
     assert len(failed) == details["failed_requests"] == 5
     assert all(r["remote"] and r["metadata"]["status_code"] == 503 for r in failed)
     assert all(r["accepted_at_ms"] // 1000 > details["last_success_at"] for r in failed)
