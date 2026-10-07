@@ -1,12 +1,12 @@
-"""Per-API-key store for user-created voices and consent recordings.
+"""Per-principal store for user-created voices and consent recordings.
 
 Layout under ``root``::
 
     <owner>/voices/<voice_id>/{reference.wav, original.<ext>, meta.json, <engine caches>}
     <owner>/consents/<consent_id>/{recording.<ext>, meta.json}
 
-``<owner>`` is the first 32 hex digits of sha256 of the credential hash (``local`` when auth is
-off), so no key material is on disk. A voice or consent that belongs to another key is reported as
+``<owner>`` is the first 32 hex digits of sha256 of the principal key (``local`` when auth is
+off), so no key material is on disk. A voice or consent that belongs to another principal is reported as
 not found, never as forbidden. Records are written to a temporary directory and renamed, so a
 crash leaves no half-created voice. Deleting a voice removes its directory, engine caches included.
 """
@@ -21,7 +21,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from gateway.transforms import CANONICAL_TTS_VOICES, LEGACY_TTS_VOICE_ALIASES
 
@@ -105,10 +105,12 @@ def _dir_bytes(path: Path) -> int:
 
 
 class VoiceStore:
-    def __init__(self, root: Path | str, limits: VoiceLimits | None = None):
+    def __init__(self, root: Path | str, limits: VoiceLimits | None = None, *,
+                 legacy_owners: Callable[[str | None], Iterable[str]] | None = None):
         self.root = Path(root)
         self.limits = limits or VoiceLimits()
         self._lock = threading.Lock()
+        self._legacy_owners = legacy_owners or (lambda owner: ())
 
     # ---- paths -------------------------------------------------------------
     def _owner(self, owner_key: str | None) -> Path:
@@ -121,7 +123,31 @@ class VoiceStore:
         return self._owner(owner_key) / "consents"
 
     def reference_path(self, owner_key: str | None, voice_id: str) -> Path:
-        return self._voices(owner_key) / voice_id / "reference.wav"
+        try:
+            return self._record_path(owner_key, "voices", voice_id, VOICE_ID_RE, "voice") / "reference.wav"
+        except VoiceError:
+            if not VOICE_ID_RE.match(voice_id or ""):
+                raise
+            # Keep the path lookup contract for valid IDs after deletion.
+            # Resource reads call get_voice first and still return not found.
+            return self._voices(owner_key) / voice_id / "reference.wav"
+
+    def _owner_paths(self, owner_key: str | None) -> list[Path]:
+        return list(dict.fromkeys(self._owner(key) for key in [owner_key, *self._legacy_owners(owner_key)]))
+
+    def _record_paths(self, owner_key: str | None, collection: str, record_id: str,
+                      id_re: re.Pattern[str], what: str) -> list[Path]:
+        if not id_re.match(record_id or ""):
+            self._load(self._owner(owner_key) / collection, record_id, id_re, what)
+        paths = [base / collection / record_id for base in self._owner_paths(owner_key)
+                 if _read_json(base / collection / record_id / "meta.json") is not None]
+        if not paths:
+            self._load(self._owner(owner_key) / collection, record_id, id_re, what)
+        return paths
+
+    def _record_path(self, owner_key: str | None, collection: str, record_id: str,
+                     id_re: re.Pattern[str], what: str) -> Path:
+        return self._record_paths(owner_key, collection, record_id, id_re, what)[0]
 
     # ---- generic record helpers -------------------------------------------
     def _load(self, base: Path, record_id: str, id_re: re.Pattern[str], what: str) -> dict[str, Any]:
@@ -140,6 +166,22 @@ class VoiceStore:
                 if meta is not None:
                     records.append(meta)
         records.sort(key=lambda m: (m.get("created_at", 0), m.get("id", "")), reverse=True)
+        return self._page(records, after, limit, what)
+
+    def _list_owned(self, owner_key: str | None, collection: str, after: str | None,
+                    limit: int, id_re: re.Pattern[str], what: str) -> tuple[list[dict[str, Any]], bool]:
+        # Principal records take precedence over manual copies in old folders.
+        by_id: dict[str, dict[str, Any]] = {}
+        for base in self._owner_paths(owner_key):
+            records, _ = self._list(base / collection, None, 10_000, id_re, what)
+            for meta in records:
+                by_id.setdefault(meta["id"], meta)
+        records = sorted(by_id.values(), key=lambda m: (m.get("created_at", 0), m.get("id", "")), reverse=True)
+        return self._page(records, after, limit, what)
+
+    @staticmethod
+    def _page(records: list[dict[str, Any]], after: str | None, limit: int,
+              what: str) -> tuple[list[dict[str, Any]], bool]:
         if after:
             ids = [m["id"] for m in records]
             if after not in ids:
@@ -162,15 +204,15 @@ class VoiceStore:
             raise
 
     def _check_bytes(self, owner_key: str | None, extra: int) -> None:
-        if _dir_bytes(self._owner(owner_key)) + extra > self.limits.max_bytes:
-            raise VoiceError(400, "voice_quota_exceeded", "This key has used its voice storage quota; delete a voice or consent first.")
+        if sum(_dir_bytes(base) for base in self._owner_paths(owner_key)) + extra > self.limits.max_bytes:
+            raise VoiceError(400, "voice_quota_exceeded", "This owner has used its voice storage quota; delete a voice or consent first.")
 
     # ---- consents ----------------------------------------------------------
     def create_consent(self, owner_key: str | None, *, name: str, language: str, recording: bytes, extension: str) -> dict[str, Any]:
         with self._lock:
-            records, _ = self._list(self._consents(owner_key), None, self.limits.max_consents + 1, CONSENT_ID_RE, "consent")
+            records, _ = self._list_owned(owner_key, "consents", None, self.limits.max_consents + 1, CONSENT_ID_RE, "consent")
             if len(records) >= self.limits.max_consents:
-                raise VoiceError(400, "voice_quota_exceeded", f"At most {self.limits.max_consents} consent recordings can be stored per key.")
+                raise VoiceError(400, "voice_quota_exceeded", f"At most {self.limits.max_consents} consent recordings can be stored per owner.")
             self._check_bytes(owner_key, len(recording))
             consent_id = f"cons_{secrets.token_hex(12)}"
             meta = {"object": "audio.voice_consent", "id": consent_id, "name": name, "language": language, "created_at": int(time.time())}
@@ -178,22 +220,25 @@ class VoiceStore:
             return meta
 
     def get_consent(self, owner_key: str | None, consent_id: str) -> dict[str, Any]:
-        return self._load(self._consents(owner_key), consent_id, CONSENT_ID_RE, "consent")
+        path = self._record_path(owner_key, "consents", consent_id, CONSENT_ID_RE, "consent")
+        return self._load(path.parent, consent_id, CONSENT_ID_RE, "consent")
 
     def list_consents(self, owner_key: str | None, *, after: str | None, limit: int) -> tuple[list[dict[str, Any]], bool]:
-        return self._list(self._consents(owner_key), after, limit, CONSENT_ID_RE, "consent")
+        return self._list_owned(owner_key, "consents", after, limit, CONSENT_ID_RE, "consent")
 
     def rename_consent(self, owner_key: str | None, consent_id: str, name: str) -> dict[str, Any]:
         with self._lock:
             meta = self.get_consent(owner_key, consent_id)
             meta["name"] = name
-            _write_json(self._consents(owner_key) / consent_id / "meta.json", meta)
+            for path in self._record_paths(owner_key, "consents", consent_id, CONSENT_ID_RE, "consent"):
+                _write_json(path / "meta.json", meta)
             return meta
 
     def delete_consent(self, owner_key: str | None, consent_id: str) -> None:
         with self._lock:
             self.get_consent(owner_key, consent_id)
-            shutil.rmtree(self._consents(owner_key) / consent_id)
+            for path in self._record_paths(owner_key, "consents", consent_id, CONSENT_ID_RE, "consent"):
+                shutil.rmtree(path)
 
     # ---- voices ------------------------------------------------------------
     def create_voice(
@@ -222,10 +267,10 @@ class VoiceStore:
             if consent_id is not None:
                 if not CONSENT_ID_RE.match(consent_id):
                     raise VoiceError(400, "invalid_consent", f"consent '{consent_id}' is not a consent recording id.", param="consent")
-                self.get_consent(owner_key, consent_id)  # 404 unless it is this key's
-            records, _ = self._list(self._voices(owner_key), None, self.limits.max_voices + 1, VOICE_ID_RE, "voice")
+                self.get_consent(owner_key, consent_id)  # 404 unless it belongs to this principal
+            records, _ = self._list_owned(owner_key, "voices", None, self.limits.max_voices + 1, VOICE_ID_RE, "voice")
             if len(records) >= self.limits.max_voices:
-                raise VoiceError(400, "voice_quota_exceeded", f"At most {self.limits.max_voices} voices can be stored per key; delete one first.")
+                raise VoiceError(400, "voice_quota_exceeded", f"At most {self.limits.max_voices} voices can be stored per owner; delete one first.")
             self._check_bytes(owner_key, len(reference_wav) + len(original or b""))
             voice_id = f"voice_{secrets.token_hex(12)}"
             meta = {
@@ -254,31 +299,34 @@ class VoiceStore:
             return meta
 
     def get_voice(self, owner_key: str | None, voice_id: str) -> dict[str, Any]:
-        return self._load(self._voices(owner_key), voice_id, VOICE_ID_RE, "voice")
+        path = self._record_path(owner_key, "voices", voice_id, VOICE_ID_RE, "voice")
+        return self._load(path.parent, voice_id, VOICE_ID_RE, "voice")
 
     def list_voices(self, owner_key: str | None, *, after: str | None = None, limit: int = 20) -> tuple[list[dict[str, Any]], bool]:
-        return self._list(self._voices(owner_key), after, limit, VOICE_ID_RE, "voice")
+        return self._list_owned(owner_key, "voices", after, limit, VOICE_ID_RE, "voice")
 
     def update_voice(self, owner_key: str | None, voice_id: str, changes: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
             meta = self.get_voice(owner_key, voice_id)
             meta.update(changes)
-            _write_json(self._voices(owner_key) / voice_id / "meta.json", meta)
+            for path in self._record_paths(owner_key, "voices", voice_id, VOICE_ID_RE, "voice"):
+                _write_json(path / "meta.json", meta)
             return meta
 
     def delete_voice(self, owner_key: str | None, voice_id: str) -> None:
         with self._lock:
             self.get_voice(owner_key, voice_id)
-            shutil.rmtree(self._voices(owner_key) / voice_id)
+            for path in self._record_paths(owner_key, "voices", voice_id, VOICE_ID_RE, "voice"):
+                shutil.rmtree(path)
 
     def usage(self, owner_key: str | None) -> dict[str, int]:
-        voices, _ = self._list(self._voices(owner_key), None, 10_000, VOICE_ID_RE, "voice")
-        consents, _ = self._list(self._consents(owner_key), None, 10_000, CONSENT_ID_RE, "consent")
-        return {"voices": len(voices), "consents": len(consents), "bytes": _dir_bytes(self._owner(owner_key))}
+        voices, _ = self._list_owned(owner_key, "voices", None, 10_000, VOICE_ID_RE, "voice")
+        consents, _ = self._list_owned(owner_key, "consents", None, 10_000, CONSENT_ID_RE, "consent")
+        return {"voices": len(voices), "consents": len(consents), "bytes": sum(_dir_bytes(base) for base in self._owner_paths(owner_key))}
 
     # ---- lifecycle ---------------------------------------------------------
     def purge_owner(self, owner_key: str | None) -> bool:
-        """Delete everything a key owns. Called when its credential is revoked."""
+        """Explicitly delete one owner's folder. Credential revocation never calls this."""
         with self._lock:
             target = self._owner(owner_key)
             if not target.is_dir():

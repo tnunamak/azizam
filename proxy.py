@@ -3903,7 +3903,10 @@ def _voice_store() -> custom_voices.VoiceStore:
     key = (str(root), limits)
     store = _VOICE_STORES.get(key)
     if store is None:
-        store = _VOICE_STORES[key] = custom_voices.VoiceStore(root, limits)
+        from gateway.ownership import credential_owner_keys
+        store = _VOICE_STORES[key] = custom_voices.VoiceStore(
+            root, limits, legacy_owners=lambda owner: credential_owner_keys(owner, path=ADMIN_STORE.path),
+        )
     return store
 
 
@@ -4040,9 +4043,9 @@ def _enforce_voice_route_policy(auth_context: AuthContext, _path: str) -> Respon
 
 
 def _purge_voices_for_credential(credential: Mapping[str, Any]) -> None:
-    key_hash = credential.get("hash")
-    if key_hash and _voice_store().purge_owner(str(key_hash)):
-        print(f"[proxy] removed custom voices of revoked credential {credential.get('prefix') or credential.get('id')}", flush=True)
+    # Rotation revokes authentication, never the principal's voices. Keep old
+    # folders too: they remain readable through trusted credential aliases.
+    return None
 
 
 
@@ -6701,9 +6704,17 @@ def verify_asset_signature(asset_id: str, expires: int, sig: str, metadata_mode:
 
 
 def _asset_owner_key(auth_context: AuthContext | None) -> str | None:
-    identity = getattr(auth_context, "identity", None) if auth_context else None
-    key_hash = getattr(identity, "key_hash", None)
-    return str(key_hash) if key_hash else None
+    from gateway.ownership import owner_key
+    return owner_key(auth_context, path=ADMIN_STORE.path)
+
+
+def _asset_read_owner_keys(auth_context: AuthContext | None) -> tuple[str, ...]:
+    from gateway.ownership import credential_owner_keys
+    identity = getattr(auth_context, "identity", None)
+    return credential_owner_keys(
+        _asset_owner_key(auth_context), path=ADMIN_STORE.path,
+        current_key_hash=getattr(identity, "key_hash", None),
+    )
 
 
 def _asset_metadata_path(asset_id: str) -> Path | None:
@@ -6743,6 +6754,8 @@ def _write_asset_metadata(asset_id: str, metadata: Mapping[str, Any]) -> None:
 
 
 def _record_asset_owner(asset_id: str, owner_key_hash: str | None) -> None:
+    from gateway.ownership import stored_owner_key
+    owner_key_hash = stored_owner_key(owner_key_hash, path=ADMIN_STORE.path)
     if not owner_key_hash:
         return
     metadata = _read_asset_metadata(asset_id)
@@ -6763,8 +6776,7 @@ def _asset_access_allowed(asset_id: str, auth_context: AuthContext | None) -> bo
         # Fail closed for authenticated callers when metadata is absent. Auth-
         # disabled local runs have no identity and keep the old cache behavior.
         return _asset_owner_key(auth_context) is None
-    owner_key_hash = _asset_owner_key(auth_context)
-    return bool(owner_key_hash and owner_key_hash in owners)
+    return bool(owners.intersection(_asset_read_owner_keys(auth_context)))
 
 
 def store_asset_bytes(
@@ -9058,7 +9070,7 @@ _video_chain_units: dict[str, list[dict[str, str]]] = {}
 #
 # This dict is also the single source of truth for "does this video_id exist
 # and is it mine" across GET (status), GET (content), GET (list), and DELETE:
-# `owner_key_hash` scopes every one of those to the credential that created
+# `owner_key_hash` scopes every one of those to the principal that created
 # the job (mirrors `_asset_owner_key`'s existing image/audio asset model; see
 # `_video_job_access_allowed`), and `deleted_at` is the DELETE tombstone --
 # once set, every read route treats the job as not-found, regardless of
@@ -9079,7 +9091,7 @@ def _video_job_access_allowed(prompt_id: str, auth_context: AuthContext | None) 
     owner = record.get("owner_key_hash") if record is not None else None
     if not owner:
         return _asset_owner_key(auth_context) is None
-    return _asset_owner_key(auth_context) == owner
+    return owner in _asset_read_owner_keys(auth_context)
 
 
 def _video_job_visible(prompt_id: str, auth_context: AuthContext | None) -> bool:
@@ -13729,11 +13741,12 @@ def _gateway_audience_resolver(request: Request) -> str:
 
 
 def _gateway_record_scope(request: Request) -> dict[str, Any]:
-    identity = _auth_context_from_scope(request).identity
+    auth_context = _auth_context_from_scope(request)
+    identity = auth_context.identity
     if not AUTH_ENABLED and identity is None:
         return {}
     return {"app_ids": [identity.app_id] if identity and identity.app_id else [],
-            "owner_key_hashes": [identity.key_hash] if identity else []}
+            "owner_key_hashes": list(_asset_read_owner_keys(auth_context))}
 
 
 def _gateway_record_authorizer(request: Request, kind: str, record: Mapping[str, Any]) -> bool:
@@ -13741,7 +13754,8 @@ def _gateway_record_authorizer(request: Request, kind: str, record: Mapping[str,
     auth_context = _auth_context_from_scope(request)
     identity = auth_context.identity
     return owns_record(
-        kind, record, app_id=identity.app_id if identity else None, key_hash=identity.key_hash if identity else None,
+        kind, record, app_id=identity.app_id if identity else None,
+        owner_keys=_asset_read_owner_keys(auth_context),
         unrestricted=not AUTH_ENABLED and identity is None,
     )
 

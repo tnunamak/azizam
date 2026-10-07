@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 from uuid import uuid4
+from gateway.ownership import stored_owner_key
 
 from gateway.redaction import (
     FORBIDDEN_KEYS as _SHARED_FORBIDDEN_KEYS,
@@ -419,6 +420,7 @@ def create(
 
 
 def _write_job(conn: sqlite3.Connection, job: MediaJob) -> None:
+    job.owner_key_hash = stored_owner_key(job.owner_key_hash, app_id=job.app_id)
     conn.execute(
         "INSERT OR REPLACE INTO media_jobs "
         "(job_id, request_id, intent, workflow, backend, status, progress, error, "

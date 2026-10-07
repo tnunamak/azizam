@@ -41,6 +41,7 @@ from typing import Any, Mapping
 
 from gateway.receipts import RouteReceipt, serialize_receipt_for_audience
 from gateway.redaction import assert_safe_mapping, assert_safe_top_level
+from gateway.ownership import stored_owner_key
 
 _default_db = Path(__file__).resolve().parent.parent / "data" / "receipts.db"
 DB_PATH = Path(get_env("AZIZAM_RECEIPTS_DB")) if get_env("AZIZAM_RECEIPTS_DB") else _default_db
@@ -190,12 +191,16 @@ def _conn(path: Path = DB_PATH):
 
 def _coerce_to_internal_dict(receipt_or_dict: Any) -> dict[str, Any]:
     if isinstance(receipt_or_dict, RouteReceipt):
-        return receipt_or_dict.to_dict("internal")
-    if isinstance(receipt_or_dict, Mapping):
-        return dict(receipt_or_dict)
-    raise TypeError(
-        f"receipt must be RouteReceipt or mapping, got {type(receipt_or_dict).__name__}"
-    )
+        data = receipt_or_dict.to_dict("internal")
+    elif isinstance(receipt_or_dict, Mapping):
+        data = dict(receipt_or_dict)
+    else:
+        raise TypeError(
+            f"receipt must be RouteReceipt or mapping, got {type(receipt_or_dict).__name__}"
+        )
+    if data.get("app_id") or data.get("owner_key_hash"):
+        data["owner_key_hash"] = stored_owner_key(data.get("owner_key_hash"), app_id=data.get("app_id"))
+    return data
 
 
 def _assert_safe(data: Mapping[str, Any]) -> None:

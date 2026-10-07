@@ -40,7 +40,7 @@ class SyncMediaIngestionTests(unittest.TestCase):
         self.assertEqual(stored["status"], media_jobs.STATUS_SUCCEEDED)
         self.assertEqual(stored["progress"], 100)
         self.assertEqual(stored["app_id"], "app_alice")
-        self.assertEqual(stored["owner_key_hash"], "sha256:alice")
+        self.assertEqual(stored["owner_key_hash"], "app:app_alice")
         self.assertEqual(stored["assets"][0]["asset_id"], asset_id)
         self.assertEqual(stored["assets"][0]["kind"], "image")
         self.assertEqual(stored["assets"][0]["width"], 512)

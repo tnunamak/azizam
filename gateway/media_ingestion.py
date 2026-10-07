@@ -18,6 +18,7 @@ from starlette.responses import Response
 
 from gateway import media_delivery, media_jobs, provenance, receipt_store
 from gateway.receipts import RouteReceipt
+from gateway.ownership import owner_key
 
 _KIND_BY_PREFIX = {"img": "image", "aud": "audio", "vid": "video"}
 _MEDIA_TYPE_BY_SUFFIX = {
@@ -93,7 +94,7 @@ async def start_receipt(request: Request, auth_context: Any, *, intent: str, pro
         path=str(request.url.path),
         app_profile=profile_id,
         app_id=getattr(identity, "app_id", None) if identity is not None else None,
-        owner_key_hash=getattr(identity, "key_hash", None) if identity is not None else None,
+        owner_key_hash=owner_key(auth_context),
         api_key_name=getattr(identity, "name", None) if identity is not None else None,
         requested_model=_body_string(body, "model"),
         stream=_body_stream_requested(body),

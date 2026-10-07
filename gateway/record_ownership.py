@@ -9,7 +9,8 @@ from typing import Any
 
 
 def owns_record(kind: str, record: Mapping[str, Any], *, app_id: str | None,
-                key_hash: str | None = None, unrestricted: bool = False) -> bool:
+                key_hash: str | None = None, owner_keys: tuple[str, ...] = (),
+                unrestricted: bool = False) -> bool:
     if kind not in {"receipt", "media_job"}:
         return False
     if unrestricted:
@@ -17,5 +18,5 @@ def owns_record(kind: str, record: Mapping[str, Any], *, app_id: str | None,
     if record.get("app_id"):
         return bool(app_id and record["app_id"] == app_id)
     if record.get("owner_key_hash"):
-        return bool(key_hash and record["owner_key_hash"] == key_hash)
+        return record["owner_key_hash"] in {*owner_keys, *([key_hash] if key_hash else [])}
     return False
