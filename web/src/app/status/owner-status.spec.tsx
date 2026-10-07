@@ -401,7 +401,11 @@ it.each(["loading", "error"])(
   "does not claim all-clear while providers are %s",
   async (state) => {
     providerState.state = state;
+    const user = userEvent.setup();
     mount();
+    // Healthy engines stay inside a closed disclosure in a real browser; open it
+    // before querying, as the other tests do, instead of relying on jsdom exposing it.
+    await user.click(await screen.findByText("1 engine · Show"));
     await screen.findByRole("button", { name: "Local chat" });
     expect(screen.getByRole("status")).toHaveTextContent(
       state === "loading"
