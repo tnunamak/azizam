@@ -421,7 +421,12 @@ describe("Home connection check errors", () => {
     await userEvent.click(
       await screen.findByRole("button", { name: "Open WebUI" }),
     );
-    await userEvent.click(screen.getByLabelText("API key", { exact: true }));
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: () => {},
+    });
+    screen.getByRole("combobox", { name: "API key" }).focus();
+    await userEvent.keyboard("{Enter}");
     await userEvent.click(
       await screen.findByRole("option", { name: "Test app · Test key" }),
     );
