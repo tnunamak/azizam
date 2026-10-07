@@ -62,6 +62,12 @@ type TryTab =
   | "embed"
   | "workflow";
 type TryKey = { id: string; secret: string; appName: string };
+type TryError = {
+  message: string;
+  status?: number;
+  receiptId?: string | null;
+  elapsedMs?: number;
+};
 type RequestInfo = {
   path: string;
   body: unknown;
@@ -241,6 +247,17 @@ function publicPath(path: string) {
   return path.startsWith("/v1/") ? path : `/openai/v1${path}`;
 }
 
+class PublicRequestError extends ApiError {
+  constructor(
+    message: string,
+    public response: Response,
+    public payload: unknown,
+    public elapsedMs: number,
+  ) {
+    super("public_request_failed", message, response.status);
+  }
+}
+
 async function publicRequest(path: string, key: string, init: RequestInit) {
   const started = performance.now();
   const response = await fetch(publicPath(path), {
@@ -261,7 +278,7 @@ async function publicRequest(path: string, key: string, init: RequestInit) {
         "string"
         ? (payload as { error: { message: string } }).error.message
         : `Request failed with HTTP ${response.status}.`;
-    throw new ApiError("public_request_failed", message, response.status);
+    throw new PublicRequestError(message, response, payload, elapsedMs);
   }
   return { response, payload, elapsedMs };
 }
@@ -822,7 +839,7 @@ export default function TryPage() {
   const chunks = useRef<Blob[]>([]);
   const [running, setRunning] = useState<TryTab | null>(null);
   const [results, setResults] = useState<Partial<Record<TryTab, Result>>>({});
-  const [errors, setErrors] = useState<Partial<Record<TryTab, string>>>({});
+  const [errors, setErrors] = useState<Partial<Record<TryTab, TryError>>>({});
   const [catalog, setCatalog] = useState<
     Partial<Record<TryTab, CatalogOption[]>>
   >({});
@@ -1334,12 +1351,21 @@ export default function TryPage() {
     } catch (error) {
       setErrors((current) => ({
         ...current,
-        [tab]:
-          error instanceof ApiError && tab === "decide" && error.status === 404
-            ? "Decisions not enabled on this gateway"
-            : error instanceof Error
-              ? error.message
-              : "This request could not be completed.",
+        [tab]: {
+          message:
+            error instanceof ApiError && tab === "decide" && error.status === 404
+              ? "Decisions not enabled on this gateway"
+              : error instanceof Error
+                ? error.message
+                : "This request could not be completed.",
+          ...(error instanceof PublicRequestError
+            ? {
+                status: error.status,
+                receiptId: receiptFrom(error.response, error.payload),
+                elapsedMs: error.elapsedMs,
+              }
+            : {}),
+        },
       }));
     } finally {
       setRunning(null);
@@ -1832,10 +1858,24 @@ export default function TryPage() {
                       <Skeleton className="h-20 w-full" />
                     </div>
                   ) : currentError ? (
-                    <ErrorState
-                      message={currentError}
-                      onRetry={() => void loadCatalog(key?.secret)}
-                    />
+                    <div className="space-y-5">
+                      <ErrorState
+                        message={currentError.message}
+                        onRetry={() => void loadCatalog(key?.secret)}
+                      />
+                      {currentError.status !== undefined && (
+                        <dl className="grid gap-3 text-sm sm:grid-cols-3">
+                          <Fact label="Status" value={`HTTP ${currentError.status}`} />
+                          <Fact label="Time" value={`${currentError.elapsedMs} ms`} />
+                          {currentError.receiptId && (
+                            <Fact
+                              label="Receipt"
+                              value={<ReceiptLink id={currentError.receiptId} />}
+                            />
+                          )}
+                        </dl>
+                      )}
+                    </div>
                   ) : currentResult ? (
                     <ResultView
                       result={currentResult}

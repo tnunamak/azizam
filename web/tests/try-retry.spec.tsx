@@ -117,3 +117,66 @@ it.each(["model", "workflow"])(
     expect(account.mintKey).not.toHaveBeenCalled();
   },
 );
+
+it.each([
+  "x-azizam-receipt-id",
+  "x-azizam-request-id",
+  "x-request-id",
+  "payload",
+  "missing",
+])("failed request retains status, time and %s receipt context", async (source) => {
+  let now = 100;
+  const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+  const requestId = "failed-request";
+  fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (init?.method === "POST") {
+      now += 42;
+      const response = json(
+        {
+          error: { message: "Provider unavailable" },
+          ...(source === "payload" ? { request_id: requestId } : {}),
+        },
+        503,
+      );
+      if (source !== "payload" && source !== "missing")
+        response.headers.set(source, requestId);
+      return response;
+    }
+    return json(url.includes("workflows") ? workflows : models);
+  });
+  try {
+    const user = userEvent.setup();
+    render(<TryPage />);
+    await waitFor(() =>
+      expect(screen.getByRole("combobox")).toHaveTextContent("Chat model"),
+    );
+    await user.click(screen.getByRole("button", { name: "Run" }));
+    expect(await screen.findByText("Provider unavailable")).toBeVisible();
+    expect(screen.getByText("HTTP 503")).toBeVisible();
+    expect(screen.getByText("42 ms")).toBeVisible();
+    if (source === "missing") {
+      expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    } else {
+      expect(screen.getByRole("link")).toHaveAttribute(
+        "href",
+        expect.stringContaining(requestId),
+      );
+    }
+    const reads = fetchMock.mock.calls.filter(
+      ([, init]) => init?.method !== "POST",
+    ).length;
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(([, init]) => init?.method !== "POST"),
+      ).toHaveLength(reads + 2),
+    );
+    expect(
+      fetchMock.mock.calls.filter(([, init]) => init?.method === "POST"),
+    ).toHaveLength(1);
+    expect(screen.getByText("HTTP 503")).toBeVisible();
+    expect(screen.getByText("42 ms")).toBeVisible();
+  } finally {
+    clock.mockRestore();
+  }
+});
