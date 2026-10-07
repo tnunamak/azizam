@@ -619,6 +619,7 @@ class AdminSQLiteStore:
             subject_kind="service_account",
             subject_id=service_account["id"],
             granted_by=actor.subject,
+            actor=actor,
             path=self.path,
         )
         admin_store.record_audit(
@@ -1580,6 +1581,16 @@ def runtime_identity_for_app_credential_hash(
     if app is None or app.get("disabled_at"):
         return None
 
+    if app.get("owner_user_id"):
+        with admin_store._conn(path) as conn:
+            has_accounts = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'").fetchone()
+            owner = conn.execute(
+                "SELECT disabled_at, removed_at FROM account_access WHERE user_id = ?",
+                (app["owner_user_id"],),
+            ).fetchone() if has_accounts else None
+        if owner and (owner["disabled_at"] is not None or owner["removed_at"] is not None):
+            return None
+
     profile = DEFAULT_PROFILE
     profile_id = credential.get("profile_id") or app.get("default_profile_id")
     if not profile_id and inherited_profile_id_for_app is not None:
@@ -1629,6 +1640,7 @@ def create_admin_service_account_key(
         subject_kind="service_account",
         subject_id=service_account["id"],
         granted_by="cli",
+        actor_kind="cli",
         path=path,
     )
     admin_store.record_audit(

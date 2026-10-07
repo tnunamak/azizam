@@ -120,7 +120,7 @@ async function mock(page: Page, state: State) {
             },
     }),
   );
-  await page.route("**/auth/api/invite?**", (route) =>
+  await page.route("**/auth/api/invite", (route) =>
     route.fulfill({
       status: state === "error" ? 410 : 200,
       json:

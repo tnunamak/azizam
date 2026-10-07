@@ -1445,6 +1445,8 @@ def assign_admin_role(
     scope_app_id: str | None = None,
     granted_by: str | None = None,
     provenance: str = "manual",
+    actor: Any = None,
+    actor_kind: str = "system",
     now: int | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
@@ -1466,6 +1468,7 @@ def assign_admin_role(
         raise ValueError("provenance must be manual or oidc")
     ts = _now() if now is None else int(now)
     with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             "SELECT * FROM admin_role_assignments "
             "WHERE role = ? AND subject_kind = ? AND subject_id = ? "
@@ -1489,6 +1492,9 @@ def assign_admin_role(
                 (role, subject_kind, subject_id, scope_app_id, ts, granted_by, provenance),
             )
             assignment_id = cur.lastrowid
+        granted = conn.execute("SELECT * FROM admin_role_assignments WHERE id=?", (assignment_id,)).fetchone()
+        _audit_admin_role(conn, "admin_role.grant", granted, ts, actor=actor,
+                          actor_kind=actor_kind, actor_id=granted_by)
         conn.commit()
         out = conn.execute(
             "SELECT * FROM admin_role_assignments WHERE id = ?",
@@ -1517,27 +1523,36 @@ def reconcile_oidc_admin_roles(
             (subject_id,),
         ).fetchall()
         for row in rows:
-            if row["provenance"] == "oidc" and row["role"] not in desired:
+            if row["provenance"] == "oidc" and row["role"] not in desired and row["revoked_at"] is None:
                 conn.execute(
                     "UPDATE admin_role_assignments SET revoked_at=? "
                     "WHERE id=? AND revoked_at IS NULL", (ts, row["id"]),
                 )
+                _audit_admin_role(conn, "admin_role.revoke", row, ts,
+                                  actor_kind="system", actor_id="oidc")
         for role in sorted(desired):
             matching = [row for row in rows if row["role"] == role]
             if any(row["provenance"] == "manual" and row["revoked_at"] is None for row in matching):
                 continue
             existing = next((row for row in matching if row["provenance"] == "oidc"), None)
             if existing is not None:
+                if existing["revoked_at"] is None:
+                    continue
                 conn.execute(
                     "UPDATE admin_role_assignments SET revoked_at=NULL, granted_at=? "
                     "WHERE id=?", (ts, existing["id"]),
                 )
+                assignment_id = existing["id"]
             else:
-                conn.execute(
+                cur = conn.execute(
                     "INSERT INTO admin_role_assignments(role,subject_kind,subject_id,"
                     "scope_app_id,granted_at,granted_by,provenance) "
                     "VALUES (?,'user',?,NULL,?,'oidc','oidc')", (role, subject_id, ts),
                 )
+                assignment_id = cur.lastrowid
+            granted = conn.execute("SELECT * FROM admin_role_assignments WHERE id=?", (assignment_id,)).fetchone()
+            _audit_admin_role(conn, "admin_role.grant", granted, ts,
+                              actor_kind="system", actor_id="oidc")
         conn.commit()
         return [_row_to_dict(row) for row in conn.execute(
             "SELECT * FROM admin_role_assignments WHERE subject_kind='user' "
@@ -1546,17 +1561,36 @@ def reconcile_oidc_admin_roles(
 
 
 def revoke_admin_role(
-    assignment_id: int, *, now: int | None = None, path: Path = DB_PATH
+    assignment_id: int, *, actor: Any = None, actor_kind: str = "system",
+    actor_id: str | None = None, now: int | None = None, path: Path = DB_PATH
 ) -> bool:
     ts = _now() if now is None else int(now)
     with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT * FROM admin_role_assignments WHERE id=?", (assignment_id,)).fetchone()
         cur = conn.execute(
             "UPDATE admin_role_assignments SET revoked_at = ? "
             "WHERE id = ? AND revoked_at IS NULL",
             (ts, assignment_id),
         )
+        if cur.rowcount:
+            _audit_admin_role(conn, "admin_role.revoke", row, ts, actor=actor,
+                              actor_kind=actor_kind, actor_id=actor_id)
         conn.commit()
         return cur.rowcount > 0
+
+
+def _audit_admin_role(conn, action, row, now, *, actor=None, actor_kind="system", actor_id=None):
+    _record_audit_in_transaction(
+        conn, action, actor_kind=actor.actor_kind if actor else actor_kind,
+        actor_id=actor.audit_actor_id if actor else actor_id,
+        actor_label=actor.actor_label if actor else None,
+        target_kind="admin_role_assignment", target_id=str(row["id"]),
+        metadata={"role": row["role"], "subject_kind": row["subject_kind"],
+                  "subject_id": row["subject_id"], "scope_app_id": row["scope_app_id"],
+                  "provenance": "oidc-claim" if row["provenance"] == "oidc" else "manual"},
+        now=now,
+    )
 
 
 def list_admin_roles(
