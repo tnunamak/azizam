@@ -15,6 +15,9 @@ import urllib.request
 REPO = Path(__file__).resolve().parents[2]
 PORT = int(os.environ.get('UI_E2E_PORT', '18180'))
 ENGINE_PORT = PORT + 1
+SEED_PROFILE = os.environ.get('UI_SEED_PROFILE', '')
+if SEED_PROFILE not in ('', 'household'):
+    raise SystemExit('UI_SEED_PROFILE must be household or unset')
 if not 18000 <= PORT < 18999:
     raise SystemExit('UI_E2E_PORT must be between 18000 and 18998')
 # Use a disk-backed, test-owned directory; do not inherit operator environment.
@@ -55,6 +58,15 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
         'AZIZAM_MEDIA_JOBS_DB': 'media_jobs.db',
     }.items():
         env[name] = str(state / filename)
+    if SEED_PROFILE == 'household':
+        env['UI_SEED_PROFILE'] = 'household'
+        env['UI_HOUSEHOLD_PROVIDER_KEY'] = 'isolated-household-provider'
+        env['AZIZAM_ADMIN_SESSION_KEY'] = 'household-fixture-session-not-production'
+        env['AZIZAM_PROVIDER_LEDGER_DB'] = str(state / 'provider_spend.db')
+        if os.environ.get('UI_HOUSEHOLD_MANIFEST_PATH'):
+            env['UI_HOUSEHOLD_MANIFEST_PATH'] = os.environ['UI_HOUSEHOLD_MANIFEST_PATH']
+        subprocess.run([sys.executable, '-m', 'scripts.ui.household_seed', str(state), str(PORT)],
+                       cwd=state, env=env, check=True)
     try:
         for module, port in [('scripts.ui.fake_engine:app', ENGINE_PORT), ('proxy:app', PORT)]:
             log = (state / f'{port}.log').open('w')

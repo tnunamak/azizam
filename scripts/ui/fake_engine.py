@@ -1,5 +1,6 @@
 """Deterministic OpenAI-compatible engine used only by the isolated UI harness."""
 import time
+import os
 
 from fastapi import FastAPI, Request
 
@@ -14,6 +15,9 @@ def health():
 
 @app.get("/v1/models")
 def models():
+    if os.environ.get('UI_SEED_PROFILE') == 'household':
+        from scripts.ui.household_seed import MODEL_GROUPS
+        return {'object': 'list', 'data': [{'id': mid, 'object': 'model', 'owned_by': 'household', 'name': name} for group in MODEL_GROUPS.values() for mid, name, cap in group]}
     return {"object": "list", "data": [{"id": "demo-chat", "object": "model", "owned_by": "demo"}]}
 
 
@@ -59,3 +63,9 @@ async def chat(request: Request):
     if "force_unknown_usage" not in content:
         response["usage"] = {"prompt_tokens": 18, "completion_tokens": 22, "total_tokens": 40, "cost": "0.000100000"}
     return response
+
+
+@app.get("/fixture/degraded")
+def degraded():
+    from fastapi.responses import JSONResponse
+    return JSONResponse({"status": "degraded", "detail": "Video worker recovering after queue timeout"}, status_code=503)
