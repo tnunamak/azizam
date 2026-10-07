@@ -280,3 +280,65 @@ test.each([
   }
   client.clear();
 });
+
+test("Usage sorts top models by requests and model name before slicing", async () => {
+  const client = renderUsageSummary({
+    requests: 100,
+    by_model: [
+      { model: "low", requests: 1 },
+      { model: "zeta", requests: 10 },
+      { model: "middle", requests: 9 },
+      { model: "beta", requests: 10 },
+      { model: "tail", requests: 2 },
+      { model: "highest", requests: 20 },
+      { model: "alpha", requests: 10 },
+    ],
+  });
+  const heading = await screen.findByRole("columnheader", { name: "Capability and model" });
+  const table = heading.closest("table") as HTMLTableElement;
+  const models = () => Array.from(table.querySelectorAll("tbody code"), (node) => node.textContent);
+  const top = ["highest", "alpha", "beta", "zeta", "middle"];
+  expect(models()).toEqual(top);
+  fireEvent.click(screen.getByRole("button", { name: "View all 7 models" }));
+  expect(models()).toEqual([...top, "tail", "low"]);
+  fireEvent.click(screen.getByRole("button", { name: "Show top 5" }));
+  expect(models()).toEqual(top);
+  client.clear();
+});
+
+test.each([
+  { name: "unclassified remainder", total: 10, counts: { chat: 2 }, expected: [2, 8, 10] },
+  { name: "unknown and explicit Other counts", total: 10, counts: { chat: 2, other: 1, future: 3 }, expected: [2, 8, 10] },
+  { name: "embedding aliases combined", total: 10, counts: { chat: 2, embed: 1, embedding: 2, embeddings: 3 }, expected: [2, 6, 2, 10] },
+  { name: "total without capability counts", total: 4, counts: {}, expected: [4, 4] },
+  { name: "missing total falls back to alias counts", total: undefined, counts: { chat: 2, embed: 3 }, expected: [2, 3, 5] },
+])("Usage reconciles daily capability stacks: $name", async ({ total, counts, expected }) => {
+  const client = renderUsageSummary({
+    requests: 10,
+    by_day: [{ date: "2026-10-07", total, capabilities: counts }],
+  });
+  const table = await screen.findByRole("table", { name: "Requests by day and capability" });
+  const row = within(table).getByRole("rowheader", { name: "2026-10-07" }).closest("tr") as HTMLTableRowElement;
+  const values = within(row).getAllByRole("cell").map((cell) => Number(cell.textContent));
+  expect(values).toEqual(expected);
+  expect(values.slice(0, -1).reduce((sum, value) => sum + value, 0)).toBe(values[values.length - 1]);
+  if (total !== undefined)
+    expect(within(table).getByRole("columnheader", { name: "Other" })).toBeTruthy();
+  client.clear();
+});
+
+test("Usage keeps recorded counts on an overfull day and says the counts disagree", async () => {
+  const client = renderUsageSummary({
+    requests: 10,
+    by_day: [{ date: "2026-10-07", total: 5, capabilities: { chat: 4, image: 3 } }],
+  });
+  const table = await screen.findByRole("table", { name: "Requests by day and capability" });
+  const row = within(table).getByRole("rowheader", { name: "2026-10-07" }).closest("tr") as HTMLTableRowElement;
+  const cells = within(row).getAllByRole("cell").map((cell) => cell.textContent);
+  expect(cells.slice(0, 2)).toEqual(["4", "3"]);
+  expect(cells[cells.length - 1]).toBe("5 (capability counts add to 7)");
+  expect(
+    screen.getByText(/On 1 day the capability counts add to more than the recorded total/),
+  ).toBeVisible();
+  client.clear();
+});

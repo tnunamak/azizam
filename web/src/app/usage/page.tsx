@@ -71,6 +71,8 @@ interface UsageDay {
   date: string;
   total: number;
   byCapability: Record<UsageCapability, number>;
+  /** Sum of the recorded capability counts when it exceeds `total`, else null. */
+  countsExceedTotal: number | null;
 }
 
 interface UsageModel {
@@ -463,11 +465,16 @@ function DailyChart({ days }: { days: UsageDay[] }) {
   const active = capabilities.filter((capability) =>
     days.some((day) => (day.byCapability[capability] ?? 0) > 0),
   );
+  const overfullDays = days.filter((day) => day.countsExceedTotal !== null).length;
   return (
     <Card className="border-0! bg-transparent! shadow-none!">
       <CardHeader>
         <CardTitle>Requests by day</CardTitle>
-        <CardDescription>Stacked by capability</CardDescription>
+        <CardDescription>
+          Stacked by capability
+          {overfullDays > 0 &&
+            `. On ${overfullDays} ${overfullDays === 1 ? "day" : "days"} the capability counts add to more than the recorded total; the bars show the recorded counts.`}
+        </CardDescription>
       </CardHeader>
       <CardContent>
         {rows.length < 1 ? (
@@ -541,7 +548,11 @@ function DailyChart({ days }: { days: UsageDay[] }) {
                     {active.map((capability) => (
                       <td key={capability}>{day.byCapability[capability] ?? 0}</td>
                     ))}
-                    <td>{day.total}</td>
+                    <td>
+                      {day.total}
+                      {day.countsExceedTotal !== null &&
+                        ` (capability counts add to ${day.countsExceedTotal})`}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -576,7 +587,10 @@ function ModelTable({
   showAll: boolean;
   onToggle: () => void;
 }) {
-  const visibleRows = showAll ? rows : rows.slice(0, 5);
+  const sortedRows = [...rows].sort((a, b) =>
+    b.requests - a.requests || (a.model < b.model ? -1 : a.model > b.model ? 1 : 0),
+  );
+  const visibleRows = showAll ? sortedRows : sortedRows.slice(0, 5);
   return (
     <Card className="border-0! bg-transparent! shadow-none!">
       <CardHeader>
@@ -1175,10 +1189,15 @@ function normalizeDay(raw: unknown): UsageDay {
   const byCapability = normalizeCapabilityCounts(
     data.capabilities ?? data.by_capability ?? data,
   );
+  const total = number(data.total ?? data.requests, sumCounts(byCapability));
+  const knownTotal = sumCounts(byCapability) - byCapability.other;
+  byCapability.other = Math.max(0, total - knownTotal);
+  // Never cap or rescale recorded counts; flag the day instead.
   return {
     date: string(data.date ?? data.day, ""),
-    total: number(data.total ?? data.requests, sumCounts(byCapability)),
+    total,
     byCapability,
+    countsExceedTotal: knownTotal > total ? knownTotal : null,
   };
 }
 
@@ -1198,10 +1217,15 @@ function normalizeCapabilityCounts(
   raw: unknown,
 ): Record<UsageCapability, number> {
   const data = object(raw);
+  const embeddingCount = Object.entries(data).reduce(
+    (sum, [key, value]) =>
+      normalizeCapability(key) === "embeddings" ? sum + number(value, 0) : sum,
+    0,
+  );
   return capabilities.reduce(
     (acc, capability) => ({
       ...acc,
-      [capability]: number(data[capability], 0),
+      [capability]: capability === "embeddings" ? embeddingCount : number(data[capability], 0),
     }),
     {} as Record<UsageCapability, number>,
   );
