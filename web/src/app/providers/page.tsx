@@ -1361,7 +1361,9 @@ function AddProviderDialog({
         message:
           ok === null
             ? "Connection not confirmed."
-            : text(response.message, ok ? "Connection worked." : "Connection failed."),
+            : ok
+              ? text(response.message, "Connection worked.")
+              : `Connection failed${text(response.message, "") ? `: ${text(response.message, "")}` : "."}`,
         models: ok === true && Array.isArray(response.models)
           ? response.models.map(mapModel)
           : [],
@@ -2117,6 +2119,11 @@ export default function ProvidersPage() {
     savePlans.isPending ||
     saveGlobalCaps.isPending;
 
+  // Show the error of the most recently submitted action, so an old failure
+  // (e.g. a cancelled rotation) cannot hide a newer validation message.
+  const latestError = [action, saveModels, saveCaps, savePlans, saveGlobalCaps]
+    .filter((mutation) => mutation.error)
+    .sort((a, b) => b.submittedAt - a.submittedAt)[0]?.error;
   return (
     <>
       <PageHeader
@@ -2215,25 +2222,11 @@ export default function ProvidersPage() {
                 />
               ))}
             </div>
-            {(action.error ||
-              saveModels.error ||
-              saveCaps.error ||
-              savePlans.error ||
-              saveGlobalCaps.error) && (
+            {latestError && (
               <div role="alert" className="text-danger text-sm">
                 <AlertCircle className="mr-1 inline size-4" />
-                {(action.error ||
-                  saveModels.error ||
-                  saveCaps.error ||
-                  savePlans.error ||
-                  saveGlobalCaps.error) instanceof Error
-                  ? (
-                      action.error ||
-                      saveModels.error ||
-                      saveCaps.error ||
-                      savePlans.error ||
-                      saveGlobalCaps.error
-                    )?.message
+                {latestError instanceof Error
+                  ? latestError.message
                   : "Provider action failed."}
               </div>
             )}

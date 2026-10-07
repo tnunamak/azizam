@@ -91,10 +91,11 @@ it("reports an engine list load failure with unknown engine states and working R
   await waitFor(() => expect(registry).toHaveBeenCalledTimes(2));
 });
 
-it.each([403, 500, 503])("attributes member status HTTP %s errors to the server without connection blame", async (status) => {
+it.each([403, 500, 503])("reports member status HTTP %s errors by status, blaming no layer", async (status) => {
   vi.spyOn(productApi, "status").mockRejectedValue(statusResponseError(status));
   mountHealthErrorPage(<MemberStatus />);
-  expect(await screen.findByText("Your model status check failed on the server side. The gateway owner can see details. Try again.")).toBeVisible();
+  expect(await screen.findByText(`Your model status check failed (HTTP ${status}). The gateway owner can see details. Try again.`)).toBeVisible();
+  expect(screen.queryByText(/server side/)).toBeNull();
   expect(screen.queryByText(/Check your connection/)).toBeNull();
 });
 
@@ -103,7 +104,7 @@ it.each([new TypeError("Failed to fetch"), new Error("Unexpected failure")])("ke
   mountHealthErrorPage(<MemberStatus />);
   expect(await screen.findByText("Your model status could not be loaded. Try again.")).toBeVisible();
   expect(screen.queryByText(/Check your connection/)).toBeNull();
-  expect(screen.queryByText(/failed on the server side/)).toBeNull();
+  expect(screen.queryByText(/check failed \(HTTP/)).toBeNull();
 });
 
 it("keeps the member status sign-in action for HTTP 401", async () => {
@@ -111,7 +112,7 @@ it("keeps the member status sign-in action for HTTP 401", async () => {
   mountHealthErrorPage(<MemberStatus />);
   expect(await screen.findByText("Sign in to see your status")).toBeVisible();
   expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/sign-in/?return_to=%2Fui%2Fstatus%2F");
-  expect(screen.queryByText(/failed on the server side/)).toBeNull();
+  expect(screen.queryByText(/check failed \(HTTP/)).toBeNull();
 });
 
 async function openEndpointEditor(baseUrl: string) {

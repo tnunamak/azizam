@@ -228,6 +228,7 @@ it.each([
   ["numeric evidence", { ok: 1 }, false, "Connection not confirmed."],
   ["null evidence", { ok: null }, false, "Connection not confirmed."],
   ["explicit failure", { ok: false }, false, "Connection failed."],
+  ["explicit failure with a success message", { ok: false, message: "Connection worked." }, false, "Connection failed: Connection worked."],
   ["explicit success", { ok: true }, true, "Connection worked."],
 ] as const)(
   "requires explicit connection success evidence: %s",
@@ -313,3 +314,32 @@ for (const target of ["add", "provider", "global"] as const) {
     },
   );
 }
+
+it("shows a new cap validation error even after an older action failed", async () => {
+  const { client } = await renderProviderRegression({ ok: true }, true);
+  const prompt = vi.spyOn(window, "prompt").mockReturnValue(null);
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: () => {},
+  });
+  try {
+    fireEvent.click(screen.getByText("Manage"));
+    const more = screen.getByRole("button", { name: "More actions for Test provider" });
+    more.focus();
+    fireEvent.keyDown(more, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Rotate key/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Rotation cancelled.");
+    fireEvent.click(screen.getByRole("button", { name: "Edit caps" }));
+    fireEvent.change(screen.getByLabelText("Test provider daily cap (USD)"), { target: { value: "-1" } });
+    fireEvent.change(screen.getByLabelText("Test provider monthly cap (USD)"), { target: { value: "5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save caps" }));
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "Caps must be non-negative numbers or blank for no cap.",
+      ),
+    );
+  } finally {
+    prompt.mockRestore();
+    client.clear();
+  }
+});
