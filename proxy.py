@@ -77,7 +77,7 @@ from gateway import (
     video_media_job_http,
     video_media_jobs,
 )
-from gateway import video_extend
+from gateway import loop_watchdog, video_extend
 from gateway import comfy_object_info, comfy_ui_graph, media_delivery, media_metadata, provenance
 from gateway import video_subject
 from gateway import video_job_records
@@ -12602,6 +12602,9 @@ async def lifespan(app: FastAPI):
     print(f"[proxy] Idle timeout: {TABBY_IDLE_TIMEOUT}s", flush=True)
     print(f"[proxy] Default model: {DEFAULT_MODEL}", flush=True)
 
+    # Log the loop thread's stack whenever the event loop stops answering.
+    watchdog = loop_watchdog.start(float(get_env("AZIZAM_LOOP_WATCHDOG_THRESHOLD_S", "1.0")))
+
     maintenance_task = asyncio.create_task(maintenance_loop())
 
     # ComfyUI websocket listener for real-time video progress. Optional —
@@ -12766,6 +12769,8 @@ async def lifespan(app: FastAPI):
     yield
 
     state.shutdown_requested = True
+    if watchdog is not None:
+        watchdog.stop()
     for task in list(_image_media_job_tasks):
         task.cancel()
     if _image_media_job_tasks:
