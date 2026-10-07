@@ -3,7 +3,10 @@
 set -euo pipefail
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-codex_bin=$(command -v codex || true)
+# Resolve the real codex binary BEFORE HOME is swapped: a mise shim (or a shell wrapper)
+# cannot run under the scratch HOME used below.
+codex_bin=${CODEX_BIN:-$(command -v codex || true)}
+if [[ "$codex_bin" == */shims/* ]] && command -v mise >/dev/null; then codex_bin=$(mise which codex); fi
 if [[ -z "$codex_bin" ]]; then
   echo "SKIP: codex is not installed" >&2
   exit 0
@@ -111,7 +114,7 @@ curl --fail --silent "http://127.0.0.1:$gateway_port/health" >/dev/null || { tai
 
 command=("$codex_bin" exec --json --sandbox danger-full-access --skip-git-repo-check --ephemeral --color never -C "$scratch" "Use apply_patch, and only apply_patch, to create hello.txt containing exactly: hello from Azizam e2e. Then state that it was created.")
 printf '%q ' "${command[@]}" > "$state/codex-command.txt"; printf '\n' >> "$state/codex-command.txt"
-(cd "$scratch" && "${base_env[@]}" "CODEX_HOME=$codex_home" "AZIZAM_E2E_KEY=azizam-e2e-dummy-key" "RUST_LOG=warn" timeout 120s "${command[@]}" </dev/null >"$state/codex-transcript.jsonl" 2>"$state/codex-stderr.log")
+(cd "$scratch" && "${base_env[@]}" "CODEX_HOME=$codex_home" "PATH=$(dirname "$codex_bin"):/usr/bin:/bin" "AZIZAM_E2E_KEY=azizam-e2e-dummy-key" "RUST_LOG=warn" timeout 120s "${command[@]}" </dev/null >"$state/codex-transcript.jsonl" 2>"$state/codex-stderr.log")
 
 "$python_bin" - "$state" <<'PY'
 import hashlib, json, sys
