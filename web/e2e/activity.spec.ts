@@ -158,6 +158,45 @@ test("automated changes are grouped by default and use plain wording when shown"
   await expect(page.getByText(/registry|safe-restart/i)).toHaveCount(0);
 });
 
+test("system change labels stay generic until event details are opened", async ({
+  page,
+}) => {
+  const rawLabel =
+    "registry-reconstruct-20261001 (restore Sep 30 pre-damage + phase5b/6 changes)";
+  await page.route("**/admin/api/audit**", (route) =>
+    route.fulfill({
+      json: {
+        records: [
+          {
+            id: "system-reconstruction",
+            action: "operator.service_registry.backfill",
+            actor_kind: "system",
+            actor_id: "startup-task",
+            actor_label: rawLabel,
+            target_kind: "operator_setting",
+            target_id: "service_registry",
+            metadata: { updated_by: rawLabel },
+            created_at: 1_760_000_000,
+          },
+        ],
+        next_cursor: null,
+        automated_count: 0,
+      },
+    }),
+  );
+
+  await page.goto("/ui/activity/");
+  const change = page.getByRole("button", {
+    name: /Updated engine configuration by System/,
+  });
+  await expect(change).toContainText("System · Gateway settings");
+  await expect(page.getByText(rawLabel)).toHaveCount(0);
+
+  await change.click();
+  await page.getByText("Technical details", { exact: true }).click();
+  await expect(page.getByLabel("Technical audit details")).toContainText(rawLabel);
+});
+
 for (const theme of ["light", "dark"] as const) {
   for (const width of [1440, 390]) {
     for (const state of ["seeded", "empty", "error"] as const) {

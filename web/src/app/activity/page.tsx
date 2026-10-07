@@ -70,7 +70,10 @@ function activityActorName(
   actorKind: AuditEntry["actor_kind"] = null,
 ) {
   if (actorKind === "service_account") return "Automation";
-  return label.includes("@") ? "Person" : label;
+  if (actorKind === "user" || actorKind === "admin") {
+    return label.includes("@") ? "Person" : label;
+  }
+  return "System";
 }
 
 export default function ActivityPage() {

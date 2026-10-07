@@ -91,6 +91,34 @@ test("usage lists a receipt and opens technical details", async ({ page }) => {
   await expect(sheet).toContainText("requested_model");
 });
 
+test("usage omits the model line when only the capability is known", async ({
+  page,
+}) => {
+  await page.route("**/me/api/usage/summary?**", (route) =>
+    route.fulfill({
+      json: {
+        ...seededSummary,
+        by_model: [
+          {
+            model: null,
+            capability: "transcribe",
+            requests: 6,
+            remote_spend: null,
+          },
+        ],
+      },
+    }),
+  );
+
+  await page.goto("/ui/usage/");
+  const transcriptionRow = page
+    .getByRole("row")
+    .filter({ hasText: "Transcription" });
+  await expect(transcriptionRow).toBeVisible();
+  await expect(transcriptionRow.locator("code")).toHaveCount(0);
+  await expect(transcriptionRow).not.toContainText("Unknown model");
+});
+
 for (const theme of ["light", "dark"] as const) {
   for (const width of [1440, 390] as const) {
     test(`usage empty ${theme} at ${width}px`, async ({ page }) => {

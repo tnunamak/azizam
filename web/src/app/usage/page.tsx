@@ -1099,7 +1099,7 @@ function normalizeDay(raw: unknown): UsageDay {
 function normalizeModel(raw: unknown): UsageModel {
   const data = object(raw);
   return {
-    model: string(data.model ?? data.name, "Unknown model"),
+    model: nullableString(data.model ?? data.name) ?? "",
     capability: normalizeCapability(data.capability ?? data.intent),
     requests: number(data.requests ?? data.count, 0),
     costUsd: nullableNumber(
