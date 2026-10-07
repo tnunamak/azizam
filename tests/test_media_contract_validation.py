@@ -57,11 +57,15 @@ class MediaContractValidationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_http3_02_generation_n_is_a_bounded_integer(self):
         for value in (True, False, 1.9, 1.0, float("inf"), float("nan"), "1", None, 0, 11):
-            with self.subTest(n=value):
+            generate = AsyncMock(return_value=proxy.Response(status_code=200))
+            with self.subTest(n=value), patch.object(
+                proxy, "_generate_images_with_adaptive_batching", generate,
+            ):
                 response = await proxy.proxy_comfy_request(
                     _StubJsonRequest({"prompt": "a tree", "n": value}), proxy.NO_AUTH_CONTEXT,
                 )
                 self.assert_invalid(response, "n")
+                generate.assert_not_awaited()
 
     async def test_generation_accepts_integer_count_boundaries(self):
         generate = AsyncMock(return_value=proxy.Response(status_code=200))
@@ -135,25 +139,33 @@ class MediaContractValidationTests(unittest.IsolatedAsyncioTestCase):
                 _StubJsonRequest({"prompt": "a tone", **parameters}), proxy.NO_AUTH_CONTEXT,
             )
 
+    async def assert_audio_invalid(self, param, value):
+        # Use the success-test transport so a late workflow submission is recorded.
+        _AudioClient.submissions = []
+        with patch.object(proxy.httpx, "AsyncClient", _AudioClient):
+            response = await self.audio(**{param: value})
+        self.assert_invalid(response, param)
+        self.assertEqual(_AudioClient.submissions, [], f"Invalid {param} submitted a workflow")
+
     async def test_http3_05_audio_rejects_requested_encoding(self):
         for value in ("mp3", "wav", "flac", None, 42):
             with self.subTest(response_format=value):
-                self.assert_invalid(await self.audio(response_format=value), "response_format")
+                await self.assert_audio_invalid("response_format", value)
 
     async def test_http3_06_audio_type_is_a_supported_string(self):
         for value in (None, 1, True, [], "speech", "Music", "music\r\n"):
             with self.subTest(type=value):
-                self.assert_invalid(await self.audio(type=value), "type")
+                await self.assert_audio_invalid("type", value)
 
     async def test_http3_07_audio_duration_must_be_finite(self):
         for value in ("NaN", "Infinity", "-Infinity", float("nan"), float("inf")):
             with self.subTest(duration=value):
-                self.assert_invalid(await self.audio(duration=value), "duration")
+                await self.assert_audio_invalid("duration", value)
 
     async def test_http3_08_invalid_explicit_seed_is_not_randomized(self):
         for value in ("abc", None, True, 1.5, "1", -1, 2**32, float("inf")):
             with self.subTest(seed=value), patch.object(proxy.random, "randint") as randomize:
-                self.assert_invalid(await self.audio(seed=value), "seed")
+                await self.assert_audio_invalid("seed", value)
                 randomize.assert_not_called()
 
     async def test_audio_native_success_and_seed_boundaries(self):
