@@ -125,7 +125,9 @@ test("real registry journey preserves disabled state and unknown config through 
     .click();
   sheet = page.getByRole("dialog", { name: "Edit engine", exact: true });
   await sheet.getByRole("switch", { name: /Toggle / }).click();
-  await page.keyboard.press("Escape");
+  expect((await registry()).services[record.id].enabled).toBe(true);
+  await sheet.getByRole("button", { name: "Save engine", exact: true }).click();
+  await expect(sheet).not.toBeVisible();
   await expect(card).toBeVisible();
   await expect(card.getByText("Disabled", { exact: true })).toBeVisible();
   await card.getByRole("button", { name: /Actions|More/ }).click();

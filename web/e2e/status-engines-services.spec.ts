@@ -528,10 +528,12 @@ test("engines add, edit, toggle, and remove use existing APIs safely", async ({
     engineCard(page, "Local chat engine"),
     "Local chat engine",
   );
+  const writesBeforeToggle = bodies.length;
   await toggleSheet
     .getByRole("switch", { name: "Toggle Local chat engine" })
     .click();
-  await page.keyboard.press("Escape");
+  expect(bodies).toHaveLength(writesBeforeToggle);
+  await toggleSheet.getByRole("button", { name: "Save engine" }).click();
   await expect(toggleSheet).not.toBeVisible();
   await page.getByRole("switch", { name: "Show not in use" }).click();
   const imageCard = engineCard(page, "Local image engine");
@@ -553,10 +555,11 @@ test("engines add, edit, toggle, and remove use existing APIs safely", async ({
       base_url: "http://127.0.0.1:18083/v1",
     }),
   );
-  expect(bodies).toContainEqual({ enabled: false });
+  expect(bodies).toContainEqual(expect.objectContaining({ enabled: false }));
   expect(bodies).toContainEqual({
     name: "Renamed substrate",
     note: "Managed note changed.",
+    enabled: true,
   });
   expect(bodies).toContainEqual(
     expect.objectContaining({
@@ -623,8 +626,10 @@ test("engines label degraded and standby states honestly", async ({ page }) => {
     },
   });
   await page.goto("/ui/engines/");
-  await expect(page.getByText("Unavailable", { exact: true })).toBeVisible();
-  await expect(page.getByText("Idle", { exact: true })).toBeVisible();
+  await expect(page.getByText("Degraded", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Standby, stopped", { exact: true }),
+  ).toBeVisible();
   await expect(page.getByText("Busy")).toHaveCount(0);
   await expect(page.getByText("Starting")).toHaveCount(0);
 });
