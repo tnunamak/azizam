@@ -1,14 +1,19 @@
 # CODING AGENTS: READ THIS FIRST
 
+Historical design archive (pre-Azizam name): this bundle preserves generated
+research and prototype material from before the current product name. Expect old
+names inside archived transcripts and uploaded research; use the current Azizam
+docs for operational guidance.
+
 This is a **handoff bundle** from Claude Design (claude.ai/design).
 
 A user mocked up designs in HTML/CSS/JS using an AI design tool, then exported this bundle so a coding agent can implement the designs for real.
 
 ## What you should do — IMPORTANT
 
-**Read the chat transcripts first.** There are 1 chat transcript(s) in `vivid-fish/chats/`. The transcripts show the full back-and-forth between the user and the design assistant — they tell you **what the user actually wants** and **where they landed** after iterating. Don't skip them. The final HTML files are the output, but the chat is where the intent lives.
+**Read the chat transcripts first.** Start with [chats/chat1.md](chats/chat1.md). The transcripts show the full back-and-forth between the user and the design assistant — they tell you **what the user actually wants** and **where they landed** after iterating. Don't skip them. The final HTML files are the output, but the chat is where the intent lives.
 
-**Read `vivid-fish/project/gateway/index.html` in full.** The user had this file open when they triggered the handoff, so it's almost certainly the primary design they want built. Read it top to bottom — don't skim. Then **follow its imports**: open every file it pulls in (shared components, CSS, scripts) so you understand how the pieces fit together before you start implementing.
+**Read [gateway/index.html](gateway/index.html) in full.** The user had this file open when they triggered the handoff, so it's almost certainly the primary design they want built. Read it top to bottom — don't skim. Then **follow its imports**: open every file it pulls in (shared components, CSS, scripts) so you understand how the pieces fit together before you start implementing.
 
 **If anything is ambiguous, ask the user to confirm before you start implementing.** It's much cheaper to clarify scope up front than to build the wrong thing.
 
@@ -20,6 +25,6 @@ The design medium is **HTML/CSS/JS** — these are prototypes, not production co
 
 ## Bundle contents
 
-- `vivid-fish/README.md` — this file
-- `vivid-fish/chats/` — conversation transcripts (read these!)
-- `vivid-fish/project/` — the `Vivid Fish` project files (HTML prototypes, assets, components)
+- `README.md` — this file
+- `chats/` — conversation transcripts (read these!)
+- `gateway/` — historical project files (HTML prototypes, assets, components)

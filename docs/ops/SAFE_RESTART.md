@@ -116,5 +116,5 @@ that stop, so use `safe-restart`.
 2. Create the admin key, store it in the key file, then
    `scripts/safe-restart --force`. The old process cannot drain.
 3. After that restart, install the drop-in and reload (no restart needed):
-   `install -m 0644 docs/ops/azizam-reliability.conf ~/.config/systemd/user/azizam.service.d/reliability.conf && systemctl --user daemon-reload`.
+   `install -d ~/.config/systemd/user/azizam.service.d && install -m 0644 docs/ops/azizam-reliability.conf ~/.config/systemd/user/azizam.service.d/reliability.conf && systemctl --user daemon-reload`.
 4. Check: `scripts/safe-restart --dry-run` should print `dry run: idle`.

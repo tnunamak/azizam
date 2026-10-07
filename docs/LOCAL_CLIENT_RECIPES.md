@@ -22,10 +22,26 @@ export it in the shell you run smoke commands from:
 
 ```bash
 export AZIZAM_API_KEY='opk_...'
+export AZIZAM_BASE_URL='http://127.0.0.1:5000'
 ```
 
-> The `$AZIZAM_API_KEY` placeholder is used throughout. Do not paste
-> real `opk_...` values into config files, prompts, or commit messages.
+> The `$AZIZAM_API_KEY` placeholder is used throughout. Examples use
+> `$AZIZAM_BASE_URL` when a command needs a host. Do not paste real `opk_...`
+> values into config files, prompts, or commit messages.
+
+Python recipes require `uv` and a client environment. Create one with
+`uv venv .venv`, install the recipe's SDK with
+`uv pip install --python .venv/bin/python openai` (or `cohere`/`anthropic`),
+and run snippets with `.venv/bin/python`. Node recipes require Node.js and
+`npm install openai` in the client project; run the shown imports in an ES module.
+`AZIZAM_BASE_URL` is the gateway root without a trailing slash.
+
+Chat examples assume you registered `my-llama` as in the [README](../README.md),
+or set `AZIZAM_MODEL` to a chat model visible in `/v1/models`. Media examples
+require their named workflows, engines, and input files. For remix and character
+replacement, set `AZIZAM_VIDEO_ID` or `AZIZAM_SOURCE_VIDEO_ID` to a completed
+video owned by your key. Replace shell asset/video/request ID placeholders
+with IDs returned by earlier requests.
 
 ## Supported interfaces
 
@@ -76,6 +92,11 @@ on 2026-10-02; those scripts are not part of the test suite.
 | | `img2img`, extras upscaling, `interrogate`, `png-info` | Unsupported: 501 | same |
 
 Per-client recipes follow in this document.
+
+Concrete engine ids, model ids, timings, GPU names, and systemd unit names in
+this file describe one example deployment. A fresh install exposes the
+capabilities and model names that the operator registered; the README's
+`my-llama` chat alias is the default example used for new client snippets.
 
 ## Live Surfaces Today
 
@@ -149,6 +170,7 @@ live and authenticated.
 Use the discovery surfaces before guessing workflow controls:
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
 curl -s http://127.0.0.1:5000/gateway/v1/extensions \
   -H "Authorization: Bearer $AZIZAM_API_KEY"
 
@@ -176,6 +198,7 @@ audio/video; image workflow seeds are manifest-backed extensions.
 Image generation seamless tile, recommended Flux2 offset+inpaint path:
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
 curl -s http://127.0.0.1:5000/v1/images/generations \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -H "Content-Type: application/json" \
@@ -206,6 +229,7 @@ headers include `X-Image-Seamless-Tile-Strategy: offset-inpaint`.
 Direct SDXL postprocess tile workflow:
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
 curl -s http://127.0.0.1:5000/v1/images/generations \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -H "Content-Type: application/json" \
@@ -255,6 +279,8 @@ expire.
 Gateway-aware clients can refresh metadata and a new signed URL with:
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
+ASSET_ID='asset_...'
 curl "http://127.0.0.1:5000/gateway/v1/assets/$ASSET_ID" \
   -H "Authorization: Bearer $AZIZAM_API_KEY"
 ```
@@ -263,6 +289,7 @@ Durable image generation job, preferred for unattended batches or clients that
 cannot safely keep a long HTTP request open:
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
 JOB_JSON=$(curl -s http://127.0.0.1:5000/gateway/v1/media/jobs \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -H "Content-Type: application/json" \
@@ -301,6 +328,7 @@ success.
 Image edit denoise:
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
 curl -s http://127.0.0.1:5000/v1/images/edits \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -F model=flux2-klein-4b-edit \
@@ -312,6 +340,7 @@ curl -s http://127.0.0.1:5000/v1/images/edits \
 Image edit mask:
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
 curl -s http://127.0.0.1:5000/v1/images/edits \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -F model=flux2-klein-4b-edit \
@@ -331,6 +360,7 @@ Image edit with multiple reference images (gpt-image-1 shape, repeated
 `image[]`):
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
 curl -s http://127.0.0.1:5000/v1/images/edits \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -F model=flux2-klein-4b-edit \
@@ -358,6 +388,7 @@ values `standard`/`hd` mapped onto `medium`/`high`) work on both
 decision to remove:
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
 curl -s http://127.0.0.1:5000/v1/images/generations \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -H "Content-Type: application/json" \
@@ -396,6 +427,7 @@ is no local "true" variations model to route to — it is routed through a
 configurable edit-capable workflow instead, with a fixed generic prompt:
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
 curl -s http://127.0.0.1:5000/v1/images/variations \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -F image=@input.png \
@@ -420,6 +452,7 @@ variations request doesn't have them): `prompt`, `mask`, `background`,
 ACE-Step music generation:
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
 curl -s http://127.0.0.1:5000/v1/audio/generate \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -H "Content-Type: application/json" \
@@ -441,6 +474,7 @@ music-description field, and top-level `lyrics` for sung lyrics. If `tags` and
 TangoFlux audio generation:
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
 curl -s http://127.0.0.1:5000/v1/audio/generate \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -H "Content-Type: application/json" \
@@ -462,6 +496,7 @@ curl -s http://127.0.0.1:5000/v1/audio/generate \
 YuE2 song generation (songs with vocals; license CC BY-NC, non-commercial):
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
 curl -s http://127.0.0.1:5000/v1/audio/generate \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -H "Content-Type: application/json" \
@@ -482,6 +517,7 @@ about 1 minute. Aliases: `yue2`, `song`.
 Stable Audio 3 small-sfx (default for `model: "sfx"` and `"ambient"`):
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
 curl -s http://127.0.0.1:5000/v1/audio/generate \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -H "Content-Type: application/json" \
@@ -500,6 +536,7 @@ and any request without `model`). MiniMax H3 is `minimax-h3`. Clips longer than 
 points at the LTX-2.5 workflow for its role (see the table below).
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
 # Text to video (LTX-2.5, default)
 curl -s http://127.0.0.1:5000/v1/videos \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
@@ -551,6 +588,7 @@ were stored), returns `404 video_id not found` (unless auth is disabled). Set `v
 different API key's jobs never appear in the list:
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
 curl -s "http://127.0.0.1:5000/v1/videos?limit=10&order=desc" \
   -H "Authorization: Bearer $AZIZAM_API_KEY"
 ```
@@ -565,6 +603,8 @@ can't be confirmed, this returns `409` instead of claiming `deleted: true`
 for a job that may keep rendering:
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
+VIDEO_ID='video_...'
 curl -s -X DELETE "http://127.0.0.1:5000/v1/videos/$VIDEO_ID" \
   -H "Authorization: Bearer $AZIZAM_API_KEY"
 ```
@@ -584,6 +624,12 @@ Measured: a 24 s, three-prompt chain took 310 s on the 3090 (about 100 s per 8 s
 Three ways in, from most to least control:
 
 ```python
+import os
+from openai import OpenAI
+
+base_url = os.environ.get("AZIZAM_BASE_URL", "http://127.0.0.1:5000")
+client = OpenAI(base_url=f"{base_url}/v1", api_key=os.environ["AZIZAM_API_KEY"])
+
 # 1. Extend a finished video (Sora's shape). The result is source + new footage.
 v = client.videos.create_and_poll(model="ltx-2.5", prompt="a cyclist on a coast road", seconds=8)
 # openai-python 3.x sends `video` as a file part only (`video={"id": ...}` raises client-side), so
@@ -693,12 +739,21 @@ prompts like "Replace the beach with a snowy mountain. Keep the dog and its
 motion unchanged."
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
+VIDEO_ID='video_...'
 curl -s -X POST "http://127.0.0.1:5000/v1/videos/$VIDEO_ID/remix" \
   -H "Authorization: Bearer $AZIZAM_API_KEY" -H "Content-Type: application/json" \
   -d '{"prompt": "Replace the beach with a snowy mountain at golden hour. Keep the dog unchanged."}'
 ```
 
 ```python
+import os
+from openai import OpenAI
+
+base_url = os.environ.get("AZIZAM_BASE_URL", "http://127.0.0.1:5000")
+video_id = os.environ["AZIZAM_VIDEO_ID"]
+client = OpenAI(base_url=f"{base_url}/v1", api_key=os.environ["AZIZAM_API_KEY"])
+
 video = client.videos.remix(video_id, prompt="Make it snowy. Keep the dog unchanged.")
 video = client.videos.poll(video.id)
 client.videos.download_content(video.id).write_to_file("remix.mp4")
@@ -748,12 +803,20 @@ and kept the other man. A reference with the whole character in frame (head to f
 
 ```python
 import base64
+import os
+
+from openai import OpenAI
+
+base_url = os.environ.get("AZIZAM_BASE_URL", "http://127.0.0.1:5000")
+source_video_id = os.environ["AZIZAM_SOURCE_VIDEO_ID"]
+client = OpenAI(base_url=f"{base_url}/v1", api_key=os.environ["AZIZAM_API_KEY"])
+
 ref = "data:image/png;base64," + base64.b64encode(open("character.png", "rb").read()).decode()
 video = client.videos.create_and_poll(
     model="character-replace",
     prompt="A young woman in a bright red raincoat walks toward the camera, waving.",
     extra_body={"extensions": {"com.azizam.workflow": {
-        "source_video": {"video_id": driving_video.id},
+        "source_video": {"video_id": source_video_id},
         "reference_image": ref,
         "source_subject": "man in gray hoodie",
         "reference_subject": "woman",
@@ -781,6 +844,7 @@ control can point at an extra form field without becoming a top-level API
 parameter:
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
 curl -s http://127.0.0.1:5000/v1/images/edits \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -F model=flux2-klein-4b-edit-controlnet \
@@ -880,8 +944,8 @@ discovering the provider id and confirming the App profile allows
 `native_passthrough`.
 
 Auth semantics are also uniform. `/health`, `/.well-known/azizam`,
-`/.well-known/azizam`, `/.well-known/skills`, `/llms.txt`, and
-`/openapi.json` are public discovery. Protocol frontends, gateway-native
+`/.well-known/skills`, `/llms.txt`, `/docs`, and `/openapi.json` are public
+discovery. Protocol frontends, gateway-native
 runtime APIs, and provider-native passthrough require
 `Authorization: Bearer $AZIZAM_API_KEY`. Some SDKs name that field
 `api_key`, `apiKey`, or `x-api-key`; the value is still the gateway `opk_...`
@@ -894,6 +958,7 @@ every one of those clients reads. `/rerank` and `/v2/rerank` are the same engine
 the other common paths; `/v2/rerank` does not echo documents unless you ask.
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
 curl -s http://127.0.0.1:5000/v1/rerank \
   -H "Authorization: Bearer $AZIZAM_API_KEY" -H "Content-Type: application/json" \
   -d '{"model":"rerank","query":"capital of France","top_n":2,
@@ -901,13 +966,25 @@ curl -s http://127.0.0.1:5000/v1/rerank \
 # {"results":[{"index":0,"relevance_score":0.99,...},{"index":2,...}], "data":[...same...], ...}
 ```
 
-Cohere's own SDK works with a base URL override (checked with `cohere` 7.2.0):
+Cohere's own SDK works with a base URL override (checked with `cohere` 7.2.0).
+Install the SDK first with `uv pip install --python .venv/bin/python cohere` in your client
+environment:
 
 ```python
+import os
+
 import cohere
-co = cohere.ClientV2(api_key=KEY, base_url="http://127.0.0.1:5000")   # posts to /v2/rerank
-r = co.rerank(model="rerank", query=q, documents=docs, top_n=3)
-# v1 client: cohere.Client(api_key=KEY, base_url="http://127.0.0.1:5000") posts to /v1/rerank
+
+base_url = os.environ.get("AZIZAM_BASE_URL", "http://127.0.0.1:5000")
+query = "capital of France"
+documents = [
+    "Paris is the capital of France.",
+    "Bananas are yellow.",
+    "Lyon is a city in France.",
+]
+co = cohere.ClientV2(api_key=os.environ["AZIZAM_API_KEY"], base_url=base_url)   # posts to /v2/rerank
+r = co.rerank(model="rerank", query=query, documents=documents, top_n=3)
+# v1 client: cohere.Client(api_key=os.environ["AZIZAM_API_KEY"], base_url=base_url) posts to /v1/rerank
 ```
 
 Settings in the other clients (field names from each client's rerank settings; these clients were not run
@@ -936,8 +1013,9 @@ Notes:
 ## Recipe: OpenAI Realtime (voice agents)
 
 `/v1/realtime` is the OpenAI Realtime WebSocket. The gateway does not run the protocol. It checks the key and
-relays frames to a sibling service, Hugging Face `speech-to-speech` (voice activity detection, turn detection,
-barge-in, tools), which in turn calls this gateway's own routes:
+relays frames to a configured sibling service. In the example deployment, that service is Hugging Face
+`speech-to-speech` (voice activity detection, turn detection, barge-in, tools), which in turn calls this
+gateway's own routes:
 
 | Slot | Gateway call | Setting |
 |---|---|---|
@@ -945,11 +1023,23 @@ barge-in, tools), which in turn calls this gateway's own routes:
 | Think | `POST /v1/chat/completions` | model `current`, `reasoning_effort: none` (thinking off), streamed |
 | Speak | `POST /v1/audio/speech` | model `tts-fast` (Supertonic), `response_format=pcm`; `tts-1` (Chatterbox) is a drop-in option |
 
-Silero VAD and Smart Turn run on the CPU. The service uses no GPU and loads no model of its own.
+Example deployment behavior: Silero VAD and Smart Turn run on the CPU. The service uses no GPU and loads no model
+of its own.
+
+Install the SDK first with `uv pip install --python .venv/bin/python openai` in your client environment:
 
 ```python
+import os
+
 from openai import OpenAI
-client = OpenAI(api_key=KEY, base_url="http://127.0.0.1:5000/v1", websocket_base_url="ws://127.0.0.1:5000/v1")
+
+base_url = os.environ.get("AZIZAM_BASE_URL", "http://127.0.0.1:5000")
+websocket_base_url = base_url.replace("http://", "ws://").replace("https://", "wss://")
+client = OpenAI(
+    api_key=os.environ["AZIZAM_API_KEY"],
+    base_url=f"{base_url}/v1",
+    websocket_base_url=f"{websocket_base_url}/v1",
+)
 with client.realtime.connect(model="gpt-realtime") as conn:     # the model name is ignored
     conn.session.update(session={"type": "realtime", "instructions": "Answer in one short sentence.",
         "audio": {"input": {"format": {"type": "audio/pcm", "rate": 24000}, "turn_detection": {"type": "server_vad"}},
@@ -959,8 +1049,8 @@ with client.realtime.connect(model="gpt-realtime") as conn:     # the model name
 ```
 
 `@openai/agents` works too: `new RealtimeSession(agent, {transport: new OpenAIRealtimeWebSocket(), model: "gpt-realtime"})`
-and `session.connect({apiKey: KEY, url: "ws://127.0.0.1:5000/v1/realtime?model=gpt-realtime"})`. Function tools
-run in the SDK as usual.
+and `session.connect({apiKey: process.env.AZIZAM_API_KEY, url: "ws://127.0.0.1:5000/v1/realtime?model=gpt-realtime"})`.
+Function tools run in the SDK as usual.
 
 Notes:
 
@@ -979,10 +1069,10 @@ Notes:
 - Not provided: WebRTC (`/v1/realtime/calls`), `client_secrets`, SIP. `conversation.item.truncate` is accepted and has
   no effect.
 
-Deployment: `docs/ops/speech-to-speech.service` (install in `~/.config/systemd/user/`, then
-`systemctl --user enable --now speech-to-speech`). The service lives in `~/applications/speech-to-speech`
-(`run.sh` holds all flags; the package is pinned to release tag `v1.0.0` in a uv venv with CPU torch). After the
-first deploy, add the backend to the DB-owned registry:
+Example deployment: `docs/ops/speech-to-speech.service` (install in `~/.config/systemd/user/`, then
+`systemctl --user enable --now speech-to-speech`). One local deployment keeps the service in
+`~/applications/speech-to-speech` (`run.sh` holds all flags; the package is pinned to release tag `v1.0.0`
+in a uv venv with CPU torch). After deploying a compatible service, add the backend to the DB-owned registry:
 `./venv/bin/python scripts/local/register_service_from_config.py realtime --apply`.
 
 ## Recipe: Open WebUI
@@ -1007,6 +1097,7 @@ advertises.
 Smoke test from the same host:
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
 curl -s http://127.0.0.1:5000/openai/v1/models \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
   | head -c 400
@@ -1033,7 +1124,7 @@ endpoints:
       apiKey: "${AZIZAM_API_KEY}"
       baseURL: "http://127.0.0.1:5000/openai/v1"
       models:
-        default: ["auto"]
+        default: ["my-llama"]
         fetch: true
       titleConvo: true
       modelDisplayLabel: "Local Proxy"
@@ -1061,7 +1152,7 @@ Expected unsupported features:
     {
       "title": "Local Proxy",
       "provider": "openai",
-      "model": "auto",
+      "model": "my-llama",
       "apiBase": "http://127.0.0.1:5000/openai/v1",
       "apiKey": "$AZIZAM_API_KEY"
     }
@@ -1069,21 +1160,22 @@ Expected unsupported features:
   "tabAutocompleteModel": {
     "title": "Local Proxy (autocomplete)",
     "provider": "openai",
-    "model": "auto",
+    "model": "my-llama",
     "apiBase": "http://127.0.0.1:5000/openai/v1",
     "apiKey": "$AZIZAM_API_KEY"
   },
   "embeddingsProvider": {
     "provider": "openai",
-    "model": "auto",
+    "model": "embed",
     "apiBase": "http://127.0.0.1:5000/openai/v1",
     "apiKey": "$AZIZAM_API_KEY"
   }
 }
 ```
 
-Replace `auto` with whichever alias your `proxy_config.yml` defines. Continue
-substitutes `$AZIZAM_API_KEY` from environment at load time.
+Use a chat alias such as `my-llama` for chat and autocomplete, and an embedding
+alias such as `embed` for embeddings. Continue substitutes `$AZIZAM_API_KEY`
+from environment at load time.
 
 Expected unsupported features:
 
@@ -1092,7 +1184,8 @@ Expected unsupported features:
   Continue expects OpenAI-specific endpoints.
 - Continue's Ollama provider can use streaming `/ollama/api/chat`,
   `/ollama/api/generate`, read-only model routes, and tags. Native backend
-  options that do not map to the canonical gateway are still rejected.
+  runtime options that do not map to the canonical gateway are accepted and
+  ignored; configure runtime sizing on the backend service.
 - Reranking provider — only works if a rerank-capable backend is configured.
 
 ## Recipe: Cline-style agents (Cline, Roo Code, Kilo, etc.)
@@ -1103,7 +1196,7 @@ These agents accept any OpenAI-compatible endpoint.
 API Provider:   OpenAI Compatible
 Base URL:       http://127.0.0.1:5000/openai/v1
 API Key:        $AZIZAM_API_KEY
-Model ID:       auto   (or whichever alias proxy_config.yml defines)
+Model ID:       my-llama   (or whichever chat alias you registered)
 ```
 
 Important caveats:
@@ -1162,6 +1255,7 @@ What is verified with the official `ollama` Python client (0.6.3) and the
 | Digests, sizes, `modified_at`, `families` | Placeholders (`""`, `0`, a fixed date); the gateway does not own model files. |
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
 curl -fsS http://127.0.0.1:5000/ollama/api/tags \
   -H "Authorization: Bearer $AZIZAM_API_KEY" | head -c 400
 ```
@@ -1184,12 +1278,15 @@ with Claude Code 2.1.286, and its responses and stream events are checked
 against schemas generated from the SDK
 (`tests/fixtures/anthropic-sdk-schemas.json`).
 
+Install the SDK first with `uv pip install --python .venv/bin/python anthropic` in your client
+environment:
+
 ```python
 import os
 from anthropic import Anthropic
 
 client = Anthropic(
-    base_url="http://127.0.0.1:5000/anthropic",
+    base_url=f"{os.environ.get('AZIZAM_BASE_URL', 'http://127.0.0.1:5000')}/anthropic",
     api_key=os.environ["AZIZAM_API_KEY"],  # sent as x-api-key
 )
 
@@ -1239,13 +1336,21 @@ its objects and every streamed event are checked against the `Response` and
 `ResponseStreamEvent` schemas of openai/openai-openapi commit `145fd3b`
 (`tests/test_openai_responses_conformance.py`).
 
+Install the SDK first with `uv pip install --python .venv/bin/python openai` in your client
+environment:
+
 ```python
+import os
+
 from openai import OpenAI
 
-client = OpenAI(base_url="http://127.0.0.1:5000/v1", api_key=KEY)
-first = client.responses.create(model="default", input="Remember the word mango.")
+base_url = os.environ.get("AZIZAM_BASE_URL", "http://127.0.0.1:5000")
+client = OpenAI(base_url=f"{base_url}/v1", api_key=os.environ["AZIZAM_API_KEY"])
+model = os.environ.get("AZIZAM_MODEL", "my-llama")
+
+first = client.responses.create(model=model, input="Remember the word mango.")
 second = client.responses.create(
-    model="default",
+    model=model,
     input="What word did I ask you to remember?",
     previous_response_id=first.id,
 )
@@ -1275,19 +1380,25 @@ print(second.output_text)
 
 This is the best-supported path.
 
+Install the SDK first with `uv pip install --python .venv/bin/python openai` in your client
+environment.
+
 Python:
 
 ```python
 import os
 from openai import OpenAI
 
+base_url = os.environ.get("AZIZAM_BASE_URL", "http://127.0.0.1:5000")
+model = os.environ.get("AZIZAM_MODEL", "my-llama")
+
 client = OpenAI(
-    base_url="http://127.0.0.1:5000/openai/v1",
+    base_url=f"{base_url}/openai/v1",
     api_key=os.environ["AZIZAM_API_KEY"],
 )
 
 resp = client.chat.completions.create(
-    model="auto",
+    model=model,
     messages=[{"role": "user", "content": "ping"}],
 )
 print(resp.choices[0].message.content)
@@ -1298,13 +1409,15 @@ Node:
 ```js
 import OpenAI from "openai";
 
+const baseURL = process.env.AZIZAM_BASE_URL ?? "http://127.0.0.1:5000";
 const client = new OpenAI({
-  baseURL: "http://127.0.0.1:5000/openai/v1",
+  baseURL: `${baseURL}/openai/v1`,
   apiKey: process.env.AZIZAM_API_KEY,
 });
 
+const model = process.env.AZIZAM_MODEL ?? "my-llama";
 const r = await client.chat.completions.create({
-  model: "auto",
+  model,
   messages: [{ role: "user", content: "ping" }],
 });
 console.log(r.choices[0].message.content);
@@ -1313,18 +1426,31 @@ console.log(r.choices[0].message.content);
 Smoke test (no SDK):
 
 ```bash
-curl -s http://127.0.0.1:5000/openai/v1/chat/completions \
+export AZIZAM_API_KEY='opk_...'
+AZIZAM_BASE_URL="${AZIZAM_BASE_URL:-http://127.0.0.1:5000}"
+AZIZAM_MODEL="${AZIZAM_MODEL:-my-llama}"
+curl -s "$AZIZAM_BASE_URL/openai/v1/chat/completions" \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model":"auto","messages":[{"role":"user","content":"ping"}]}' \
+  -d "{\"model\":\"$AZIZAM_MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" \
   | head -c 400
 ```
 
 Responses API:
 
 ```python
+import os
+from openai import OpenAI
+
+base_url = os.environ.get("AZIZAM_BASE_URL", "http://127.0.0.1:5000")
+model = os.environ.get("AZIZAM_MODEL", "my-llama")
+client = OpenAI(
+    base_url=f"{base_url}/openai/v1",
+    api_key=os.environ["AZIZAM_API_KEY"],
+)
+
 r = client.responses.create(
-    model="auto",
+    model=model,
     input="Summarize the README of this repo in one sentence.",
 )
 print(r.output_text)
@@ -1338,7 +1464,9 @@ Expected unsupported features:
 
 - Assistants API — registered compatibility routes return `unsupported_operation`; use Responses.
 - Fine-tuning, files, batches — registered compatibility routes return `unsupported_operation`.
-- Realtime API — registered compatibility routes return `unsupported_operation`.
+- Realtime WebSocket works at `/v1/realtime` and `/openai/v1/realtime` when the sibling service is configured.
+  Realtime HTTP routes such as `/v1/realtime/calls`, `client_secrets`, SIP and WebRTC are not supported;
+  registered HTTP compatibility routes return `unsupported_operation`.
 
 ## Recipe: MCP clients (Claude Code, Pi, Cursor, Codex)
 
@@ -1371,8 +1499,9 @@ revisions 2025-03-26 to 2025-11-25. The server never issues `Mcp-Session-Id`;
 **Claude Code:**
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
 claude mcp add gateway https://ai.example.com/mcp --transport http \
-  -H 'Authorization: Bearer ${AZIZAM_API_KEY}'
+  -H "Authorization: Bearer ${AZIZAM_API_KEY}"
 ```
 
 **Pi (`pi-mcp-adapter`)**, in `.mcp.json` or `~/.config/mcp/mcp.json`:
@@ -1388,6 +1517,7 @@ claude mcp add gateway https://ai.example.com/mcp --transport http \
 **Smoke test without a client:**
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
 curl -s https://ai.example.com/mcp -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"run","arguments":{"target":"tts-fast","inputs":{"input":"Hello."}}}}'
@@ -1446,7 +1576,7 @@ an exact model or settings. Unknown names pass through unchanged.
 
 | API | Stable name | Resolves to today | OpenAI names that map to it |
 |---|---|---|---|
-| Chat / completions | `default` | Qwen3.8-27B, reasoning on (also does vision) | `gpt-5*`, `gpt-4.1`, `gpt-4o`, `gpt-4`, `o1*`, `o3*`, `o4*`, `chatgpt-*`, `claude-*` |
+| Chat / completions | `default` | Example deployment: Qwen3.8-27B, reasoning on (also does vision) | `gpt-5*`, `gpt-4.1`, `gpt-4o`, `gpt-4`, `o1*`, `o3*`, `o4*`, `chatgpt-*`, `claude-*` |
 | | `fast` | `default-fast` (same weights, reasoning off) | `gpt-*-mini*`, `gpt-*-nano*`, `o*-mini*`, `gpt-3.5*`, `claude-*haiku*` |
 | | `vision` | `default` | |
 | | `coder` | `coder` (coding profile) | `gpt-*-codex*`, `codex-*` |
@@ -1464,7 +1594,7 @@ an exact model or settings. Unknown names pass through unchanged.
 | | `h3-long`, `minimax-h3-long` | `video-minimax-h3-long` (code-built H3 chain, same cap; `minimax-h3` itself also chains past 10 s) | |
 | | `video-remix` | `video-bernini-r-remix`; needs `extensions...source_video`; also what `/v1/videos/{id}/remix` runs | |
 | | `character-replace` | `video-scail-2-replace`; needs `extensions...source_video` and `reference_image` | |
-| Rerank | `rerank` | Qwen3-Reranker-0.6B Q5_K_M (CPU, on demand) | any name containing `rerank` |
+| Rerank | `rerank` | Example deployment: Qwen3-Reranker-0.6B Q5_K_M (CPU, on demand) | any name containing `rerank` |
 | TTS | `tts` | Chatterbox Turbo (GPU0, on demand), then OmniVoice. The 13 OpenAI voice names are fixed cloned identities, and `voice: {"id": "voice_..."}` selects a user-created voice | `tts-1`, `gpt-4o-mini-tts`, `gpt-4o-tts`, `tts-*` |
 | | `tts-fast` | Supertonic (audio.cpp, GPU0; preset voices), then Chatterbox, then OmniVoice | none (point `tts-1` here to make it the fast tier) |
 | | `tts-quality` | Chatterbox Turbo, then OmniVoice, then Kokoro | `tts-1-hd` |
@@ -1507,7 +1637,7 @@ engine's error is returned with the header. A TTS fallback engine applies its ow
 can differ; a custom voice only falls back to engines that accept one. `GET /gateway/v1/aliases/resolve`
 lists `fallback_engines`.
 
-**Starting engines.** An engine whose service has a `systemd` lifecycle is
+**Example deployment: starting engines.** An engine whose service has a `systemd` lifecycle is
 started on demand (one health check, then `systemctl --user start` and a health
 poll). `chatterbox-tts`, `omnivoice-tts`, `supertonic-tts`, `kokoro-tts`, `nemotron-stt`, `canary-stt` and `diarize-stt` are
 operator-owned user units; the gateway only starts them. Chatterbox frees its weights after 10 min idle and exits after
@@ -1518,8 +1648,10 @@ operator-owned user units; the gateway only starts them. Chatterbox frees its we
 `response_format: "pcm"` streams chunked 24 kHz s16le audio while the engine is
 still speaking; add `stream_format: "audio"` to stream `mp3`/`opus`/`aac`/`flac`/`wav`
 too, or `stream_format: "sse"` for `speech.audio.delta` events. Other engines
-answer once (an SSE request gets one delta). `GET /v1/audio/voices` lists each
-deployed engine's voices under `engines`.
+answer once (an SSE request gets one delta). See the shared
+[speech formats matrix](../MODEL_COMPATIBILITY.md#speech-formats) for buffered
+and streaming behavior. `GET /v1/audio/voices` lists each deployed engine's
+voices under `engines`.
 
 ### Custom voices
 
@@ -1530,14 +1662,16 @@ so the stock `openai` SDK works. OpenAI's spec has no list, get or delete for vo
 those and the rename and sample routes are our additions.
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
+AZIZAM_BASE_URL="${AZIZAM_BASE_URL:-http://127.0.0.1:5000}"
 # 1. Optional: record a consent statement (required when voices.consent_mode is "required")
-curl $BASE/audio/voice_consents -H "Authorization: Bearer $KEY" \
+curl "$AZIZAM_BASE_URL/v1/audio/voice_consents" -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -F name="Jo Doe" -F language=en-US -F recording=@consent.wav          # -> {"id": "cons_...", ...}
 # 2. Create the voice from a 5-60 s sample (best 8-15 s of clear speech)
-curl $BASE/audio/voices -H "Authorization: Bearer $KEY" \
+curl "$AZIZAM_BASE_URL/v1/audio/voices" -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -F name="My narrator" -F audio_sample=@me.wav -F consent=cons_...      # -> {"object": "audio.voice", "id": "voice_...", ...}
 # 3. Speak with it
-curl $BASE/audio/speech -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+curl "$AZIZAM_BASE_URL/v1/audio/speech" -H "Authorization: Bearer $AZIZAM_API_KEY" -H 'Content-Type: application/json' \
   -d '{"model":"tts","voice":{"id":"voice_..."},"input":"Hello there."}' -o out.wav
 ```
 
@@ -1584,6 +1718,12 @@ after checking that service's policy, availability, and execution limits.
 the OpenAI SDK works unchanged:
 
 ```python
+import os
+from openai import OpenAI
+
+base_url = os.environ.get("AZIZAM_BASE_URL", "http://127.0.0.1:5000")
+client = OpenAI(base_url=f"{base_url}/v1", api_key=os.environ["AZIZAM_API_KEY"])
+
 r = client.audio.transcriptions.create(
     model="gpt-4o-transcribe-diarize", file=open("meeting.wav", "rb"),
     response_format="diarized_json", chunking_strategy="auto")
@@ -1612,9 +1752,11 @@ for s in r.segments:            # s.speaker is "A", "B", ... in order of first a
 Discovery and dry run (no model is loaded or run):
 
 ```bash
-curl -s localhost:5000/v1/models -H "Authorization: Bearer $KEY"      # alias entries carry azizam_resolves_to; every entry a type (docs/api/MODEL_METADATA.md)
-curl -s localhost:5000/gateway/v1/aliases -H "Authorization: Bearer $KEY"   # stable + OpenAI rules + engines (deployed or not)
-curl -s "localhost:5000/gateway/v1/aliases/resolve?operation=chat&model=gpt-4o" -H "Authorization: Bearer $KEY"
+export AZIZAM_API_KEY='opk_...'
+AZIZAM_BASE_URL="${AZIZAM_BASE_URL:-http://127.0.0.1:5000}"
+curl -s "$AZIZAM_BASE_URL/v1/models" -H "Authorization: Bearer $AZIZAM_API_KEY"      # alias entries carry azizam_resolves_to; every entry a type (docs/api/MODEL_METADATA.md)
+curl -s "$AZIZAM_BASE_URL/gateway/v1/aliases" -H "Authorization: Bearer $AZIZAM_API_KEY"   # stable + OpenAI rules + engines (deployed or not)
+curl -s "$AZIZAM_BASE_URL/gateway/v1/aliases/resolve?operation=chat&model=gpt-4o" -H "Authorization: Bearer $AZIZAM_API_KEY"
 ```
 
 `operation` is one of `chat`, `embeddings`, `images`, `image_edits`, `videos`,
@@ -1656,6 +1798,7 @@ The audience returned to a client is determined server-side; default is
 ### Workflows
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
 curl -s http://127.0.0.1:5000/gateway/v1/workflows \
   -H "Authorization: Bearer $AZIZAM_API_KEY"
 ```
@@ -1666,6 +1809,7 @@ inputs and outputs (no backend node IDs at `client` audience).
 ### Capabilities
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
 curl -s http://127.0.0.1:5000/gateway/v1/capabilities \
   -H "Authorization: Bearer $AZIZAM_API_KEY"
 ```
@@ -1680,6 +1824,8 @@ After making a request, capture the `request_id` (header or response body
 depending on protocol) and:
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
+REQUEST_ID='req_...'
 curl -s "http://127.0.0.1:5000/gateway/v1/receipts/$REQUEST_ID" \
   -H "Authorization: Bearer $AZIZAM_API_KEY"
 ```
@@ -1687,6 +1833,7 @@ curl -s "http://127.0.0.1:5000/gateway/v1/receipts/$REQUEST_ID" \
 Or list recent:
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
 curl -s "http://127.0.0.1:5000/gateway/v1/receipts?limit=20" \
   -H "Authorization: Bearer $AZIZAM_API_KEY"
 ```
@@ -1738,6 +1885,7 @@ media are replaced before embedding).
 **Delivery control.** Per request, on every route that returns generated media:
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
 curl -s http://127.0.0.1:5000/v1/images/generations \
   -H "Authorization: Bearer $AZIZAM_API_KEY" -H "Content-Type: application/json" \
   -d '{"model":"flux2-klein-4b","prompt":"a lighthouse","extensions":{"com.azizam.workflow":{"metadata":"none"}}}'
@@ -1838,6 +1986,7 @@ The image edit route executes the `seedvr2-upscale` workflow. It uses a
 multipart upload and returns the usual image JSON response:
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
 curl -s http://127.0.0.1:5000/v1/images/edits \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -F 'model=seedvr2-upscale' \
@@ -1858,6 +2007,7 @@ manifest id `video.edit.rife-interpolate`. The response body is the rendered
 video file:
 
 ```bash
+export AZIZAM_API_KEY='opk_...'
 curl -sS http://127.0.0.1:5000/gateway/v1/workflows/rife-interpolate/run \
   -H "Authorization: Bearer $AZIZAM_API_KEY" \
   -F 'source_video=@input.mp4;type=video/mp4' \
@@ -1868,8 +2018,11 @@ curl -sS http://127.0.0.1:5000/gateway/v1/workflows/rife-interpolate/run \
 The workflow manifest validates the multiplier. `2` is the verified setting;
 the RIFE node also declares `3` and `4` as supported values.
 
-- `/health` is the only unauthenticated endpoint. Use it for liveness in
-  Docker/systemd; do not use authenticated endpoints for health checks.
+- `/health` is the recommended unauthenticated liveness endpoint. Public
+  discovery/static surfaces also include `/.well-known/azizam`,
+  `/.well-known/skills`, `/llms.txt`, `/docs`, `/openapi.json`, and the public
+  `/showcase` page/assets/examples. See [PUBLIC_EXPOSURE.md](ops/PUBLIC_EXPOSURE.md)
+  for the inventory; use `/health` for Docker/systemd health checks.
 - Dashboard Apps, Profiles, and keys live in `admin.db` and apply live through
   the admin store.
 - Streaming clients must respect server-side idle timeouts on

@@ -20,6 +20,12 @@ proxy: those paths return HTML and require admin auth respectively.
 ## Recommended Nginx snippet
 
 ```nginx
+# Put map and upstream in the http context.
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    '' close;
+}
+
 upstream gateway {
     server 127.0.0.1:5000;
 }
@@ -32,9 +38,12 @@ server {
 
     location / {
         proxy_pass http://gateway;
+        proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
 
         # Streaming responses — disable buffering for SSE/chunked
         proxy_buffering off;
@@ -48,6 +57,16 @@ server {
     }
 }
 ```
+
+WebSocket smoke check:
+
+```bash
+export AZIZAM_API_KEY='opk_...'
+wscat -c 'wss://ai.example.com/v1/realtime?model=gpt-realtime' -H "Authorization: Bearer $AZIZAM_API_KEY"
+```
+
+With `wscat` installed and a configured Realtime backend, the check should
+complete the WebSocket upgrade with HTTP 101.
 
 ## Recommended Caddy snippet
 

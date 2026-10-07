@@ -12,8 +12,12 @@ OpenAI-compatible gateway for local and remote AI backends.
    uv pip install --python venv/bin/python -r requirements.txt
    venv/bin/python -m prisma generate --schema venv/lib/python3.12/site-packages/litellm/proxy/schema.prisma
    ```
-3. Copy `.env.example` to `.env` only if you need local overrides.
-4. Start from the docs that match your change:
+3. Install Node.js 20 or newer with npm, then install web dependencies:
+   ```bash
+   npm --prefix web ci
+   ```
+4. Copy `.env.example` to `.env` only if you need local overrides.
+5. Start from the docs that match your change:
    - `CONFIG.md` for environment and bootstrap settings.
    - `AUTH_GUIDE.md` for Apps, Profiles, keys, and admin access.
    - `docs/EXTENSION_ARCHITECTURE.md` for extensions.
@@ -46,9 +50,8 @@ scripts/run-hermetic-pytest.sh -q tests/test_name.py
 For web changes, also run:
 
 ```bash
-cd web
-npm run lint
-npm run build
+npm --prefix web run lint
+npm --prefix web run build
 ```
 
 ## Commit style
@@ -89,9 +92,11 @@ declarative transforms where possible. Do not add per-engine branches or parser
 classes to core code. Read `docs/design/ENGINE_KNOWLEDGE_BOUNDARY.md` before you
 change provider or engine handling.
 
-Provider secrets belong in environment variables, Docker secrets, or another
-operator-controlled secret store. The dashboard may show whether a secret
-reference is configured, but it must not expose the secret value.
+Provider secrets are write-only. Use Providers to store an encrypted key in
+`admin.db`, or reference an environment variable supplied by Docker secrets or
+another deployment secret store. The dashboard may show whether a key is set
+and its suffix, but it must not expose the full value. See
+[`docs/REMOTE_PROVIDERS.md`](docs/REMOTE_PROVIDERS.md#key-custody-and-threat-model).
 
 ## Pull requests
 

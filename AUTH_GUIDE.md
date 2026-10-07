@@ -1,7 +1,6 @@
 # Azizam — Auth Guide
 
-This document explains how Azizam (the project formerly known as
-`azizam`) handles authentication for the apps that call it.
+This document explains how Azizam handles authentication for the apps that call it.
 
 The gateway uses **App API keys** that are separate from downstream provider
 keys. Each app — LibreChat, Open WebUI, Continue, Cline, a personal chat
@@ -288,9 +287,8 @@ appropriate downstream credentials itself.
 
 ## Smoke Test
 
-After generating a key, test that the gateway accepts it. `AZIZAM_API_KEY`
-is the historical env-var name and remains the canonical one for now — new
-docs may also reference `AZIZAM_API_KEY` as an alias:
+After generating an App key, set `AZIZAM_API_KEY` and test that the gateway
+accepts it:
 
 ```bash
 export AZIZAM_API_KEY='opk_...'

@@ -2,6 +2,17 @@
 
 Choose the guide for the task you want to complete. For the product overview, start with [the main README](../README.md).
 
+## Start here
+
+Follow this ordering through the existing guides. A future trimmed structure
+would group these as start, operator, clients, reference, contributor, and archive:
+
+1. [Product and first chat](../README.md), then [first-run setup](FIRST_RUN_SETUP.md).
+2. [Publish safely](ops/PUBLIC_EXPOSURE.md) and [TLS/WebSocket proxying](REVERSE_PROXY.md).
+3. [Operator tasks, backup, and troubleshooting](guides/OPERATOR.md), then [providers](REMOTE_PROVIDERS.md) and [people](PEOPLE_AND_ACCOUNTS.md).
+4. [Connect clients](LOCAL_CLIENT_RECIPES.md), then [route limits](SUPPORT_MATRIX.md), [configuration](CONFIG_SOURCE_OF_TRUTH.md), and [media formats](../MODEL_COMPATIBILITY.md#speech-formats).
+5. [Contributor setup and checks](../CONTRIBUTING.md), then design references. Historical research and example deployments belong after operational guides.
+
 ## Operator
 
 Run a gateway, connect engines and providers, and give people access.
