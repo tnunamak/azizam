@@ -1212,11 +1212,14 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
             _CaptureNativePassthroughClient,
         ), patch.object(proxy.receipt_store, "record", return_value="req_test"):
             response = self.client.get(
-                "/gateway/v1/providers/tabby/v1/models?limit=1",
+                "/gateway/v1/providers/tabby/v1/models?limit=1&api_key=caller-query&API_KEY=second-query",
                 headers={
                     **AUTH_HEADERS,
                     "X-Api-Key": "caller-secret",
                     "X-Request-Id": "request-123",
+                    "Cookie": "azizam_admin_session=synthetic-session",
+                    "X-CSRF-Token": "synthetic-csrf",
+                    "X-Azizam-Internal-Forward": "synthetic-internal",
                 },
             )
 
@@ -1235,7 +1238,8 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertNotIn("authorization", forwarded_headers)
         self.assertNotEqual(forwarded_headers.get("x-api-key"), "caller-secret")
         self.assertEqual(forwarded_headers["x-admin-key"], "tabby-admin-key")
-        self.assertEqual(forwarded_headers["x-request-id"], "request-123")
+        for name in ("x-request-id", "cookie", "x-csrf-token", "x-azizam-internal-forward"):
+            self.assertNotIn(name, forwarded_headers)
         self.assertEqual(response.headers["x-tabby-native"], "1")
 
     def test_provider_native_targets_include_configured_local_backends(self) -> None:
@@ -1416,7 +1420,7 @@ class TestRuntimeRoutePolicy(unittest.TestCase):
         self.assertNotIn("authorization", forwarded_headers)
         self.assertNotEqual(forwarded_headers.get("x-api-key"), "caller-secret")
         self.assertEqual(forwarded_headers["x-comfy-key"], "comfy-secret")
-        self.assertEqual(forwarded_headers["x-request-id"], "request-456")
+        self.assertNotIn("x-request-id", forwarded_headers)
 
     def test_provider_native_preserves_streaming_response_shape(self) -> None:
         profile = AppProfile(

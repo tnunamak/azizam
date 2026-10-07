@@ -12,7 +12,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -192,29 +192,17 @@ class EditRouteTests(RemixReplaceBase):
         )
 
     def test_url_source_is_downloaded(self) -> None:
-        class Resp:
-            status_code = 200
-            content = b"url-clip"
-            headers = {"content-type": "video/webm"}
-
-            def raise_for_status(self) -> None:
-                return None
-
-        orig = self.comfy.client_class()
-
-        class Client(orig):  # type: ignore[misc, valid-type]
-            async def get(self, url, **kwargs):
-                if url.startswith("https://example.test/"):
-                    return Resp()
-                return await super().get(url, **kwargs)
-
-        self.stack.enter_context(patch.object(proxy.httpx, "AsyncClient", Client))
+        fetched = proxy.media_fetch.FetchedMedia(b"url-clip", "clip.webm", "video/webm")
+        fetch = self.stack.enter_context(patch.object(proxy, "_fetch_media_url", AsyncMock(return_value=fetched)))
         r = self.client.post(
             "/v1/videos/edits",
             json={"prompt": "x", "video": "https://example.test/a/clip.webm?sig=1"},
         )
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(self.comfy.uploads[0][:2], ("source.webm", b"url-clip"))
+        fetch.assert_awaited_once()
+        self.assertEqual(fetch.call_args.args, ("https://example.test/a/clip.webm?sig=1", proxy.NO_AUTH_CONTEXT))
+        self.assertEqual(fetch.call_args.kwargs["request"].headers["host"], "testserver")
 
 
 class CharacterReplaceTests(RemixReplaceBase):

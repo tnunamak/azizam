@@ -78,11 +78,12 @@ from gateway import (
     video_media_jobs,
 )
 from gateway import loop_watchdog, video_extend
-from gateway import comfy_object_info, comfy_ui_graph, media_delivery, media_metadata, provenance
+from gateway import comfy_object_info, comfy_ui_graph, media_delivery, media_fetch, media_metadata, provenance
 from gateway import video_subject
 from gateway import video_job_records
 from gateway.showcase import build_showcase_router, is_public_showcase_path
 from gateway import realtime_proxy
+from gateway.outbound_request import backend_request_headers, backend_query_string, canonical_native_path
 from gateway import decisions_api, decision_provider_execution
 from gateway.decision_routing import DecisionRuntime
 from gateway import rerank as rerank_api
@@ -1471,14 +1472,6 @@ if API_KEY:
 # Proxy auth
 # =============================================================================
 
-CLIENT_AUTH_HEADERS = [
-    "authorization",
-    "x-api-key",
-    "x-admin-key",
-    "api-key",
-]
-
-
 def config_path(value: str | None, default_name: str) -> Path:
     """Resolve config paths relative to this proxy directory."""
     path = Path(value or default_name)
@@ -2582,13 +2575,7 @@ def prepare_downstream_headers(
     backend_config: Mapping[str, Any] | None = None,
 ) -> dict:
     """Build backend headers without leaking client-facing proxy credentials."""
-    headers = dict(request_headers)
-    pop_header(headers, "host")
-    pop_header(headers, "content-length")
-
-    if AUTH_ENABLED or auth_context.identity:
-        for header_name in CLIENT_AUTH_HEADERS:
-            pop_header(headers, header_name)
+    headers = backend_request_headers(request_headers)
 
     service_cfg = service_auth_config(auth_context, service)
     apply_configured_downstream_headers(headers, service_cfg)
@@ -9829,6 +9816,69 @@ class _InputReferenceError(ValueError):
 _DATA_URI_PREFIX = "data:"
 
 
+async def _resolve_gateway_media_url(
+    url: str,
+    auth_context: AuthContext | None,
+    request: Request | None = None,
+) -> media_fetch.FetchedMedia | None:
+    """Resolve our own content URLs with signatures and caller ownership."""
+    parsed = urlsplit(url)
+    public_urls = [
+        "https://ai.vivid.fish", "https://openai.vivid.fish",
+        str(get_env("AZIZAM_PUBLIC_URL") or ""),
+        str((config.get("proxy") or {}).get("public_url") or ""),
+        str(instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults()).get("base_url") or ""),
+    ]
+    hosts = {urlsplit(base).hostname for base in public_urls if base}
+    if request is not None:
+        # Signed URLs are minted from these same request hosts. Recognizing a
+        # host permits only internal owned-media resolution, never network I/O.
+        hosts.update(
+            urlsplit(f"//{value.split(',')[0].strip()}").hostname
+            for value in (
+                request.headers.get("host"), request.headers.get("x-forwarded-host"),
+            ) if value
+        )
+    if parsed.hostname not in hosts:
+        return None
+    match = re.fullmatch(r"/(?:openai/|gateway/)?v1/(images|assets|videos)/([^/]+)/content", parsed.path)
+    if match is None:
+        # A known gateway host is never a network fetch escape hatch.
+        raise media_fetch.MediaFetchError("gateway media URL must reference a content asset")
+    route, asset_id = match.groups()
+    if route == "videos" and asset_id.startswith(VIDEO_ID_PREFIX):
+        prompt_id = _prompt_id_from_video_id(asset_id)
+        if not prompt_id or not _video_job_access_allowed(prompt_id, auth_context):
+            raise media_fetch.MediaFetchError("video is not accessible for this API key")
+        data, filename = await _load_completed_video_bytes(asset_id, auth_context)
+        return media_fetch.FetchedMedia(data, filename, "video/mp4")
+    cache_path = image_cache_path(asset_id) if route == "images" else asset_cache_path(asset_id)
+    if cache_path is not None and cache_path.exists() and cache_path.stat().st_size > media_fetch.max_bytes():
+        raise media_fetch.MediaFetchError("media exceeds the download byte limit")
+    content_request = Request({
+        "type": "http", "method": "GET", "path": parsed.path,
+        "query_string": parsed.query.encode("ascii"), "headers": [],
+    })
+    response = _signed_asset_content_response(
+        asset_id, content_request, invalid_message="invalid media asset",
+        missing_message="media asset not found", image_only=route == "images",
+        auth_context=auth_context,
+    )
+    if response.status_code != 200:
+        message = json.loads(response.body)["error"]["message"]
+        raise media_fetch.MediaFetchError(message)
+    filename = f"{asset_id}{cache_path.suffix}" if cache_path else asset_id
+    return media_fetch.FetchedMedia(response.body, filename, response.headers.get("content-type", "application/octet-stream"))
+
+
+async def _fetch_media_url(
+    url: str, auth_context: AuthContext | None, *, request: Request | None = None,
+) -> media_fetch.FetchedMedia:
+    return await media_fetch.safe_fetch_media(
+        url, internal_resolver=lambda value: _resolve_gateway_media_url(value, auth_context, request)
+    )
+
+
 def _resolve_cached_image_asset(
     asset_id: str,
     auth_context: AuthContext | None = None,
@@ -9847,14 +9897,16 @@ def _resolve_cached_image_asset(
 async def _resolve_input_reference(
     value,
     auth_context: AuthContext | None = None,
+    *,
+    request: Request | None = None,
 ) -> tuple[bytes, str]:
     """Resolve an OpenAI-shaped input_reference into (bytes, filename).
 
     Accepts (in priority order):
       * dict {"type": "input_image", "image_url": {...}} or {"image_url": "..."}
         (OpenAI vision-style — pull image_url out and recurse)
-      * absolute filesystem path (must exist and be readable)
-      * http:// or https:// URL (downloaded with httpx)
+      * ownership-checked cached image asset id
+      * http:// or https:// URL (downloaded with network and byte limits)
       * data: URI ("data:image/png;base64,...")
       * raw base64 string (fallback when the above don't match)
 
@@ -9874,7 +9926,7 @@ async def _resolve_input_reference(
             if isinstance(inner, dict):
                 inner = inner.get("url") or inner.get("image_url")
             if isinstance(inner, str):
-                return await _resolve_input_reference(inner, auth_context)
+                return await _resolve_input_reference(inner, auth_context, request=request)
         raise _InputReferenceError(
             "input_reference dict missing a recognizable image_url/url field"
         )
@@ -9891,25 +9943,14 @@ async def _resolve_input_reference(
     if s.startswith("img_"):
         return _resolve_cached_image_asset(s, auth_context)
 
-    # Filesystem path.
-    try:
-        p = Path(s)
-        if p.is_absolute() and p.is_file():
-            return p.read_bytes(), p.name
-    except OSError:
-        pass
-
     # HTTP(S) URL.
     if s.startswith(("http://", "https://")):
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(30, connect=10), follow_redirects=True) as c:
-                r = await c.get(s)
-                r.raise_for_status()
-                # Derive a filename from the URL path; fall back to a safe default.
-                fname = s.rsplit("/", 1)[-1].split("?", 1)[0] or "input_reference.png"
-                if "." not in fname:
-                    fname += ".png"
-                return r.content, fname
+            fetched = await _fetch_media_url(s, auth_context, request=request)
+            fname = fetched.filename
+            if "." not in fname:
+                fname += ".png"
+            return fetched.data, fname
         except Exception as e:
             raise _InputReferenceError(f"failed to download input_reference: {e}") from e
 
@@ -9936,8 +9977,16 @@ async def _resolve_input_reference(
     except Exception:
         pass
 
+    # Check after base64: JPEG base64 commonly starts with '/'. No branch
+    # treats a public string as a local filename or opens the supplied path.
+    if s.startswith(("/", "\\", "file:", "./", "../", "~/")) or re.match(r"^[A-Za-z]:[\\/]", s):
+        raise _InputReferenceError(
+            "Filesystem paths are not accepted; send the bytes as a multipart upload "
+            "or a data:image/...;base64 URI"
+        )
+
     raise _InputReferenceError(
-        "input_reference must be an absolute path, http(s) URL, data: URI, or base64 string"
+        "input_reference must be an asset id, http(s) URL, data: URI, or base64 string"
     )
 
 
@@ -9954,7 +10003,7 @@ async def _read_video_create_form_body(request: Request) -> dict[str, Any]:
     The OpenAI Python SDK always submits videos.create as multipart/form-data so
     that `input_reference` can be uploaded as a file. The rest of the video
     handler is written against a JSON-shaped dict (prompt/model/size/seconds/...
-    as scalars, input_reference as path / URL / data: URI / base64). Here we
+    as scalars, input_reference as asset id / URL / data: URI / base64). Here we
     flatten the form back into that shape so the downstream pipeline is unchanged.
 
     File uploads for `input_reference` are converted to a data: URI so the
@@ -10046,10 +10095,17 @@ async def _load_completed_video_bytes(
         params = {"filename": file_info["filename"], "type": file_info["type"]}
         if file_info["subfolder"]:
             params["subfolder"] = file_info["subfolder"]
-        view = await client.get(f"{COMFY_HOST}/view", headers=headers, params=params)
-        if view.status_code != 200:
-            raise _VideoAssetError(f"ComfyUI /view error: {view.status_code}", param=param, status=502)
-        return view.content, Path(file_info["filename"]).name
+        async with client.stream(
+            "GET", f"{COMFY_HOST}/view",
+            headers={**headers, "accept-encoding": "identity"}, params=params,
+        ) as view:
+            if view.status_code != 200:
+                raise _VideoAssetError(f"ComfyUI /view error: {view.status_code}", param=param, status=502)
+            try:
+                data = await media_fetch.read_bounded_media_response(view)
+            except media_fetch.MediaFetchError as exc:
+                raise _VideoAssetError(str(exc), param=param) from exc
+            return data, Path(file_info["filename"]).name
 
 
 def _asset_reference_video_id(value: Any) -> str | None:
@@ -10067,6 +10123,7 @@ async def _resolve_video_workflow_asset(
     kind: str,
     param: str,
     auth_context: AuthContext | None,
+    request: Request | None = None,
 ) -> tuple[bytes, str, str]:
     """Resolve one workflow asset to (bytes, filename, content_type).
 
@@ -10100,16 +10157,13 @@ async def _resolve_video_workflow_asset(
                 param=param,
             )
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(60, connect=10), follow_redirects=True) as client:
-                resp = await client.get(value.strip())
-                resp.raise_for_status()
+            fetched = await _fetch_media_url(value.strip(), auth_context, request=request)
         except Exception as exc:
             raise _VideoAssetError(f"failed to download {param}: {exc}", param=param) from exc
-        mime = resp.headers.get("content-type", "video/mp4")
-        name = value.rsplit("/", 1)[-1].split("?", 1)[0]
-        return resp.content, f"source{video_inputs.suffix_for_video(name, mime)}", mime
+        mime = fetched.content_type if fetched.content_type != "application/octet-stream" else "video/mp4"
+        return fetched.data, f"source{video_inputs.suffix_for_video(fetched.filename, mime)}", mime
     try:
-        data, name = await _resolve_input_reference(value, auth_context)
+        data, name = await _resolve_input_reference(value, auth_context, request=request)
     except _InputReferenceError as exc:
         raise _VideoAssetError(f"{param}: {exc}", param=param) from exc
     suffix = Path(name).suffix.lower()
@@ -10122,6 +10176,8 @@ async def _resolve_video_workflow_assets(
     manifest: Mapping[str, Any],
     workflow_cfg: Mapping[str, Any],
     auth_context: AuthContext | None,
+    *,
+    request: Request | None = None,
 ) -> tuple[dict[str, tuple[bytes, str, str]], "video_inputs.VideoProbe | None"]:
     """Resolve every asset extension input a request supplied, and probe the source video.
 
@@ -10158,7 +10214,7 @@ async def _resolve_video_workflow_assets(
             continue
         kind = "video" if name == source_input else "image"
         data, filename, mime = await _resolve_video_workflow_asset(
-            value, kind=kind, param=f"{ext_param}.{name}", auth_context=auth_context
+            value, kind=kind, param=f"{ext_param}.{name}", auth_context=auth_context, request=request,
         )
         if not data:
             raise _VideoAssetError(f"{name} is empty", param=f"{ext_param}.{name}")
@@ -10655,7 +10711,7 @@ async def proxy_comfy_video_create(
                     ),
                 }
             staged_assets, source_probe = await _resolve_video_workflow_assets(
-                body, video_manifest, workflow_cfg, auth_context
+                body, video_manifest, workflow_cfg, auth_context, request=request,
             )
         except ExtensionError as e:
             return Response(
@@ -10899,6 +10955,7 @@ async def proxy_comfy_video_create(
             image_bytes, image_filename = await _resolve_input_reference(
                 input_reference,
                 auth_context,
+                request=request,
             )
         except _InputReferenceError as e:
             return Response(
@@ -11295,7 +11352,7 @@ async def _submit_video_chain(
     if extending:
         try:
             source_bytes, source_name, _mime = await _resolve_video_workflow_asset(
-                source, kind="video", param="video", auth_context=auth_context)
+                source, kind="video", param="video", auth_context=auth_context, request=request)
         except _VideoAssetError as exc:
             return _video_asset_error_response(exc)
         if not source_bytes or len(source_bytes) > video_inputs.MAX_SOURCE_VIDEO_BYTES:
@@ -11358,7 +11415,7 @@ async def _submit_video_chain(
                 source_bytes, source_name or "source.mp4", "video/mp4", auth_context)
         if body.get("input_reference"):
             try:
-                image_bytes, image_name = await _resolve_input_reference(body["input_reference"], auth_context)
+                image_bytes, image_name = await _resolve_input_reference(body["input_reference"], auth_context, request=request)
             except _InputReferenceError as exc:
                 return _json_error(400, str(exc), param="input_reference")
             first_frame_image = await _upload_comfy_input(image_bytes, image_name, "image/png", auth_context)
@@ -26197,17 +26254,6 @@ def _record_internal_hop_receipt(
         print(f"[proxy] Could not record internal-hop receipt: {e}", flush=True)
 
 
-def _forward_query_without_client_api_key(raw_query: str) -> str:
-    if not raw_query:
-        return ""
-    pairs = [
-        (key, value)
-        for key, value in parse_qsl(raw_query, keep_blank_values=True)
-        if key != "api_key"
-    ]
-    return urlencode(pairs)
-
-
 def _gateway_request_id_metadata(request_id: str) -> dict[str, str]:
     return {"request-id": request_id}
 
@@ -26436,7 +26482,7 @@ async def _forward_current_loaded_openai_request(
         if policy_error is not None:
             owner.report(status="failed", reason="failed")
             return policy_error
-        query = _forward_query_without_client_api_key(request.url.query)
+        query = backend_query_string(request.url.query)
         url = f"{target.host}{request_path}"
         if query:
             url = f"{url}?{query}"
@@ -27005,22 +27051,28 @@ async def _handle_openai_litellm_request(
     request_path: str,
 ) -> Response:
     """Try only fallback targets explicitly listed in the requested alias."""
+    route_auth = authenticate_runtime_or_litellm_request(
+        request,
+        request_path,
+        allow_litellm_delegation=True,
+    )
+    if isinstance(route_auth, Response):
+        return route_auth
     body, parse_error = parse_openai_json_body(await request.body())
     if parse_error is not None:
-        # The normal handler owns authentication before request validation.
-        return await _handle_openai_litellm_request_once(request, request_path)
+        return await _handle_openai_litellm_request_once(request, request_path, route_auth=route_auth)
     operation = "embeddings" if request_path == "/v1/embeddings" else "chat"
     try:
         alias = resolve_stable_alias(operation, body.get("model"))
     except stable_aliases.AliasUnavailableError:
-        return await _handle_openai_litellm_request_once(request, request_path)
+        return await _handle_openai_litellm_request_once(request, request_path, route_auth=route_auth)
     request.state.provider_requested_model = str(body.get("model") or "")
     request.state.paid_provider_fallback = bool(alias and alias.skipped_engines)
     request.state.gateway_fallback_reasons = [
         f"{engine}->{alias.engine} (not_deployed)"
         for engine in (alias.skipped_engines if alias is not None and alias.engine else ())
     ]
-    response = await _handle_openai_litellm_request_once(request, request_path)
+    response = await _handle_openai_litellm_request_once(request, request_path, route_auth=route_auth)
     if alias is not None and alias.fallbacks:
         engines = ((config.get("model_aliases") or {}).get(operation) or {}).get("engines") or {}
         previous_engine = alias.engine or alias.target
@@ -27035,7 +27087,9 @@ async def _handle_openai_litellm_request(
             spec = engines.get(engine_id) or {}
             target = _provider_alias_model(engine_id, service_id, spec)
             request.state.paid_provider_fallback = True
-            response = await _handle_openai_litellm_request_once(request, request_path, model_override=target)
+            response = await _handle_openai_litellm_request_once(
+                request, request_path, model_override=target, route_auth=route_auth,
+            )
             previous_engine = engine_id
     fallback_reasons = [
         str(reason)
@@ -27061,12 +27115,14 @@ async def _handle_openai_litellm_request_once(
     request_path: str,
     *,
     model_override: str | None = None,
+    route_auth: RuntimeRouteAuth | None = None,
 ) -> Response:
-    route_auth = authenticate_runtime_or_litellm_request(
-        request,
-        request_path,
-        allow_litellm_delegation=True,
-    )
+    if route_auth is None:
+        route_auth = authenticate_runtime_or_litellm_request(
+            request,
+            request_path,
+            allow_litellm_delegation=True,
+        )
     if isinstance(route_auth, Response):
         return route_auth
     auth_context = route_auth.auth_context
@@ -27912,13 +27968,21 @@ async def provider_native_request(
     if invalid_response is not None:
         return invalid_response
 
+    try:
+        native_request_path = canonical_native_path(
+            native_path, raw_path=request.scope.get("raw_path")
+        )
+    except ValueError as error:
+        return openai_error_response(
+            str(error), status_code=400, code="invalid_native_path"
+        )
+
     receipt = _native_passthrough_receipt(
         auth_context=auth_context,
         provider=provider_key,
         gateway_path=gateway_path,
         native_path=native_path,
     )
-    native_request_path = f"/{native_path.lstrip('/')}"
     native_operation = f"{request.method.upper()} {native_request_path}"
     decision = evaluate_and_apply(
         auth_context.identity,
@@ -27949,8 +28013,9 @@ async def provider_native_request(
             native_request_path,
         )
         url = f"{target['host']}{native_request_path}"
-        if request.url.query:
-            url += f"?{request.url.query}"
+        query = backend_query_string(request.url.query)
+        if query:
+            url += f"?{query}"
 
         client = httpx.AsyncClient(timeout=httpx.Timeout(
             connect=10.0,
@@ -28180,17 +28245,11 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
                         status_code=503,
                         media_type="application/json"
                     )
-        # Forward to target backend. Strip our own ?api_key= before forwarding so the
-        # gateway credential never reaches the backend (or its access logs); all other
-        # query params are preserved.
+        # Gateway credentials never belong in a backend URL or its access logs.
         url = f"{target_host}/{path}"
-        if request.url.query:
-            _fwd_qs = [
-                (k, v) for k, v in parse_qsl(request.url.query, keep_blank_values=True)
-                if k != "api_key"
-            ]
-            if _fwd_qs:
-                url += f"?{urlencode(_fwd_qs)}"
+        query = backend_query_string(request.url.query)
+        if query:
+            url += f"?{query}"
 
         body = body_peek  # Already read above for model detection
         # backend_for_host resolves known hosts; for an unknown host (shouldn't
@@ -28349,12 +28408,14 @@ async def proxy_request(request: Request, path: str, *, mapped_route: bool = Fal
             )
 
 
-# Added last so it is the outermost layer: it counts a request until the whole
+# Inside the framing/source layers, this counts a request until the whole
 # response (including every SSE chunk) is sent, and short-circuits a drain 503
 # before auth or routing work. See gateway/drain.py.
 app.add_middleware(InflightMiddleware, state=DRAIN_STATE)
 from gateway.request_source import RequestSourceMiddleware
 app.add_middleware(RequestSourceMiddleware)
+from gateway.request_body_limits import RequestBodyLimitMiddleware, RequestBodyLimits
+app.add_middleware(RequestBodyLimitMiddleware, limits=RequestBodyLimits.from_config(config))
 
 
 # =============================================================================

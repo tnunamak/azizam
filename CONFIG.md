@@ -41,6 +41,31 @@ changing bootstrap seeds does not overwrite an existing service record.
 | `AZIZAM_DRIFT_REPORT_PATH` | Path to the workflow drift status JSON written by `scripts/check_workflow_drift.py`. | `<repo>/cache/drift_status.json` |
 | `AZIZAM_IMAGE_CACHE_DIR` | Directory for the content-addressed image cache used by `response_format: "url"` results. | `<repo>/cache/images` |
 
+## Media URL inputs
+
+Media inputs accept multipart bytes, asset IDs owned by the calling API key,
+data URIs, base64, and HTTP(S) URLs. Filesystem paths are rejected. Gateway
+content URLs on the public hosts or configured instance base URL resolve
+internally, with signature and ownership checks.
+The current request's `Host` and `X-Forwarded-Host` are also recognized so
+signed URLs minted on local or unconfigured gateway hostnames can be reused.
+Recognizing a host permits only internal content resolution, never a network
+fetch to that host.
+
+| Env var | What it controls | Default |
+|---|---|---|
+| `AZIZAM_MEDIA_FETCH_MAX_BYTES` | Maximum bytes in one URL download. Responses stream under this cap; each redirect is checked. | `268435456` (256 MiB) |
+| `AZIZAM_MEDIA_FETCH_ALLOW_PRIVATE_HOSTS` | Comma-separated exact hostnames or IPs that may resolve to RFC 1918 or IPv6 ULA addresses. No wildcards. This does not permit loopback, link-local, or metadata endpoints. | empty |
+
+URL downloads use a 10-second DNS/connect timeout, 30-second read timeout,
+60-second total timeout, and at most three redirects. Connections use a checked
+IP, the original HTTP Host and TLS hostname, and no environment proxies.
+If a checked address cannot connect, the fetch tries the other checked
+addresses without resolving the hostname again. IPv6 transition addresses
+are checked against their embedded IPv4 destination; IPv6 site-local
+addresses are blocked.
+Servers must honor `Accept-Encoding: identity` and send uncompressed media.
+
 ## Daisy integration (optional, personal-agent specific)
 
 These env vars connect the status endpoint to a [Daisy](https://github.com/daisy-agent/daisy) instance running locally. All are disabled when unset; the status endpoint still works normally without them.
@@ -74,3 +99,31 @@ or passed as environment variables):
   process-local limit. The gateway has no durable multi-worker STT coordinator,
   so each additional Python worker multiplies allowed uploads and reserved disk
   budget.
+
+## Request body limits
+
+Backend requests forward only `Content-Type`, `Accept`, and `User-Agent` from
+clients, with `Accept-Encoding: identity`. Configure any backend-specific
+headers and authentication through downstream `headers` or backend
+`auth_inject` rules. Gateway cookies, CSRF tokens, internal headers and
+credentials in query parameters are not forwarded to inference backends.
+Native provider paths containing dot segments, encoded delimiters, backslashes
+or double slashes return HTTP 400 before policy evaluation or forwarding.
+
+The gateway checks `Content-Length` before routing and counts incoming body
+chunks before passing them to a parser. Requests over the selected limit return
+HTTP 413 with the OpenAI error code `request_too_large`. Chat authentication runs
+before JSON body reads. A declared oversized body may receive 413 before auth.
+
+| Env var | Config field | Default |
+|---|---|---|
+| `AZIZAM_REQUEST_BODY_JSON_BYTES` | `request_body_limits.json_bytes` | 33,554,432 bytes (32 MiB) |
+| `AZIZAM_REQUEST_BODY_MEDIA_BYTES` | `request_body_limits.media_bytes` | 537,919,488 bytes (513 MiB) |
+
+Environment values override configuration. Both must be positive byte counts;
+changes apply when the gateway starts. Image, audio, video, gateway media,
+workflow and identity routes, and `/sdapi/v1` use the media limit. `/openai/v1`
+media aliases use the same limit. All other routes use the JSON limit, regardless
+of the supplied `Content-Type`. The media default leaves 1 MiB of multipart
+overhead above STT's existing 512 MiB file limit. Route-specific file and field
+limits still apply.

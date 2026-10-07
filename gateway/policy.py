@@ -16,6 +16,8 @@ from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from typing import Iterable
 
+from gateway.outbound_request import canonical_native_path
+
 
 ALLOWED = "allowed"
 DENIED = "denied"
@@ -329,16 +331,20 @@ def _matches_native_operation(value: str, allowed: frozenset[str]) -> bool:
     Path-only legacy scopes (``/v1/models`` or ``v1/models``) also match a
     method-qualified request such as ``GET /v1/models``.
     """
-    if not allowed:
-        return True
-    if "*" in allowed or value in allowed:
-        return True
-
     method: str | None = None
     path = value
     if " " in value:
         method, path = value.split(" ", 1)
         method = method.upper()
+
+    try:
+        canonical_native_path(path)
+    except ValueError:
+        return False
+
+    if not allowed or "*" in allowed or value in allowed:
+        return True
+    if method is not None:
         if f"{method} *" in allowed:
             return True
 

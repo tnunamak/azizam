@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import patch
 
@@ -25,6 +26,9 @@ class FakeResponse:
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
             raise RuntimeError(f"HTTP {self.status_code}")
+
+    async def aiter_raw(self):
+        yield self.content
 
 
 def succeeded_history(filename: str = "source_00001_.mp4") -> dict:
@@ -70,6 +74,11 @@ class FakeComfy:
                 if url.endswith("/queue"):
                     return FakeResponse(200, {"queue_running": [], "queue_pending": []})
                 raise AssertionError(f"unexpected GET {url}")
+
+            @asynccontextmanager
+            async def stream(self, method: str, url: str, **kwargs: Any):
+                assert method == "GET"
+                yield await self.get(url, **kwargs)
 
             async def post(self, url: str, **kwargs: Any) -> FakeResponse:
                 if url.endswith("/upload/image"):
