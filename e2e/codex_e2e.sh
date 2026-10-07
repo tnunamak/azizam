@@ -87,7 +87,6 @@ EOF
 cat > "$codex_home/config.toml" <<EOF
 model = "azizam-e2e"
 model_provider = "azizam"
-web_search = "disabled"
 model_catalog_json = "$state/model-catalog.json"
 [features]
 plugins = false
@@ -96,7 +95,6 @@ name = "Azizam"
 base_url = "http://127.0.0.1:$gateway_port/v1"
 wire_api = "responses"
 env_key = "AZIZAM_E2E_KEY"
-supports_standalone_web_search = false
 [mcp_servers.azizam_e2e]
 command = "$python_bin"
 args = ["$repo/e2e/codex_e2e_mcp.py"]
@@ -125,10 +123,14 @@ if not requests or not any(tool.get("type") == "namespace" and tool.get("name") 
     raise SystemExit("no observed Azizam Responses namespace declaration")
 if not any(tool.get("type") == "custom" and tool.get("name") == "apply_patch" for tool in requests[0].get("tools", []) if isinstance(tool, dict)):
     raise SystemExit("Codex did not declare the Azizam custom apply_patch tool")
+if not any(tool.get("type") in ("web_search", "web_search_preview", "web_search_2025_06_24", "web_search_2025_08_25") for request in requests for tool in request.get("tools", []) if isinstance(tool, dict)):
+    raise SystemExit("Codex did not declare its default hosted web_search tool")
 expected_auth = hashlib.sha256(b"Bearer azizam-e2e-dummy-key").hexdigest()
 if not all(request.get("_azizam_e2e", {}).get("authorization_hash") == expected_auth and request.get("_azizam_e2e", {}).get("status") == 200 for request in requests):
     raise SystemExit("Azizam did not accept the fixture dummy key")
 backend = [json.loads(line) for line in (state / "backend-requests.jsonl").read_text().splitlines()]
+if any(tool.get("type") in ("web_search", "web_search_preview", "web_search_2025_06_24", "web_search_2025_08_25") for request in backend for tool in request.get("tools", []) if isinstance(tool, dict)):
+    raise SystemExit("hosted web_search declaration leaked to the Chat backend")
 if len(backend) < 3 or not any(message.get("role") == "tool" for request in backend for message in request.get("messages", []) if isinstance(message, dict)):
     raise SystemExit("Azizam custom-tool continuation did not reach the fake Chat backend")
 def typed_items(value):
@@ -159,5 +161,5 @@ if not any(event.get("type") == "turn.completed" for event in events) or any(eve
     raise SystemExit("Codex did not complete the Azizam e2e turn")
 if "unsupported call" in transcript.lower():
     raise SystemExit("Codex reported an unsupported tool call")
-print("PASS: namespace declaration, custom apply_patch round trip, and hello.txt verified")
+print("PASS: declared web_search omission, namespace declaration, custom apply_patch round trip, and hello.txt verified")
 PY

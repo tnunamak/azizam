@@ -137,10 +137,18 @@ def test_client_tool_search_round_trip_loads_discovered_namespaces():
 
 
 @pytest.mark.parametrize("execution", ["server", None, "hosted"])
-def test_hosted_search_is_rejected_with_a_clear_error(execution):
-    with pytest.raises(rt.ResponsesTranslationError, match="hosted search") as error:
-        rt.to_chat_completions({"tools": [{**SEARCH, "execution": execution}]})
-    assert error.value.code == "hosted_tool_not_supported" and error.value.param == "tools[0].execution"
+def test_optional_hosted_search_is_omitted(execution):
+    req = {"tools": [{**SEARCH, "execution": execution}]}
+    mapping = rt.ToolMapping(req)
+    assert mapping.omitted_tools == ["tool_search"]
+    assert "tools" not in rt.to_chat_completions(req, tool_mapping=mapping)
+
+
+@pytest.mark.parametrize("execution", ["server", None, "hosted"])
+def test_required_hosted_search_is_rejected_with_a_clear_error(execution):
+    with pytest.raises(rt.ResponsesTranslationError, match="hosted tool") as error:
+        rt.to_chat_completions({"tools": [{**SEARCH, "execution": execution}], "tool_choice": {"type": "tool_search"}})
+    assert error.value.code == "hosted_tool_not_supported" and error.value.param == "tool_choice"
 
 
 @pytest.mark.parametrize("tool", [namespace(tools=[FUNCTION, FUNCTION]), namespace(tools=[{"type": "namespace"}]),

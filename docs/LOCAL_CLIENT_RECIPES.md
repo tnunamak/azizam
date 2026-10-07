@@ -70,7 +70,8 @@ on 2026-10-02; those scripts are not part of the test suite.
 | | `pull`, `push`, `create`, `copy`, `delete`, `blobs` | Unsupported: 501 `{"error": "unsupported operation: ..."}`. The gateway owns no model files. | same |
 | **OpenAI Responses** (`/v1/responses`, `/openai/v1/responses`) | `responses.create`, streaming events, function tools, `previous_response_id`, retrieve, delete, `input_items`, images, reasoning items, `text.format` | Works | `tests/test_openai_responses_conformance.py` (schemas from openai/openai-openapi `145fd3b`); Live: `openai` Python SDK 3.23.0 |
 | | Stored responses | Private to the creating key; unknown or foreign `previous_response_id` is a 404 | same |
-| | Hosted tools (web search, file search, code interpreter, computer use), `background`, `conversation`, `prompt`, `cancel`, `input_tokens` count | Unsupported: 400 with a specific `code` | same |
+| | Optional hosted tools (web search, file search, code interpreter, computer use) | Omitted with `x-azizam-omitted-tools`; forced hosted-tool choice returns 400 | Responses recipe below |
+| | `input_file`, `additional_tools`, `background`, `conversation`, `prompt`, `cancel`, `input_tokens` count | Unsupported: 400 with a specific `code` | same |
 | | Reasoning summaries (`reasoning.summary`) | Not produced; raw reasoning returns as a `reasoning` item | documented gap |
 | **OpenAI** chat, completions, embeddings, models, images, audio, video | Response shapes | Works | `tests/test_openai_schema_conformance.py` (openai/openai-openapi `145fd3b`); Live: `openai` Python SDK |
 | **Rerank** (`/v1/rerank`, `/openai/v1/rerank`, `/rerank`, `/v2/rerank`) | Cohere and Jina body (`query`, `documents` as strings or `{"text"}` objects, `top_n`, `return_documents`); Voyage `top_k`; TEI `texts` (answered as TEI's bare list) | Works | `tests/test_rerank.py`; Live: `cohere` Python SDK 7.2.0 (`Client` and `ClientV2` with `base_url`) |
@@ -1336,6 +1337,15 @@ its objects and every streamed event are checked against the `Response` and
 `ResponseStreamEvent` schemas of openai/openai-openapi commit `145fd3b`
 (`tests/test_openai_responses_conformance.py`).
 
+### Codex
+
+Codex can use its default Responses configuration with this gateway even when
+hosted search is unavailable. Optional hosted tool declarations are omitted
+from the translated backend request and named in the `x-azizam-omitted-tools`
+response header. The gateway does not run web searches, and forcing a hosted
+tool choice returns `400`. Codex `input_file` content and the Lite
+`additional_tools` declaration remain unsupported with `400` responses.
+
 Install the SDK first with `uv pip install --python .venv/bin/python openai` in your client
 environment:
 
@@ -1370,10 +1380,18 @@ print(second.output_text)
   `previous_response_id`. An unknown or expired `previous_response_id` is a
   404 `previous_response_not_found`; the gateway does not continue without the
   context.
-- Unsupported, with an explicit 400: hosted tools (`web_search`,
-  `file_search`, `code_interpreter`, `computer_use`, ...), `background`,
+- Optional hosted tools that the gateway cannot provide are listed in the
+  `x-azizam-omitted-tools` response header and omitted from the translated Chat
+  Completions request. This allows Codex's default tool declarations to work
+  when hosted search is unavailable; the gateway still does not perform web
+  search. A forced choice of an omitted hosted tool returns `400`.
+- Unsupported, with an explicit 400: `input_file` content (the gateway cannot
+  resolve file attachments), `additional_tools` declarations, `background`,
   `conversation`, `prompt`, `POST /v1/responses/{id}/cancel`, and
   `POST /v1/responses/input_tokens`.
+- Codex's `additional_tools` declaration remains unsupported even when optional
+  hosted tools are omitted. Use ordinary `tools` declarations for client-side
+  functions and custom tools.
 - An unknown model is a 404 `model_not_found`.
 
 ## Recipe: OpenAI SDK clients

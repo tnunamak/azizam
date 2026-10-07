@@ -216,6 +216,25 @@ Ollama-compatible clients may use `/api/embed`, `/ollama/api/embed`,
 
 ## Logs And Responses
 
+### Codex Responses compatibility
+
+Codex may include optional hosted tools in its default Responses request. The
+gateway reports unsupported optional tool types in the
+`x-azizam-omitted-tools` response header and leaves them out of the translated
+Chat Completions request. This lets the default Codex client work when hosted
+search is unavailable. It does not provide web search; a request that forces a
+hosted tool choice still returns `400` because that choice cannot be fulfilled.
+The header does not change the existing `400` handling for unsupported
+`input_file` content or the `additional_tools` declaration.
+
+Omitted hosted types: `web_search`, `web_search_preview`,
+`web_search_2025_06_24`, `web_search_2025_08_25`, `file_search`,
+`file_search_preview`, `code_interpreter`, `code_interpreter_preview`,
+`computer_use`, `computer_use_preview`, `image_generation`, `mcp`, `shell`,
+`local_shell`, and `apply_patch`. A `tool_search` declaration is also omitted
+unless its `execution` is `client`. Custom tools named `apply_patch` and
+client-executed function, namespace, and search tools remain available.
+
 When the gateway activates a local target before LiteLLM execution, it logs the
 requested model and target information:
 

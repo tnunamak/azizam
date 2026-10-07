@@ -25485,6 +25485,10 @@ async def create_response(request: Request):
             )
 
         response_id = responses_translator.new_response_id()
+        omission_headers = (
+            {"x-azizam-omitted-tools": ", ".join(tool_mapping.omitted_tools)}
+            if tool_mapping.omitted_tools else {}
+        )
         created_at = int(time.time())
         stream = bool(req_body.get("stream"))
         store = req_body.get("store")
@@ -25587,7 +25591,7 @@ async def create_response(request: Request):
                     owner.handoff_stream(event_stream()),
                     status_code=200,
                     media_type="text/event-stream",
-                    headers={"cache-control": "no-cache", "x-accel-buffering": "no"},
+                    headers={"cache-control": "no-cache", "x-accel-buffering": "no", **omission_headers},
                 )
 
             # Non-streaming
@@ -25650,6 +25654,7 @@ async def create_response(request: Request):
                 content=json.dumps(resp_json),
                 status_code=200,
                 media_type="application/json",
+                headers=omission_headers,
             )
     except Exception as error:  # noqa: BLE001
         print(f"[proxy] /v1/responses internal error: {error}", flush=True)

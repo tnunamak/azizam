@@ -215,7 +215,7 @@ class TestGatewayContractHTTP(unittest.TestCase):
         self.assertTrue(error.get("message"))
 
     def test_responses_hosted_tool_returns_protocol_shaped_400(self) -> None:
-        """The gateway has no first-party hosted-tool surface, so hosted tools
+        """The gateway has no first-party hosted-tool surface, so required tools
         on /v1/responses must be refused with a deterministic OpenAI-shaped
         error envelope."""
         res = self._request(
@@ -224,6 +224,7 @@ class TestGatewayContractHTTP(unittest.TestCase):
                 "model": "default",
                 "input": "hi",
                 "tools": [{"type": "web_search"}],
+                "tool_choice": {"type": "web_search"},
             },
         )
         self.assertEqual(res.status, 400, res.body[:500])
@@ -232,8 +233,8 @@ class TestGatewayContractHTTP(unittest.TestCase):
         self.assertEqual(error.get("code"), "hosted_tool_not_supported")
         param = error.get("param") or ""
         self.assertTrue(
-            param.startswith("tools["),
-            f"expected tools[...] param pointer, got {param!r}",
+            param == "tool_choice",
+            f"expected tool_choice param pointer, got {param!r}",
         )
 
     def test_audio_speech_unsupported_response_format_is_openai_shaped(self) -> None:

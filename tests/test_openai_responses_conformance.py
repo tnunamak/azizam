@@ -515,7 +515,8 @@ class ResponsesConformanceTests(unittest.TestCase):
 
     def test_unsupported_requests_return_parameter_errors_without_forwarding(self):
         cases = [({"tool_choice": {"type": "allowed_tools", "mode": "required", "tools": []}}, "tool_choice"),
-                 ({"tools": [{"type": "tool_search", "execution": "server"}]}, "tools[0].execution"),
+                 ({"tools": [{"type": "tool_search", "execution": "server"}],
+                   "tool_choice": {"type": "tool_search"}}, "tool_choice"),
                  ({"input": [{"type": "additional_tools", "role": "developer", "tools": []}]}, "input[0].type"),
                  ({"input": [{"role": "user", "content": [{"type": "input_file", "file_id": "file_test"}]}]},
                   "input[0].content[0]"),
@@ -537,12 +538,42 @@ class ResponsesConformanceTests(unittest.TestCase):
         r = self.client.post("/v1/responses/input_tokens", json={"model": "default", "input": "hi"})
         self.assertEqual(r.status_code, 400)
         self.assertEqual(r.json()["error"]["code"], "unsupported_operation")
-        r = self.create({}, {"input": "hi", "tools": [{"type": "web_search"}]})
+        r = self.create({}, {"input": "hi", "tools": [{"type": "web_search"}],
+                             "tool_choice": {"type": "web_search"}})
         self.assertEqual(r.status_code, 400)
         self.assertEqual(r.json()["error"]["code"], "hosted_tool_not_supported")
         r = self.create({}, {"input": "hi", "background": True})
         self.assertEqual(r.status_code, 400)
         self.assertEqual(r.json()["error"]["code"], "unsupported_operation")
+
+    def test_optional_hosted_tools_are_omitted_with_header_buffered_and_streamed(self):
+        for stream in (False, True):
+            with self.subTest(stream=stream):
+                upstream = sse([chunk({"content": "Hello"}), chunk({}, "stop")]) if stream else chat_completion(
+                    {"role": "assistant", "content": "Hello"})
+                r = self.create(upstream, {"input": "hi", "stream": stream,
+                    "tools": [{"type": "web_search"}, {"type": "file_search", "vector_store_ids": []},
+                              {"type": "web_search"}, {"type": "tool_search", "execution": "server"}]})
+                self.assertEqual(r.status_code, 200, r.text)
+                self.assertEqual(r.headers["x-azizam-omitted-tools"], "web_search, file_search, tool_search")
+                self.assertNotIn("tools", self.sent[-1])
+                if stream:
+                    self.check_stream(parse_events(r.text))
+                else:
+                    validate("Response", r.json())
+                    self.assertNotIn("warnings", r.json())
+
+    def test_forced_hosted_choices_fail_without_forwarding(self):
+        for choice in ({"type": "web_search"}, {"type": "function", "name": "web_search"},
+                       {"type": "function", "function": {"name": "web_search"}},
+                       {"type": "custom", "name": "web_search"}, "required"):
+            with self.subTest(choice=choice):
+                before = len(self.sent)
+                r = self.create({}, {"input": "hi", "tools": [{"type": "web_search"}], "tool_choice": choice})
+                self.assertEqual(r.status_code, 400)
+                self.assertEqual(r.json()["error"]["code"], "hosted_tool_not_supported")
+                self.assertEqual(r.json()["error"]["param"], "tool_choice")
+                self.assertEqual(len(self.sent), before)
 
     def test_unknown_model_is_a_404_model_not_found(self) -> None:
         up = {"error": {"message": "/chat/completions: Invalid model name passed in model=nope-x. Call `/v1/models`."}}

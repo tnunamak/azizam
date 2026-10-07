@@ -14,8 +14,8 @@ Mapping summary (Responses -> Chat Completions, on request):
   tools[type=custom]            -> function with one string `input` parameter
                                    (grammar is advisory description text)
   tools[type=namespace]         -> flattened functions with request-local aliases
-  tools[type=tool_search]       -> function when execution=client; hosted search rejected
-  tools[type=hosted]            -> 400 not_supported_error
+  tools[type=tool_search]       -> function when execution=client; otherwise omitted
+  tools[type=hosted]            -> omitted unless explicitly required by tool_choice
   tool_choice                   -> tool_choice (compatible shapes pass through)
   parallel_tool_calls           -> parallel_tool_calls
   text.format.type=text         -> (drop)
@@ -45,7 +45,8 @@ Notes:
 - Hosted tools (web_search, file_search, code_interpreter, computer_use,
   computer_use_preview, image_generation, mcp, file_search_preview,
   web_search_preview, web_search_2025_*, code_interpreter_preview, shell,
-  apply_patch) are rejected.
+  local_shell, apply_patch) are omitted from backend declarations. Required
+  hosted tools still fail with hosted_tool_not_supported.
 """
 
 from __future__ import annotations
@@ -307,6 +308,8 @@ class ToolMapping:
 
     def __init__(self, req: dict, prior_messages: Optional[list[dict]] = None):
         self.tools: list[dict] = []
+        self.omitted_tools: list[str] = []
+        omitted_names: set[str] = set()
         self.identities: dict[tuple[Optional[str], str], str] = {}
         definitions: dict[tuple[Optional[str], str], dict] = {}
 
@@ -338,17 +341,19 @@ class ToolMapping:
 
         def add(tool: dict, namespace: Optional[str], description: str, path: str, discovered: bool) -> None:
             kind = tool.get("type")
+            if kind in HOSTED_TOOL_TYPES or (kind == "tool_search" and tool.get("execution") != "client"):
+                if kind not in self.omitted_tools:
+                    self.omitted_tools.append(kind)
+                omitted_names.add(kind)
+                if isinstance(tool.get("name"), str):
+                    omitted_names.add(tool["name"])
+                return
             if kind == "tool_search":
-                if tool.get("execution") != "client":
-                    raise ResponsesTranslationError(
-                        "Azizam supports tool_search with execution='client' only. Codex performs discovery; hosted search is unavailable.",
-                        code="hosted_tool_not_supported", param=path + ".execution",
-                    )
                 name = "tool_search"
             else:
                 inner = tool.get("function") if isinstance(tool.get("function"), dict) else {}
                 name = tool.get("name") or inner.get("name")
-            # Retain the established hosted/unknown-tool errors.
+            # Unknown tool types still fail before forwarding.
             if kind not in ("function", "custom", "tool_search"):
                 try:
                     _translate_tools([tool])
@@ -379,6 +384,27 @@ class ToolMapping:
                 if item.get("execution") != "client":
                     raise ResponsesTranslationError("Hosted tool_search output is unavailable.", code="hosted_tool_not_supported", param=f"input[{index}].execution")
                 add_tools(item.get("tools"), f"input[{index}].tools", discovered=True)
+        choice = req.get("tool_choice")
+        forced_hosted = isinstance(choice, str) and choice in HOSTED_TOOL_TYPES
+        if isinstance(choice, dict):
+            choice_type = choice.get("type")
+            inner = choice.get("function") if isinstance(choice.get("function"), dict) else {}
+            choice_name = choice.get("name") or inner.get("name")
+            identity = (choice.get("namespace"), choice_name)
+            declared = any(entry["identity"] == identity for entry in self.tools)
+            forced_hosted = (
+                choice_type in HOSTED_TOOL_TYPES
+                or (choice_type == "tool_search" and "tool_search" in self.omitted_tools
+                    and not any(entry["tool"]["type"] == "tool_search" for entry in self.tools))
+                or (choice_type in ("function", "custom") and not declared
+                    and isinstance(choice_name, str) and choice_name in omitted_names)
+            )
+        if forced_hosted or (choice == "required" and self.omitted_tools and not self.tools):
+            raise ResponsesTranslationError(
+                "Azizam cannot execute the hosted tool required by tool_choice. "
+                "Use a client-executed tool or allow automatic tool selection.",
+                code="hosted_tool_not_supported", param="tool_choice",
+            )
         # Replayed calls need an alias even if their declaration is no longer active.
         history = list(prior_messages or [])
         for item in input_items:
