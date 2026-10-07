@@ -43,7 +43,7 @@ class TtsLifecycleTests(RouteCase):
     def test_always_on_service_is_never_probed(self) -> None:
         self.cfg["backends"]["tts-chatterbox"].pop("lifecycle", None)  # an always-on (external) service
         self.use_upstream(lambda r: httpx.Response(200, content=b"RIFFwav", headers={"content-type": "audio/wav"}))
-        resp = self.client.post("/v1/audio/speech", json={"model": "tts", "voice": "nova", "input": "hi"})
+        resp = self.client.post("/v1/audio/speech", json={"model": "tts", "voice": "nova", "input": "hi", "response_format": "wav"})
         self.assertEqual(resp.status_code, 200)
         self.health.assert_not_awaited()
         self.ensure.assert_not_awaited()
@@ -63,10 +63,73 @@ class TtsLifecycleTests(RouteCase):
         seen = self.use_upstream(lambda r: httpx.Response(200, content=b"RIFFwav"))
         response = self.client.post(
             "/v1/audio/speech",
-            json={"model": "tts-1", "voice": "alloy", "input": "hello"},
+            json={"model": "tts-1", "voice": "alloy", "input": "hello", "response_format": "wav"},
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(seen[0].content)["model"], "chatterbox-turbo")
+
+
+@unittest.skipUnless(HAVE_FFMPEG, "ffmpeg is required")
+class TtsDefaultFormatTests(RouteCase):
+    def test_buffered_default_and_empty_format_return_mp3(self) -> None:
+        seen = self.use_upstream(lambda r: httpx.Response(
+            200, content=_wav_bytes(24000, 1), headers={"content-type": "audio/wav"},
+        ))
+        for model in ("omnivoice", "tts-fast"):
+            for format_fields in ({}, {"response_format": ""}, {"response_format": None}):
+                with self.subTest(model=model, format_fields=format_fields):
+                    resp = self.client.post("/v1/audio/speech", json={
+                        "model": model, "voice": "alloy", "input": "hello", **format_fields,
+                    })
+                    self.assertEqual(resp.status_code, 200, resp.text)
+                    self.assertEqual(resp.headers["content-type"], "audio/mpeg")
+                    self.assertTrue(resp.content.startswith(b"ID3"))
+                    self.assertGreater(len(resp.content), 100)
+                    self.assertEqual(json.loads(seen[-1].content)["response_format"], "wav")
+
+    def test_explicit_wav_is_returned_unchanged(self) -> None:
+        wav = _wav_bytes(24000, 1)
+        self.use_upstream(lambda r: httpx.Response(200, content=wav, headers={"content-type": "audio/wav"}))
+        resp = self.client.post("/v1/audio/speech", json={
+            "model": "omnivoice", "voice": "alloy", "input": "hello", "response_format": "wav",
+        })
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(resp.headers["content-type"], "audio/wav")
+        self.assertEqual(resp.content, wav)
+
+    def test_streaming_default_returns_mp3_audio_and_sse_deltas(self) -> None:
+        pcm = struct.pack("<h", 2500) * 4410
+        seen = self.use_upstream(lambda r: httpx.Response(200, stream=_Chunks([pcm])))
+        for stream_format in ("audio", "sse"):
+            with self.subTest(stream_format=stream_format):
+                resp = self.client.post("/v1/audio/speech", json={
+                    "model": "tts-fast", "voice": "alloy", "input": "hello", "stream_format": stream_format,
+                })
+                self.assertEqual(resp.status_code, 200, resp.text)
+                if stream_format == "sse":
+                    self.assertEqual(resp.headers["content-type"], "text/event-stream; charset=utf-8")
+                    events = [json.loads(line[6:]) for line in resp.text.split("\n\n") if line.startswith("data: ")]
+                    self.assertEqual(events[-1]["type"], "speech.audio.done")
+                    self.assertTrue(all(e["type"] == "speech.audio.delta" for e in events[:-1]))
+                    audio = b"".join(base64.b64decode(e["audio"]) for e in events[:-1])
+                else:
+                    self.assertEqual(resp.headers["content-type"], "audio/mpeg")
+                    audio = resp.content
+                self.assertTrue(audio.startswith(b"ID3"))
+                self.assertGreater(len(audio), 100)
+                sent = json.loads(seen[-1].content)
+                self.assertEqual((sent["response_format"], sent["stream_format"]), ("pcm", "audio"))
+
+    def test_buffered_default_sse_carries_mp3(self) -> None:
+        self.use_upstream(lambda r: httpx.Response(200, content=_wav_bytes(24000, 1), headers={"content-type": "audio/wav"}))
+        resp = self.client.post("/v1/audio/speech", json={
+            "model": "omnivoice", "voice": "alloy", "input": "hello", "stream_format": "sse",
+        })
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(resp.headers["content-type"], "text/event-stream; charset=utf-8")
+        events = [json.loads(line[6:]) for line in resp.text.split("\n\n") if line.startswith("data: ")]
+        self.assertEqual([e["type"] for e in events], ["speech.audio.delta", "speech.audio.done"])
+        self.assertTrue(base64.b64decode(events[0]["audio"]).startswith(b"ID3"))
 
 
 class TtsRuntimeFallbackTests(RouteCase):

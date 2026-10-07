@@ -1644,6 +1644,17 @@ operator-owned user units; the gateway only starts them. Chatterbox frees its we
 1 h; OmniVoice exits after 5 min idle. If GPU0 is full (ComfyUI is rendering), Chatterbox answers
 `503` with `Retry-After` instead of failing mid-request.
 
+**Speech formats.** An omitted or empty `response_format` defaults to `mp3`,
+matching OpenAI. MP3 responses use `Content-Type: audio/mpeg`; request `wav`
+explicitly to preserve WAV output.
+
+| Request | Audio format |
+| --- | --- |
+| Omitted or empty `response_format` | MP3 (default) |
+| Explicit `response_format` | The requested format: `mp3`, `wav`, `opus`, `aac`, `flac`, or `pcm` |
+| `stream_format: "sse"` | Base64 deltas in the requested format; MP3 by default |
+| Realtime voice slot | Explicit `response_format: "pcm"`; PCM16 at 24 kHz |
+
 **Streaming speech.** For engines marked `streaming: true`,
 `response_format: "pcm"` streams chunked 24 kHz s16le audio while the engine is
 still speaking; add `stream_format: "audio"` to stream `mp3`/`opus`/`aac`/`flac`/`wav`
@@ -1672,7 +1683,7 @@ curl "$AZIZAM_BASE_URL/v1/audio/voices" -H "Authorization: Bearer $AZIZAM_API_KE
   -F name="My narrator" -F audio_sample=@me.wav -F consent=cons_...      # -> {"object": "audio.voice", "id": "voice_...", ...}
 # 3. Speak with it
 curl "$AZIZAM_BASE_URL/v1/audio/speech" -H "Authorization: Bearer $AZIZAM_API_KEY" -H 'Content-Type: application/json' \
-  -d '{"model":"tts","voice":{"id":"voice_..."},"input":"Hello there."}' -o out.wav
+  -d '{"model":"tts","voice":{"id":"voice_..."},"input":"Hello there.","response_format":"wav"}' -o out.wav
 ```
 
 | Route | Notes |

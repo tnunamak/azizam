@@ -57,14 +57,17 @@ longer choose targets for names that `model_aliases` covers.
 
 ## Speech formats
 
-`POST /v1/audio/speech` and its `/openai/v1` alias accept `wav` (the default),
-`mp3`, `opus`, `aac`, `flac`, and `pcm`. A configured speech model is required;
+`POST /v1/audio/speech` and its `/openai/v1` alias accept `mp3` (the default,
+matching OpenAI), `wav`, `opus`, `aac`, `flac`, and `pcm`. An omitted or empty
+`response_format` returns MP3 bytes with `Content-Type: audio/mpeg`, including
+MP3 audio in SSE deltas. Request `wav` explicitly for WAV output.
+A configured speech model is required;
 the gateway does not install a speech engine.
 
 | Engine capability and request | Delivery | Conversion dependency |
 | --- | --- | --- |
 | Any engine, no streaming requested, format `wav` | Buffered backend WAV | No format conversion |
-| Buffered path, `mp3`/`opus`/`aac`/`flac` (also `pcm` on engines without streaming) | Backend WAV converted after synthesis; PCM is 24 kHz signed 16-bit little-endian mono | Gateway `ffmpeg` and the requested encoder |
+| Buffered path, `mp3` (default)/`opus`/`aac`/`flac` (also `pcm` on engines without streaming) | Backend WAV converted after synthesis; PCM is 24 kHz signed 16-bit little-endian mono | Gateway `ffmpeg` and the requested encoder |
 | Engine marked `streaming: true`, format `pcm` or `stream_format: "audio"` | Chunked audio in the requested format, sourced from native PCM | Native 24 kHz PCM passes through; other sample rates or formats require `ffmpeg` |
 | Engine marked `streaming: true`, `stream_format: "sse"` | Base64 audio delta events and a done event | Streaming path invokes `ffmpeg` before SSE framing |
 | Engine without streaming capability, `stream_format: "audio"` or `"sse"` | Buffered synthesis; SSE wraps the completed audio in one delta and a done event | Same conversion rules as buffered output |

@@ -4278,7 +4278,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
     tts_service_id = "tts"
 
     # Map voice in request body
-    requested_response_format = "wav"
+    requested_response_format = "mp3"
     body_json = None
     stream_format: str | None = None
     stream_mode: str | None = None  # "audio" | "sse" | None (buffered)
@@ -4292,7 +4292,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
             if metadata_error is not None:
                 return metadata_error
             body_json.pop("extensions", None)
-        response_format = str(body_json.get("response_format", "") or "wav").lower()
+        response_format = str(body_json.get("response_format", "") or "mp3").lower()
         if response_format not in SUPPORTED_TTS_RESPONSE_FORMATS:
             return openai_error_response(
                 "response_format must be one of wav, mp3, opus, aac, flac, or pcm.",
