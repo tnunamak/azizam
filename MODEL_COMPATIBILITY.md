@@ -26,10 +26,7 @@ POST /v1/images/generations    model=dall-e-3     -> local image model
 POST /v1/images/edits          model=gpt-image-1  -> local image-edit model
 ```
 
-Speech synthesis accepts `response_format: "wav"` and `response_format: "mp3"`.
-The local TTS backend is requested as WAV; MP3 responses are transcoded at the
-gateway boundary with ffmpeg. Other OpenAI speech formats are rejected with
-`unsupported_response_format`.
+See [Speech formats](#speech-formats) for buffered and streaming audio contracts.
 
 Known OpenAI model families used on the wrong endpoint fail with a clear `400`
 instead of routing silently:
@@ -57,6 +54,29 @@ receipts see the concrete target. Full table and discovery endpoints:
 `docs/LOCAL_CLIENT_RECIPES.md` ("Model aliases"). The category heuristics
 below only decide which OpenAI names are *wrong* for an endpoint (400); they no
 longer choose targets for names that `model_aliases` covers.
+
+## Speech formats
+
+`POST /v1/audio/speech` and its `/openai/v1` alias accept `wav` (the default),
+`mp3`, `opus`, `aac`, `flac`, and `pcm`. A configured speech model is required;
+the gateway does not install a speech engine.
+
+| Engine capability and request | Delivery | Conversion dependency |
+| --- | --- | --- |
+| Any engine, no streaming requested, format `wav` | Buffered backend WAV | No format conversion |
+| Buffered path, `mp3`/`opus`/`aac`/`flac` (also `pcm` on engines without streaming) | Backend WAV converted after synthesis; PCM is 24 kHz signed 16-bit little-endian mono | Gateway `ffmpeg` and the requested encoder |
+| Engine marked `streaming: true`, format `pcm` or `stream_format: "audio"` | Chunked audio in the requested format, sourced from native PCM | Native 24 kHz PCM passes through; other sample rates or formats require `ffmpeg` |
+| Engine marked `streaming: true`, `stream_format: "sse"` | Base64 audio delta events and a done event | Streaming path invokes `ffmpeg` before SSE framing |
+| Engine without streaming capability, `stream_format: "audio"` or `"sse"` | Buffered synthesis; SSE wraps the completed audio in one delta and a done event | Same conversion rules as buffered output |
+
+For SSE, the audio bytes use the requested `response_format`; select `pcm`
+when the client expects PCM deltas. `stream_format` accepts only `audio` or
+`sse`. Other values return `400 unsupported_stream_format`; unknown audio
+formats return `400 unsupported_response_format`. Buffered conversion failures
+return `502` with an API error. Streaming conversion requires the same installed
+binary and encoders; failures can occur after response headers have been sent.
+
+See [streaming speech recipes](docs/LOCAL_CLIENT_RECIPES.md#model-aliases-stable-names) for client examples.
 
 ## Defaults
 

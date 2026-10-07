@@ -76,9 +76,9 @@ The gateway owns authentication, access plans, routing, paid admission and recor
 
 ## Providers and costs
 
-Local models use your hardware. Paid remote models use provider-qualified names such as `typesafe/jev-latest`. Add its service-registry record through the admin API (or Engines when a matching preset exists), reference its key through an environment variable, and grant the relevant access plan permission. **Gateway → Providers** currently shows status and spend; it does not edit provider records or caps. Provider keys stay on the server.
+Local models use your hardware. Paid remote models use provider-qualified names such as `typesafe/jev-latest`. Use **Gateway → Providers → Add provider** to select an endpoint, enter a write-only key or environment-variable reference, choose models and prices, and set caps and allowed access plans. The page also shows status and spend. See [key custody and backups](docs/REMOTE_PROVIDERS.md#key-custody-and-threat-model) for how server-side credentials are stored.
 
-Set per-request and daily or monthly budgets on the access plan. Use the provider admin API for provider or gateway caps. Estimates reserve spend before dispatch. Actual cost settles afterward; missing final cost remains unknown until reconciliation. A cap can be exceeded by the cost of requests already in flight. Use a provider-side credit limit as another control.
+Set per-request and daily or monthly budgets on the access plan. Use Providers or the provider admin API for provider or gateway caps. Estimates reserve spend before dispatch. Actual cost settles afterward; missing final cost remains unknown until reconciliation. A cap can be exceeded by the cost of requests already in flight. Use a provider-side credit limit as another control.
 
 An unavailable local model does not silently become a paid request. Paid fallback needs explicit routing configuration and access-plan permission. See [remote-provider configuration and limits](docs/REMOTE_PROVIDERS.md) and [charge reconciliation](docs/ops/PROVIDER_RECONCILIATION.md).
 
@@ -102,7 +102,7 @@ The member opens Home, picks a connection recipe, and uses their own key. Give t
 
 ## Security model
 
-App keys are bearer credentials with access-plan permissions. Browser accounts use signed sessions and CSRF protection. Admin credentials grant control-plane access and must not be pasted into client apps. Keep provider credentials in your deployment secret store or environment.
+App keys are bearer credentials with access-plan permissions. Browser accounts use signed sessions and CSRF protection. Admin credentials grant control-plane access and must not be pasted into client apps. Enter provider credentials as write-only keys in Providers, or reference the gateway service environment. See [key custody](docs/REMOTE_PROVIDERS.md#key-custody-and-threat-model) for encryption and backup requirements.
 
 Authenticated member access scopes jobs, assets and receipts to their App ownership. Complete signed asset URLs remain bearer capabilities until expiry, so treat shared download links as private. Historical records without trusted ownership are hidden from scoped users. Disabling authentication removes that isolation boundary.
 

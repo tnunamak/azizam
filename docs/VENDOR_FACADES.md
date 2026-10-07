@@ -72,7 +72,7 @@ Known limits:
 
 - Model file mutation is deliberately unsupported. `create`, `copy`, `pull`, `push`, `delete` and `blobs` return `501` with an Ollama-shaped `{"error": ...}` body after auth and policy checks.
 - Raw prompting is rejected.
-- Native `options` keys are mapped only when they have a canonical chat equivalent. Unmapped native options are rejected on the route before forwarding.
+- Native `options` keys are mapped only when they have a canonical chat equivalent. Runtime-sizing options (such as `num_ctx` and `num_gpu`) and unknown options are accepted but ignored. Configure runtime sizing on the engine; a successful request does not mean those options took effect.
 - `suffix` and `template` on `/api/generate` are rejected because the gateway does not expose fill-in-the-middle or template override behavior through this frontend.
 
 Evidence:
@@ -180,6 +180,7 @@ Known limits:
 - A configured `realtime` backend service with a `port` is required. Without it, the route refuses the upgrade with `503 realtime_not_configured`.
 - If the sibling service cannot start or refuses the connection, the route refuses the upgrade with `503`.
 - The gateway relays protocol frames. It does not validate or synthesize Realtime event semantics.
+- HTTP Realtime operations, including session/client-secret creation and WebRTC calls, return `unsupported_operation`. Use the [WebSocket recipe](LOCAL_CLIENT_RECIPES.md#recipe-openai-realtime-voice-agents) with a configured sibling service.
 
 Evidence:
 

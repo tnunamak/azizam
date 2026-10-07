@@ -1,6 +1,6 @@
 # Operator guide
 
-Use this guide to run a Azizam for yourself, family, friends,
+Use this guide to run Azizam for yourself, family, friends,
 or local apps. The gateway gives clients one endpoint and one key while you
 control engines, providers, people, access plans, and spend.
 
@@ -77,31 +77,28 @@ branches for an engine.
 Remote providers are paid or externally hosted backends. They are service
 registry records with provider-shaped config.
 
-Provider secret values stay outside `admin.db`. Put the real key in the
-gateway service environment or secret store, then store only the env var name
-on the provider record. For example:
+Open **Gateway → Providers → Add provider** at `/ui/providers/`. Select a
+preset or generic endpoint, enter a write-only key or an environment-variable
+name, and run **Gateway check**. Choose models, review prices, set caps, and
+select allowed access plans before saving. The page also supports provider
+configuration changes and reports enabled state, reachability, key state,
+and spend totals.
 
-```text
-OPENROUTER_API_KEY=...
-TYPESAFE_API_KEY=...
-```
+UI-entered keys are encrypted in `admin.db`; service records contain only
+credential references. Environment references leave the value in the gateway
+service environment. Neither mode exposes the full key through the admin API.
+See [Remote providers: key custody and threat model](../REMOTE_PROVIDERS.md#key-custody-and-threat-model)
+for storage, backup, and security limits.
 
-Provider status and spend appear in `/ui/providers/` when the provider admin
-API is available. The page reports enabled state, reachability, key state, and
-spend totals. It does not create providers, edit providers, or show provider
-key values.
-
-Create provider records through the service registry. Use `/ui/engines/` when
-the API supplies a matching preset. For records that are not exposed by that
-dialog, use the `/admin/api/operator/services` service-registry API or
-bootstrap/provisioning input, then manage the live DB record from the registry.
-Remote provider records must be `kind: provider` and must use provider-shaped
-config. See [Remote providers](../REMOTE_PROVIDERS.md) for the exact fields.
+Provider records remain service-registry data (`kind: provider`). Automation
+can also use the provider admin API. See [Remote providers](../REMOTE_PROVIDERS.md)
+for the current workflow and record fields.
 
 Provider cap and allowed-plan state is implemented by the admin provider API:
 
 | Action | Endpoint |
 | --- | --- |
+| Create a provider | `POST /admin/api/providers` |
 | List providers | `GET /admin/api/providers` |
 | Inspect a provider | `GET /admin/api/providers/{provider}` |
 | Set or remove provider caps | `PUT` or `DELETE /admin/api/providers/{provider}/caps` |
@@ -116,7 +113,7 @@ ledger behavior.
 Paid remote execution requires all of these facts:
 
 1. The provider is configured and enabled.
-2. The provider key env var is present.
+2. The provider credential is available from its encrypted secret or referenced environment variable.
 3. The requested model or alias names that provider.
 4. The caller's access plan allows that provider and model.
 5. Spend caps and request estimates permit the call.
@@ -190,7 +187,8 @@ live `.db` file while a `-wal` file can contain committed data.
 
 At minimum, preserve:
 
-- `admin.db`;
+- `admin.db` and `provider-secrets.key` in the same directory, if UI-entered
+  provider keys are used; see [key custody](../REMOTE_PROVIDERS.md#key-custody-and-threat-model);
 - `admin_session_key`, if the gateway generated one;
 - response, receipt, metrics, and media job databases if you need that history;
 - generated media and voice data that your deployment uses;
@@ -253,8 +251,11 @@ models, protocols, workflows, engines, and remote providers.
 
 ### A provider is missing its key
 
-Set the provider key in the gateway service environment or secret store. The
-provider record should store the env var name, not the key value.
+Replace the write-only key in Providers, or set the referenced variable in the
+gateway service environment and restart through the documented procedure.
+Check the saved endpoint and run Gateway check. See
+[key custody](../REMOTE_PROVIDERS.md#key-custody-and-threat-model) for encrypted
+key storage and environment references.
 
 ### A paid request is denied
 
