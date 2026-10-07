@@ -37,3 +37,27 @@ it("does not attach a disk remedy to a temperature warning", async () => {
   const reason = await screen.findByText("Temperature is high.");
   expect(within(reason.parentElement!.parentElement!).queryByRole("button", { name: "Free disk space" })).toBeNull();
 });
+it("counts every provider failure and signal, deduplicating identical source/reason pairs", async () => {
+  const provider = { enabled: true, reachable: false, keyState: "set" as const, keySuffix: null, spendText: "", tone: "bad" as const };
+  state.providers = [
+    { ...provider, id: "first", name: "First provider", keyState: "missing" },
+    { ...provider, id: "second", name: "Second provider" },
+  ];
+  mount([
+    { source: "api", tone: "warn", reasons: ["Request failures.", "Request failures."] },
+    { source: "disk", tone: "warn", reasons: ["Disk full.", "Other disk full."] },
+    { source: "disk", tone: "warn", reasons: ["Disk full."] },
+    { source: "thermal", tone: "warn", reasons: ["Temperature high."] },
+    { source: "custom-check", tone: "bad", reasons: ["Check failed."] },
+  ]);
+  expect(await screen.findByText("8 problems need you")).toBeVisible();
+  expect(screen.getAllByText("Request failures.")).toHaveLength(1);
+  expect(screen.getAllByText("Disk full.")).toHaveLength(1);
+  expect(screen.getByText("First provider needs owner action: provider key is missing.")).toBeVisible();
+  expect(screen.getByText("Second provider needs owner action: provider is unreachable.")).toBeVisible();
+  expect(screen.getByText("Check failed.")).toBeVisible();
+  for (const reason of ["Disk full.", "Other disk full."]) {
+    const row = screen.getByText(reason).parentElement!.parentElement!;
+    expect(within(row).getByRole("button", { name: "Free disk space" })).toBeVisible();
+  }
+});

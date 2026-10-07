@@ -389,33 +389,22 @@ export function StatusClient() {
         engine.service.enabled ||
         engine.service.id === selectedServiceId),
   );
-  const hostWarnings = (
-    statusIsError ? [] : (statusData?.current_health?.signals ?? [])
-  )
-    .filter((signal) => /host|disk|thermal|temperature/i.test(signal.source))
-    .flatMap((signal) =>
-      signal.reasons.map((reason) => ({ source: signal.source, reason })),
-    );
-  const providerFailure =
-    providers.state === "ready"
-      ? providers.providers.find(
-          (provider) =>
-            provider.enabled === true &&
-            (provider.reachable === false || provider.keyState === "missing"),
-        )
-      : null;
-  const providerIssue = providerFailure
-    ? `${providerFailure.name} needs owner action: ${providerFailure.reachable === false ? "provider is unreachable" : "provider key is missing"}.`
-    : null;
-  const firstHostWarning = hostWarnings[0];
-  const apiSignal = observedStatus?.current_health?.signals?.find(
-    (signal) => signal.source === "api",
-  );
-  const warningSignal = apiSignal?.reasons[0]
-    ? { source: apiSignal.source, reason: apiSignal.reasons[0] }
-    : firstHostWarning
-      ? firstHostWarning
-      : null;
+  const signalProblems = (statusIsError ? [] : (statusData?.current_health?.signals ?? []))
+    .filter((signal) => signal.tone === "warn" || signal.tone === "bad")
+    .flatMap((signal) => signal.reasons.map((reason) => ({ source: signal.source, reason })));
+  const providerProblems = providers.state === "ready"
+    ? providers.providers.flatMap((provider) => provider.enabled === true
+      ? [
+          ...(provider.reachable === false ? ["provider is unreachable"] : []),
+          ...(provider.keyState === "missing" ? ["provider key is missing"] : []),
+        ].map((reason) => ({
+          key: `provider:${provider.id}:${reason}`,
+          title: "Provider needs owner action",
+          detail: `${provider.name} needs owner action: ${reason}.`,
+          href: "/providers",
+        }))
+      : [])
+    : [];
   const refreshAll = () => {
     void refetchStatus();
     void refetchRegistry();
@@ -447,24 +436,20 @@ export function StatusClient() {
         }
       : null,
     ...engineProblemRows(engines),
-    providerIssue
-      ? {
-          key: "provider",
-          title: "Provider needs owner action",
-          detail: providerIssue,
-          href: "/providers",
-        }
-      : null,
-    warningSignal
-      ? {
-          key: "hardware",
-          source: warningSignal.source,
-          title: warningSignal.source === "api" ? "Gateway needs attention" : "Hardware needs attention",
-          detail: warningSignal.reason,
-          href: null,
-        }
-      : null,
-  ].filter((row) => row != null);
+    ...providerProblems,
+    ...signalProblems.map(({ source, reason }) => ({
+      key: `signal:${source}:${reason}`,
+      source,
+      title: source === "api"
+        ? "Gateway needs attention"
+        : /host|disk|thermal|temperature/i.test(source)
+          ? "Hardware needs attention"
+          : "Health check needs attention",
+      detail: reason,
+      href: null,
+    })),
+  ].filter((row) => row != null)
+    .filter((row, index, rows) => rows.findIndex((candidate) => candidate.key === row.key) === index);
   const health = observedStatus?.current_health;
   const incomplete = Object.values(health?.incomplete ?? {}).some(
     (gaps) => gaps?.length,
