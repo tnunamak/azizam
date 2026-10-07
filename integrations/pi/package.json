@@ -1,6 +1,6 @@
 {
   "name": "pi-provider-azizam",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Pi provider that discovers chat models live from an Azizam gateway's /v1/models",
   "keywords": [
     "pi-package",

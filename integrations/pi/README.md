@@ -7,7 +7,7 @@ Azizam is the working name of the `azizam` gateway. Any OpenAI-compatible gatewa
 ## Install
 
 ```bash
-pi install git:github.com/tnunamak/pi-provider-azizam@v0.1.0   # from the git mirror
+pi install git:github.com/tnunamak/pi-provider-azizam@v0.1.1   # from the git mirror
 pi install /path/to/azizam/integrations/pi                     # from a checkout
 pi -e /path/to/azizam/integrations/pi                          # try for one run, no install
 ```
