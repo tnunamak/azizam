@@ -7247,13 +7247,23 @@ async def _comfy_run_round(
 
         print(f"[proxy] ComfyUI {label} submitted: {prompt_id}", flush=True)
 
-        max_polls = (max_wait_s or COMFY_TIMEOUT) * 2  # 0.5s cadence
+        # Keep the original total sleep budget; history request time was never
+        # charged against it. Check immediately, then back off to the old cadence.
+        remaining_wait_s = float(max_wait_s or COMFY_TIMEOUT)
+        poll_delay_s = 0.0
         job = None
-        for _ in range(max_polls):
+        while remaining_wait_s > 0:
             if await _request_is_disconnected(request):
                 await _cancel_comfy_prompt(client, prompt_id, headers, reason="client disconnect")
                 return _image_client_disconnected_response(prompt_id), []
-            await asyncio.sleep(0.5)
+            if poll_delay_s:
+                await asyncio.sleep(poll_delay_s)
+                remaining_wait_s -= poll_delay_s
+            poll_delay_s = min(
+                poll_delay_s * 2 if poll_delay_s else 0.05,
+                0.5,
+                remaining_wait_s,
+            )
             try:
                 history_resp = await client.get(f"{COMFY_HOST}/history/{prompt_id}", headers=headers)
             except (httpx.TimeoutException, httpx.ConnectError):
