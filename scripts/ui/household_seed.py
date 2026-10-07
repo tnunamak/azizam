@@ -54,6 +54,24 @@ MODEL_GROUPS = {
         ("gpt-mini", "GPT 4.1 mini", "chat"),
     ],
 }
+APP_CAPABILITY_CHOICES = {
+    "sam": (
+        "chat",
+        "chat",
+        "image",
+        "image-edit",
+        "tts",
+        "stt",
+        "video",
+        "music",
+        "sfx",
+    ),
+    "robin": ("chat", "image", "chat", "tts", "stt", "video", "music", "sfx"),
+    "alex": ("chat", "chat", "image", "image-edit", "stt", "music", "sfx"),
+    "webui": ("chat", "chat", "image", "chat", "video", "image-edit"),
+    "home": ("tts", "tts", "stt", "tts", "stt", "chat"),
+    "codex": ("chat",),
+}
 SERVICE_NAMES = {
     "household-chat": "Study and coding",
     "household-image": "Image studio",
@@ -280,9 +298,7 @@ def seed(state: Path, port: int) -> dict:
             "images": {"stable": {"image": "krea2-turbo"}},
             "speech": {
                 "stable": {"voice": ["tts-1"]},
-                "engines": {
-                    "tts-1": {"service": "household-voice", "model": "tts-1"}
-                },
+                "engines": {"tts-1": {"service": "household-voice", "model": "tts-1"}},
             },
         }
         config_path.write_text(yaml.safe_dump(document))
@@ -484,6 +500,7 @@ def seed(state: Path, port: int) -> dict:
         ("music", "audio.music", "/v1/audio/music", "musicgen", "household-voice"),
         ("sfx", "audio.sfx", "/v1/audio/sfx", "audio-sfx", "household-voice"),
     ]
+    capability_by_name = {row[0]: row for row in capabilities}
     samples, spend, receipt_rows = [], [], []
     evening = datetime.fromtimestamp(now, ZoneInfo("America/Chicago")).replace(
         hour=21, minute=0, second=0, microsecond=0
@@ -493,15 +510,19 @@ def seed(state: Path, port: int) -> dict:
     for day in range(30):
         for index in range(30 + (day % 4) * 5):
             slug = active_apps[(index + day) % len(active_apps)]
-            _cap, intent, endpoint, model, backend = capabilities[
-                index % len(capabilities)
-            ]
+            choices = APP_CAPABILITY_CHOICES[slug]
+            choice = choices[(index // len(active_apps) + day) % len(choices)]
+            _cap, intent, endpoint, model, backend = capability_by_name[choice]
+            if slug == "codex":
+                model = "coder"
+            elif slug == "home" and choice == "chat":
+                model = "fast"
             ts = (
                 int((evening - timedelta(days=day)).timestamp())
                 - (index % 8) * 900
                 - (12 * 3600 if index % 7 == 0 else 0)
             )
-            if day > 4 and index % 17 == 0:
+            if slug == "codex" and day > 4 and (index + day) % 5 == 0:
                 _cap, intent, endpoint, model, backend = (
                     "embeddings",
                     "embeddings",
@@ -509,7 +530,11 @@ def seed(state: Path, port: int) -> dict:
                     "bge-m3",
                     "household-embedding",
                 )
-            remote = index % 11 == 0 and slug != "alex"
+            remote = (
+                intent == "chat.completions"
+                and index % 7 == 0
+                and slug not in {"alex", "home"}
+            )
             if remote:
                 _cap, intent, endpoint, model, backend = (
                     "chat",
@@ -526,7 +551,7 @@ def seed(state: Path, port: int) -> dict:
                     "budget_exceeded",
                     "invalid_request",
                 ][(index + day) % 5]
-                if index % 13 == 0
+                if day < 5 and index == 27
                 else None
             )
             if failure in {"model_access_denied", "budget_exceeded"}:
@@ -540,9 +565,11 @@ def seed(state: Path, port: int) -> dict:
                 )
                 if failure == "model_access_denied":
                     slug = "alex"
-                elif slug == "alex":
+                elif slug in {"alex", "home"}:
                     slug = "sam"
             if failure == "upstream_unavailable":
+                if slug in {"codex", "home"}:
+                    slug = "webui"
                 _cap, intent, endpoint, model, backend = (
                     "video",
                     "video.generate",

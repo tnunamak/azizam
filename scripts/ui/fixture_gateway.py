@@ -21,6 +21,18 @@ if os.environ.get("UI_SEED_PROFILE") == "household":
     from gateway import receipt_store, media_jobs, media_delivery
     from pathlib import Path
 
+    from gateway import default_profiles, admin_store
+
+    original_seed_profiles = default_profiles.seed_default_profiles
+
+    def household_seed_profiles(*, path=admin_store.DB_PATH, now=None):
+        # The three household plans already exist. Remove only unused defaults
+        # created at this startup, through the store's reference-checked API.
+        for profile in original_seed_profiles(path=path, now=now):
+            admin_store.delete_profile(profile["id"], path=path)
+        return []
+
+    default_profiles.seed_default_profiles = household_seed_profiles
     media_delivery.DEFAULT_WORKDIR = Path.cwd() / "media_metadata"
     import status_endpoint
 

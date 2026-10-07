@@ -38,6 +38,7 @@ def test_household_consistency(tmp_path):
         rows = conn.execute("SELECT created_at,receipt_json FROM receipts").fetchall()
     receipts = [json.loads(row[1]) for row in rows]
     assert manifest["request_count"] == len(receipts)
+    assert sum(receipt["status"] != "succeeded" for receipt in receipts) == 5
     assert max(row[0] for row in rows) - min(row[0] for row in rows) >= 29 * 86400
     assert {
         r["metadata"].get("status_code") for r in receipts if r["status"] != "succeeded"
@@ -49,6 +50,24 @@ def test_household_consistency(tmp_path):
             assert receipt["remote"]
         if receipt["metadata"].get("status_code") == 429:
             assert receipt["remote"]
+        if receipt["app_id"] == manifest["apps"]["codex"]:
+            assert receipt["intent"] in {"chat.completions", "embeddings"}
+        if receipt["app_id"] == manifest["apps"]["home"]:
+            assert receipt["intent"] in {
+                "chat.completions",
+                "audio.speech",
+                "audio.transcribe",
+            }
+            assert not receipt["remote"]
+        if receipt["intent"] == "embeddings":
+            assert receipt["app_id"] == manifest["apps"]["codex"]
+        if receipt["remote"]:
+            assert receipt["intent"] == "chat.completions"
+        if (
+            receipt["status"] == "succeeded"
+            and receipt["app_id"] == manifest["apps"]["alex"]
+        ):
+            assert not receipt["remote"]
     with sqlite3.connect(tmp_path / "metrics.db") as conn:
         assert conn.execute(
             "SELECT COUNT(*) FROM samples WHERE metric='request'"
@@ -73,6 +92,11 @@ def test_household_consistency(tmp_path):
     assert {asset["kind"] for asset in assets} == {"image", "audio", "video"}
     with sqlite3.connect(tmp_path / "admin.db") as conn:
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert {row[0] for row in conn.execute("SELECT name FROM profiles")} == {
+            "Everyone",
+            "Teen",
+            "Builder",
+        }
         assert (
             conn.execute(
                 "SELECT COUNT(*) FROM users WHERE email='june@example.test'"
