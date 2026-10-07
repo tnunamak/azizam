@@ -299,6 +299,130 @@ class ResponsesConformanceTests(unittest.TestCase):
 
     # -- unsupported and errors ---------------------------------------
 
+    def test_input_items_pagination_defaults_order_and_stable_cursors(self):
+        inputs = [{"role": "user", "content": str(i)} for i in range(23)]
+        made = self.create(chat_completion({"content": "ok"}), {"input": inputs, "store": True})
+        path = f"/v1/responses/{made.json()['id']}/input_items"
+        default = self.client.get(path).json()
+        self.assertEqual(len(default["data"]), 20)
+        self.assertEqual(default["data"][0]["content"][0]["text"], "22")
+        self.assertTrue(default["has_more"])
+        first = self.client.get(path, params={"limit": 1, "order": "asc"}).json()
+        self.assertEqual(first["data"][0]["content"][0]["text"], "0")
+        self.assertEqual(first["first_id"], first["last_id"])
+        again = self.client.get(path, params={"limit": 1, "order": "asc"}).json()
+        self.assertEqual(first, again)
+        page = self.client.get(path, params={"limit": 2, "order": "asc", "after": first["last_id"]}).json()
+        self.assertEqual([i["content"][0]["text"] for i in page["data"]], ["1", "2"])
+        last = self.client.get(path, params={"after": default["last_id"]}).json()
+        self.assertEqual([i["content"][0]["text"] for i in last["data"]], ["2", "1", "0"])
+        self.assertFalse(last["has_more"])
+        empty = self.client.get(path, params={"after": last["last_id"]}).json()
+        self.assertEqual(empty["data"], [])
+        self.assertIsNone(empty["first_id"])
+        self.assertIsNone(empty["last_id"])
+        self.assertFalse(empty["has_more"])
+        for param, value in (("limit", "0"), ("limit", "101"), ("limit", "no"),
+                             ("order", "sideways"), ("after", "item_missing")):
+            with self.subTest(param=param, value=value):
+                error = self.client.get(path, params={param: value})
+                self.assertEqual(error.status_code, 400)
+                self.assertEqual(error.json()["error"]["param"], param)
+
+    def test_storage_failure_returns_error_before_success(self):
+        with patch.object(proxy.responses_store, "save", side_effect=OSError("disk full")):
+            buffered = self.create(chat_completion({"content": "ok"}), {"input": "hi", "store": True})
+            self.assertEqual(buffered.status_code, 500)
+            self.assertEqual(buffered.json()["error"]["code"], "internal_error")
+            streamed = self.create(sse([chunk({"content": "ok"}), chunk({}, "stop")]),
+                                   {"input": "hi", "stream": True, "store": True})
+            events = parse_events(streamed.text)
+            self.assertEqual(events[-1]["type"], "response.failed")
+            self.assertEqual(events[-1]["response"]["status"], "failed")
+            self.assertNotIn("response.completed", [e["type"] for e in events])
+            self.assertIn("persist", events[-1]["response"]["error"]["message"].lower())
+            for event in events:
+                validate("ResponseStreamEvent", event)
+
+    def test_stream_is_saved_before_terminal_success_is_yielded(self):
+        # Check the generator directly so TestClient buffering cannot hide ordering.
+        import asyncio
+        from starlette.requests import Request
+
+        async def exercise():
+            raw = json.dumps({"model": "default", "input": "hi", "stream": True}).encode()
+            async def receive():
+                return {"type": "http.request", "body": raw, "more_body": False}
+            request = Request({"type": "http", "method": "POST", "path": "/v1/responses",
+                               "headers": [], "query_string": b""}, receive)
+            upstream = sse([chunk({"content": "ok"}), chunk({}, "stop")])
+            async def forward(*args, **kwargs):
+                return _FakeClient(), httpx.Response(200, content=upstream)
+            real_save = proxy.responses_store.save
+            with patch.object(proxy, "_forward_chat_completions", forward), patch.object(
+                proxy.responses_store, "save", wraps=real_save
+            ) as save:
+                response = await proxy.create_response(request)
+                async for frame in response.body_iterator:
+                    event = parse_events(frame.decode())[0]
+                    if event["type"] == "response.completed":
+                        self.assertEqual(save.call_count, 1)
+                        self.assertIsNotNone(proxy.responses_store.get(event["response"]["id"]))
+        asyncio.run(exercise())
+
+    def test_stream_read_error_uses_flat_error_and_increasing_sequence(self):
+        for count in (1, 10005):
+            with self.subTest(count=count):
+                async def broken_stream(client, upstream):
+                    for _ in range(count):
+                        yield sse([chunk({"content": "x"})]).split(b"data: [DONE]")[0]
+                    raise OSError("backend read failed")
+                with patch.object(proxy, "iter_llm_response_bytes", broken_stream):
+                    r = self.create(b"", {"input": "hi", "stream": True})
+                events = parse_events(r.text)
+                error = next(e for e in events if e["type"] == "error")
+                self.assertEqual(error["message"], "backend read failed")
+                self.assertIsNone(error["param"])
+                self.assertNotIn("error", error)
+                self.assertEqual([e["sequence_number"] for e in events], list(range(1, len(events) + 1)))
+                self.assertEqual(events[-1]["type"], "response.failed")
+                validate("ResponseStreamEvent", error)
+                validate("ResponseStreamEvent", events[-1])
+
+    def test_stream_upstream_error_and_premature_eof_match_failed_schema(self):
+        for upstream in (sse([chunk({"content": "partial"}), {"error": {"message": "failed"}}]),
+                         sse([chunk({"content": "partial"})])):
+            with self.subTest(upstream=upstream):
+                events = parse_events(self.create(upstream, {"input": "hi", "stream": True}).text)
+                self.assertEqual(events[-1]["type"], "response.failed")
+                self.assertEqual(events[-1]["response"]["output_text"], "partial")
+                for event in events:
+                    validate("ResponseStreamEvent", event)
+
+    def test_refusals_match_buffered_and_streamed_schemas(self):
+        buffered = self.create(chat_completion({"content": None, "refusal": "Cannot help."}), {"input": "hi"})
+        validate("Response", buffered.json())
+        self.assertEqual(buffered.json()["output"][0]["content"], [{"type": "refusal", "refusal": "Cannot help."}])
+        events = parse_events(self.create(sse([chunk({"refusal": "Cannot "}), chunk({"refusal": "help."}, "stop")]),
+                                         {"input": "hi", "stream": True}).text)
+        self.check_stream(events)
+        self.assertEqual(next(e for e in events if e["type"] == "response.refusal.done")["refusal"], "Cannot help.")
+
+    def test_unsupported_requests_return_parameter_errors_without_forwarding(self):
+        cases = [({"tools": [{"type": "custom", "name": "echo"}]}, "tools[0].type"),
+                 ({"tool_choice": {"type": "allowed_tools", "mode": "required", "tools": []}}, "tool_choice"),
+                 ({"input": [{"role": "user", "content": [{"type": "input_file", "file_id": "file_test"}]}]},
+                  "input[0].content[0]"),
+                 ({"input": [{"role": "user", "content": [{"type": "input_image", "file_id": "file_test"}]}]},
+                  "input[0].content[0]")]
+        for fields, param in cases:
+            with self.subTest(fields=fields):
+                before = len(self.sent)
+                r = self.create({}, {"input": "hi", **fields})
+                self.assertEqual(r.status_code, 400)
+                self.assertEqual(r.json()["error"]["param"], param)
+                self.assertEqual(len(self.sent), before)
+
     def test_unsupported_operations_are_explicit(self) -> None:
         r = self.client.post("/v1/responses/resp_x/cancel")
         self.assertEqual(r.status_code, 400)

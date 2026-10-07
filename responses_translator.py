@@ -45,6 +45,8 @@ Notes:
 
 from __future__ import annotations
 
+import codecs
+import hashlib
 import json
 import secrets
 import time
@@ -116,18 +118,20 @@ def _coerce_content_to_text(content: Any) -> str:
     return str(content)
 
 
-def _content_to_chat_content(content: Any) -> Any:
+def _content_to_chat_content(content: Any, *, param: str = "input") -> Any:
     """Map Responses message content to Chat Completions content.
 
     Text-only content stays a plain string to preserve the existing request
     shape. Multimodal content becomes OpenAI chat content parts so the chat
     route can detect and forward vision inputs.
     """
+    if isinstance(content, dict):
+        content = [content]
     if not isinstance(content, list):
         return _coerce_content_to_text(content)
 
     parts: list[dict] = []
-    for c in content:
+    for index, c in enumerate(content):
         if isinstance(c, str):
             if c:
                 parts.append({"type": "text", "text": c})
@@ -138,6 +142,12 @@ def _content_to_chat_content(content: Any) -> Any:
                 parts.append({"type": "text", "text": text})
             continue
         t = c.get("type")
+        if t == "input_file" or (t in ("input_image", "image_url", "image") and c.get("file_id")):
+            raise ResponsesTranslationError(
+                "Azizam cannot resolve file attachments. Use an image URL or data URL for images.",
+                code="unsupported_operation",
+                param=f"{param}[{index}]",
+            )
         if t in ("input_text", "output_text", "text"):
             text = c.get("text", "")
             if isinstance(text, str) and text:
@@ -166,7 +176,7 @@ def _content_to_chat_content(content: Any) -> Any:
     return parts
 
 
-def _input_item_to_messages(item: dict) -> list[dict]:
+def _input_item_to_messages(item: dict, *, param: str = "input") -> list[dict]:
     """Map one Responses input item to one or more Chat Completions messages.
 
     Responses input items include:
@@ -178,6 +188,12 @@ def _input_item_to_messages(item: dict) -> list[dict]:
     if not isinstance(item, dict):
         return []
     itype = item.get("type")
+    if itype in ("custom_tool_call", "custom_tool_call_output"):
+        raise ResponsesTranslationError(
+            "Azizam does not support custom tool calls or outputs.",
+            code="unsupported_operation",
+            param=f"{param}.type",
+        )
     # "message" is the common case. Easy-input messages without an explicit
     # type still have role + content and should be treated as messages.
     if itype == "message" or (itype is None and "role" in item):
@@ -185,7 +201,7 @@ def _input_item_to_messages(item: dict) -> list[dict]:
         # Chat Completions uses "system" not "developer". Map developer->system.
         if role == "developer":
             role = "system"
-        return [{"role": role, "content": _content_to_chat_content(item.get("content"))}]
+        return [{"role": role, "content": _content_to_chat_content(item.get("content"), param=f"{param}.content")}]
     if itype == "function_call":
         # Responses assistant tool call -> Chat assistant message with tool_calls.
         call_id = item.get("call_id") or item.get("id") or f"call_{secrets.token_hex(8)}"
@@ -227,11 +243,11 @@ def _input_to_messages(input_value: Any) -> list[dict]:
         return [{"role": "user", "content": input_value}]
     if isinstance(input_value, list):
         messages: list[dict] = []
-        for item in input_value:
+        for index, item in enumerate(input_value):
             if isinstance(item, str):
                 messages.append({"role": "user", "content": item})
             else:
-                messages.extend(_input_item_to_messages(item))
+                messages.extend(_input_item_to_messages(item, param=f"input[{index}]"))
         return messages
     raise ResponsesTranslationError(
         "Field 'input' must be a string or array of input items.",
@@ -295,10 +311,11 @@ def _translate_tools(tools: Any) -> list[dict]:
             out.append({"type": "function", "function": fn})
             continue
         if ttype == "custom":
-            # Custom (non-JSON-schema) tools — pass through name only.
-            name = tool.get("name", "")
-            out.append({"type": "function", "function": {"name": name, "description": tool.get("description", "")}})
-            continue
+            raise ResponsesTranslationError(
+                "Azizam does not support custom tools. Use function tools with JSON schemas.",
+                code="unsupported_operation",
+                param=f"tools[{i}].type",
+            )
         raise ResponsesTranslationError(
             f"Unknown tool type '{ttype}' at tools[{i}].",
             param=f"tools[{i}].type",
@@ -323,9 +340,12 @@ def _translate_tool_choice(tc: Any) -> Any:
             if not name:
                 return "auto"
             return {"type": "function", "function": {"name": name}}
-        if t in ("allowed_tools",):
-            # Best-effort: collapse to "auto".
-            return "auto"
+        if t in ("allowed_tools", "custom"):
+            raise ResponsesTranslationError(
+                f"Azizam does not support tool_choice type '{t}'.",
+                code="unsupported_operation",
+                param="tool_choice",
+            )
         return "auto"
     return "auto"
 
@@ -575,14 +595,20 @@ def _build_output_items_from_message(msg: dict) -> list[dict]:
     tool_calls = msg.get("tool_calls") or []
     if isinstance(reasoning_content, str) and reasoning_content:
         items.append(_reasoning_item("rs_" + secrets.token_hex(12), reasoning_content))
+    message_content: list[dict] = []
     if content:
         text = content if isinstance(content, str) else _coerce_content_to_text(content)
+        message_content.append(_output_text_part(text))
+    refusal = msg.get("refusal")
+    if isinstance(refusal, str) and refusal:
+        message_content.append({"type": "refusal", "refusal": refusal})
+    if message_content:
         items.append({
             "id": "msg_" + secrets.token_hex(12),
             "type": "message",
             "role": "assistant",
             "status": "completed",
-            "content": [_output_text_part(text)],
+            "content": message_content,
         })
     for tc in tool_calls:
         if not isinstance(tc, dict):
@@ -681,7 +707,7 @@ def from_chat_completions(
     return out
 
 
-def input_items_from_request(req: dict) -> list[dict]:
+def input_items_from_request(req: dict, *, response_id: str = "") -> list[dict]:
     """The ``input`` of a stored request as Responses input items, in order."""
     value = req.get("input")
     if isinstance(value, str):
@@ -698,7 +724,9 @@ def input_items_from_request(req: dict) -> list[dict]:
                 role = item.get("role")
                 kind = "output_text" if role == "assistant" else "input_text"
                 item["content"] = [{"type": kind, "text": content}]
-        item.setdefault("id", f"item_{position}_" + secrets.token_hex(8))
+        # IDs must survive repeated reads so an `after` cursor remains usable.
+        identity = f"{response_id}:{position}:{json.dumps(item, sort_keys=True, ensure_ascii=False)}"
+        item.setdefault("id", "item_" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24])
         items.append(item)
     return items
 
@@ -800,12 +828,18 @@ class StreamTranslator:
         self._seq = 0
         self._started = False
         self._buf = ""
+        self._decoder = codecs.getincrementaldecoder("utf-8")()
+        self._pending_cr = ""
+        self._upstream_done = False
+        self._error: Optional[dict] = None
+        self._finished = False
 
         # Output bookkeeping
         self._reasoning: Optional[dict] = None  # index, id, text parts, closed
         self._message_index: Optional[int] = None
         self._message_id: Optional[str] = None
         self._message_text: list[str] = []
+        self._message_parts: dict[str, list[str]] = {}
         # Tool calls keyed by their streaming index (Chat Completions convention).
         self._tool_calls: dict[int, dict] = {}
         # Output ordering — list of (kind, key) so we can serialize at the end.
@@ -847,11 +881,19 @@ class StreamTranslator:
     def feed(self, line_bytes: bytes) -> list[bytes]:
         """Feed one byte chunk from the upstream SSE stream. Returns
         zero-or-more translated Responses SSE events."""
-        try:
-            text = line_bytes.decode("utf-8", errors="replace")
-        except Exception:
+        if self._finished or self._error or self._upstream_done:
             return []
-        self._buf += text
+        return self._feed_text(self._decoder.decode(line_bytes))
+
+    def _feed_text(self, text: str, *, final: bool = False) -> list[bytes]:
+        if self._upstream_done or self._error:
+            return []
+        # Hold a trailing CR until the next chunk distinguishes CR from CRLF.
+        text = self._pending_cr + text
+        self._pending_cr = ""
+        if text.endswith("\r") and not final:
+            text, self._pending_cr = text[:-1], "\r"
+        self._buf += text.replace("\r\n", "\n").replace("\r", "\n")
 
         events: list[bytes] = []
         # Process complete SSE messages (terminated by blank line).
@@ -865,14 +907,31 @@ class StreamTranslator:
                 continue
             payload = "\n".join(data_lines).strip()
             if payload == "[DONE]":
-                # Wait for finish() to emit response.completed.
-                continue
+                self._upstream_done = True
+                break
             try:
                 chunk = json.loads(payload)
             except Exception:
                 continue
             events.extend(self._handle_cc_chunk(chunk))
+            if self._error:
+                break
         return events
+
+    def fail(self, message: str, *, code: str = "server_error", param: Optional[str] = None) -> list[bytes]:
+        """Retain failure state and emit a documented flat error event."""
+        if self._done_sent or self._error:
+            return []
+        # Response.error has a narrower code enum than the flat error event.
+        response_code = "rate_limit_exceeded" if code == "rate_limit_exceeded" else "server_error"
+        self._error = {"code": response_code, "message": message}
+        return [sse_pack("error", {
+            "type": "error",
+            "sequence_number": self._next_seq(),
+            "message": message,
+            "code": code,
+            "param": param,
+        })]
 
     def _reasoning_delta(self, text: str) -> list[bytes]:
         events: list[bytes] = []
@@ -926,7 +985,7 @@ class StreamTranslator:
             }),
         ]
 
-    def _ensure_message_item(self) -> tuple[list[bytes], int, str]:
+    def _ensure_message_item(self, part_type: str = "output_text") -> tuple[list[bytes], int, str]:
         out_events: list[bytes] = self._close_reasoning()
         if self._message_index is None:
             idx = len(self._output_order)
@@ -947,13 +1006,17 @@ class StreamTranslator:
                 "output_index": idx,
                 "item": item,
             }))
+        if part_type not in self._message_parts:
+            content_index = len(self._message_parts)
+            self._message_parts[part_type] = []
+            part = _output_text_part("") if part_type == "output_text" else {"type": "refusal", "refusal": ""}
             out_events.append(sse_pack("response.content_part.added", {
                 "type": "response.content_part.added",
                 "sequence_number": self._next_seq(),
-                "output_index": idx,
-                "item_id": mid,
-                "content_index": 0,
-                "part": _output_text_part(""),
+                "output_index": self._message_index,
+                "item_id": self._message_id,
+                "content_index": content_index,
+                "part": part,
             }))
         return out_events, self._message_index, self._message_id  # type: ignore[return-value]
 
@@ -1001,6 +1064,12 @@ class StreamTranslator:
         events: list[bytes] = []
         if not isinstance(chunk, dict):
             return events
+        if chunk.get("error") is not None:
+            error = chunk["error"]
+            if isinstance(error, dict):
+                return self.fail(str(error.get("message") or "Upstream stream failed."),
+                                 code=str(error.get("code") or "server_error"), param=error.get("param"))
+            return self.fail(str(error))
         if "model" in chunk and isinstance(chunk["model"], str):
             self._model_seen = chunk["model"]
         if isinstance(chunk.get("usage"), dict):
@@ -1022,14 +1091,28 @@ class StreamTranslator:
             ev, idx, mid = self._ensure_message_item()
             events.extend(ev)
             self._message_text.append(content)
+            self._message_parts["output_text"].append(content)
             events.append(sse_pack("response.output_text.delta", {
                 "type": "response.output_text.delta",
                 "sequence_number": self._next_seq(),
                 "item_id": mid,
                 "output_index": idx,
-                "content_index": 0,
+                "content_index": list(self._message_parts).index("output_text"),
                 "delta": content,
                 "logprobs": [],
+            }))
+        refusal = delta.get("refusal")
+        if isinstance(refusal, str) and refusal:
+            ev, idx, mid = self._ensure_message_item("refusal")
+            events.extend(ev)
+            self._message_parts["refusal"].append(refusal)
+            events.append(sse_pack("response.refusal.delta", {
+                "type": "response.refusal.delta",
+                "sequence_number": self._next_seq(),
+                "item_id": mid,
+                "output_index": idx,
+                "content_index": list(self._message_parts).index("refusal"),
+                "delta": refusal,
             }))
         # Tool-call deltas (streaming function-call args).
         tool_calls = delta.get("tool_calls")
@@ -1058,33 +1141,51 @@ class StreamTranslator:
             self._finish_reason = fr
         return events
 
-    def finish(self) -> list[bytes]:
-        """Emit terminal events + response.completed."""
-        if self._done_sent:
+    def _message_content(self) -> list[dict]:
+        return [
+            _output_text_part("".join(parts)) if kind == "output_text"
+            else {"type": "refusal", "refusal": "".join(parts)}
+            for kind, parts in self._message_parts.items()
+        ]
+
+    def finish(self, *, emit_terminal: bool = True) -> list[bytes]:
+        """Close output items, optionally deferring the terminal event until storage succeeds."""
+        if self._finished:
             return []
-        self._done_sent = True
-        events: list[bytes] = self._close_reasoning()
+        events: list[bytes] = []
+        if not self._error:
+            try:
+                events.extend(self._feed_text(self._decoder.decode(b"", final=True), final=True))
+            except UnicodeDecodeError:
+                events.extend(self.fail("Upstream stream ended with incomplete UTF-8."))
+        if not self._error and self._finish_reason is None:
+            events.extend(self.fail("Upstream stream ended without a finish_reason."))
+        self._finished = True
+        events.extend(self._close_reasoning())
 
         # Close message item if any.
         if self._message_index is not None and self._message_id is not None:
-            full_text = "".join(self._message_text)
-            events.append(sse_pack("response.output_text.done", {
-                "type": "response.output_text.done",
-                "sequence_number": self._next_seq(),
-                "item_id": self._message_id,
-                "output_index": self._message_index,
-                "content_index": 0,
-                "text": full_text,
-                "logprobs": [],
-            }))
-            events.append(sse_pack("response.content_part.done", {
-                "type": "response.content_part.done",
-                "sequence_number": self._next_seq(),
-                "output_index": self._message_index,
-                "item_id": self._message_id,
-                "content_index": 0,
-                "part": _output_text_part(full_text),
-            }))
+            for content_index, part in enumerate(self._message_content()):
+                refusal = part["type"] == "refusal"
+                event_type = "response.refusal.done" if refusal else "response.output_text.done"
+                value_field = "refusal" if refusal else "text"
+                events.append(sse_pack(event_type, {
+                    "type": event_type,
+                    "sequence_number": self._next_seq(),
+                    "item_id": self._message_id,
+                    "output_index": self._message_index,
+                    "content_index": content_index,
+                    value_field: part[value_field],
+                    **({} if refusal else {"logprobs": []}),
+                }))
+                events.append(sse_pack("response.content_part.done", {
+                    "type": "response.content_part.done",
+                    "sequence_number": self._next_seq(),
+                    "output_index": self._message_index,
+                    "item_id": self._message_id,
+                    "content_index": content_index,
+                    "part": part,
+                }))
             events.append(sse_pack("response.output_item.done", {
                 "type": "response.output_item.done",
                 "sequence_number": self._next_seq(),
@@ -1094,7 +1195,7 @@ class StreamTranslator:
                     "type": "message",
                     "role": "assistant",
                     "status": "completed",
-                    "content": [_output_text_part(full_text)],
+                    "content": self._message_content(),
                 },
             }))
 
@@ -1121,19 +1222,26 @@ class StreamTranslator:
                 },
             }))
 
-        # Final response.completed
+        if emit_terminal:
+            events.extend(self.terminal_event())
+        return events
+
+    def terminal_event(self) -> list[bytes]:
+        """Emit the final lifecycle event once, after output closure and persistence."""
+        if self._done_sent:
+            return []
+        self._done_sent = True
         final = self.build_final_response()
-        terminal = "response.incomplete" if final["status"] == "incomplete" else "response.completed"
-        events.append(sse_pack(terminal, {
+        terminal = "response." + final["status"]
+        return [sse_pack(terminal, {
             "type": terminal,
             "sequence_number": self._next_seq(),
             "response": final,
-        }))
-        return events
+        })]
 
     def build_final_response(self) -> dict:
         """Build the full Responses object that the streaming summary represents.
-        Used for the final `response.completed` event AND for persisting to
+        Used for the terminal lifecycle event AND for persisting to
         responses_store."""
         # Reassemble output in insertion order.
         output: list[dict] = []
@@ -1152,7 +1260,7 @@ class StreamTranslator:
                     "type": "message",
                     "role": "assistant",
                     "status": "completed",
-                    "content": [_output_text_part(full_text)],
+                    "content": self._message_content(),
                 })
             elif kind == "function_call":
                 entry = self._tool_calls.get(key)
@@ -1169,7 +1277,9 @@ class StreamTranslator:
 
         status = "completed"
         incomplete_details = None
-        if self._finish_reason == "length":
+        if self._error:
+            status = "failed"
+        elif self._finish_reason == "length":
             status = "incomplete"
             incomplete_details = {"reason": "max_output_tokens"}
         elif self._finish_reason == "content_filter":
@@ -1183,7 +1293,7 @@ class StreamTranslator:
             "object": "response",
             "created_at": self.created_at,
             "status": status,
-            "error": None,
+            "error": self._error,
             "incomplete_details": incomplete_details,
             "model": model,
             "output": output,
