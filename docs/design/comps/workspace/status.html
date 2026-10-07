@@ -46,6 +46,9 @@
   .nav a[aria-current="page"] .ico { fill: currentColor; fill-opacity: 1; }
   .disclose { margin-top: 16px; font-weight: 600; justify-content: space-between; }
   .rail { height: 56px; display: flex; align-items: center; justify-content: space-between; padding: 0 32px; border-bottom: 1px solid var(--line); }
+  .search input { flex: 1; min-width: 0; height: 40px; border: 0; background: none; color: var(--text); font: 400 16px/24px "Source Sans 3", sans-serif; outline: none; }
+  .search input::placeholder { color: var(--text); opacity: 1; }
+  .search:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
   .search { display: flex; align-items: center; gap: 8px; width: 360px; height: 44px; padding: 0 12px; border: 1px solid var(--text); border-radius: 6px; }
   .account { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 12px 0 6px; border: 1px solid var(--text); border-radius: 6px; background: none; color: var(--text); font: 600 16px/24px "Source Sans 3", sans-serif; }
   .initial { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 6px; background: var(--text); color: var(--bg); font-weight: 600; }
@@ -66,12 +69,18 @@
   .ok { color: var(--ok); } .fail { color: var(--fail); }
   .caps-foot { margin-top: 16px; padding: 0 12px; }
 
-  .incident { border: 1px solid var(--line); border-radius: 12px; padding: 24px; }
+  .incident { border-top: 1px solid var(--line); padding-top: 20px; }
   .verdict { display: flex; align-items: center; gap: 12px; font: 650 36px/42px Archivo, sans-serif; letter-spacing: -0.02em; }
   .verdict .ico { width: 32px; height: 32px; color: var(--fail); stroke-width: 2.2; }
   .cause { margin-top: 12px; max-width: 68ch; }
   .cause strong { font-weight: 600; }
   .actions { display: flex; gap: 12px; margin-top: 16px; }
+  .incident table { margin-top: 20px; }
+  .more { margin-top: 20px; border-top: 1px solid var(--line); }
+  .more summary { min-height: 52px; display: flex; align-items: center; gap: 8px; font-weight: 600; cursor: pointer; list-style: none; }
+  .more summary::-webkit-details-marker { display: none; }
+  .more summary::before { content: ""; width: 8px; height: 8px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg); margin: 0 6px 0 4px; }
+  .more[open] summary::before { transform: rotate(45deg); }
   .region-sep { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
   .chart-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
   .chart-head h3 { font: 600 16px/24px "Source Sans 3", sans-serif; }
@@ -96,7 +105,7 @@
   .outcome { vertical-align: middle; display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
   .btn-sm { min-height: 44px; padding: 0 12px; }
 
-  .context { display: flex; gap: 40px; margin-top: 24px; padding: 0 24px; }
+  .context { display: flex; gap: 40px; margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--line); }
   .context dt { font-size: 14px; line-height: 20px; font-weight: 600; }
   .context dd { font-size: 16px; line-height: 24px; }
   .static-capture .shell { min-height: 0; }
@@ -119,7 +128,6 @@
   <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
   <symbol id="i-ok" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
   <symbol id="i-fail" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></symbol>
-  <symbol id="i-paused" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M10 9v6M14 9v6"/></symbol>
 </svg>
 
 <div class="shell">
@@ -147,7 +155,7 @@
 
   <div>
     <header class="rail">
-      <label class="search"><svg class="ico" aria-hidden="true"><use href="#i-search"/></svg><span>Search</span></label>
+      <div class="search" role="search"><svg class="ico" aria-hidden="true"><use href="#i-search"/></svg><label for="q" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Search</label><input id="q" type="search" placeholder="Search"></div>
       <button class="account" type="button"><span class="initial" aria-hidden="true">S</span>Sam</button>
     </header>
 
@@ -164,7 +172,7 @@
             <li class="cap"><svg class="ico ok" aria-hidden="true"><use href="#i-ok"/></svg><span class="cap-name">Transcription</span><span class="cap-state ok">Ready</span></li>
             <li class="cap"><svg class="ico ok" aria-hidden="true"><use href="#i-ok"/></svg><span class="cap-name">Music</span><span class="cap-state ok">Ready</span></li>
             <li class="cap"><svg class="ico ok" aria-hidden="true"><use href="#i-ok"/></svg><span class="cap-name">Sound effects</span><span class="cap-state ok">Ready</span></li>
-            <li class="cap"><svg class="ico" aria-hidden="true"><use href="#i-paused"/></svg><span class="cap-name">Embeddings</span><span class="cap-state">Paused</span></li>
+            <li class="cap"><svg class="ico fail" aria-hidden="true"><use href="#i-fail"/></svg><span class="cap-name">Embeddings</span><span class="cap-state fail">Unavailable</span></li>
           </ul>
           <div class="caps-foot"><a class="btn" href="#">Open engines</a></div>
         </section>
@@ -178,10 +186,18 @@
               <a class="btn" href="#">Open video receipts</a>
             </div>
 
-            <hr class="region-sep">
+            <table>
+              <caption class="sr" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Failed video receipt</caption>
+              <thead><tr><th>When</th><th>App</th><th>Model</th><th>Outcome</th><th>Time taken</th><th><span style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Receipt</span></th></tr></thead>
+              <tbody>
+                <tr><td>21h ago</td><td>Open WebUI</td><td><span class="mono">ltx-2.5</span></td><td><span class="outcome fail"><svg class="ico" aria-hidden="true"><use href="#i-fail"/></svg>Failed</span></td><td>3.5 s</td><td><a class="btn btn-sm" href="#">Open receipt</a></td></tr>
+              </tbody>
+            </table>
 
+            <details class="more">
+              <summary>Video requests by day, Oct 1 to Oct 7</summary>
             <div class="chart-head">
-              <h3>Video requests by day, Oct 1 to Oct 7</h3>
+              <span></span>
               <div class="legend" aria-hidden="true">
                 <span><i class="key key-all"></i>All video requests</span>
                 <span><i class="key key-fail"></i>Failed</span>
@@ -225,17 +241,7 @@
               <text x="766" y="226" text-anchor="middle">Oct 7</text>
             </svg>
             <p class="note">Daily totals come from Usage. Failed comes from receipts.</p>
-
-            <hr class="region-sep">
-
-            <h3 class="chart-head" style="font:600 16px/24px 'Source Sans 3',sans-serif">Latest video receipts</h3>
-            <table>
-              <thead><tr><th>When</th><th>App</th><th>Model</th><th>Outcome</th><th>Time taken</th><th><span class="sr" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Receipt</span></th></tr></thead>
-              <tbody>
-                <tr><td>21h ago</td><td>Open WebUI</td><td><span class="mono">ltx-2.5</span></td><td><span class="outcome fail"><svg class="ico" aria-hidden="true"><use href="#i-fail"/></svg>Failed</span></td><td>3.5 s</td><td><a class="btn btn-sm" href="#">Open receipt</a></td></tr>
-                <tr><td>2d ago</td><td>Robin's personal app</td><td><span class="mono">ltx-2.5</span></td><td><span class="outcome ok"><svg class="ico" aria-hidden="true"><use href="#i-ok"/></svg>Completed</span></td><td>3.3 s</td><td><a class="btn btn-sm" href="#">Open receipt</a></td></tr>
-              </tbody>
-            </table>
+            </details>
           </section>
 
           <dl class="context">

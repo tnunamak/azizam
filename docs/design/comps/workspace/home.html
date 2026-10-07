@@ -14,7 +14,6 @@
     --bg: #FFFFFF; --text: #172536; --accent: #2855B6;
     --ok: #206246; --attn: #895316; --fail: #AD3545;
     --line: rgb(23 37 54 / 0.28);
-    --art-bg: #172536;
     color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
@@ -59,9 +58,7 @@
   .verdict { display: flex; align-items: center; gap: 8px; margin-top: 12px; font: 650 30px/36px Archivo, sans-serif; letter-spacing: -0.02em; }
   .verdict .ico { width: 28px; height: 28px; color: var(--ok); stroke-width: 2.2; }
   .evidence { margin-top: 4px; font-size: 16px; line-height: 24px; }
-  .act-row { display: grid; grid-template-columns: 1fr 96px; gap: 12px; margin-top: 16px; align-items: center; }
-  .act-stack { display: grid; gap: 8px; }
-  .art { width: 96px; height: 96px; border-radius: 12px; background: var(--art-bg) url(assets/deep-water.png) center / cover no-repeat; }
+  .act-stack { display: grid; gap: 8px; margin-top: 16px; }
 
   .btn {
     display: inline-flex; align-items: center; justify-content: center; gap: 8px;
@@ -85,6 +82,8 @@
   .state .ico { width: 16px; height: 16px; margin-top: 2px; stroke-width: 2.4; }
   .ok { color: var(--ok); }
   .fail { color: var(--fail); }
+  .row-act { min-height: 44px; display: inline-flex; align-items: center; padding: 0 4px; color: var(--accent); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
+  .sub { font-size: 14px; line-height: 20px; }
   .restricted-note { font-size: 14px; line-height: 20px; }
 
   .thumbs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 8px; }
@@ -111,8 +110,7 @@
   <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></symbol>
   <symbol id="i-ok" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
   <symbol id="i-fail" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></symbol>
-  <symbol id="i-paused" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M10 9v6M14 9v6"/></symbol>
-</svg>
+  </svg>
 
 <header class="top">
   <span class="wordmark">Azizam</span>
@@ -123,36 +121,34 @@
   <div class="task">
     <h1>Home</h1>
     <p class="verdict"><svg class="ico" aria-hidden="true"><use href="#i-ok"/></svg>Chat is ready.</p>
-    <p class="evidence">Your last chat request worked 20h ago.</p>
-    <div class="act-row">
-      <div class="act-stack">
-        <a class="btn btn-lg btn-primary" href="#">Open chat</a>
-        <a class="btn btn-lg" href="#">Connect an app</a>
-      </div>
-      <div class="art" role="img" aria-label="Azizam artwork"></div>
+    <p class="evidence">Last used 20h ago</p>
+    <div class="act-stack">
+      <a class="btn btn-lg btn-primary" href="#">Open chat</a>
+      <a class="btn btn-lg" href="#">Connect an app</a>
     </div>
   </div>
 
   <section aria-labelledby="h-other">
     <div class="sec-head"><h2 id="h-other">Other things you can do</h2></div>
     <ul class="rows">
-      <li class="row"><div class="row-main"><div class="row-name">Images</div><div class="state ok"><svg class="ico" aria-hidden="true"><use href="#i-ok"/></svg>Ready</div></div><a class="btn" href="#">Open</a></li>
-      <li class="row"><div class="row-main"><div class="row-name">Speech</div><div class="state ok"><svg class="ico" aria-hidden="true"><use href="#i-ok"/></svg>Ready</div></div><a class="btn" href="#">Open</a></li>
-      <li class="row"><div class="row-main"><div class="row-name">Transcription</div><div class="state ok"><svg class="ico" aria-hidden="true"><use href="#i-ok"/></svg>Ready</div></div><a class="btn" href="#">Open</a></li>
-      <li class="row"><div class="row-main"><div class="row-name">Music</div><div class="state ok"><svg class="ico" aria-hidden="true"><use href="#i-ok"/></svg>Ready</div></div><a class="btn" href="#">Open</a></li>
-      <li class="row"><div class="row-main"><div class="row-name">Sound effects</div><div class="state ok"><svg class="ico" aria-hidden="true"><use href="#i-ok"/></svg>Ready</div></div><a class="btn" href="#">Open</a></li>
+      <li class="row"><div class="row-main"><div class="row-name">Images</div><div class="state ok"><svg class="ico" aria-hidden="true"><use href="#i-ok"/></svg>Ready</div><div class="sub">Last used 11h ago</div></div><a class="row-act" href="#">Make an image</a></li>
+      <li class="row"><div class="row-main"><div class="row-name">Speech</div><div class="state ok"><svg class="ico" aria-hidden="true"><use href="#i-ok"/></svg>Ready</div><div class="sub">Last used 21h ago</div></div><a class="row-act" href="#">Read aloud</a></li>
+      <li class="row"><div class="row-main"><div class="row-name">Transcription</div><div class="state ok"><svg class="ico" aria-hidden="true"><use href="#i-ok"/></svg>Ready</div><div class="sub">Last used 20h ago</div></div><a class="row-act" href="#">Transcribe audio</a></li>
+      <li class="row"><div class="row-main"><div class="row-name">Music</div><div class="state ok"><svg class="ico" aria-hidden="true"><use href="#i-ok"/></svg>Ready</div></div><a class="row-act" href="#">Make music</a></li>
+      <li class="row"><div class="row-main"><div class="row-name">Sound effects</div><div class="state ok"><svg class="ico" aria-hidden="true"><use href="#i-ok"/></svg>Ready</div></div><a class="row-act" href="#">Make a sound</a></li>
       <li class="row"><div class="row-main"><div class="row-name">Video</div><div class="state fail"><svg class="ico" aria-hidden="true"><use href="#i-fail"/></svg>Unavailable</div><p class="restricted-note">Its engine is recovering after a queue timeout. Ask Sam if you need it.</p></div></li>
-      <li class="row"><div class="row-main"><div class="row-name">Embeddings</div><div class="state"><svg class="ico" aria-hidden="true"><use href="#i-paused"/></svg>Paused for your account</div><p class="restricted-note">Ask Sam to turn it on.</p></div></li>
+      <li class="row"><div class="row-main"><div class="row-name">Embeddings</div><div class="state fail"><svg class="ico" aria-hidden="true"><use href="#i-fail"/></svg>Unavailable</div><p class="restricted-note">Ask Sam to turn it on for your account.</p></div></li>
     </ul>
   </section>
 
   <section aria-labelledby="h-apps">
     <div class="sec-head"><h2 id="h-apps">Your apps</h2></div>
     <ul class="rows">
-      <li class="row"><div class="row-main"><div class="row-name">Robin's personal app</div><div class="state">Last used 1h ago</div></div><a class="btn" href="#">Setup</a></li>
-      <li class="row"><div class="row-main"><div class="row-name">Open WebUI</div><div class="state">Last used 4h ago</div></div><a class="btn" href="#">Setup</a></li>
-      <li class="row"><div class="row-main"><div class="row-name">Telegram helper</div><div class="state">Not used yet</div></div><a class="btn" href="#">Setup</a></li>
+      <li class="row"><div class="row-main"><div class="row-name">Robin's personal app</div><div class="state">Last used 1h ago</div></div></li>
+      <li class="row"><div class="row-main"><div class="row-name">Open WebUI</div><div class="state">Last used 4h ago</div></div></li>
+      <li class="row"><div class="row-main"><div class="row-name">Telegram helper</div><div class="state">Not used yet</div></div><a class="row-act" href="#">Set up</a></li>
     </ul>
+    <a class="link-btn" href="#">Manage apps and keys</a>
   </section>
 
   <section aria-labelledby="h-recent">

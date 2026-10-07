@@ -8,7 +8,7 @@ Spec: `docs/design/directions/blind-codex.md`, "Direction 2: Workspace" and "Rul
 - PNGs, viewport: `home-{light,dark}-390.png` (390x844), `status-{light,dark}-1440.png`, `library-{light,dark}-1440.png` (1440x1000).
 - PNGs, full page: the same names with `-full`. Full-page captures make the phone bottom bar static.
 - `render.mjs`: renders every PNG with the Chromium from `~/applications/azizam/web/node_modules/@playwright/test`. It also reports horizontal overflow and the lowest text-contrast ratios. Run `node render.mjs [home|status|library]`.
-- `assets/`: 18 Library images and the video poster from the household fixture, plus `deep-water.png`.
+- `assets/`: 18 Library images and the video poster from the household fixture.
 
 ## What the comps match from the spec
 
@@ -33,13 +33,13 @@ Spec: `docs/design/directions/blind-codex.md`, "Direction 2: Workspace" and "Rul
 - **Chart by 5-minute interval, past hour:** there is no such data. The chart uses real daily Video counts from the Usage page (Oct 1 to 7: 2, 3, 4, 3, 2, 2, 1). The Failed lane shows the one failed video receipt (`req_household_00_27`, 21h ago, which is Oct 7 UTC). The data does not give success or failure for the other requests, so the chart shows "All requests" and "Failed" instead of "Successful" and "Failed". The note under the chart names both sources. One caveat: the Activity list loads only 51 receipts, and I could not fully reconcile it with the Oct 6 Usage count. The chart uses the Usage figures as shown.
 - **"Unchecked" capability state:** no capability in the data is unchecked, so no question-mark state appears.
 - **Spec wireframe text such as "Images unavailable" and "Studio stopped":** the spec marks this text as hypothetical. It is replaced with the real Video problem.
-- **Brand art:** the repository has no standalone deep-water art file. `assets/deep-water.png` is a crop of the fish artwork from the handoff image `reference-ui/portal-overview-mobile-welcome.png`.
+- **Brand art:** removed in fix pass 2.
 - **Audio waveforms:** none are extracted from the files, so audio cells show a play control and the duration only, as the spec allows.
 
 ## Choices where the spec was silent
 
-- **Paused:** the spec has no icon for Paused. I used a circled pause glyph in text colour, because Paused is not a failure.
-- **Embeddings state:** for Robin, "Paused for your account. Ask Sam to turn it on." This comes from the real "Ask the owner to enable this capability." The owner view shows the same capability as Paused.
+- **Paused:** (superseded by fix pass 2; no Paused state remains)
+- **Embeddings state:** Unavailable (fix pass 2). The member text "Ask Sam to turn it on for your account." comes from "Ask the owner to enable this capability."
 - **Speech and Transcription readiness** on the owner Status page comes from the member Status page. The owner page lists engines only.
 - **Video wording for members:** "Unavailable. Its engine is recovering after a queue timeout. Ask Sam if you need it." The cause is quoted from the receipt warning.
 - **App rows on Home** offer "Setup", because the data has no launch targets. Telegram helper shows "Not used yet", because the real UI shows it with no last-used time.
@@ -53,3 +53,14 @@ Spec: `docs/design/directions/blind-codex.md`, "Direction 2: Workspace" and "Rul
 - **Selected nav item:** an accent outline, accent text and a filled icon.
 - **Account control:** a 6 px-radius initial plus the name on desktop, and the initial only on the phone.
 - **Chart colours:** bars use the text colour and the failed bar uses the Failed colour. Bars are separated by lane as well as colour.
+
+## Fix pass 2 (judge and text review)
+
+1. **Art removed:** the deep-water art on Home is gone (the judge matched it to the banned "AI" glow). Open chat and Connect an app now use the full width. This drops the spec's "one memorable element" on Home.
+2. **Readiness:** "Ready" now comes from the current engine and capability state in the Status captures. Real receipts appear only as a secondary "Last used" line: Chat 20h ago, Images 11h ago, Speech 21h ago, Transcription 20h ago. Music and Sound effects have no receipts for Robin, so they show no line.
+3. **Row actions:** each capability has one task label in a single text-link style ("Make an image", "Read aloud", "Transcribe audio", "Make music", "Make a sound").
+4. **Embeddings:** now Unavailable on both Home and Status, following "Video and embeddings are unavailable." The Paused glyph is removed. Status still leads with Video, because the owner capture reports "1 problem needs you".
+5. **Home app rows:** used apps have no action. Telegram helper (not used yet) keeps "Set up". A single "Manage apps and keys" link gives access to configuration.
+6. **Status:** the incident is now a plain section under a rule. The failed receipt row sits directly under the incident actions. The by-day chart is in a `<details>` element, closed by default. The completed receipt from 2d ago is removed because it only repeated older evidence. The page now ends at about y=600 of 1000, which is below the top third.
+7. **Library:** frames are now square (aspect-ratio 1), so square images have no gutters. The video poster (3:2) still shows a band inside its square frame. The rail is the only large preview. The selected cell keeps its thumbnail, selection outline and bold title (coordinator correction: the "Shown in the preview" placeholder was removed).
+8. **Accessibility:** both search boxes are labelled `<input type="search">` elements, and Type and Person are labelled native `<select>` elements. Each audio and video cell has a native `<button>` named "Play audio: ..." or "Play video: ..." as a sibling of the selection link, not inside it.

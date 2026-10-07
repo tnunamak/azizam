@@ -46,6 +46,9 @@
   .nav a[aria-current="page"] .ico { fill: currentColor; fill-opacity: 1; }
   .disclose { margin-top: 16px; font-weight: 600; justify-content: space-between; }
   .rail { height: 56px; display: flex; align-items: center; justify-content: space-between; padding: 0 32px; border-bottom: 1px solid var(--line); }
+  .search input, .field input { flex: 1; min-width: 0; height: 40px; border: 0; background: none; color: var(--text); font: 400 16px/24px "Source Sans 3", sans-serif; outline: none; }
+  .search input::placeholder, .field input::placeholder { color: var(--text); opacity: 1; }
+  .search:focus-within, .field:focus-within, .select:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
   .search { display: flex; align-items: center; gap: 8px; width: 360px; height: 44px; padding: 0 12px; border: 1px solid var(--text); border-radius: 6px; }
   .account { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 12px 0 6px; border: 1px solid var(--text); border-radius: 6px; background: none; color: var(--text); font: 600 16px/24px "Source Sans 3", sans-serif; }
   .initial { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 6px; background: var(--text); color: var(--bg); font-weight: 600; }
@@ -61,24 +64,28 @@
   .toolbar { display: flex; gap: 12px; align-items: center; }
   .field { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 12px; border: 1px solid var(--text); border-radius: 6px; }
   .field-search { width: 280px; }
-  .select { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 8px 0 12px; border: 1px solid var(--text); border-radius: 6px; }
-  .select b { font-weight: 600; }
+  .select { position: relative; display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 0 0 12px; border: 1px solid var(--text); border-radius: 6px; }
+  .select select { appearance: none; -webkit-appearance: none; height: 42px; border: 0; background: none; color: var(--text); font: 600 16px/24px "Source Sans 3", sans-serif; padding: 0 36px 0 0; outline: none; cursor: pointer; }
+  .select select option { background: var(--bg); color: var(--text); }
+  .select .ico { position: absolute; right: 8px; pointer-events: none; }
   .lib { display: grid; grid-template-columns: 768px 400px; gap: 24px; margin-top: 24px; align-items: start; }
   .group + .group { margin-top: 32px; }
   .group-h { font: 600 16px/24px "Source Sans 3", sans-serif; margin-bottom: 12px; }
   .sheet { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, 248px); column-gap: 12px; row-gap: 24px; }
   .cell a { display: block; text-decoration: none; border-radius: 2px; }
-  .media { position: relative; display: grid; place-items: center; height: 160px; border: 1px solid var(--line); border-radius: 2px; overflow: hidden; }
+  .media { position: relative; display: grid; place-items: center; aspect-ratio: 1; border: 1px solid var(--line); border-radius: 2px; overflow: hidden; }
   .media img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
   .cell a[aria-current="true"] .media { outline: 2px solid var(--accent); outline-offset: 2px; }
   .title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 10px; font-size: 16px; line-height: 24px; }
   .cell a[aria-current="true"] .title { font-weight: 600; }
   .meta { display: block; font-size: 14px; line-height: 20px; margin-top: 2px; }
-  .audio { display: flex; align-items: center; gap: 12px; }
-  .play { width: 44px; height: 44px; padding: 0; }
+  .cell { position: relative; }
+  .media-audio { place-items: end start; padding: 12px; }
+  .play { position: absolute; width: 44px; height: 44px; display: grid; place-items: center; padding: 0; border-radius: 6px; background: var(--bg); color: var(--text); border: 1px solid var(--text); cursor: pointer; }
+  .play-audio { left: calc(50% - 22px); top: calc(124px - 22px); }
+  .play-video { left: 8px; top: calc(248px - 52px); }
   .dur { font-weight: 600; }
-  .play-over { position: absolute; left: 8px; bottom: 8px; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 6px; background: var(--bg); color: var(--text); border: 1px solid var(--text); }
-  .play-over .ico, .play .ico { fill: currentColor; stroke-width: 1.5; }
+  .play .ico { fill: currentColor; stroke-width: 1.5; }
 
   .preview { border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
   .preview-media { height: 366px; display: grid; place-items: center; }
@@ -110,7 +117,6 @@
   <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
   <symbol id="i-ok" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
   <symbol id="i-fail" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></symbol>
-  <symbol id="i-paused" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M10 9v6M14 9v6"/></symbol>
   <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></symbol>
   <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
   <symbol id="i-expand" viewBox="0 0 24 24"><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/></symbol>
@@ -141,7 +147,7 @@
 
   <div>
     <header class="rail">
-      <label class="search"><svg class="ico" aria-hidden="true"><use href="#i-search"/></svg><span>Search</span></label>
+      <div class="search" role="search"><svg class="ico" aria-hidden="true"><use href="#i-search"/></svg><label for="q" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Search</label><input id="q" type="search" placeholder="Search"></div>
       <button class="account" type="button"><span class="initial" aria-hidden="true">S</span>Sam</button>
     </header>
 
@@ -149,9 +155,9 @@
       <div class="lib-head">
         <h1>Library</h1>
         <div class="toolbar" role="search">
-          <label class="field field-search"><svg class="ico" aria-hidden="true"><use href="#i-search"/></svg><span>Search creations</span></label>
-          <label class="select">Type: <b>All</b><svg class="ico" aria-hidden="true"><use href="#i-down"/></svg></label>
-          <label class="select">Person: <b>Everyone</b><svg class="ico" aria-hidden="true"><use href="#i-down"/></svg></label>
+          <div class="field field-search"><svg class="ico" aria-hidden="true"><use href="#i-search"/></svg><label for="lib-q" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Search creations</label><input id="lib-q" type="search" placeholder="Search creations"></div>
+          <label class="select" for="f-type">Type<select id="f-type"><option>All</option><option>Images</option><option>Video</option><option>Audio</option></select><svg class="ico" aria-hidden="true"><use href="#i-down"/></svg></label>
+          <label class="select" for="f-person">Person<select id="f-person"><option>Everyone</option><option>Sam</option><option>Robin</option><option>Alex</option></select><svg class="ico" aria-hidden="true"><use href="#i-down"/></svg></label>
         </div>
       </div>
 
@@ -159,36 +165,36 @@
         <div class="collection" aria-label="Creations">
       <section class="group"><h2 class="group-h">Last 24 hours</h2>
       <ul class="sheet">
-        <li class="cell"><a href="#" aria-current="true"><span class="media"><img src="assets/kitchen-morning.webp" alt=""></span><span class="title">A lived-in family kitchen in warm morning light, sourdough bread on a wooden board, yellow ceramic mug, herbs at the window. Candid editorial photograph, tasteful natural colors, no text.</span><span class="meta">Sam, just now</span></a></li>
-        <li class="cell"><a href="#"><span class="media"><img src="assets/garden-plan.webp" alt=""></span><span class="title">An overhead photograph of a backyard raised vegetable bed with tomatoes, lettuce and marigolds, gardening gloves on the cedar edge, late afternoon sunlight, warm documentary style.</span><span class="meta">Robin, 11h ago</span></a></li>
-        <li class="cell"><a href="#"><span class="media"><img src="assets/school-ecosystem.webp" alt=""></span><span class="title">A beautifully crafted school science project showing a miniature pond ecosystem in a glass terrarium with moss, stones and tiny plants on a classroom desk. Editorial photograph, no text.</span><span class="meta">Alex, 22h ago</span></a></li>
+        <li class="cell"><a href="#" aria-current="true"><span class="media media-image"><img src="assets/kitchen-morning.webp" alt=""></span><span class="title">A lived-in family kitchen in warm morning light, sourdough bread on a wooden board, yellow ceramic mug, herbs at the window. Candid editorial photograph, tasteful natural colors, no text.</span><span class="meta">Sam, just now</span></a></li>
+        <li class="cell"><a href="#"><span class="media media-image"><img src="assets/garden-plan.webp" alt=""></span><span class="title">An overhead photograph of a backyard raised vegetable bed with tomatoes, lettuce and marigolds, gardening gloves on the cedar edge, late afternoon sunlight, warm documentary style.</span><span class="meta">Robin, 11h ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media media-image"><img src="assets/school-ecosystem.webp" alt=""></span><span class="title">A beautifully crafted school science project showing a miniature pond ecosystem in a glass terrarium with moss, stones and tiny plants on a classroom desk. Editorial photograph, no text.</span><span class="meta">Alex, 22h ago</span></a></li>
       </ul></section>
       <section class="group"><h2 class="group-h">1 to 6 days ago</h2>
       <ul class="sheet">
-        <li class="cell"><a href="#"><span class="media"><img src="assets/dog-window.webp" alt=""></span><span class="title">A golden retriever asleep beside a sunlit living room window, knitted cream blanket and houseplants, quiet ordinary family afternoon, candid photography.</span><span class="meta">Robin, 1d ago</span></a></li>
-        <li class="cell"><a href="#"><span class="media"><img src="assets/coastal-weekend.webp" alt=""></span><span class="title">A coastal walking trail with wildflowers, two bicycles leaned against a wooden fence, blue sea and distant fishing boats, sunny family weekend mood, natural travel photography.</span><span class="meta">Sam, 2d ago</span></a></li>
-        <li class="cell"><a href="#"><span class="media"><img src="assets/reading-nook.webp" alt=""></span><span class="title">A cozy reading corner with a green armchair, well-loved paperback, tea and a patchwork quilt, rain on the window, warm lamp light, tasteful interior photography.</span><span class="meta">Robin, 2d ago</span></a></li>
-        <li class="cell"><a href="#"><span class="media"><img src="assets/solar-project.webp" alt=""></span><span class="title">A tiny handmade solar-powered model house made of balsa wood with a small solar panel on the roof on a teenager workbench, tools and colored pencils, detailed natural photography.</span><span class="meta">Alex, 3d ago</span></a></li>
-        <li class="cell"><a href="#"><span class="media"><img src="assets/apple-tart.webp" alt=""></span><span class="title">A homemade apple tart cooling on a wooden kitchen table, flour-dusted rolling pin, folded linen towel and a bowl of autumn apples, gentle window light, food photography.</span><span class="meta">Sam, 3d ago</span></a></li>
-        <li class="cell"><a href="#"><span class="media"><img src="assets/cat-bookshelf.webp" alt=""></span><span class="title">A ginger cat peeking from a bookshelf between paperbacks and a ceramic vase, lived-in family living room, soft afternoon light, candid photograph.</span><span class="meta">Robin, 4d ago</span></a></li>
-        <li class="cell"><a href="#"><span class="media"><img src="assets/mountain-cabin.webp" alt=""></span><span class="title">A small wood cabin beside a mountain lake at sunrise, mist above still water, canoe pulled onto a pebble shore, peaceful family holiday scene, travel photograph.</span><span class="meta">Sam, 4d ago</span></a></li>
-        <li class="cell"><a href="#"><span class="media"><img src="assets/wildflower-study.webp" alt=""></span><span class="title">A hand-painted watercolor study of local wildflowers on a sketchbook page, paint palette and brushes on a teenager desk, warm natural light, charming believable craft photograph, no lettering.</span><span class="meta">Alex, 5d ago</span></a></li>
-        <li class="cell"><a href="#"><span class="media"><img src="assets/herb-window.webp" alt=""></span><span class="title">Basil rosemary and thyme growing in terracotta pots on a kitchen windowsill, old brass watering can, morning sun and soft shadows, honest domestic photograph.</span><span class="meta">Robin, 5d ago</span></a></li>
-        <li class="cell"><a href="#"><span class="media"><img src="assets/birthday-table.webp" alt=""></span><span class="title">A simple backyard birthday table with a homemade lemon cake, linen tablecloth, flowers in jam jars and warm string lights, intimate family celebration, no people no text, editorial photograph.</span><span class="meta">Sam, 6d ago</span></a></li>
-        <li class="cell"><a href="#"><span class="media"><img src="assets/train-journey.webp" alt=""></span><span class="title">View from a train window over rolling countryside in autumn, a travel journal and two takeaway coffee cups on the small table, warm quiet family travel photograph.</span><span class="meta">Robin, 6d ago</span></a></li>
-        <li class="cell"><a href="#"><span class="media"><img src="assets/birdhouse.webp" alt=""></span><span class="title">A handmade wooden birdhouse freshly painted soft blue hanging from an apple tree in a backyard, a small bird nearby, spring sunlight, thoughtful school craft project photograph.</span><span class="meta">Alex, 6d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media media-image"><img src="assets/dog-window.webp" alt=""></span><span class="title">A golden retriever asleep beside a sunlit living room window, knitted cream blanket and houseplants, quiet ordinary family afternoon, candid photography.</span><span class="meta">Robin, 1d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media media-image"><img src="assets/coastal-weekend.webp" alt=""></span><span class="title">A coastal walking trail with wildflowers, two bicycles leaned against a wooden fence, blue sea and distant fishing boats, sunny family weekend mood, natural travel photography.</span><span class="meta">Sam, 2d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media media-image"><img src="assets/reading-nook.webp" alt=""></span><span class="title">A cozy reading corner with a green armchair, well-loved paperback, tea and a patchwork quilt, rain on the window, warm lamp light, tasteful interior photography.</span><span class="meta">Robin, 2d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media media-image"><img src="assets/solar-project.webp" alt=""></span><span class="title">A tiny handmade solar-powered model house made of balsa wood with a small solar panel on the roof on a teenager workbench, tools and colored pencils, detailed natural photography.</span><span class="meta">Alex, 3d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media media-image"><img src="assets/apple-tart.webp" alt=""></span><span class="title">A homemade apple tart cooling on a wooden kitchen table, flour-dusted rolling pin, folded linen towel and a bowl of autumn apples, gentle window light, food photography.</span><span class="meta">Sam, 3d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media media-image"><img src="assets/cat-bookshelf.webp" alt=""></span><span class="title">A ginger cat peeking from a bookshelf between paperbacks and a ceramic vase, lived-in family living room, soft afternoon light, candid photograph.</span><span class="meta">Robin, 4d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media media-image"><img src="assets/mountain-cabin.webp" alt=""></span><span class="title">A small wood cabin beside a mountain lake at sunrise, mist above still water, canoe pulled onto a pebble shore, peaceful family holiday scene, travel photograph.</span><span class="meta">Sam, 4d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media media-image"><img src="assets/wildflower-study.webp" alt=""></span><span class="title">A hand-painted watercolor study of local wildflowers on a sketchbook page, paint palette and brushes on a teenager desk, warm natural light, charming believable craft photograph, no lettering.</span><span class="meta">Alex, 5d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media media-image"><img src="assets/herb-window.webp" alt=""></span><span class="title">Basil rosemary and thyme growing in terracotta pots on a kitchen windowsill, old brass watering can, morning sun and soft shadows, honest domestic photograph.</span><span class="meta">Robin, 5d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media media-image"><img src="assets/birthday-table.webp" alt=""></span><span class="title">A simple backyard birthday table with a homemade lemon cake, linen tablecloth, flowers in jam jars and warm string lights, intimate family celebration, no people no text, editorial photograph.</span><span class="meta">Sam, 6d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media media-image"><img src="assets/train-journey.webp" alt=""></span><span class="title">View from a train window over rolling countryside in autumn, a travel journal and two takeaway coffee cups on the small table, warm quiet family travel photograph.</span><span class="meta">Robin, 6d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media media-image"><img src="assets/birdhouse.webp" alt=""></span><span class="title">A handmade wooden birdhouse freshly painted soft blue hanging from an apple tree in a backyard, a small bird nearby, spring sunlight, thoughtful school craft project photograph.</span><span class="meta">Alex, 6d ago</span></a></li>
       </ul></section>
       <section class="group"><h2 class="group-h">7 to 11 days ago</h2>
       <ul class="sheet">
-        <li class="cell"><a href="#"><span class="media"><img src="assets/rainy-patio.webp" alt=""></span><span class="title">Rain drops on a small covered patio with terracotta planters, a folded green umbrella and two wooden chairs, warm light through a kitchen door, cozy documentary photograph.</span><span class="meta">Robin, 7d ago</span></a></li>
-        <li class="cell"><a href="#"><span class="media"><img src="assets/picnic-lake.webp" alt=""></span><span class="title">A family picnic blanket beside a quiet lake, wicker basket, strawberries and sandwiches, shoes placed neatly on grass, golden afternoon light, candid travel photograph.</span><span class="meta">Sam, 7d ago</span></a></li>
-        <li class="cell"><a href="#"><span class="media"><img src="assets/garden-evening.webp" alt=""></span><span class="title">A backyard vegetable garden at dusk with a stone path, climbing beans and warm porch lights, the first stars above, peaceful lived-in home photography.</span><span class="meta">Robin, 8d ago</span></a></li>
-        <li class="cell"><a href="#"><span class="media"><span class="audio"><span class="btn play" aria-hidden="true"><svg class="ico" aria-hidden="true"><use href="#i-play"/></svg></span><span class="dur">0:04</span></span></span><span class="title">The tomatoes are ready to pick. Please water the herb pots before dinner.</span><span class="meta">Robin, 8d ago</span></a></li>
-        <li class="cell"><a href="#"><span class="media"><span class="audio"><span class="btn play" aria-hidden="true"><svg class="ico" aria-hidden="true"><use href="#i-play"/></svg></span><span class="dur">0:05</span></span></span><span class="title">Our solar house uses sunlight to power a tiny fan. We tested it on a cloudy day too.</span><span class="meta">Alex, 9d ago</span></a></li>
-        <li class="cell"><a href="#"><span class="media"><span class="audio"><span class="btn play" aria-hidden="true"><svg class="ico" aria-hidden="true"><use href="#i-play"/></svg></span><span class="dur">0:05</span></span></span><span class="title">On Saturday we will take the train to the coast, walk by the harbor, and have a picnic.</span><span class="meta">Sam, 9d ago</span></a></li>
-        <li class="cell"><a href="#"><span class="media"><span class="audio"><span class="btn play" aria-hidden="true"><svg class="ico" aria-hidden="true"><use href="#i-play"/></svg></span><span class="dur">0:06</span></span></span><span class="title">Hi June. Welcome to our household gateway. You can try a voice message or make a picture of your garden.</span><span class="meta">Sam, 10d ago</span></a></li>
-        <li class="cell"><a href="#"><span class="media"><span class="audio"><span class="btn play" aria-hidden="true"><svg class="ico" aria-hidden="true"><use href="#i-play"/></svg></span><span class="dur">0:07</span></span></span><span class="title">For the apple tart, slice the apples thinly and bake until the pastry is golden. Let it cool before serving.</span><span class="meta">Robin, 10d ago</span></a></li>
-        <li class="cell"><a href="#"><span class="media"><img src="assets/garden-breeze-poster.webp" alt=""><span class="play-over"><svg class="ico" aria-hidden="true"><use href="#i-play"/></svg></span></span><span class="title">A gentle breeze moves the leaves in a sunlit backyard vegetable garden, a watering can beside the raised bed, quiet warm family afternoon, slow steady camera. Audio: birds chirping softly.</span><span class="meta">Video, 0:03. Robin, 11d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media media-image"><img src="assets/rainy-patio.webp" alt=""></span><span class="title">Rain drops on a small covered patio with terracotta planters, a folded green umbrella and two wooden chairs, warm light through a kitchen door, cozy documentary photograph.</span><span class="meta">Robin, 7d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media media-image"><img src="assets/picnic-lake.webp" alt=""></span><span class="title">A family picnic blanket beside a quiet lake, wicker basket, strawberries and sandwiches, shoes placed neatly on grass, golden afternoon light, candid travel photograph.</span><span class="meta">Sam, 7d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media media-image"><img src="assets/garden-evening.webp" alt=""></span><span class="title">A backyard vegetable garden at dusk with a stone path, climbing beans and warm porch lights, the first stars above, peaceful lived-in home photography.</span><span class="meta">Robin, 8d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media media-audio"><span class="dur">0:04</span></span><span class="title">The tomatoes are ready to pick. Please water the herb pots before dinner.</span><span class="meta">Robin, 8d ago</span></a><button class="play play-audio" type="button" aria-label="Play audio: The tomatoes are ready to pick"><svg class="ico" aria-hidden="true"><use href="#i-play"/></svg></button></li>
+        <li class="cell"><a href="#"><span class="media media-audio"><span class="dur">0:05</span></span><span class="title">Our solar house uses sunlight to power a tiny fan. We tested it on a cloudy day too.</span><span class="meta">Alex, 9d ago</span></a><button class="play play-audio" type="button" aria-label="Play audio: Our solar house uses sunlight to power a tiny fan"><svg class="ico" aria-hidden="true"><use href="#i-play"/></svg></button></li>
+        <li class="cell"><a href="#"><span class="media media-audio"><span class="dur">0:05</span></span><span class="title">On Saturday we will take the train to the coast, walk by the harbor, and have a picnic.</span><span class="meta">Sam, 9d ago</span></a><button class="play play-audio" type="button" aria-label="Play audio: On Saturday we will take the train to the coast, walk by the"><svg class="ico" aria-hidden="true"><use href="#i-play"/></svg></button></li>
+        <li class="cell"><a href="#"><span class="media media-audio"><span class="dur">0:06</span></span><span class="title">Hi June. Welcome to our household gateway. You can try a voice message or make a picture of your garden.</span><span class="meta">Sam, 10d ago</span></a><button class="play play-audio" type="button" aria-label="Play audio: Hi June"><svg class="ico" aria-hidden="true"><use href="#i-play"/></svg></button></li>
+        <li class="cell"><a href="#"><span class="media media-audio"><span class="dur">0:07</span></span><span class="title">For the apple tart, slice the apples thinly and bake until the pastry is golden. Let it cool before serving.</span><span class="meta">Robin, 10d ago</span></a><button class="play play-audio" type="button" aria-label="Play audio: For the apple tart, slice the apples thinly and bake until t"><svg class="ico" aria-hidden="true"><use href="#i-play"/></svg></button></li>
+        <li class="cell"><a href="#"><span class="media media-video"><img src="assets/garden-breeze-poster.webp" alt=""></span><span class="title">A gentle breeze moves the leaves in a sunlit backyard vegetable garden, a watering can beside the raised bed, quiet warm family afternoon, slow steady camera. Audio: birds chirping softly.</span><span class="meta">Video, 0:03. Robin, 11d ago</span></a><button class="play play-video" type="button" aria-label="Play video: A gentle breeze moves the leaves in a sunlit backyard vegeta"><svg class="ico" aria-hidden="true"><use href="#i-play"/></svg></button></li>
       </ul></section>
         </div>
 
