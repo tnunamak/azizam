@@ -820,7 +820,6 @@ export default function TryPage() {
   const explicitModelTabs = useRef<Set<TryTab>>(new Set());
   const initializedWorkflowId = useRef<string | null>(null);
   const chunks = useRef<Blob[]>([]);
-  const requestForm = useRef<HTMLFormElement | null>(null);
   const [running, setRunning] = useState<TryTab | null>(null);
   const [results, setResults] = useState<Partial<Record<TryTab, Result>>>({});
   const [errors, setErrors] = useState<Partial<Record<TryTab, string>>>({});
@@ -1595,7 +1594,6 @@ export default function TryPage() {
             <TabsContent key={tab.value} value={tab.value} className="mt-4">
               <div className="grid gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
                 <form
-                  ref={requestForm}
                   noValidate
                   onSubmit={(event) => void run(tab.value, event)}
                   className="bg-card min-w-0 space-y-4 rounded-xl border p-5"
@@ -1836,7 +1834,7 @@ export default function TryPage() {
                   ) : currentError ? (
                     <ErrorState
                       message={currentError}
-                      onRetry={() => requestForm.current?.requestSubmit()}
+                      onRetry={() => void loadCatalog(key?.secret)}
                     />
                   ) : currentResult ? (
                     <ResultView
