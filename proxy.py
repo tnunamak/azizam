@@ -25462,8 +25462,9 @@ async def create_response(request: Request):
             prior_messages = await _build_prior_messages(
                 req_body.get("previous_response_id"), auth_context
             )
+            tool_mapping = responses_translator.ToolMapping(req_body, prior_messages)
             cc_body = responses_translator.to_chat_completions(
-                req_body, prior_messages=prior_messages
+                req_body, prior_messages=prior_messages, tool_mapping=tool_mapping
             )
         except responses_translator.ResponsesTranslationError as e:
             return _responses_error(e.message, code=e.code, param=e.param)
@@ -25535,6 +25536,7 @@ async def create_response(request: Request):
                     response_id=response_id,
                     created_at=created_at,
                     original_request=req_body,
+                    tool_mapping=tool_mapping,
                 )
 
                 async def event_stream():
@@ -25618,6 +25620,7 @@ async def create_response(request: Request):
                     response_id=response_id,
                     created_at=created_at,
                     original_request=req_body,
+                    tool_mapping=tool_mapping,
                 )
             except ValueError as error:
                 owner.report(status="failed", reason="read_error")

@@ -171,6 +171,46 @@ class ResponsesConformanceTests(unittest.TestCase):
                                  {"role": "tool", "tool_call_id": "call_patch", "content": "Success."})
                 self.assertEqual(json.loads(self.sent[-1]["messages"][2]["tool_calls"][0]["function"]["arguments"])["input"], patch_input)
 
+    def test_namespace_call_and_client_search_match_schemas_and_continue(self):
+        import responses_translator as rt
+
+        tool = {"type": "namespace", "name": "azizam", "description": "Local test tools.", "tools": [
+            {"type": "function", "name": "echo", "parameters": {"type": "object"}}]}
+        body = {"input": "Echo", "tools": [tool]}
+        alias = rt.to_chat_completions(body)["tools"][0]["function"]["name"]
+        search = {"type": "tool_search", "execution": "client", "description": "Discover tools.",
+                  "parameters": {"type": "object", "properties": {"query": {"type": "string"}}}}
+        cases = [(body, alias, '{}', "function_call"),
+                 ({"input": "Find echo", "tools": [search]}, "tool_search", '{"query":"echo"}', "tool_search_call")]
+        for req, name, arguments, expected_type in cases:
+            for stream in (False, True):
+                with self.subTest(type=expected_type, stream=stream):
+                    calls = [{"index": 0, "id": "call_ns", "type": "function", "function": {"name": name, "arguments": arguments}}]
+                    upstream = sse([chunk({"tool_calls": calls}), chunk({}, "tool_calls")]) if stream else chat_completion(
+                        {"content": None, "tool_calls": calls}, "tool_calls")
+                    response = self.create(upstream, {**req, "stream": stream})
+                    self.assertEqual(response.status_code, 200, response.text)
+                    if stream:
+                        events = parse_events(response.text)
+                        self.check_stream(events)
+                        obj = events[-1]["response"]
+                    else:
+                        obj = response.json()
+                    validate("Response", obj)
+                    item = obj["output"][0]
+                    self.assertEqual(item["type"], expected_type)
+                    if expected_type == "function_call":
+                        self.assertEqual((item["namespace"], item["name"]), ("azizam", "echo"))
+                        result = {"type": "function_call_output", "call_id": "call_ns", "output": "echoed"}
+                    else:
+                        self.assertEqual(item["arguments"], {"query": "echo"})
+                        result = {"type": "tool_search_output", "call_id": "call_ns", "execution": "client", "status": "completed", "tools": [tool]}
+                    continuation = self.create(chat_completion({"content": "Done."}), {**req, "input": [item, result]})
+                    self.assertEqual(continuation.status_code, 200, continuation.text)
+                    validate("Response", continuation.json())
+                    if expected_type == "tool_search_call":
+                        self.assertEqual(len(self.sent[-1]["tools"]), 2)
+
     def test_malformed_upstream_custom_call_returns_502_without_executable_output(self):
         up = chat_completion({"tool_calls": [{"id": "call_patch", "type": "function",
                               "function": {"name": "apply_patch", "arguments": '{"input":false}'}}]}, "tool_calls")
@@ -475,7 +515,7 @@ class ResponsesConformanceTests(unittest.TestCase):
 
     def test_unsupported_requests_return_parameter_errors_without_forwarding(self):
         cases = [({"tool_choice": {"type": "allowed_tools", "mode": "required", "tools": []}}, "tool_choice"),
-                 ({"tools": [{"type": "namespace", "name": "functions", "tools": []}]}, "tools[0].type"),
+                 ({"tools": [{"type": "tool_search", "execution": "server"}]}, "tools[0].execution"),
                  ({"input": [{"type": "additional_tools", "role": "developer", "tools": []}]}, "input[0].type"),
                  ({"input": [{"role": "user", "content": [{"type": "input_file", "file_id": "file_test"}]}]},
                   "input[0].content[0]"),
