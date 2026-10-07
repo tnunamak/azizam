@@ -5,11 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 import mimetypes
+import math
 import os
+import random
 import shutil
 import sqlite3
-import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -22,6 +23,35 @@ STABLE_TARGETS = {
     "voice": "tts-1",
 }
 PASSWORD = "Household browser password 2026"
+# Every timestamp derives from one fixed instant so reruns are byte-comparable.
+# A late-October afternoon gives the monthly budget window enough days to fill.
+FIXED_NOW = int(datetime(2026, 10, 28, 20, 30, tzinfo=timezone.utc).timestamp())
+RNG_SEED = 20261028
+SCENARIOS = (
+    "default",
+    "running",
+    "budget-exhausted",
+    "provider-down",
+    "stale-health",
+    "new-member",
+)
+REMOTE_SERVICE = "household-remote"
+REMOTE_DOWN_HOURS = 4
+STALE_VOICE_HOURS = 7
+# Median latency (ms) per capability: a TTS clip and a video render differ by 100x.
+LATENCY_MEDIAN_MS = {
+    "chat": 2600, "image": 14000, "image-edit": 18000, "tts": 1400, "stt": 3200,
+    "video": 95000, "music": 38000, "sfx": 7500, "embeddings": 120,
+}
+# Local hour of day (mean, spread) in which each capability is typically used.
+HOUR_PROFILE = {
+    "chat": (15, 5), "image": (20, 2.5), "image-edit": (20, 2.5), "tts": (8, 3),
+    "stt": (18, 4), "video": (21, 1.5), "music": (19, 3), "sfx": (19, 3),
+    "embeddings": (11, 2),
+}
+APP_WEIGHTS = {
+    "sam": 3, "robin": 3, "alex": 2, "zoe": 1.5, "webui": 2, "home": 3, "codex": 2.5,
+}
 FIXTURES = Path(__file__).parent / "fixtures" / "household"
 # Engine and model knowledge is fixture DATA, authored through registry contracts.
 MODEL_GROUPS = {
@@ -67,6 +97,7 @@ APP_CAPABILITY_CHOICES = {
         "sfx",
     ),
     "robin": ("chat", "image", "chat", "tts", "stt", "video", "music", "sfx"),
+    "zoe": ("chat", "chat", "image", "tts"),
     "alex": ("chat", "chat", "image", "image-edit", "stt", "music", "sfx"),
     "webui": ("chat", "chat", "image", "chat", "video", "image-edit"),
     "home": ("tts", "tts", "stt", "tts", "stt", "chat"),
@@ -130,7 +161,7 @@ MODEL_METADATA = {
 }
 
 
-def registry(engine_port: int) -> dict:
+def registry(engine_port: int, scenario: str = "default") -> dict:
     from gateway.service_registry import normalize_service_registry
 
     services = {}
@@ -143,6 +174,8 @@ def registry(engine_port: int) -> dict:
             "protocol": "openai-compatible",
             "health_endpoint": "/fixture/degraded"
             if sid == "household-video"
+            else "/fixture/down"
+            if remote and scenario == "provider-down"
             else "/health",
             "models": [
                 {
@@ -243,6 +276,7 @@ def registry(engine_port: int) -> dict:
                 if cap == "video"
                 else "unhealthy"
                 if cap == "embeddings"
+                or (sid == REMOTE_SERVICE and scenario == "provider-down")
                 else "healthy",
                 "enabled": True,
                 "source": "ui",
@@ -253,8 +287,14 @@ def registry(engine_port: int) -> dict:
     )
 
 
-def seed(state: Path, port: int) -> dict:
-    """Seed fresh isolated databases, using the same schemas and stores as the gateway."""
+def seed(state: Path, port: int, scenario: str | None = None, now: int | None = None) -> dict:
+    """Seed fresh isolated databases, using the same schemas and stores as the gateway.
+
+    `scenario` layers one named state on the default household (see SCENARIOS).
+    """
+    scenario = scenario or os.environ.get("UI_HOUSEHOLD_SCENARIO") or "default"
+    if scenario not in SCENARIOS:
+        raise ValueError(f"unknown household scenario {scenario!r}; use one of {SCENARIOS}")
     import metrics_store
     from gateway import accounts, admin_store, media_jobs, providers, receipt_store
     from gateway.local_owner import hash_password
@@ -283,7 +323,8 @@ def seed(state: Path, port: int) -> dict:
     media_jobs.init_db(paths["media_jobs"])
     metrics_store.init_db(paths["metrics"])
     providers.ensure_ledger(paths["provider_spend"])
-    now = int(time.time())
+    now = int(now or os.environ.get("UI_HOUSEHOLD_NOW") or FIXED_NOW)
+    rng = random.Random(RNG_SEED)
     config_path = state / "config.yml"
     if config_path.is_file():
         import yaml
@@ -302,7 +343,7 @@ def seed(state: Path, port: int) -> dict:
             },
         }
         config_path.write_text(yaml.safe_dump(document))
-    reg = registry(port + 1)
+    reg = registry(port + 1, scenario)
     admin_store.write_service_registry(
         reg, expected_generation=0, updated_by="household-fixture", path=paths["admin"]
     )
@@ -348,9 +389,13 @@ def seed(state: Path, port: int) -> dict:
         [
             ("sam", "Sam", "Builder"),
             ("robin", "Robin", "Everyone"),
-            ("alex", "Alex", "Teen"),
+            ("alex", "Alexandria Montgomery-Featherstonehaugh", "Teen"),
+            ("zoe", "Zoë Ångström", "Everyone"),
             ("casey", "Casey · former guest", "Everyone"),
         ]
+        + (
+            [("noor", "نیلوفر احمدی", "Everyone")] if scenario == "new-member" else []
+        )
     ):
         user = admin_store.upsert_oidc_user(
             "local",
@@ -390,6 +435,14 @@ def seed(state: Path, port: int) -> dict:
                 provenance="oidc",
                 path=paths["admin"],
             )
+        if slug == "noor":
+            # A brand-new member has signed in but owns no app or key yet.
+            with sqlite3.connect(paths["admin"]) as conn:
+                conn.execute(
+                    "UPDATE users SET created_at=?,last_login_at=? WHERE id=?",
+                    (now - 86400, now - 1800, user["id"]),
+                )
+            continue
         app = admin_store.create_app(
             f"{name.split(' ·')[0]}'s personal app",
             kind="personal",
@@ -402,7 +455,7 @@ def seed(state: Path, port: int) -> dict:
         ("webui", "robin", "Open WebUI"),
         ("home", "sam", "Home Assistant voice"),
         ("codex", "sam", "Codex"),
-        ("telegram", "robin", "Telegram helper"),
+        ("telegram", "robin", "Telegram homework and grocery reminder helper for the family group chat"),
         ("librechat", "sam", "LibreChat · retired"),
     ]:
         apps[slug] = admin_store.create_app(
@@ -502,27 +555,40 @@ def seed(state: Path, port: int) -> dict:
     ]
     capability_by_name = {row[0]: row for row in capabilities}
     samples, spend, receipt_rows = [], [], []
-    evening = datetime.fromtimestamp(now, ZoneInfo("America/Chicago")).replace(
-        hour=21, minute=0, second=0, microsecond=0
+    chicago = ZoneInfo("America/Chicago")
+    today = datetime.fromtimestamp(now, chicago).replace(
+        hour=0, minute=0, second=0, microsecond=0
     )
-    if evening.timestamp() > now:
-        evening -= timedelta(days=1)
+    failure_kinds = [
+        "model_access_denied",
+        "upstream_timeout",
+        "upstream_unavailable",
+        "budget_exceeded",
+        "invalid_request",
+    ]
+    slugs = list(active_apps)
+    weights = [APP_WEIGHTS[slug] for slug in slugs]
     for day in range(30):
-        for index in range(30 + (day % 4) * 5):
-            slug = active_apps[(index + day) % len(active_apps)]
-            choices = APP_CAPABILITY_CHOICES[slug]
-            choice = choices[(index // len(active_apps) + day) % len(choices)]
+        # Weekends run busier; the per-day count is irregular, not a repeating cycle.
+        local_day = today - timedelta(days=day)
+        total = rng.randint(24, 40) + (8 if local_day.weekday() >= 5 else 0)
+        failure_at = rng.randrange(total) if day < 5 else None
+        midnight = local_day
+        for index in range(total):
+            slug = rng.choices(slugs, weights)[0]
+            choice = rng.choice(APP_CAPABILITY_CHOICES[slug])
             _cap, intent, endpoint, model, backend = capability_by_name[choice]
             if slug == "codex":
                 model = "coder"
             elif slug == "home" and choice == "chat":
                 model = "fast"
-            ts = (
-                int((evening - timedelta(days=day)).timestamp())
-                - (index % 8) * 900
-                - (12 * 3600 if index % 7 == 0 else 0)
-            )
-            if slug == "codex" and day > 4 and (index + day) % 5 == 0:
+            mean_hour, spread = HOUR_PROFILE[choice]
+            hour = min(23.9, max(6.0, rng.gauss(mean_hour, spread)))
+            ts = int(midnight.timestamp() + hour * 3600 + rng.randint(0, 59))
+            if ts > now - 120:
+                # Today is only partly over: keep activity before the present.
+                ts = int(midnight.timestamp() + rng.uniform(6 * 3600, now - 120 - midnight.timestamp()))
+            if slug == "codex" and day > 4 and rng.random() < 0.2:
                 _cap, intent, endpoint, model, backend = (
                     "embeddings",
                     "embeddings",
@@ -530,9 +596,10 @@ def seed(state: Path, port: int) -> dict:
                     "bge-m3",
                     "household-embedding",
                 )
+                choice = "embeddings"
             remote = (
                 intent == "chat.completions"
-                and index % 7 == 0
+                and rng.random() < 0.25
                 and slug not in {"alex", "home"}
             )
             if remote:
@@ -543,17 +610,7 @@ def seed(state: Path, port: int) -> dict:
                     "claude-sonnet",
                     "household-remote",
                 )
-            failure = (
-                [
-                    "model_access_denied",
-                    "upstream_timeout",
-                    "upstream_unavailable",
-                    "budget_exceeded",
-                    "invalid_request",
-                ][(index + day) % 5]
-                if day < 5 and index == 27
-                else None
-            )
+            failure = failure_kinds[(day + 2) % 5] if index == failure_at else None
             if failure in {"model_access_denied", "budget_exceeded"}:
                 remote = True
                 _cap, intent, endpoint, model, backend = (
@@ -563,6 +620,7 @@ def seed(state: Path, port: int) -> dict:
                     "claude-sonnet",
                     "household-remote",
                 )
+                choice = "chat"
                 if failure == "model_access_denied":
                     slug = "alex"
                 elif slug in {"alex", "home"}:
@@ -577,22 +635,30 @@ def seed(state: Path, port: int) -> dict:
                     "ltx-2.5",
                     "household-video",
                 )
+                choice = "video"
                 remote = False
-            prompt_tokens, completion_tokens = (
-                (4000 + index * 70, 1400 + index * 45)
-                if remote
-                else (350 + index * 31, 140 + index * 17)
-            )
+            # A request refused before execution generates nothing.
+            prompt_tokens = _lognormal(rng, 3500 if remote else 600, 0.6, 12, 9000)
+            completion_tokens = _lognormal(rng, 1300 if remote else 260, 0.6, 12, 3500)
+            if failure == "budget_exceeded":
+                # The estimate alone exceeds the $0.10 per-request cap.
+                prompt_tokens, completion_tokens = 38000 + rng.randint(0, 2500), 0
+            elif failure == "invalid_request":
+                prompt_tokens = completion_tokens = 0
+            elif failure:
+                completion_tokens = 0
             cost = (
-                str(
-                    (
-                        Decimal(prompt_tokens) * Decimal("0.000003")
-                        + Decimal(completion_tokens) * Decimal("0.000015")
-                    ).quantize(Decimal("0.000000001"))
-                )
+                _usd(prompt_tokens, completion_tokens)
                 if remote and not failure
                 else "0.000000000"
             )
+            latency_ms = _lognormal(rng, LATENCY_MEDIAN_MS[choice], 0.4, 20, 600000)
+            if failure == "upstream_timeout":
+                latency_ms = 60000
+            elif failure in {"model_access_denied", "budget_exceeded", "invalid_request"}:
+                latency_ms = rng.randint(8, 45)
+            elif failure == "upstream_unavailable":
+                latency_ms = rng.randint(1200, 2400)
             request_id = f"req_household_{day:02}_{index:02}"
             app = apps[slug]
             receipt = RouteReceipt(
@@ -617,7 +683,7 @@ def seed(state: Path, port: int) -> dict:
                 else "succeeded",
                 remote=remote,
                 owner_key_hash=hashes[slug],
-                latency_ms=1200 + index * 87,
+                latency_ms=latency_ms,
                 cost={
                     "usd": cost,
                     "source": "provider-reported" if remote else "local",
@@ -628,7 +694,7 @@ def seed(state: Path, port: int) -> dict:
                     "completion_tokens": completion_tokens,
                 },
                 accepted_at_ms=ts * 1000,
-                updated_at_ms=ts * 1000 + 1200 + index * 87,
+                updated_at_ms=ts * 1000 + latency_ms,
                 policy_decision="denied"
                 if failure in {"model_access_denied", "budget_exceeded"}
                 else "allowed",
@@ -688,6 +754,15 @@ def seed(state: Path, port: int) -> dict:
                         request_id,
                     )
                 )
+    ctx = {
+        "rng": rng, "now": now, "apps": apps, "hashes": hashes, "plans": plans,
+        "people": people, "paths": paths, "samples": samples, "spend": spend,
+        "receipt_rows": receipt_rows, "details": {},
+    }
+    if scenario == "budget-exhausted":
+        _scenario_budget_exhausted(ctx)
+    elif scenario == "provider-down":
+        _scenario_provider_down(ctx)
     with sqlite3.connect(paths["receipts"]) as conn:
         conn.executemany(
             "INSERT INTO receipts(request_id,created_at,protocol,intent,path,app_profile,app_id,api_key_name,status,job_id,parent_request_id,receipt_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -696,6 +771,11 @@ def seed(state: Path, port: int) -> dict:
     for hour in range(30 * 24):
         ts = now - hour * 3600
         for sid in MODEL_GROUPS:
+            if scenario == "stale-health" and (
+                sid == "household-embedding"
+                or (sid == "household-voice" and hour < STALE_VOICE_HOURS)
+            ):
+                continue  # no recent (or any) observation for these services
             tags = json.dumps(
                 {
                     "backend": sid,
@@ -708,6 +788,12 @@ def seed(state: Path, port: int) -> dict:
             up = (sid != "household-embedding" or hour > 4 * 24) and not (
                 sid == "household-video" and hour % 7 in {0, 1}
             )
+            if (
+                scenario == "provider-down"
+                and sid == REMOTE_SERVICE
+                and hour < REMOTE_DOWN_HOURS
+            ):
+                up = False
             samples.extend(
                 [
                     (ts, "service_up", tags, int(up)),
@@ -751,18 +837,26 @@ def seed(state: Path, port: int) -> dict:
             now=now - day * 86400,
             path=paths["admin"],
         )
-    assets = _media(state, paths, apps, hashes, now)
+    assets = _media(state, paths, apps, hashes, now, rng)
+    if scenario == "running":
+        _scenario_running(ctx)
     manifest = {
         "base_url": f"http://127.0.0.1:{port}",
         "owner_email": "sam@example.test",
-        "member_email": "robin@example.test",
+        "member_email": "noor@example.test"
+        if scenario == "new-member"
+        else "robin@example.test",
         "restricted_email": "alex@example.test",
         "password": PASSWORD,
         "people": {slug: row["id"] for slug, row in people.items()},
         "apps": {slug: row["id"] for slug, row in apps.items()},
+        "scenario": scenario,
+        "now": now,
+        "scenario_details": ctx["details"],
         "assets": assets,
         "request_count": sum(metric == "request" for _, metric, _, _ in samples)
-        + len(assets),
+        + len(assets)
+        + ctx.get("extra_requests", 0),
     }
     (state / "household-manifest.json").write_text(json.dumps(manifest))
     target = os.environ.get("UI_HOUSEHOLD_MANIFEST_PATH")
@@ -772,7 +866,203 @@ def seed(state: Path, port: int) -> dict:
     return manifest
 
 
-def _media(state, paths, apps, hashes, now):
+def _lognormal(rng, median: float, sigma: float, low: int, high: int) -> int:
+    """Skewed positive integer (latency, token count) drawn from the seeded generator."""
+    return int(min(high, max(low, rng.lognormvariate(math.log(median), sigma))))
+
+
+def _usd(prompt_tokens: int, completion_tokens: int) -> str:
+    return str(
+        (
+            Decimal(prompt_tokens) * Decimal("0.000003")
+            + Decimal(completion_tokens) * Decimal("0.000015")
+        ).quantize(Decimal("0.000000001"))
+    )
+
+
+def _remote_receipt(ctx, *, request_id, slug, ts, status, prompt_tokens, completion_tokens,
+                    cost="0.000000000", status_code=None, reason=None, warning=None,
+                    model="claude-sonnet", latency_ms=2400):
+    """One paid-remote chat receipt plus its request sample (and ledger row if charged)."""
+    from gateway import receipt_store
+    from gateway.receipts import RouteReceipt
+
+    app = ctx["apps"][slug]
+    denied = status == "rejected"
+    receipt = RouteReceipt(
+        protocol="openai", intent="chat.completions", path="/v1/chat/completions",
+        request_id=request_id, app_id=app["id"], app_profile=app["default_profile_id"],
+        api_key_name=app["name"], client_hint=app["name"], requested_model=model,
+        resolved_model=model, backend=REMOTE_SERVICE, status=status, remote=True,
+        owner_key_hash=ctx["hashes"][slug], latency_ms=latency_ms,
+        cost={"usd": cost, "source": "provider-reported", "cost_class": "paid-remote"},
+        usage={"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens},
+        accepted_at_ms=ts * 1000, updated_at_ms=ts * 1000 + latency_ms,
+        policy_decision="denied" if denied else "allowed",
+        policy_reasons=[reason] if reason else [],
+        warnings=[warning] if warning else [],
+        metadata={"status_code": status_code, "litellm": {"response_cost": cost}}
+        if status_code
+        else {"litellm": {"response_cost": cost}},
+    )
+    data = receipt_store._coerce_to_internal_dict(receipt)
+    receipt_store._assert_safe(data)
+    ctx["receipt_rows"].append(receipt_store._row_values(data, created_at=ts))
+    tags = json.dumps(
+        {"key": app["name"], "app_id": app["id"], "model": model,
+         "backend": REMOTE_SERVICE, "intent": "chat.completions"},
+        sort_keys=True, separators=(",", ":"),
+    )
+    ctx["samples"].append((ts, "request", tags, 1))
+    if status != "succeeded":
+        ctx["samples"].append((ts, "error", tags, 1))
+    elif Decimal(cost) > 0:
+        ctx["spend"].append((REMOTE_SERVICE, app["default_profile_id"], "settled", cost,
+                             cost, "provider-reported", ts, ts + 2, request_id))
+
+
+def _scenario_budget_exhausted(ctx):
+    """Robin's plan (Everyone) has spent its daily and monthly allowance.
+
+    Ledger rows and succeeded receipts share one cost, so the ledger total is the
+    receipt total. Later 429 rejections follow the row that crossed the cap.
+    """
+    rng, now = ctx["rng"], ctx["now"]
+    profile = ctx["plans"]["Everyone"]["id"]
+    month_start = int(datetime.fromtimestamp(now, timezone.utc).replace(
+        day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
+    day_cap, month_cap = Decimal(1), Decimal(8)
+
+    def total(since):
+        return sum((Decimal(row[4]) for row in ctx["spend"]
+                    if row[1] == profile and row[6] >= since), Decimal(0))
+
+    count = 0
+
+    def charge(ts):
+        nonlocal count
+        count += 1
+        prompt, completion = _lognormal(rng, 3000, 0.4, 1500, 6000), _lognormal(rng, 2200, 0.4, 1000, 3800)
+        _remote_receipt(ctx, request_id=f"req_household_budget_{count:03}", slug="robin", ts=ts,
+                        status="succeeded", prompt_tokens=prompt, completion_tokens=completion,
+                        cost=_usd(prompt, completion), latency_ms=_lognormal(rng, 5200, 0.4, 900, 40000))
+
+    # Earlier days: stay under the daily cap, accumulate toward the monthly cap.
+    day_start = now - 24 * 3600
+    for day in range(1, 27):
+        window_end = now - day * 86400
+        if window_end < month_start or total(month_start) >= month_cap:
+            break
+        for _ in range(rng.randint(3, 8)):
+            if total(window_end - 86400) >= Decimal("0.9") or total(month_start) >= month_cap:
+                break
+            charge(window_end - rng.randint(600, 80000))
+    while total(month_start) < month_cap - Decimal("1.1"):
+        charge(rng.randint(month_start, day_start - 3600))
+    # Last 24 hours: cross both caps; the final charge is the one that exhausts them.
+    last = day_start + 3600
+    while total(day_start) < day_cap or total(month_start) < month_cap:
+        last += rng.randint(900, 2400)
+        charge(min(last, now - 5400))
+    exhausted_at = max(row[6] for row in ctx["spend"] if row[1] == profile)
+    for number in range(1, 4):
+        ts = exhausted_at + number * rng.randint(1200, 2400)
+        prompt = _lognormal(rng, 1500, 0.4, 600, 3000)
+        _remote_receipt(
+            ctx, request_id=f"req_household_budget_rejected_{number}", slug="robin",
+            ts=min(ts, now - 60), status="rejected", prompt_tokens=prompt, completion_tokens=0,
+            status_code=429, reason="budget_exceeded", latency_ms=rng.randint(8, 40),
+            warning="The Everyone plan has used its daily and monthly remote spending allowance.",
+        )
+    ctx["details"].update(
+        member="robin", plan="Everyone", provider=REMOTE_SERVICE,
+        daily_cap_usd="1", monthly_cap_usd="8",
+        daily_spent_usd=str(total(day_start)), monthly_spent_usd=str(total(month_start)),
+        exhausted_at=exhausted_at, rejections=3,
+    )
+
+
+def _scenario_provider_down(ctx):
+    """The paid provider failed REMOTE_DOWN_HOURS ago; paid routes now return 503."""
+    rng, now = ctx["rng"], ctx["now"]
+    last_success = now - REMOTE_DOWN_HOURS * 3600
+    error = "HTTP 503: provider unavailable"
+    for number, (slug, minutes) in enumerate(
+        [("sam", 205), ("robin", 160), ("sam", 96), ("zoe", 50), ("robin", 12)], 1
+    ):
+        _remote_receipt(
+            ctx, request_id=f"req_household_down_{number}", slug=slug, ts=now - minutes * 60,
+            status="failed", prompt_tokens=_lognormal(rng, 700, 0.4, 200, 2000), completion_tokens=0,
+            status_code=503, latency_ms=rng.randint(1500, 3200),
+            warning="Remote backup is not answering. Local models still work.",
+        )
+    ctx["details"].update(
+        provider=REMOTE_SERVICE, last_success_at=last_success, error=error,
+        affected_models=["claude-sonnet", "gpt-mini"], failed_requests=5,
+    )
+
+
+def _scenario_running(ctx):
+    """In-flight work: two accepted receipts, one running job, one failed job."""
+    from gateway import media_jobs, receipt_store
+    from gateway.receipts import RouteReceipt
+
+    now, apps, hashes, paths = ctx["now"], ctx["apps"], ctx["hashes"], ctx["paths"]
+
+    def receipt(request_id, slug, intent, path, model, backend, accepted_s, status, **extra):
+        item = RouteReceipt(
+            protocol="openai", intent=intent, path=path, request_id=request_id,
+            app_id=apps[slug]["id"], app_profile=apps[slug]["default_profile_id"],
+            api_key_name=apps[slug]["name"], requested_model=model, resolved_model=model,
+            backend=backend, status=status, owner_key_hash=hashes[slug],
+            accepted_at_ms=(now - accepted_s) * 1000, **extra,
+        )
+        if status == "in_progress":
+            item.updated_at_ms = (now - 3) * 1000
+        data = receipt_store._coerce_to_internal_dict(item)
+        receipt_store._assert_safe(data)
+        with sqlite3.connect(paths["receipts"]) as conn:
+            conn.execute(
+                "INSERT INTO receipts(request_id,created_at,protocol,intent,path,app_profile,app_id,api_key_name,status,job_id,parent_request_id,receipt_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                receipt_store._row_values(data, created_at=now - accepted_s),
+            )
+        with sqlite3.connect(paths["metrics"]) as conn:
+            conn.execute(
+                "INSERT INTO samples(ts,metric,tags,value) VALUES(?,?,?,?)",
+                (now - accepted_s, "request", json.dumps(
+                    {"key": apps[slug]["name"], "app_id": apps[slug]["id"], "model": model,
+                     "backend": backend, "intent": intent}, sort_keys=True, separators=(",", ":")), 1),
+            )
+        ctx["extra_requests"] = ctx.get("extra_requests", 0) + 1
+
+    def job(request_id, slug, intent, model, accepted_s, status, progress, error=None):
+        media_jobs.create(
+            media_jobs.MediaJob(
+                request_id=request_id, intent=intent, status=status, progress=progress,
+                error=error, app_id=apps[slug]["id"], owner_key_hash=hashes[slug],
+                created_at=now - accepted_s, updated_at=now - 3 if status == "running" else now - accepted_s + 41,
+                metadata={"model": model},
+            ),
+            path=paths["media_jobs"],
+        )
+
+    receipt("req_household_running_chat", "robin", "chat.completions", "/v1/chat/completions",
+            "qwen-27b", "household-chat", 38, "in_progress", stream=True)
+    receipt("req_household_running_video", "sam", "video.generate", "/v1/videos",
+            "ltx-2.5", "household-video", 140, "in_progress")
+    job("req_household_running_video", "sam", "video.generate", "ltx-2.5", 140, "running", 42)
+    receipt("req_household_failed_image", "alex", "image.generate", "/v1/images/generations",
+            "krea2-turbo", "household-image", 1320, "failed", latency_ms=41000,
+            metadata={"status_code": 503}, warnings=["The image engine ran out of memory before finishing."])
+    job("req_household_failed_image", "alex", "image.generate", "krea2-turbo", 1320, "failed", 0,
+        error="The image engine ran out of memory before finishing.")
+    ctx["details"].update(
+        in_progress_receipts=["req_household_running_chat", "req_household_running_video"],
+        running_job="req_household_running_video", failed_job="req_household_failed_image",
+    )
+
+
+def _media(state, paths, apps, hashes, now, rng):
     from gateway import media_jobs, receipt_store
     from gateway.receipts import RouteReceipt
 
@@ -780,6 +1070,7 @@ def _media(state, paths, apps, hashes, now):
     cache = state / "images"
     cache.mkdir(exist_ok=True)
     assets = []
+    ts = now - rng.randint(20 * 60, 5 * 3600)
     for index, entry in enumerate(entries):
         source = FIXTURES / entry["file"]
         digest = hashlib.sha256(source.read_bytes()).hexdigest()
@@ -788,7 +1079,12 @@ def _media(state, paths, apps, hashes, now):
         asset_id = f"{prefix}_{digest}"
         shutil.copyfile(source, cache / f"{digest}{source.suffix}")
         owner = entry["owner"]
-        ts = now - index * 11 * 3600
+        if index:
+            # Creations come in bursts and long gaps, not on a fixed grid.
+            ts -= rng.randint(120, 900) if rng.random() < 0.3 else rng.randint(2 * 3600, 30 * 3600)
+        latency_ms = _lognormal(
+            rng, {"image": 14000, "audio": 1400, "video": 95000}[kind], 0.35, 300, 600000
+        )
         request_id = f"req_household_asset_{index:02}"
         (cache / f"{digest}.meta.json").write_text(
             json.dumps(
@@ -815,8 +1111,8 @@ def _media(state, paths, apps, hashes, now):
             resolved_model=entry["model"],
             status="succeeded",
             accepted_at_ms=ts * 1000,
-            updated_at_ms=ts * 1000 + 4200,
-            latency_ms=4200,
+            updated_at_ms=ts * 1000 + latency_ms,
+            latency_ms=latency_ms,
             metadata={},
             owner_key_hash=hashes[owner],
         )
@@ -837,7 +1133,7 @@ def _media(state, paths, apps, hashes, now):
                 app_id=apps[owner]["id"],
                 owner_key_hash=hashes[owner],
                 created_at=ts,
-                updated_at=ts + 5,
+                updated_at=ts + max(1, latency_ms // 1000),
                 metadata={"model": entry["model"]},
             ),
             path=paths["media_jobs"],
@@ -867,4 +1163,4 @@ def _media(state, paths, apps, hashes, now):
 if __name__ == "__main__":
     import sys
 
-    seed(Path(sys.argv[1]), int(sys.argv[2]))
+    seed(Path(sys.argv[1]), int(sys.argv[2]), sys.argv[3] if len(sys.argv) > 3 else None)

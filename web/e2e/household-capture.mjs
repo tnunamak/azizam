@@ -18,6 +18,12 @@ const manifestPath = path.join(stateRoot, `manifest-${port}.json`);
 const outputArg = process.argv[2];
 if (process.argv.length > 3) throw new Error("Usage: scripts/ui/design-review-capture [output-directory]");
 const output = path.resolve(outputArg ?? process.env.UI_CAPTURE_DIR ?? path.join(os.homedir(), ".tmp/gw-product/ui-review/household"));
+const scenarios = ["default", "running", "budget-exhausted", "provider-down", "stale-health", "new-member"];
+const scenario = process.env.UI_HOUSEHOLD_SCENARIO ?? "default";
+if (!scenarios.includes(scenario)) throw new Error(`UI_HOUSEHOLD_SCENARIO must be one of: ${scenarios.join(", ")}`);
+// Browser locale and zone are fixed so relative and absolute dates render the same on every run.
+const browserLocale = "en-US";
+const browserTimezone = "America/Chicago";
 const baseURL = `http://127.0.0.1:${port}`;
 const routes = [
   ["home", "/ui/home/"], ["apps", "/ui/apps/"], ["models", "/ui/models/"],
@@ -43,7 +49,7 @@ if ((await readdir(output)).length)
   throw new Error(`Output directory must be empty before capture: ${output}`);
 const server = spawn(python, ["../scripts/ui/serve.py"], {
   cwd: web,
-  env: { ...process.env, UI_E2E_PORT: String(port), UI_SEED_PROFILE: "household", UI_HOUSEHOLD_MANIFEST_PATH: manifestPath },
+  env: { ...process.env, UI_E2E_PORT: String(port), UI_SEED_PROFILE: "household", UI_HOUSEHOLD_MANIFEST_PATH: manifestPath, UI_HOUSEHOLD_SCENARIO: scenario },
   stdio: "inherit",
 });
 let browser;
@@ -119,13 +125,14 @@ async function prepareLibraryMedia(page, entry) {
     await video.scrollIntoViewIfNeeded();
     const handle = await video.elementHandle();
     await page.waitForFunction(item => item.readyState >= 2 && Number.isFinite(item.duration) && item.duration > 0, handle, { timeout: 20_000 });
-    const duration = await video.evaluate(item => {
+    // Wait for the browser to present the first frame, not a fixed delay.
+    const duration = await video.evaluate(item => new Promise(resolve => {
       item.pause();
+      if (item.currentTime === 0 && !item.seeking) return requestAnimationFrame(() => resolve(item.duration));
+      item.addEventListener("seeked", () => requestAnimationFrame(() => resolve(item.duration)), { once: true });
       item.currentTime = 0;
-      return item.duration;
-    });
+    }));
     await page.evaluate(() => window.scrollTo(0, 0));
-    await page.waitForTimeout(250);
     mediaChecks.push({ view: entry.view, route: "/ui/library/", media: "video", result: "frame-decoded-and-paused", duration_seconds: duration });
   } else {
     mediaChecks.push({ view: entry.view, route: "/ui/library/", media: "video", result: "unavailable" });
@@ -139,8 +146,8 @@ async function capture(page, entry) {
     await settled(page);
   }
   const actualRoute = new URL(page.url()).pathname;
-  const safe = [entry.view, entry.route, actualRoute, entry.interaction ?? "page", entry.theme, entry.width, entry.state]
-    .map(value => String(value).replace(/[^a-zA-Z0-9_-]+/g, "-")).join("_");
+  const safe = [scenario === "default" ? null : scenario, entry.view, entry.route, actualRoute, entry.interaction ?? "page", entry.theme, entry.width, entry.state]
+    .filter(value => value !== null).map(value => String(value).replace(/[^a-zA-Z0-9_-]+/g, "-")).join("_");
   const file = `${safe}.png`;
   const textFile = `${safe}.txt`;
   await writeFile(path.join(output, textFile), `${await page.locator("body").innerText()}\n`);
@@ -162,6 +169,7 @@ try {
   }
   if (!ready) throw new Error("Household supervisor readiness timed out");
   const seed = JSON.parse(await readFile(manifestPath, "utf8"));
+  if (seed.scenario !== scenario) throw new Error(`Seeded scenario ${seed.scenario} does not match ${scenario}`);
   if (!seed.owner_email || !seed.member_email || !seed.password || !seed.base_url)
     throw new Error("Household manifest is missing owner/member credentials or base_url");
   const base = seed.base_url;
@@ -169,8 +177,7 @@ try {
   for (const [view, email] of [["owner", seed.owner_email], ["member", seed.member_email]]) {
     for (const theme of ["light", "dark"]) {
       for (const width of [1440, 390]) {
-        const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 1000 }, colorScheme: theme, reducedMotion: "reduce" });
-        await context.addInitScript(value => localStorage.setItem("theme", value), theme);
+        const context = await newContext(seed, { width, theme });
         await login(context, { email, password: seed.password }, base);
         const page = await context.newPage();
         for (const [route, url] of routes) {
@@ -199,7 +206,10 @@ try {
       }
     }
   }
-  const report = { generated_at: new Date().toISOString(), base_url: base, captures, skipped_states: skipped, media_checks: mediaChecks };
+  for (const theme of ["light", "dark"]) {
+    for (const width of [1440, 390]) await captureTryResult(seed, { theme, width });
+  }
+  const report = { scenario, generated_at: new Date(seed.now * 1000).toISOString(), timezone: browserTimezone, locale: browserLocale, base_url: base, captures, skipped_states: skipped, media_checks: mediaChecks };
   await writeFile(path.join(output, "manifest.json"), `${JSON.stringify(report, null, 2)}\n`);
   const ownerSkips = skipped.filter(item => item.view === "owner");
   if (ownerSkips.length) throw new Error(`Required owner capture states were unavailable; see ${path.join(output, "manifest.json")}`);
@@ -251,24 +261,41 @@ async function captureInteractions(page, { view, theme, width, base }) {
   if (await invite.count()) { await invite.click(); await shot("people", "invite"); }
   else skip("people", "invite", "Invite someone control was not rendered");
 
-  await page.goto(`${base}/ui/try/`);
+  await page.goto(`${base}/ui/library/`);
+  await settled(page);
+  const detail = page.getByRole("button", { name: /^Open / }).first();
+  if (await detail.count()) { await detail.click(); await shot("library", "detail"); }
+  else skip("library", "detail", "No Library asset was rendered");
+}
+
+async function newContext(seed, { width, theme }) {
+  const context = await browser.newContext({
+    viewport: { width, height: width === 390 ? 844 : 1000 }, colorScheme: theme, reducedMotion: "reduce",
+    locale: browserLocale, timezoneId: browserTimezone,
+  });
+  // Freeze Date at the seeded instant; timers and animations keep running.
+  await context.clock.setFixedTime(new Date(seed.now * 1000));
+  await context.addInitScript(value => localStorage.setItem("theme", value), theme);
+  return context;
+}
+
+// Running a request changes later pages (Activity, Usage, Home), so Try runs after every other capture.
+async function captureTryResult(seed, { theme, width }) {
+  const context = await newContext(seed, { width, theme });
+  await login(context, { email: seed.owner_email, password: seed.password }, seed.base_url);
+  const page = await context.newPage();
+  await page.goto(`${seed.base_url}/ui/try/`);
   await settled(page);
   const run = page.getByRole("button", { name: "Run", exact: true }).first();
   await page.waitForFunction(() => {
     const button = [...document.querySelectorAll("button")].find(item => item.textContent?.trim() === "Run");
     return button && !button.disabled;
   }, null, { timeout: 20_000 }).catch(() => {});
-  if (await run.count() && await run.isEnabled()) {
-    await run.click();
-    await page.getByRole("tabpanel").locator('section[aria-live="polite"] h2').waitFor({ state: "visible", timeout: 30_000 });
-    await shot("try", "result");
-  } else throw new Error("Try result capture could not start because Run stayed unavailable");
-
-  await page.goto(`${base}/ui/library/`);
-  await settled(page);
-  const detail = page.getByRole("button", { name: /^Open / }).first();
-  if (await detail.count()) { await detail.click(); await shot("library", "detail"); }
-  else skip("library", "detail", "No Library asset was rendered");
+  if (!(await run.count()) || !(await run.isEnabled())) throw new Error("Try result capture could not start because Run stayed unavailable");
+  await run.click();
+  await page.getByRole("tabpanel").locator('section[aria-live="polite"] h2').waitFor({ state: "visible", timeout: 30_000 });
+  await capture(page, { route: "try", view: "owner", interaction: "result", theme, width, state: "settled" });
+  await context.close();
 }
 
 async function capturePeopleViews(page, { view, theme, width }) {

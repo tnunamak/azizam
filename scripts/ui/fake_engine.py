@@ -69,3 +69,9 @@ async def chat(request: Request):
 def degraded():
     from fastapi.responses import JSONResponse
     return JSONResponse({"status": "degraded", "detail": "Video worker recovering after queue timeout"}, status_code=503)
+
+
+@app.get("/fixture/down")
+def down():
+    from fastapi.responses import JSONResponse
+    return JSONResponse({"status": "down", "detail": "Provider returned 503"}, status_code=503)
