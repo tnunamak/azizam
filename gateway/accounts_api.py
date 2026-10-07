@@ -78,14 +78,17 @@ class SignInMode(_Body):
     mode: Literal["built-in", "oidc", "both"]
 
 
-def signin_options(path, oidc: dict) -> dict:
+def signin_options(path, oidc: dict, *, include_revision: bool = False) -> dict:
     setting = admin_store.get_operator_setting("sign_in", path=path)
     mode = setting["value"].get("mode", "both") if setting else "both"
-    return {"mode": mode, "built_in": mode in {"built-in", "both"},
+    result = {"mode": mode, "built_in": mode in {"built-in", "both"},
             "oidc": mode in {"oidc", "both"} and oidc["enabled"],
             "oidc_label": oidc.get("label") or "your identity provider",
             "oidc_url": "/admin/login?return_to=/ui/invite/", "instance_name": "Azizam",
             "owner_name": "The gateway owner"}
+    if include_revision:
+        result["revision"] = admin_store.operator_setting_revision(setting)
+    return result
 
 
 def create_account_router(*, path_provider: Callable, auth, session_reader, cookie_provider,
@@ -109,8 +112,8 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
             return JSONResponse({"error": {"code": "owner_required", "message": "Only the owner can manage people."}}, status_code=403)
         return ctx
 
-    def options():
-        result = signin_options(path_provider(), oidc_provider())
+    def options(*, include_revision=False):
+        result = signin_options(path_provider(), oidc_provider(), include_revision=include_revision)
         instance = instance_provider() if instance_provider else instance_settings(path_provider())
         result["instance_name"] = instance["name"]
         return result
@@ -274,21 +277,28 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
     @router.get("/admin/api/operator/sign-in")
     def get_mode(request: Request):
         ctx = owner(request)
-        return ctx if isinstance(ctx, JSONResponse) else options()
+        return ctx if isinstance(ctx, JSONResponse) else options(include_revision=True)
 
     @router.put("/admin/api/operator/sign-in")
     def set_mode(request: Request, body: SignInMode):
         ctx = owner(request)
         if isinstance(ctx, JSONResponse):
             return ctx
+        revision = request.headers.get("if-match")
+        if not revision:
+            raise accounts.AccountError("settings_revision_required", "Reload settings and supply the current revision in If-Match.", 428)
         def validate_sign_in(conn):
             # Hold the same write lock as OIDC configuration changes.
             if body.mode in {"oidc", "both"} and not oidc_provider()["enabled"]:
                 raise accounts.AccountError("oidc_unavailable", "Configure an identity provider before enabling this sign-in option.", 409)
-        admin_store.put_operator_setting_with_audit("sign_in", {"mode": body.mode}, updated_by=ctx.audit_actor_id, audit_action="operator.sign_in.update",
-                                                   audit_actor_kind=ctx.actor_kind, audit_actor_id=ctx.audit_actor_id,
-                                                   audit_actor_label=ctx.actor_label, audit_target_kind="operator_setting",
-                                                   audit_target_id="sign_in", validate_in_transaction=validate_sign_in, path=path_provider())
-        return options()
+        try:
+            admin_store.put_operator_setting_with_audit("sign_in", {"mode": body.mode}, updated_by=ctx.audit_actor_id, audit_action="operator.sign_in.update",
+                                                       audit_actor_kind=ctx.actor_kind, audit_actor_id=ctx.audit_actor_id,
+                                                       audit_actor_label=ctx.actor_label, audit_target_kind="operator_setting",
+                                                       audit_target_id="sign_in", expected_revision=revision.strip('"'),
+                                                       validate_in_transaction=validate_sign_in, path=path_provider())
+        except admin_store.SettingsConflictError:
+            raise accounts.AccountError("settings_conflict", "Settings changed elsewhere; reload to see the latest", 409)
+        return options(include_revision=True)
 
     return router

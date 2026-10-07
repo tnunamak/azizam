@@ -53,14 +53,20 @@ members and administrators cannot use the owner-only People/invitation APIs.
 | `POST /admin/api/invites` | `{profile_id,email?,expires_in}`; invitation metadata and private link |
 | `GET /admin/api/invites/{id}/link` | Recover the same pending invitation link; expired/used/revoked links fail |
 | `DELETE /admin/api/invites/{id}` | Revoke pending invitation |
-| `GET /admin/api/operator/sign-in` | Current effective sign-in choices |
-| `PUT /admin/api/operator/sign-in` | `{mode:"built-in"}`, `{mode:"oidc"}` or `{mode:"both"}` |
+| `GET /admin/api/operator/sign-in` | Current effective sign-in choices and `revision` |
+| `PUT /admin/api/operator/sign-in` | `{mode:"built-in"}`, `{mode:"oidc"}` or `{mode:"both"}` with `If-Match` from GET; returns saved choices and `revision` |
 
 The sign-in choice lives in `operator_settings.sign_in` in admin.db and
 applies without restart. OIDC must be configured before selecting `oidc` or
 `both` explicitly. The Settings lane can use these APIs without changing the
 account implementation. The default permits built-in sign-in and exposes
 OIDC when its existing configuration is enabled.
+
+Sign-in choice and identity-provider configuration have separate revisions.
+Saving a sign-in choice does not invalidate a provider draft, and saving a
+provider does not invalidate a sign-in-choice draft. A stale revision for the
+same resource returns `409 settings_conflict`; a missing `If-Match` returns
+`428 settings_revision_required`.
 
 ## Revocation and ownership
 

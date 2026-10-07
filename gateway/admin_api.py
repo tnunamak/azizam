@@ -2991,21 +2991,36 @@ def create_admin_router(
             content={"media_job_admission": {k: v for k, v in record.items() if k != "revision"}, "revision": record["revision"]},
         )
 
+    def oidc_config_response() -> JSONResponse:
+        # The effective projection includes bootstrap defaults and provenance.
+        # Keep that projection, but only pair it with a revision if no provider
+        # write occurred while it was being read.
+        for _ in range(3):
+            revision = store.setting_revision("oidc_provider_config")
+            record = (
+                effective_oidc_config_provider()
+                if effective_oidc_config_provider is not None
+                else store.get_oidc_config_setting()
+            )
+            if store.setting_revision("oidc_provider_config") == revision:
+                return JSONResponse(
+                    status_code=status.HTTP_200_OK,
+                    content={"oidc_config": record, "revision": revision},
+                )
+        response = _RouteError(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "settings_snapshot_unavailable",
+            "Settings are changing elsewhere; retry to read the current configuration.",
+        ).as_response()
+        response.headers["Retry-After"] = "1"
+        return response
+
     @router.get("/oidc-config")
     def get_oidc_config(request: Request) -> JSONResponse:
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        revision = store.setting_revision("oidc_provider_config")
-        record = (
-            effective_oidc_config_provider()
-            if effective_oidc_config_provider is not None
-            else store.get_oidc_config_setting()
-        )
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={"oidc_config": record, "revision": revision},
-        )
+        return oidc_config_response()
 
     @router.put("/oidc-config")
     async def update_oidc_config(request: Request) -> JSONResponse:
@@ -3021,7 +3036,7 @@ def create_admin_router(
         try:
             body = await _read_json_body(request)
             payload = _validate_oidc_config_payload(body)
-            record = store.update_oidc_config_setting(data=payload, actor=ctx, expected_revision=settings_revision(request))
+            store.update_oidc_config_setting(data=payload, actor=ctx, expected_revision=settings_revision(request))
         except _RouteError as exc:
             return exc.as_response()
         except admin_store.SettingsConflictError:
@@ -3032,17 +3047,7 @@ def create_admin_router(
                 "invalid_oidc_config",
                 str(exc),
             ).as_response()
-        return JSONResponse(
-            status_code=status.HTTP_200_OK,
-            content={
-                "revision": record["revision"],
-                "oidc_config": (
-                    effective_oidc_config_provider()
-                    if effective_oidc_config_provider is not None
-                    else {k: v for k, v in record.items() if k != "revision"}
-                )
-            },
-        )
+        return oidc_config_response()
 
     @router.get("/audit")
     def audit(request: Request) -> JSONResponse:

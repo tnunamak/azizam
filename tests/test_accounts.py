@@ -353,7 +353,8 @@ def test_api_login_rejects_other_origin_and_reports_persistent_throttle(account_
 def test_signin_mode_controls_public_options_and_builtin_routes(account_db, account_client, mode, builtin, oidc, fast_password_work):
     path, plan = account_db
     client, _ = account_client
-    set_mode = client.put("/admin/api/operator/sign-in", json={"mode": mode}, headers=OWNER_HEADERS)
+    revision = client.get("/admin/api/operator/sign-in", headers=OWNER_HEADERS).json()["revision"]
+    set_mode = client.put("/admin/api/operator/sign-in", json={"mode": mode}, headers={**OWNER_HEADERS, "If-Match": revision})
     assert set_mode.status_code == 200
     options = client.get("/auth/api/options").json()
     assert options["mode"] == mode
@@ -369,9 +370,10 @@ def test_signin_mode_controls_public_options_and_builtin_routes(account_db, acco
 def test_oidc_mode_requires_configured_provider_and_invalid_settings_fail(account_client):
     client, state = account_client
     state["oidc_enabled"] = False
+    headers = {**OWNER_HEADERS, "If-Match": "0"}
     for mode in ("oidc", "both"):
-        assert client.put("/admin/api/operator/sign-in", json={"mode": mode}, headers=OWNER_HEADERS).status_code == 409
-    assert client.put("/admin/api/operator/sign-in", json={"mode": "built-in"}, headers=OWNER_HEADERS).status_code == 200
+        assert client.put("/admin/api/operator/sign-in", json={"mode": mode}, headers=headers).status_code == 409
+    assert client.put("/admin/api/operator/sign-in", json={"mode": "built-in"}, headers=headers).status_code == 200
     assert client.put("/admin/api/operator/sign-in", json={"mode": "anything"}, headers=OWNER_HEADERS).status_code == 422
     assert client.post("/admin/api/invites", json={"profile_id": "unused", "expires_in": True}, headers=OWNER_HEADERS).status_code == 422
     assert client.patch("/admin/api/people/unused", json={"disabled": "false"}, headers=OWNER_HEADERS).status_code == 422

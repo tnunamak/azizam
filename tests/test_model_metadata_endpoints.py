@@ -154,11 +154,14 @@ class ModelListEndpointTests(unittest.TestCase):
         self.assertEqual(_strip_contract_fields(with_metadata), without_metadata)
 
     def test_anthropic_list_is_unchanged(self) -> None:
-        with_metadata = self.client.get("/anthropic/v1/models").json()
-        with patch.object(mm, "annotate_entries", lambda *_a, **_k: None):
-            without_metadata = self.client.get("/anthropic/v1/models").json()
+        # Entries without a creation timestamp use the current time. Hold it
+        # constant so crossing a second does not change this contract comparison.
+        with patch.object(proxy.time, "time", return_value=1_700_000_000):
+            with_metadata = self.client.get("/anthropic/v1/models").json()
+            with patch.object(mm, "annotate_entries", lambda *_a, **_k: None):
+                without_metadata = self.client.get("/anthropic/v1/models").json()
+            sdk_shaped = self.client.get("/v1/models", headers={"anthropic-version": "2023-06-01"}).json()
         self.assertEqual(with_metadata, without_metadata)
-        sdk_shaped = self.client.get("/v1/models", headers={"anthropic-version": "2023-06-01"}).json()
         self.assertEqual(sdk_shaped, with_metadata)
         for entry in with_metadata["data"]:
             self.assertEqual(set(entry), {"id", "type", "display_name", "created_at"})
