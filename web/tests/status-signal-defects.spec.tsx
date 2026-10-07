@@ -113,3 +113,73 @@ it("keeps the member status sign-in action for HTTP 401", async () => {
   expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/sign-in/?return_to=%2Fui%2Fstatus%2F");
   expect(screen.queryByText(/failed on the server side/)).toBeNull();
 });
+
+async function openEndpointEditor(baseUrl: string) {
+  vi.spyOn(session, "useViewer").mockReturnValue({ admin: true } as ReturnType<typeof session.useViewer>);
+  const registry = {
+    schema_version: 1,
+    services: {
+      endpoint: {
+        id: "endpoint", name: "Endpoint regression engine", enabled: true,
+        editable: true, source: "provisioned", role: "primary", priority: 1,
+        capabilities: [], config: { base_url: baseUrl, note: "Original note" },
+      },
+    },
+  } as unknown as Awaited<ReturnType<typeof api.services.registry>>;
+  vi.spyOn(api.services, "registry").mockResolvedValue(registry);
+  vi.spyOn(api, "status").mockResolvedValue({});
+  const edit = vi.spyOn(api.services, "edit").mockResolvedValue(registry);
+  mountHealthErrorPage(<EnginesPage />);
+  fireEvent.click(await screen.findByText("Show infrastructure"));
+  fireEvent.click(screen.getByText("Endpoint regression engine").closest("button")!);
+  await screen.findByRole("button", { name: "Save engine" });
+  return edit;
+}
+
+it.each([
+  "https://engine.example/v1",
+  "ftp://engine.example/v1",
+  "http://[invalid",
+  "",
+])("saves an unrelated engine edit without validating or rewriting unchanged endpoint %s", async (endpoint) => {
+  const edit = await openEndpointEditor(endpoint);
+  fireEvent.change(screen.getByRole("textbox", { name: "Note" }), { target: { value: "Updated note" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save engine" }));
+  await waitFor(() => expect(edit).toHaveBeenCalledTimes(1));
+  expect(edit).toHaveBeenCalledWith("endpoint", expect.objectContaining({
+    base_url: endpoint, note: "Updated note",
+  }));
+  expect(edit.mock.calls[0][1]).not.toHaveProperty("host");
+  expect(edit.mock.calls[0][1]).not.toHaveProperty("port");
+  expect(edit.mock.calls[0][1]).not.toHaveProperty("base_path");
+});
+
+it.each(["https://secure.example/v1/", "https://secure.example:8443/v1/"])(
+  "still rejects a NEW https endpoint %s, because health checks are http-only",
+  async (endpoint) => {
+    const edit = await openEndpointEditor("http://old.example/v1");
+    fireEvent.change(screen.getByRole("textbox", { name: "Endpoint" }), { target: { value: endpoint } });
+    fireEvent.click(screen.getByRole("button", { name: "Save engine" }));
+    expect(await screen.findByText("Endpoint must use http://. HTTPS endpoints are not supported by this registry editor yet.")).toBeVisible();
+    expect(edit).not.toHaveBeenCalled();
+  },
+);
+
+it("keeps changed HTTP engine endpoints supported and removes a stale HTTPS base URL", async () => {
+  const edit = await openEndpointEditor("https://old.example/v1");
+  fireEvent.change(screen.getByRole("textbox", { name: "Endpoint" }), { target: { value: "http://plain.example/v2/" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save engine" }));
+  await waitFor(() => expect(edit).toHaveBeenCalledTimes(1));
+  expect(edit).toHaveBeenCalledWith("endpoint", expect.objectContaining({
+    host: "plain.example", port: 80, base_path: "/v2",
+  }));
+  expect(edit.mock.calls[0][1]).not.toHaveProperty("base_url");
+});
+
+it.each(["ftp://other.example/v1", "ws://other.example/v1"])("rejects a changed unsupported engine endpoint %s with the existing message", async (endpoint) => {
+  const edit = await openEndpointEditor("https://old.example/v1");
+  fireEvent.change(screen.getByRole("textbox", { name: "Endpoint" }), { target: { value: endpoint } });
+  fireEvent.click(screen.getByRole("button", { name: "Save engine" }));
+  expect(await screen.findByText("Endpoint must use http://. HTTPS endpoints are not supported by this registry editor yet.")).toBeVisible();
+  expect(edit).not.toHaveBeenCalled();
+});

@@ -109,6 +109,8 @@ function endpointFields(baseUrl: string): Record<string, unknown> {
   const text = baseUrl.trim();
   if (!text) throw new Error("Endpoint is required.");
   const parsed = new URL(text.includes("://") ? text : `http://${text}`);
+  // A new or changed endpoint must be http: health polling builds
+  // http://host:port, so an https engine would route but never look healthy.
   if (parsed.protocol !== "http:") {
     throw new Error(
       "Endpoint must use http://. HTTPS endpoints are not supported by this registry editor yet.",
@@ -173,9 +175,12 @@ function editableUpdateBody(
   if ("models" in parsed) {
     parsed.models = normalizeModelConfigForPatch(parsed.models);
   }
-  let endpoint: Record<string, unknown>;
+  let endpoint: Record<string, unknown> = {};
   try {
-    endpoint = endpointFields(baseUrl);
+    if (baseUrl !== composeBaseUrl(service.config)) {
+      endpoint = endpointFields(baseUrl);
+      delete parsed.base_url;
+    }
   } catch (err) {
     if (err instanceof Error) throw err;
     throw new Error("Endpoint must be a valid URL.");
@@ -187,7 +192,6 @@ function editableUpdateBody(
     enabled: service.enabled,
     note: note.trim(),
   };
-  delete nextConfig.base_url;
   return nextConfig;
 }
 
