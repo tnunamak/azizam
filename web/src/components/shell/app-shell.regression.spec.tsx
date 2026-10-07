@@ -1,6 +1,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { axe } from "jest-axe";
+import userEvent from "@testing-library/user-event";
 import { AppShell } from "./app-shell";
 import type { QueryClient } from "@tanstack/react-query";
 import { resetSessionCache } from "@/lib/api";
@@ -115,6 +116,35 @@ afterEach(() => {
 });
 
 describe("AppShell accessible names", () => {
+  it("signs out through a POST with the current session CSRF token", async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockImplementation((input) => {
+      const url = String(input);
+      if (url.endsWith("/me/api/session")) return jsonResponse(ownerSession);
+      if (url.endsWith("/logout")) return jsonResponse({}, { status: 403 });
+      return jsonResponse({});
+    });
+    render(
+      <AppShell>
+        <h1>Home</h1>
+      </AppShell>,
+    );
+    const user = userEvent.setup();
+    const menus = await screen.findAllByRole("button", {
+      name: "Account menu: Alex Owner",
+    });
+    await user.click(menus[0]);
+    await user.click(await screen.findByRole("menuitem", { name: "Sign out" }));
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/logout",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "x-azizam-csrf": "csrf", accept: "application/json" },
+      }),
+    );
+  });
+
   it("keeps natural visible labels while exposing dynamic account and brand names", async () => {
     render(
       <AppShell>

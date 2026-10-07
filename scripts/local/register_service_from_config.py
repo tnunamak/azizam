@@ -34,8 +34,11 @@ from gateway.admin_runtime import AdminSQLiteStore  # noqa: E402
 
 def _backup(db: Path) -> Path:
     target = db.with_name(f"{db.name}.bak.pre-register-{int(time.time())}")
+    admin_store.secure_state_path(db)
+    admin_store.secure_state_path(target)
     with sqlite3.connect(db) as source, sqlite3.connect(target) as dest:
         source.backup(dest)  # consistent copy even while the gateway has the file open
+    admin_store.secure_state_path(target)
     return target
 
 

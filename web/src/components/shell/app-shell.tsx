@@ -144,6 +144,26 @@ function ThemeToggle() {
 
 function AccountMenu() {
   const viewer = useViewer();
+  async function signOut() {
+    try {
+      const member = await fetch("/me/api/session", {
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      const snapshot = await member.json();
+      const csrf =
+        snapshot.csrf_token || (await api.session()).actor.csrf_token;
+      const response = await fetch("/logout", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "x-azizam-csrf": csrf, accept: "application/json" },
+      });
+      if (!response.ok) throw new Error("Sign out failed");
+      window.location.assign("/ui/sign-in/");
+    } catch {
+      toast.error("Could not sign out. Refresh the page and try again.");
+    }
+  }
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -187,18 +207,21 @@ function AccountMenu() {
               API reference
             </a>
           </DropdownMenuItem>
-          <DropdownMenuItem asChild>
-            <a
-              href={
-                viewer.authenticated
-                  ? "/logout"
-                  : `/ui/sign-in/?return_to=${encodeURIComponent(typeof window === "undefined" ? "/ui/home/" : window.location.pathname + window.location.search)}`
-              }
-            >
+          {viewer.authenticated ? (
+            <DropdownMenuItem onSelect={() => void signOut()}>
               <LogOut />
-              {viewer.authenticated ? "Sign out" : "Sign in"}
-            </a>
-          </DropdownMenuItem>
+              Sign out
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem asChild>
+              <a
+                href={`/ui/sign-in/?return_to=${encodeURIComponent(typeof window === "undefined" ? "/ui/home/" : window.location.pathname + window.location.search)}`}
+              >
+                <LogOut />
+                Sign in
+              </a>
+            </DropdownMenuItem>
+          )}
         </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -738,7 +761,9 @@ function Shell({ children }: { children: React.ReactNode }) {
   // The instance name defaults to the product name; repeating it says nothing.
   const instanceName = instanceData?.service?.name?.trim();
   const instanceSubtitle =
-    instanceName && instanceName.toLowerCase() !== PRODUCT_NAME.toLowerCase() ? instanceName : null;
+    instanceName && instanceName.toLowerCase() !== PRODUCT_NAME.toLowerCase()
+      ? instanceName
+      : null;
   useEffect(() => {
     const theme = instanceData?.presentation?.theme_default;
     if (

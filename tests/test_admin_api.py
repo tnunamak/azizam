@@ -1262,6 +1262,8 @@ class FakeAdminStore:
 
 def _admin_auth(request: Request) -> AdminContext:
     header = request.headers.get("authorization", "")
+    if header == "Bearer owner-token":
+        return AdminContext(subject="u_owner", roles=frozenset({"owner"}))
     if header == "Bearer admin-token":
         return AdminContext(
             subject="u_owner",
@@ -1312,11 +1314,11 @@ def _make_client(
     return TestClient(app), store
 
 
-def _auth() -> dict[str, str]:
+def _auth(role: str = "admin") -> dict[str, str]:
     # Registry writers now require this global snapshot precondition.  The
     # fake store deliberately holds generation 1 for ordinary route tests;
     # real-store CAS races have focused tests below.
-    return {"Authorization": "Bearer admin-token", "If-Match": '"os-1"'}
+    return {"Authorization": f"Bearer {role}-token", "If-Match": '"os-1"'}
 
 
 def test_policy_editor_is_admin_projected_and_fails_closed() -> None:
@@ -2522,7 +2524,7 @@ class AdminAuditTests(unittest.TestCase):
                 "redirect_uri": "https://gw.example.com/auth/callback",
                 "groups_claim": "cognito:groups",
             },
-            headers=_auth(),
+            headers=_auth("owner"),
         )
         self.assertEqual(put_resp.status_code, 200, put_resp.text)
         cfg_put = put_resp.json()["oidc_config"]
@@ -2531,7 +2533,7 @@ class AdminAuditTests(unittest.TestCase):
         self.assertNotEqual(cfg_put.get("client_secret"), "s3cr3t")
 
         # GET must return the stored groups_claim plainly (not redacted).
-        get_resp = client.get("/admin/api/oidc-config", headers=_auth())
+        get_resp = client.get("/admin/api/oidc-config", headers=_auth("owner"))
         self.assertEqual(get_resp.status_code, 200)
         cfg_get = get_resp.json()["oidc_config"]
         self.assertEqual(cfg_get.get("groups_claim"), "cognito:groups")
@@ -2552,13 +2554,13 @@ class AdminAuditTests(unittest.TestCase):
                 "redirect_uri": "https://gw/cb",
                 "groups_claim": "my_groups",
             },
-            headers=_auth(),
+            headers=_auth("owner"),
         )
         # Update a different field without touching groups_claim.
         patch_resp = client.put(
             "/admin/api/oidc-config",
             json={"enabled": False, "issuer": "https://other.example.com"},
-            headers=_auth(),
+            headers=_auth("owner"),
         )
         self.assertEqual(patch_resp.status_code, 200)
         cfg = patch_resp.json()["oidc_config"]

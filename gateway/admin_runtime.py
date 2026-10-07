@@ -596,8 +596,11 @@ class AdminSQLiteStore:
         role = str(data.get("role") or "admin").strip()
         if role not in ADMIN_KEY_CREATABLE_ROLES:
             raise ValueError("role must be one of: owner, admin")
+        if "owner" not in actor.roles and role not in actor.roles:
+            raise PermissionError("owner role required to mint owner keys")
         service_account = admin_store.ensure_service_account(
             name,
+            allowed_roles=None if "owner" in actor.roles else actor.roles,
             description="Owner for an admin automation key created from the dashboard.",
             path=self.path,
         )
@@ -1129,6 +1132,8 @@ class AdminSQLiteStore:
         passes an empty/redacted value. Unknown fields are rejected so a
         misspelled key never silently disables auth.
         """
+        if "owner" not in actor.roles:
+            raise PermissionError("owner role required to change OIDC trust configuration")
         unknown = set(data.keys()) - set(OIDC_PROVIDER_FIELDS)
         if unknown:
             raise ValueError(
@@ -1422,6 +1427,10 @@ class AdminAuthenticator:
                         token,
                         signing_key=self.signing_key,
                     )
+                    from gateway.accounts import session_allowed
+
+                    if not session_allowed(session.subject, session.session_id, path=self.store.path):
+                        raise AdminAuthError("session revoked or account disabled")
                     subject_kind, subject_id = session_admin_role_subject(
                         session.subject
                     )

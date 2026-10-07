@@ -2272,6 +2272,10 @@ def create_admin_router(
             record = store.create_admin_automation_key(
                 data={**body, "role": role}, actor=ctx
             )
+        except PermissionError as exc:
+            return _RouteError(
+                status.HTTP_403_FORBIDDEN, "admin_role_forbidden", str(exc)
+            ).as_response()
         except ValueError as exc:
             return _RouteError(
                 status.HTTP_400_BAD_REQUEST,
@@ -2991,6 +2995,12 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
+        if "owner" not in ctx.roles:
+            return _RouteError(
+                status.HTTP_403_FORBIDDEN,
+                "admin_role_forbidden",
+                "owner role required to change OIDC trust configuration",
+            ).as_response()
         try:
             body = await _read_json_body(request)
             payload = _validate_oidc_config_payload(body)

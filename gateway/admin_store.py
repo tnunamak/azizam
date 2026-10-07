@@ -46,7 +46,7 @@ from typing import Any, Iterable, Mapping
 _default_db = Path(__file__).resolve().parent.parent / "data" / "admin.db"
 DB_PATH = Path(get_env("AZIZAM_ADMIN_DB")) if get_env("AZIZAM_ADMIN_DB") else _default_db
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SUBJECT_KINDS = ("user", "service_account", "app")
 APP_KINDS = ("personal", "service")
@@ -101,6 +101,14 @@ CREATE TABLE IF NOT EXISTS user_identity_claims (
 );
 CREATE INDEX IF NOT EXISTS user_identity_claims_lookup
   ON user_identity_claims(user_id, claim_kind);
+
+-- Fixed manual access preserved during the v4 authorization migration. Old
+-- claim aliases cannot safely reconstruct an immutable group path.
+CREATE TABLE IF NOT EXISTS legacy_identity_profile_grants (
+  user_id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL,
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
 
 CREATE TABLE IF NOT EXISTS service_accounts (
   id TEXT PRIMARY KEY,
@@ -163,6 +171,7 @@ CREATE TABLE IF NOT EXISTS admin_role_assignments (
   scope_app_id TEXT,
   granted_at INTEGER NOT NULL,
   granted_by TEXT,
+  provenance TEXT NOT NULL DEFAULT 'manual',
   revoked_at INTEGER,
   UNIQUE(role, subject_kind, subject_id, scope_app_id),
   FOREIGN KEY(scope_app_id) REFERENCES apps(id)
@@ -242,7 +251,10 @@ def _apply_pragmas(conn: sqlite3.Connection) -> None:
 
 def _exec_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA)
+    conn.execute("BEGIN IMMEDIATE")
     row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+    role_columns = {column[1] for column in conn.execute("PRAGMA table_info(admin_role_assignments)")}
+    migrate_legacy_claims = (row is not None and int(row[0]) < 4) or "provenance" not in role_columns
     if row is None:
         conn.execute(
             "INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,)
@@ -258,6 +270,16 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         if "actor_label" not in columns:
             conn.execute("ALTER TABLE audit_events ADD COLUMN actor_label TEXT")
         conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
+    # Grants made before provenance tracking stay manual. This migration is
+    # intentionally idempotent even for databases with an inconsistent version.
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(admin_role_assignments)")}
+    if "provenance" not in columns:
+        conn.execute(
+            "ALTER TABLE admin_role_assignments "
+            "ADD COLUMN provenance TEXT NOT NULL DEFAULT 'manual'"
+        )
+    if migrate_legacy_claims:
+        _migrate_legacy_identity_profiles(conn)
     # A database created before registry generations existed may already have
     # the document.  Seed its first server-owned value during migration rather
     # than exposing a synthetic zero until the next write.
@@ -270,12 +292,105 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_legacy_identity_profiles(conn: sqlite3.Connection) -> None:
+    """Freeze existing claim-derived access, then discard unrecoverable aliases.
+
+    The v3 matcher folded case and path separators. Preserve only its current
+    winning profile, never its ability to authorize future profile mappings.
+    This runs once inside the schema migration's write transaction.
+    """
+    mappings = conn.execute(
+        "SELECT source_kind,source_value,profile_id FROM runtime_profile_mappings "
+        "WHERE disabled_at IS NULL ORDER BY priority ASC,created_at ASC"
+    ).fetchall()
+    has_account_access = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_access'"
+    ).fetchone() is not None
+    users = conn.execute(
+        "SELECT id,email FROM users WHERE EXISTS "
+        "(SELECT 1 FROM user_identity_claims WHERE user_id=users.id)"
+    ).fetchall()
+    for user_id, email in users:
+        # A manual People access plan already took precedence over mappings.
+        if has_account_access and conn.execute(
+            "SELECT 1 FROM account_access WHERE user_id=? "
+            "AND profile_id IS NOT NULL AND removed_at IS NULL", (user_id,)
+        ).fetchone():
+            continue
+        email_value = _normalize_access_value(email)
+        _, _, domain = email_value.partition("@")
+        candidates = {("all_users", "*")}
+        if email_value:
+            candidates.add(("email", email_value))
+        if domain:
+            candidates.add(("domain", domain))
+        roles = {row[0] for row in conn.execute(
+            "SELECT role FROM admin_role_assignments WHERE subject_kind='user' "
+            "AND subject_id=? AND revoked_at IS NULL", (user_id,)
+        )}
+        role = next((role for role in ("owner", "superadmin", "admin") if role in roles), "none")
+        candidates.add(("gateway_role", role))
+        for kind, value in conn.execute(
+            "SELECT claim_kind,claim_value FROM user_identity_claims WHERE user_id=?", (user_id,)
+        ):
+            normalized = _normalize_access_value(value)
+            if normalized:
+                candidates.add((kind, normalized))
+        for kind, value, profile_id in mappings:
+            if (kind, value) not in candidates:
+                continue
+            if kind in IDENTITY_CLAIM_KINDS:
+                # Match the gateway's profile-reference semantics. Default
+                # policy sentinels remain fixed defaults rather than row IDs.
+                if profile_id not in {"default", "default-local"} and not conn.execute(
+                    "SELECT 1 FROM profiles WHERE id=?", (profile_id,)
+                ).fetchone():
+                    for stored_id, name, document in conn.execute(
+                        "SELECT id,name,profile_json FROM profiles ORDER BY created_at ASC"
+                    ):
+                        try:
+                            policy = json.loads(document)
+                        except (TypeError, ValueError):
+                            policy = {}
+                        policy_id = policy.get("id") if isinstance(policy, Mapping) else None
+                        if profile_id in {stored_id, name, policy_id}:
+                            profile_id = stored_id
+                            break
+                conn.execute(
+                    "INSERT OR IGNORE INTO legacy_identity_profile_grants(user_id,profile_id) "
+                    "VALUES (?,?)", (user_id, profile_id),
+                )
+            break
+    conn.execute("DELETE FROM user_identity_claims")
+
+
+def secure_state_path(path: Path) -> None:
+    """Create private SQLite state and tighten existing database sidecars.
+
+    SQLite inherits database permissions for new WAL/SHM files. Precreating the
+    database avoids a process-wide umask change in this multithreaded gateway.
+    """
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path.parent.chmod(0o700)
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        pass
+    else:
+        os.close(fd)
+    for state_file in (path, Path(f"{path}-wal"), Path(f"{path}-shm"), Path(f"{path}-journal")):
+        try:
+            state_file.chmod(0o600)
+        except FileNotFoundError:
+            pass
+
+
 def init_db(path: Path = DB_PATH) -> None:
     """Create the data dir, run the schema, integrity-check, replace if broken.
 
     Idempotent: running it twice on the same file is a no-op.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
+    secure_state_path(path)
 
     if path.exists():
         try:
@@ -297,6 +412,7 @@ def init_db(path: Path = DB_PATH) -> None:
             )
             try:
                 shutil.move(str(path), str(broken))
+                broken.chmod(0o600)
             except Exception as mv_err:  # noqa: BLE001
                 print(
                     f"[admin_store] failed to move broken db: {mv_err}",
@@ -307,6 +423,7 @@ def init_db(path: Path = DB_PATH) -> None:
                 except Exception:
                     pass
 
+    secure_state_path(path)
     conn = sqlite3.connect(str(path), timeout=5.0)
     try:
         _apply_pragmas(conn)
@@ -317,6 +434,7 @@ def init_db(path: Path = DB_PATH) -> None:
 
 @contextmanager
 def _conn(path: Path = DB_PATH):
+    secure_state_path(path)
     conn = sqlite3.connect(str(path), timeout=5.0)
     conn.row_factory = sqlite3.Row
     try:
@@ -617,6 +735,16 @@ def _normalize_access_value(value: object) -> str:
     return " ".join(str(value or "").strip().lower().strip("/").split())
 
 
+def _normalize_identity_value(kind: str, value: object) -> str:
+    # Authorization claims retain their case, separators, and full path.
+    raw = str(value or "")
+    if kind == "oidc_group":
+        from gateway.admin_oidc import canonical_oidc_group
+
+        return canonical_oidc_group(raw) if raw else ""
+    return raw
+
+
 def replace_user_identity_claims(
     user_id: str,
     claims_by_kind: Mapping[str, Iterable[str]],
@@ -624,7 +752,7 @@ def replace_user_identity_claims(
     now: int | None = None,
     path: Path = DB_PATH,
 ) -> None:
-    """Replace the latest OIDC group/role aliases observed for a user."""
+    """Replace exact OIDC authorization claims observed for a user."""
     if not user_id:
         raise ValueError("user_id is required")
     ts = _now() if now is None else int(now)
@@ -633,7 +761,7 @@ def replace_user_identity_claims(
         if kind not in IDENTITY_CLAIM_KINDS:
             continue
         for value in values:
-            normalized = _normalize_access_value(value)
+            normalized = _normalize_identity_value(kind, value)
             if normalized:
                 rows.append((kind, normalized))
 
@@ -697,21 +825,44 @@ def ensure_service_account(
     name: str,
     *,
     description: str | None = None,
+    allowed_roles: Iterable[str] | None = None,
     now: int | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
-    """Return a service account by name, creating it when missing."""
+    """Reuse an identity only if the issuer may mint its effective roles.
+
+    ``allowed_roles=None`` is reserved for trusted local operator callers.
+    Authorization precedes all mutations, including creation of a new identity.
+    """
     if not name:
         raise ValueError("service account name is required")
+    ts = _now() if now is None else int(now)
     with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             "SELECT * FROM service_accounts WHERE name = ?", (name,)
         ).fetchone()
-    if row is not None:
-        return _row_to_dict(row)  # type: ignore[return-value]
-    return create_service_account(
-        name, description=description, now=now, path=path
-    )
+        if row is not None:
+            if allowed_roles is not None:
+                roles = {
+                    str(grant[0]) for grant in conn.execute(
+                        "SELECT role FROM admin_role_assignments "
+                        "WHERE subject_kind='service_account' AND subject_id=? "
+                        "AND revoked_at IS NULL", (row["id"],)
+                    )
+                }
+                if roles - set(allowed_roles):
+                    raise PermissionError("cannot mint a key for a higher-privilege principal")
+            return _row_to_dict(row)  # type: ignore[return-value]
+        svc_id = _gen_id("svc")
+        conn.execute(
+            "INSERT INTO service_accounts(id, name, description, created_at) "
+            "VALUES (?, ?, ?, ?)", (svc_id, name, description, ts),
+        )
+        conn.commit()
+        return _row_to_dict(conn.execute(
+            "SELECT * FROM service_accounts WHERE id=?", (svc_id,)
+        ).fetchone())  # type: ignore[return-value]
 
 
 def get_service_account(
@@ -1296,6 +1447,7 @@ def assign_admin_role(
     subject_id: str,
     scope_app_id: str | None = None,
     granted_by: str | None = None,
+    provenance: str = "manual",
     now: int | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
@@ -1313,27 +1465,31 @@ def assign_admin_role(
         )
     if not role or not subject_id:
         raise ValueError("role and subject_id are required")
+    if provenance not in {"manual", "oidc"}:
+        raise ValueError("provenance must be manual or oidc")
     ts = _now() if now is None else int(now)
     with _conn(path) as conn:
         row = conn.execute(
-            "SELECT id FROM admin_role_assignments "
+            "SELECT * FROM admin_role_assignments "
             "WHERE role = ? AND subject_kind = ? AND subject_id = ? "
             "AND COALESCE(scope_app_id, '') = COALESCE(?, '')",
             (role, subject_kind, subject_id, scope_app_id),
         ).fetchone()
         if row is not None:
+            if provenance == "oidc" and row["provenance"] == "manual" and row["revoked_at"] is None:
+                return _row_to_dict(row)  # type: ignore[return-value]
             conn.execute(
                 "UPDATE admin_role_assignments SET revoked_at = NULL, "
-                "granted_at = ?, granted_by = ? WHERE id = ?",
-                (ts, granted_by, row["id"]),
+                "granted_at = ?, granted_by = ?, provenance = ? WHERE id = ?",
+                (ts, granted_by, provenance, row["id"]),
             )
             assignment_id = row["id"]
         else:
             cur = conn.execute(
                 "INSERT INTO admin_role_assignments(role, subject_kind, "
-                "subject_id, scope_app_id, granted_at, granted_by) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (role, subject_kind, subject_id, scope_app_id, ts, granted_by),
+                "subject_id, scope_app_id, granted_at, granted_by, provenance) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (role, subject_kind, subject_id, scope_app_id, ts, granted_by, provenance),
             )
             assignment_id = cur.lastrowid
         conn.commit()
@@ -1342,6 +1498,54 @@ def assign_admin_role(
             (assignment_id,),
         ).fetchone()
     return _row_to_dict(out)  # type: ignore[return-value]
+
+
+def reconcile_oidc_admin_roles(
+    subject_id: str,
+    roles: Iterable[str],
+    *,
+    now: int | None = None,
+    path: Path = DB_PATH,
+) -> list[dict[str, Any]]:
+    """Replace claim-derived global grants while preserving every manual grant."""
+    desired = set(roles)
+    if not subject_id or desired - {"owner", "admin", "superadmin"}:
+        raise ValueError("valid user and control-plane roles are required")
+    ts = _now() if now is None else int(now)
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        rows = conn.execute(
+            "SELECT * FROM admin_role_assignments "
+            "WHERE subject_kind='user' AND subject_id=? AND scope_app_id IS NULL",
+            (subject_id,),
+        ).fetchall()
+        for row in rows:
+            if row["provenance"] == "oidc" and row["role"] not in desired:
+                conn.execute(
+                    "UPDATE admin_role_assignments SET revoked_at=? "
+                    "WHERE id=? AND revoked_at IS NULL", (ts, row["id"]),
+                )
+        for role in sorted(desired):
+            matching = [row for row in rows if row["role"] == role]
+            if any(row["provenance"] == "manual" and row["revoked_at"] is None for row in matching):
+                continue
+            existing = next((row for row in matching if row["provenance"] == "oidc"), None)
+            if existing is not None:
+                conn.execute(
+                    "UPDATE admin_role_assignments SET revoked_at=NULL, granted_at=? "
+                    "WHERE id=?", (ts, existing["id"]),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO admin_role_assignments(role,subject_kind,subject_id,"
+                    "scope_app_id,granted_at,granted_by,provenance) "
+                    "VALUES (?,'user',?,NULL,?,'oidc','oidc')", (role, subject_id, ts),
+                )
+        conn.commit()
+        return [_row_to_dict(row) for row in conn.execute(
+            "SELECT * FROM admin_role_assignments WHERE subject_kind='user' "
+            "AND subject_id=? AND revoked_at IS NULL", (subject_id,)
+        )]  # type: ignore[misc]
 
 
 def revoke_admin_role(
@@ -1403,7 +1607,10 @@ def _normalize_runtime_mapping(
         )
     if spec["value_mode"] == "fixed":
         return kind, str(spec["fixed_value"])
-    value = _normalize_access_value(source_value)
+    value = (
+        _normalize_identity_value(kind, source_value)
+        if kind in IDENTITY_CLAIM_KINDS else _normalize_access_value(source_value)
+    )
     if not value:
         raise ValueError("source_value is required")
     return kind, value
@@ -1544,16 +1751,21 @@ def resolve_runtime_profile_mapping(
     if role_value:
         candidates.add(("gateway_role", role_value))
     for group in oidc_groups:
-        value = _normalize_access_value(group)
+        value = _normalize_identity_value("oidc_group", group)
         if value:
             candidates.add(("oidc_group", value))
     for role in oidc_roles:
-        value = _normalize_access_value(role)
+        value = _normalize_identity_value("oidc_role", role)
         if value:
             candidates.add(("oidc_role", value))
 
     for row in list_runtime_profile_mappings(path=path):
-        pair = (str(row.get("source_kind") or ""), str(row.get("source_value") or ""))
+        kind = str(row.get("source_kind") or "")
+        value = str(row.get("source_value") or "")
+        # Old short-name mappings remain exact root paths after migration.
+        if kind in IDENTITY_CLAIM_KINDS:
+            value = _normalize_identity_value(kind, value)
+        pair = (kind, value)
         if pair in candidates:
             return str(row.get("profile_id") or "") or None
     return None
@@ -2040,6 +2252,7 @@ __all__ = [
     "RUNTIME_PROFILE_MAPPING_SOURCE_KINDS",
     "RUNTIME_PROFILE_MAPPING_SOURCE_SPECS",
     "init_db",
+    "secure_state_path",
     "schema_version",
     "upsert_oidc_user",
     "get_user",
@@ -2070,6 +2283,7 @@ __all__ = [
     "list_credentials",
     "list_active_credentials",
     "assign_admin_role",
+    "reconcile_oidc_admin_roles",
     "revoke_admin_role",
     "list_admin_roles",
     "create_runtime_profile_mapping",

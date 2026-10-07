@@ -424,7 +424,7 @@ def test_proxy_rejects_revoked_session_for_portal_and_browser_before_and_after_r
     monkeypatch.setattr(proxy, "_browser_admin_session_signing_key", lambda: SIGNING_KEY)
     monkeypatch.setattr(proxy, "_browser_admin_cookie_config", lambda: cookie)
     raw = encode_session_cookie(session, signing_key=SIGNING_KEY)
-    client = TestClient(proxy.app)
+    client = TestClient(proxy.app, client=("127.0.0.1", 50000))
     client.cookies.set(cookie.name, raw)
     assert client.get("/me/api/session").status_code == 200
     accounts.change_person(user["id"], "owner", disabled=True, path=path)
@@ -475,8 +475,8 @@ def test_proxy_http_full_member_lifecycle_from_owner_invitation_through_reset_an
     monkeypatch.setattr(proxy.ADMIN_AUTH, "cookie", cookie)
     monkeypatch.setattr(proxy, "_browser_admin_session_signing_key", lambda: SIGNING_KEY)
     monkeypatch.setattr(proxy, "_browser_admin_cookie_config", lambda: cookie)
-    admin = TestClient(proxy.app)
-    member = TestClient(proxy.app)
+    admin = TestClient(proxy.app, client=("127.0.0.1", 50000))
+    member = TestClient(proxy.app, client=("127.0.0.1", 50000))
     admin.cookies.set(cookie.name, encode_session_cookie(owner_session, signing_key=SIGNING_KEY))
     owner_csrf = {"x-azizam-csrf": csrf_token_for_session(owner_session, signing_key=SIGNING_KEY)}
     invitation = admin.post("/admin/api/invites", headers=owner_csrf, json={"profile_id": plan["id"], "email": "member@example.test"})
