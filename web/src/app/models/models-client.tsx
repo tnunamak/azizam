@@ -238,7 +238,7 @@ function hasNoProviderCharge(row: CatalogRow): boolean {
 function costLabel(row: CatalogRow): string | undefined {
   if (row.cost.kind === "paid") {
     return row.cost.price === null
-      ? undefined
+      ? "Paid · price unavailable"
       : `Paid · ${String(row.cost.price)}`;
   }
   return undefined;
@@ -383,28 +383,53 @@ function AvailabilityFacts({ row }: { row: CatalogRow }) {
 
 function CopyModelName({ row }: { row: CatalogRow }) {
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
   async function copyName() {
-    await navigator.clipboard.writeText(row.id);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
+    try {
+      await navigator.clipboard.writeText(row.id);
+      setCopyError(false);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+      setCopyError(true);
+    }
   }
   return (
-    <button
-      type="button"
-      onClick={(event) => {
-        event.stopPropagation();
-        void copyName();
-      }}
-      aria-label={`Copy model name ${row.id}`}
-      className="bg-muted hover:bg-muted/80 focus-visible:ring-ring flex min-h-11 max-w-full min-w-0 items-center justify-between gap-2 rounded-md px-3 py-2 text-left font-mono text-xs transition outline-none focus-visible:ring-[3px]"
-    >
-      <code className="truncate">{row.id}</code>
-      {copied ? (
-        <Check aria-label="Model name copied" className="size-4 shrink-0" />
-      ) : (
-        <Copy aria-hidden="true" className="size-4 shrink-0" />
+    <div className="min-w-0">
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          void copyName();
+        }}
+        aria-label={`Copy model name ${row.id}`}
+        className="bg-muted hover:bg-muted/80 focus-visible:ring-ring flex min-h-11 max-w-full min-w-0 items-center justify-between gap-2 rounded-md px-3 py-2 text-left font-mono text-xs transition outline-none focus-visible:ring-[3px]"
+      >
+        <code className="truncate">{row.id}</code>
+        {copied ? (
+          <Check aria-label="Model name copied" className="size-4 shrink-0" />
+        ) : (
+          <Copy aria-hidden="true" className="size-4 shrink-0" />
+        )}
+      </button>
+      {copyError && (
+        <div
+          className="mt-2 space-y-2"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <p role="alert" className="text-destructive text-sm">
+            Copy failed. Select the model name and copy it manually.
+          </p>
+          <Input
+            aria-label="Model name for manual copy"
+            readOnly
+            value={row.id}
+            onFocus={(event) => event.currentTarget.select()}
+          />
+        </div>
       )}
-    </button>
+    </div>
   );
 }
 

@@ -331,8 +331,10 @@ test("Usage labels local and unknown paid spend honestly", async ({ page }) => {
 
   await page.getByRole("combobox", { name: "Source" }).click();
   await page.getByRole("option", { name: "Open WebUI" }).click();
-  await expect(page.getByText("Remote spend", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Remote spend", { exact: true })).toBeVisible();
+  await expect(page.getByText("Unavailable", { exact: true })).toBeVisible();
+  await expect(page.getByText("No paid requests")).toHaveCount(0);
   await expect(
-    page.getByText("2 paid requests have no settled cost"),
-  ).toHaveCount(0);
+    page.getByText(/2 paid requests have unknown cost/),
+  ).toBeVisible();
 });

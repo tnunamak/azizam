@@ -83,6 +83,7 @@ type CatalogOption = {
   capability: TryTab;
   price: string;
   locality: string;
+  provider?: string;
   workflow?: WorkflowOption;
 };
 type WorkflowOption = {
@@ -108,6 +109,9 @@ type WorkflowOption = {
     javascript?: string;
   };
 };
+type CatalogState = "idle" | "loading" | "ready" | "empty" | "error";
+type CatalogSection = "models" | "workflows";
+
 type CatalogGroups = Partial<Record<TryTab, CatalogOption[]>>;
 type Result = {
   title: string;
@@ -507,6 +511,7 @@ function groupCatalog(payload: unknown) {
         capability,
         price: costLabel(record.cost),
         locality: localityLabel(record),
+        provider: stringValue(record.provider) ?? undefined,
       };
       if (!(grouped[capability] ?? []).some((existing) => existing.id === id)) {
         grouped[capability] = [...(grouped[capability] ?? []), option];
@@ -514,7 +519,11 @@ function groupCatalog(payload: unknown) {
     }
   }
   for (const capability of Object.keys(grouped) as TryTab[]) {
-    const seenLabels = new Set<string>();
+    const labelCounts = new Map<string, number>();
+    for (const option of grouped[capability] ?? []) {
+      const label = option.label.trim().toLocaleLowerCase();
+      labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
+    }
     grouped[capability] = [...(grouped[capability] ?? [])]
       .sort((a, b) => {
         const rank = (option: CatalogOption) =>
@@ -527,11 +536,16 @@ function groupCatalog(payload: unknown) {
                 : 3;
         return rank(a) - rank(b);
       })
-      .filter((option) => {
+      .map((option) => {
         const label = option.label.trim().toLocaleLowerCase();
-        if (seenLabels.has(label)) return false;
-        seenLabels.add(label);
-        return true;
+        return (labelCounts.get(label) ?? 0) > 1
+          ? {
+              ...option,
+              label: [option.label, option.provider, option.id]
+                .filter(Boolean)
+                .join(" · "),
+            }
+          : option;
       });
   }
   return grouped;
@@ -754,7 +768,11 @@ function selectedOrDefaultModel(
     options.some((option) => option.id === current)
   )
     return current;
-  if (!current || current === DEFAULTS[tab].model || !options.some((option) => option.id === current))
+  if (
+    !current ||
+    current === DEFAULTS[tab].model ||
+    !options.some((option) => option.id === current)
+  )
     return recommended?.id ?? options[0].id;
   return current;
 }
@@ -792,6 +810,7 @@ export default function TryPage() {
   >({});
   const [checkingJob, setCheckingJob] = useState(false);
   const [jobError, setJobError] = useState<string | null>(null);
+  const [recordingError, setRecordingError] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const recorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
@@ -808,9 +827,13 @@ export default function TryPage() {
   const [catalog, setCatalog] = useState<
     Partial<Record<TryTab, CatalogOption[]>>
   >({});
+  const catalogRef = useRef<CatalogGroups>({});
+  const catalogRequests = useRef<
+    Partial<Record<CatalogSection, AbortController>>
+  >({});
   const [catalogState, setCatalogState] = useState<
-    "idle" | "loading" | "ready" | "empty" | "error"
-  >("idle");
+    Record<CatalogSection, CatalogState>
+  >({ models: "idle", workflows: "idle" });
   const parsedOptions = useMemo(
     () =>
       options
@@ -863,6 +886,10 @@ export default function TryPage() {
 
   useEffect(() => {
     void loadCatalog();
+    const requests = catalogRequests.current;
+    return () => {
+      for (const controller of Object.values(requests)) controller.abort();
+    };
     // The catalog is safe to read without a public API key. Run refreshes it
     // after minting a key so fallback model-list gateways still work.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -932,7 +959,6 @@ export default function TryPage() {
     try {
       await accountApi.revokeKey(key.id);
       setKey(null);
-      setCatalogState("idle");
     } catch (error) {
       setKeyError(
         error instanceof Error
@@ -945,7 +971,7 @@ export default function TryPage() {
   }
 
   async function startRecording() {
-    setKeyError(null);
+    setRecordingError(null);
     let mediaStream: MediaStream | null = null;
     try {
       mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -974,7 +1000,11 @@ export default function TryPage() {
       setRecording(true);
     } catch {
       mediaStream?.getTracks().forEach((track) => track.stop());
-      setKeyError("Recording is not available in this browser.");
+      stream.current = null;
+      if (mounted.current && activeTabRef.current === "transcribe")
+        setRecordingError(
+          "Recording is not available in this browser. Check microphone access and try again.",
+        );
     }
   }
 
@@ -1006,68 +1036,92 @@ export default function TryPage() {
   }
 
   async function loadCatalog(secret?: string): Promise<CatalogGroups | null> {
-    setCatalogState("loading");
+    await Promise.all([
+      loadCatalogSection("models", secret),
+      loadCatalogSection("workflows"),
+    ]);
+    return mounted.current ? catalogRef.current : null;
+  }
+
+  async function loadCatalogSection(section: CatalogSection, secret?: string) {
+    catalogRequests.current[section]?.abort();
+    const controller = new AbortController();
+    catalogRequests.current[section] = controller;
+    const current = () =>
+      mounted.current &&
+      !controller.signal.aborted &&
+      catalogRequests.current[section] === controller;
+    setCatalogState((states) => ({ ...states, [section]: "loading" }));
     try {
-      const catalogResponse = await fetch("/me/api/models/catalog", {
-        credentials: "same-origin",
-      });
-      const workflowsResponse = await fetch("/me/api/workflows", {
-        credentials: "same-origin",
-      });
-      let workflowOptions = workflowsResponse.ok
-        ? groupWorkflows(await workflowsResponse.json())
-        : [];
-      if (requestedCapabilityKey === "audio" && !requestedWorkflow) {
-        workflowOptions = workflowOptions.filter((option) =>
-          option.workflow?.outputs?.some(
-            (output) =>
-              output.kind === "audio" ||
-              output.type === "audio" ||
-              output.media_type?.startsWith("audio/"),
+      const response = await fetch(
+        section === "models" ? "/me/api/models/catalog" : "/me/api/workflows",
+        {
+          credentials: "same-origin",
+          signal: controller.signal,
+        },
+      );
+      let grouped: CatalogGroups;
+      if (section === "workflows") {
+        if (!response.ok) throw new Error("Workflow catalog unavailable");
+        let workflowOptions = groupWorkflows(await response.json());
+        if (requestedCapabilityKey === "audio" && !requestedWorkflow) {
+          workflowOptions = workflowOptions.filter((option) =>
+            option.workflow?.outputs?.some(
+              (output) =>
+                output.kind === "audio" ||
+                output.type === "audio" ||
+                output.media_type?.startsWith("audio/"),
+            ),
+          );
+        }
+        grouped = { workflow: workflowOptions };
+      } else if (response.ok) {
+        grouped = groupCatalog(await response.json());
+      } else if (secret) {
+        const fallback = await fetch("/openai/v1/models", {
+          headers: { authorization: `Bearer ${secret}` },
+          signal: controller.signal,
+        });
+        if (!fallback.ok) throw new Error("Model catalog unavailable");
+        const payload = (await fallback.json()) as {
+          data?: Array<{ id?: string }>;
+        };
+        grouped = {
+          chat: (payload.data ?? []).flatMap((item) =>
+            item.id
+              ? [
+                  {
+                    id: item.id,
+                    label: item.id,
+                    capability: "chat" as const,
+                    price: "",
+                    locality: "Available to this Try key",
+                  },
+                ]
+              : [],
           ),
-        );
+        };
+      } else {
+        throw new Error("Model catalog unavailable");
       }
-      if (catalogResponse.ok) {
-        const grouped = groupCatalog(await catalogResponse.json());
-        if (workflowOptions.length) grouped.workflow = workflowOptions;
-        setCatalog(grouped);
-        setModel((current) => nextModelForCatalog(grouped, current));
-        setCatalogState(Object.keys(grouped).length ? "ready" : "empty");
-        return grouped;
-      }
-      if (!secret) {
-        setCatalogState(catalogResponse.status === 404 ? "empty" : "error");
-        return null;
-      }
-      const response = await fetch("/openai/v1/models", {
-        headers: { authorization: `Bearer ${secret}` },
-      });
-      if (!response.ok) {
-        setCatalogState(catalogResponse.status === 404 ? "empty" : "error");
-        return null;
-      }
-      const payload = (await response.json()) as {
-        data?: Array<{ id?: string }>;
-      };
-      const ids = payload.data?.map((item) => item.id).filter(Boolean) as
-        | string[]
-        | undefined;
-      const grouped = {
-        chat: (ids ?? []).map((id) => ({
-          id,
-          label: id,
-          capability: "chat",
-          price: "",
-          locality: "Available to this Try key",
-        })),
-      } satisfies CatalogGroups;
-      setCatalog(grouped);
-      setModel((current) => nextModelForCatalog(grouped, current));
-      setCatalogState(ids?.length ? "ready" : "empty");
-      return grouped;
+      if (!current()) return;
+      const merged =
+        section === "workflows"
+          ? { ...catalogRef.current, workflow: grouped.workflow }
+          : { ...grouped, workflow: catalogRef.current.workflow };
+      catalogRef.current = merged;
+      setCatalog(merged);
+      setModel((selected) => nextModelForCatalog(merged, selected));
+      const hasOptions = Object.values(grouped).some(
+        (options) => options?.length,
+      );
+      setCatalogState((states) => ({
+        ...states,
+        [section]: hasOptions ? "ready" : "empty",
+      }));
     } catch {
-      setCatalogState("error");
-      return null;
+      if (current())
+        setCatalogState((states) => ({ ...states, [section]: "error" }));
     }
   }
 
@@ -1572,7 +1626,22 @@ export default function TryPage() {
                     />
                   </label>
                   {tab.value === activeTab && (
-                    <CatalogNotice state={catalogState} />
+                    <CatalogNotice
+                      state={
+                        catalogState[
+                          tab.value === "workflow" ? "workflows" : "models"
+                        ]
+                      }
+                      section={
+                        tab.value === "workflow" ? "workflows" : "models"
+                      }
+                      onRetry={() =>
+                        void loadCatalogSection(
+                          tab.value === "workflow" ? "workflows" : "models",
+                          key?.secret,
+                        )
+                      }
+                    />
                   )}
                   {tab.value === "workflow" &&
                     requestedCapabilityKey === "audio" && (
@@ -1673,6 +1742,16 @@ export default function TryPage() {
                   )}
                   {tab.value === "transcribe" && (
                     <div className="space-y-3">
+                      {/* ErrorState retry buttons must not submit this form. */}
+                      {recordingError && (
+                        <div onClick={(event) => event.preventDefault()}>
+                          <ErrorState
+                            heading="Could not record audio"
+                            message={recordingError}
+                            onRetry={() => void startRecording()}
+                          />
+                        </div>
+                      )}
                       <label className="block space-y-2">
                         <span className="text-sm font-medium">Audio file</span>
                         <Input
@@ -1733,9 +1812,7 @@ export default function TryPage() {
                       running !== null ||
                       keyBusy ||
                       checkingJob ||
-                      (tab.value === "workflow" &&
-                        requestedCapabilityKey === "audio" &&
-                        !selectedWorkflow)
+                      (tab.value === "workflow" && !selectedWorkflow)
                     }
                   >
                     {running === tab.value ? (
@@ -1948,9 +2025,7 @@ function ResultView({
           label={result.job ? "Request time" : "Time"}
           value={`${result.elapsedMs} ms`}
         />
-        {result.cost && (
-          <Fact label="Cost" value={result.cost} />
-        )}
+        {result.cost && <Fact label="Cost" value={result.cost} />}
         <Fact
           label="Receipt"
           value={
@@ -2116,7 +2191,8 @@ function ModelSelect({
   onChange: (value: string) => void;
 }) {
   const values = [
-    ...(!options.some((option) => option.id === value)
+    ...((value || fallbackLabel) &&
+    !options.some((option) => option.id === value)
       ? [
           {
             id: value || fallbackLabel,
@@ -2131,6 +2207,7 @@ function ModelSelect({
   return (
     <Select
       value={value}
+      disabled={!values.length}
       onValueChange={(next) => {
         // Catalog updates can reset the Select's hidden form input. A model
         // must keep its selected identifier rather than accept that empty value.
@@ -2141,7 +2218,7 @@ function ModelSelect({
         aria-label="Model"
         className="w-full min-w-0 overflow-hidden [&_[data-slot=select-value]]:min-w-0"
       >
-        <SelectValue />
+        <SelectValue placeholder="No options available" />
       </SelectTrigger>
       <SelectContent>
         {values.map((option) => (
@@ -2158,20 +2235,33 @@ function ModelSelect({
 
 function CatalogNotice({
   state,
+  section,
+  onRetry,
 }: {
-  state: "idle" | "loading" | "ready" | "empty" | "error";
+  state: CatalogState;
+  section: CatalogSection;
+  onRetry: () => void;
 }) {
-  if (state === "loading") {
-    return <Badge variant="outline">Loading model catalog</Badge>;
-  }
-  if (state === "ready") {
-    return null;
-  }
-  if (state === "error") {
-    return <Badge variant="outline">Catalog could not be loaded</Badge>;
-  }
-  if (state === "empty") {
-    return <Badge variant="outline">No models are listed for your key</Badge>;
-  }
+  const label = section === "workflows" ? "Workflow" : "Model";
+  if (state === "loading")
+    return (
+      <Badge variant="outline">Loading {label.toLowerCase()} catalog</Badge>
+    );
+  // ErrorState action buttons must not submit the surrounding Run form.
+  if (state === "error")
+    return (
+      <div onClick={(event) => event.preventDefault()}>
+        <ErrorState
+          heading={`${label} catalog unavailable`}
+          message={`${label} catalog could not be loaded.`}
+          action={{
+            label: `Retry ${label.toLowerCase()} catalog`,
+            onClick: onRetry,
+          }}
+        />
+      </div>
+    );
+  if (state === "empty")
+    return <Badge variant="outline">No {section} are listed</Badge>;
   return null;
 }

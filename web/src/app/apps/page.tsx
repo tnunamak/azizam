@@ -6,7 +6,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppWindow, MoreHorizontal, Plus, KeyRound } from "lucide-react";
 import { toast } from "sonner";
 import { formatAppName } from "@/lib/format";
-import { accountApi, type AccountApp } from "@/lib/account-api";
+import {
+  accountApi,
+  type AccountApp,
+  type AccountSnapshot,
+} from "@/lib/account-api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -111,6 +115,23 @@ function AppsContents() {
     document.getElementById(`app-${requestedApp}`)?.focus();
   }, [requestedApp, accountData]);
 
+  function resetDraft() {
+    setName("");
+    setClient(CLIENTS[0]);
+    setCreatedApp(null);
+    setError(null);
+  }
+
+  function startNewApp() {
+    resetDraft();
+    setCreating(true);
+  }
+
+  function closeCreate() {
+    setCreating(false);
+    resetDraft();
+  }
+
   async function create(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
@@ -118,6 +139,20 @@ function AppsContents() {
     try {
       const app = createdApp ?? (await accountApi.createApp(name.trim()));
       setCreatedApp(app);
+      if (!createdApp) {
+        queryClient.setQueryData<AccountSnapshot>(accountKey, (current) =>
+          current
+            ? {
+                ...current,
+                apps: [
+                  ...current.apps.filter((item) => item.id !== app.id),
+                  app,
+                ],
+              }
+            : current,
+        );
+        void refresh();
+      }
       const appName = formatAppName(app.name, accountData?.user?.email);
       const key = await accountApi.mintKey(
         app.id,
@@ -250,14 +285,7 @@ function AppsContents() {
         title="Apps & keys"
         subtitle="Apps that use your gateway"
         primaryAction={
-          <Button
-            onClick={() => {
-              setCreating(true);
-              setError(null);
-              setCreatedApp(null);
-            }}
-            disabled={!accountData?.authenticated}
-          >
+          <Button onClick={startNewApp} disabled={!accountData?.authenticated}>
             <Plus aria-hidden="true" />
             New app
           </Button>
@@ -294,7 +322,7 @@ function AppsContents() {
           icon={KeyRound}
           title="Connect your first app"
           description="Create a key for an app you already use."
-          action={<Button onClick={() => setCreating(true)}>New app</Button>}
+          action={<Button onClick={startNewApp}>New app</Button>}
         />
       ) : (
         <div className="space-y-3">
@@ -336,6 +364,20 @@ function AppsContents() {
                     </p>
                   )}
                 </div>
+                {!app.credentials.length && (
+                  <Button
+                    variant="outline"
+                    disabled={!app.can_mint_keys || busy}
+                    onClick={() => {
+                      resetDraft();
+                      setCreatedApp(app);
+                      setName(app.name);
+                      setCreating(true);
+                    }}
+                  >
+                    Create key
+                  </Button>
+                )}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
@@ -373,7 +415,9 @@ function AppsContents() {
                         }
                       }}
                     >
-                      Create another key
+                      {app.credentials.length
+                        ? "Create another key"
+                        : "Create key"}
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       disabled={!app.credentials.length || !app.can_mint_keys}
@@ -413,12 +457,12 @@ function AppsContents() {
       <Dialog
         open={creating}
         onOpenChange={(open) => {
-          if (!busy) setCreating(open);
+          if (!open && !busy) closeCreate();
         }}
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>New app</DialogTitle>
+            <DialogTitle>{createdApp ? "Create key" : "New app"}</DialogTitle>
             <DialogDescription>
               Create access for an existing app; its key appears once.
             </DialogDescription>
@@ -469,7 +513,7 @@ function AppsContents() {
                 variant="outline"
                 type="button"
                 disabled={busy}
-                onClick={() => setCreating(false)}
+                onClick={closeCreate}
               >
                 Cancel
               </Button>
@@ -477,7 +521,9 @@ function AppsContents() {
                 {busy
                   ? "Creating…"
                   : createdApp
-                    ? "Retry key creation"
+                    ? error
+                      ? "Retry key creation"
+                      : "Create key"
                     : "Create app and key"}
               </Button>
             </DialogFooter>
