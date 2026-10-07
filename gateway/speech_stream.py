@@ -152,6 +152,7 @@ async def transcode_pcm_stream(
 
     The input is fed from a task while output is yielded as soon as ffmpeg
     emits it, so the first encoded bytes leave before synthesis finishes.
+    A nonzero ffmpeg exit raises after any already-yielded output.
     """
     process = await asyncio.create_subprocess_exec(
         *ffmpeg_pcm_command(src_rate, response_format),
@@ -203,6 +204,8 @@ async def transcode_pcm_stream(
             except ProcessLookupError:
                 pass
         await asyncio.shield(process.wait())
+    if process.returncode != 0:
+        raise RuntimeError(f"ffmpeg exited with status {process.returncode}")
 
 
 def transcript_json_to_sse(payload: Mapping[str, Any]) -> list[bytes]:
