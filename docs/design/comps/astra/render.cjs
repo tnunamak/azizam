@@ -36,11 +36,21 @@ process.env.TMPDIR=path.join(out,'.browser-tmp');fs.mkdirSync(process.env.TMPDIR
      const size=parseFloat(s.fontSize),large=size>=24||(size>=18.66&&parseInt(s.fontWeight)>=700);
      rows.push({text:node.textContent.trim().slice(0,85),color:s.color,background:bg.slice(0,3),fontSize:size,ratio:+ratio.toFixed(2),required:large?3:4.5,pass:ratio>=(large?3:4.5)});
     }
-    return {text:rows,overflow:document.documentElement.scrollWidth>innerWidth,height:document.documentElement.scrollHeight,images:[...document.images].filter(i=>i.getAttribute('src')).every(i=>i.complete&&i.naturalWidth>0),squareImages:[...document.querySelectorAll('.creation:not(.video-item) img')].every(i=>Math.abs(i.width-i.height)<=1)};
+    const token=name=>getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    const hex=s=>{const digits=s.replace('#','');return (digits.length===3?[...digits].map(c=>c+c).join(''):digits).match(/../g).map(v=>parseInt(v,16))};
+    const contrast=(a,b)=>{const x=lum(hex(a)),y=lum(hex(b));return +((Math.max(x,y)+.05)/(Math.min(x,y)+.05)).toFixed(3)};
+    const focus={color:token('--focus'),masthead:contrast(token('--focus'),token('--deep')),page:contrast(token('--focus'),token('--bg')),surface:contrast(token('--focus'),token('--surface')),soft:contrast(token('--accent'),token('--soft'))};
+    return {text:rows,focus,overflow:document.documentElement.scrollWidth>innerWidth,height:document.documentElement.scrollHeight,images:[...document.images].filter(i=>i.getAttribute('src')).every(i=>i.complete&&i.naturalWidth>0),squareImages:[...document.querySelectorAll('.creation:not(.video-item) img')].every(i=>Math.abs(i.width-i.height)<=1)};
    });
    const interactions={};
+   await page.keyboard.press('Tab');await page.keyboard.press('Tab');
+   interactions.keyboardFocus=await page.locator('.wordmark').evaluate(el=>el.matches(':focus-visible')&&getComputedStyle(el).outlineStyle==='solid');
+   if(surface==='home')interactions.readyTasks=await page.locator('.task small').allTextContents().then(states=>states.length===5&&states.every(s=>s==='Ready'));
+   if(surface==='status')interactions.spendQualification=await page.locator('.provider').innerText().then(s=>s.includes('Remote spend · partial')&&s.includes('Cost measured for 249 of 265 requests.'));
    await page.locator('.theme').click();interactions.theme=await page.evaluate(t=>document.documentElement.dataset.theme!==t,theme);
    if(surface==='library'){
+    await page.locator('.see-all').first().click();interactions.seeAll=await page.locator('.maker-row').first().evaluate(el=>el.classList.contains('expanded')&&el.querySelector('button').getAttribute('aria-expanded')==='true');await page.locator('.see-all').first().click();
+    interactions.sixPeople=await page.evaluate(()=>{const household=document.querySelector('.household'),originals=[...household.children],clones=originals.map(el=>el.cloneNode(true));clones.forEach(el=>household.append(el));const rows=[...household.children].map(el=>el.getBoundingClientRect());const pass=rows.length===6&&rows.every((box,i)=>box.width>0&&(!i||box.top>=rows[i-1].bottom))&&document.documentElement.scrollWidth===innerWidth;clones.forEach(el=>el.remove());return pass});
     await page.locator('#search').fill('tomatoes');interactions.search=await page.locator('[data-kind]:visible').count()===2;
     await page.locator('#search').fill('');await page.locator('#kind').selectOption('audio');interactions.audioFilter=await page.locator('[data-kind]:visible').count()===5;
     await page.locator('#kind').selectOption('all');await page.locator('.creation>a').first().click();interactions.viewer=await page.locator('#viewer').evaluate(d=>d.open);await page.locator('#viewer button').click();
@@ -51,5 +61,5 @@ process.env.TMPDIR=path.join(out,'.browser-tmp');fs.mkdirSync(process.env.TMPDIR
   }
  }
  await browser.close();fs.writeFileSync(path.join(out,'verification.json'),JSON.stringify(report,null,2));
- if(report.some(r=>r.overflow||!r.images||!r.squareImages||r.errors.length||r.text.some(t=>!t.pass)||Object.values(r.interactions).some(v=>!v)))process.exitCode=1;
+ if(report.some(r=>Object.entries(r.focus).some(([key,value])=>key!=='color'&&(!Number.isFinite(value)||value<3))||r.overflow||!r.images||!r.squareImages||r.errors.length||r.text.some(t=>!t.pass)||Object.values(r.interactions).some(v=>!v)))process.exitCode=1;
 })().catch(e=>{console.error(e);process.exitCode=1});

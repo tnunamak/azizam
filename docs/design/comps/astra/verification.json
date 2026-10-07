@@ -3,7 +3,7 @@
     "surface": "home",
     "theme": "light",
     "width": 390,
-    "height": 982,
+    "height": 1095,
     "text": [
       {
         "text": "Azizam",
@@ -123,6 +123,97 @@
         "pass": true
       },
       {
+        "text": "Ready",
+        "color": "rgb(33, 99, 83)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 6.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Transcribe audio",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 18,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Ready",
+        "color": "rgb(33, 99, 83)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 6.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Make music",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 18,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Ready",
+        "color": "rgb(33, 99, 83)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 6.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Make a sound",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 18,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Ready",
+        "color": "rgb(33, 99, 83)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 6.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
         "text": "Video is unavailable.",
         "color": "rgb(161, 57, 47)",
         "background": [
@@ -227,19 +318,6 @@
         "pass": true
       },
       {
-        "text": "More tasks",
-        "color": "rgb(23, 59, 69)",
-        "background": [
-          237,
-          243,
-          243
-        ],
-        "fontSize": 15,
-        "ratio": 10.71,
-        "required": 4.5,
-        "pass": true
-      },
-      {
         "text": "Home",
         "color": "rgb(23, 59, 69)",
         "background": [
@@ -292,11 +370,20 @@
         "pass": true
       }
     ],
+    "focus": {
+      "color": "#bf7567",
+      "masthead": 3.245,
+      "page": 3.142,
+      "surface": 3.526,
+      "soft": 5.332
+    },
     "overflow": false,
     "images": true,
     "squareImages": true,
     "errors": [],
     "interactions": {
+      "keyboardFocus": true,
+      "readyTasks": true,
       "theme": true
     }
   },
@@ -304,7 +391,7 @@
     "surface": "home",
     "theme": "dark",
     "width": 390,
-    "height": 982,
+    "height": 1095,
     "text": [
       {
         "text": "Azizam",
@@ -424,6 +511,97 @@
         "pass": true
       },
       {
+        "text": "Ready",
+        "color": "rgb(179, 223, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 9.64,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Transcribe audio",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 18,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Ready",
+        "color": "rgb(179, 223, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 9.64,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Make music",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 18,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Ready",
+        "color": "rgb(179, 223, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 9.64,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Make a sound",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 18,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Ready",
+        "color": "rgb(179, 223, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 9.64,
+        "required": 4.5,
+        "pass": true
+      },
+      {
         "text": "Video is unavailable.",
         "color": "rgb(255, 184, 167)",
         "background": [
@@ -528,19 +706,6 @@
         "pass": true
       },
       {
-        "text": "More tasks",
-        "color": "rgb(234, 243, 241)",
-        "background": [
-          16,
-          47,
-          56
-        ],
-        "fontSize": 15,
-        "ratio": 12.51,
-        "required": 4.5,
-        "pass": true
-      },
-      {
         "text": "Home",
         "color": "rgb(234, 243, 241)",
         "background": [
@@ -593,11 +758,20 @@
         "pass": true
       }
     ],
+    "focus": {
+      "color": "#ffb8a7",
+      "masthead": 6.9,
+      "page": 8.525,
+      "surface": 6.944,
+      "soft": 5.645
+    },
     "overflow": false,
     "images": true,
     "squareImages": true,
     "errors": [],
     "interactions": {
+      "keyboardFocus": true,
+      "readyTasks": true,
       "theme": true
     }
   },
@@ -842,7 +1016,7 @@
         "pass": true
       },
       {
-        "text": "Check the Video studio engine’s connection.",
+        "text": "The Video studio engine is unavailable.",
         "color": "rgb(23, 59, 69)",
         "background": [
           237,
@@ -1505,7 +1679,33 @@
         "pass": true
       },
       {
-        "text": "Spend this month",
+        "text": "Remote spend · partial",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 14,
+        "ratio": 4.95,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Cost measured for 249 of 265 requests.",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 14,
+        "ratio": 4.95,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "This month",
         "color": "rgb(75, 101, 109)",
         "background": [
           220,
@@ -1531,11 +1731,20 @@
         "pass": true
       }
     ],
+    "focus": {
+      "color": "#bf7567",
+      "masthead": 3.245,
+      "page": 3.142,
+      "surface": 3.526,
+      "soft": 5.332
+    },
     "overflow": false,
     "images": true,
     "squareImages": true,
     "errors": [],
     "interactions": {
+      "keyboardFocus": true,
+      "spendQualification": true,
       "theme": true
     }
   },
@@ -1780,7 +1989,7 @@
         "pass": true
       },
       {
-        "text": "Check the Video studio engine’s connection.",
+        "text": "The Video studio engine is unavailable.",
         "color": "rgb(234, 243, 241)",
         "background": [
           16,
@@ -2443,7 +2652,33 @@
         "pass": true
       },
       {
-        "text": "Spend this month",
+        "text": "Remote spend · partial",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 14,
+        "ratio": 5.3,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Cost measured for 249 of 265 requests.",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 14,
+        "ratio": 5.3,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "This month",
         "color": "rgb(177, 199, 202)",
         "background": [
           37,
@@ -2469,11 +2704,20 @@
         "pass": true
       }
     ],
+    "focus": {
+      "color": "#ffb8a7",
+      "masthead": 6.9,
+      "page": 8.525,
+      "surface": 6.944,
+      "soft": 5.645
+    },
     "overflow": false,
     "images": true,
     "squareImages": true,
     "errors": [],
     "interactions": {
+      "keyboardFocus": true,
+      "spendQualification": true,
       "theme": true
     }
   },
@@ -2481,7 +2725,7 @@
     "surface": "library",
     "theme": "light",
     "width": 1440,
-    "height": 3025,
+    "height": 1897,
     "text": [
       {
         "text": "Azizam",
@@ -2653,6 +2897,19 @@
         "pass": true
       },
       {
+        "text": "See all",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 16,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
         "text": "A lived-in family kitchen in warm morning light, sourdough bread on a wooden board, y",
         "color": "rgb(23, 59, 69)",
         "background": [
@@ -2699,7 +2956,7 @@
           243,
           243
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 10.71,
         "required": 4.5,
         "pass": true
@@ -2738,7 +2995,7 @@
           243,
           243
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 10.71,
         "required": 4.5,
         "pass": true
@@ -2777,7 +3034,7 @@
           243,
           243
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 10.71,
         "required": 4.5,
         "pass": true
@@ -2816,7 +3073,7 @@
           243,
           243
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 10.71,
         "required": 4.5,
         "pass": true
@@ -2855,7 +3112,7 @@
           243,
           243
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 10.71,
         "required": 4.5,
         "pass": true
@@ -2978,6 +3235,19 @@
         "pass": true
       },
       {
+        "text": "See all",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 16,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
         "text": "An overhead photograph of a backyard raised vegetable bed with tomatoes, lettuce and ",
         "color": "rgb(23, 59, 69)",
         "background": [
@@ -3024,7 +3294,7 @@
           243,
           243
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 10.71,
         "required": 4.5,
         "pass": true
@@ -3063,7 +3333,7 @@
           243,
           243
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 10.71,
         "required": 4.5,
         "pass": true
@@ -3102,7 +3372,7 @@
           243,
           243
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 10.71,
         "required": 4.5,
         "pass": true
@@ -3141,7 +3411,7 @@
           243,
           243
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 10.71,
         "required": 4.5,
         "pass": true
@@ -3180,7 +3450,7 @@
           243,
           243
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 10.71,
         "required": 4.5,
         "pass": true
@@ -3219,7 +3489,7 @@
           243,
           243
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 10.71,
         "required": 4.5,
         "pass": true
@@ -3258,7 +3528,7 @@
           243,
           243
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 10.71,
         "required": 4.5,
         "pass": true
@@ -3446,6 +3716,19 @@
         "pass": true
       },
       {
+        "text": "See all",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 16,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
         "text": "A beautifully crafted school science project showing a miniature pond ecosystem in a ",
         "color": "rgb(23, 59, 69)",
         "background": [
@@ -3492,7 +3775,7 @@
           243,
           243
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 10.71,
         "required": 4.5,
         "pass": true
@@ -3531,7 +3814,7 @@
           243,
           243
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 10.71,
         "required": 4.5,
         "pass": true
@@ -3570,7 +3853,7 @@
           243,
           243
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 10.71,
         "required": 4.5,
         "pass": true
@@ -3667,12 +3950,22 @@
         "pass": true
       }
     ],
+    "focus": {
+      "color": "#bf7567",
+      "masthead": 3.245,
+      "page": 3.142,
+      "surface": 3.526,
+      "soft": 5.332
+    },
     "overflow": false,
     "images": true,
     "squareImages": true,
     "errors": [],
     "interactions": {
+      "keyboardFocus": true,
       "theme": true,
+      "seeAll": true,
+      "sixPeople": true,
       "search": true,
       "audioFilter": true,
       "viewer": true
@@ -3682,7 +3975,7 @@
     "surface": "library",
     "theme": "dark",
     "width": 1440,
-    "height": 3025,
+    "height": 1897,
     "text": [
       {
         "text": "Azizam",
@@ -3854,6 +4147,19 @@
         "pass": true
       },
       {
+        "text": "See all",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 16,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
         "text": "A lived-in family kitchen in warm morning light, sourdough bread on a wooden board, y",
         "color": "rgb(234, 243, 241)",
         "background": [
@@ -3900,7 +4206,7 @@
           47,
           56
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 12.51,
         "required": 4.5,
         "pass": true
@@ -3939,7 +4245,7 @@
           47,
           56
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 12.51,
         "required": 4.5,
         "pass": true
@@ -3978,7 +4284,7 @@
           47,
           56
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 12.51,
         "required": 4.5,
         "pass": true
@@ -4017,7 +4323,7 @@
           47,
           56
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 12.51,
         "required": 4.5,
         "pass": true
@@ -4056,7 +4362,7 @@
           47,
           56
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 12.51,
         "required": 4.5,
         "pass": true
@@ -4179,6 +4485,19 @@
         "pass": true
       },
       {
+        "text": "See all",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 16,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
         "text": "An overhead photograph of a backyard raised vegetable bed with tomatoes, lettuce and ",
         "color": "rgb(234, 243, 241)",
         "background": [
@@ -4225,7 +4544,7 @@
           47,
           56
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 12.51,
         "required": 4.5,
         "pass": true
@@ -4264,7 +4583,7 @@
           47,
           56
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 12.51,
         "required": 4.5,
         "pass": true
@@ -4303,7 +4622,7 @@
           47,
           56
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 12.51,
         "required": 4.5,
         "pass": true
@@ -4342,7 +4661,7 @@
           47,
           56
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 12.51,
         "required": 4.5,
         "pass": true
@@ -4381,7 +4700,7 @@
           47,
           56
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 12.51,
         "required": 4.5,
         "pass": true
@@ -4420,7 +4739,7 @@
           47,
           56
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 12.51,
         "required": 4.5,
         "pass": true
@@ -4459,7 +4778,7 @@
           47,
           56
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 12.51,
         "required": 4.5,
         "pass": true
@@ -4647,6 +4966,19 @@
         "pass": true
       },
       {
+        "text": "See all",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 16,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
         "text": "A beautifully crafted school science project showing a miniature pond ecosystem in a ",
         "color": "rgb(234, 243, 241)",
         "background": [
@@ -4693,7 +5025,7 @@
           47,
           56
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 12.51,
         "required": 4.5,
         "pass": true
@@ -4732,7 +5064,7 @@
           47,
           56
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 12.51,
         "required": 4.5,
         "pass": true
@@ -4771,7 +5103,7 @@
           47,
           56
         ],
-        "fontSize": 13,
+        "fontSize": 14,
         "ratio": 12.51,
         "required": 4.5,
         "pass": true
@@ -4868,12 +5200,22 @@
         "pass": true
       }
     ],
+    "focus": {
+      "color": "#ffb8a7",
+      "masthead": 6.9,
+      "page": 8.525,
+      "surface": 6.944,
+      "soft": 5.645
+    },
     "overflow": false,
     "images": true,
     "squareImages": true,
     "errors": [],
     "interactions": {
+      "keyboardFocus": true,
       "theme": true,
+      "seeAll": true,
+      "sixPeople": true,
       "search": true,
       "audioFilter": true,
       "viewer": true
