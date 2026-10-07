@@ -72,6 +72,8 @@ TOKEN_ENV_NAMES = ("AZIZAM_ADMIN_KEY",)
 MAX_TTL_S = 7200.0
 DEFAULT_WEB_BUILD_TIMEOUT_S = 900.0
 WEB_BUILD_STAMP = ".azizam-build-complete"
+# Files outside web/ that the export imports, relative to the repo root.
+WEB_BUILD_SHARED_INPUTS = ("gateway/product_identity.json",)
 
 
 def web_source_files(web_dir: Path) -> list[Path]:
@@ -100,7 +102,8 @@ def web_build_required(web_dir: Path) -> bool:
     sources = web_source_files(web_dir)
     if sorted(str(path.relative_to(web_dir)) for path in sources) != exported_sources:
         return True
-    return any(path.stat().st_mtime > stamp.stat().st_mtime for path in sources)
+    shared = [web_dir.parent / name for name in WEB_BUILD_SHARED_INPUTS]
+    return any(path.stat().st_mtime > stamp.stat().st_mtime for path in [*sources, *shared])
 
 
 def publish_web_export(staged_out: Path, served_out: Path) -> None:
@@ -425,6 +428,11 @@ class Restarter:
                                 "node_modules", ".next", "out", ".git", "*.tsbuildinfo",
                             ),
                         )
+                        # web/src/lib/product.ts imports ../../../gateway/product_identity.json.
+                        for shared in WEB_BUILD_SHARED_INPUTS:
+                            staged_shared = Path(tmp) / shared
+                            staged_shared.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(self.web_dir.parent / shared, staged_shared)
                         dependencies = self.web_dir / "node_modules"
                         if dependencies.exists():
                             (staged_web / "node_modules").symlink_to(dependencies.resolve(), target_is_directory=True)

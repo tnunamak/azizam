@@ -447,6 +447,10 @@ class WebBuildTests(unittest.TestCase):
     def make_web(self, root, *, fresh=False):
         web = Path(root) / "web"
         (web / "src").mkdir(parents=True)
+        identity = Path(root) / "gateway" / "product_identity.json"
+        identity.parent.mkdir()
+        identity.write_text('{"name": "Azizam"}\n')
+        os.utime(identity, (100, 100))
         source = web / "src" / "page.tsx"
         source.write_text("export default function Page() {}\n")
         (web / "out").mkdir()
@@ -485,6 +489,34 @@ class WebBuildTests(unittest.TestCase):
             self.assertEqual(world.invoke(web_dir=web), sr.EXIT_OK)
             self.assertEqual([cmd[0] for cmd in world.commands], ["npm", "systemctl"])
             self.assertFalse(sr.web_build_required(web))
+
+    def test_staged_build_sees_inputs_outside_web(self):
+        # web/src/lib/product.ts imports ../../../gateway/product_identity.json.
+        with tempfile.TemporaryDirectory() as tmp:
+            web = self.make_web(tmp)
+            world = World()
+            original_run = world.run
+            seen = {}
+
+            def run(cmd, timeout):
+                if cmd[0] == "npm":
+                    build_web = Path(cmd[2])
+                    seen["identity"] = (build_web.parent / "gateway" / "product_identity.json").read_text()
+                    (build_web / "out").mkdir()
+                    (build_web / "out" / "index.html").write_text("built")
+                    return 0
+                return original_run(cmd, timeout)
+
+            world.run = run
+            self.assertEqual(world.invoke(web_dir=web), sr.EXIT_OK)
+            self.assertEqual(seen["identity"], '{"name": "Azizam"}\n')
+
+    def test_shared_input_edit_requires_rebuild(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            web = self.make_web(tmp, fresh=True)
+            self.assertFalse(sr.web_build_required(web))
+            os.utime(Path(tmp) / "gateway" / "product_identity.json", (300, 300))
+            self.assertTrue(sr.web_build_required(web))
 
     def test_export_failure_preserves_served_output(self):
         for outcome in (1, 124, KeyboardInterrupt):
