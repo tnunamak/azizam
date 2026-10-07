@@ -637,8 +637,8 @@
         ];
       case "voices": case "custom-voices":
         return [
-          { label: "curl", code: `# list built-in and your custom voices\ncurl -sS ${BASE}/v1/voices ${KEYLINE}\n\n# create a custom voice from a 5-60 s sample\ncurl -sS ${BASE}/v1/audio/voices ${KEYLINE} \\\n  -F name='My narrator' -F audio_sample=@me.wav\n\n# speak with it\ncurl -sS ${BASE}/v1/audio/speech ${KEYLINE} \\\n  -H 'Content-Type: application/json' \\\n  -d '{"model": "tts", "voice": {"id": "voice_..."}, "input": "Hello there."}' -o out.wav` },
-          { label: "Python (openai)", code: `from openai import OpenAI\nclient = OpenAI(base_url="${BASE}/v1", api_key="$AZIZAM_API_KEY")\nvoice = client.audio.voices.create(name="My narrator", audio_sample=open("me.wav", "rb"))\nwith client.audio.speech.with_streaming_response.create(\n    model="tts", voice={"id": voice.id}, input="Hello there.",\n) as r:\n    r.stream_to_file("out.wav")` },
+          { label: "curl", code: `# list built-in and your custom voices\ncurl -sS ${BASE}/v1/voices ${KEYLINE}\n\n# create a custom voice from a 5-60 s sample\ncurl -sS ${BASE}/v1/audio/voices ${KEYLINE} \\\n  -F name='My narrator' -F audio_sample=@me.wav\n\n# speak with it\ncurl -sS ${BASE}/v1/audio/speech ${KEYLINE} \\\n  -H 'Content-Type: application/json' \\\n  -d '{"model": "tts", "voice": {"id": "voice_..."}, "input": "Hello there."}' -o out.mp3` },
+          { label: "Python (openai)", code: `from openai import OpenAI\nclient = OpenAI(base_url="${BASE}/v1", api_key="$AZIZAM_API_KEY")\nvoice = client.audio.voices.create(name="My narrator", audio_sample=open("me.wav", "rb"))\nwith client.audio.speech.with_streaming_response.create(\n    model="tts", voice={"id": voice.id}, input="Hello there.",\n) as r:\n    r.stream_to_file("out.mp3")` },
         ];
       case "stt": case "stt-diarize": {
         const d = card.kind === "stt-diarize";

@@ -86,7 +86,7 @@ def _audio_speech_request_schema() -> JsonObjectSchema:
             "response_format": {
                 "type": "string",
                 "enum": ["mp3", "opus", "aac", "flac", "wav", "pcm"],
-                "default": "wav",
+                "default": "mp3",
                 "description": "Audio encoding for synthesized speech.",
             },
             "stream_format": {
