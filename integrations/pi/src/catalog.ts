@@ -37,8 +37,12 @@ type Json = Record<string, unknown>;
 
 const isObject = (value: unknown): value is Json => typeof value === "object" && value !== null && !Array.isArray(value);
 
-const positiveInt = (value: unknown): number | undefined =>
-	typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined;
+/** A positive safe integer after flooring; fractions below one and unsafe integers are invalid. */
+const positiveInt = (value: unknown): number | undefined => {
+	if (typeof value !== "number") return undefined;
+	const n = Math.floor(value);
+	return Number.isSafeInteger(n) && n > 0 ? n : undefined;
+};
 
 const stringArray = (value: unknown): string[] | undefined =>
 	Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : undefined;
@@ -46,7 +50,9 @@ const stringArray = (value: unknown): string[] | undefined =>
 /** Per-token price (number or numeric string) -> USD per million tokens. */
 const perMillion = (value: unknown): number | undefined => {
 	const n = typeof value === "string" && value.trim() !== "" ? Number(value) : value;
-	return typeof n === "number" && Number.isFinite(n) && n >= 0 ? n * 1_000_000 : undefined;
+	if (typeof n !== "number" || !Number.isFinite(n) || n < 0) return undefined;
+	const scaled = n * 1_000_000;
+	return Number.isFinite(scaled) ? scaled : undefined;
 };
 
 /** Cost is 0 unless the entry carries Vercel-style (`input`/`output`) or OpenRouter-style (`prompt`/`completion`) per-token `pricing`. */
@@ -81,8 +87,9 @@ function toChatModel(entry: Json & { id: string }): ChatModelInfo {
 }
 
 function outputsOnlyText(entry: Json): boolean {
-	const out = isObject(entry.architecture) ? stringArray(entry.architecture.output_modalities) : undefined;
-	return out?.length === 1 && out[0] === "text";
+	// Match the raw array: filtering out non-strings first would turn ["text", null] into ["text"].
+	const out = isObject(entry.architecture) ? entry.architecture.output_modalities : undefined;
+	return Array.isArray(out) && out.length === 1 && out[0] === "text";
 }
 
 /**

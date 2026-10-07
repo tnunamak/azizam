@@ -36,6 +36,17 @@ test("untyped gateway: output_modalities exactly [text] is chat", () => {
 	assert.deepEqual(catalog.models.map((m) => m.id), ["a"]);
 });
 
+test("untyped gateway: non-string extra output modalities are not text-only", () => {
+	const ids = parseModelList({
+		data: [
+			{ id: "ok", architecture: { output_modalities: ["text"] } },
+			{ id: "null", architecture: { output_modalities: ["text", null] } },
+			{ id: "obj", architecture: { output_modalities: ["text", {}] } },
+		],
+	}).models.map((m) => m.id);
+	assert.deepEqual(ids, ["ok"]);
+});
+
 test("metadata-free gateway lists everything", () => {
 	const catalog = parseModelList({ data: [{ id: "gpt-x", object: "model" }, { id: "gpt-y" }] });
 	assert.equal(catalog.mode, "unfiltered");
@@ -75,6 +86,11 @@ test("context window / max tokens: invalid values fall back, max never exceeds c
 	assert.equal(get({ max_tokens: 0 }).maxTokens, DEFAULT_MAX_TOKENS);
 	assert.equal(get({ context_window: 4096 }).maxTokens, 4096);
 	assert.equal(get({ context_window: 4096, max_tokens: 99999 }).maxTokens, 4096);
+	// Positive values that floor to zero, and unsafe integers, are invalid too.
+	assert.equal(get({ context_window: 0.5 }).contextWindow, DEFAULT_CONTEXT_WINDOW);
+	assert.equal(get({ max_tokens: 0.5 }).maxTokens, DEFAULT_MAX_TOKENS);
+	assert.equal(get({ context_window: 2 ** 60 }).contextWindow, DEFAULT_CONTEXT_WINDOW);
+	assert.equal(get({ context_window: 4096.7 }).contextWindow, 4096);
 });
 
 test("cost is zero unless pricing is provided (per-token -> per-million)", () => {
@@ -84,6 +100,8 @@ test("cost is zero unless pricing is provided (per-token -> per-million)", () =>
 	});
 	assert.deepEqual(cost({ prompt: "0.000001", completion: "0.000002" }), { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 });
 	assert.deepEqual(cost({ input: "free", output: -1 }), { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+	// A finite price that overflows when scaled to per-million is invalid, not Infinity.
+	assert.deepEqual(cost({ input: 1e308, output: "1e308" }), { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
 });
 
 test("malformed entries are skipped, not fatal; duplicates collapse", () => {
