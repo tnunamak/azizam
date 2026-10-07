@@ -24,6 +24,9 @@ class MetricsWriter:
         self._path = path
         self._queue = queue.Queue(maxsize=capacity)
         self._lock = threading.Lock()
+        self._drained = threading.Condition(self._lock)
+        self._submitted = 0
+        self._completed = 0
         self._accepting = True
         self._error: Exception | None = None
         self._dropped_samples = 0
@@ -50,6 +53,7 @@ class MetricsWriter:
             if self._accepting:
                 try:
                     self._queue.put_nowait(command)
+                    self._submitted += 1
                     return True
                 except queue.Full:
                     pass
@@ -71,9 +75,11 @@ class MetricsWriter:
 
     def flush(self) -> None:
         """Wait for accepted work; raises if persistence failed. Off-loop only."""
-        self._queue.join()
-        if self._error is not None:
-            raise RuntimeError("metrics persistence failed") from self._error
+        with self._drained:
+            target = self._submitted
+            self._drained.wait_for(lambda: self._completed >= target)
+            if self._error is not None:
+                raise RuntimeError("metrics persistence failed") from self._error
 
     def wait_ready(self) -> None:
         """Wait for schema migration and connection creation. Off-loop only."""
@@ -96,6 +102,12 @@ class MetricsWriter:
                 self._error = error
         # Do not log sample tags (which can contain request identities).
         print(f"[metrics_writer] persistence failed: {type(error).__name__}", flush=True)
+
+    def _finish(self) -> None:
+        self._queue.task_done()
+        with self._drained:
+            self._completed += 1
+            self._drained.notify_all()
 
     def _execute(self, conn: sqlite3.Connection, command: tuple) -> None:
         operation, payload = command
@@ -145,7 +157,7 @@ class MetricsWriter:
                 except Exception as error:
                     self._failed(error)
                 finally:
-                    self._queue.task_done()
+                    self._finish()
         except Exception as error:
             self._failed(error)
         finally:
@@ -158,14 +170,17 @@ class MetricsWriter:
                     self._queue.get_nowait()
                 except queue.Empty:
                     break
-                self._queue.task_done()
+                self._finish()
             if conn is not None:
                 try:
                     conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
                 except Exception as error:
                     self._failed(error)
                 finally:
-                    conn.close()
+                    try:
+                        conn.close()
+                    except Exception as error:
+                        self._failed(error)
 
 
 _writer: MetricsWriter | None = None
@@ -185,6 +200,8 @@ def start_writer() -> MetricsWriter:
     global _writer
     with _writer_lock:
         if _writer is None or not _writer.stats["accepting"]:
+            if _writer is not None and _writer._thread.is_alive():
+                raise RuntimeError("metrics writer is still closing")
             _writer = MetricsWriter(metrics_store.DB_PATH)
         return _writer
 

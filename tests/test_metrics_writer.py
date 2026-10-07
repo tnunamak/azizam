@@ -169,6 +169,90 @@ class MetricsWriterTests(unittest.TestCase):
         self.assertEqual(writer.stats["write_errors"], 1)
         self.assertFalse(writer._thread.is_alive())
 
+    def test_flush_waits_for_its_snapshot_without_waiting_for_newer_samples(self):
+        entered = threading.Event()
+        release = threading.Event()
+        waiting = threading.Event()
+        flushed = threading.Event()
+        newer_entered = threading.Event()
+        newer_release = threading.Event()
+        original = metrics_store.record_samples
+
+        def blocked(conn, rows):
+            event, gate = (entered, release) if rows[0][0] == 1 else (newer_entered, newer_release)
+            event.set()
+            if not gate.wait(5):
+                raise RuntimeError("test did not release writer")
+            original(conn, rows)
+
+        with patch.object(metrics_store, "record_samples", blocked):
+            writer = self.writer()
+            writer.record_sample(1, "first", 1)
+            self.assertTrue(entered.wait(2))
+            wait_for = writer._drained.wait_for
+
+            def wait(predicate):
+                waiting.set()  # target was captured while holding the admission lock
+                return wait_for(predicate)
+
+            def flush():
+                writer.flush()
+                flushed.set()
+
+            with patch.object(writer._drained, "wait_for", wait):
+                flusher = threading.Thread(target=flush)
+                flusher.start()
+                try:
+                    self.assertTrue(waiting.wait(2))
+                    writer.record_sample(2, "newer", 2)
+                    release.set()
+                    self.assertTrue(newer_entered.wait(2))
+                    self.assertTrue(flushed.wait(0.1))
+                finally:
+                    release.set()
+                    newer_release.set()
+                    flusher.join(5)
+                    writer.close()
+
+    def test_restart_cannot_create_another_owner_while_shutdown_drains(self):
+        entered = threading.Event()
+        release = threading.Event()
+        original = metrics_store.record_samples
+
+        def blocked(conn, rows):
+            entered.set()
+            if not release.wait(5):
+                raise RuntimeError("test did not release writer")
+            original(conn, rows)
+
+        with (
+            patch.object(metrics_store, "record_samples", blocked),
+            patch.object(metrics_store, "DB_PATH", self.db),
+            patch.object(metrics_writer, "_writer", None),
+        ):
+            writer = metrics_writer.start_writer()
+            writer.wait_ready()
+            writer.record_sample(1, "first", 1)
+            self.assertTrue(entered.wait(2))
+            closer = threading.Thread(target=metrics_writer.close_writer)
+            closer.start()
+            try:
+                deadline = time.monotonic() + 2
+                while writer.stats["accepting"] and time.monotonic() < deadline:
+                    time.sleep(0.001)
+                self.assertFalse(writer.stats["accepting"])
+                with self.assertRaisesRegex(RuntimeError, "still closing"):
+                    metrics_writer.start_writer()
+                self.assertIs(metrics_writer.get_writer(), writer)
+            finally:
+                release.set()
+                closer.join(5)
+                writer.close()
+            replacement = metrics_writer.start_writer()
+            replacement.wait_ready()
+            self.assertIsNot(replacement, writer)
+            metrics_writer.close_writer()
+
 
 class WriterResponsivenessTests(unittest.IsolatedAsyncioTestCase):
     async def test_real_health_request_answers_while_write_sleeps_one_second(self):
