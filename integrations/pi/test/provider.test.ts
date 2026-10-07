@@ -94,6 +94,21 @@ test("prefetch fetches on a cold start with the credential Pi resolves, no AZIZA
 	assert.equal(calls[0].authorization, `Bearer ${KEY}`);
 });
 
+test("slow discovery on a cold start without a cache waits past the former 3 second limit", { skip }, async () => {
+	const { models, provider } = await setup(async (_url, init) => {
+		await new Promise<void>((resolve, reject) => {
+			const timer = setTimeout(resolve, 3_500);
+			init.signal!.addEventListener("abort", () => {
+				clearTimeout(timer);
+				reject(init.signal!.reason);
+			}, { once: true });
+		});
+		return json(CONTRACT_LIST);
+	});
+	await provider.prefetch(models);
+	assert.deepEqual(ids(provider.getModels()), ["chat-small", "coder"]);
+});
+
 test("prefetch is skipped offline, never throws, and a failed fetch leaves no models", { skip }, async () => {
 	const offline = await setup(() => assert.fail("must not fetch"), { PI_OFFLINE: "1" });
 	await offline.provider.prefetch(offline.models);
@@ -272,7 +287,9 @@ test("a stalled credential store without an env key is bounded and does not fetc
 	assert.equal(calls.length, 0);
 });
 
-test("prefetch is bounded when the gateway never answers", { skip }, async () => {
+test("prefetch is bounded when the gateway never answers and reports the cache miss without debug", { skip }, async (t) => {
+	const errors: string[] = [];
+	t.mock.method(console, "error", (message: string) => errors.push(message));
 	const { models, provider, calls } = await setup(
 		(_url, init) => new Promise<Response>((_resolve, reject) => init.signal?.addEventListener("abort", () => reject(init.signal!.reason))),
 		{},
@@ -281,6 +298,21 @@ test("prefetch is bounded when the gateway never answers", { skip }, async () =>
 	await within(900, provider.prefetch(models));
 	assert.equal(calls.length, 1);
 	assert.deepEqual(provider.getModels(), []);
+	assert.equal(errors.length, 1);
+	assert.match(errors[0], /exceeded the 300 ms startup budget; no saved catalog/);
+	assert.match(errors[0], /retry Pi/);
+	assert.ok(!errors[0].includes(KEY));
+});
+
+test("a failed first discovery reports an error without echoing untrusted exception text", { skip }, async (t) => {
+	const errors: string[] = [];
+	t.mock.method(console, "error", (message: string) => errors.push(message));
+	const { models, provider } = await setup(() => { throw new Error(`request failed with ${KEY}`); });
+	await provider.prefetch(models);
+	assert.deepEqual(provider.getModels(), []);
+	assert.equal(errors.length, 1);
+	assert.match(errors[0], /Model discovery failed; no saved catalog/);
+	assert.ok(!errors[0].includes(KEY));
 });
 
 test("the budget is shared: slow restore plus a fetch cannot exceed it", { skip }, async () => {
