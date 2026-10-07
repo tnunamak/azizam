@@ -143,6 +143,16 @@ class NativeSttLifecycleTests(SttCase):
     def test_task_cancellation_signals_registry_and_closes_upstream(self):
         self._cancel_pending_read("task")
 
+    def test_closing_a_partly_consumed_body_releases_resources(self):
+        async def scenario():
+            stream = ControlledStream([b"partial", b"remainder"])
+            response = await self.open_response(stream)
+            self.assertEqual(await anext(response.body_iterator), b"partial")
+            await response.body_iterator.aclose()
+            self.assertTrue(self.registry.is_cancelled(self.receipt.request_id))
+            self.assert_terminal(stream, "failed")
+        asyncio.run(scenario())
+
     def _cancel_pending_read(self, mode):
         async def block():
             await asyncio.Future()
@@ -222,6 +232,19 @@ class BufferedSttStreamValidationTests(SttCase):
                 self.assertTrue(response.headers["content-type"].startswith("text/event-stream"))
                 events = [json.loads(event[6:]) for event in response.content.split(b"\n\n") if event]
                 self.assertEqual(events[-1], {"type": "transcript.text.done", "text": "words", "usage": {"seconds": 1}})
+
+    def test_buffered_stream_remains_ineligible_for_chunking(self):
+        self._json_upstream("words")
+        self.cfg["backends"]["stt"]["chunking"]["enabled"] = True
+
+        async def chunking(**kwargs):
+            self.assertFalse(stt_chunking.request_supports_chunking(kwargs["fields"], file_count=1))
+            return stt_chunking.ChunkingOutcome("passthrough", 0)
+
+        with patch.object(stt_chunking, "execute_chunking", side_effect=chunking):
+            response = self._post([("model", "parakeet"), ("stream", "true")])
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.headers["content-type"].startswith("text/event-stream"))
 
     def test_sse_helper_rejects_nonobjects_and_nonstring_text(self):
         for payload in (123, None, [], "words", {}, {"text": 123}, {"text": None}):

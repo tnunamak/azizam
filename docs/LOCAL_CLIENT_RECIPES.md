@@ -1704,9 +1704,21 @@ shadowed. Chatterbox and OmniVoice accept custom voices (`compatible_engines`); 
 another voice. Limits per key, in `proxy_config.yml` `voices:`: 20 voices, 50 consents, 200 MB. Revoking an
 API key deletes its voices and consents. Files live under `data/voices/<owner>/`.
 
+Buffered speech backend errors return a JSON OpenAI error envelope. Backend
+4xx/5xx statuses are preserved; other non-success statuses become `502`.
+The response does not include the backend's raw diagnostics.
+
 **Streaming transcription.** Send `stream=true` on
 `POST /v1/audio/transcriptions` to get `transcript.text.delta` events followed by
-`transcript.text.done`. Streaming engines (Nemotron) send deltas while decoding;
+`transcript.text.done`. Use `response_format=json` (the default) or
+`verbose_json`; native streams also accept `diarized_json` for speaker events.
+Other formats, including `text`, `srt`, and `vtt`, return
+`400 unsupported_stream_response_format` with `param: "response_format"`
+before inference. Invalid buffered JSON transcripts return
+`502 invalid_stt_stream_response`. Native streams enforce the overall request
+deadline, cancellation, and response byte limit throughout delivery; a failure
+after headers interrupts the body and records a failed or cancelled receipt.
+Streaming engines (Nemotron) send deltas while decoding;
 other engines send the whole text in one delta. Multipart fields can arrive in
 any order for transcriptions and translations. When `model` arrives first, the
 gateway selects its service immediately. When the model cannot be peeked before

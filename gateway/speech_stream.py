@@ -214,7 +214,9 @@ def transcript_json_to_sse(payload: Mapping[str, Any]) -> list[bytes]:
     Used for engines that cannot stream, so ``stream=true`` clients still get
     the OpenAI event shape (all text arrives in the single delta).
     """
-    text = str(payload.get("text") or "")
+    if not isinstance(payload, Mapping) or not isinstance(payload.get("text"), str):
+        raise ValueError("Streaming transcription requires a JSON object with string text")
+    text = payload["text"]
     events = []
     if text:
         events.append(sse_event({"type": "transcript.text.delta", "delta": text}))

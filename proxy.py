@@ -4396,6 +4396,16 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
         async with httpx.AsyncClient(timeout=httpx.Timeout(TTS_TIMEOUT, connect=10)) as client:
             resp = await client.post(url, headers=headers, content=body)
 
+            if not 200 <= resp.status_code < 300:
+                # Retain allocation-failure fallback without exposing engine diagnostics.
+                allocation_failed = resp.status_code in {500, 502, 507} and _RESOURCE_ERROR.search(resp.text[:4096])
+                return openai_error_response(
+                    "TTS backend ran out of memory." if allocation_failed else "TTS backend rejected the speech request.",
+                    status_code=resp.status_code if 400 <= resp.status_code < 600 else 502,
+                    error_type="invalid_request_error" if 400 <= resp.status_code < 500 else "api_error",
+                    code="tts_backend_error",
+                )
+
             # TTS returns audio data, stream it back
             content = resp.content
             content_type = resp.headers.get("content-type", TTS_RESPONSE_MEDIA_TYPES["wav"])
@@ -4976,9 +4986,17 @@ async def proxy_stt_request(
             engine_spec = (model_resolution.alias.engine_spec if model_resolution.alias is not None else None) or {}
             native_stream = bool_from_config(engine_spec.get("streaming"), False)
             wants_stream = any(name == "stream" and value.strip().lower() in {"true", "1"} for name, value in fields)
-            if wants_stream and not native_stream:
-                # The engine answers once; the gateway frames that answer as SSE.
-                fields = [(name, value) for name, value in fields if name != "stream"]
+            if wants_stream:
+                supported_formats = {"json", "verbose_json"}
+                if native_stream:
+                    supported_formats.add("diarized_json")
+                if any(name == "response_format" and value.strip().lower() not in supported_formats for name, value in fields):
+                    return openai_error_response(
+                        "stream=true requires a JSON response_format.",
+                        status_code=400,
+                        param="response_format",
+                        code="unsupported_stream_response_format",
+                    )
             stream_model = str(engine_spec.get("stream_model") or "")
             if wants_stream and native_stream and stream_model:
                 # One weight file served in two modes: offline answers fastest, streaming sends deltas.
@@ -4986,6 +5004,10 @@ async def proxy_stt_request(
             wav16k_input = str(engine_spec.get("upload_format") or "") == "wav16k"
             multipart_fields: dict[str, str | list[str]] = {}
             for field_name, field_value in fields:
+                if field_name == "stream" and wants_stream and not native_stream:
+                    # Keep stream in fields so chunking stays ineligible; only
+                    # omit it from the buffered engine's outgoing request.
+                    continue
                 previous = multipart_fields.get(field_name)
                 multipart_fields[field_name] = field_value if previous is None else [*previous, field_value] if isinstance(previous, list) else [previous, field_value]
             _record_stt_input_shape(receipt, fields, uploads)
@@ -5083,13 +5105,51 @@ async def proxy_stt_request(
 
                 async def relay():
                     try:
-                        async for chunk in upstream.aiter_raw():
+                        total = 0
+                        iterator = upstream.aiter_raw().__aiter__()
+                        while True:
+                            try:
+                                chunk = await stt_chunking.await_with_cancellation(
+                                    iterator.__anext__(),
+                                    cancellation_waiters=waiters,
+                                    deadline_at=deadline_at,
+                                    on_cancel=signal_cancellation,
+                                )
+                            except StopAsyncIteration:
+                                break
+                            total += len(chunk)
+                            if total > execution.max_response_bytes:
+                                raise stt_chunking.SttResponseLimitExceeded("STT backend response exceeds the configured limit")
                             yield chunk
+                    except (ClientDisconnect, stt_chunking.SttCancelled) as error:
+                        signal_cancellation()
+                        raise asyncio.CancelledError from error
+                    except (asyncio.CancelledError, GeneratorExit):
+                        signal_cancellation()
+                        raise
                     finally:
                         await cleanup.aclose()
+                    if cleanup.failed:
+                        raise stt_chunking.SttCleanupFailure("STT cleanup failed")
+                    owner.report(status="succeeded", reason="completed")
+
+                source = relay()
+                owned_stream = owner.handoff_stream(source)
+
+                async def response_body():
+                    try:
+                        async for chunk in owned_stream:
+                            yield chunk
+                    finally:
+                        # Closing a suspended async-for does not close its
+                        # source. Release the relay before terminal ownership.
+                        try:
+                            await source.aclose()
+                        finally:
+                            await owned_stream.aclose()
 
                 return StreamingResponse(
-                    relay(),
+                    response_body(),
                     media_type="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
                 )
@@ -5150,7 +5210,7 @@ async def proxy_stt_request(
                 try:
                     events = speech_stream.transcript_json_to_sse(json.loads(direct.body))
                 except (ValueError, TypeError):
-                    return response
+                    return _stt_error("STT backend returned an invalid JSON transcript for streaming.", status_code=502, code="invalid_stt_stream_response")
                 return Response(
                     content=b"".join(events),
                     media_type="text/event-stream",
@@ -5227,8 +5287,9 @@ async def proxy_stt_request(
         except Exception:
             owner.report(status="failed", reason="failed")
             return _stt_error("STT proxy request failed.", status_code=502, code="stt_proxy_error")
-        succeeded = stt_chunking.upstream_response_succeeded(response.status_code)
-        owner.report(status="succeeded" if succeeded else "failed", reason="completed" if succeeded else "failed")
+        if not cleanup_deferred:
+            succeeded = stt_chunking.upstream_response_succeeded(response.status_code)
+            owner.report(status="succeeded" if succeeded else "failed", reason="completed" if succeeded else "failed")
         return response
 
 

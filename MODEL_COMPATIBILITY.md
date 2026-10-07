@@ -76,6 +76,19 @@ formats return `400 unsupported_response_format`. Buffered conversion failures
 return `502` with an API error. Streaming conversion requires the same installed
 binary and encoders; failures can occur after response headers have been sent.
 
+Buffered speech backend errors return a JSON OpenAI error envelope instead of
+backend text, HTML, or audio-labelled errors. Backend 4xx/5xx statuses are
+preserved; other non-success statuses become `502`.
+
+Transcription `stream=true` accepts `json` (the default) and `verbose_json`;
+native streaming also accepts `diarized_json`. Other formats, including `text`,
+`srt`, and `vtt`, return `400 unsupported_stream_response_format` with
+`param: "response_format"` before inference. Buffered streaming requires a
+JSON object with a string `text`; invalid backend payloads return
+`502 invalid_stt_stream_response`. Native streams retain the request deadline,
+cancellation, and response byte limits until the body ends. A stream failure
+after headers interrupts the body and records a failed or cancelled receipt.
+
 See [streaming speech recipes](docs/LOCAL_CLIENT_RECIPES.md#model-aliases-stable-names) for client examples.
 
 ## Defaults
