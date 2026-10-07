@@ -1571,7 +1571,8 @@ def _load_admin_oidc_config():
 ADMIN_DB_PATH = _admin_db_path()
 ADMIN_OIDC_CONFIG = _load_admin_oidc_config()
 ADMIN_OIDC_STATES: dict[str, StateRecord] = {}
-ADMIN_OIDC_JWKS_CACHE: dict[str, Any] = {}
+from gateway.oidc_jwks import JWKSCache
+ADMIN_OIDC_JWKS_CACHE = JWKSCache()
 ADMIN_SESSION_SIGNING_KEY = (
     ADMIN_OIDC_CONFIG.signing_key
     if ADMIN_OIDC_CONFIG.enabled
@@ -1887,7 +1888,7 @@ def _default_profile_id_for_session(session) -> str | None:
     user_id = str(getattr(session, "subject", "") or "")
     account_profile = accounts.profile_for_user(user_id, path=ADMIN_STORE.path)
     if account_profile:
-        return account_profile
+        return _profile_ref_to_store_id(account_profile)
     oidc_access = _stored_oidc_access_names_for_user(user_id)
     return _default_profile_id_for_user(
         email=str(getattr(session, "email", "") or ""),
@@ -1908,7 +1909,7 @@ def _inherited_profile_id_for_app(app: Mapping[str, Any]) -> str | None:
         return None
     account_profile = accounts.profile_for_user(owner_user_id, path=ADMIN_STORE.path)
     if account_profile:
-        return account_profile
+        return _profile_ref_to_store_id(account_profile)
     oidc_access = _stored_oidc_access_names_for_user(owner_user_id)
     return _default_profile_id_for_user(
         email=str(user.get("email") or ""),
@@ -14479,49 +14480,15 @@ async def _oidc_exchange_code(code: str, *, config, pkce: PKCEPair) -> dict[str,
 
 
 async def _oidc_verify_id_token(id_token: str, *, config) -> Mapping[str, Any]:
-    jwks = ADMIN_OIDC_JWKS_CACHE.get(config.jwks_uri)
-    if jwks is None:
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.get(config.jwks_uri)
-            response.raise_for_status()
-            jwks = response.json()
-        ADMIN_OIDC_JWKS_CACHE[config.jwks_uri] = jwks
-    from authlib.jose import JsonWebKey, jwt
-
-    key_set = JsonWebKey.import_key_set(jwks)
-    claims = jwt.decode(id_token, key_set)
-    claims.validate(leeway=config.clock_skew_seconds)
-    return dict(claims)
-
-
-def _existing_admin_roles_by_email() -> dict[str, str]:
-    roles_by_email: dict[str, str] = {}
-    for user in admin_store.list_users(path=ADMIN_STORE.path):
-        if not is_human_user_record(user):
-            continue
-        email = str(user.get("email") or "").strip().lower()
-        if not email:
-            continue
-        roles = admin_store.list_admin_roles(
-            subject_kind="user",
-            subject_id=user["id"],
-            path=ADMIN_STORE.path,
-        )
-        role_names = {str(role["role"]) for role in roles}
-        if "owner" in role_names:
-            roles_by_email[email] = "owner"
-        elif "admin" in role_names:
-            roles_by_email[email] = "admin"
-    service_roles = admin_store.list_admin_roles(
-        subject_kind="service_account",
-        path=ADMIN_STORE.path,
+    return await ADMIN_OIDC_JWKS_CACHE.verify(
+        id_token, uri=config.jwks_uri, leeway=config.clock_skew_seconds,
     )
-    service_role_names = {str(role["role"]) for role in service_roles}
-    if "owner" in service_role_names:
-        roles_by_email["__service_account_owner__"] = "owner"
-    elif "admin" in service_role_names:
-        roles_by_email["__service_account_admin__"] = "admin"
-    return roles_by_email
+
+
+def _existing_admin_grants(*, include_revoked: bool = False) -> dict[str, str]:
+    """Presence-only bootstrap guard; email is never an identity key."""
+    return {str(row["id"]): str(row["role"])
+            for row in admin_store.list_admin_roles(include_revoked=include_revoked, path=ADMIN_STORE.path)}
 
 
 def _safe_admin_return_to(value: str | None, *, default: str = "/ui/home/") -> str:
@@ -14754,6 +14721,7 @@ app.include_router(create_account_router(
     signing_key_provider=_browser_admin_session_signing_key,
     oidc_provider=lambda: {"enabled": _resolved_admin_oidc_config()[0].enabled},
     instance_provider=lambda: instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults()),
+    client_ip_resolver=resolve_real_client_ip,
 ))
 
 
@@ -14761,7 +14729,7 @@ app.include_router(create_account_router(
 async def _account_session_revocation(request: Request, call_next):
     # Login routes must accept a revoked cookie so the person can sign in again.
     public_auth = (request.url.path.startswith("/auth/api/")
-                   or request.url.path in {"/admin/login", "/admin/oidc/callback", "/me/logout", "/admin/logout"}
+                   or request.url.path in {"/login", "/admin/login", "/admin/oidc/callback", "/me/logout", "/admin/logout"}
                    or request.url.path.startswith("/ui/sign-in")
                    or request.url.path.startswith("/ui/invite"))
     if not public_auth:
@@ -14801,7 +14769,7 @@ async def user_portal_logout():
 
 @app.get("/logout", include_in_schema=False)
 async def browser_logout_alias():
-    return await user_portal_logout()
+    return RedirectResponse("/auth/logout-confirm", status_code=303)
 
 
 def _render_user_portal_response(request: Request, *, login_return_to: str) -> Response:
@@ -16098,6 +16066,10 @@ async def _start_browser_login(request: Request, *, default_return_to: str) -> R
             media_type="text/plain; charset=utf-8",
         )
     try:
+        client_ip = resolve_real_client_ip(request)
+        if client_ip is None:
+            raise accounts.AccountError("invalid_client_ip", "Cannot verify the sign-in client address.", 400)
+        accounts.throttle_oidc(str(client_ip), path=ADMIN_STORE.path)
         cfg = oidc_config_for_public_base(
             await _admin_oidc_config_with_discovery(),
             instance_settings(ADMIN_STORE.path, _instance_presentation_defaults())["base_url"],
@@ -16114,6 +16086,9 @@ async def _start_browser_login(request: Request, *, default_return_to: str) -> R
                 status_code=302, headers={"cache-control": "no-store"},
             )
         return begin_browser_login(cfg, ADMIN_OIDC_STATES, return_to=return_to)
+    except accounts.AccountError as exc:
+        return JSONResponse({"error": {"code": exc.code, "message": exc.message}}, status_code=exc.status,
+                            headers={"retry-after": "60"} if exc.status == 429 else {})
     except Exception as e:  # noqa: BLE001
         return Response(
             content=f"OIDC login failed to start: {str(e)[:200]}",
@@ -16128,7 +16103,7 @@ def _owner_or_admin_exists() -> bool:
     Covers both OIDC user roles and service-account admin keys, since either
     is enough to manage the gateway.
     """
-    return bool(_existing_admin_roles_by_email())
+    return bool(_existing_admin_grants())
 
 
 def _admin_credential_active(record: Mapping[str, Any]) -> bool:
@@ -16774,7 +16749,10 @@ async def setup_local_login(request: Request):
         return JSONResponse({"error": {"code": "builtin_disabled", "message": "Use the identity provider to sign in."}}, status_code=403)
     try:
         accounts.initialize(ADMIN_STORE.path)
-        accounts.throttle(request.client.host if request.client else "unknown", email, path=ADMIN_STORE.path)
+        client_ip = resolve_real_client_ip(request)
+        if client_ip is None:
+            raise accounts.AccountError("invalid_client_ip", "Cannot verify the sign-in client address.", 400)
+        accounts.throttle(str(client_ip), email, path=ADMIN_STORE.path)
     except accounts.AccountError as exc:
         return JSONResponse({"error": {"code": exc.code, "message": exc.message}}, status_code=exc.status)
     user = admin_store.find_user_by_email(
@@ -17021,21 +16999,29 @@ async def admin_oidc_callback(request: Request):
             oidc_access_names,
             path=ADMIN_STORE.path,
         )
-        role = bootstrap_admin_role(
+        bootstrap_role = bootstrap_admin_role(
             str(claims.get("email") or ""),
             config=cfg,
-            existing_roles=_existing_admin_roles_by_email(),
+            existing_roles=_existing_admin_grants(include_revoked=True),
+            issuer=str(claims.get("iss") or ""),
+            email_verified=claims.get("email_verified") is True,
         )
-        if role == "none":
-            role = admin_role_from_oidc_claims(claims, config=cfg)
-        if role in {"owner", "admin"}:
+        if bootstrap_role == "owner":
+            # Bootstrap is durable and separate from current IdP membership.
             admin_store.assign_admin_role(
-                role=role,
+                role="owner",
                 subject_kind="user",
                 subject_id=user["id"],
-                granted_by="oidc",
+                granted_by="oidc-bootstrap",
                 path=ADMIN_STORE.path,
             )
+        claim_role = admin_role_from_oidc_claims(claims, config=cfg)
+        effective_grants = admin_store.reconcile_oidc_admin_roles(
+            str(user["id"]), {claim_role} if claim_role in {"owner", "admin"} else set(),
+            path=ADMIN_STORE.path,
+        )
+        effective_roles = {grant["role"] for grant in effective_grants}
+        role = "owner" if "owner" in effective_roles else "admin" if "admin" in effective_roles else "none"
         if _user_self_service_enabled() and _auto_create_personal_app_enabled():
             label = user.get("email") or user.get("display_name") or user["id"]
             default_profile_id = accounts.profile_for_user(str(user["id"]), path=ADMIN_STORE.path) or _default_profile_id_for_user(
@@ -17044,6 +17030,7 @@ async def admin_oidc_callback(request: Request):
                 oidc_groups=oidc_access_names["oidc_group"],
                 oidc_roles=oidc_access_names["oidc_role"],
             )
+            default_profile_id = _profile_ref_to_store_id(default_profile_id)
             app = admin_store.ensure_personal_app_for_user(
                 str(user["id"]),
                 name=f"{label} personal access",
@@ -17086,19 +17073,47 @@ async def admin_oidc_callback(request: Request):
             domain=cfg.cookie.domain,
         )
         return clear_browser_binding(response, state)
-    except (SessionError, IDTokenClaimsError, ValueError, httpx.HTTPError) as e:
+    except (SessionError, IDTokenClaimsError, ValueError, httpx.HTTPError):
         response = Response(
-            content=f"OIDC callback failed: {str(e)[:200]}",
+            content="OIDC authentication failed",
             status_code=400,
             media_type="text/plain; charset=utf-8",
         )
         return clear_browser_binding(response, state) if state else response
 
 
+@app.get("/auth/logout-confirm", include_in_schema=False)
+async def logout_confirmation(request: Request):
+    session = _oidc_session_from_request(request)
+    if session is None:
+        return RedirectResponse("/ui/sign-in/", status_code=303)
+    csrf = _csrf_token_for_oidc_session(session)
+    return HTMLResponse(
+        '<!doctype html><title>Sign out of Azizam</title>'
+        '<form method="post" action="/logout">'
+        f'<input type="hidden" name="csrf_token" value="{csrf}">'
+        '<button type="submit">Sign out</button></form>',
+        headers={"cache-control": "no-store", "referrer-policy": "no-referrer"},
+    )
+
+
+@app.post("/logout", include_in_schema=False)
+@app.post("/me/logout", include_in_schema=False)
 @app.post("/admin/logout", include_in_schema=False)
-async def admin_logout():
-    target = _login_url(return_to="/admin") if _effective_admin_oidc_config().enabled else "/setup"
-    response = RedirectResponse(target, status_code=302)
+async def admin_logout(request: Request):
+    session = _oidc_session_from_request(request)
+    if session is None:
+        return JSONResponse({"error": {"code": "login_required", "message": "Sign in first."}}, status_code=401)
+    supplied = request.headers.get("x-azizam-csrf") or ""
+    if not supplied and request.headers.get("content-type", "").startswith("application/x-www-form-urlencoded"):
+        values = await _setup_form_values(request)
+        supplied = values.get("csrf_token", "")
+    expected = _csrf_token_for_oidc_session(session)
+    if not expected or not hmac.compare_digest(expected, supplied):
+        return JSONResponse({"error": {"code": "csrf_required", "message": "Refresh the page before signing out."}}, status_code=403)
+    accounts.revoke_session(session.session_id, int(session.expires_at), path=ADMIN_STORE.path)
+    response = (JSONResponse({"next": "/ui/sign-in/"}) if "application/json" in request.headers.get("accept", "")
+                else RedirectResponse("/ui/sign-in/", status_code=303))
     cookie = _browser_admin_cookie_config()
     response.delete_cookie(
         cookie.name,

@@ -23,8 +23,8 @@ What lives here:
   an already-decoded claims dict. Cryptographic JWT signature verification
   is delegated to an adapter boundary (:class:`IDTokenVerifier`) so this
   module is fully testable without network or a JWKS dependency.
-* Role bootstrap helper that promotes the first allowed login to ``owner``
-  when no owner is recorded yet.
+* Role bootstrap helper that seeds a configured, verified owner under the
+  trusted issuer only when no grant exists.
 
 Security defaults chosen for r/selfhosted operators:
 
@@ -67,6 +67,7 @@ __all__ = [
     "access_names_from_oidc_claims",
     "bootstrap_admin_role",
     "consume_state",
+    "canonical_oidc_group",
     "csrf_token_for_session",
     "encode_session_cookie",
     "decode_session_cookie",
@@ -247,58 +248,25 @@ def _coerce_str_set(values: Any) -> frozenset[str]:
     return frozenset(str(v).strip().lower() for v in items if str(v).strip())
 
 
-def _access_name_aliases(value: Any) -> frozenset[str]:
-    """Return normalized aliases for IdP group/role names.
-
-    Operators should not have to remember whether Keycloak emitted
-    "trusted users", "trusted-users", "trusted_users", or "/trusted-users".
-    For nested group paths we match both the full path and final segment.
-    """
-    raw = str(value).strip().lower()
-    if not raw:
-        return frozenset()
-    stripped = raw.strip("/")
-    path_parts = [part.strip() for part in stripped.split("/") if part.strip()]
-    candidates = {stripped}
-    if path_parts:
-        candidates.add("/".join(path for path in path_parts if path))
-        candidates.add(path_parts[-1])
-
-    aliases: set[str] = set()
-    for candidate in candidates:
-        compact = " ".join(candidate.split())
-        if not compact:
-            continue
-        aliases.add(compact)
-        words = " ".join(compact.replace("_", " ").replace("-", " ").split())
-        if words:
-            aliases.add(words)
-            aliases.add(words.replace(" ", "-"))
-            aliases.add(words.replace(" ", "_"))
-    return frozenset(alias for alias in aliases if alias)
+def canonical_oidc_group(value: str) -> str:
+    """Interpret a short group name as a root path, preserving its exact name."""
+    return value if value.startswith("/") else "/" + value
 
 
 def _coerce_access_name_set(values: Any) -> frozenset[str]:
+    """Load exact authorization names; separators are only config list syntax."""
     if values is None:
         return frozenset()
     if isinstance(values, str):
-        if "," in values or "\n" in values:
-            items: Iterable[Any] = [
-                part.strip()
-                for chunk in values.splitlines()
-                for part in chunk.split(",")
-            ]
-        else:
-            items = [values]
+        items: Iterable[Any] = [
+            part.strip() for chunk in values.splitlines() for part in chunk.split(",")
+        ]
     else:
         try:
             items = list(values)
         except TypeError as exc:
             raise OIDCConfigError(f"expected iterable, got {type(values).__name__}") from exc
-    aliases: set[str] = set()
-    for item in items:
-        aliases.update(_access_name_aliases(item))
-    return frozenset(aliases)
+    return frozenset(str(item) for item in items if str(item))
 
 
 def _coerce_scopes(values: Any) -> tuple[str, ...]:
@@ -565,13 +533,21 @@ def record_state(
     browser_binding_hash: str = "",
     state: str | None = None,
     now: float | None = None,
+    max_age_seconds: int = 600,
+    max_pending: int = 1024,
 ) -> StateRecord:
-    """Mint a ``state`` and store the matching record. Returns the record."""
+    """Prune expired flows, then mint a bounded pending authorization record."""
+    current = now if now is not None else time.time()
+    for key, pending in tuple(store.items()):
+        if current - pending.created_at > max_age_seconds:
+            del store[key]
+    if max_pending <= 0 or len(store) >= max_pending:
+        raise SessionError("too many pending login flows")
     record = StateRecord(
         state=state or generate_state(),
         nonce=nonce,
         pkce_verifier=pkce_verifier,
-        created_at=now if now is not None else time.time(),
+        created_at=current,
         return_to=return_to,
         redirect_uri=redirect_uri,
         browser_cookie_name=browser_cookie_name,
@@ -782,16 +758,13 @@ def _iter_claim_strings(value: Any) -> Iterable[str]:
     return ()
 
 
-def _claim_values_match(value: Any, allowed: frozenset[str]) -> bool:
-    if not allowed:
-        return False
-    allowed_aliases: set[str] = set()
-    for item in allowed:
-        allowed_aliases.update(_access_name_aliases(item))
-    for item in _iter_claim_strings(value):
-        if _access_name_aliases(item) & allowed_aliases:
-            return True
-    return False
+def _claim_values_match(
+    value: Any, allowed: frozenset[str], *, groups: bool = False,
+) -> bool:
+    expected = allowed | {canonical_oidc_group(item) for item in allowed} if groups else allowed
+    # Claims are issuer assertions, not operator shorthand. No suffix,
+    # case, whitespace or punctuation aliases belong in authorization.
+    return any(item in expected for item in _iter_claim_strings(value))
 
 
 def admin_role_from_oidc_claims(
@@ -805,7 +778,7 @@ def admin_role_from_oidc_claims(
     bootstrap/manual concept, while "trusted users" can be managed in the
     IdP as the normal admin set for this gateway.
     """
-    if _claim_values_match(claims.get(config.groups_claim), config.admin_groups):
+    if _claim_values_match(claims.get(config.groups_claim), config.admin_groups, groups=True):
         return AdminRole.ADMIN
 
     realm_access = claims.get("realm_access")
@@ -833,33 +806,24 @@ def access_names_from_oidc_claims(
     client_id: str,
     groups_claim: str = "groups",
 ) -> dict[str, tuple[str, ...]]:
-    """Return normalized OIDC group/role names for runtime Profile mapping.
-
-    The gateway stores aliases rather than raw claims so an admin can map
-    "trusted users", "trusted-users", or "/trusted-users" without caring how
-    the IdP serialized the name on a given login.
-
-    ``groups_claim`` is the name of the ID-token claim that carries group
-    memberships.  Defaults to ``"groups"``; override with the value stored in
-    ``OIDCConfig.groups_claim``.
-    """
+    """Return exact issuer assertions for runtime Profile authorization mapping."""
     groups: set[str] = set()
     roles: set[str] = set()
 
     for item in _iter_claim_strings(claims.get(groups_claim)):
-        groups.update(_access_name_aliases(item))
+        groups.add(item)
 
     realm_access = claims.get("realm_access")
     if isinstance(realm_access, Mapping):
         for item in _iter_claim_strings(realm_access.get("roles")):
-            roles.update(_access_name_aliases(item))
+            roles.add(item)
 
     resource_access = claims.get("resource_access")
     if isinstance(resource_access, Mapping):
         client_access = resource_access.get(client_id)
         if isinstance(client_access, Mapping):
             for item in _iter_claim_strings(client_access.get("roles")):
-                roles.update(_access_name_aliases(item))
+                roles.add(item)
 
     return {
         "oidc_group": tuple(sorted(groups)),
@@ -906,13 +870,19 @@ class AdminSession:
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "AdminSession":
         try:
+            session_id = str(data.get("sid") or "")
+            if not session_id:
+                # Old signed cookies predate sid. Their payload is a stable,
+                # session-specific revocation key without invalidating them.
+                payload = json.dumps(dict(data), sort_keys=True, separators=(",", ":"))
+                session_id = "legacy_" + hashlib.sha256(payload.encode()).hexdigest()
             return cls(
                 subject=str(data["sub"]),
                 email=str(data["email"]),
                 role=str(data["role"]),
                 issued_at=float(data["iat"]),
                 expires_at=float(data["exp"]),
-                session_id=str(data.get("sid", "")),
+                session_id=session_id,
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise SessionError(f"malformed session payload: {exc}") from exc
@@ -1029,45 +999,17 @@ def bootstrap_admin_role(
     *,
     config: OIDCConfig,
     existing_roles: Mapping[str, str],
+    issuer: str = "",
+    email_verified: bool = False,
 ) -> str:
-    """Decide which :class:`AdminRole` to grant a freshly-authenticated user.
+    """Seed only the first configured, verified owner under the trusted issuer.
 
-    Rules, in order:
-
-    1. If ``existing_roles`` already maps this email to a role, that role
-       is returned verbatim (so a manually-promoted admin keeps their
-       grant across logins).
-    2. If no row in ``existing_roles`` has role=owner *and* no row has
-       role=admin, the first allowed login becomes ``owner`` — the
-       single-operator bootstrap path.
-    3. If the email is listed in ``config.admin_emails``, they get
-       ``admin``.
-    4. Otherwise they get ``none`` — callers can keep the signed identity
-       around for a future read-only surface, but admin routes should reject
-       it unless they explicitly support non-admin viewing.
-
-    ``existing_roles`` is expected to be a ``{email: role}`` mapping; the
-    actual persistence is up to the caller.
+    Persisted grants are presence-only here. Returning users recover their
+    grants by immutable (issuer, subject) at the caller, never by email.
+    Once any grant exists, an email cannot create or transfer authorization.
     """
-    email_norm = email.strip().lower()
-    existing_norm = {
-        str(k).strip().lower(): str(v).strip().lower()
-        for k, v in existing_roles.items()
-    }
-
-    if email_norm in existing_norm:
-        role = existing_norm[email_norm]
-        if role in AdminRole.ALL:
-            return role
+    if existing_roles or issuer != config.issuer or email_verified is not True:
         return AdminRole.NONE
-
-    has_owner = any(r == AdminRole.OWNER for r in existing_norm.values())
-    has_admin = any(r == AdminRole.ADMIN for r in existing_norm.values())
-
-    if not has_owner and not has_admin:
+    if email.strip().lower() in config.admin_emails:
         return AdminRole.OWNER
-
-    if email_norm in config.admin_emails:
-        return AdminRole.ADMIN
-
     return AdminRole.NONE

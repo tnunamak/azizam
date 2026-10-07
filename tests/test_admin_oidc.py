@@ -106,7 +106,7 @@ class TestConfigLoad(unittest.TestCase):
         self.assertEqual(cfg.client_secret, "from-env")
         self.assertEqual(cfg.signing_key, b"k" * 40)
 
-    def test_loads_oidc_admin_groups_and_roles_with_aliases(self) -> None:
+    def test_loads_oidc_admin_groups_and_roles_exactly(self) -> None:
         cfg = load_oidc_config(
             {
                 "enabled": True,
@@ -119,9 +119,8 @@ class TestConfigLoad(unittest.TestCase):
                 "admin_roles": ["trusted-admins"],
             }
         )
-        self.assertIn("trusted-users", cfg.admin_groups)
-        self.assertIn("trusted users", cfg.admin_groups)
-        self.assertIn("trusted_admins", cfg.admin_roles)
+        self.assertEqual(cfg.admin_groups, frozenset({"/Trusted Users"}))
+        self.assertEqual(cfg.admin_roles, frozenset({"trusted-admins"}))
 
     def test_loads_oidc_admin_groups_and_roles_from_env(self) -> None:
         cfg = load_oidc_config(
@@ -140,8 +139,7 @@ class TestConfigLoad(unittest.TestCase):
                 "ADMIN_ROLES": "trusted-admins",
             },
         )
-        self.assertIn("trusted", cfg.admin_groups)
-        self.assertIn("trusted-users", cfg.admin_groups)
+        self.assertEqual(cfg.admin_groups, frozenset({"/Trusted", "trusted users"}))
         self.assertIn("trusted-admins", cfg.admin_roles)
 
     def test_scopes_must_include_openid(self) -> None:
@@ -387,7 +385,7 @@ class TestIDTokenClaims(unittest.TestCase):
             admin_groups=frozenset({"trusted"}),
         )
         validate_id_token_claims(
-            self._claims(email="simon@example.com", groups=["/Trusted"]),
+            self._claims(email="simon@example.com", groups=["/trusted"]),
             config=cfg,
             expected_nonce="NONCE",
         )
@@ -524,61 +522,44 @@ class TestSessionCookie(unittest.TestCase):
 
 
 class TestBootstrapRole(unittest.TestCase):
-    def test_first_login_becomes_owner(self) -> None:
-        cfg = make_config()
-        role = bootstrap_admin_role("alice@example.com", config=cfg, existing_roles={})
+    def test_first_configured_verified_login_becomes_owner(self) -> None:
+        cfg = make_config(admin_emails=frozenset({"alice@example.com"}))
+        role = bootstrap_admin_role(
+            "  ALICE@Example.com ", config=cfg, existing_roles={},
+            issuer=cfg.issuer, email_verified=True,
+        )
         self.assertEqual(role, AdminRole.OWNER)
 
-    def test_existing_owner_blocks_bootstrap(self) -> None:
+    def test_email_cannot_recover_or_create_existing_grant(self) -> None:
+        cfg = make_config(admin_emails=frozenset({"alice@example.com"}))
+        for roles in ({"alice@example.com": "owner"}, {"other": "admin"}, {"other": "none"}):
+            self.assertEqual(bootstrap_admin_role(
+                "alice@example.com", config=cfg, existing_roles=roles,
+                issuer=cfg.issuer, email_verified=True,
+            ), AdminRole.NONE)
+
+    def test_bootstrap_requires_configured_email_verified_under_same_issuer(self) -> None:
+        cfg = make_config(admin_emails=frozenset({"alice@example.com"}))
+        for email, issuer, verified in (
+            ("outsider@example.com", cfg.issuer, True),
+            ("alice@example.com", "https://other.example.com", True),
+            ("alice@example.com", cfg.issuer, False),
+        ):
+            self.assertEqual(bootstrap_admin_role(
+                email, config=cfg, existing_roles={}, issuer=issuer, email_verified=verified,
+            ), AdminRole.NONE)
+
+    def test_unspecified_bootstrap_email_cannot_become_owner(self) -> None:
         cfg = make_config()
-        role = bootstrap_admin_role(
-            "bob@example.com",
-            config=cfg,
-            existing_roles={"alice@example.com": AdminRole.OWNER},
-        )
-        self.assertEqual(role, AdminRole.NONE)
-
-    def test_existing_admin_blocks_bootstrap(self) -> None:
-        cfg = make_config()
-        role = bootstrap_admin_role(
-            "carol@example.com",
-            config=cfg,
-            existing_roles={"alice@example.com": AdminRole.ADMIN},
-        )
-        self.assertEqual(role, AdminRole.NONE)
-
-    def test_configured_admin_email_gets_admin(self) -> None:
-        cfg = make_config(admin_emails=frozenset({"bob@example.com"}))
-        role = bootstrap_admin_role(
-            "bob@example.com",
-            config=cfg,
-            existing_roles={"alice@example.com": AdminRole.OWNER},
-        )
-        self.assertEqual(role, AdminRole.ADMIN)
-
-    def test_existing_role_preserved(self) -> None:
-        cfg = make_config(admin_emails=frozenset({"bob@example.com"}))
-        role = bootstrap_admin_role(
-            "bob@example.com",
-            config=cfg,
-            existing_roles={"bob@example.com": AdminRole.OWNER},
-        )
-        # bob was promoted to owner manually; bootstrap must not demote.
-        self.assertEqual(role, AdminRole.OWNER)
-
-    def test_email_normalization(self) -> None:
-        cfg = make_config(admin_emails=frozenset({"bob@example.com"}))
-        role = bootstrap_admin_role(
-            "  BOB@Example.COM ",
-            config=cfg,
-            existing_roles={"alice@example.com": AdminRole.OWNER},
-        )
-        self.assertEqual(role, AdminRole.ADMIN)
+        self.assertEqual(bootstrap_admin_role(
+            "alice@example.com", config=cfg, existing_roles={},
+            issuer=cfg.issuer, email_verified=True,
+        ), AdminRole.NONE)
 
 
 class TestOIDCClaimRole(unittest.TestCase):
     def test_group_claim_can_grant_admin(self) -> None:
-        cfg = make_config(admin_groups=frozenset({"trusted users"}))
+        cfg = make_config(admin_groups=frozenset({"/local-ai/trusted-users"}))
         role = admin_role_from_oidc_claims(
             {"groups": ["/local-ai/trusted-users"]},
             config=cfg,
@@ -606,7 +587,7 @@ class TestOIDCClaimRole(unittest.TestCase):
         )
         self.assertEqual(role, AdminRole.ADMIN)
 
-    def test_access_names_from_claims_normalizes_runtime_mapping_inputs(self) -> None:
+    def test_access_names_from_claims_preserves_exact_runtime_mapping_inputs(self) -> None:
         names = access_names_from_oidc_claims(
             {
                 "groups": ["/local-ai/trusted-users"],
@@ -618,10 +599,8 @@ class TestOIDCClaimRole(unittest.TestCase):
             },
             client_id="azizam",
         )
-        self.assertIn("trusted-users", names["oidc_group"])
-        self.assertIn("trusted users", names["oidc_group"])
-        self.assertIn("power-users", names["oidc_role"])
-        self.assertIn("video team", names["oidc_role"])
+        self.assertEqual(names["oidc_group"], ("/local-ai/trusted-users",))
+        self.assertEqual(names["oidc_role"], ("Power Users", "video-team"))
         self.assertNotIn("ignored", names["oidc_role"])
 
     def test_unconfigured_claims_do_not_grant_admin(self) -> None:

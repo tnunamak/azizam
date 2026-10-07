@@ -86,8 +86,15 @@ def signin_options(path, oidc: dict) -> dict:
 
 def create_account_router(*, path_provider: Callable, auth, session_reader, cookie_provider,
                           signing_key_provider, oidc_provider: Callable,
-                          instance_provider: Callable | None = None) -> APIRouter:
+                          instance_provider: Callable | None = None,
+                          client_ip_resolver: Callable | None = None) -> APIRouter:
     router = APIRouter(route_class=_AccountRoute, tags=["accounts"])
+
+    def client_ip(request: Request) -> str:
+        resolved = client_ip_resolver(request) if client_ip_resolver else (request.client.host if request.client else None)
+        if resolved is None:
+            raise accounts.AccountError("invalid_client_ip", "Cannot verify the sign-in client address.", 400)
+        return str(resolved)
 
     def owner(request: Request):
         ctx = _require_admin(auth, request)
@@ -142,7 +149,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         same_origin(request)
         if not options()["built_in"]:
             raise accounts.AccountError("builtin_disabled", "Use the identity provider to sign in.", 403)
-        user = accounts.login(body.email, body.password, request.client.host if request.client else "unknown", path=path_provider())
+        user = accounts.login(body.email, body.password, client_ip(request), path=path_provider())
         return issue(user, {"next": safe_browser_return_to(body.return_to)})
 
     @router.get("/auth/api/invite")
@@ -156,7 +163,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
     def accept(request: Request, body: Accept):
         same_origin(request)
         opts, path = options(), path_provider()
-        accounts.throttle(request.client.host if request.client else "unknown", body.email, path=path)
+        accounts.throttle(client_ip(request), body.email, path=path)
         oidc_user_id = None
         if body.password is None:
             session = session_reader(request)
@@ -183,7 +190,7 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
     @router.post("/auth/api/password-reset")
     def reset(request: Request, body: Reset):
         same_origin(request)
-        accounts.throttle(request.client.host if request.client else "unknown", "reset", path=path_provider())
+        accounts.throttle(client_ip(request), "reset", path=path_provider())
         accounts.reset_password(body.token, body.password, path=path_provider())
         response = JSONResponse({"next": "/ui/sign-in/"})
         cookie = cookie_provider()

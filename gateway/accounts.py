@@ -34,6 +34,9 @@ CREATE TABLE IF NOT EXISTS account_access (
 CREATE TABLE IF NOT EXISTS account_sessions (
  session_id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), expires_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS account_session_revocations (
+ session_id TEXT PRIMARY KEY, expires_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS account_links (
  id TEXT PRIMARY KEY, kind TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
  profile_id TEXT REFERENCES profiles(id) ON DELETE SET NULL, user_id TEXT REFERENCES users(id), email TEXT,
@@ -136,14 +139,20 @@ def access(user_id: str, *, path: Path) -> dict[str, Any] | None:
 
 def profile_for_user(user_id: str, *, path: Path) -> str | None:
     with connection(path) as conn:
-        if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='account_access'").fetchone():
-            return None
-        row = conn.execute("SELECT profile_id FROM account_access WHERE user_id=? AND removed_at IS NULL", (user_id,)).fetchone()
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='account_access'").fetchone():
+            row = conn.execute("SELECT profile_id,removed_at FROM account_access WHERE user_id=?", (user_id,)).fetchone()
+            if row and (row[0] or row[1] is not None):
+                return row[0] if row[1] is None else None
+        row = conn.execute("SELECT profile_id FROM legacy_identity_profile_grants WHERE user_id=?", (user_id,)).fetchone()
         return row[0] if row else None
 
 
 def session_allowed(user_id: str, session_id: str, *, path: Path) -> bool:
     with connection(path) as conn:
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE name='account_session_revocations'").fetchone():
+            if conn.execute("SELECT 1 FROM account_session_revocations WHERE session_id=? AND expires_at>?",
+                            (session_id, int(time.time()))).fetchone():
+                return False
         if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='account_access'").fetchone():
             return True
         row = conn.execute("SELECT * FROM account_access WHERE user_id=?", (user_id,)).fetchone()
@@ -155,6 +164,17 @@ def session_allowed(user_id: str, session_id: str, *, path: Path) -> bool:
             return True
         return conn.execute("SELECT 1 FROM account_sessions WHERE user_id=? AND session_id=? AND expires_at>?",
                             (user_id, session_id, int(time.time()))).fetchone() is not None
+
+
+def revoke_session(session_id: str, expires_at: int, *, path: Path) -> None:
+    """Deny replay of signed cookies, including pre-registration sessions."""
+    with connection(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("DELETE FROM account_session_revocations WHERE expires_at<=?", (int(time.time()),))
+        conn.execute("INSERT INTO account_session_revocations VALUES(?,?) "
+                     "ON CONFLICT(session_id) DO UPDATE SET expires_at=MAX(expires_at, excluded.expires_at)",
+                     (session_id, expires_at))
+        conn.execute("DELETE FROM account_sessions WHERE session_id=?", (session_id,))
 
 
 def register_session(user_id: str, session_id: str, expires_at: int, *, path: Path):
@@ -181,6 +201,20 @@ def throttle(ip: str, email: str, *, path: Path, now: int | None = None):
             exceeded |= attempts > maximum
     if exceeded:
         raise AccountError("login_rate_limited", "Too many attempts. Try again in 15 minutes.", 429)
+
+
+def throttle_oidc(ip: str, *, path: Path, now: int | None = None) -> None:
+    initialize(path)
+    ts = int(time.time()) if now is None else now
+    bucket = "oidc:" + hashlib.sha256(ip.encode()).hexdigest()
+    with connection(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("DELETE FROM account_login_limits WHERE bucket LIKE 'oidc:%' AND started_at<=?", (ts - 60,))
+        conn.execute("INSERT INTO account_login_limits VALUES(?,?,1) ON CONFLICT(bucket) DO UPDATE SET attempts=attempts+1",
+                     (bucket, ts))
+        attempts = conn.execute("SELECT attempts FROM account_login_limits WHERE bucket=?", (bucket,)).fetchone()[0]
+    if attempts > 20:
+        raise AccountError("login_rate_limited", "Too many sign-in attempts. Try again in a minute.", 429)
 
 
 def login(email: str, password: str, ip: str, *, path: Path) -> dict:
@@ -334,10 +368,12 @@ def reset_password(token: str, password: str, *, path: Path):
 
 def people(*, path: Path) -> list[dict]:
     with connection(path) as conn:
-        rows = conn.execute("SELECT u.id,u.issuer,u.subject,u.display_name name,u.email,a.profile_id,p.name plan_name,"
+        rows = conn.execute("SELECT u.id,u.issuer,u.subject,u.display_name name,u.email,COALESCE(a.profile_id,l.profile_id) profile_id,p.name plan_name,"
                             "a.disabled_at,MAX(u.last_login_at,(SELECT COALESCE(MAX(c.last_used_at),0) FROM credentials c "
                             "JOIN apps app ON app.id=c.app_id WHERE app.owner_user_id=u.id)) last_active "
-                            "FROM users u LEFT JOIN account_access a ON a.user_id=u.id LEFT JOIN profiles p ON p.id=a.profile_id "
+                            "FROM users u LEFT JOIN account_access a ON a.user_id=u.id "
+                            "LEFT JOIN legacy_identity_profile_grants l ON l.user_id=u.id "
+                            "LEFT JOIN profiles p ON p.id=COALESCE(a.profile_id,l.profile_id) "
                             "WHERE a.removed_at IS NULL ORDER BY u.created_at").fetchall()
         people = []
         for row in rows:
@@ -370,9 +406,12 @@ def change_person(user_id: str, actor: str, *, path: Path, profile_id: str | Non
         conn.execute("INSERT OR IGNORE INTO account_access(user_id) VALUES(?)", (user_id,))
         if profile_id is not None:
             _valid_profile(conn, profile_id)
+            conn.execute("DELETE FROM legacy_identity_profile_grants WHERE user_id=?", (user_id,))
             conn.execute("UPDATE account_access SET profile_id=? WHERE user_id=?", (profile_id, user_id))
             conn.execute("UPDATE apps SET default_profile_id=? WHERE owner_user_id=?", (profile_id, user_id))
             conn.execute("UPDATE credentials SET profile_id=? WHERE app_id IN (SELECT id FROM apps WHERE owner_user_id=?)", (profile_id, user_id))
+        if remove:
+            conn.execute("DELETE FROM legacy_identity_profile_grants WHERE user_id=?", (user_id,))
         if disabled is not None or remove:
             conn.execute("UPDATE account_access SET disabled_at=?,removed_at=?,require_registered_session=1 WHERE user_id=?",
                          (ts if disabled or remove else None, ts if remove else None, user_id))
@@ -430,6 +469,7 @@ def copy_invite(link_id: str, actor: str, signing_key: bytes, *, path: Path) -> 
 
 def profile_reference_count(conn, profile_id: str) -> int:
     """Active product references that an owner must clear before deletion."""
+    legacy = conn.execute("SELECT COUNT(*) FROM legacy_identity_profile_grants WHERE profile_id=?", (profile_id,)).fetchone()[0]
     if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='account_access'").fetchone():
-        return 0
-    return conn.execute("SELECT COUNT(*) FROM account_access WHERE profile_id=? AND removed_at IS NULL", (profile_id,)).fetchone()[0] + conn.execute("SELECT COUNT(*) FROM account_links WHERE profile_id=? AND kind='invite' AND used_at IS NULL AND revoked_at IS NULL AND expires_at>?", (profile_id, int(time.time()))).fetchone()[0]
+        return legacy
+    return legacy + conn.execute("SELECT COUNT(*) FROM account_access WHERE profile_id=? AND removed_at IS NULL", (profile_id,)).fetchone()[0] + conn.execute("SELECT COUNT(*) FROM account_links WHERE profile_id=? AND kind='invite' AND used_at IS NULL AND revoked_at IS NULL AND expires_at>?", (profile_id, int(time.time()))).fetchone()[0]

@@ -263,7 +263,7 @@ class TestRuntimeProfileMappings(AdminStoreTestBase):
         rows = admin_store.list_user_identity_claims(user["id"], path=self.db)
         self.assertEqual(
             [(row["claim_kind"], row["claim_value"]) for row in rows],
-            [("oidc_group", "family")],
+            [("oidc_group", "/family")],
         )
 
     def test_runtime_mapping_resolution_uses_priority(self) -> None:

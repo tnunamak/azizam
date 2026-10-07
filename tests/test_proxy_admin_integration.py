@@ -74,7 +74,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         self.admin_key, _, _ = create_admin_service_account_key(
             "test-owner", path=self.db
         )
-        self.client = TestClient(proxy.app)
+        self.client = TestClient(proxy.app, client=("127.0.0.1", 50000))
 
     def tearDown(self) -> None:
         proxy.ADMIN_STORE.path = self.old_path
@@ -372,6 +372,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             authorization_endpoint="https://idp.example/authorize",
             token_endpoint="https://idp.example/token",
             jwks_uri="https://idp.example/jwks",
+            admin_groups=frozenset({"admins"}),
         )
         proxy.ADMIN_OIDC_CONFIG = cfg
         proxy.ADMIN_AUTH.signing_key = cfg.signing_key
@@ -400,6 +401,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
                 "sub": "oidc-subject",
                 "email": "owner@example.com",
                 "email_verified": True,
+                "groups": ["/admins"],
                 "nonce": record.nonce,
                 "exp": 4_000_000_000,
                 "iat": 1_700_000_000,
@@ -437,7 +439,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             authorization_endpoint="https://idp.example/authorize",
             token_endpoint="https://idp.example/token",
             jwks_uri="https://idp.example/jwks",
-            admin_groups=frozenset({"trusted users"}),
+            admin_groups=frozenset({"/trusted-users"}),
             admin_roles=frozenset({"trusted"}),
         )
         proxy.ADMIN_OIDC_CONFIG = cfg
@@ -707,6 +709,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             authorization_endpoint="https://idp.example/authorize",
             token_endpoint="https://idp.example/token",
             jwks_uri="https://idp.example/jwks",
+            admin_groups=frozenset({"admins"}),
         )
         proxy.ADMIN_OIDC_CONFIG = cfg
         proxy.ADMIN_AUTH.signing_key = cfg.signing_key
@@ -726,6 +729,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
                 "sub": "oidc-subject",
                 "email": "owner@example.com",
                 "email_verified": True,
+                "groups": ["/admins"],
                 "nonce": record.nonce,
                 "exp": 4_000_000_000,
                 "iat": 1_700_000_000,
@@ -2841,7 +2845,7 @@ class AdminEffectiveProfileTests(unittest.TestCase):
         self.admin_key, _, _ = create_admin_service_account_key(
             "test-owner", path=self.db
         )
-        self.client = TestClient(proxy.app)
+        self.client = TestClient(proxy.app, client=("127.0.0.1", 50000))
 
     def tearDown(self) -> None:
         proxy.ADMIN_STORE.path = self.old_path
@@ -2898,7 +2902,7 @@ class AdminCredentialDeleteAliasTests(unittest.TestCase):
         self.admin_key, _, _ = create_admin_service_account_key(
             "test-owner", path=self.db
         )
-        self.client = TestClient(proxy.app)
+        self.client = TestClient(proxy.app, client=("127.0.0.1", 50000))
 
     def tearDown(self) -> None:
         proxy.ADMIN_STORE.path = self.old_path
@@ -2962,7 +2966,7 @@ class AdminAuditEventsEndpointTests(unittest.TestCase):
         self.admin_key, _, _ = create_admin_service_account_key(
             "test-owner", path=self.db
         )
-        self.client = TestClient(proxy.app)
+        self.client = TestClient(proxy.app, client=("127.0.0.1", 50000))
 
     def tearDown(self) -> None:
         proxy.ADMIN_STORE.path = self.old_path
@@ -3077,7 +3081,7 @@ class ConfigExportTests(unittest.TestCase):
         self.admin_key, _, _ = create_admin_service_account_key(
             "test-owner", path=self.db
         )
-        self.client = TestClient(proxy.app)
+        self.client = TestClient(proxy.app, client=("127.0.0.1", 50000))
 
     def tearDown(self) -> None:
         proxy.ADMIN_STORE.path = self.old_path

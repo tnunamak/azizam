@@ -80,6 +80,7 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 | `GET` | `/health` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `health` |
 | `GET` | `/llms.txt` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `llms_txt` |
 | `GET` | `/logout` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `browser_logout_alias` |
+| `POST` | `/logout` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `admin_logout` |
 | `DELETE` | `/mcp` | unsupported | 405; stateless POST transport only | [gateway/mcp_server.py](../gateway/mcp_server.py) `mcp_no_stream` |
 | `GET` | `/mcp` | unsupported | 405; stateless POST transport only | [gateway/mcp_server.py](../gateway/mcp_server.py) `mcp_no_stream` |
 | `POST` | `/mcp` | partial | Protocol subset or configured-backend feature; see vendor facades | [gateway/mcp_server.py](../gateway/mcp_server.py) `mcp_post` |
