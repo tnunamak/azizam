@@ -282,17 +282,27 @@ test("Usage person filter does not promote an email address to a person name", a
     route.fulfill({
       json: {
         ...seededSummary,
-        people: [{ id: "person-email", name: "person@example.test" }],
+        people: [
+          { id: "person-email", name: "person@example.test" },
+          { id: "person-second", label: "second@example.test" },
+        ],
       },
     }),
   );
   await page.goto("/ui/usage/");
 
   await page.getByRole("combobox", { name: "Person" }).click();
-  await expect(
-    page.getByRole("option", { name: "Person", exact: true }),
-  ).toBeVisible();
+  const people = page.getByRole("option", { name: /^Person · / });
+  await expect(people).toHaveCount(2);
+  const labels = await people.allTextContents();
+  expect(new Set(labels).size).toBe(2);
+  expect(labels.join(" ")).not.toContain("@example.test");
   await expect(
     page.getByRole("option", { name: "person@example.test", exact: true }),
   ).toHaveCount(0);
+  const summaryRequest = page.waitForRequest((request) =>
+    request.url().includes("person=person-second"),
+  );
+  await people.nth(1).click();
+  await summaryRequest;
 });

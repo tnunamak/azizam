@@ -352,8 +352,23 @@ function PersonFilter({
 }
 
 function SummaryRow({ summary }: { summary: UsageSummary }) {
-  const showSpend =
-    summary.paidRequests === 0 || summary.remoteSpendUsd !== null;
+  const hasPaidRequests =
+    summary.paidRequests > 0 || summary.unknownPaidRequests > 0;
+  const hasCoverage =
+    summary.spendMeasuredRequests !== null && summary.spendTotalRequests !== null;
+  const partial =
+    summary.unknownPaidRequests > 0 ||
+    (summary.spendMeasuredRequests !== null &&
+      summary.spendTotalRequests !== null &&
+      summary.spendMeasuredRequests < summary.spendTotalRequests);
+  const spendLabel =
+    hasPaidRequests && summary.remoteSpendUsd !== null
+      ? partial
+        ? "Remote spend · partial"
+        : hasCoverage
+          ? "Remote spend"
+          : "Remote spend · coverage unknown"
+      : "Remote spend";
   return (
     <section className="grid gap-4 md:grid-cols-3" aria-label="This month">
       <MetricCard
@@ -362,18 +377,20 @@ function SummaryRow({ summary }: { summary: UsageSummary }) {
         value={formatNumber(summary.requests)}
         detail="This month"
       />
-      {showSpend ? <MetricCard
+      <MetricCard
         icon={DollarSign}
-        label="Remote spend"
+        label={spendLabel}
         value={
-          summary.paidRequests > 0 ? (
-            <Money amount={summary.remoteSpendUsd} summary />
-          ) : (
+          !hasPaidRequests ? (
             "No paid requests"
+          ) : summary.remoteSpendUsd === null ? (
+            "Unavailable"
+          ) : (
+            <Money amount={summary.remoteSpendUsd} summary />
           )
         }
         detail={spendCoverageDetail(summary)}
-      /> : null}
+      />
       <MetricCard
         icon={Image}
         label="Media made"
@@ -499,10 +516,24 @@ function DailyChart({ days }: { days: UsageDay[] }) {
             </div>
             <table className="sr-only">
               <caption>Requests by day and capability</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Date</th>
+                  {active.map((capability) => (
+                    <th key={capability} scope="col">
+                      {capabilityLabels[capability]}
+                    </th>
+                  ))}
+                  <th scope="col">Total</th>
+                </tr>
+              </thead>
               <tbody>
                 {days.map((day) => (
                   <tr key={day.date}>
                     <th scope="row">{day.date}</th>
+                    {active.map((capability) => (
+                      <td key={capability}>{day.byCapability[capability] ?? 0}</td>
+                    ))}
                     <td>{day.total}</td>
                   </tr>
                 ))}
@@ -1008,16 +1039,7 @@ function normalizeSummary(raw: unknown): UsageSummary {
         return { id: string(row.id, ""), label: string(row.label, "Source") };
       })
       .filter((item) => item.id),
-    people: array(data.people)
-      .map((item) => {
-        const person = object(item);
-        const label = string(person.label ?? person.name, "");
-        return {
-          id: string(person.id, ""),
-          label: label && !/^[^\s@]+@[^\s@]+$/.test(label) ? label : "Person",
-        };
-      })
-      .filter((item) => item.id),
+    people: normalizePeople(data.people),
     retentionDays: positiveNullableNumber(data.retention_days),
     coverageStart: nullableString(data.coverage_start ?? data.coverageStart),
     coverageNote: nullableString(data.coverage_note ?? data.coverageNote),
@@ -1034,6 +1056,31 @@ function normalizeSummary(raw: unknown): UsageSummary {
     ),
     truncated: Boolean(data.truncated),
   };
+}
+
+function normalizePeople(raw: unknown): UsagePerson[] {
+  const usedLabels = new Set<string>();
+  return array(raw)
+    .map((item) => {
+      const person = object(item);
+      const id = string(person.id, "");
+      const name = [person.label, person.name]
+        .map((value) => string(value, "").trim())
+        .find((value) => value && !/^[^\s@]+@[^\s@]+$/.test(value));
+      if (name) return { id, label: name };
+      // Derive a short identifier without exposing email addresses or other ID text.
+      let hash = 2166136261;
+      for (const character of id) {
+        hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
+      }
+      const base = `Person · ${(hash >>> 0).toString(16).padStart(8, "0")}`;
+      let label = base;
+      let suffix = 2;
+      while (usedLabels.has(label)) label = `${base}-${suffix++}`;
+      usedLabels.add(label);
+      return { id, label };
+    })
+    .filter((person) => person.id);
 }
 
 function normalizeReceipt(raw: unknown): UsageReceipt {
@@ -1197,8 +1244,16 @@ function formatDuration(value: number | null) {
 }
 
 function spendCoverageDetail(summary: UsageSummary) {
-  if (summary.paidRequests > 0) {
-    return `Across ${formatNumber(summary.paidRequests)} paid ${summary.paidRequests === 1 ? "request" : "requests"}`;
+  if (summary.paidRequests > 0 || summary.unknownPaidRequests > 0) {
+    const coverage =
+      summary.spendMeasuredRequests !== null && summary.spendTotalRequests !== null
+        ? `Cost measured for ${formatNumber(summary.spendMeasuredRequests)} of ${formatNumber(summary.spendTotalRequests)} requests.`
+        : "Measurement coverage is unavailable.";
+    const unknown =
+      summary.unknownPaidRequests > 0
+        ? ` ${formatNumber(summary.unknownPaidRequests)} paid ${summary.unknownPaidRequests === 1 ? "request has" : "requests have"} unknown cost.`
+        : "";
+    return `${coverage}${unknown}`;
   }
   if (summary.requests > 0) return "";
   return "";

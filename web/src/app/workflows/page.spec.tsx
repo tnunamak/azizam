@@ -128,4 +128,43 @@ describe("WorkflowsPage empathy copy", () => {
     expect(screen.getByText("workflow.image.upscale")).toBeInTheDocument();
     expect(screen.queryByText("Typed inputs")).not.toBeInTheDocument();
   });
+
+  test("WORKFLOWS-01 renders each filtered workflow once across all capabilities", async () => {
+    const catalog = [
+      "image",
+      "chat",
+      "transcribe",
+      "decide",
+      "embed",
+      "custom_task",
+    ].map((capability, index) => ({
+      ...workflows[0],
+      id: `workflow.test.${index}`,
+      capability,
+      title: `Catalog item ${index}`,
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({ schema_version: 1, workflows: catalog }),
+      ),
+    );
+    renderWorkflows();
+
+    await screen.findByText("Catalog item 0");
+    for (const row of catalog) {
+      expect(screen.getAllByText(row.title)).toHaveLength(1);
+    }
+    expect(screen.getByRole("heading", { name: "Custom task" })).toBeVisible();
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Search workflows" }),
+      {
+        target: { value: "Catalog item 5" },
+      },
+    );
+    expect(screen.getAllByText("Catalog item 5")).toHaveLength(1);
+    expect(screen.queryByText("Catalog item 0")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Custom task" }));
+    expect(screen.getAllByText("Catalog item 5")).toHaveLength(1);
+  });
 });

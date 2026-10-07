@@ -103,7 +103,8 @@ function capabilityLabel(value: string) {
       transcribe: capabilityLabels.transcribe,
       decide: capabilityLabels.decisions,
       embed: capabilityLabels.embeddings,
-    }[value as WorkflowCapability] ?? value
+    }[value as WorkflowCapability] ??
+    value.replace(/[_-]+/g, " ").replace(/^./, (letter) => letter.toUpperCase())
   );
 }
 
@@ -750,9 +751,7 @@ function RecentJobs({ workflow }: { workflow: WorkflowRow }) {
 
 export default function WorkflowsPage() {
   const [query, setQuery] = useState("");
-  const [capability, setCapability] = useState<WorkflowCapability | "all">(
-    "all",
-  );
+  const [capability, setCapability] = useState<string>("all");
   const [detail, setDetail] = useState<WorkflowRow | null>(null);
   const { data, isPending, isError, isFetching, refetch } = useQuery({
     queryKey: ["workflows", "catalog"],
@@ -760,7 +759,15 @@ export default function WorkflowsPage() {
     retry: false,
   });
   const rows = data?.workflows ?? EMPTY_WORKFLOWS;
-  const availableCapabilities = capabilityOrder.filter((cap) =>
+  const allCapabilities = [
+    ...capabilityOrder,
+    ...new Set(
+      rows
+        .map((row) => row.capability)
+        .filter((cap) => !capabilityOrder.includes(cap as WorkflowCapability)),
+    ),
+  ];
+  const availableCapabilities = allCapabilities.filter((cap) =>
     rows.some((row) => row.capability === cap),
   );
   const filtered = useMemo(
@@ -772,7 +779,7 @@ export default function WorkflowsPage() {
       ),
     [rows, query, capability],
   );
-  const grouped = capabilityOrder
+  const grouped = allCapabilities
     .map((cap) => ({
       capability: cap,
       rows: filtered.filter((row) => row.capability === cap),

@@ -1143,3 +1143,62 @@ describe("models catalog contract distinctions", () => {
     ).toHaveAttribute("href", "/ui/providers/");
   });
 });
+
+describe("model cost and clipboard recovery", () => {
+  it.each([
+    { price: null, label: "Paid · price unavailable" },
+    { price: 0, label: "Paid · 0" },
+  ])(
+    "preserves paid classification for price $price across cards, details, and tables",
+    async ({ price, label }) => {
+      renderModels(
+        catalog(
+          [row({ locality: "remote", cost: { kind: "paid", price } })],
+          [
+            row({
+              id: "paid-exact",
+              alias: false,
+              object: "model_catalog.model",
+              locality: "remote",
+              cost: { kind: "paid", price },
+            }),
+          ],
+        ),
+      );
+      const copy = await screen.findByRole("button", {
+        name: "Copy model name chat",
+      });
+      const card = within(copy.closest("article")!);
+      expect(card.getByText(label)).toBeVisible();
+      fireEvent.click(card.getByRole("button", { name: "Details" }));
+      expect(within(screen.getByRole("dialog")).getByText(label)).toBeVisible();
+      fireEvent.click(
+        within(screen.getByRole("dialog")).getByRole("button", {
+          name: "Close",
+        }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "All models" }));
+      expect(within(screen.getByRole("table")).getByText(label)).toBeVisible();
+    },
+  );
+
+  it("announces rejected clipboard access and exposes the full name for manual copy", async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error("Permission denied"));
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    const id = "provider/a-long-model-name-that-needs-manual-copy";
+    renderModels(catalog([row({ id })]));
+    fireEvent.click(
+      await screen.findByRole("button", { name: `Copy model name ${id}` }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Copy failed. Select the model name and copy it manually.",
+    );
+    expect(
+      screen.getByRole("textbox", { name: "Model name for manual copy" }),
+    ).toHaveValue(id);
+    expect(writeText).toHaveBeenCalledWith(id);
+  });
+});
