@@ -1,0 +1,70 @@
+Skip to content
+Azizam
+
+You
+
+Home
+Apps & keys
+Models
+Workflows
+Try
+Library
+Usage
+
+Gateway
+
+Status
+Engines
+Providers
+People
+Activity
+Settings
+Search⌘K
+Appearance
+S
+Sam
+Gateway reachable
+Status
+
+1 problem needs you
+
+Needs attention
+
+Video is unavailable.
+
+1 engine affected.
+
+Open
+Engines
+Show disabled
+Open engines
+5 engines
+Engine status
+Engine	State	Serves
+
+Execution gateway (chat)
+	
+Ready	Chat
+
+Home Assistant voice (music & sound effects)
+	
+Ready	Music, Sound effects
+
+Image studio (images)
+	
+Ready	Images
+
+Study and coding (chat)
+	
+Ready	Chat
+
+Video studio (video)
+	
+Unavailable	Video
+Providers
+Remote backup
+Configured
+Enabled
+Key set
+
+Spend: $0.45 of $8.00 this month
