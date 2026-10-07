@@ -875,3 +875,20 @@ def test_member_ready_summary_and_help_are_consistent(home_case):
     assert partial["status"]["reason_code"] == "unknown"
     assert partial["status"]["affected_capability_ids"] == ["image"]
     assert partial["help"] == ""
+
+
+def test_recipe_alias_local_provenance_excludes_remote_and_unknown(home_case):
+    c = home_case
+    response = c.http.get("/me/api/home")
+    assert response.status_code == 200
+    assert response.json()["credential_aliases"][c.cred["id"]][0]["local"] is True
+
+    c.registry["services"]["service"]["config"] = {}
+    response = c.http.get("/me/api/home")
+    assert response.json()["credential_aliases"][c.cred["id"]][0]["local"] is False
+
+    c.registry["services"]["service"]["config"] = {
+        "gateway_lifecycle": True, "cost_class": "paid-remote",
+    }
+    response = c.http.get("/me/api/home")
+    assert response.json()["credential_aliases"][c.cred["id"]][0]["local"] is False

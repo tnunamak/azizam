@@ -92,3 +92,17 @@ describe.skipIf(process.platform === "win32")("Shell recipe escaping", () => {
     expect(values).toEqual([url, model, model]);
   });
 });
+
+describe("Home local recipe fallback", () => {
+  const alias = { operation: "chat", available: true, status: "ready" as const, reason_code: "ready" };
+  it("uses a permitted local chat alias when default is absent", () => {
+    expect(chatAlias([{ ...alias, id: "paid", local: false }, { ...alias, id: "local-chat", local: true }])).toBe("local-chat");
+  });
+  it("never substitutes a paid or unclassified alias", () => {
+    expect(chatAlias([{ ...alias, id: "paid", local: false }, { ...alias, id: "unknown" }])).toBeNull();
+  });
+  it("retains the default preference and ignores non-chat aliases", () => {
+    expect(chatAlias([{ ...alias, id: "local-chat", local: true }, { ...alias, id: "default" }])).toBe("default");
+    expect(chatAlias([{ ...alias, id: "images", operation: "images", local: true }])).toBeNull();
+  });
+});

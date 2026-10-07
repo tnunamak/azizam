@@ -26,6 +26,8 @@ export function chatAlias(aliases: HomeAlias[]): string | null {
   return (
     chat.find((alias) => alias.id === "default" && alias.available)?.id ??
     chat.find((alias) => alias.id === "default")?.id ??
+    chat.find((alias) => alias.local === true && alias.available)?.id ??
+    chat.find((alias) => alias.local === true)?.id ??
     null
   );
 }

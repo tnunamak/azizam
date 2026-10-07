@@ -236,6 +236,14 @@ def _capability_rows(capabilities, evidence, registry=None, alias_views=None) ->
                          if alias.get("alias") == cap.model and "alias" in cap.tags), None)
         summary = summarize_capability(cap, "client")
         summary.pop("reason", None)
+        service = ((registry or {}).get("services") or {}).get(cap.backend) or {}
+        remote = ("remote" in cap.tags or cap.backend_kind == "remote"
+                  or cap.cost_class not in {None, "free-local"}
+                  or is_remote_provider_config(service.get("config") or {}))
+        if not remote and _declared_local_fast(cap, registry or {}):
+            summary["backend_kind"] = "local"
+        elif remote:
+            summary["backend_kind"] = "remote"
         product_availability = projection.to_public_dict()
         product_availability.pop("reason", None)
         product_availability["reason_code"] = reason
@@ -256,7 +264,8 @@ def _alias_rows(rows, views) -> list[dict[str, Any]]:
             if matches:
                 best = next((row for row in matches if row["available"]), matches[0])
                 aliases.append({"id": alias["alias"], "operation": operation,
-                                "available": best["available"], "status": best["status"], "reason_code": best["reason_code"]})
+                                "available": best["available"], "status": best["status"], "reason_code": best["reason_code"],
+                                "local": best.get("backend_kind") == "local"})
     return aliases
 
 

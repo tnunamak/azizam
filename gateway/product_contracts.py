@@ -95,6 +95,7 @@ class HomeCapability(CapabilitySummary):
 
 
 class HomeAlias(TypedDict):
+    local: NotRequired[bool]
     id: str
     operation: str
     available: bool

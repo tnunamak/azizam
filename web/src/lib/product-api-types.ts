@@ -123,6 +123,7 @@ export interface HomeCapability {
 }
 
 export interface HomeAlias {
+  local?: boolean;
   id: string;
   operation: string;
   available: boolean;
