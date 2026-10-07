@@ -25395,28 +25395,17 @@ async def create_response(request: Request):
                 )
 
                 async def event_stream():
-                    final_obj: Optional[dict] = None
                     try:
                         for ev in translator.start():
                             yield ev
                         async for chunk in iter_llm_response_bytes(client, upstream):
                             for ev in translator.feed(chunk):
                                 yield ev
-                        for ev in translator.finish():
+                        # Close items first, but acknowledge completion only after persistence.
+                        for ev in translator.finish(emit_terminal=False):
                             yield ev
                         final_obj = translator.build_final_response()
-                        owner.report(status="succeeded", reason="completed")
-                    except Exception as error:  # noqa: BLE001
-                        owner.report(status="failed", reason="read_error")
-                        yield responses_translator.sse_pack("response.error", {
-                            "type": "response.error",
-                            "sequence_number": 9999,
-                            "error": {"message": str(error), "type": "internal_error", "code": "internal_error"},
-                        })
-                    finally:
-                        await upstream.aclose()
-                        await client.aclose()
-                        if store and final_obj is not None:
+                        if store:
                             try:
                                 responses_store.save(
                                     response_id,
@@ -25427,8 +25416,27 @@ async def create_response(request: Request):
                                     response_json=final_obj,
                                     api_key_name=_api_key_name(auth_context),
                                 )
-                            except Exception as error:  # noqa: BLE001
-                                print(f"[proxy] responses_store.save failed: {error}", flush=True)
+                            except Exception:  # noqa: BLE001
+                                for ev in translator.fail("Azizam could not persist the response."):
+                                    yield ev
+                                final_obj = translator.build_final_response()
+                        owner.report(
+                            status="succeeded" if final_obj["status"] == "completed" else "failed",
+                            reason="completed" if final_obj["status"] == "completed" else "failed",
+                        )
+                        for ev in translator.terminal_event():
+                            yield ev
+                    except Exception as error:  # noqa: BLE001
+                        owner.report(status="failed", reason="read_error")
+                        for ev in translator.fail(str(error)):
+                            yield ev
+                        for ev in translator.finish():
+                            yield ev
+                        for ev in translator.terminal_event():
+                            yield ev
+                    finally:
+                        await upstream.aclose()
+                        await client.aclose()
 
                 return StreamingResponse(
                     owner.handoff_stream(event_stream()),
@@ -25479,8 +25487,13 @@ async def create_response(request: Request):
                         response_json=resp_json,
                         api_key_name=_api_key_name(auth_context),
                     )
-                except Exception as error:  # noqa: BLE001
-                    print(f"[proxy] responses_store.save failed: {error}", flush=True)
+                except Exception:  # noqa: BLE001
+                    owner.report(status="failed", reason="failed")
+                    return _responses_error(
+                        "Azizam could not persist the response.",
+                        code="internal_error",
+                        status=500,
+                    )
 
             owner.report(status="succeeded", reason="completed")
             return Response(
@@ -25545,14 +25558,35 @@ async def list_response_input_items(response_id: str, request: Request):
             code="not_found",
             status=404,
         )
-    items = responses_translator.input_items_from_request(row.get("request_json") or {})
+    try:
+        limit = int(request.query_params.get("limit", "20"))
+    except ValueError:
+        return _responses_error("limit must be an integer between 1 and 100.", param="limit")
+    if not 1 <= limit <= 100:
+        return _responses_error("limit must be between 1 and 100.", param="limit")
+    order = request.query_params.get("order", "desc")
+    if order not in ("asc", "desc"):
+        return _responses_error("order must be 'asc' or 'desc'.", param="order")
+    items = responses_translator.input_items_from_request(
+        row.get("request_json") or {}, response_id=response_id
+    )
+    if order == "desc":
+        items.reverse()
+    after = request.query_params.get("after")
+    if after is not None:
+        cursor = next((index for index, item in enumerate(items) if item["id"] == after), None)
+        if cursor is None:
+            return _responses_error("after must identify an input item in this response.", param="after")
+        items = items[cursor + 1:]
+    has_more = len(items) > limit
+    items = items[:limit]
     return _json_error_response(
         {
             "object": "list",
             "data": items,
             "first_id": items[0]["id"] if items else None,
             "last_id": items[-1]["id"] if items else None,
-            "has_more": False,
+            "has_more": has_more,
         },
         status_code=200,
     )
