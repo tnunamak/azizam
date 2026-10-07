@@ -179,6 +179,8 @@ class AdminStore(Protocol):
 
     def operator_overrides(self) -> dict[str, Any]: ...
 
+    def setting_revision(self, key: str) -> str: ...
+
     def update_user_access_defaults(
         self, *, data: Mapping[str, Any], actor: AdminContext
     ) -> dict[str, Any]: ...
@@ -188,7 +190,8 @@ class AdminStore(Protocol):
     ) -> dict[str, Any]: ...
 
     def update_media_job_admission_overrides(
-        self, *, data: Mapping[str, Any], actor: AdminContext
+        self, *, data: Mapping[str, Any], actor: AdminContext,
+        expected_revision: str | None = None,
     ) -> dict[str, Any]: ...
 
     def get_service_registry(self) -> dict[str, Any]: ...
@@ -236,7 +239,8 @@ class AdminStore(Protocol):
     def get_oidc_config_setting(self) -> dict[str, Any] | None: ...
 
     def update_oidc_config_setting(
-        self, *, data: Mapping[str, Any], actor: AdminContext
+        self, *, data: Mapping[str, Any], actor: AdminContext,
+        expected_revision: str | None = None,
     ) -> dict[str, Any]: ...
 
     def recent_audit(
@@ -2948,6 +2952,15 @@ def create_admin_router(
             ).as_response()
         return JSONResponse(status_code=status.HTTP_200_OK, content=result)
 
+    def settings_revision(request: Request) -> str:
+        revision = request.headers.get("if-match")
+        if not revision:
+            raise _RouteError(428, "settings_revision_required", "Reload settings and supply the current revision in If-Match.")
+        return revision.strip('"')
+
+    def settings_conflict() -> JSONResponse:
+        return _RouteError(409, "settings_conflict", "Settings changed elsewhere; reload to see the latest").as_response()
+
     @router.put("/operator/media-job-admission")
     async def update_media_job_admission_overrides(
         request: Request,
@@ -2961,9 +2974,12 @@ def create_admin_router(
             record = store.update_media_job_admission_overrides(
                 data=overrides,
                 actor=ctx,
+                expected_revision=settings_revision(request),
             )
         except _RouteError as exc:
             return exc.as_response()
+        except admin_store.SettingsConflictError:
+            return settings_conflict()
         except ValueError as exc:
             return _RouteError(
                 status.HTTP_400_BAD_REQUEST,
@@ -2972,7 +2988,7 @@ def create_admin_router(
             ).as_response()
         return JSONResponse(
             status_code=status.HTTP_200_OK,
-            content={"media_job_admission": record},
+            content={"media_job_admission": {k: v for k, v in record.items() if k != "revision"}, "revision": record["revision"]},
         )
 
     @router.get("/oidc-config")
@@ -2980,6 +2996,7 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
+        revision = store.setting_revision("oidc_provider_config")
         record = (
             effective_oidc_config_provider()
             if effective_oidc_config_provider is not None
@@ -2987,7 +3004,7 @@ def create_admin_router(
         )
         return JSONResponse(
             status_code=status.HTTP_200_OK,
-            content={"oidc_config": record},
+            content={"oidc_config": record, "revision": revision},
         )
 
     @router.put("/oidc-config")
@@ -3004,9 +3021,11 @@ def create_admin_router(
         try:
             body = await _read_json_body(request)
             payload = _validate_oidc_config_payload(body)
-            record = store.update_oidc_config_setting(data=payload, actor=ctx)
+            record = store.update_oidc_config_setting(data=payload, actor=ctx, expected_revision=settings_revision(request))
         except _RouteError as exc:
             return exc.as_response()
+        except admin_store.SettingsConflictError:
+            return settings_conflict()
         except ValueError as exc:
             return _RouteError(
                 status.HTTP_400_BAD_REQUEST,
@@ -3016,10 +3035,11 @@ def create_admin_router(
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={
+                "revision": record["revision"],
                 "oidc_config": (
                     effective_oidc_config_provider()
                     if effective_oidc_config_provider is not None
-                    else record
+                    else {k: v for k, v in record.items() if k != "revision"}
                 )
             },
         )

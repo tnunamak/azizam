@@ -7,6 +7,7 @@ import { Download, Loader2, Puzzle } from "lucide-react";
 import { toast } from "sonner";
 import {
   adminFetch,
+  ApiError,
   adminRegistryMutation,
   api,
   type EffectiveOidcConfig,
@@ -221,7 +222,9 @@ function MutationError({ error }: { error: unknown }) {
   return error ? (
     <p role="alert" className="text-destructive text-sm">
       <span className="font-medium">Unsaved changes. </span>
-      {error instanceof Error
+      {error instanceof ApiError && error.status === 409
+        ? "Settings changed elsewhere; reload to see the latest"
+        : error instanceof Error
         ? error.message
         : "Changes could not be saved. Try again."}
     </p>
@@ -232,7 +235,7 @@ function InstanceSection() {
   const { data, isPending, isError, refetch } = useQuery({
     queryKey: keys.instance,
     queryFn: () =>
-      adminFetch<{ instance: Instance }>("/admin/api/settings/instance"),
+      adminFetch<{ instance: Instance; revision: string }>("/admin/api/settings/instance"),
   });
   const theme =
     data?.instance.theme_default === "system"
@@ -267,23 +270,27 @@ function InstanceSection() {
         />
       ) : (
         <InstanceForm
-          key={JSON.stringify(data.instance)}
           initial={data.instance}
+          revision={data.revision}
         />
       )}
     </Section>
   );
 }
-function InstanceForm({ initial }: { initial: Instance }) {
+function InstanceForm({ initial, revision }: { initial: Instance; revision: string }) {
   const client = useQueryClient();
+  const [draftRevision, setDraftRevision] = useState(revision);
   const [form, setForm] = useState(initial);
   const mutation = useMutation({
     mutationFn: () =>
-      adminFetch<{ instance: Instance }>("/admin/api/settings/instance", {
+      adminFetch<{ instance: Instance; revision: string }>("/admin/api/settings/instance", {
         method: "PUT",
         body: form,
+        headers: { "If-Match": draftRevision },
       }),
     onSuccess: (data) => {
+      setDraftRevision(data.revision);
+      setForm(data.instance);
       client.setQueryData(keys.instance, data);
       void client.invalidateQueries({ queryKey: ["foundation", "instance"] });
       void client.invalidateQueries({ queryKey: keys.effective });
@@ -354,7 +361,7 @@ function SignInSection() {
   } = useQuery({
     queryKey: keys.oidc,
     queryFn: () =>
-      adminFetch<{ oidc_config: EffectiveOidcConfig | null }>(
+      adminFetch<{ oidc_config: EffectiveOidcConfig | null; revision: string }>(
         "/admin/api/oidc-config",
       ),
   });
@@ -401,11 +408,8 @@ function SignInSection() {
         />
       ) : (
         <OidcForm
-          key={JSON.stringify({
-            oidc: oidcData.oidc_config,
-            signIn: signInData,
-          })}
           config={oidcData.oidc_config}
+          revision={oidcData.revision}
           signIn={signInData}
         />
       )}
@@ -414,12 +418,15 @@ function SignInSection() {
 }
 function OidcForm({
   config,
+  revision,
   signIn,
 }: {
   config: EffectiveOidcConfig | null;
+  revision: string;
   signIn: SignInOptions;
 }) {
   const client = useQueryClient();
+  const [draftRevision, setDraftRevision] = useState(revision);
   const [mode, setMode] = useState<SignInMode>(signIn.mode);
   const [enabled, setEnabled] = useState(config?.enabled ?? false);
   const [fields, setFields] = useState({
@@ -460,12 +467,14 @@ function OidcForm({
       };
       if (fields.client_secret.trim())
         body.client_secret = fields.client_secret;
-      return adminFetch<{ oidc_config: EffectiveOidcConfig }>(
+      return adminFetch<{ oidc_config: EffectiveOidcConfig; revision: string }>(
         "/admin/api/oidc-config",
-        { method: "PUT", body },
+        { method: "PUT", body, headers: { "If-Match": draftRevision } },
       );
     },
     onSuccess: (data) => {
+      setDraftRevision(data.revision);
+      setFields((current) => ({ ...current, client_secret: "" }));
       client.setQueryData(keys.oidc, data);
       void client.invalidateQueries({ queryKey: keys.signIn });
       void client.invalidateQueries({ queryKey: keys.effective });
@@ -837,7 +846,7 @@ function MediaSection() {
     queryKey: keys.media,
     queryFn: () =>
       adminFetch<{
-        overrides: { media_job_admission: Partial<MediaAdmission> | null };
+        overrides: { media_job_admission: Partial<MediaAdmission> | null; revisions: { media_job_admission_overrides: string } };
       }>("/admin/api/operator/overrides"),
   });
   return (
@@ -882,15 +891,16 @@ function MediaSection() {
         />
       ) : (
         <MediaForm
-          key={JSON.stringify(data.overrides.media_job_admission)}
           initial={data.overrides.media_job_admission ?? {}}
+          revision={data.overrides.revisions.media_job_admission_overrides}
         />
       )}
     </Section>
   );
 }
-function MediaForm({ initial }: { initial: Partial<MediaAdmission> }) {
+function MediaForm({ initial, revision }: { initial: Partial<MediaAdmission>; revision: string }) {
   const client = useQueryClient();
+  const [draftRevision, setDraftRevision] = useState(revision);
   const [form, setForm] = useState({
     disabled_intents: (initial.disabled_intents ?? []).join(", "),
     disabled_resource_classes: (initial.disabled_resource_classes ?? []).join(
@@ -904,8 +914,9 @@ function MediaForm({ initial }: { initial: Partial<MediaAdmission> }) {
     setForm({ ...form, [key]: value });
   const mutation = useMutation({
     mutationFn: () =>
-      adminFetch("/admin/api/operator/media-job-admission", {
+      adminFetch<{ revision: string }>("/admin/api/operator/media-job-admission", {
         method: "PUT",
+        headers: { "If-Match": draftRevision },
         body: {
           disabled_intents: split(form.disabled_intents),
           disabled_resource_classes: split(form.disabled_resource_classes),
@@ -918,7 +929,8 @@ function MediaForm({ initial }: { initial: Partial<MediaAdmission> }) {
               : Number(form.retry_after_seconds),
         },
       }),
-    onSuccess: () => {
+    onSuccess: (data) => {
+      setDraftRevision(data.revision);
       void client.invalidateQueries({ queryKey: keys.media });
       void client.invalidateQueries({ queryKey: keys.effective });
       toast.success("Media admission saved");

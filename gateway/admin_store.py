@@ -41,7 +41,7 @@ import sqlite3
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 _default_db = Path(__file__).resolve().parent.parent / "data" / "admin.db"
 DB_PATH = Path(get_env("AZIZAM_ADMIN_DB")) if get_env("AZIZAM_ADMIN_DB") else _default_db
@@ -210,9 +210,8 @@ CREATE TABLE IF NOT EXISTS operator_settings (
 CREATE INDEX IF NOT EXISTS operator_settings_updated_at
   ON operator_settings(updated_at);
 
--- This table is deliberately scoped to the one document currently protected
--- by this CAS protocol.  Its key makes a future, explicit setting opt-in
--- possible without silently turning unrelated settings into registry writers.
+-- Each setting has an independent server-owned revision. The registry keeps
+-- its existing generation contract; forms opt in to revisions per resource.
 CREATE TABLE IF NOT EXISTS operator_settings_generations (
   setting_key TEXT PRIMARY KEY,
   operator_settings_generation INTEGER NOT NULL
@@ -280,14 +279,12 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         )
     if migrate_legacy_claims:
         _migrate_legacy_identity_profiles(conn)
-    # A database created before registry generations existed may already have
-    # the document.  Seed its first server-owned value during migration rather
-    # than exposing a synthetic zero until the next write.
+    # Seed existing documents once. INSERT OR IGNORE preserves every revision
+    # across restarts, including the registry's existing CAS generation.
     conn.execute(
         "INSERT OR IGNORE INTO operator_settings_generations("
         "setting_key, operator_settings_generation) "
-        "SELECT 'service_registry', 1 WHERE EXISTS ("
-        "SELECT 1 FROM operator_settings WHERE key='service_registry')"
+        "SELECT key, 1 FROM operator_settings"
     )
     conn.commit()
 
@@ -1984,6 +1981,7 @@ def put_operator_setting(
     ts = _now() if now is None else int(now)
     payload = json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
     with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
         conn.execute(
             "INSERT INTO operator_settings(key, value_json, updated_at, updated_by) "
             "VALUES (?, ?, ?, ?) "
@@ -1993,9 +1991,10 @@ def put_operator_setting(
             "updated_by = excluded.updated_by",
             (setting_key, payload, ts, updated_by),
         )
+        _advance_setting_revision(conn, setting_key)
         conn.commit()
         row = conn.execute(
-            "SELECT * FROM operator_settings WHERE key = ?", (setting_key,)
+            _SETTING_SELECT + " WHERE s.key = ?", (setting_key,)
         ).fetchone()
     return _operator_setting_row_to_dict(row)
 
@@ -2012,6 +2011,8 @@ def put_operator_setting_with_audit(
     audit_target_kind: str | None,
     audit_target_id: str | None,
     audit_metadata: Mapping[str, Any] | None = None,
+    expected_revision: str | None = None,
+    validate_in_transaction: Callable[[sqlite3.Connection], None] | None = None,
     now: int | None = None,
     path: Path = DB_PATH,
 ) -> dict[str, Any]:
@@ -2030,6 +2031,15 @@ def put_operator_setting_with_audit(
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
+            current = conn.execute(
+                "SELECT operator_settings_generation FROM operator_settings_generations WHERE setting_key=?",
+                (setting_key,),
+            ).fetchone()
+            revision = str(current[0]) if current else "0"
+            if expected_revision is not None and expected_revision != revision:
+                raise SettingsConflictError("Settings changed elsewhere; reload to see the latest")
+            if validate_in_transaction is not None:
+                validate_in_transaction(conn)
             conn.execute(
                 "INSERT INTO operator_settings(key, value_json, updated_at, updated_by) "
                 "VALUES (?, ?, ?, ?) "
@@ -2037,6 +2047,7 @@ def put_operator_setting_with_audit(
                 "updated_at = excluded.updated_at, updated_by = excluded.updated_by",
                 (setting_key, payload, ts, updated_by),
             )
+            _advance_setting_revision(conn, setting_key)
             _record_audit_in_transaction(
                 conn, audit_action,
                 actor_kind=audit_actor_kind,
@@ -2047,14 +2058,36 @@ def put_operator_setting_with_audit(
                 metadata=audit_metadata,
                 now=ts,
             )
+            row = conn.execute(
+                _SETTING_SELECT + " WHERE s.key = ?", (setting_key,)
+            ).fetchone()
             conn.commit()
         except Exception:
             conn.rollback()
             raise
-        row = conn.execute(
-            "SELECT * FROM operator_settings WHERE key = ?", (setting_key,)
-        ).fetchone()
     return _operator_setting_row_to_dict(row)
+
+
+class SettingsConflictError(ValueError):
+    """An operator setting changed since the client loaded its draft."""
+
+
+_SETTING_SELECT = (
+    "SELECT s.*, COALESCE(g.operator_settings_generation, 0) AS revision "
+    "FROM operator_settings s LEFT JOIN operator_settings_generations g ON g.setting_key=s.key"
+)
+
+
+def _advance_setting_revision(conn: sqlite3.Connection, key: str) -> None:
+    conn.execute(
+        "INSERT INTO operator_settings_generations(setting_key,operator_settings_generation) VALUES(?,1) "
+        "ON CONFLICT(setting_key) DO UPDATE SET operator_settings_generation=operator_settings_generation+1",
+        (key,),
+    )
+
+
+def operator_setting_revision(record: Mapping[str, Any] | None) -> str:
+    return str(record["revision"]) if record else "0"
 
 
 class OperatorSettingsGenerationConflict(ValueError):
@@ -2215,7 +2248,7 @@ def get_operator_setting(
         return None
     with _conn(path) as conn:
         row = conn.execute(
-            "SELECT * FROM operator_settings WHERE key = ?", (setting_key,)
+            _SETTING_SELECT + " WHERE s.key = ?", (setting_key,)
         ).fetchone()
     return _operator_setting_row_to_dict(row) if row is not None else None
 
@@ -2223,7 +2256,7 @@ def get_operator_setting(
 def list_operator_settings(*, path: Path = DB_PATH) -> list[dict[str, Any]]:
     with _conn(path) as conn:
         rows = conn.execute(
-            "SELECT * FROM operator_settings ORDER BY key ASC"
+            _SETTING_SELECT + " ORDER BY s.key ASC"
         ).fetchall()
     return [_operator_setting_row_to_dict(row) for row in rows]
 
@@ -2240,6 +2273,7 @@ def _operator_setting_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "value": value,
         "updated_at": row["updated_at"],
         "updated_by": row["updated_by"],
+        "revision": str(row["revision"]),
     }
 
 

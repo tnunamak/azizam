@@ -139,3 +139,23 @@ exists. The diagnostic receipt store retains 14 days, so the UI says
 or claim that cloud fallback permission is a paid-provider spending policy.
 Optional passkeys are deferred because no WebAuthn library is in the locked
 dependencies. Links are shared by the owner; email delivery is not added.
+
+Settings updates for instance presentation, OIDC trust and media admission
+require `If-Match` with the revision returned by their GET response. OIDC and
+instance responses include `revision`; operator overrides include
+`overrides.revisions.media_job_admission_overrides`. Missing revisions return
+428 (`settings_revision_required`), including for existing automation clients.
+Stale revisions return 409 (`settings_conflict`), preserve the current settings,
+and create no success audit event. Reload before resubmitting a draft. Revisions
+advance on every write, even if two writes occur in the same second.
+
+Disabling OIDC while the saved sign-in choice is OIDC-only is rejected. Select
+built-in or both first. Sign-in choice writes and OIDC writes validate this under
+the database write lock. The existing owner recovery flow through admin-key
+sign-in remains available and unchanged.
+
+Existing settings receive their first revision automatically during database
+initialization at startup. The idempotent `INSERT OR IGNORE` backfill uses the
+existing settings generation table and preserves existing registry generations.
+No operator script or schema column change is required.
+

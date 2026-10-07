@@ -71,7 +71,11 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
         return instance_settings(admin_path, instance_defaults() if instance_defaults else None)
 
     def instance_response() -> JSONResponse:
-        return JSONResponse({"instance": instance(), "source": "admin.db", "apply_mode": "live"}, headers={"Cache-Control": "no-store"})
+        record = admin_store.get_operator_setting(INSTANCE_SETTING_KEY, path=admin_path)
+        value = {"name": "Azizam", "base_url": "", "theme_default": "system", **(instance_defaults() if instance_defaults else {})}
+        if record:
+            value.update(record["value"])
+        return JSONResponse({"instance": value, "revision": admin_store.operator_setting_revision(record), "source": "admin.db", "apply_mode": "live"}, headers={"Cache-Control": "no-store"})
 
     def lan_placeholder_keys_response() -> JSONResponse:
         return JSONResponse({
@@ -112,13 +116,19 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
                 body["base_url"] = body["base_url"].rstrip("/")
         except (ValueError, TypeError):
             return JSONResponse({"error": {"code": "invalid_instance", "message": "Supply a name, a valid HTTP(S) base URL and system/light/dark theme"}}, status_code=400)
-        admin_store.put_operator_setting_with_audit(
-            INSTANCE_SETTING_KEY, body, updated_by=ctx.subject,
-            audit_action="operator.instance.update", audit_actor_kind=ctx.actor_kind,
-            audit_actor_id=ctx.audit_actor_id, audit_actor_label=ctx.actor_label,
-            audit_target_kind="operator_setting", audit_target_id=INSTANCE_SETTING_KEY,
-            audit_metadata={"fields": sorted(body)}, path=admin_path,
-        )
+        revision = request.headers.get("if-match")
+        if not revision:
+            return JSONResponse({"error": {"code": "settings_revision_required", "message": "Reload settings and supply If-Match."}}, status_code=428)
+        try:
+            admin_store.put_operator_setting_with_audit(
+                INSTANCE_SETTING_KEY, body, updated_by=ctx.subject, expected_revision=revision.strip('"'),
+                audit_action="operator.instance.update", audit_actor_kind=ctx.actor_kind,
+                audit_actor_id=ctx.audit_actor_id, audit_actor_label=ctx.actor_label,
+                audit_target_kind="operator_setting", audit_target_id=INSTANCE_SETTING_KEY,
+                audit_metadata={"fields": sorted(body)}, path=admin_path,
+            )
+        except admin_store.SettingsConflictError:
+            return JSONResponse({"error": {"code": "settings_conflict", "message": "Settings changed elsewhere; reload to see the latest"}}, status_code=409)
         return instance_response()
 
     def defaults_response() -> JSONResponse:

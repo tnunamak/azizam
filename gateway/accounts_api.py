@@ -275,12 +275,14 @@ def create_account_router(*, path_provider: Callable, auth, session_reader, cook
         ctx = owner(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        if body.mode in {"oidc", "both"} and not oidc_provider()["enabled"]:
-            raise accounts.AccountError("oidc_unavailable", "Configure an identity provider before enabling this sign-in option.", 409)
-        admin_store.put_operator_setting_with_audit("sign_in", {"mode": body.mode}, updated_by=ctx.subject, audit_action="operator.sign_in.update",
-                                                   audit_actor_kind=ctx.actor_kind, audit_actor_id=ctx.subject,
+        def validate_sign_in(conn):
+            # Hold the same write lock as OIDC configuration changes.
+            if body.mode in {"oidc", "both"} and not oidc_provider()["enabled"]:
+                raise accounts.AccountError("oidc_unavailable", "Configure an identity provider before enabling this sign-in option.", 409)
+        admin_store.put_operator_setting_with_audit("sign_in", {"mode": body.mode}, updated_by=ctx.audit_actor_id, audit_action="operator.sign_in.update",
+                                                   audit_actor_kind=ctx.actor_kind, audit_actor_id=ctx.audit_actor_id,
                                                    audit_actor_label=ctx.actor_label, audit_target_kind="operator_setting",
-                                                   audit_target_id="sign_in", path=path_provider())
+                                                   audit_target_id="sign_in", validate_in_transaction=validate_sign_in, path=path_provider())
         return options()
 
     return router

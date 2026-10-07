@@ -283,6 +283,9 @@ def _request(bootstrap: Mapping[str, Any], identity: str, method: str, path: str
         headers["x-azizam-csrf"] = session["csrf"]
         if identity != "admin":
             headers["x-azizam-user-action"] = "1"
+    if method == "PUT" and path == "/admin/api/oidc-config":
+        _, current = _request(bootstrap, identity, "GET", path)
+        headers["If-Match"] = current["revision"]
     request = urllib.request.Request(f"{bootstrap['base_url']}{path}", data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(request, timeout=5) as response:

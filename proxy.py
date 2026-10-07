@@ -14559,10 +14559,10 @@ def _merged_admin_oidc_config_candidate(db_value: Mapping[str, Any] | None) -> d
     return merged
 
 
-def _validate_admin_oidc_db_candidate(db_value: Mapping[str, Any]) -> None:
+def _validate_admin_oidc_db_candidate(db_value: Mapping[str, Any]) -> bool:
     """Reject a write unless the live runtime parser accepts its merge."""
     validate_oidc_stored_override(db_value)
-    load_oidc_config(_merged_admin_oidc_config_candidate(db_value), env=os.environ)
+    return load_oidc_config(_merged_admin_oidc_config_candidate(db_value), env=os.environ).enabled
 
 
 async def _admin_oidc_config_with_discovery():
