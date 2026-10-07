@@ -82,7 +82,7 @@ interface UsageModel {
 
 interface UsageReceipt {
   selectionKey: string;
-  requestId: string;
+  requestId: string | null;
   createdAt: number | string | null;
   capability: UsageCapability;
   model: string | null;
@@ -117,8 +117,8 @@ interface UsageSummary {
   coverageNote: string | null;
   spendMeasuredRequests: number | null;
   spendTotalRequests: number | null;
-  paidRequests: number;
-  unknownPaidRequests: number;
+  paidRequests: number | null;
+  unknownPaidRequests: number | null;
   truncated: boolean;
 }
 
@@ -358,17 +358,18 @@ function PersonFilter({
 }
 
 function SummaryRow({ summary }: { summary: UsageSummary }) {
-  const hasPaidRequests =
-    summary.paidRequests > 0 || summary.unknownPaidRequests > 0;
+  const noPaidRequests =
+    summary.paidRequests === 0 && summary.unknownPaidRequests === 0 &&
+    summary.remoteSpendUsd === 0;
   const hasCoverage =
     summary.spendMeasuredRequests !== null && summary.spendTotalRequests !== null;
   const partial =
-    summary.unknownPaidRequests > 0 ||
+    (summary.unknownPaidRequests ?? 0) > 0 ||
     (summary.spendMeasuredRequests !== null &&
       summary.spendTotalRequests !== null &&
       summary.spendMeasuredRequests < summary.spendTotalRequests);
   const spendLabel =
-    hasPaidRequests && summary.remoteSpendUsd !== null
+    !noPaidRequests && summary.remoteSpendUsd !== null
       ? partial
         ? "Remote spend · partial"
         : hasCoverage
@@ -387,7 +388,7 @@ function SummaryRow({ summary }: { summary: UsageSummary }) {
         icon={DollarSign}
         label={spendLabel}
         value={
-          !hasPaidRequests ? (
+          noPaidRequests ? (
             "No paid requests"
           ) : summary.remoteSpendUsd === null ? (
             "Unavailable"
@@ -800,15 +801,17 @@ function ReceiptSheet({
                 <Detail
                   label="Request ID"
                   value={
-                    <span className="inline-flex min-w-0 items-center gap-2">
-                      <span className="min-w-0 break-all">
-                        {receipt.requestId}
+                    receipt.requestId ? (
+                      <span className="inline-flex min-w-0 items-center gap-2">
+                        <span className="min-w-0 break-all">
+                          {receipt.requestId}
+                        </span>
+                        <CopyButton
+                          value={receipt.requestId}
+                          aria-label="Copy request ID"
+                        />
                       </span>
-                      <CopyButton
-                        value={receipt.requestId}
-                        aria-label="Copy request ID"
-                      />
-                    </span>
+                    ) : "No request ID recorded"
                   }
                   wide
                 />
@@ -1057,10 +1060,9 @@ function normalizeSummary(raw: unknown): UsageSummary {
     spendTotalRequests: nullableNumber(
       data.spend_total_requests ?? data.spendTotalRequests,
     ),
-    paidRequests: number(data.paid_requests ?? data.paidRequests, 0),
-    unknownPaidRequests: number(
+    paidRequests: nullableNumber(data.paid_requests ?? data.paidRequests),
+    unknownPaidRequests: nullableNumber(
       data.unknown_paid_requests ?? data.unknownPaidRequests,
-      0,
     ),
     truncated: Boolean(data.truncated),
   };
@@ -1137,7 +1139,7 @@ function normalizeReceipt(raw: unknown, selectionKey: string): UsageReceipt {
   const fallbackModel = nullableString(
     data.fallback_model ?? data.declared_fallback ?? metadata.fallback_model,
   );
-  const requestId = string(data.request_id ?? data.id, "receipt");
+  const requestId = nullableString(data.request_id) ?? nullableString(data.id);
   const status = nullableString(data.status);
   const durationMs = nullableNumber(
     data.duration_ms ?? data.latency_ms ?? data.latencyMs,
@@ -1281,6 +1283,8 @@ function formatDuration(value: number | null) {
 }
 
 function spendCoverageDetail(summary: UsageSummary) {
+  if (summary.paidRequests === null || summary.unknownPaidRequests === null)
+    return "Paid request count is unknown.";
   if (summary.paidRequests > 0 || summary.unknownPaidRequests > 0) {
     const coverage =
       summary.spendMeasuredRequests !== null && summary.spendTotalRequests !== null
