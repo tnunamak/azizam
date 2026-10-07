@@ -735,6 +735,10 @@ function Shell({ children }: { children: React.ReactNode }) {
       }>;
     },
   });
+  // The instance name defaults to the product name; repeating it says nothing.
+  const instanceName = instanceData?.service?.name?.trim();
+  const instanceSubtitle =
+    instanceName && instanceName.toLowerCase() !== PRODUCT_NAME.toLowerCase() ? instanceName : null;
   useEffect(() => {
     const theme = instanceData?.presentation?.theme_default;
     if (
@@ -896,14 +900,14 @@ function Shell({ children }: { children: React.ReactNode }) {
               <Link
                 href="/"
                 className="mb-8 flex min-h-11 items-center gap-3 px-3 font-semibold"
-                aria-label={`${PRODUCT_NAME}${instanceData?.service?.name ? ` ${instanceData.service.name}` : ""} Home`}
+                aria-label={`${PRODUCT_NAME}${instanceSubtitle ? ` ${instanceSubtitle}` : ""} Home`}
               >
                 <Fish className="text-primary size-5 shrink-0" />
                 <span className="shell-nav-label min-w-0">
                   <span className="block">{PRODUCT_NAME} </span>
-                  {instanceData?.service?.name && (
+                  {instanceSubtitle && (
                     <span className="text-muted-foreground block truncate text-xs font-normal">
-                      {instanceData.service.name}
+                      {instanceSubtitle}
                     </span>
                   )}
                 </span>
@@ -954,15 +958,15 @@ function Shell({ children }: { children: React.ReactNode }) {
               <header className="flex h-16 items-center justify-between border-b px-5 sm:hidden">
                 <Link
                   href="/"
-                  aria-label={`${PRODUCT_NAME}${instanceData?.service?.name ? ` ${instanceData.service.name}` : ""} Home`}
+                  aria-label={`${PRODUCT_NAME}${instanceSubtitle ? ` ${instanceSubtitle}` : ""} Home`}
                   className="flex min-h-11 items-center gap-2 font-semibold"
                 >
                   <Fish className="text-primary size-5" />
                   <span className="min-w-0">
                     <span className="block">{PRODUCT_NAME}</span>
-                    {instanceData?.service?.name && (
+                    {instanceSubtitle && (
                       <span className="text-muted-foreground block max-w-44 truncate text-xs font-normal">
-                        {instanceData.service.name}
+                        {instanceSubtitle}
                       </span>
                     )}
                   </span>
