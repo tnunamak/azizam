@@ -3153,16 +3153,17 @@ def _record_backend_health_samples(backends: Optional[list[dict]]) -> None:
         return
 
 
-def _backend_p95_latency_ms(tags_filter: dict, since_s: int) -> Optional[int]:
+def _backend_p95_latency_ms(tags_filter: dict, since_s: int, *, conn=None) -> Optional[int]:
     """Compute p95 latency from raw samples for one backend over the given window.
 
     Returns None when fewer than 2 latency samples exist (no meaningful p95).
     """
     try:
+        from contextlib import nullcontext
         import metrics_store as _ms
         cutoff = int(time.time()) - since_s
         tags_json = json.dumps(tags_filter, sort_keys=True, separators=(",", ":"))
-        with _ms.reader() as c:
+        with (nullcontext(conn) if conn is not None else _ms.reader()) as c:
             rows = c.execute(
                 "SELECT value FROM samples WHERE metric='service_latency_ms' AND ts >= ? AND tags = ? "
                 "ORDER BY value",
@@ -3180,14 +3181,32 @@ def _backend_p95_latency_ms(tags_filter: dict, since_s: int) -> Optional[int]:
 def _metrics_section(gpus: Optional[list[dict]], disk: Optional[dict], backends: Optional[list[dict]] = None) -> dict:
     """Build the time-series-derived `metrics` block.
 
-    Reads from ``metrics_store`` (SQLite). Each query opens a short-lived
-    connection — WAL makes that essentially free. Failures degrade silently;
+    Reuse a worker-local SQLite reader for related queries. Failures degrade silently;
     the section returns whatever we could compute.
     """
     try:
         import metrics_store  # local import; metrics_store is in the same package
     except Exception as e:  # noqa: BLE001
         return {"available": False, "error": _safe_err(e)}
+
+    from contextlib import ExitStack
+
+    with ExitStack() as stack:
+        try:
+            conn = stack.enter_context(metrics_store.reader())
+        except Exception:
+            # Preserve per-query fallback/error handling when opening fails.
+            conn = None
+        return _metrics_section_queries(metrics_store, gpus, disk, backends, conn=conn)
+
+
+def _metrics_section_queries(metrics_store, gpus, disk, backends, *, conn=None) -> dict:
+    """Build the same payload with either a shared or per-query reader."""
+    from contextlib import nullcontext
+    from functools import partial
+
+    query_aggregate = partial(metrics_store.query_aggregate, conn=conn)
+    query_series = partial(metrics_store.query_series, conn=conn)
 
     out: dict[str, Any] = {
         "available": True,
@@ -3206,7 +3225,7 @@ def _metrics_section(gpus: Optional[list[dict]], disk: Optional[dict], backends:
         widget would render '—' for a full minute on a fresh proxy.
         """
         try:
-            v = metrics_store.query_aggregate(
+            v = query_aggregate(
                 metric, since_s=since_s, tags_filter=tags, op=op, table="samples_1min"
             )
             if v is not None:
@@ -3214,7 +3233,7 @@ def _metrics_section(gpus: Optional[list[dict]], disk: Optional[dict], backends:
         except Exception:
             pass
         try:
-            return metrics_store.query_aggregate(
+            return query_aggregate(
                 metric, since_s=since_s, tags_filter=tags, op=op
             )
         except Exception:
@@ -3223,7 +3242,7 @@ def _metrics_section(gpus: Optional[list[dict]], disk: Optional[dict], backends:
     def _series_fallback(metric: str, since_s: int, points: int, op: str = "avg",
                          tags: Optional[dict] = None):
         try:
-            s = metrics_store.query_series(
+            s = query_series(
                 metric, since_s=since_s, points=points, tags_filter=tags,
                 table="samples_1min", op=op,
             )
@@ -3232,7 +3251,7 @@ def _metrics_section(gpus: Optional[list[dict]], disk: Optional[dict], backends:
         except Exception:
             pass
         try:
-            return metrics_store.query_series(
+            return query_series(
                 metric, since_s=since_s, points=points, tags_filter=tags, op=op,
             )
         except Exception:
@@ -3246,19 +3265,19 @@ def _metrics_section(gpus: Optional[list[dict]], disk: Optional[dict], backends:
         gpu_tag = {"gpu": int(idx)}
         gpu_entry = {"index": idx}
         try:
-            gpu_entry["temp_max_5min_c"] = metrics_store.query_aggregate(
+            gpu_entry["temp_max_5min_c"] = query_aggregate(
                 "gpu_temp_c", since_s=300, tags_filter=gpu_tag, op="max"
             )
-            gpu_entry["temp_max_1h_c"] = metrics_store.query_aggregate(
+            gpu_entry["temp_max_1h_c"] = query_aggregate(
                 "gpu_temp_c", since_s=3600, tags_filter=gpu_tag, op="max"
             )
             gpu_entry["temp_max_24h_c"] = _agg_fallback(
                 "gpu_temp_c", since_s=86400, op="max", tags=gpu_tag,
             )
-            gpu_entry["vram_pct_max_5min"] = metrics_store.query_aggregate(
+            gpu_entry["vram_pct_max_5min"] = query_aggregate(
                 "vram_pct", since_s=300, tags_filter=gpu_tag, op="max"
             )
-            gpu_entry["vram_pct_max_1h"] = metrics_store.query_aggregate(
+            gpu_entry["vram_pct_max_1h"] = query_aggregate(
                 "vram_pct", since_s=3600, tags_filter=gpu_tag, op="max"
             )
             gpu_entry["vram_pct_max_24h"] = _agg_fallback(
@@ -3278,8 +3297,8 @@ def _metrics_section(gpus: Optional[list[dict]], disk: Optional[dict], backends:
     # CPU thermal windows.
     try:
         out["cpu"] = {
-            "temp_max_5min_c": metrics_store.query_aggregate("cpu_temp_c", since_s=300, op="max"),
-            "temp_max_1h_c": metrics_store.query_aggregate("cpu_temp_c", since_s=3600, op="max"),
+            "temp_max_5min_c": query_aggregate("cpu_temp_c", since_s=300, op="max"),
+            "temp_max_1h_c": query_aggregate("cpu_temp_c", since_s=3600, op="max"),
             "temp_max_24h_c": _agg_fallback("cpu_temp_c", since_s=86400, op="max"),
             "load_avg_24h_series": _series_fallback("load_avg_1min", since_s=86400, points=96),
         }
@@ -3327,7 +3346,7 @@ def _metrics_section(gpus: Optional[list[dict]], disk: Optional[dict], backends:
     trends: dict[str, Any] = {}
     try:
         trends["xid_109_24h_count"] = _agg_fallback("xid_109_24h", since_s=86400, op="max")
-        trends["xid_109_60min_count"] = metrics_store.query_aggregate(
+        trends["xid_109_60min_count"] = query_aggregate(
             "xid_109_60min", since_s=3600, op="max",
         )
         # Bar chart: hourly Xid 109 counts over last 24h.
@@ -3337,7 +3356,7 @@ def _metrics_section(gpus: Optional[list[dict]], disk: Optional[dict], backends:
         # Per-key request rate over last hour.
         # Unique keys come from samples directly.
         try:
-            with metrics_store.reader() as rconn:
+            with (nullcontext(conn) if conn is not None else metrics_store.reader()) as rconn:
                 rows = rconn.execute(
                     "SELECT DISTINCT tags FROM samples WHERE metric='request' AND ts >= ?",
                     (int(time.time()) - 3600,),
@@ -3357,11 +3376,11 @@ def _metrics_section(gpus: Optional[list[dict]], disk: Optional[dict], backends:
                     continue
                 keys_seen.add(k)
                 # rpm over last 5 minutes (mean count per minute).
-                count_5min = metrics_store.query_aggregate(
+                count_5min = query_aggregate(
                     "request", since_s=300, tags_filter={"key": k}, op="count",
                 )
                 per_key_rpm[k] = (count_5min / 5.0) if isinstance(count_5min, (int, float)) else None
-                series = metrics_store.query_series(
+                series = query_series(
                     "request", since_s=3600, points=60,
                     tags_filter={"key": k}, op="count",
                 )
@@ -3391,9 +3410,9 @@ def _metrics_section(gpus: Optional[list[dict]], disk: Optional[dict], backends:
                 "service_status_code", since_s=86400, op="count", tags=tags
             )
             avg_latency_24h = _agg_fallback("service_latency_ms", since_s=86400, op="avg", tags=tags)
-            p95_latency_24h = _backend_p95_latency_ms(tags, since_s=86400)
+            p95_latency_24h = _backend_p95_latency_ms(tags, since_s=86400, conn=conn)
             avg_latency_7d = _agg_fallback("service_latency_ms", since_s=7 * 86400, op="avg", tags=tags)
-            p95_latency_7d = _backend_p95_latency_ms(tags, since_s=7 * 86400)
+            p95_latency_7d = _backend_p95_latency_ms(tags, since_s=7 * 86400, conn=conn)
             services_history["backends"][key] = {
                 "key": key,
                 "name": backend.get("name") or key,
