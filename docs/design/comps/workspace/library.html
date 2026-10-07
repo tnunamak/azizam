@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Library - Azizam</title>
+<!-- Web fonts named by the Workspace spec, loaded from Google Fonts. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@100..900&family=Source+Code+Pro:wght@400&family=Source+Sans+3:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #FFFFFF; --text: #172536; --accent: #2855B6;
+    --ok: #206246; --attn: #895316; --fail: #AD3545;
+    --line: rgb(23 37 54 / 0.28);
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #182130; --text: #EDF2FA; --accent: #A7BBF5;
+      --ok: #8ECEB1; --attn: #E9BD78; --fail: #F19AA8;
+      --line: rgb(237 242 250 / 0.28);
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body { font: 400 16px/24px "Source Sans 3", system-ui, sans-serif; font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; }
+  h1, h2, h3, p, dl, dd { margin: 0; }
+  a { color: inherit; }
+  .ico { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .mono { font: 400 14px/20px "Source Code Pro", ui-monospace, monospace; }
+
+  /* Desktop shell: 184 px sidebar, 56 px top rail */
+  .shell { display: grid; grid-template-columns: 184px 1fr; min-height: 100vh; }
+  .side { border-right: 1px solid var(--line); padding: 0 12px 24px; }
+  .brand { height: 56px; display: flex; align-items: center; padding: 0 8px; font: 600 20px/26px Archivo, sans-serif; letter-spacing: -0.015em; }
+  .nav { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 2px; }
+  .nav a, .disclose {
+    display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 8px; border-radius: 6px;
+    text-decoration: none; font-weight: 400; width: 100%; background: none; border: 0; color: var(--text); font: inherit; text-align: left;
+  }
+  .nav a[aria-current="page"] { outline: 2px solid var(--accent); outline-offset: -2px; color: var(--accent); font-weight: 600; }
+  .nav a[aria-current="page"] .ico { fill: currentColor; fill-opacity: 1; }
+  .disclose { margin-top: 16px; font-weight: 600; justify-content: space-between; }
+  .rail { height: 56px; display: flex; align-items: center; justify-content: space-between; padding: 0 32px; border-bottom: 1px solid var(--line); }
+  .search { display: flex; align-items: center; gap: 8px; width: 360px; height: 44px; padding: 0 12px; border: 1px solid var(--text); border-radius: 6px; }
+  .account { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 12px 0 6px; border: 1px solid var(--text); border-radius: 6px; background: none; color: var(--text); font: 600 16px/24px "Source Sans 3", sans-serif; }
+  .initial { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 6px; background: var(--text); color: var(--bg); font-weight: 600; }
+  .content { padding: 32px; max-width: 1256px; }
+  h1 { font: 600 30px/36px Archivo, sans-serif; letter-spacing: -0.015em; }
+  h2 { font: 600 22px/28px "Source Sans 3", sans-serif; }
+
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 16px; border-radius: 6px; border: 1px solid var(--text); background: none; color: var(--text); font: 600 16px/24px "Source Sans 3", sans-serif; text-decoration: none; white-space: nowrap; }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+
+  /* Library layout: 768 + 24 + 400 */
+  .lib-head { display: flex; align-items: center; justify-content: space-between; gap: 24px; width: 1192px; }
+  .toolbar { display: flex; gap: 12px; align-items: center; }
+  .field { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 12px; border: 1px solid var(--text); border-radius: 6px; }
+  .field-search { width: 280px; }
+  .select { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 8px 0 12px; border: 1px solid var(--text); border-radius: 6px; }
+  .select b { font-weight: 600; }
+  .lib { display: grid; grid-template-columns: 768px 400px; gap: 24px; margin-top: 24px; align-items: start; }
+  .group + .group { margin-top: 32px; }
+  .group-h { font: 600 16px/24px "Source Sans 3", sans-serif; margin-bottom: 12px; }
+  .sheet { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, 248px); column-gap: 12px; row-gap: 24px; }
+  .cell a { display: block; text-decoration: none; border-radius: 2px; }
+  .media { position: relative; display: grid; place-items: center; height: 160px; border: 1px solid var(--line); border-radius: 2px; overflow: hidden; }
+  .media img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
+  .cell a[aria-current="true"] .media { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin-top: 10px; font-size: 16px; line-height: 24px; }
+  .cell a[aria-current="true"] .title { font-weight: 600; }
+  .meta { display: block; font-size: 14px; line-height: 20px; margin-top: 2px; }
+  .audio { display: flex; align-items: center; gap: 12px; }
+  .play { width: 44px; height: 44px; padding: 0; }
+  .dur { font-weight: 600; }
+  .play-over { position: absolute; left: 8px; bottom: 8px; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 6px; background: var(--bg); color: var(--text); border: 1px solid var(--text); }
+  .play-over .ico, .play .ico { fill: currentColor; stroke-width: 1.5; }
+
+  .preview { border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  .preview-media { height: 366px; display: grid; place-items: center; }
+  .preview-media img { max-width: 100%; max-height: 100%; border-radius: 2px; display: block; }
+  .preview-actions { display: grid; gap: 8px; margin-top: 16px; }
+  .preview-actions .row2 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .preview-actions .btn { padding: 0 8px; }
+  .prompt-h { font: 600 14px/20px "Source Sans 3", sans-serif; margin-top: 20px; }
+  .prompt { margin-top: 2px; }
+  .facts { display: grid; grid-template-columns: 112px 1fr; row-gap: 8px; column-gap: 12px; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+  .facts dt { font-weight: 600; font-size: 14px; line-height: 24px; }
+  .static-capture .shell { min-height: 0; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3 20 3M16 7l3 3M14 9l2 2"/></symbol>
+  <symbol id="i-try" viewBox="0 0 24 24"><path d="M9 3h6M10 3v6L4.5 19a1.5 1.5 0 0 0 1.3 2h12.4a1.5 1.5 0 0 0 1.3-2L14 9V3M7 15h10"/></symbol>
+  <symbol id="i-library" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></symbol>
+  <symbol id="i-status" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></symbol>
+  <symbol id="i-engines" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01"/></symbol>
+  <symbol id="i-providers" viewBox="0 0 24 24"><path d="M7 18h10a4 4 0 0 0 .5-7.97A6 6 0 0 0 6.1 9.1 4.5 4.5 0 0 0 7 18z"/></symbol>
+  <symbol id="i-people" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6.5 6.5 0 0 1 3.5 6"/></symbol>
+  <symbol id="i-usage" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/></symbol>
+  <symbol id="i-activity" viewBox="0 0 24 24"><path d="M9 6h12M9 12h12M9 18h12M4 6h.01M4 12h.01M4 18h.01"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 6h9M19 6h1M4 12h3M13 12h7M4 18h11M21 18h-1"/><circle cx="16" cy="6" r="2.5"/><circle cx="10" cy="12" r="2.5"/><circle cx="18" cy="18" r="2.5"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-ok" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
+  <symbol id="i-fail" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></symbol>
+  <symbol id="i-paused" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M10 9v6M14 9v6"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/></symbol>
+</svg>
+
+<div class="shell">
+  <aside class="side">
+    <div class="brand">Azizam</div>
+    <nav aria-label="Main">
+      <ul class="nav">
+        <li><a href="#"><svg class="ico" aria-hidden="true"><use href="#i-home"/></svg>Home</a></li>
+        <li><a href="#"><svg class="ico" aria-hidden="true"><use href="#i-key"/></svg>Apps &amp; keys</a></li>
+        <li><a href="#"><svg class="ico" aria-hidden="true"><use href="#i-try"/></svg>Try</a></li>
+        <li><a href="#" aria-current="page"><svg class="ico" aria-hidden="true"><use href="#i-library"/></svg>Library</a></li>
+      </ul>
+      <button class="disclose" type="button" aria-expanded="true">Admin<svg class="ico" aria-hidden="true"><use href="#i-down"/></svg></button>
+      <ul class="nav">
+        <li><a href="#"><svg class="ico" aria-hidden="true"><use href="#i-status"/></svg>Status</a></li>
+        <li><a href="#"><svg class="ico" aria-hidden="true"><use href="#i-engines"/></svg>Engines</a></li>
+        <li><a href="#"><svg class="ico" aria-hidden="true"><use href="#i-providers"/></svg>Providers</a></li>
+        <li><a href="#"><svg class="ico" aria-hidden="true"><use href="#i-people"/></svg>People</a></li>
+        <li><a href="#"><svg class="ico" aria-hidden="true"><use href="#i-usage"/></svg>Usage</a></li>
+        <li><a href="#"><svg class="ico" aria-hidden="true"><use href="#i-activity"/></svg>Activity</a></li>
+        <li><a href="#"><svg class="ico" aria-hidden="true"><use href="#i-settings"/></svg>Settings</a></li>
+      </ul>
+    </nav>
+  </aside>
+
+  <div>
+    <header class="rail">
+      <label class="search"><svg class="ico" aria-hidden="true"><use href="#i-search"/></svg><span>Search</span></label>
+      <button class="account" type="button"><span class="initial" aria-hidden="true">S</span>Sam</button>
+    </header>
+
+    <main class="content">
+      <div class="lib-head">
+        <h1>Library</h1>
+        <div class="toolbar" role="search">
+          <label class="field field-search"><svg class="ico" aria-hidden="true"><use href="#i-search"/></svg><span>Search creations</span></label>
+          <label class="select">Type: <b>All</b><svg class="ico" aria-hidden="true"><use href="#i-down"/></svg></label>
+          <label class="select">Person: <b>Everyone</b><svg class="ico" aria-hidden="true"><use href="#i-down"/></svg></label>
+        </div>
+      </div>
+
+      <div class="lib">
+        <div class="collection" aria-label="Creations">
+      <section class="group"><h2 class="group-h">Last 24 hours</h2>
+      <ul class="sheet">
+        <li class="cell"><a href="#" aria-current="true"><span class="media"><img src="assets/kitchen-morning.webp" alt=""></span><span class="title">A lived-in family kitchen in warm morning light, sourdough bread on a wooden board, yellow ceramic mug, herbs at the window. Candid editorial photograph, tasteful natural colors, no text.</span><span class="meta">Sam, just now</span></a></li>
+        <li class="cell"><a href="#"><span class="media"><img src="assets/garden-plan.webp" alt=""></span><span class="title">An overhead photograph of a backyard raised vegetable bed with tomatoes, lettuce and marigolds, gardening gloves on the cedar edge, late afternoon sunlight, warm documentary style.</span><span class="meta">Robin, 11h ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media"><img src="assets/school-ecosystem.webp" alt=""></span><span class="title">A beautifully crafted school science project showing a miniature pond ecosystem in a glass terrarium with moss, stones and tiny plants on a classroom desk. Editorial photograph, no text.</span><span class="meta">Alex, 22h ago</span></a></li>
+      </ul></section>
+      <section class="group"><h2 class="group-h">1 to 6 days ago</h2>
+      <ul class="sheet">
+        <li class="cell"><a href="#"><span class="media"><img src="assets/dog-window.webp" alt=""></span><span class="title">A golden retriever asleep beside a sunlit living room window, knitted cream blanket and houseplants, quiet ordinary family afternoon, candid photography.</span><span class="meta">Robin, 1d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media"><img src="assets/coastal-weekend.webp" alt=""></span><span class="title">A coastal walking trail with wildflowers, two bicycles leaned against a wooden fence, blue sea and distant fishing boats, sunny family weekend mood, natural travel photography.</span><span class="meta">Sam, 2d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media"><img src="assets/reading-nook.webp" alt=""></span><span class="title">A cozy reading corner with a green armchair, well-loved paperback, tea and a patchwork quilt, rain on the window, warm lamp light, tasteful interior photography.</span><span class="meta">Robin, 2d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media"><img src="assets/solar-project.webp" alt=""></span><span class="title">A tiny handmade solar-powered model house made of balsa wood with a small solar panel on the roof on a teenager workbench, tools and colored pencils, detailed natural photography.</span><span class="meta">Alex, 3d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media"><img src="assets/apple-tart.webp" alt=""></span><span class="title">A homemade apple tart cooling on a wooden kitchen table, flour-dusted rolling pin, folded linen towel and a bowl of autumn apples, gentle window light, food photography.</span><span class="meta">Sam, 3d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media"><img src="assets/cat-bookshelf.webp" alt=""></span><span class="title">A ginger cat peeking from a bookshelf between paperbacks and a ceramic vase, lived-in family living room, soft afternoon light, candid photograph.</span><span class="meta">Robin, 4d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media"><img src="assets/mountain-cabin.webp" alt=""></span><span class="title">A small wood cabin beside a mountain lake at sunrise, mist above still water, canoe pulled onto a pebble shore, peaceful family holiday scene, travel photograph.</span><span class="meta">Sam, 4d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media"><img src="assets/wildflower-study.webp" alt=""></span><span class="title">A hand-painted watercolor study of local wildflowers on a sketchbook page, paint palette and brushes on a teenager desk, warm natural light, charming believable craft photograph, no lettering.</span><span class="meta">Alex, 5d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media"><img src="assets/herb-window.webp" alt=""></span><span class="title">Basil rosemary and thyme growing in terracotta pots on a kitchen windowsill, old brass watering can, morning sun and soft shadows, honest domestic photograph.</span><span class="meta">Robin, 5d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media"><img src="assets/birthday-table.webp" alt=""></span><span class="title">A simple backyard birthday table with a homemade lemon cake, linen tablecloth, flowers in jam jars and warm string lights, intimate family celebration, no people no text, editorial photograph.</span><span class="meta">Sam, 6d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media"><img src="assets/train-journey.webp" alt=""></span><span class="title">View from a train window over rolling countryside in autumn, a travel journal and two takeaway coffee cups on the small table, warm quiet family travel photograph.</span><span class="meta">Robin, 6d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media"><img src="assets/birdhouse.webp" alt=""></span><span class="title">A handmade wooden birdhouse freshly painted soft blue hanging from an apple tree in a backyard, a small bird nearby, spring sunlight, thoughtful school craft project photograph.</span><span class="meta">Alex, 6d ago</span></a></li>
+      </ul></section>
+      <section class="group"><h2 class="group-h">7 to 11 days ago</h2>
+      <ul class="sheet">
+        <li class="cell"><a href="#"><span class="media"><img src="assets/rainy-patio.webp" alt=""></span><span class="title">Rain drops on a small covered patio with terracotta planters, a folded green umbrella and two wooden chairs, warm light through a kitchen door, cozy documentary photograph.</span><span class="meta">Robin, 7d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media"><img src="assets/picnic-lake.webp" alt=""></span><span class="title">A family picnic blanket beside a quiet lake, wicker basket, strawberries and sandwiches, shoes placed neatly on grass, golden afternoon light, candid travel photograph.</span><span class="meta">Sam, 7d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media"><img src="assets/garden-evening.webp" alt=""></span><span class="title">A backyard vegetable garden at dusk with a stone path, climbing beans and warm porch lights, the first stars above, peaceful lived-in home photography.</span><span class="meta">Robin, 8d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media"><span class="audio"><span class="btn play" aria-hidden="true"><svg class="ico" aria-hidden="true"><use href="#i-play"/></svg></span><span class="dur">0:04</span></span></span><span class="title">The tomatoes are ready to pick. Please water the herb pots before dinner.</span><span class="meta">Robin, 8d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media"><span class="audio"><span class="btn play" aria-hidden="true"><svg class="ico" aria-hidden="true"><use href="#i-play"/></svg></span><span class="dur">0:05</span></span></span><span class="title">Our solar house uses sunlight to power a tiny fan. We tested it on a cloudy day too.</span><span class="meta">Alex, 9d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media"><span class="audio"><span class="btn play" aria-hidden="true"><svg class="ico" aria-hidden="true"><use href="#i-play"/></svg></span><span class="dur">0:05</span></span></span><span class="title">On Saturday we will take the train to the coast, walk by the harbor, and have a picnic.</span><span class="meta">Sam, 9d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media"><span class="audio"><span class="btn play" aria-hidden="true"><svg class="ico" aria-hidden="true"><use href="#i-play"/></svg></span><span class="dur">0:06</span></span></span><span class="title">Hi June. Welcome to our household gateway. You can try a voice message or make a picture of your garden.</span><span class="meta">Sam, 10d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media"><span class="audio"><span class="btn play" aria-hidden="true"><svg class="ico" aria-hidden="true"><use href="#i-play"/></svg></span><span class="dur">0:07</span></span></span><span class="title">For the apple tart, slice the apples thinly and bake until the pastry is golden. Let it cool before serving.</span><span class="meta">Robin, 10d ago</span></a></li>
+        <li class="cell"><a href="#"><span class="media"><img src="assets/garden-breeze-poster.webp" alt=""><span class="play-over"><svg class="ico" aria-hidden="true"><use href="#i-play"/></svg></span></span><span class="title">A gentle breeze moves the leaves in a sunlit backyard vegetable garden, a watering can beside the raised bed, quiet warm family afternoon, slow steady camera. Audio: birds chirping softly.</span><span class="meta">Video, 0:03. Robin, 11d ago</span></a></li>
+      </ul></section>
+        </div>
+
+        <aside class="preview" aria-label="Selected creation">
+          <div class="preview-media"><img src="assets/kitchen-morning.webp" alt="A lived-in family kitchen in warm morning light, sourdough bread on a wooden board, yellow ceramic mug, herbs at the window"></div>
+          <div class="preview-actions">
+            <a class="btn btn-primary" href="#"><svg class="ico" aria-hidden="true"><use href="#i-expand"/></svg>Open full view</a>
+            <div class="row2">
+              <a class="btn" href="#">Download</a>
+              <a class="btn" href="#">Copy prompt</a>
+              <a class="btn" href="#">View receipt</a>
+            </div>
+          </div>
+          <p class="prompt-h">Full prompt</p>
+          <p class="prompt">A lived-in family kitchen in warm morning light, sourdough bread on a wooden board, yellow ceramic mug, herbs at the window. Candid editorial photograph, tasteful natural colors, no text.</p>
+          <dl class="facts">
+            <dt>Kind</dt><dd>Image</dd>
+            <dt>Size</dt><dd>768 &times; 768</dd>
+            <dt>Model</dt><dd><span class="mono">krea2-turbo</span></dd>
+            <dt>Made by</dt><dd>Sam, just now</dd>
+            <dt>Cost</dt><dd>Cost not recorded</dd>
+          </dl>
+        </aside>
+      </div>
+    </main>
+  </div>
+</div>
+</body>
+</html>
