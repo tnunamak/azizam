@@ -7,11 +7,29 @@ from contextlib import ExitStack
 from unittest.mock import AsyncMock, patch
 
 import httpx
+from openai import AsyncOpenAI
 import proxy
 from test_audio_media_job_integration import _StubJsonRequest
 from test_image_route_receipts import (
     _FakeAsyncClient, _MultipartRequest, _MultipartUpload, _png_bytes,
 )
+from test_sync_media_routes import _wav_bytes
+
+
+class _AudioClient(_FakeAsyncClient):
+    submissions = []
+
+    async def post(self, url, **kwargs):
+        self.submissions.append(kwargs["json"])
+        return httpx.Response(200, json={"prompt_id": "test-audio"})
+
+    async def get(self, url, **kwargs):
+        if "/history/" in url:
+            return httpx.Response(200, json={"test-audio": {
+                "status": {"status_str": "success"},
+                "outputs": {"1": {"audio": [{"filename": "test.wav"}]}},
+            }})
+        return httpx.Response(200, content=_wav_bytes(), headers={"content-type": "audio/wav"})
 
 
 class MediaContractValidationTests(unittest.IsolatedAsyncioTestCase):
@@ -43,6 +61,20 @@ class MediaContractValidationTests(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assert_invalid(response, "n")
 
+    async def test_generation_accepts_integer_count_boundaries(self):
+        generate = AsyncMock(return_value=proxy.Response(status_code=200))
+        with patch.object(proxy, "_generate_images_with_adaptive_batching", generate), patch.object(
+            proxy, "resolve_image_background_decision",
+            AsyncMock(return_value=proxy.ImageBackgroundRemovalDecision(False)),
+        ):
+            for value in (1, 10):
+                response = await proxy.proxy_comfy_request(
+                    _StubJsonRequest({"model": "flux2-klein-4b", "prompt": "a tree", "n": value}),
+                    proxy.NO_AUTH_CONTEXT,
+                )
+                self.assertEqual(response.status_code, 200, response.body)
+                self.assertEqual(generate.call_args.kwargs["n_requested"], value)
+
     async def edit(self, *, size=None, count=1, variations=False):
         items = [("model", "flux2-klein-4b-edit")]
         if not variations:
@@ -58,6 +90,24 @@ class MediaContractValidationTests(unittest.IsolatedAsyncioTestCase):
             for size in ("garbage", "0x0", "-1x512", "512x0", "1.5x512", "", "512", "512x512x512"):
                 with self.subTest(size=size, variations=variations):
                     self.assert_invalid(await self.edit(size=size, variations=variations), "size")
+
+    async def test_edit_enforces_manifest_dimension_limits(self):
+        for size in ("1x512", "512x1", "2049x512", "512x2049"):
+            with self.subTest(size=size):
+                self.assert_invalid(await self.edit(size=size), "size")
+
+    async def test_edit_omitted_auto_and_valid_size_reach_generation(self):
+        generate = AsyncMock(return_value=proxy.Response(status_code=200))
+        with patch.object(proxy, "_generate_images_with_adaptive_batching", generate), patch.object(
+            proxy, "resolve_image_background_decision",
+            AsyncMock(return_value=proxy.ImageBackgroundRemovalDecision(False)),
+        ):
+            for size in (None, "auto", "512x768"):
+                with self.subTest(size=size):
+                    response = await self.edit(size=size)
+                    self.assertEqual(response.status_code, 200, response.body)
+                    dimensions = (generate.call_args.kwargs["width"], generate.call_args.kwargs["height"])
+                    self.assertEqual(dimensions, (512, 768) if size == "512x768" else (2, 1))
 
     async def test_http3_04_excess_images_do_not_upload(self):
         workflow = {"_meta": {"image_node": "1"}, "1": {"inputs": {"image": ""}}}
@@ -104,6 +154,27 @@ class MediaContractValidationTests(unittest.IsolatedAsyncioTestCase):
                 self.assert_invalid(await self.audio(seed=value), "seed")
                 randomize.assert_not_called()
 
+    async def test_audio_native_success_and_seed_boundaries(self):
+        _AudioClient.submissions = []
+        with patch.object(proxy.httpx, "AsyncClient", _AudioClient), patch.object(
+            proxy.asyncio, "sleep", AsyncMock(),
+        ), patch.object(proxy.media_delivery, "attach_provenance", side_effect=lambda data, *a, **kw: data), patch.object(
+            proxy.media_delivery, "deliver_bytes", side_effect=lambda data, *a, **kw: data,
+        ), patch.object(proxy.random, "randint", return_value=123) as randomize:
+            for audio_type in ("music", "sfx", "ambient"):
+                for seed in (0, 2**32 - 1):
+                    response = await self.audio(type=audio_type, seed=seed, response_format="native")
+                    self.assertEqual(response.status_code, 200, response.body)
+                    self.assertEqual(response.headers["content-type"], "audio/wav")
+                    self.assertEqual(response.headers["x-audio-type"], audio_type)
+                    self.assertEqual(response.body, _wav_bytes())
+                    self.assertEqual(_AudioClient.submissions[-1]["prompt"]["1"]["inputs"]["seed"], seed)
+            randomize.assert_not_called()
+            response = await self.audio()
+            self.assertEqual(response.status_code, 200, response.body)
+            randomize.assert_called_once_with(0, 2**32 - 1)
+            self.assertEqual(_AudioClient.submissions[-1]["prompt"]["1"]["inputs"]["seed"], 123)
+
 
 class ModelRetrieveContractTests(unittest.IsolatedAsyncioTestCase):
     async def test_http3_01_retrieve_for_both_openai_bases_and_prefixed_ids(self):
@@ -118,5 +189,10 @@ class ModelRetrieveContractTests(unittest.IsolatedAsyncioTestCase):
                             response = await client.get(f"{base}/models/{entry['id']}")
                             self.assertEqual(response.status_code, 200, response.text)
                             self.assertEqual(response.json(), entry)
+                for base in ("/v1", "/openai/v1"):
+                    sdk = AsyncOpenAI(api_key="test", base_url=f"http://azizam.test{base}", http_client=client)
+                    for entry in entries:
+                        model = await sdk.models.retrieve(entry["id"])
+                        self.assertEqual(model.id, entry["id"])
         routes = {route.path: route.endpoint for route in proxy.app.routes}
         self.assertIs(routes["/openai/v1/models/{model_id:path}"], routes["/v1/models/{model_id:path}"])
