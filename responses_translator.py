@@ -220,6 +220,10 @@ def _input_item_to_messages(item: dict, *, param: str = "input") -> list[dict]:
     if itype == "function_call_output":
         call_id = item.get("call_id") or item.get("id") or ""
         output = item.get("output", "")
+        if isinstance(output, (list, dict)):
+            # Apply the same attachment validation as message content before
+            # retaining the existing JSON representation of structured results.
+            _content_to_chat_content(output, param=f"{param}.output")
         if not isinstance(output, str):
             try:
                 output = json.dumps(output)
@@ -243,7 +247,16 @@ def _input_to_messages(input_value: Any) -> list[dict]:
         return [{"role": "user", "content": input_value}]
     if isinstance(input_value, list):
         messages: list[dict] = []
+        seen_ids: set[str] = set()
         for index, item in enumerate(input_value):
+            if isinstance(item, dict) and "id" in item:
+                item_id = item["id"]
+                if not isinstance(item_id, str) or not item_id or item_id in seen_ids:
+                    raise ResponsesTranslationError(
+                        "Input item IDs must be unique, non-empty strings.",
+                        param=f"input[{index}].id",
+                    )
+                seen_ids.add(item_id)
             if isinstance(item, str):
                 messages.append({"role": "user", "content": item})
             else:
@@ -1060,16 +1073,70 @@ class StreamTranslator:
                 entry["name"] = name
         return out_events, self._tool_calls[tc_index]
 
+    @staticmethod
+    def _valid_cc_chunk(chunk: dict) -> bool:
+        """Validate every consumed nested value before any stream mutation."""
+        usage = chunk.get("usage")
+        if usage is not None:
+            if not isinstance(usage, dict):
+                return False
+            try:
+                _translate_usage(usage)
+            except (TypeError, ValueError, OverflowError):
+                return False
+        choices = chunk.get("choices")
+        if choices is None:
+            return True
+        if not isinstance(choices, list):
+            return False
+        for choice in choices:
+            if not isinstance(choice, dict):
+                return False
+            if choice.get("finish_reason") is not None and not isinstance(choice["finish_reason"], str):
+                return False
+            delta = choice.get("delta")
+            if delta is None:
+                continue
+            if not isinstance(delta, dict):
+                return False
+            for key in ("reasoning_content", "reasoning", "content", "refusal"):
+                if delta.get(key) is not None and not isinstance(delta[key], str):
+                    return False
+            calls = delta.get("tool_calls")
+            if calls is None:
+                continue
+            if not isinstance(calls, list):
+                return False
+            for call in calls:
+                if not isinstance(call, dict):
+                    return False
+                index = call.get("index", 0)
+                if type(index) is not int or index < 0:
+                    return False
+                if call.get("id") is not None and not isinstance(call["id"], str):
+                    return False
+                function = call.get("function")
+                if function is None:
+                    continue
+                if not isinstance(function, dict):
+                    return False
+                for key in ("name", "arguments"):
+                    if function.get(key) is not None and not isinstance(function[key], str):
+                        return False
+        return True
+
     def _handle_cc_chunk(self, chunk: dict) -> list[bytes]:
         events: list[bytes] = []
         if not isinstance(chunk, dict):
-            return events
+            return self.fail("Malformed upstream stream frame.")
         if chunk.get("error") is not None:
             error = chunk["error"]
             if isinstance(error, dict):
                 return self.fail(str(error.get("message") or "Upstream stream failed."),
                                  code=str(error.get("code") or "server_error"), param=error.get("param"))
             return self.fail(str(error))
+        if not self._valid_cc_chunk(chunk):
+            return self.fail("Malformed upstream stream frame.")
         if "model" in chunk and isinstance(chunk["model"], str):
             self._model_seen = chunk["model"]
         if isinstance(chunk.get("usage"), dict):
