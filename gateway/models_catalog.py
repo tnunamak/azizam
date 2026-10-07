@@ -475,7 +475,7 @@ def _intent_prefixes_for_operation(operation: str) -> tuple[str, ...]:
         return ("text.embeddings",)
     if op in {"images", "image", "image.generate", "image.generations"}:
         return ("image.generate",)
-    if op in {"image.edit", "images.edit", "edits"}:
+    if op in {"image.edit", "image.edits", "images.edit", "edits"}:
         return ("image.edit",)
     if op in {"audio", "audio.generate"}:
         return ("audio.generate",)
@@ -485,10 +485,17 @@ def _intent_prefixes_for_operation(operation: str) -> tuple[str, ...]:
         return ("speech.transcription",)
     if op in {"translation", "translations", "speech.translation"}:
         return ("speech.translation",)
-    if op in {"video", "videos", "video.generate"}:
+    if op in {"video", "videos"}:
+        # The /v1/videos operation serves both generation and editing (remix, extend).
+        return ("video.generate", "video.edit")
+    if op == "video.generate":
         return ("video.generate",)
+    if op in {"video.edit", "videos.edit"}:
+        return ("video.edit",)
     if op in {"rerank", "reranking", "text.rerank"}:
         return ("text.rerank",)
+    if op in {"decision", "decisions"}:
+        return ("decision.",)
     return ()
 
 

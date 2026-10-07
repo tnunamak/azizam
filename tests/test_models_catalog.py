@@ -974,3 +974,30 @@ class ModelsCatalogHealthProbeTests(unittest.TestCase):
         evidence = asyncio.run(run())
         self.assertFalse(evidence["svc"]["available"])
         self.assertEqual(evidence["svc"]["status"], "unavailable")
+
+
+class OperationIntentMappingTests(unittest.TestCase):
+    """Every canonical alias operation (gateway/model_metadata.py _OPERATIONS) selects the right capabilities."""
+
+    @staticmethod
+    def _caps(*intents: str) -> list[Capability]:
+        return [Capability(intent=intent, model="m", backend="local") for intent in intents]
+
+    def _selected(self, operation: str, *intents: str) -> list[str]:
+        from gateway.models_catalog import _capabilities_for_operation
+
+        return [cap.intent for cap in _capabilities_for_operation(self._caps(*intents), operation)]
+
+    def test_image_edits_selects_only_the_edit_capability(self) -> None:
+        self.assertEqual(self._selected("image_edits", "image.generate", "image.edit"), ["image.edit"])
+
+    def test_videos_covers_generation_and_editing(self) -> None:
+        self.assertEqual(self._selected("videos", "video.edit"), ["video.edit"])
+        self.assertEqual(self._selected("videos", "video.generate", "video.edit"), ["video.generate", "video.edit"])
+
+    def test_every_canonical_operation_is_recognized(self) -> None:
+        from gateway.model_metadata import _OPERATIONS
+        from gateway.models_catalog import _intent_prefixes_for_operation
+
+        unmapped = [op for op in _OPERATIONS if not _intent_prefixes_for_operation(op)]
+        self.assertEqual(unmapped, [])
