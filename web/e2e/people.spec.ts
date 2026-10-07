@@ -226,6 +226,14 @@ for (const theme of ["light", "dark"] as const)
             theme,
           );
           await open(page, surface, state);
+          if (surface === "people" && state === "seeded") {
+            const inviteAction = page.getByRole("button", {
+              name: "Invite someone",
+              exact: true,
+            });
+            await expect(inviteAction).toBeEnabled();
+            await expect(inviteAction).toHaveCSS("opacity", "1");
+          }
           await page.evaluate(() => document.fonts.ready);
           expect(
             await page.evaluate(
