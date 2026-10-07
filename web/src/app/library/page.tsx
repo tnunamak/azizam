@@ -261,7 +261,13 @@ function modelDisplayName(model: string, catalog?: ModelCatalog) {
   const row = [...(catalog?.aliases ?? []), ...(catalog?.models ?? [])].find(
     (item) => item.id === model,
   );
-  return row?.title ?? row?.display_name ?? "";
+  return row?.title || row?.display_name || model;
+}
+
+function pauseOtherAudio(current: HTMLAudioElement) {
+  current.ownerDocument.querySelectorAll("audio").forEach((audio) => {
+    if (audio !== current) audio.pause();
+  });
 }
 
 function MiniAudioPlayer({
@@ -317,7 +323,8 @@ function MiniAudioPlayer({
           setError(null);
           setMeasuredDuration(event.currentTarget.duration);
         }}
-        onPlay={() => {
+        onPlay={(event) => {
+          pauseOtherAudio(event.currentTarget);
           setError(null);
           setIsPlaying(true);
         }}
@@ -549,6 +556,7 @@ function Preview({
         preload="none"
         onError={() => setMediaFailed(true)}
         aria-label="Generated audio"
+        onPlay={(event) => pauseOtherAudio(event.currentTarget)}
         className="w-full"
       />
     ) : (
@@ -1250,7 +1258,7 @@ export default function LibraryPage() {
                   {selected.workflow_download_url ? (
                     <Button asChild variant="outline">
                       <a href={selected.workflow_download_url} download>
-                        <ExternalLink /> Open in ComfyUI
+                        <ExternalLink /> Download ComfyUI workflow
                       </a>
                     </Button>
                   ) : null}

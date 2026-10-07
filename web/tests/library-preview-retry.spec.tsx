@@ -72,3 +72,126 @@ it.each(["rejected", "missing URL", "JSON null", "invalid JSON"])(
     client.clear();
   },
 );
+
+it("shows the recorded model ID on the card and in Details when the catalog lacks it", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+    assets: [{
+      asset_id: "retired-model",
+      kind: "image",
+      prompt: "Retired model image",
+      model: "vendor/retired-model:v1",
+      download_url: "/retired.png",
+    }],
+    next_cursor: null,
+  })));
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { container } = render(
+    <QueryClientProvider client={client}>
+      <LibraryPage />
+    </QueryClientProvider>,
+  );
+  await screen.findByRole("button", { name: "Open Retired model image" });
+  expect(container.querySelector("article")).toHaveTextContent("vendor/retired-model:v1");
+  fireEvent.click(screen.getByRole("button", { name: "Open Retired model image" }));
+  const dialog = await screen.findByRole("dialog");
+  fireEvent.click(screen.getByText("Details", { selector: "summary" }));
+  const modelDetail = Array.from(dialog.querySelectorAll("dl")).find(
+    (detail) => detail.querySelector("dt")?.textContent === "Model",
+  );
+  expect(modelDetail?.querySelector("dd")).toHaveTextContent("vendor/retired-model:v1");
+  client.clear();
+});
+
+it("labels the ComfyUI workflow link as a download", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+    assets: [{
+      asset_id: "workflow",
+      kind: "image",
+      prompt: "Workflow image",
+      model: "",
+      download_url: "/workflow.png",
+      workflow_download_url: "/workflow.json",
+    }],
+    next_cursor: null,
+  })));
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={client}>
+      <LibraryPage />
+    </QueryClientProvider>,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Open Workflow image" }));
+  const link = await screen.findByRole("link", { name: "Download ComfyUI workflow" });
+  expect(link).toHaveAttribute("href", "/workflow.json");
+  expect(link).toHaveAttribute("download");
+  expect(screen.queryByRole("link", { name: "Open in ComfyUI" })).toBeNull();
+  client.clear();
+});
+
+it("pauses every other audio player when a card or drawer starts playing", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+    assets: ["First clip", "Second clip"].map((prompt, index) => ({
+      asset_id: `audio-${index}`,
+      kind: "audio",
+      prompt,
+      model: "",
+      download_url: `/audio-${index}.mp3`,
+    })),
+    next_cursor: null,
+  })));
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { container } = render(
+    <QueryClientProvider client={client}>
+      <LibraryPage />
+    </QueryClientProvider>,
+  );
+  await screen.findByRole("button", { name: "Play First clip" });
+  const [first, second] = Array.from(container.querySelectorAll("audio"));
+  const firstPause = vi.spyOn(first, "pause").mockImplementation(() => {
+    fireEvent.pause(first);
+  });
+  const secondPause = vi.spyOn(second, "pause").mockImplementation(() => {
+    fireEvent.pause(second);
+  });
+  try {
+    fireEvent.play(first);
+    expect(firstPause).not.toHaveBeenCalled();
+    expect(secondPause).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Pause First clip" })).toBeVisible();
+    fireEvent.play(second);
+    expect(firstPause).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Play First clip" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Pause Second clip" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Open First clip" }));
+    const drawer = await screen.findByLabelText("Generated audio");
+    const drawerPause = vi.spyOn(drawer as HTMLAudioElement, "pause").mockImplementation(() => {
+      fireEvent.pause(drawer);
+    });
+    try {
+      firstPause.mockClear();
+      secondPause.mockClear();
+      fireEvent.play(drawer);
+      expect(firstPause).toHaveBeenCalledTimes(1);
+      expect(secondPause).toHaveBeenCalledTimes(1);
+      expect(drawerPause).not.toHaveBeenCalled();
+      firstPause.mockClear();
+      secondPause.mockClear();
+      fireEvent.play(first);
+      expect(firstPause).not.toHaveBeenCalled();
+      expect(secondPause).toHaveBeenCalledTimes(1);
+      expect(drawerPause).toHaveBeenCalledTimes(1);
+    } finally {
+      drawerPause.mockRestore();
+    }
+  } finally {
+    firstPause.mockRestore();
+    secondPause.mockRestore();
+    client.clear();
+  }
+});
