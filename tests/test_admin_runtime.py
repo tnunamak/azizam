@@ -1159,7 +1159,9 @@ class AdminOidcSettingsTests(unittest.TestCase):
             "system.seed", actor_kind="system", actor_id="startup", path=self.db,
         )
         admin_key, _, _ = create_admin_service_account_key("reader", path=self.db)
-        records = self._client(admin_key).get("/admin/api/audit").json()["records"]
+        records = self._client(admin_key).get(
+            "/admin/api/audit?show_automated=true"
+        ).json()["records"]
         service_record = next(
             record for record in records
             if record["action"] == "app.create" and record["actor_kind"] == "service_account"

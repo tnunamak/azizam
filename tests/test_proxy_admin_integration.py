@@ -3036,7 +3036,7 @@ class AdminAuditEventsEndpointTests(unittest.TestCase):
         self.assertNotIn("service_account.deploy_smoke", default_actions)
 
         filtered_resp = self.client.get(
-            "/admin/api/audit-events?show_internal=true", headers=self._auth()
+            "/admin/api/audit-events?show_automated=true", headers=self._auth()
         )
         self.assertEqual(filtered_resp.status_code, 200, filtered_resp.text)
         events = filtered_resp.json()["records"]

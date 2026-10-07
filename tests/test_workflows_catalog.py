@@ -279,7 +279,7 @@ class WorkflowsCatalogTests(unittest.TestCase):
         image = next(row for row in payload["workflows"] if row["id"] == "image.generate.simple")
         self.assertEqual(image["description"], "Generate or edit images from your prompts.")
         self.assertEqual(image["technical_notes"], "Test image workflow.")
-        self.assertNotIn("purpose", image)
+        self.assertIsNone(image["purpose"])
 
     def test_every_exposed_builtin_workflow_has_a_distinct_short_purpose(self) -> None:
         manifest_root = Path(__file__).resolve().parents[1] / "manifests" / "workflows"

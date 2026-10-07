@@ -56,7 +56,7 @@ test("owner access audit rows stay hidden until the filter is enabled", async ({
       created_at: 1_760_000_001,
     },
   ];
-  await page.route("**/admin/api/audit?*", (route) => {
+  await page.route("**/admin/api/audit**", (route) => {
     const url = new URL(route.request().url());
     const excluded = url.searchParams.get("exclude_access_audit") === "true";
     requestedFilters.push(url.searchParams.get("exclude_access_audit") ?? "");
