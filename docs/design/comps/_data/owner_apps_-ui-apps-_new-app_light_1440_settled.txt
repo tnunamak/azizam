@@ -1,0 +1,67 @@
+Skip to content
+Azizam
+
+You
+
+Home
+Apps & keys
+Models
+Workflows
+Try
+Library
+Usage
+
+Gateway
+
+Status
+Engines
+Providers
+People
+Activity
+Settings
+Search⌘K
+Appearance
+S
+Sam
+Gateway reachable
+Apps & keys
+
+Apps that use your gateway
+
+New app
+Sam's personal app
+
+1 key · Builder
+
+Last used · 1m ago
+
+Home Assistant voice
+
+1 key · Builder
+
+Last used · 5h ago
+
+Codex
+
+1 key · Builder
+
+Last used · 6h ago
+
+New app
+
+Create access for an existing app; its key appears once.
+
+App name
+App recipe
+Other app
+Other app
+Open WebUI
+LibreChat
+SillyTavern
+Cursor
+Python
+JavaScript
+curl
+Cancel
+Create app and key
+Close

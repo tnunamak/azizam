@@ -1,0 +1,121 @@
+Skip to content
+Azizam
+
+You
+
+Home
+Apps & keys
+Models
+Workflows
+Try
+Library
+Usage
+
+Gateway
+
+Status
+Engines
+Providers
+People
+Activity
+Settings
+Search⌘K
+Appearance
+S
+Sam
+Gateway reachable
+Video studio (video) is unavailable. Check its connection on Status.
+View status
+Activity
+
+Changes and request outcomes
+
+Changes
+Requests
+Change type
+All changes
+Person
+Everyone
+Refresh
+Show access audit
+Technical: filter by person ID
+
+Account login
+
+Sam · account link
+
+just now
+
+Updated engine configuration
+
+System · Gateway settings
+
+just now
+
+Account invite create
+
+Sam · account link
+
+just now
+
+Account invite create
+
+Sam · account link
+
+just now
+
+People update
+
+Sam · Person
+
+just now
+
+Admin role grant
+
+System · admin role assignment
+
+just now
+
+Admin role grant
+
+System · admin role assignment
+
+just now
+
+People update
+
+Sam · Person
+
+3d ago
+
+Operator service disable
+
+Sam · Engine
+
+4d ago
+
+Disabled an app
+
+Sam · App
+
+8d ago
+
+Updated provider settings
+
+Sam · provider
+
+12d ago
+
+App key create
+
+Sam · App
+
+2w ago
+
+People update
+
+Sam · Person
+
+3w ago
+
+End of audit log
