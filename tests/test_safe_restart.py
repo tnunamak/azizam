@@ -444,6 +444,15 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, sr.EXIT_LOCKED)
 
 
+def _process_alive(pid):
+    # Read /proc rather than os.kill(pid, 0): the hermetic runner forbids os.kill.
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except FileNotFoundError:
+        return False
+    return stat.rsplit(")", 1)[1].split()[0] != "Z"
+
+
 class RunCommandTests(unittest.TestCase):
     def test_timeout_kills_grandchildren(self):
         # Like `npm run build` -> sh -> `next build`: the grandchild must die too.
@@ -454,14 +463,10 @@ class RunCommandTests(unittest.TestCase):
             self.assertEqual(code, 124)
             grandchild = int(pid_file.read_text())
             deadline = time.time() + 5
-            while time.time() < deadline:
-                try:
-                    os.kill(grandchild, 0)
-                except ProcessLookupError:
-                    break
+            while time.time() < deadline and _process_alive(grandchild):
                 time.sleep(0.05)
-            else:
-                os.kill(grandchild, 9)
+            if _process_alive(grandchild):
+                os.killpg(os.getpgid(grandchild), 9)
                 self.fail("grandchild survived the timeout")
 
     def test_missing_command(self):
