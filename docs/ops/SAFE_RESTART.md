@@ -6,10 +6,11 @@ synchronous media call that is running.
 
 ```
 scripts/safe-restart --dry-run   # what is in flight? changes nothing
-scripts/safe-restart             # wait for idle + quiet, drain, restart, verify (max 15 min)
+scripts/safe-restart             # build stale UI, wait for idle + quiet, drain, restart, verify
 scripts/safe-restart --quiet-seconds 0   # skip the quiet-window wait
 scripts/safe-restart --llama     # drain chat, wait, restart llama-bee
 scripts/safe-restart --force     # skip the wait; KILLS in-flight work
+scripts/safe-restart --skip-web-build  # skip checking and rebuilding web/out
 ```
 
 Options: `--timeout SEC` (default 3600), `--quiet-seconds SEC` (default 300, so a deploy waits for 5 idle minutes and never lands mid-session; 20 is enough only when nobody is using an agent; 0 = off), `--ignore-async-jobs`,
@@ -26,6 +27,7 @@ Options: `--timeout SEC` (default 3600), `--quiet-seconds SEC` (default 300, so 
 | 4 | Drain endpoint unreachable or refused, NOT restarted (use `--force`) |
 | 5 | `systemctl restart` failed |
 | 6 | Another `safe-restart` is running |
+| 7 | Web build failed; gateway was NOT drained or restarted |
 | 130 | Interrupted; drain was switched off |
 
 ## Admin key
@@ -38,12 +40,25 @@ The key is never printed.
 
 ## How it works
 
+- Before a gateway restart, the script checks the static UI export served at
+  `/ui`. If `web/out/index.html` is missing or a web input is newer than the
+  last completed export, it runs `npm --prefix web run build` in the checkout.
+  It ignores `node_modules`, `.next`, `out`, and generated TypeScript files.
+  The completion marker records the source paths, so removing an input also
+  triggers a rebuild. An older export without this marker is rebuilt once
+  to establish the baseline.
+  The marker uses the build start time and input paths, so edits made during
+  the build remain detectable on the next restart.
+  Build time is before the quiet wait and drain, so the gateway keeps serving
+  requests. A failed build stops the restart, including with `--force`.
+  `--skip-web-build` skips this check; `--dry-run` and `--llama` also skip it.
+  The build needs installed web dependencies and Node/npm on `PATH`.
 - **Two phases, in this order.** An agent turn is a chain of chat calls with
   tool steps between them. "Nothing in flight" is true in every gap, so a
   drain that starts in a gap would answer the agent's next call with 503.
   1. *Quiet wait (gateway still accepting).* The script polls until no chat
      request is in flight and none started or finished for `--quiet-seconds`
-     (default 20). Media work in flight does not hold this phase. New requests are accepted and served normally, so a
+     (default 300). Media work in flight does not hold this phase. New requests are accepted and served normally, so a
      running agent never sees a refusal. Each new chat call restarts the
      window. The gateway computes it (`seconds_since_chat_activity` in the
      drain snapshot), so the script and the gateway share one clock.

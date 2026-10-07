@@ -743,7 +743,7 @@ class TestHttpLoadUnloadDriverSwapGolden(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# 3. ensure_target() driver-path integration (AGW_DRIVER_SWAP=1)
+# 3. ensure_target() driver-path integration (AZIZAM_DRIVER_SWAP=1)
 # ---------------------------------------------------------------------------
 
 class TestEnsureTargetDriverPath(unittest.TestCase):

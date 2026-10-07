@@ -74,7 +74,7 @@ async def _filter_model_list_for_profile(
             for item in filtered
             if normalize_model_id(str(item.get("id") or "")) in allowed_ids
         ]
-        metadata["vivid_fish_profile_model_allowlist"] = sorted(allowlist)
+        metadata["azizam_profile_model_allowlist"] = sorted(allowlist)
 
     if _profile_target_visibility(auth_context) == "available":
         loaded_ids = await _current_loaded_llm_model_ids()
@@ -86,24 +86,24 @@ async def _filter_model_list_for_profile(
             if (
                 normalize_model_id(str(item.get("id") or "")) in loaded_norm
                 or (
-                    bool(item.get("vivid_fish_current_loaded"))
+                    bool(item.get("azizam_current_loaded"))
                     and bool(loaded_norm)
                 )
                 or (
-                    bool(item.get("vivid_fish_workflow"))
-                    and str(item.get("vivid_fish_backend") or "") in {"comfyui", "gateway"}
+                    bool(item.get("azizam_workflow"))
+                    and str(item.get("azizam_backend") or "") in {"comfyui", "gateway"}
                     and comfy_available
                 )
                 or (
-                    str(item.get("vivid_fish_backend") or "") == "embeddings"
+                    str(item.get("azizam_backend") or "") == "embeddings"
                     and EMBEDDINGS_ENABLED
                 )
             )
         ]
-        metadata["vivid_fish_target_visibility"] = "available"
-        metadata["vivid_fish_target_activation"] = _profile_target_activation(auth_context)
-        metadata["vivid_fish_model_access"] = "current_loaded"
-        metadata["vivid_fish_current_model_ids"] = sorted(
+        metadata["azizam_target_visibility"] = "available"
+        metadata["azizam_target_activation"] = _profile_target_activation(auth_context)
+        metadata["azizam_model_access"] = "current_loaded"
+        metadata["azizam_current_model_ids"] = sorted(
             item for item in loaded_ids if item and not item.startswith("/")
         )
 
@@ -119,7 +119,7 @@ async def _context_window_for_model_id(
 
     backend = None
     if isinstance(entry, Mapping):
-        backend = str(entry.get("vivid_fish_backend") or "").strip() or None
+        backend = str(entry.get("azizam_backend") or "").strip() or None
     configured_backend, record = _configured_model_record_for_id(model_id)
     backend = backend or configured_backend
 

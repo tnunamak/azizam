@@ -103,24 +103,55 @@ WATCHER_HARNESS = textwrap.dedent(
 
 
 class StartScriptGracefulStopTests(unittest.TestCase):
+    def test_prisma_generation_is_idempotent_and_repairs_missing_client(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            _prepare_start_fixture(work)
+            (work / "proxy.py").write_text("print('fixture proxy started')\n")
+            log = work / "log.txt"
+            _write_python_wrapper(work / "bin" / "python3")
+            _write_awk_wrapper(work / "bin" / "awk")
+            env = {**os.environ, "FAKE_LOG": str(log), "DATABASE_URL": "",
+                   "PATH": f"{work / 'bin'}:{os.environ.get('PATH', '/usr/bin:/bin')}"}
+
+            def start():
+                result = subprocess.run(["/bin/bash", "start.sh"], cwd=work, env=env,
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+            start()
+            start()
+            self.assertEqual(log.read_text().splitlines().count("prisma generate"), 1)
+            (work / "venv" / ".fake-prisma-client").unlink()
+            start()
+            self.assertEqual(log.read_text().splitlines().count("prisma generate"), 2)
+            (work / "schema.prisma").write_text("// changed schema\n")
+            start()
+            self.assertEqual(log.read_text().splitlines().count("prisma generate"), 3)
+
+    def test_prisma_generation_failure_refuses_before_proxy_start(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            work = Path(tmp)
+            _prepare_start_fixture(work)
+            _write_python_wrapper(work / "bin" / "python3")
+            _write_awk_wrapper(work / "bin" / "awk")
+            log = work / "log.txt"
+            env = {**os.environ, "FAKE_LOG": str(log), "DATABASE_URL": "",
+                   "FAKE_PRISMA_GENERATE_EXIT": "1",
+                   "PATH": f"{work / 'bin'}:{os.environ.get('PATH', '/usr/bin:/bin')}"}
+            result = subprocess.run(["/bin/bash", "start.sh"], cwd=work, env=env,
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("Prisma client generation failed", result.stderr)
+            self.assertNotIn("proxy started", log.read_text())
+            self.assertFalse((work / "venv" / ".prisma-generated.sha256").exists())
+
     def test_sigterm_is_forwarded_and_litellm_outlives_the_proxy(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp)
-            shutil.copy(ROOT / "start.sh", work / "start.sh")
-            shutil.copytree(ROOT / "gateway", work / "gateway")
-            (work / "start.sh").chmod(0o755)
-            requirements = work / "requirements.txt"
-            requirements.write_text("# none\n")
-            (work / "venv" / "bin").mkdir(parents=True)
-            (work / "venv" / "bin" / "activate").write_text("")
-            (work / "venv" / ".requirements.sha256").write_text(
-                hashlib.sha256(requirements.read_bytes()).hexdigest()
-            )
-            (work / "data").mkdir()
-            (work / "data" / "litellm.config.yaml").write_text("model_list: []\n")
-            (work / "proxy.py").write_text(FAKE_PROXY)
+            _prepare_start_fixture(work)
             bindir = work / "bin"
-            bindir.mkdir()
+            _write_python_wrapper(bindir / "python3")
             litellm = bindir / "litellm"
             litellm.write_text(FAKE_LITELLM)
             litellm.chmod(litellm.stat().st_mode | stat.S_IXUSR)
@@ -134,6 +165,7 @@ class StartScriptGracefulStopTests(unittest.TestCase):
                 "FAKE_LOG": str(log),
                 "PATH": f"{bindir}:{os.environ.get('PATH', '/usr/bin:/bin')}",
                 "AZIZAM_LITELLM_RELOAD_INTERVAL": "1",
+                "DATABASE_URL": "",
             }
             result = subprocess.run(
                 ["/bin/bash", "-c", HARNESS, "harness", str(work)],
@@ -195,6 +227,7 @@ class StartScriptGracefulStopTests(unittest.TestCase):
                 "PATH": f"{bindir}:{os.environ.get('PATH', '/usr/bin:/bin')}",
                 "AZIZAM_ADMIN_DB": str(db_path),
                 "AZIZAM_LITELLM_RELOAD_INTERVAL": "0.2",
+                "DATABASE_URL": "",
             }
             proc = subprocess.Popen(
                 ["/bin/bash", "-c", WATCHER_HARNESS, "watcher-harness", str(work)],
@@ -254,10 +287,21 @@ def _prepare_start_fixture(work: Path) -> None:
     (work / "data" / "litellm.config.yaml").write_text("model_list: []\n", encoding="utf-8")
     (work / "proxy.py").write_text(FAKE_PROXY, encoding="utf-8")
     (work / "bin").mkdir()
+    (work / "schema.prisma").write_text("// fixture schema\n")
 
 
 def _write_python_wrapper(path: Path) -> None:
-    path.write_text(f"#!/bin/bash\nexec {os.environ.get('PYTHON', os.sys.executable)!r} \"$@\"\n")
+    path.write_text(
+        "#!/bin/bash\n"
+        'if [[ $1 == -c && $2 == *find_spec* ]]; then echo "$PWD/schema.prisma"; exit 0; fi\n'
+        'if [[ $1 == -c && $2 == "from prisma import Prisma" ]]; then test -f venv/.fake-prisma-client; exit $?; fi\n'
+        'if [[ $1 == -m && $2 == prisma && $3 == generate ]]; then\n'
+        '  echo "prisma generate" >> "$FAKE_LOG"\n'
+        '  if [[ ${FAKE_PRISMA_GENERATE_EXIT:-0} != 0 ]]; then exit "$FAKE_PRISMA_GENERATE_EXIT"; fi\n'
+        '  touch venv/.fake-prisma-client; exit 0\n'
+        'fi\n'
+        f"exec {os.environ.get('PYTHON', os.sys.executable)!r} \"$@\"\n"
+    )
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 

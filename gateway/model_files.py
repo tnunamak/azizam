@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from gateway.compat import accept_aliases
-
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -93,7 +91,7 @@ def _model_file_paths(
     service: Mapping[str, Any] | None,
     seen: frozenset[str] = frozenset(),
 ) -> tuple[Path, ...]:
-    model = accept_aliases(dict(model))
+    model = dict(model)
     if _backend_file_scope(model, service):
         return ()
     paths: list[Path] = []

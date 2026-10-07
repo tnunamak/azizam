@@ -27,7 +27,7 @@ class TestChatExtensions(unittest.TestCase):
             body["input"] = "hello"
         return body
 
-    def test_legacy_namespaces_keep_chat_and_routing_validation_errors(self) -> None:
+    def test_new_namespaces_keep_chat_and_routing_validation_errors(self) -> None:
         validators = (
             validate_chat_completions_extensions,
             validate_responses_extensions,
@@ -38,8 +38,8 @@ class TestChatExtensions(unittest.TestCase):
                     self._request_body(
                         validate,
                         {
-                            "com.vividfish.chat": {"receipt_verbosity": "verbose"},
-                            "com.vividfish.routing": {"backend": "kobold"},
+                            "com.azizam.chat": {"receipt_verbosity": "verbose"},
+                            "com.azizam.routing": {"backend": "kobold"},
                         },
                     )
                 )
@@ -62,7 +62,7 @@ class TestChatExtensions(unittest.TestCase):
                     },
                 )
 
-    def test_valid_legacy_namespaces_are_accepted(self) -> None:
+    def test_valid_new_namespaces_are_accepted(self) -> None:
         validators = (
             validate_chat_completions_extensions,
             validate_responses_extensions,
@@ -73,8 +73,8 @@ class TestChatExtensions(unittest.TestCase):
                     self._request_body(
                         validate,
                         {
-                            "com.vividfish.chat": {"receipt_verbosity": "summary"},
-                            "com.vividfish.routing": {"local_preference": "local"},
+                            "com.azizam.chat": {"receipt_verbosity": "summary"},
+                            "com.azizam.routing": {"local_preference": "local"},
                         },
                     )
                 )
@@ -83,7 +83,7 @@ class TestChatExtensions(unittest.TestCase):
                 self.assertEqual(result.chat.accepted, {"receipt_verbosity": "summary"})
                 self.assertEqual(result.routing.accepted, {"local_preference": "local"})
 
-    def test_canonical_namespaces_win_over_legacy_collisions(self) -> None:
+    def test_new_namespaces_are_independent_of_retired_namespaces(self) -> None:
         validators = (
             validate_chat_completions_extensions,
             validate_responses_extensions,
@@ -124,6 +124,16 @@ class TestChatExtensions(unittest.TestCase):
                         )
                     },
                 )
+
+    def test_retired_namespaces_do_not_apply_controls(self) -> None:
+        for validate in (validate_chat_completions_extensions, validate_responses_extensions):
+            result = validate(self._request_body(validate, {
+                "com.vividfish.chat": {"receipt_verbosity": "detailed"},
+                "com.vividfish.routing": {"local_preference": "local"},
+            }))
+            self.assertTrue(result.ok)
+            self.assertEqual(result.chat.accepted, {})
+            self.assertEqual(result.routing.accepted, {})
 
     def test_accepts_namespaced_chat_and_routing_controls(self) -> None:
         body = {

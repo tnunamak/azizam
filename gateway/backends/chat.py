@@ -7,8 +7,6 @@ large enough to extract without changing behavior.
 
 from __future__ import annotations
 
-from gateway.compat import emit_header_mapping
-
 import json
 from dataclasses import dataclass
 from typing import Any, Mapping
@@ -58,7 +56,7 @@ def build_chat_loopback_request(
 
     return ChatLoopbackRequest(
         url=f"http://127.0.0.1:{proxy_port}/v1/chat/completions",
-        headers=emit_header_mapping(headers),
+        headers=headers,
         body=json.dumps(body).encode("utf-8"),
         timeout=httpx.Timeout(
             connect=10.0,

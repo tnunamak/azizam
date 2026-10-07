@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 
-source "$(dirname "${BASH_SOURCE[0]}")/azizam-env.sh"
 # fresh_instance_harness.sh -- spin up an isolated Azizam instance for fresh-instance testing.
 #
 # WHAT THIS DOES
@@ -66,13 +65,13 @@ fi
 
 # -- Safety guard --------------------------------------------------------------
 LIVE_DB="$REPO_ROOT/data/admin.db"
-for env_name in AZIZAM_ADMIN_DB AI_GATEWAY_ADMIN_DB OPENAI_PROXY_ADMIN_DB; do
-  if [[ "${!env_name:-}" == "$LIVE_DB" || "${!env_name:-}" == "$(dirname "$REPO_ROOT")/azizam/data/admin.db" || "${!env_name:-}" == "$(dirname "$REPO_ROOT")/openai-proxy/data/admin.db" ]]; then
+for env_name in AZIZAM_ADMIN_DB; do
+  if [[ "${!env_name:-}" == "$LIVE_DB" || "${!env_name:-}" == "$(dirname "$REPO_ROOT")/azizam/data/admin.db" ]]; then
     echo "ERROR: $env_name is set to a production DB path. Aborting." >&2
     exit 1
   fi
 done
-for env_name in AZIZAM_PORT OPENAI_PROXY_PORT HARNESS_PORT; do
+for env_name in AZIZAM_PORT HARNESS_PORT; do
   if [[ "${!env_name:-}" == "5000" ]]; then
     echo "ERROR: Refusing to bind on live port 5000." >&2
     exit 1
@@ -84,7 +83,7 @@ if [[ "$FIXTURE_MODE" == 1 ]]; then
   mkdir -p "$HOME/.tmp"
   TMPDIR_ROOT=$(mktemp -d "$HOME/.tmp/gw-ux-p1b-XXXXXX")
 else
-  TMPDIR_ROOT=$(mktemp -d /tmp/agw-fresh-XXXXXX)
+  TMPDIR_ROOT=$(mktemp -d /tmp/azizam-fresh-XXXXXX)
 fi
 
 cleanup_fixture() {
@@ -99,7 +98,7 @@ cleanup_fixture() {
       if kill -0 -- "-$pgid" 2>/dev/null; then echo "ERROR: fixture process group survived cleanup" >&2; return; fi
     fi
   fi
-  if [[ "$TMPDIR_ROOT" == "$HOME/.tmp/gw-ux-p1b-"* || "$TMPDIR_ROOT" == /tmp/agw-fresh-* ]]; then
+  if [[ "$TMPDIR_ROOT" == "$HOME/.tmp/gw-ux-p1b-"* || "$TMPDIR_ROOT" == /tmp/azizam-fresh-* ]]; then
     echo "[harness] Cleaning up $TMPDIR_ROOT"
     rm -rf "$TMPDIR_ROOT"
   fi
@@ -252,9 +251,9 @@ if [[ "$FIXTURE_MODE" == 1 ]]; then
   export AZIZAM_MEDIA_JOBS_DB="$TMPDIR_ROOT/media_jobs.db"
   export AZIZAM_CONFIG_PATH="$TMPDIR_ROOT/proxy_config.yml"
   export AZIZAM_ADMIN_SESSION_KEY="p1b-only-session-signing-key-32-bytes-minimum"
-  export AGW_IMAGE_CACHE_DIR="$TMPDIR_ROOT/images"
-  export AGW_VRAM_ESTIMATES_PATH="$TMPDIR_ROOT/vram_estimates.json"
-  export AGW_DRIFT_REPORT_PATH="$TMPDIR_ROOT/drift_status.json"
+  export AZIZAM_IMAGE_CACHE_DIR="$TMPDIR_ROOT/images"
+  export AZIZAM_VRAM_ESTIMATES_PATH="$TMPDIR_ROOT/vram_estimates.json"
+  export AZIZAM_DRIFT_REPORT_PATH="$TMPDIR_ROOT/drift_status.json"
   export AZIZAM_KEY_ACTIVITY_LOG="$TMPDIR_ROOT/key_activity.jsonl"
   export PYTHONPYCACHEPREFIX="$TMPDIR_ROOT/pycache"
   export TMPDIR="$TMPDIR_ROOT"
@@ -276,7 +275,7 @@ if [[ "$FIXTURE_MODE" == 1 ]]; then
     "$PYTHON" "$REPO_ROOT/tests/compat/python/macro_ux_fixture.py" --assert-os-containment --state-root "$TMPDIR_ROOT" --readonly-root "$REPO_ROOT"
   echo "[harness] Launching authenticated fixture ($FIXTURE_SCENARIO)..."
   setsid strace -f -qq -o "$TMPDIR_ROOT/network-trace.log" -e trace=network bwrap "${fixture_sandbox_args[@]}" -- env -i PATH="$PATH" HOME="$TMPDIR_ROOT/home" TMPDIR="$TMPDIR" LANG="${LANG:-C.UTF-8}" LC_ALL="${LC_ALL:-C.UTF-8}" PYTHONPATH="$REPO_ROOT" PYTHONUNBUFFERED=1 PYTHONPYCACHEPREFIX="$PYTHONPYCACHEPREFIX" \
-    AZIZAM_ADMIN_DB="$AZIZAM_ADMIN_DB" AZIZAM_METRICS_DB="$AZIZAM_METRICS_DB" AZIZAM_RESPONSES_DB="$AZIZAM_RESPONSES_DB" AZIZAM_RECEIPTS_DB="$AZIZAM_RECEIPTS_DB" AZIZAM_MEDIA_JOBS_DB="$AZIZAM_MEDIA_JOBS_DB" AZIZAM_CONFIG_PATH="$AZIZAM_CONFIG_PATH" AZIZAM_ADMIN_SESSION_KEY="$AZIZAM_ADMIN_SESSION_KEY" AZIZAM_LITELLM_BASE_URL=http://127.0.0.1:9 AZIZAM_LITELLM_API_KEY= TABBY_IDLE_TIMEOUT=0 TTS_ENABLED=false AGW_HOST_TELEMETRY_DISABLED=1 P1B_FIXTURE_SCENARIO="$FIXTURE_SCENARIO" AGW_IMAGE_CACHE_DIR="$AGW_IMAGE_CACHE_DIR" AGW_VRAM_ESTIMATES_PATH="$AGW_VRAM_ESTIMATES_PATH" AGW_DRIFT_REPORT_PATH="$AGW_DRIFT_REPORT_PATH" AZIZAM_KEY_ACTIVITY_LOG="$AZIZAM_KEY_ACTIVITY_LOG" \
+    AZIZAM_ADMIN_DB="$AZIZAM_ADMIN_DB" AZIZAM_METRICS_DB="$AZIZAM_METRICS_DB" AZIZAM_RESPONSES_DB="$AZIZAM_RESPONSES_DB" AZIZAM_RECEIPTS_DB="$AZIZAM_RECEIPTS_DB" AZIZAM_MEDIA_JOBS_DB="$AZIZAM_MEDIA_JOBS_DB" AZIZAM_CONFIG_PATH="$AZIZAM_CONFIG_PATH" AZIZAM_ADMIN_SESSION_KEY="$AZIZAM_ADMIN_SESSION_KEY" AZIZAM_LITELLM_BASE_URL=http://127.0.0.1:9 AZIZAM_LITELLM_API_KEY= TABBY_IDLE_TIMEOUT=0 TTS_ENABLED=false AZIZAM_HOST_TELEMETRY_DISABLED=1 P1B_FIXTURE_SCENARIO="$FIXTURE_SCENARIO" AZIZAM_IMAGE_CACHE_DIR="$AZIZAM_IMAGE_CACHE_DIR" AZIZAM_VRAM_ESTIMATES_PATH="$AZIZAM_VRAM_ESTIMATES_PATH" AZIZAM_DRIFT_REPORT_PATH="$AZIZAM_DRIFT_REPORT_PATH" AZIZAM_KEY_ACTIVITY_LOG="$AZIZAM_KEY_ACTIVITY_LOG" \
     "$PYTHON" "$REPO_ROOT/tests/compat/python/macro_ux_fixture.py" --serve --state-root "$TMPDIR_ROOT" --scenario "$FIXTURE_SCENARIO" >"$STARTUP_LOG" 2>&1 &
   PROXY_PID=$!
   for _ in $(seq 1 200); do [[ -f "$TMPDIR_ROOT/fixture-ready.json" ]] && break; kill -0 "$PROXY_PID" 2>/dev/null || break; sleep 0.1; done
@@ -315,7 +314,7 @@ export TABBY_IDLE_TIMEOUT=0
 export TTS_ENABLED=false
 # This is someone's real desktop/dev box, not the fresh-operator's machine --
 # never leak its disk/thermal state into the isolated instance's health.
-export AGW_HOST_TELEMETRY_DISABLED=1
+export AZIZAM_HOST_TELEMETRY_DISABLED=1
 
 echo "[harness] Launching gateway (Ctrl-C or --smoke auto-stops)..."
 STARTUP_LOG="$TMPDIR_ROOT/startup.log"

@@ -20,7 +20,7 @@ _STATE_DIR = Path(os.environ["HERMETIC_TEST_STATE_DIR"])
 
 # These production overrides must be absent before we install test-owned paths.
 # The runner supplies the admin path through its neutral, private contract.
-for _name in ("AZIZAM_ADMIN_DB", "AI_GATEWAY_ADMIN_DB", "OPENAI_PROXY_ADMIN_DB"):
+for _name in ("AZIZAM_ADMIN_DB",):
     if _name in os.environ:
         pytest.exit(f"production environment variable leaked into pytest: {_name}", returncode=2)
 _ADMIN_DB = Path(os.environ["HERMETIC_ADMIN_DB"])

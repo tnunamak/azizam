@@ -210,7 +210,7 @@ def run_doctor(
         check_workflow_bindings(),
         check_auth_env(),
         check_http_json("public_health", base_url, "/health", timeout),
-        check_http_json("well_known_ai_gateway", base_url, "/.well-known/azizam", timeout),
+        check_http_json("well_known_azizam", base_url, "/.well-known/azizam", timeout),
     ]
     if include_comfy:
         checks.append(check_http_json("comfyui_system_stats", resolved_comfy_url, "/system_stats", timeout))

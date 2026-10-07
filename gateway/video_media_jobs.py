@@ -7,8 +7,6 @@ It deliberately avoids scheduling, persistence, and backend calls.
 
 from __future__ import annotations
 
-from gateway.compat import emit_aliases
-
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any, Mapping
@@ -271,9 +269,9 @@ def video_generation_payload(
             content_url = first.get("content_url") or first.get("url")
             if content_url:
                 payload["content_url"] = content_url
-    return emit_aliases({key: value for key, value in payload.items() if value is not None or key in {
+    return {key: value for key, value in payload.items() if value is not None or key in {
         "completed_at", "expires_at", "prompt", "remixed_from_video_id", "error"
-    }})
+    }}
 
 
 def openai_video_status(status: str) -> str:

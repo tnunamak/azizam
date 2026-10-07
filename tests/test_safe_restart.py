@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parent.parent
 _loader = importlib.machinery.SourceFileLoader("safe_restart", str(ROOT / "scripts" / "safe-restart"))
@@ -97,10 +100,13 @@ class World:
             self.draining = False if cmd[-1] == "azizam" else self.draining
         return self.systemctl_code
 
-    def invoke(self, *argv, token=TOKEN):
+    def invoke(self, *argv, token=TOKEN, web_dir=None):
         lock = tempfile.NamedTemporaryFile(suffix=".lock", delete=False)
         lock.close()
-        args = sr.build_parser().parse_args(["--lock-file", lock.name, "--poll", "1", *argv])
+        args = sr.build_parser().parse_args([
+            "--lock-file", lock.name, "--poll", "1",
+            *([] if web_dir is not None else ["--skip-web-build"]), *argv,
+        ])
         restarter = sr.Restarter(
             args,
             token=token,
@@ -109,6 +115,7 @@ class World:
             sleep=self.sleep,
             clock=self.clock,
             out=self.output.append,
+            web_dir=web_dir,
         )
         self.restarter = restarter
         return restarter.execute()
@@ -433,6 +440,130 @@ class MainTests(unittest.TestCase):
             finally:
                 handle.close()
         self.assertEqual(code, sr.EXIT_LOCKED)
+
+
+class WebBuildTests(unittest.TestCase):
+    def make_web(self, root, *, fresh=False):
+        web = Path(root) / "web"
+        (web / "src").mkdir(parents=True)
+        source = web / "src" / "page.tsx"
+        source.write_text("export default function Page() {}\n")
+        (web / "out").mkdir()
+        output = web / "out" / "index.html"
+        output.write_text("<html></html>\n")
+        os.utime(source, (100, 100))
+        os.utime(web / "src", (100, 100))
+        os.utime(output, (200 if fresh else 50, 200 if fresh else 50))
+        if fresh:
+            stamp = web / "out" / sr.WEB_BUILD_STAMP
+            stamp.write_text(json.dumps(["src/page.tsx"]))
+            os.utime(stamp, (200, 200))
+        return web
+
+    def test_stale_sources_build_before_first_drain_call(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            web = self.make_web(tmp)
+            world = World()
+            original_run = world.run
+
+            def run(cmd, timeout):
+                if cmd[0] == "npm":
+                    self.assertEqual(world.calls, [])
+                    self.assertFalse(world.draining)
+                    self.assertEqual(cmd, ["npm", "--prefix", str(web), "run", "build"])
+                    world.commands.append(list(cmd))
+                    return 0
+                return original_run(cmd, timeout)
+
+            world.run = run
+            self.assertEqual(world.invoke(web_dir=web), sr.EXIT_OK)
+            self.assertEqual([cmd[0] for cmd in world.commands], ["npm", "systemctl"])
+            self.assertFalse(sr.web_build_required(web))
+
+    def test_failed_build_never_drains_or_restarts_even_with_force(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            web = self.make_web(tmp)
+            world = World()
+            world.run = lambda cmd, timeout: 1
+            self.assertEqual(world.invoke("--force", web_dir=web), sr.EXIT_WEB_BUILD)
+            self.assertEqual(world.calls, [])
+            self.assertFalse((web / "out" / sr.WEB_BUILD_STAMP).exists())
+
+    def test_missing_export_builds_and_refuses_incomplete_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            web = self.make_web(tmp)
+            (web / "out" / "index.html").unlink()
+            self.assertTrue(sr.web_build_required(web))
+            world = World()
+            world.run = lambda cmd, timeout: 0
+            self.assertEqual(world.invoke(web_dir=web), sr.EXIT_WEB_BUILD)
+            self.assertEqual(world.calls, [])
+
+    def test_fresh_export_ignores_dependency_and_build_caches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            web = self.make_web(tmp, fresh=True)
+            for directory in ("node_modules", ".next"):
+                (web / directory).mkdir()
+                (web / directory / "cache").write_text("cache")
+            (web / "next-env.d.ts").write_text("generated")
+            (web / "tsconfig.tsbuildinfo").write_text("generated")
+            self.assertFalse(sr.web_build_required(web))
+            world = World()
+            self.assertEqual(world.invoke(web_dir=web), sr.EXIT_OK)
+            self.assertEqual(len(world.commands), 1)
+
+    def test_skip_flag_dry_run_and_llama_never_build(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            web = self.make_web(tmp)
+            for args in (("--skip-web-build",), ("--dry-run",), ("--llama",)):
+                world = World()
+                self.assertEqual(world.invoke(*args, web_dir=web), sr.EXIT_OK)
+                self.assertTrue(all(cmd[0] == "systemctl" for cmd in world.commands))
+
+    def test_removing_root_config_requires_build_without_directory_timestamps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            web = self.make_web(tmp, fresh=True)
+            config = web / "next.config.ts"
+            config.write_text("export default {}\n")
+            os.utime(config, (100, 100))
+            stamp = web / "out" / sr.WEB_BUILD_STAMP
+            stamp.write_text(json.dumps(["next.config.ts", "src/page.tsx"]))
+            os.utime(stamp, (200, 200))
+            self.assertFalse(sr.web_build_required(web))
+            config.unlink()
+            self.assertTrue(sr.web_build_required(web))
+
+    def test_source_newer_than_completion_marker_requires_build(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            web = self.make_web(tmp, fresh=True)
+            os.utime(web / "src" / "page.tsx", (300, 300))
+            self.assertTrue(sr.web_build_required(web))
+
+    def test_source_edit_during_build_stays_newer_than_export(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            web = self.make_web(tmp)
+            world = World()
+            original_run = world.run
+
+            def run(cmd, timeout):
+                if cmd[0] == "npm":
+                    source = web / "src" / "page.tsx"
+                    source.write_text("export default function UpdatedPage() {}\n")
+                    os.utime(source, (400, 400))
+                    return 0
+                return original_run(cmd, timeout)
+
+            world.run = run
+            with patch.object(sr.time, "time", return_value=300):
+                self.assertEqual(world.invoke(web_dir=web), sr.EXIT_OK)
+            self.assertEqual((web / "out" / sr.WEB_BUILD_STAMP).stat().st_mtime, 300)
+            self.assertTrue(sr.web_build_required(web))
+
+    def test_export_without_source_manifest_is_rebuilt_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            web = self.make_web(tmp, fresh=True)
+            (web / "out" / sr.WEB_BUILD_STAMP).unlink()
+            self.assertTrue(sr.web_build_required(web))
 
 
 if __name__ == "__main__":

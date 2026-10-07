@@ -215,8 +215,9 @@ def write_litellm_config_artifact(
     registry: Mapping[str, Any],
     *,
     base_dir: Path,
+    path: Path | None = None,
 ) -> Path:
-    path = litellm_config_path_from_registry(registry, base_dir=base_dir)
+    path = path if path is not None else litellm_config_path_from_registry(registry, base_dir=base_dir)
     compiled = compile_litellm_config_from_registry(registry)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
@@ -610,4 +611,4 @@ def _api_key_ref(config: Mapping[str, Any], secret_refs: Mapping[str, Any]) -> s
 
 def secret_env_name_for_provider(provider_id: str, secret_id: str) -> str:
     digest = hashlib.sha256(f"{canonical_provider_id(provider_id)}\0{secret_id}".encode("utf-8")).hexdigest()[:16]
-    return f"AI_GATEWAY_PROVIDER_SECRET_{digest.upper()}"
+    return f"AZIZAM_PROVIDER_SECRET_{digest.upper()}"

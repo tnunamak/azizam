@@ -84,7 +84,7 @@ def _env(state: Path, port: int, engine_port: int, config: Path) -> dict[str, st
         "AZIZAM_ADMIN_SESSION_KEY": "live-data-session-signing-key-not-production",
         "XDG_CONFIG_HOME": str(home / ".config"),
         "XDG_CACHE_HOME": str(home / ".cache"),
-        "AGW_IMAGE_CACHE_DIR": str(state / "images"),
+        "AZIZAM_IMAGE_CACHE_DIR": str(state / "images"),
     }
     for name, filename in {
         "AZIZAM_ADMIN_DB": "admin.db",

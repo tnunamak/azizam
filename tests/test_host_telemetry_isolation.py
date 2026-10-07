@@ -1,7 +1,7 @@
 """Host disk/thermal telemetry must never leak into an isolated instance.
 
 status_endpoint's `_disk_partitions`/`_read_sensors` shell out to `df`/`sensors`
-against the *runner's own machine*. `AGW_HOST_TELEMETRY_DISABLED` is the
+against the *runner's own machine*. `AZIZAM_HOST_TELEMETRY_DISABLED` is the
 isolation seam any isolated launch mode (harness, dev, tests) sets so a fresh
 instance never reports the developer's own disk/thermal state as if it were
 the gateway's own host health.
@@ -23,7 +23,7 @@ class HostTelemetryIsolationTests(unittest.TestCase):
     def setUp(self) -> None:
         self._orig_env = {
             k: os.environ.get(k)
-            for k in ("AGW_HOST_TELEMETRY_DISABLED", "AGW_DISK_PARTITIONS")
+            for k in ("AZIZAM_HOST_TELEMETRY_DISABLED", "AZIZAM_DISK_PARTITIONS")
         }
 
     def tearDown(self) -> None:
@@ -37,7 +37,7 @@ class HostTelemetryIsolationTests(unittest.TestCase):
         importlib.reload(status_endpoint)
 
     def _reload_with_env(self, **env: str):
-        for key in ("AGW_HOST_TELEMETRY_DISABLED", "AGW_DISK_PARTITIONS"):
+        for key in ("AZIZAM_HOST_TELEMETRY_DISABLED", "AZIZAM_DISK_PARTITIONS"):
             os.environ.pop(key, None)
         os.environ.update(env)
         import status_endpoint
@@ -45,14 +45,14 @@ class HostTelemetryIsolationTests(unittest.TestCase):
         return importlib.reload(status_endpoint)
 
     def test_disabled_flag_skips_disk_shell_out(self) -> None:
-        mod = self._reload_with_env(AGW_HOST_TELEMETRY_DISABLED="1")
+        mod = self._reload_with_env(AZIZAM_HOST_TELEMETRY_DISABLED="1")
         calls: list[list[str]] = []
         mod._run = lambda cmd, timeout=None: (calls.append(cmd) or (1, "", ""))  # type: ignore[assignment]
         self.assertEqual(mod._disk_partitions(), [])
         self.assertEqual(calls, [], "disabled flag must skip the df shell-out entirely")
 
     def test_disabled_flag_skips_sensors_shell_out(self) -> None:
-        mod = self._reload_with_env(AGW_HOST_TELEMETRY_DISABLED="1")
+        mod = self._reload_with_env(AZIZAM_HOST_TELEMETRY_DISABLED="1")
         calls: list[list[str]] = []
         mod._run = lambda cmd, timeout=None: (calls.append(cmd) or (1, "", ""))  # type: ignore[assignment]
         result = mod._read_sensors()
@@ -64,7 +64,7 @@ class HostTelemetryIsolationTests(unittest.TestCase):
         self.assertEqual(mod._DISK_PARTITIONS_CONFIG, ["/"])
 
     def test_disk_partitions_config_is_operator_declared(self) -> None:
-        mod = self._reload_with_env(AGW_DISK_PARTITIONS="/, /data")
+        mod = self._reload_with_env(AZIZAM_DISK_PARTITIONS="/, /data")
         self.assertEqual(mod._DISK_PARTITIONS_CONFIG, ["/", "/data"])
 
     def test_no_hardcoded_operator_specific_mount_literal(self) -> None:

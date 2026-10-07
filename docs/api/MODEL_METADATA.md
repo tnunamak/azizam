@@ -41,7 +41,7 @@ Semantics:
   modalities and tags.
 - A dynamic alias (`current`, `current-fast`: whatever local LLM is loaded) inherits the metadata of
   the loaded model. See "Dynamic aliases".
-- No new field uses a `vivid_fish` name.
+- All gateway-owned fields use an `azizam` name.
 
 Example:
 

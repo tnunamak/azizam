@@ -892,28 +892,29 @@ class NativeWorkflowRunTests(unittest.IsolatedAsyncioTestCase):
         stripped, raw = await self._run({}, none_auth)
         self.assertNotIn("KSampler", self._blob(stripped.body))
         explicit, raw = await self._run({self.FIELD: "none"})
+        self.assertEqual(explicit.status_code, 200, explicit.body)
         left = self._blob(explicit.body)
         for needle in ("KSampler", "azizam", "prompt", "workflow"):
             self.assertNotIn(needle, left)
         self.assertEqual(AvDeliveryTests()._stream_md5(explicit.body, ".mp4"), AvDeliveryTests()._stream_md5(raw, ".mp4"))
         up, _ = await self._run({self.FIELD: "full"}, none_auth)
+        self.assertEqual(up.status_code, 200, up.body)
         self.assertIn("azizam_provenance", self._blob(up.body))
+        self.assertNotIn("vividfish_provenance", self._blob(up.body))
 
     async def test_bad_value_is_a_400(self) -> None:
         response, _ = await self._run({self.FIELD: "maybe"})
         self.assertEqual(response.status_code, 400)
 
-    async def test_legacy_metadata_control_and_new_name_precedence(self) -> None:
-        legacy_field = "extensions[com.vividfish.workflow][metadata]"
-        invalid, _ = await self._run({legacy_field: "maybe"})
-        self.assertEqual(invalid.status_code, 400)
-        stripped, _ = await self._run({legacy_field: "none"})
-        self.assertEqual(stripped.status_code, 200, stripped.body)
-        self.assertNotIn("azizam_provenance", self._blob(stripped.body))
-        full, _ = await self._run({legacy_field: "none", self.FIELD: "full"})
-        self.assertEqual(full.status_code, 200, full.body)
-        self.assertIn("azizam_provenance", self._blob(full.body))
-        self.assertNotIn("vividfish_provenance", self._blob(full.body))
+    async def test_retired_metadata_control_is_an_unknown_multipart_field(self) -> None:
+        retired_field = "extensions[com.vividfish.workflow][metadata]"
+        for fields in ({retired_field: "maybe"},
+                       {retired_field: "full", self.FIELD: "none"},
+                       {retired_field: "none", self.FIELD: "full"}):
+            with self.subTest(fields=fields):
+                response, _ = await self._run(fields)
+                self.assertEqual(response.status_code, 400, response.body)
+                self.assertIn(b"unknown workflow input", response.body)
 
 
 class MetadataOnlyExtensionTests(unittest.TestCase):

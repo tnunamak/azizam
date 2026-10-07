@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 
-source "$(dirname "${BASH_SOURCE[0]}")/../azizam-env.sh"
 # Smoke-test the local proxy as an OpenAI-compatible client would see it.
 #
 # Usage:

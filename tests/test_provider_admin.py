@@ -288,7 +288,7 @@ class ProviderAdminApiTests(unittest.TestCase):
         )
         provider = response.json()["provider"]
         self.assertEqual(provider["key_status"]["state"], "set")
-        self.assertTrue(provider["key_status"]["api_key_env"].startswith("AI_GATEWAY_PROVIDER_SECRET_"))
+        self.assertTrue(provider["key_status"]["api_key_env"].startswith("AZIZAM_PROVIDER_SECRET_"))
         self.assertNotIn("sk-", response.text)
 
     def test_add_provider_preserves_validated_https_url_for_litellm_api_base(self) -> None:

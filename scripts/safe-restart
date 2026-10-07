@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Restart the AI gateway (or llama-bee) without killing in-flight requests.
+"""Restart Azizam (or llama-bee) without killing in-flight requests.
 
     scripts/safe-restart                 drain the gateway, wait, restart it
     scripts/safe-restart --llama         drain chat, wait, restart llama-bee
     scripts/safe-restart --dry-run       only show what is in flight
     scripts/safe-restart --quiet-seconds 0   skip the agent quiet-window wait
     scripts/safe-restart --force         skip the wait (kills in-flight work)
+    scripts/safe-restart --skip-web-build   skip checking the static UI export
 
 Restart the gateway ONLY with this script. A plain `systemctl --user restart
 azizam` cuts every streaming reply and sync media call that is running.
@@ -18,7 +19,7 @@ gets 503 + Retry-After), waits for any request that slipped in, restarts the
 unit, waits for health, and leaves draining off. The deadline covers both
 waits. It needs the loopback admin endpoint
 GET/POST /admin/api/drain and an admin bearer key from the environment
-(AZIZAM_ADMIN_KEY, with migration fallbacks) or a
+(AZIZAM_ADMIN_KEY) or a
 key file (AZIZAM_ADMIN_KEY_FILE, default ~/.config/azizam/admin-key).
 The key is never printed.
 
@@ -30,15 +31,11 @@ Exit codes:
   4  drain endpoint unreachable or refused; NOT restarted (use --force)
   5  systemctl restart failed
   6  another safe-restart is already running
+  7  web build failed; NOT drained or restarted
   130 interrupted (drain is switched off again)
 """
 
 from __future__ import annotations
-
-import sys as _compat_sys
-from pathlib import Path as _CompatPath
-_compat_sys.path.insert(0, str(_CompatPath(__file__).resolve().parents[1]))
-from gateway.compat import get_env
 
 import argparse
 import fcntl
@@ -60,6 +57,7 @@ EXIT_BUSY = 3
 EXIT_REFUSED = 4
 EXIT_SYSTEMCTL = 5
 EXIT_LOCKED = 6
+EXIT_WEB_BUILD = 7
 EXIT_INTERRUPTED = 130
 
 DEFAULT_GATEWAY_URL = "http://127.0.0.1:5000"
@@ -68,6 +66,37 @@ DEFAULT_TIMEOUT_S = 3600.0  # long enough to find a 5-minute idle window during 
 DEFAULT_QUIET_S = 300.0  # a person using an agent pauses for minutes between messages; 20 s only covered tool steps
 TOKEN_ENV_NAMES = ("AZIZAM_ADMIN_KEY",)
 MAX_TTL_S = 7200.0
+DEFAULT_WEB_BUILD_TIMEOUT_S = 900.0
+WEB_BUILD_STAMP = ".azizam-build-complete"
+
+
+def web_source_files(web_dir: Path) -> list[Path]:
+    """Return inputs to the static export, excluding generated files and caches."""
+    sources = []
+    for root, dirs, files in os.walk(web_dir):
+        dirs[:] = [name for name in dirs if name not in {"node_modules", ".next", "out", ".git"}]
+        for name in files:
+            if name == "next-env.d.ts" or name.endswith(".tsbuildinfo"):
+                continue
+            sources.append(Path(root) / name)
+    return sources
+
+
+def web_build_required(web_dir: Path) -> bool:
+    """Compare web inputs with the last complete static export, including removals."""
+    if not (web_dir / "out" / "index.html").is_file():
+        return True
+    stamp = web_dir / "out" / WEB_BUILD_STAMP
+    try:
+        exported_sources = json.loads(stamp.read_text())
+    except (OSError, ValueError):
+        # An export from before this check has no source manifest. Rebuild once
+        # to establish a baseline that can detect removed inputs thereafter.
+        return True
+    sources = web_source_files(web_dir)
+    if sorted(str(path.relative_to(web_dir)) for path in sources) != exported_sources:
+        return True
+    return any(path.stat().st_mtime > stamp.stat().st_mtime for path in sources)
 
 
 class DrainUnavailable(Exception):
@@ -116,14 +145,13 @@ def run_command(cmd: Sequence[str], timeout: float) -> int:
 
 
 def resolve_token(env: Mapping[str, str]) -> str | None:
-    value = get_env("AZIZAM_ADMIN_KEY", "", environ=env).strip()
+    value = env.get("AZIZAM_ADMIN_KEY", "").strip()
     if value:
         return value
-    configured = get_env("AZIZAM_ADMIN_KEY_FILE", environ=env)
+    configured = env.get("AZIZAM_ADMIN_KEY_FILE")
     home = Path(env.get("HOME", "~")).expanduser()
     paths = [Path(configured)] if configured else [
         home / ".config" / "azizam" / "admin-key",
-        home / ".config" / "openai-proxy" / "admin-key",
     ]
     for path in paths:
         try:
@@ -166,6 +194,7 @@ class Restarter:
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
         out: Callable[[str], None] | None = None,
+        web_dir: Path | None = None,
     ) -> None:
         self.args = args
         self.token = token
@@ -175,6 +204,7 @@ class Restarter:
         self.clock = clock
         self._out = out or (lambda text: print(text, flush=True))
         self.drain_set_by_us = False
+        self.web_dir = web_dir if web_dir is not None else Path(__file__).resolve().parents[1] / "web"
 
     # -- output -------------------------------------------------------------
 
@@ -353,6 +383,21 @@ class Restarter:
     def execute(self) -> int:
         args = self.args
         target = self._unit()
+        if not (args.llama or args.dry_run or args.skip_web_build):
+            if web_build_required(self.web_dir):
+                self.say("building web/out before draining; requests are still accepted")
+                build_started_at = time.time()
+                build_sources = sorted(
+                    str(path.relative_to(self.web_dir)) for path in web_source_files(self.web_dir)
+                )
+                code = self.run(["npm", "--prefix", str(self.web_dir), "run", "build"], DEFAULT_WEB_BUILD_TIMEOUT_S)
+                if code != 0 or not (self.web_dir / "out" / "index.html").is_file():
+                    self.say(f"web build failed (exit {code}); NOT draining or restarting {target}")
+                    return EXIT_WEB_BUILD
+                stamp = self.web_dir / "out" / WEB_BUILD_STAMP
+                stamp.write_text(json.dumps(build_sources))
+                # Keep edits during compilation newer than this export marker.
+                os.utime(stamp, (build_started_at, build_started_at))
         snapshot: dict[str, Any] | None = None
         try:
             snapshot = self.get_drain()
@@ -520,10 +565,11 @@ class Restarter:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="safe-restart",
-        description="Restart the AI gateway without killing in-flight requests.",
+        description="Restart Azizam without killing in-flight requests.",
     )
     parser.add_argument("--llama", action="store_true", help="drain chat, then restart llama-bee instead of the gateway")
     parser.add_argument("--dry-run", action="store_true", help="only show what is in flight; change nothing")
+    parser.add_argument("--skip-web-build", action="store_true", help="skip checking and rebuilding the static UI export")
     parser.add_argument(
         "--force",
         action="store_true",
@@ -539,7 +585,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--ignore-async-jobs", action="store_true", help="do not wait for async media jobs (they resume from the start)")
     parser.add_argument("--health-timeout", type=float, default=None, help="seconds to wait for health after restart (default 120; 600 with --llama)")
-    parser.add_argument("--url", default=get_env("AZIZAM_URL", DEFAULT_GATEWAY_URL), help="gateway base URL (loopback)")
+    parser.add_argument("--url", default=os.environ.get("AZIZAM_URL", DEFAULT_GATEWAY_URL), help="gateway base URL (loopback)")
     parser.add_argument("--llama-url", default=DEFAULT_LLAMA_URL)
     parser.add_argument("--unit", default="azizam")
     parser.add_argument("--llama-unit", default="llama-bee")
@@ -547,16 +593,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--systemctl-timeout", type=float, default=300.0, help=argparse.SUPPRESS)
     parser.add_argument("--lock-file", default=str(Path.home() / ".tmp" / "safe-restart.lock"), help=argparse.SUPPRESS)
     return parser
-
-
-def installed_gateway_unit(env: Mapping[str, str]) -> str:
-    if not env.get("HOME"):
-        return "azizam"
-    unit_dir = Path(env["HOME"]) / ".config" / "systemd" / "user"
-    for unit in ("azizam", "openai-proxy"):
-        if (unit_dir / (unit + ".service")).exists():
-            return unit
-    return "azizam"
 
 
 def validate(args: argparse.Namespace) -> str | None:
@@ -584,9 +620,6 @@ def main(
     except SystemExit as exc:
         return EXIT_USAGE if exc.code not in (0, None) else EXIT_OK
     env = os.environ if env is None else env
-    arguments = list(sys.argv[1:] if argv is None else argv)
-    if not any(arg == "--unit" or arg.startswith("--unit=") for arg in arguments):
-        args.unit = installed_gateway_unit(env)
     problem = validate(args)
     if problem:
         print(f"error: {problem}", file=sys.stderr)

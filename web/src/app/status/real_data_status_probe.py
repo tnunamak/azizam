@@ -66,7 +66,7 @@ def configure_environment() -> None:
             "AZIZAM_MEDIA_JOBS_DB": str(DATA / "media_jobs.db"),
             "AZIZAM_PROVIDER_LEDGER_DB": str(DATA / "provider_spend.db"),
             "AZIZAM_GRACEFUL_SHUTDOWN_S": "1",
-            "AGW_HOST_TELEMETRY_DISABLED": "1",
+            "AZIZAM_HOST_TELEMETRY_DISABLED": "1",
             "IMAGE_MEDIA_JOB_RESUME_ON_START": "false",
             "PYTHONDONTWRITEBYTECODE": "1",
         }

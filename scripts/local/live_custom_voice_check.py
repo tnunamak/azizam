@@ -1,8 +1,7 @@
 #!/usr/bin/env python
 """Live check of custom voices through the real OpenAI SDK against a running gateway.
 
-    source ~/applications/daisy/scripts/lib/vivid-env && load_daisy_env ~/applications/daisy
-    OPENAI_BASE_URL=$(vivid_base_url) OPENAI_API_KEY=$AZIZAM_API_KEY \\
+    OPENAI_BASE_URL="$AZIZAM_BASE_URL/openai/v1" OPENAI_API_KEY="$AZIZAM_API_KEY" \\
       ~/applications/daisy/.venv-openai/bin/python scripts/local/live_custom_voice_check.py [--sample FILE] [--omnivoice]
 
 Creates a consent and a voice from a 10 s sample, speaks with it (buffered and streamed), measures

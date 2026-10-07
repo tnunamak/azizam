@@ -118,7 +118,7 @@ class TestFreshInstanceBootstrap(unittest.TestCase):
 
     # -- 4. env override guard -------------------------------------------------
 
-    def test_ai_gateway_admin_db_env_is_respected(self) -> None:
+    def test_azizam_admin_db_env_is_respected(self) -> None:
         """Verify the module honours AZIZAM_ADMIN_DB when set."""
         saved = os.environ.get("AZIZAM_ADMIN_DB")
         try:

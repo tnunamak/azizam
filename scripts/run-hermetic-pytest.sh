@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 
-source "$(dirname "${BASH_SOURCE[0]}")/azizam-env.sh"
 # Run pytest from an exact Git tree with no operator filesystem, environment,
 # network, processes, IPC, terminal, or service manager access.
 set -euo pipefail
@@ -9,10 +8,6 @@ repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 state_root="$HOME/.tmp"
 lock_file="$repo_root/tests/requirements-hermetic.lock"
 python_store="$state_root/azizam-hermetic-python"
-# TODO(azizam-rename): drop once every checkout uses the new cache dir.
-if [[ ! -d "$python_store" && -d "$state_root/vivid-fish-hermetic-python" ]]; then
-  python_store="$state_root/vivid-fish-hermetic-python"
-fi
 python_abi=cpython-312
 python_minor=3.12
 platform=linux-x86_64
@@ -51,7 +46,6 @@ host_runner_pid=$$
 host_pid_namespace=$(readlink /proc/self/ns/pid)
 host_ipc_namespace=$(readlink /proc/self/ns/ipc)
 forbidden_production_path="$(dirname -- "$repo_root")/azizam"
-legacy_production_path="$(dirname -- "$repo_root")/openai-proxy"
 python_bin="/venv/bin/python"
 
 declare -a bwrap_args=(
@@ -68,7 +62,6 @@ declare -a bwrap_args=(
   --setenv HERMETIC_ADMIN_DB "$state_dir/admin.db"
   --setenv HERMETIC_TEST_NAMESPACE 1 --setenv HERMETIC_STATE_DIR "$state_dir"
   --setenv HERMETIC_FORBIDDEN_PRODUCTION_PATH "$forbidden_production_path"
-  --setenv HERMETIC_LEGACY_PRODUCTION_PATH "$legacy_production_path"
   --setenv HERMETIC_HOST_RUNNER_PID "$host_runner_pid"
   --setenv HERMETIC_HOST_PID_NAMESPACE "$host_pid_namespace" --setenv HERMETIC_HOST_IPC_NAMESPACE "$host_ipc_namespace"
   --setenv HERMETIC_TEST_ENV_ROOT /venv --setenv HERMETIC_REPO_ROOT "$checkout_root"
@@ -108,12 +101,12 @@ if [[ $(ip -o link show | wc -l) -ne 1 ]] || tail -n +2 /proc/net/route | grep -
 read -r _ _ _ _ _ _ tty_number _ < /proc/self/stat
 if [[ $tty_number != 0 ]] || ( : </dev/tty ) 2>/dev/null; then echo "error: sandbox retained a controlling terminal" >&2; exit 1; fi
 if [[ -e "/proc/$HERMETIC_HOST_RUNNER_PID" ]] || [[ $(readlink /proc/1/ns/pid) == "$HERMETIC_HOST_PID_NAMESPACE" ]] || [[ $(readlink /proc/1/ns/ipc) == "$HERMETIC_HOST_IPC_NAMESPACE" ]]; then echo "error: sandbox exposes host process or IPC state" >&2; exit 1; fi
-if [[ -e "$HERMETIC_FORBIDDEN_PRODUCTION_PATH" ]] || [[ -e "$HERMETIC_LEGACY_PRODUCTION_PATH" ]] || [[ -e /run/docker.sock ]] || [[ -e /var/run/docker.sock ]]; then echo "error: sandbox exposes forbidden production or Unix-socket path" >&2; exit 1; fi
+if [[ -e "$HERMETIC_FORBIDDEN_PRODUCTION_PATH" ]] || [[ -e /run/docker.sock ]] || [[ -e /var/run/docker.sock ]]; then echo "error: sandbox exposes forbidden production or Unix-socket path" >&2; exit 1; fi
 exec "$@"'
 
 if [[ ${1:-} == "--check" ]]; then
   shift; (($# == 0)) || { echo "error: --check does not accept pytest arguments" >&2; exit 2; }
-  test_command=("$python_bin" -S -c 'import os, sys; assert sys.executable; assert not os.environ.get("OPENAI_API_KEY"); assert not os.environ.get("AZIZAM_ADMIN_DB"); assert not os.environ.get("AI_GATEWAY_ADMIN_DB")')
+  test_command=("$python_bin" -S -c 'import os, sys; assert sys.executable; assert not os.environ.get("OPENAI_API_KEY"); assert not os.environ.get("AZIZAM_ADMIN_DB")')
 else
   test_command=("$python_bin" -m pytest -p no:cacheprovider "$@")
 fi

@@ -234,8 +234,8 @@ def _main(argv: list[str]) -> int:
     )
     parser.add_argument(
         "--comfyui-root",
-        default=os.environ.get("AGW_COMFY_DIR", ""),
-        help="Path to the local ComfyUI installation (or set AGW_COMFY_DIR)",
+        default=os.environ.get("AZIZAM_COMFY_DIR", ""),
+        help="Path to the local ComfyUI installation (or set AZIZAM_COMFY_DIR)",
     )
     parser.add_argument(
         "--object-info",

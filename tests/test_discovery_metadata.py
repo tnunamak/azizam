@@ -433,7 +433,7 @@ class TestLiveDiscoveryRoutes(unittest.TestCase):
         self.assertEqual(response.status_code, 301, response.text)
         self.assertEqual(response.headers["location"], "/status/raw")
 
-    def test_well_known_ai_gateway_is_public(self) -> None:
+    def test_well_known_azizam_is_public(self) -> None:
         response = self.client.get("/.well-known/azizam")
         self.assertEqual(response.status_code, 200, response.text)
         body = response.json()

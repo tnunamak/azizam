@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 
-source "$(dirname "${BASH_SOURCE[0]}")/azizam-env.sh"
 # Post-deploy smoke for a live gateway: real requests that catch "healthy but broken" deploys.
 # Usage: scripts/post-deploy-smoke [BASE_URL]   (default http://127.0.0.1:5000; LAN needs no key,
 # otherwise set AZIZAM_SMOKE_KEY)

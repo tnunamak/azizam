@@ -1,14 +1,13 @@
 """Runtime environment injector for the LiteLLM sidecar.
 
 The generated LiteLLM YAML keeps provider keys as ``os.environ/NAME`` refs.
-This module resolves gateway-owned encrypted provider secrets immediately
-before starting LiteLLM, then replaces itself with the LiteLLM process. Secret
-values do not appear in YAML, argv, stdout, or logs.
+This module compiles that YAML and resolves gateway-owned encrypted provider
+secrets from one registry snapshot immediately before starting LiteLLM, then
+replaces itself with the LiteLLM process. Secret values do not appear in YAML,
+argv, stdout, or logs.
 """
 
 from __future__ import annotations
-
-from gateway.compat import ENV_ALIASES, get_env
 
 import argparse
 import hashlib
@@ -20,7 +19,7 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from gateway.litellm_substrate import secret_env_name_for_provider
+from gateway.litellm_substrate import secret_env_name_for_provider, write_litellm_config_artifact
 from gateway.secret_store import credential_origin_from_url, get_provider_secret
 
 DEFAULT_ADMIN_DB = Path("data/admin.db")
@@ -135,19 +134,12 @@ def build_sidecar_env(
     db_path: Path,
     base_env: Mapping[str, str] | None = None,
     env_map: Mapping[str, str] | None = None,
+    registry: Mapping[str, Any] | None = None,
 ) -> dict[str, str]:
     """Return a child environment with decrypted provider secrets injected."""
 
     child_env = dict(os.environ if base_env is None else base_env)
-    # LiteLLM resolves persisted os.environ/ references itself, so bridge both
-    # spellings in its child environment until registry state is migrated.
-    for name, aliases in ENV_ALIASES.items():
-        value = get_env(name, environ=child_env)
-        if value is not None:
-            child_env[name] = value
-            for alias in aliases:
-                child_env[alias] = value
-    registry = _read_service_registry(db_path) or {}
+    registry = (_read_service_registry(db_path) or {}) if registry is None else registry
     resolved_map = dict(env_map or provider_secret_env_map_from_registry(registry))
     origin_map = provider_secret_origin_map_from_registry(registry)
     for env_name, secret_id in resolved_map.items():
@@ -179,6 +171,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     run_parser = subcommands.add_parser("run")
     run_parser.add_argument("--db", type=Path, default=DEFAULT_ADMIN_DB)
+    run_parser.add_argument("--config", type=Path, help="Selected LiteLLM config artifact path")
     run_parser.add_argument("exec_args", nargs=argparse.REMAINDER)
 
     args = parser.parse_args(list(argv) if argv is not None else None)
@@ -191,7 +184,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         exec_args = exec_args[1:]
     if not exec_args:
         parser.error("run requires a command after --")
-    child_env = build_sidecar_env(db_path=args.db)
+    # Regenerate before exec: a retained artifact may refer to a retired env name.
+    # Both the YAML and child env must come from this one registry snapshot.
+    registry = _read_service_registry(args.db) or {}
+    write_litellm_config_artifact(registry, base_dir=args.db.parent, path=args.config)
+    child_env = build_sidecar_env(db_path=args.db, registry=registry)
     os.execvpe(exec_args[0], exec_args, child_env)
     raise AssertionError("unreachable after exec")
 

@@ -59,7 +59,7 @@ class ChatBackendAdapterTests(unittest.TestCase):
             parent_request_id="server-owned", read_timeout=30.0,
         )
         self.assertEqual(request.headers["x-azizam-request-id"], "server-owned")
-        self.assertEqual(request.headers["x-ai-gateway-request-id"], "server-owned")
+        self.assertNotIn("x-ai-gateway-request-id", request.headers)
 
         unparented = build_chat_loopback_request(
             proxy_port=5001, body={"model": "default", "messages": []},

@@ -209,7 +209,7 @@ def prepare() -> dict[str, Any]:
         config = service.get("config") or {}
         if config.get("gateway_lifecycle"):
             config["gateway_lifecycle_base_url"] = f"http://127.0.0.1:{GATEWAY_PORT}/internal/litellm/local"
-        if sid in {"azizam", "openai-proxy"}:
+        if sid == "azizam":
             config["host"] = "127.0.0.1"
             config["port"] = GATEWAY_PORT
     if "litellm" in registry.get("services", {}):
@@ -281,7 +281,7 @@ def _env(config_path: Path) -> dict[str, str]:
             "AZIZAM_RESPONSES_DB": str(DATA / "responses.db"),
             "AZIZAM_RECEIPTS_DB": str(DATA / "receipts.db"),
             "AZIZAM_MEDIA_JOBS_DB": str(DATA / "media_jobs.db"),
-            "AGW_IMAGE_CACHE_DIR": str(PRIVATE / "cache" / "images"),
+            "AZIZAM_IMAGE_CACHE_DIR": str(PRIVATE / "cache" / "images"),
             "IMAGE_MEDIA_JOB_RESUME_ON_START": "false",
             "VIDEO_MEDIA_JOB_RESUME_ON_START": "false",
             "AUDIO_MEDIA_JOB_RESUME_ON_START": "false",

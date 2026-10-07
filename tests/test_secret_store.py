@@ -37,8 +37,8 @@ def test_provider_secret_round_trip_is_encrypted_and_key_file_is_0600(tmp_path: 
     assert stat.S_IMODE((tmp_path / "provider-secrets.key").stat().st_mode) == 0o600
     assert export_provider_secret_env(
         db_path,
-        {"AI_GATEWAY_PROVIDER_SECRET_OPENROUTER": "provider:openrouter:api_key"},
-    ) == {"AI_GATEWAY_PROVIDER_SECRET_OPENROUTER": "sk-test-1234"}
+        {"AZIZAM_PROVIDER_SECRET_OPENROUTER": "provider:openrouter:api_key"},
+    ) == {"AZIZAM_PROVIDER_SECRET_OPENROUTER": "sk-test-1234"}
 
 
 def test_provider_secret_delete_returns_write_only_missing_status(tmp_path: Path) -> None:

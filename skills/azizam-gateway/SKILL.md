@@ -1,6 +1,6 @@
 ---
 name: azizam-gateway
-description: Use Azizam (the local OpenAI-compatible AI gateway, formerly azizam) for chat, embeddings, image generation/editing, TTS, STT, audio generation, video jobs, Anthropic Messages, Ollama-compatible chat/generate/model routes, and gateway-native capabilities/receipts. Use when a task mentions Azizam, Azizam, azizam, /gateway/v1, opk_ keys, local AI backends, or apps that need one local AI endpoint.
+description: Use Azizam (the local OpenAI-compatible AI gateway) for chat, embeddings, image generation/editing, TTS, STT, audio generation, video jobs, Anthropic Messages, Ollama-compatible chat/generate/model routes, and gateway-native capabilities/receipts. Use when a task mentions Azizam, azizam, /gateway/v1, opk_ keys, local AI backends, or apps that need one local AI endpoint.
 ---
 
 # Azizam
@@ -17,7 +17,7 @@ Start with unauthenticated metadata:
 
 ```bash
 curl -fsS "$BASE/health"
-curl -fsS "$BASE/.well-known/ai-gateway" || curl -fsS "$BASE/.well-known/azizam"
+curl -fsS "$BASE/.well-known/azizam"
 ```
 
 Then use authenticated gateway discovery before assuming a modality:
@@ -29,7 +29,7 @@ curl -fsS "$BASE/gateway/v1/workflows" \
   -H "Authorization: Bearer $AZIZAM_API_KEY"
 ```
 
-`AZIZAM_API_KEY` is still accepted by existing apps and tooling as an env-var alias for the same bearer token.
+Set `AZIZAM_API_KEY` to the App bearer token for the calls below.
 
 Typed inputs, aliases, typical times, and the sync and async route of every native workflow are in `GET /openapi.json`, root list `x-azizam-workflows` (each entry points at a `WorkflowInputs_<id>` schema). Slow work uses an async route: submit, poll, fetch the content. Pick the entry, then call its route with curl or an OpenAI SDK: `execution.fields` says whether each input is a body field, an `extensions["com.azizam.workflow"]` key, or a file part.
 
@@ -46,7 +46,7 @@ If a needed capability is absent or unavailable, stop and report that honestly.
 
 ## Auth Rules
 
-- Use `Authorization: Bearer $AZIZAM_API_KEY` (or the legacy `$AZIZAM_API_KEY` env-var name when that is already set).
+- Use `Authorization: Bearer $AZIZAM_API_KEY`.
 - Bearer tokens start with `opk_` regardless of which env-var name your client uses.
 - Never ask the user to paste a raw `opk_...` token into chat.
 - Never read, print, or echo local key stores.

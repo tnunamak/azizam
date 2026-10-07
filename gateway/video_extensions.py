@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from gateway.compat import JSON_OLD_NAMES, canonical_key
-
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
@@ -120,8 +118,7 @@ def _request_with_workflow_namespace(
         return copied
     if not isinstance(extensions, Mapping):
         raise ExtensionError("extensions must be a mapping")
-    canonical = canonical_key(namespace)
-    if canonical in extensions or (canonical in JSON_OLD_NAMES and JSON_OLD_NAMES[canonical] in extensions):
+    if namespace in extensions:
         raise ExtensionError(
             f"use either inputs or extensions.{namespace}, not both"
         )

@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-source "$(dirname "${BASH_SOURCE[0]}")/../../../scripts/azizam-env.sh"
 # Deterministic verifier for the source-only autotile skill.
 #
 # Default mode never contacts a gateway or ComfyUI.  `--live` is an explicit

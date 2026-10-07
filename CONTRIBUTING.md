@@ -10,6 +10,7 @@ OpenAI-compatible gateway for local and remote AI backends.
    ```bash
    uv venv venv --python 3.12
    uv pip install --python venv/bin/python -r requirements.txt
+   venv/bin/python -m prisma generate --schema venv/lib/python3.12/site-packages/litellm/proxy/schema.prisma
    ```
 3. Copy `.env.example` to `.env` only if you need local overrides.
 4. Start from the docs that match your change:
@@ -17,6 +18,11 @@ OpenAI-compatible gateway for local and remote AI backends.
    - `AUTH_GUIDE.md` for Apps, Profiles, keys, and admin access.
    - `docs/EXTENSION_ARCHITECTURE.md` for extensions.
    - `docs/VENDOR_FACADES.md` for vendor-compatible routes.
+
+LiteLLM needs its generated Prisma client on a fresh environment, even when
+`DATABASE_URL` is unset. `start.sh` generates it before starting managed
+LiteLLM and repeats generation when the schema or requirements change, or
+when the client is missing. Generation failure stops startup.
 
 Do not commit real API keys, local database files, generated media, or machine
 specific paths.

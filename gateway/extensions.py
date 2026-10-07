@@ -28,8 +28,6 @@ The contract has three goals:
 
 from __future__ import annotations
 
-from gateway.compat import read_field, canonical_key
-
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
@@ -81,13 +79,12 @@ def extract_extension_namespace(
     block for this namespace. Raises ``ExtensionError`` if the shapes are
     obviously wrong so callers fail fast instead of silently dropping inputs.
     """
-    namespace = canonical_key(namespace)
     container = request_body.get(container_key)
     if container is None:
         return {}
     if not isinstance(container, Mapping):
         raise ExtensionError(f"{container_key} must be a mapping")
-    block = read_field(container, namespace)
+    block = container.get(namespace)
     if block is None:
         return {}
     if not isinstance(block, Mapping):
@@ -116,7 +113,6 @@ def validate_extension_inputs(
     being silently dropped or treated as unknown. This is how a manifest can
     advertise an input that a particular backend binding has not yet wired up.
     """
-    namespace = canonical_key(namespace)
     try:
         spec_names = set(specs.keys())
     except AttributeError as exc:

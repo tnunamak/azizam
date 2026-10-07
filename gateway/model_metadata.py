@@ -17,8 +17,6 @@ registry, or the network.
 
 from __future__ import annotations
 
-from gateway.compat import accept_aliases, read_field
-
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Iterable, Mapping
 
@@ -36,7 +34,7 @@ DECLARABLE_FIELDS: tuple[str, ...] = (
     "type", "input_modalities", "output_modalities", "max_tokens", "tags",
 )
 
-# Top-level response fields this module writes. None uses a vivid_fish name.
+# Top-level response fields this module writes.
 OUTPUT_FIELDS: tuple[str, ...] = ("type", "architecture", "max_tokens", "tags")
 
 ORIGIN_LLM_CATALOG = "llm-catalog"
@@ -345,15 +343,15 @@ def base_metadata(entry: Mapping[str, Any], sources: MetadataSources) -> ModelMe
     model_id = str(entry.get("id") or "")
     if model_id in sources.inherited:
         return sources.inherited[model_id]
-    intent = read_field(entry, "azizam_intent")
+    intent = entry.get("azizam_intent")
     derived = None
     if intent:
-        derived = from_intent(intent, sources.manifest(str(read_field(entry, "azizam_workflow_id") or "")))
+        derived = from_intent(intent, sources.manifest(str(entry.get("azizam_workflow_id") or "")))
     if derived is None and sources.origins.get(model_id) == ORIGIN_DECISION:
         derived = _DECISION
     if derived is None:
         derived = from_service_capabilities(sources.service_capabilities(model_id))
-    if derived is None and read_field(entry, "azizam_current_loaded"):
+    if derived is None and entry.get("azizam_current_loaded"):
         derived = _LANGUAGE
     if derived is None:
         derived = from_origin(sources.origins.get(model_id))
@@ -373,11 +371,7 @@ def annotate_entries(
     `entries`.
     """
     entries = [e for e in entries if isinstance(e, dict)]
-    for entry in entries:
-        normalized = accept_aliases(entry)
-        entry.clear()
-        entry.update(normalized)
-    pool = [accept_aliases(dict(e)) for e in (entries if catalog is None else catalog) if isinstance(e, Mapping)]
+    pool = [dict(e) for e in (entries if catalog is None else catalog) if isinstance(e, Mapping)]
     by_id: dict[str, ModelMetadata | None] = {}
     for item in [*pool, *entries]:
         model_id = str(item.get("id") or "")
@@ -414,7 +408,7 @@ def _metadata_for(
 ) -> ModelMetadata | None:
     model_id = str(entry.get("id") or "")
     own = by_id.get(model_id)
-    resolves_to = read_field(entry, "azizam_resolves_to")
+    resolves_to = entry.get("azizam_resolves_to")
     if not isinstance(resolves_to, Mapping):
         return own
     targets = [(op, str(t)) for op, t in resolves_to.items() if t and str(t) != model_id]

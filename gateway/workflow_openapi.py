@@ -32,8 +32,6 @@ The module is pure. It does not import FastAPI or ``proxy.py``.
 
 from __future__ import annotations
 
-from gateway.compat import emit_aliases
-
 import copy
 import re
 from typing import Any, Iterable, Mapping
@@ -122,7 +120,7 @@ def _input_schema(spec: Mapping[str, Any], *, form: bool) -> dict[str, Any]:
     if spec.get("description"):
         base = out.get("description")
         out["description"] = f"{base} {spec['description']}" if base else spec["description"]
-    return emit_aliases(out)
+    return out
 
 
 def workflow_inputs_schema(record: WorkflowRecord, *, form: bool = False) -> dict[str, Any]:
@@ -146,7 +144,7 @@ def workflow_inputs_schema(record: WorkflowRecord, *, form: bool = False) -> dic
         schema["required"] = required
     if record.manifest.get("description"):
         schema["description"] = " ".join(str(record.manifest["description"]).split())
-    return emit_aliases(schema)
+    return schema
 
 
 # ------------------------------------------------------------- request mapping
@@ -563,7 +561,6 @@ def _patch_extensions(op: dict[str, Any], records: list[WorkflowRecord]) -> None
 
 def _async_extension(op: dict[str, Any], mode: str, **fields: Any) -> None:
     op[f"x-azizam-{mode}"] = fields
-    op.update(emit_aliases(op))
 
 
 def augment_openapi(
@@ -733,7 +730,7 @@ def augment_openapi(
         path = f"/gateway/v1/workflows/{short_id(record)}/run"
         outputs = (record.manifest.get("outputs") or {})
         media = next((o.get("media_type") for o in outputs.values() if o.get("media_type")), "video/mp4")
-        paths[path] = {"post": emit_aliases({
+        paths[path] = {"post": {
             "tags": ["gateway-workflows"],
             "operationId": f"run_{short_id(record).replace('.', '_').replace('-', '_')}",
             "summary": f"Run {record.manifest.get('display_name') or record.id}",
@@ -746,10 +743,9 @@ def augment_openapi(
                         "content": {media: {"schema": {"type": "string", "format": "binary"}}}},
                 **errors,
             },
-        })}
+        }}
 
     spec[ROOT_EXTENSION] = workflow_catalog(records, aliases, video_limits)
-    spec.update(emit_aliases(spec))
     return spec
 
 

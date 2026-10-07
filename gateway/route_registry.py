@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from gateway.compat import read_field
-
 import copy
 from collections.abc import Mapping
 from typing import Any
@@ -119,7 +117,7 @@ def azizam_policy(
         proxy_config=proxy_config,
     ):
         path = _path(route.get("canonical") or route.get("path"))
-        policy = read_field(route, "azizam_policy")
+        policy = route.get("azizam_policy")
         if not path or not isinstance(policy, Mapping):
             continue
         protocol = str(policy.get("protocol") or "").strip()

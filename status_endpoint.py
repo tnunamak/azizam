@@ -65,33 +65,33 @@ _BUDGET_CACHE_TTL_S = 60.0
 _SELF_DIR = Path(__file__).parent
 
 _GPU_BUDGET_PATH = Path(
-    os.environ.get("AGW_GPU_BUDGET_PATH", "")
-) if os.environ.get("AGW_GPU_BUDGET_PATH") else None
+    os.environ.get("AZIZAM_GPU_BUDGET_PATH", "")
+) if os.environ.get("AZIZAM_GPU_BUDGET_PATH") else None
 _VRAM_ESTIMATES_PATH = Path(
-    os.environ.get("AGW_VRAM_ESTIMATES_PATH", str(_SELF_DIR / "cache" / "vram_estimates.json"))
+    os.environ.get("AZIZAM_VRAM_ESTIMATES_PATH", str(_SELF_DIR / "cache" / "vram_estimates.json"))
 )
 _DRIFT_REPORT_PATH = Path(
-    os.environ.get("AGW_DRIFT_REPORT_PATH", str(_SELF_DIR / "cache" / "drift_status.json"))
+    os.environ.get("AZIZAM_DRIFT_REPORT_PATH", str(_SELF_DIR / "cache" / "drift_status.json"))
 )
 _IMAGE_CACHE_DIR = Path(
-    os.environ.get("AGW_IMAGE_CACHE_DIR", str(_SELF_DIR / "cache" / "images"))
+    os.environ.get("AZIZAM_IMAGE_CACHE_DIR", str(_SELF_DIR / "cache" / "images"))
 )
 _DAISY_AUDIT_PATH = Path(
-    os.environ.get("AGW_DAISY_AUDIT_PATH", "")
-) if os.environ.get("AGW_DAISY_AUDIT_PATH") else None
+    os.environ.get("AZIZAM_DAISY_AUDIT_PATH", "")
+) if os.environ.get("AZIZAM_DAISY_AUDIT_PATH") else None
 
 # Host machine telemetry (disk/thermal) is operator-machine-specific and must
-# never be assumed present. `AGW_HOST_TELEMETRY_DISABLED` is the isolation seam
+# never be assumed present. `AZIZAM_HOST_TELEMETRY_DISABLED` is the isolation seam
 # any isolated launch mode (harness, dev, tests) sets to skip the `df`/`sensors`
 # shell-outs entirely rather than leaking the runner's own host state into a
-# fresh instance's health projection. `AGW_DISK_PARTITIONS` lets an operator
+# fresh instance's health projection. `AZIZAM_DISK_PARTITIONS` lets an operator
 # declare which mount points they actually want watched; it defaults to just
 # `/` rather than a maintainer-specific hardcoded list.
-_HOST_TELEMETRY_DISABLED = os.environ.get("AGW_HOST_TELEMETRY_DISABLED", "") not in (
+_HOST_TELEMETRY_DISABLED = os.environ.get("AZIZAM_HOST_TELEMETRY_DISABLED", "") not in (
     "", "0", "false", "False",
 )
 _DISK_PARTITIONS_CONFIG = [
-    p.strip() for p in os.environ.get("AGW_DISK_PARTITIONS", "/").split(",") if p.strip()
+    p.strip() for p in os.environ.get("AZIZAM_DISK_PARTITIONS", "/").split(",") if p.strip()
 ]
 
 # Hot-spot directories the firehose should surface separately from the root partition.
@@ -101,15 +101,15 @@ def _optional_path(env_key: str, default: str | None = None) -> Path | None:
 
 
 _COMFY_OUTPUT_ROOT = _optional_path(
-    "AGW_COMFY_OUTPUT_DIR",
-    os.environ.get("AGW_COMFY_DIR", "") and os.path.join(os.environ["AGW_COMFY_DIR"], "output") or "",
+    "AZIZAM_COMFY_OUTPUT_DIR",
+    os.environ.get("AZIZAM_COMFY_DIR", "") and os.path.join(os.environ["AZIZAM_COMFY_DIR"], "output") or "",
 )
 _HOTSPOT_DIRS = [
     entry for entry in [
         ("comfy_output_root", _COMFY_OUTPUT_ROOT),
         ("comfy_output_video", Path(_COMFY_OUTPUT_ROOT / "video") if _COMFY_OUTPUT_ROOT else None),
         ("openai_image_cache", _IMAGE_CACHE_DIR),
-        ("daisy_audit", _optional_path("AGW_DAISY_DIR")),
+        ("daisy_audit", _optional_path("AZIZAM_DAISY_DIR")),
     ]
     if entry[1] is not None
 ]
@@ -127,7 +127,7 @@ _SERVICE_UNITS = [
     "voxtral-tts",
     "parakeet-stt",
     "tabbyapi",
-    "openai-proxy",
+    "azizam",
     "daisy",
 ]
 
@@ -922,10 +922,10 @@ def _read_proc_comm(pid: int) -> Optional[str]:
         return None
 
 
-_REPO_PATH = os.environ.get("AGW_REPO_PATH", str(Path(__file__).parent))
+_REPO_PATH = os.environ.get("AZIZAM_REPO_PATH", str(Path(__file__).parent))
 _COMFY_CUSTOM_NODES = _optional_path(
-    "AGW_COMFY_CUSTOM_NODES_DIR",
-    os.environ.get("AGW_COMFY_DIR", "") and os.path.join(os.environ["AGW_COMFY_DIR"], "custom_nodes") or "",
+    "AZIZAM_COMFY_CUSTOM_NODES_DIR",
+    os.environ.get("AZIZAM_COMFY_DIR", "") and os.path.join(os.environ["AZIZAM_COMFY_DIR"], "custom_nodes") or "",
 )
 
 
@@ -1297,7 +1297,7 @@ def _read_gpu_budget() -> Optional[dict]:
         return cached
     try:
         if _GPU_BUDGET_PATH is None:
-            raise FileNotFoundError("AGW_GPU_BUDGET_PATH not configured")
+            raise FileNotFoundError("AZIZAM_GPU_BUDGET_PATH not configured")
         text = _GPU_BUDGET_PATH.read_text(encoding="utf-8")
     except Exception:
         _BUDGET_CACHE["data"] = None
@@ -1951,19 +1951,18 @@ def _reboot_history(n: int = 5) -> list[dict]:
 
 
 def _proxy_restart_count() -> Optional[int]:
-    for unit in ("azizam.service", "openai-proxy.service"):
-        rc, out, _ = _run(
-            ["systemctl", "--user", "show", unit, "-p", "NRestarts", "-p", "LoadState"],
-            timeout=1.0,
-        )
-        if rc != 0 or "LoadState=not-found" in out:
-            continue
-        for line in out.splitlines():
-            if line.startswith("NRestarts="):
-                try:
-                    return int(line.split("=", 1)[1])
-                except ValueError:
-                    return None
+    rc, out, _ = _run(
+        ["systemctl", "--user", "show", "azizam.service", "-p", "NRestarts", "-p", "LoadState"],
+        timeout=1.0,
+    )
+    if rc != 0 or "LoadState=not-found" in out:
+        return None
+    for line in out.splitlines():
+        if line.startswith("NRestarts="):
+            try:
+                return int(line.split("=", 1)[1])
+            except ValueError:
+                return None
     return None
 
 
@@ -2006,7 +2005,7 @@ def _disk_pressure_reason(part: dict, config: dict) -> str:
 
 
 def _disk_partitions() -> list[dict]:
-    """df for the operator-declared partitions (``AGW_DISK_PARTITIONS``, default `/`)."""
+    """df for the operator-declared partitions (``AZIZAM_DISK_PARTITIONS``, default `/`)."""
     if _HOST_TELEMETRY_DISABLED:
         return []
     out_rows: list[dict] = []
@@ -2660,8 +2659,8 @@ def _voices_summary(proxy_module) -> Optional[dict]:
 # --- daisy ---------------------------------------------------------------
 
 _DAISY_MODELS_JSON = _optional_path(
-    "AGW_DAISY_MODELS_JSON",
-    os.environ.get("AGW_DAISY_DIR", "") and os.path.join(os.environ["AGW_DAISY_DIR"], ".pi", "agent", "models.json") or "",
+    "AZIZAM_DAISY_MODELS_JSON",
+    os.environ.get("AZIZAM_DAISY_DIR", "") and os.path.join(os.environ["AZIZAM_DAISY_DIR"], ".pi", "agent", "models.json") or "",
 )
 _DAISY_TMUX_TARGET = "main:daisy"
 
@@ -2859,7 +2858,7 @@ def _daisy_telegram_bridge() -> dict:
 def _daisy_audit_summary() -> dict:
     """Read the last few audit entries from daisy's audit log."""
     if _DAISY_AUDIT_PATH is None:
-        return {"path": None, "exists": False, "unavailable_reason": "AGW_DAISY_AUDIT_PATH not configured"}
+        return {"path": None, "exists": False, "unavailable_reason": "AZIZAM_DAISY_AUDIT_PATH not configured"}
     info: dict[str, Any] = {"path": str(_DAISY_AUDIT_PATH), "exists": _DAISY_AUDIT_PATH.is_file()}
     if not _DAISY_AUDIT_PATH.is_file():
         return info

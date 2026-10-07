@@ -23,8 +23,6 @@ def test_state_config_and_environment_are_private_to_this_run(gateway_test_state
     assert os.environ.get("OPENAI_API_KEY") is None
     assert Path(os.environ["HERMETIC_ADMIN_DB"]) == gateway_test_state_dir / "admin.db"
     assert os.environ["AZIZAM_ADMIN_DB"] == os.environ["HERMETIC_ADMIN_DB"]
-    assert os.environ.get("AI_GATEWAY_ADMIN_DB") is None
-    assert os.environ.get("OPENAI_PROXY_ADMIN_DB") is None
     assert os.environ.get("PYTHONDONTWRITEBYTECODE") == "1"
 
 
@@ -40,7 +38,7 @@ def test_production_environment_names_cannot_leak_into_the_suite() -> None:
     leaked = {
         name
         for name in os.environ
-        if name.startswith(("OPENAI_", "AI_GATEWAY_", "VIVID_", "ANTHROPIC_", "AWS_", "DATABASE_"))
+        if name.startswith(("OPENAI_", "ANTHROPIC_", "AWS_", "DATABASE_"))
         or (name.startswith("AZIZAM_") and name not in allowed_gateway_names)
     }
     assert leaked == set()
@@ -89,7 +87,7 @@ def test_interpreter_and_imports_are_inside_fresh_environment() -> None:
     assert Path(sys.executable).exists()
 
 
-@pytest.mark.parametrize("command", [["systemctl", "--user", "restart", "azizam.service"], ["systemctl", "--user", "restart", "openai-proxy.service"], ["tmux", "kill-server"]])
+@pytest.mark.parametrize("command", [["systemctl", "--user", "restart", "azizam.service"], ["systemctl", "--user", "restart", "unrelated.service"], ["tmux", "kill-server"]])
 def test_service_and_terminal_mutation_are_rejected_before_spawn(command: list[str]) -> None:
     with pytest.raises(pytest.fail.Exception, match="host-control command"):
         subprocess.run(command, check=False)

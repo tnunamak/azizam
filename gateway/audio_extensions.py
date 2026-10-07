@@ -17,7 +17,6 @@ from gateway.extensions import (
     record_extension_result,
     validate_extension_inputs,
 )
-from gateway.compat import read_field
 from gateway.manifests import BackendBindingResult, bind_backend_request
 
 WORKFLOW_EXTENSION_NAMESPACE = "com.azizam.workflow"
@@ -90,7 +89,7 @@ def _extract_workflow_block(
         return {}
     if not isinstance(container, Mapping):
         raise ExtensionError("extensions must be a mapping")
-    block = read_field(container, namespace)
+    block = container.get(namespace)
     if block is None:
         return {}
     if not isinstance(block, Mapping):

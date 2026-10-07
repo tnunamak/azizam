@@ -193,7 +193,7 @@ class TestPublicSurfaces(unittest.TestCase):
 
     # -- discovery --
 
-    def test_well_known_ai_gateway(self) -> None:
+    def test_well_known_azizam(self) -> None:
         r = self.gw.get("/.well-known/azizam")
         self.assertEqual(r.status, 200, r.text()[:300])
         data = r.json()

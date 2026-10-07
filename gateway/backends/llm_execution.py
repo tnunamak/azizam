@@ -7,7 +7,7 @@ Keep it narrow so the substrate boundary does not become a second router.
 
 from __future__ import annotations
 
-from gateway.compat import get_env, emit_header_mapping
+from gateway.compat import get_env
 
 from dataclasses import dataclass
 import asyncio
@@ -282,7 +282,7 @@ def litellm_headers(
     for name, value in (gateway_metadata or {}).items():
         if value:
             headers[f"x-azizam-{name}"] = value
-    return emit_header_mapping(headers)
+    return headers
 
 
 class RequestDisconnectWatcher:

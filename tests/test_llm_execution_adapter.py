@@ -215,7 +215,7 @@ def test_litellm_headers_do_not_forward_client_runtime_key() -> None:
     assert headers["X-Litellm-Key"] == "Bearer sk-litellm-internal"
     assert headers["content-type"] == "application/json"
     assert headers["x-azizam-execution"] == "litellm"
-    assert headers["x-ai-gateway-execution"] == headers["x-azizam-execution"]
+    assert "x-ai-gateway-execution" not in headers
     assert headers["x-azizam-profile"] == "family"
     assert headers["x-azizam-key-prefix"] == "sha256:abcdef"
     assert "authorization" not in headers

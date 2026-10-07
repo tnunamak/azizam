@@ -611,7 +611,7 @@ def render_markdown(doc: ThreadDoc) -> str:
         f"- Num comments: {doc.num_comments if doc.num_comments is not None else 'unknown'}",
         f"- Completeness: {doc.completeness_reason}",
         f"- Source raw JSON: {doc.source_path}",
-        "- Relevance: selected for AI-gateway Reddit simulation grounding.",
+        "- Relevance: selected for Azizam Reddit simulation grounding.",
         "",
         "## OP",
         "",

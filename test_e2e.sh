@@ -1,6 +1,5 @@
 #!/bin/bash
 
-source "$(dirname "${BASH_SOURCE[0]}")/scripts/azizam-env.sh"
 # E2E test for azizam endpoints
 # Usage: AZIZAM_API_KEY=opk_... ./test_e2e.sh [proxy_url]
 

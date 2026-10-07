@@ -19,11 +19,9 @@ Check: `scripts/run-hermetic-pytest.sh -q tests/test_support_matrix.py`.
 |---|---|---|---|---|
 | `GET` | `/` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `root_browser_entrypoint` |
 | `HEAD` | `/` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `head_root` |
-| `GET` | `/.well-known/ai-gateway` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `well_known_ai_gateway` |
 | `GET` | `/.well-known/azizam` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `well_known_azizam` |
 | `GET` | `/.well-known/oauth-protected-resource` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mcp_server.py](../gateway/mcp_server.py) `protected_resource` |
 | `GET` | `/.well-known/oauth-protected-resource/mcp` | supported | Implemented route; requires applicable policy and backend configuration | [gateway/mcp_server.py](../gateway/mcp_server.py) `protected_resource` |
-| `GET` | `/.well-known/openai-proxy` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `well_known_azizam` |
 | `GET` | `/.well-known/skills` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `well_known_skills` |
 | `GET` | `/.well-known/skills/{skill_id}/SKILL.md` | supported | Implemented route; requires applicable policy and backend configuration | [proxy.py](../proxy.py) `well_known_skill_file` |
 | `POST` | `/anthropic/v1/messages` | partial | Protocol subset or configured-backend feature; see vendor facades | [proxy.py](../proxy.py) `anthropic_messages` |

@@ -6,7 +6,7 @@
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # Operator-local machine paths (gitignored; absent on a fresh install, where
-# the affected integrations are simply off). See CONFIG.md for the AGW_* vars.
+# the affected integrations are simply off). See CONFIG.md for the AZIZAM_* vars.
 if [ -f ".env.local" ]; then
     set -a
     # shellcheck disable=SC1091
@@ -20,8 +20,6 @@ if [ ! -d "venv" ]; then
     uv venv venv --python 3.12
 fi
 
-
-source "$(dirname "${BASH_SOURCE[0]}")/scripts/azizam-env.sh"
 
 source venv/bin/activate
 
@@ -76,6 +74,25 @@ if [ "${AZIZAM_MANAGE_LITELLM:-true}" != "false" ]; then
         fi
     fi
 
+    # LiteLLM imports the generated Prisma client even without DATABASE_URL.
+    # A requirements install does not generate it. Regenerate after a schema
+    # or requirements change, and repair a missing client on an existing venv.
+    PRISMA_SCHEMA="$(python3 -c 'from importlib.util import find_spec; from pathlib import Path; print(Path(next(iter(find_spec("litellm").submodule_search_locations))) / "proxy" / "schema.prisma")')"
+    if [ ! -f "$PRISMA_SCHEMA" ]; then
+        echo "[start] LiteLLM Prisma schema is missing; refusing to start." >&2
+        exit 1
+    fi
+    PRISMA_HASH="$(sha256sum "$PRISMA_SCHEMA" | awk '{print $1}'):$REQ_HASH"
+    PRISMA_STAMP="venv/.prisma-generated.sha256"
+    if [ ! -f "$PRISMA_STAMP" ] || [ "$(cat "$PRISMA_STAMP")" != "$PRISMA_HASH" ] \
+        || ! python3 -c 'from prisma import Prisma' >/dev/null 2>&1; then
+        if ! timeout "${AZIZAM_PRISMA_PREFLIGHT_TIMEOUT:-90}" python3 -m prisma generate --schema "$PRISMA_SCHEMA"; then
+            echo "[start] Prisma client generation failed; refusing to start LiteLLM." >&2
+            exit 1
+        fi
+        echo "$PRISMA_HASH" > "$PRISMA_STAMP"
+    fi
+
     LITELLM_CONFIG_PATH="${AZIZAM_LITELLM_CONFIG_PATH:-data/litellm.config.yaml}"
     AZIZAM_ADMIN_DB_PATH="${AZIZAM_ADMIN_DB:-data/admin.db}"
     mkdir -p "$(dirname "$LITELLM_CONFIG_PATH")"
@@ -83,7 +100,7 @@ if [ "${AZIZAM_MANAGE_LITELLM:-true}" != "false" ]; then
     LITELLM_PID=""
 
     start_litellm() {
-        python3 -m gateway.provider_sidecar run --db "$AZIZAM_ADMIN_DB_PATH" -- \
+        python3 -m gateway.provider_sidecar run --db "$AZIZAM_ADMIN_DB_PATH" --config "$LITELLM_CONFIG_PATH" -- \
             litellm --config "$LITELLM_CONFIG_PATH" --host 127.0.0.1 --port 4011 &
         LITELLM_PID=$!
         echo "$LITELLM_PID" > "$LITELLM_PID_FILE"

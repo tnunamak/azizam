@@ -264,7 +264,15 @@ def test_secret_store_refs_compile_to_deterministic_env_indirection() -> None:
     )
 
     params = compiled["model_list"][0]["litellm_params"]
-    assert params["api_key"].startswith("os.environ/AI_GATEWAY_PROVIDER_SECRET_")
+    assert params["api_key"].startswith("os.environ/AZIZAM_PROVIDER_SECRET_")
+    from gateway.provider_sidecar import provider_secret_env_map_from_registry
+
+    sidecar_env = provider_secret_env_map_from_registry({"services": {"openrouter": {
+        "kind": "provider", "config": {
+            "provider_id": "openrouter", "api_key_secret_id": "provider:openrouter:api_key",
+        },
+    }}})
+    assert params["api_key"].removeprefix("os.environ/") in sidecar_env
     assert "provider:openrouter:api_key" not in repr(params)
     assert secret_env_name_for_provider("my-provider", "provider:my-provider:api_key") != (
         secret_env_name_for_provider("my_provider", "provider:my_provider:api_key")

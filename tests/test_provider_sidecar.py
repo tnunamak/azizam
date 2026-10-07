@@ -252,6 +252,7 @@ def test_run_exec_uses_secret_env_without_putting_secret_in_argv(
         },
     )
     put_provider_secret("sec_openrouter", "sk-live-secret", db_path=db_path, now=1000, approved_origin="https://openrouter.ai/api/v1")
+    config_path = tmp_path / "litellm.config.yaml"
     captured: dict[str, object] = {}
 
     def fake_execvpe(file: str, args: list[str], env: dict[str, str]) -> None:
@@ -268,19 +269,95 @@ def test_run_exec_uses_secret_env_without_putting_secret_in_argv(
                 "run",
                 "--db",
                 str(db_path),
+                "--config",
+                str(config_path),
                 "--",
                 "litellm",
                 "--config",
-                "litellm.config.yaml",
+                str(config_path),
             ]
         )
 
     assert exc.value.code == 23
     assert captured["file"] == "litellm"
-    assert captured["args"] == ["litellm", "--config", "litellm.config.yaml"]
+    assert captured["args"] == ["litellm", "--config", str(config_path)]
     assert "sk-live-secret" not in repr(captured["args"])
     env_name = secret_env_name_for_provider("openrouter", "sec_openrouter")
     assert captured["env"][env_name] == "sk-live-secret"  # type: ignore[index]
+
+
+def test_run_replaces_stale_config_and_uses_one_registry_snapshot_before_exec(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import json
+    import yaml
+    from gateway import provider_sidecar
+
+    db_path = tmp_path / "admin.db"
+    service = provider_configuration.provider_service_from_body(
+        {
+            "preset_id": "openrouter",
+            "models": [{"id": "anthropic/claude-3-haiku", "price": {"input_usd_per_million_tokens": "1", "output_usd_per_million_tokens": "2"}}],
+            "api_key": "sk-unused",
+        }
+    )
+    registry = {"services": {"openrouter": service}}
+    _write_registry_json(db_path, registry)
+    secret_id = service["config"]["api_key_secret_id"]
+    secret = "sk-snapshot-test"
+    put_provider_secret(secret_id, secret, db_path=db_path, approved_origin=service["config"]["credential_origin"])
+    env_name = secret_env_name_for_provider("openrouter", secret_id)
+    config_path = tmp_path / "selected.yaml"
+    config_path.write_text("model_list:\n- litellm_params:\n    api_key: os.environ/AI_GATEWAY_PROVIDER_SECRET_STALE\n")
+    reads = []
+    real_read = provider_sidecar._read_service_registry
+
+    def read_once(path: Path):
+        reads.append(path)
+        assert len(reads) == 1, "config and env must share one registry read"
+        return real_read(path)
+
+    def fake_execvpe(file: str, args: list[str], env: dict[str, str]) -> None:
+        compiled = yaml.safe_load(config_path.read_text())
+        key_refs = {entry["litellm_params"]["api_key"] for entry in compiled["model_list"]}
+        assert key_refs == {"os.environ/" + env_name}
+        assert env_name.startswith("AZIZAM_PROVIDER_SECRET_")
+        assert env[env_name] == secret
+        assert "AI_GATEWAY_PROVIDER_SECRET_" not in config_path.read_text()
+        assert secret not in config_path.read_text()
+        assert secret not in json.dumps(args)
+        assert file == "litellm"
+        assert args == ["litellm", "--config", str(config_path)]
+        raise SystemExit(23)
+
+    monkeypatch.setattr(provider_sidecar, "_read_service_registry", read_once)
+    monkeypatch.setattr(os, "execvpe", fake_execvpe)
+    with pytest.raises(SystemExit) as exc:
+        main(["run", "--db", str(db_path), "--config", str(config_path), "--", "litellm", "--config", str(config_path)])
+    assert exc.value.code == 23
+    assert reads == [db_path]
+    output = capsys.readouterr()
+    assert secret not in output.out + output.err
+
+
+def test_run_does_not_exec_when_config_compile_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from gateway import provider_sidecar
+
+    def fail(*args, **kwargs):
+        raise ValueError("invalid registry")
+
+    def unexpected_exec(*args, **kwargs):
+        pytest.fail("LiteLLM must not start with a stale config")
+
+    monkeypatch.setattr(provider_sidecar, "write_litellm_config_artifact", fail)
+    monkeypatch.setattr(os, "execvpe", unexpected_exec)
+    with pytest.raises(ValueError, match="invalid registry"):
+        main(["run", "--db", str(tmp_path / "admin.db"), "--config", str(tmp_path / "selected.yaml"), "--", "litellm"])
 
 
 def test_missing_referenced_secret_omits_env_without_blocking_start(tmp_path: Path) -> None:
