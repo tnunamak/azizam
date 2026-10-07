@@ -21,6 +21,7 @@ import shutil
 import sqlite3
 import time
 from contextlib import contextmanager
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -32,7 +33,7 @@ RAW_RETAIN_S = 7 * 24 * 3600
 MINUTE_RETAIN_S = 30 * 24 * 3600
 HOUR_RETAIN_S = 365 * 24 * 3600
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS samples (
@@ -43,6 +44,10 @@ CREATE TABLE IF NOT EXISTS samples (
 );
 CREATE INDEX IF NOT EXISTS samples_metric_ts ON samples(metric, ts);
 CREATE INDEX IF NOT EXISTS samples_ts ON samples(ts);
+-- Exact-tag latency percentiles need a different access path from metric/time
+-- telemetry. Keep this covering index small by excluding unrelated samples.
+CREATE INDEX IF NOT EXISTS samples_latency_tags_ts ON samples(tags, ts, value)
+  WHERE metric = 'service_latency_ms';
 
 CREATE TABLE IF NOT EXISTS samples_1min (
   ts INTEGER NOT NULL,
@@ -82,6 +87,8 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
     row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
     if row is None:
         conn.execute("INSERT INTO schema_version(version) VALUES (?)", (SCHEMA_VERSION,))
+    elif row[0] < SCHEMA_VERSION:
+        conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION,))
     conn.commit()
 
 
@@ -113,8 +120,8 @@ def _move_broken_aside(path: Path, reason: object) -> None:
 def init_db(path: Path = DB_PATH) -> None:
     """Create the data dir and run the schema; replace the file if it is unusable.
 
-    This runs on the gateway's startup path, so it does only constant-time checks: the schema
-    statements fail on a file whose header or schema pages are broken. The full scan
+    Startup checks only the header/schema; new indexes are built once during schema migration.
+    Schema statements fail on a file whose header or schema pages are broken. The full scan
     (``PRAGMA integrity_check``, ~12 s on a 346 MB file) is ``verify_integrity``, which the caller
     runs in a background thread. When that scan finds damage it leaves a marker file; the next
     ``init_db`` sees the marker and moves the broken file aside before opening it.
@@ -279,6 +286,9 @@ def query_aggregate(
 
     sql = f"SELECT {col} FROM {table} WHERE metric = ? AND ts >= ?"
     params: list[Any] = [metric, cutoff]
+    # Rollups repeat a small set of tags across thousands of timestamps. Decode
+    # each tag set once per query, bounded and isolated from other callers/filters.
+    matches_tags = lru_cache(maxsize=1024)(lambda tags: _matches_tags(tags, tags_filter))
     if tags_filter is None:
         # No filter: SQL handles directly.
         def _run(c: sqlite3.Connection) -> Optional[float]:
@@ -296,7 +306,7 @@ def query_aggregate(
 
         def _run(c: sqlite3.Connection) -> Optional[float]:
             rows = c.execute(sql_rows, params).fetchall()
-            filtered = [r for r in rows if _matches_tags(r[0], tags_filter)]
+            filtered = [r for r in rows if matches_tags(r[0])]
             if not filtered:
                 return None
             if table == "samples":
@@ -348,6 +358,7 @@ def query_series(
     now = int(time.time())
     cutoff = now - since_s
     bucket_s = max(1, since_s // points)
+    matches_tags = lru_cache(maxsize=1024)(lambda tags: _matches_tags(tags, tags_filter))
 
     if table == "samples":
         if tags_filter is None:
@@ -368,7 +379,7 @@ def query_series(
                 ).fetchall()
                 buckets: dict[int, list[float]] = {}
                 for ts, tag_json, v in rows:
-                    if not _matches_tags(tag_json, tags_filter):
+                    if not matches_tags(tag_json):
                         continue
                     bk = (ts // bucket_s) * bucket_s
                     buckets.setdefault(bk, []).append(v)
@@ -393,7 +404,7 @@ def query_series(
             ).fetchall()
             buckets: dict[int, list[tuple[float, float, float, int]]] = {}
             for ts, tag_json, avg_v, mn_v, mx_v, cnt in rows:
-                if not _matches_tags(tag_json, tags_filter):
+                if not matches_tags(tag_json):
                     continue
                 bk = (ts // bucket_s) * bucket_s
                 buckets.setdefault(bk, []).append((avg_v, mn_v, mx_v, cnt))
@@ -547,7 +558,11 @@ def db_health(path: Path = DB_PATH) -> dict:
         pass
     try:
         with reader(path) as c:
-            row = c.execute("SELECT MIN(ts), COUNT(*) FROM samples").fetchone()
+            # Separate scalar aggregates keep one read snapshot while allowing
+            # SQLite's indexed MIN lookup and fast COUNT opcode.
+            row = c.execute(
+                "SELECT (SELECT MIN(ts) FROM samples), (SELECT COUNT(*) FROM samples)"
+            ).fetchone()
             if row:
                 out["oldest_sample_ts"] = row[0]
                 out["total_rows"] = row[1]

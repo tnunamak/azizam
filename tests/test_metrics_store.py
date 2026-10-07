@@ -85,7 +85,6 @@ class TestMetricsStore(unittest.TestCase):
             rows += [(now, "cache", '{"key":"beta"}', 99.0),
                      (now, "cache", "invalid-json", 99.0)]
             metrics_store.record_samples(conn, rows)
-            metrics_store.downsample_minute(conn)
             conn.commit()
             for op in ("avg", "min", "max", "sum", "count"):
                 with patch.object(metrics_store.json, "loads", wraps=metrics_store.json.loads) as loads:
@@ -107,6 +106,37 @@ class TestMetricsStore(unittest.TestCase):
             self.assertEqual(metrics_store.query_aggregate(
                 "cache", since_s=60, tags_filter={"key": "beta"}, conn=conn
             ), 99.0)
+
+    def test_tagged_rollups_preserve_weighted_values_and_cache_matching(self) -> None:
+        from unittest.mock import patch
+
+        for table in ("samples_1min", "samples_1hour"):
+            with metrics_store.reader(self.db) as conn:
+                conn.executemany(
+                    f"INSERT INTO {table} VALUES (?,?,?,?,?,?,?)",
+                    [(1750, "rollup", '{"key":"alpha","extra":1}', 10, 8, 12, 2),
+                     (1760, "rollup", '{"key":"alpha","extra":1}', 20, 16, 24, 3),
+                     (1760, "rollup", '{"key":"beta"}', 99, 99, 99, 1),
+                     (1760, "rollup", "invalid-json", 99, 99, 99, 1)],
+                )
+                conn.commit()
+                for op, expected in (("avg", 16), ("min", 8), ("max", 24),
+                                     ("sum", 80), ("count", 5)):
+                    with self.subTest(table=table, op=op), patch.object(metrics_store.time, "time", return_value=1800):
+                        with patch.object(metrics_store.json, "loads", wraps=metrics_store.json.loads) as loads:
+                            value = metrics_store.query_aggregate(
+                                "rollup", since_s=600, tags_filter={"key": "alpha"},
+                                table=table, op=op, conn=conn
+                            )
+                            self.assertEqual(value, expected)
+                            self.assertEqual(loads.call_count, 3)
+                        with patch.object(metrics_store.json, "loads", wraps=metrics_store.json.loads) as loads:
+                            series = metrics_store.query_series(
+                                "rollup", since_s=600, points=1, tags_filter={"key": "alpha"},
+                                table=table, op=op, conn=conn
+                            )
+                            self.assertEqual(series, [(1200, expected)])
+                            self.assertEqual(loads.call_count, 3)
 
     def test_index_migration_is_idempotent_and_covers_latency_lookup(self) -> None:
         import sqlite3
@@ -180,7 +210,7 @@ class TestMetricsStore(unittest.TestCase):
             conn.close()
 
     def test_init_db_does_not_scan_the_whole_file(self) -> None:
-        """Startup must stay O(1): the full integrity scan is a separate, background call."""
+        """After migration, startup leaves the integrity scan to its background caller."""
         import sqlite3
         from unittest.mock import patch
 

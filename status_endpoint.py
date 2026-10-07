@@ -3,7 +3,8 @@
 
 Design:
 - Every section is wrapped so a failing probe never propagates.
-- Each subprocess call has a 1-2s timeout; total cache miss budget < 3s.
+- Blocking sections run in workers; network probes stay asynchronous.
+- Each subprocess call has a 1-2s timeout.
 - Errors return null sections + a short safe message in `errors{}`.
 - Server-side cache (12-15s TTL) keeps the dashboard's 8s polling cheap.
 
@@ -18,12 +19,16 @@ from __future__ import annotations
 from gateway.compat import get_env
 
 import asyncio
+import copy
+import importlib
 import json
 import os
 import re
 import subprocess
+import sys
+import threading
 import time
-from collections import Counter, defaultdict
+from collections import Counter, OrderedDict, defaultdict
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
@@ -34,9 +39,10 @@ from gateway import lifecycle_drivers
 from gateway.models_catalog import _availability_from_health_payload, _status_from_health_payload
 from gateway.model_presentation import declared_health_success, service_health_endpoint
 
-# Module-level cache (single in-process consumer is fine).
+# Loop-owned cache and shared rebuild; all callers use the gateway's event loop.
 _CACHE: dict[str, Any] = {"ts": 0.0, "data": None}
 _CACHE_TTL_S = 12.0
+_BUILD_TASK: asyncio.Task | None = None
 
 
 def _resolve_commit_hash() -> Optional[str]:
@@ -2296,21 +2302,24 @@ def _cpu_usage_quick() -> dict:
 _VIDEO_DIR = Path(_COMFY_OUTPUT_ROOT / "video") if _COMFY_OUTPUT_ROOT else None
 _IMAGE_DIR = _COMFY_OUTPUT_ROOT
 
-# In-memory probe cache keyed by (path, mtime) so we don't re-shell ffprobe /
-# re-open Pillow on every status poll. Bounded by the n we ever look at.
-_FFPROBE_CACHE: dict[tuple[str, int], dict] = {}
+# File identity includes size and nanosecond mtime, including in-place rewrites.
+_FFPROBE_CACHE: OrderedDict[tuple[str, int, int], dict] = OrderedDict()
+_FFPROBE_CACHE_LOCK = threading.Lock()
+_FFPROBE_CACHE_MAX = 200
 _IMG_DIMS_CACHE: dict[tuple[str, int], dict] = {}
 # Cached extracted positive-prompt text per image file. Keyed by (path, mtime)
 # so a re-encode of the same filename invalidates the cache. Bounded.
 _IMG_PROMPT_CACHE: dict[tuple[str, int], Optional[str]] = {}
 
 
-def _ffprobe_video(path: Path, mtime: int) -> dict:
+def _ffprobe_video(path: Path, *, size: int, mtime_ns: int) -> dict:
     """Return ``{duration_s, width, height, has_audio}`` or ``{error}``."""
-    key = (str(path), mtime)
-    cached = _FFPROBE_CACHE.get(key)
-    if cached is not None:
-        return cached
+    key = (str(path), size, mtime_ns)
+    with _FFPROBE_CACHE_LOCK:
+        cached = _FFPROBE_CACHE.get(key)
+        if cached is not None:
+            _FFPROBE_CACHE.move_to_end(key)
+            return cached
     rc, out, err = _run(
         [
             "ffprobe",
@@ -2342,11 +2351,11 @@ def _ffprobe_video(path: Path, mtime: int) -> dict:
             info["has_audio"] = any(s.get("codec_type") == "audio" for s in streams)
         except Exception as e:  # noqa: BLE001
             info = {"error": _safe_err(e)[:80]}
-    _FFPROBE_CACHE[key] = info
-    # Bound cache to last 200 entries.
-    if len(_FFPROBE_CACHE) > 200:
-        for k in list(_FFPROBE_CACHE.keys())[:50]:
-            _FFPROBE_CACHE.pop(k, None)
+    with _FFPROBE_CACHE_LOCK:
+        _FFPROBE_CACHE[key] = info
+        _FFPROBE_CACHE.move_to_end(key)
+        while len(_FFPROBE_CACHE) > _FFPROBE_CACHE_MAX:
+            _FFPROBE_CACHE.popitem(last=False)
     return info
 
 
@@ -2517,7 +2526,7 @@ def _recent_renders_videos(
         # but the proxy's /v1/videos/{id}/content uses opaque IDs registered
         # at submission time. We surface the bare filename so the renderer can
         # build a static content URL (proxy serves cached files).
-        probe = _ffprobe_video(f, int(st.st_mtime))
+        probe = _ffprobe_video(f, size=st.st_size, mtime_ns=st.st_mtime_ns)
         prompt = _video_prompt_for(
             alias=alias,
             mtime=int(st.st_mtime),
@@ -3426,270 +3435,27 @@ def _metrics_section(gpus: Optional[list[dict]], disk: Optional[dict], backends:
     return out
 
 
-async def build_status_payload(config: dict) -> dict:
-    errors: dict[str, str] = {}
+def _status_auth_key_names(db_path: Path | None) -> tuple[list[str], dict[str, set[str]]]:
+    """Read display labels and unambiguous app identities with worker-owned connections."""
+    from gateway import admin_store
 
-    async def section(name: str, coro):
-        try:
-            return await coro
-        except Exception as e:  # noqa: BLE001
-            errors[name] = _safe_err(e)
-            return None
-
-    def sync_section(name: str, fn):
-        try:
-            return fn()
-        except Exception as e:  # noqa: BLE001
-            errors[name] = _safe_err(e)
-            return None
-
-    # The proxy is launched via `python3 proxy.py`, which means its module
-    # name at runtime is `__main__` rather than `proxy`. Reach for that first
-    # so we share the live `_video_progress` dict; fall back to a regular
-    # import only when this module is exercised in isolation.
-    proxy_module = None
-    try:
-        import sys as _sys
-        candidate = _sys.modules.get("__main__")
-        if candidate is not None and hasattr(candidate, "_video_progress"):
-            proxy_module = candidate
-        else:
-            import proxy as proxy_module  # noqa: WPS433
-    except Exception:
-        proxy_module = None  # type: ignore
-
-    try:
-        import firehose_metrics
-    except Exception:
-        firehose_metrics = None  # type: ignore
-
-    # Run independent probes in parallel.
-    backends_task = section("backends", _backend_grid(config))
-    queue_task = section("comfy_queue", _comfy_queue_and_stats())
-    llama_task = section("llama_props_slots", _llama_props_and_slots())
-    aux_task = section("aux_health", _enriched_aux_health())
-
-    backends, queue_result, llama_result, aux_health = await asyncio.gather(
-        backends_task, queue_task, llama_task, aux_task,
-    )
-    voices_summary = sync_section("voices_summary", lambda: _voices_summary(proxy_module))
-    comfy_queue, comfy_stats = (queue_result or (None, None))
-    props, slots = (llama_result or (None, None))
-
-    voxtral_health = (aux_health or {}).get("voxtral") if isinstance(aux_health, dict) else None
-    models = sync_section(
-        "models",
-        lambda: _build_models(config, props, slots, voxtral_health=voxtral_health),
-    )
-
-    gpus_raw = sync_section("gpus", _gpus_raw)
-    try:
-        gpus = await _gpu_workloads(gpus_raw, comfy_queue, slots)
-    except Exception as e:  # noqa: BLE001
-        errors["gpu_workloads"] = _safe_err(e)
-        gpus = gpus_raw
-
-    vram_attr = sync_section("vram_attribution", lambda: _vram_attribution(gpus_raw))
-    ram_attr = sync_section("ram_attribution", _ram_attribution)
-    repo_state = sync_section("repo_state", _repo_state)
-    comfy_custom_nodes = sync_section("comfy_custom_nodes", _comfy_custom_nodes) or []
-    capabilities = sync_section("capabilities", lambda: _capabilities(config)) or []
-    image_capabilities = sync_section("image_capabilities", lambda: _image_capabilities(config)) or []
-
-    driver = {
-        **(sync_section("xids", _journal_xids) or {}),
-        "uptime_since": sync_section("uptime", _uptime_since),
-        "kernel_recent": sync_section("kernel_recent", _kernel_recent_events) or [],
-        "reboot_history": sync_section("reboot_history", _reboot_history) or [],
-        "proxy_restarts": sync_section("proxy_restarts", _proxy_restart_count),
-    }
-
-    disk = {
-        "partitions": sync_section("disk_partitions", _disk_partitions) or [],
-        "hotspots": [
-            sync_section(f"hotspot_{name}", lambda n=name, p=p: _dir_summary(n, p))
-            for name, p in _HOTSPOT_DIRS
-        ],
-        "journal_disk_usage_bytes": sync_section("journal_disk", _journal_disk_usage),
-    }
-    disk["hotspots"] = [h for h in disk["hotspots"] if h]
-    # Compute deduped (non-overlapping) hot-spot total. When one path is a
-    # subdirectory of another we attribute its bytes only to the deepest
-    # ancestor present, so the total reflects unique on-disk bytes.
-    try:
-        hotspot_paths = [(h.get("path") or "", int(h.get("size_bytes") or 0)) for h in disk["hotspots"] if h.get("exists")]
-        non_overlap = 0
-        for path, size in hotspot_paths:
-            # If another hotspot is a strict prefix (ancestor) of this one, it
-            # already accounts for these bytes — skip the child to avoid
-            # double-counting.
-            is_child = any(
-                other_path
-                and other_path != path
-                and (path == other_path or path.startswith(other_path.rstrip("/") + "/"))
-                for other_path, _ in hotspot_paths
-            )
-            if not is_child:
-                non_overlap += size
-        disk["hotspots_total_non_overlapping_bytes"] = non_overlap
-    except Exception:
-        disk["hotspots_total_non_overlapping_bytes"] = None
-
-    thermal = sync_section("sensors", _read_sensors) or {}
-    cpu = sync_section("cpu_usage", _cpu_usage_quick) or {}
-
-    # Pull video submit metadata + recent events early so recent_videos can
-    # join filenames against the prompt_text recorded at submission time. Both
-    # are best-effort; failures degrade to "no prompt" rather than blocking
-    # the whole panel.
-    _video_meta_for_join: dict[str, dict] = {}
-    _events_for_join: list[dict] = []
-    if firehose_metrics is not None:
-        try:
-            _video_meta_for_join = firehose_metrics.snapshot_video_meta() or {}
-        except Exception:
-            _video_meta_for_join = {}
-        try:
-            _events_for_join = firehose_metrics.snapshot_recent_events(200) or []
-        except Exception:
-            _events_for_join = []
-    recent_videos = sync_section(
-        "recent_videos",
-        lambda: _recent_renders_videos(
-            20,
-            video_meta=_video_meta_for_join,
-            recent_events=_events_for_join,
-        ),
-    ) or []
-    recent_images = sync_section("recent_images", lambda: _recent_renders_images(10)) or []
-
-    budgets = {
-        "gpu0": None,
-        "gpu1": None,
-        "images": sync_section("images_budget", lambda: _images_budget(config)) or {},
-        "vram_estimates": sync_section("vram_estimates", _read_vram_estimates),
-    }
-    gpu_budget = sync_section("gpu_budget", _read_gpu_budget)
-    if gpu_budget:
-        budgets["gpu0"] = gpu_budget.get("gpu0")
-        budgets["gpu1"] = gpu_budget.get("gpu1")
-        budgets["raw"] = gpu_budget.get("raw")
-
-    # Image cache snapshot.
-    image_cache = sync_section("image_cache", lambda: _dir_summary("image_cache", _IMAGE_CACHE_DIR))
-
-    # Live video jobs (in-process state).
-    if proxy_module is not None and firehose_metrics is not None:
-        try:
-            video_meta = firehose_metrics.snapshot_video_meta()
-        except Exception as e:
-            errors["video_meta"] = _safe_err(e)
-            video_meta = {}
-    else:
-        video_meta = {}
-    video_jobs = sync_section(
-        "video_jobs",
-        lambda: _live_video_jobs(proxy_module, video_meta) if proxy_module else [],
-    ) or []
-
-    swap_state = sync_section(
-        "swap_state",
-        lambda: _swap_state(proxy_module) if proxy_module else {},
-    )
-    comfy_ws_state = sync_section(
-        "comfy_ws_state",
-        lambda: _comfy_ws_state(proxy_module) if proxy_module else {},
-    )
-
-    # Per-key activity from in-process counters.
-    auth_keys: list[dict] = []
-    auth_keys_window: dict[str, Any] = {}
-    known_names: list[str] = []
+    db_path = db_path if db_path is not None else admin_store.DB_PATH
+    credentials = admin_store.list_active_credentials(subject_kind="app", path=db_path)
+    names: set[str] = set()
     app_ids_by_label: dict[str, set[str]] = {}
-    if proxy_module is not None:
-        try:
-            from gateway import admin_store as _admin_store  # noqa: WPS433
+    for credential in credentials:
+        app_id = credential.get("app_id") or credential.get("subject_id")
+        app = admin_store.get_app(str(app_id), path=db_path) if app_id else None
+        app_name = app.get("name") if app else None
+        label = str(app_name or credential.get("display_name") or "").strip()
+        if label:
+            names.add(label)
+            if app_id:
+                app_ids_by_label.setdefault(label, set()).add(str(app_id))
+    return sorted(names), app_ids_by_label
 
-            store = getattr(proxy_module, "ADMIN_STORE", None)
-            db_path = getattr(store, "path", _admin_store.DB_PATH)
-            credentials = _admin_store.list_active_credentials(
-                subject_kind="app",
-                path=db_path,
-            )
-            names: set[str] = set()
-            for credential in credentials:
-                app_id = credential.get("app_id") or credential.get("subject_id")
-                app = _admin_store.get_app(str(app_id), path=db_path) if app_id else None
-                app_name = app.get("name") if app else None
-                display_name = credential.get("display_name")
-                label = str(app_name or display_name or "").strip()
-                if label:
-                    names.add(label)
-                    if app_id:
-                        app_ids_by_label.setdefault(label, set()).add(str(app_id))
-            known_names = sorted(names)
-        except Exception:
-            known_names = []
-            app_ids_by_label = {}
-    if firehose_metrics is not None:
-        try:
-            auth_keys = firehose_metrics.snapshot_per_key(known_names)
-        except Exception as e:
-            errors["auth_keys"] = _safe_err(e)
-            auth_keys = []
-        try:
-            # Tells the renderer how far back the counters actually cover so
-            # the section title can be honest after a restart.
-            auth_keys_window = firehose_metrics.snapshot_window() or {}
-        except Exception:
-            auth_keys_window = {}
-    else:
-        auth_keys = [
-            {
-                "name": n,
-                "requests_24h": None,
-                "errors_4xx_24h": None,
-                "errors_5xx_24h": None,
-                "last_seen": None,
-                "latency_ms_p50": None,
-                "latency_ms_p95": None,
-                "top_endpoints": [],
-                "active": None,
-                "unavailable_reason": "firehose_metrics not loaded",
-            }
-            for n in known_names
-        ]
-    _attach_unique_app_ids_to_auth_keys(auth_keys, app_ids_by_label)
 
-    recent_events: list[dict] = []
-    if firehose_metrics is not None:
-        try:
-            recent_events = firehose_metrics.snapshot_recent_events(50)
-        except Exception as e:
-            errors["recent_events"] = _safe_err(e)
-            recent_events = []
-
-    # Aux health enrichment.
-    aux_health = aux_health or {}
-
-    # ComfyUI system_stats — VRAM headroom from comfy's perspective.
-    comfy_view: Optional[dict] = None
-    if comfy_stats:
-        try:
-            devices = comfy_stats.get("devices") or []
-            sysd = comfy_stats.get("system") or {}
-            comfy_view = {
-                "comfyui_version": sysd.get("comfyui_version"),
-                "python_version": sysd.get("python_version"),
-                "pytorch_version": sysd.get("pytorch_version"),
-                "ram_total_bytes": sysd.get("ram_total"),
-                "ram_free_bytes": sysd.get("ram_free"),
-                "argv": sysd.get("argv"),
-                "device": devices[0] if devices else None,
-            }
-        except Exception as e:
-            errors["comfy_stats"] = _safe_err(e)
-
+def _status_config_snapshot(config: dict) -> dict:
     # Configuration snapshot (load-bearing values).
     config_snapshot = {
         "llm": config.get("llm") or {},
@@ -3748,8 +3514,265 @@ async def build_status_payload(config: dict) -> dict:
     except Exception:
         pass
 
-    sync_section("service_health_samples", lambda: _record_backend_health_samples(backends))
-    metrics_block = sync_section(
+    return config_snapshot
+
+
+async def build_status_payload(config: dict) -> dict:
+    errors: dict[str, str] = {}
+
+    async def section(name: str, coro):
+        try:
+            return await coro
+        except Exception as e:  # noqa: BLE001
+            errors[name] = _safe_err(e)
+            return None
+
+    def loop_section(name: str, fn):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001
+            errors[name] = _safe_err(e)
+            return None
+
+    async def sync_section(name: str, fn):
+        try:
+            return await asyncio.to_thread(fn)
+        except Exception as e:  # noqa: BLE001
+            errors[name] = _safe_err(e)
+            return None
+
+    # Hot reload and request telemetry belong to this loop. Workers receive a
+    # detached config; the small live-state projections below never await.
+    config = copy.deepcopy(config)
+
+    # Startup has already imported the proxy. Avoid importing it here: an
+    # isolated status build must not initialize stores or services on the loop.
+    candidate = sys.modules.get("__main__")
+    proxy_module = (
+        candidate if candidate is not None and hasattr(candidate, "_video_progress")
+        else sys.modules.get("proxy")
+    )
+
+    try:
+        firehose_metrics = await asyncio.to_thread(importlib.import_module, "firehose_metrics")
+    except Exception:
+        firehose_metrics = None  # type: ignore
+
+    # Run independent probes in parallel.
+    backends_task = section("backends", _backend_grid(config))
+    queue_task = section("comfy_queue", _comfy_queue_and_stats())
+    llama_task = section("llama_props_slots", _llama_props_and_slots())
+    aux_task = section("aux_health", _enriched_aux_health())
+
+    backends, queue_result, llama_result, aux_health = await asyncio.gather(
+        backends_task, queue_task, llama_task, aux_task,
+    )
+    voices_summary = loop_section("voices_summary", lambda: _voices_summary(proxy_module))
+    comfy_queue, comfy_stats = (queue_result or (None, None))
+    props, slots = (llama_result or (None, None))
+
+    voxtral_health = (aux_health or {}).get("voxtral") if isinstance(aux_health, dict) else None
+    models = await sync_section(
+        "models",
+        lambda: _build_models(config, props, slots, voxtral_health=voxtral_health),
+    )
+
+    gpus_raw = await sync_section("gpus", _gpus_raw)
+    try:
+        gpus = await _gpu_workloads(gpus_raw, comfy_queue, slots)
+    except Exception as e:  # noqa: BLE001
+        errors["gpu_workloads"] = _safe_err(e)
+        gpus = gpus_raw
+
+    vram_attr = await sync_section("vram_attribution", lambda: _vram_attribution(gpus_raw))
+    ram_attr = await sync_section("ram_attribution", _ram_attribution)
+    repo_state = await sync_section("repo_state", _repo_state)
+    comfy_custom_nodes = await sync_section("comfy_custom_nodes", _comfy_custom_nodes) or []
+    capabilities = await sync_section("capabilities", lambda: _capabilities(config)) or []
+    image_capabilities = await sync_section("image_capabilities", lambda: _image_capabilities(config)) or []
+
+    driver = {
+        **(await sync_section("xids", _journal_xids) or {}),
+        "uptime_since": await sync_section("uptime", _uptime_since),
+        "kernel_recent": await sync_section("kernel_recent", _kernel_recent_events) or [],
+        "reboot_history": await sync_section("reboot_history", _reboot_history) or [],
+        "proxy_restarts": await sync_section("proxy_restarts", _proxy_restart_count),
+    }
+
+    disk = {
+        "partitions": await sync_section("disk_partitions", _disk_partitions) or [],
+        "hotspots": [
+            await sync_section(f"hotspot_{name}", lambda n=name, p=p: _dir_summary(n, p))
+            for name, p in _HOTSPOT_DIRS
+        ],
+        "journal_disk_usage_bytes": await sync_section("journal_disk", _journal_disk_usage),
+    }
+    disk["hotspots"] = [h for h in disk["hotspots"] if h]
+    # Compute deduped (non-overlapping) hot-spot total. When one path is a
+    # subdirectory of another we attribute its bytes only to the deepest
+    # ancestor present, so the total reflects unique on-disk bytes.
+    try:
+        hotspot_paths = [(h.get("path") or "", int(h.get("size_bytes") or 0)) for h in disk["hotspots"] if h.get("exists")]
+        non_overlap = 0
+        for path, size in hotspot_paths:
+            # If another hotspot is a strict prefix (ancestor) of this one, it
+            # already accounts for these bytes — skip the child to avoid
+            # double-counting.
+            is_child = any(
+                other_path
+                and other_path != path
+                and (path == other_path or path.startswith(other_path.rstrip("/") + "/"))
+                for other_path, _ in hotspot_paths
+            )
+            if not is_child:
+                non_overlap += size
+        disk["hotspots_total_non_overlapping_bytes"] = non_overlap
+    except Exception:
+        disk["hotspots_total_non_overlapping_bytes"] = None
+
+    thermal = await sync_section("sensors", _read_sensors) or {}
+    cpu = await sync_section("cpu_usage", _cpu_usage_quick) or {}
+
+    # Pull video submit metadata + recent events early so recent_videos can
+    # join filenames against the prompt_text recorded at submission time. Both
+    # are best-effort; failures degrade to "no prompt" rather than blocking
+    # the whole panel.
+    _video_meta_for_join: dict[str, dict] = {}
+    _events_for_join: list[dict] = []
+    if firehose_metrics is not None:
+        try:
+            _video_meta_for_join = await asyncio.to_thread(firehose_metrics.snapshot_video_meta) or {}
+        except Exception:
+            _video_meta_for_join = {}
+        try:
+            _events_for_join = await asyncio.to_thread(firehose_metrics.snapshot_recent_events, 200) or []
+        except Exception:
+            _events_for_join = []
+    recent_videos = await sync_section(
+        "recent_videos",
+        lambda: _recent_renders_videos(
+            20,
+            video_meta=_video_meta_for_join,
+            recent_events=_events_for_join,
+        ),
+    ) or []
+    recent_images = await sync_section("recent_images", lambda: _recent_renders_images(10)) or []
+
+    budgets = {
+        "gpu0": None,
+        "gpu1": None,
+        "images": await sync_section("images_budget", lambda: _images_budget(config)) or {},
+        "vram_estimates": await sync_section("vram_estimates", _read_vram_estimates),
+    }
+    gpu_budget = await sync_section("gpu_budget", _read_gpu_budget)
+    if gpu_budget:
+        budgets["gpu0"] = gpu_budget.get("gpu0")
+        budgets["gpu1"] = gpu_budget.get("gpu1")
+        budgets["raw"] = gpu_budget.get("raw")
+
+    # Image cache snapshot.
+    image_cache = await sync_section("image_cache", lambda: _dir_summary("image_cache", _IMAGE_CACHE_DIR))
+
+    # Live video jobs: bounded in-process projection only, with no I/O or
+    # await while iterating loop-owned progress. Keep it on the loop.
+    if proxy_module is not None and firehose_metrics is not None:
+        try:
+            video_meta = await asyncio.to_thread(firehose_metrics.snapshot_video_meta)
+        except Exception as e:
+            errors["video_meta"] = _safe_err(e)
+            video_meta = {}
+    else:
+        video_meta = {}
+    video_jobs = loop_section(
+        "video_jobs",
+        lambda: _live_video_jobs(proxy_module, video_meta) if proxy_module else [],
+    ) or []
+
+    swap_state = loop_section(
+        "swap_state",
+        lambda: _swap_state(proxy_module) if proxy_module else {},
+    )
+    comfy_ws_state = loop_section(
+        "comfy_ws_state",
+        lambda: _comfy_ws_state(proxy_module) if proxy_module else {},
+    )
+
+    # Per-key activity from in-process counters.
+    auth_keys: list[dict] = []
+    auth_keys_window: dict[str, Any] = {}
+    known_names: list[str] = []
+    app_ids_by_label: dict[str, set[str]] = {}
+    if proxy_module is not None:
+        try:
+            store = getattr(proxy_module, "ADMIN_STORE", None)
+            db_path = getattr(store, "path", None)
+            known_names, app_ids_by_label = await asyncio.to_thread(_status_auth_key_names, db_path)
+        except Exception:
+            known_names = []
+            app_ids_by_label = {}
+    if firehose_metrics is not None:
+        try:
+            auth_keys = await asyncio.to_thread(firehose_metrics.snapshot_per_key, known_names)
+        except Exception as e:
+            errors["auth_keys"] = _safe_err(e)
+            auth_keys = []
+        try:
+            # Tells the renderer how far back the counters actually cover so
+            # the section title can be honest after a restart.
+            auth_keys_window = await asyncio.to_thread(firehose_metrics.snapshot_window) or {}
+        except Exception:
+            auth_keys_window = {}
+    else:
+        auth_keys = [
+            {
+                "name": n,
+                "requests_24h": None,
+                "errors_4xx_24h": None,
+                "errors_5xx_24h": None,
+                "last_seen": None,
+                "latency_ms_p50": None,
+                "latency_ms_p95": None,
+                "top_endpoints": [],
+                "active": None,
+                "unavailable_reason": "firehose_metrics not loaded",
+            }
+            for n in known_names
+        ]
+    _attach_unique_app_ids_to_auth_keys(auth_keys, app_ids_by_label)
+
+    recent_events: list[dict] = []
+    if firehose_metrics is not None:
+        try:
+            recent_events = await asyncio.to_thread(firehose_metrics.snapshot_recent_events, 50)
+        except Exception as e:
+            errors["recent_events"] = _safe_err(e)
+            recent_events = []
+
+    # Aux health enrichment.
+    aux_health = aux_health or {}
+
+    # ComfyUI system_stats — VRAM headroom from comfy's perspective.
+    comfy_view: Optional[dict] = None
+    if comfy_stats:
+        try:
+            devices = comfy_stats.get("devices") or []
+            sysd = comfy_stats.get("system") or {}
+            comfy_view = {
+                "comfyui_version": sysd.get("comfyui_version"),
+                "python_version": sysd.get("python_version"),
+                "pytorch_version": sysd.get("pytorch_version"),
+                "ram_total_bytes": sysd.get("ram_total"),
+                "ram_free_bytes": sysd.get("ram_free"),
+                "argv": sysd.get("argv"),
+                "device": devices[0] if devices else None,
+            }
+        except Exception as e:
+            errors["comfy_stats"] = _safe_err(e)
+
+    config_snapshot = await sync_section("config_snapshot", lambda: _status_config_snapshot(config)) or {}
+
+    await sync_section("service_health_samples", lambda: _record_backend_health_samples(backends))
+    metrics_block = await sync_section(
         "metrics", lambda: _metrics_section(gpus_raw, disk, backends)
     ) or {}
 
@@ -3783,16 +3806,16 @@ async def build_status_payload(config: dict) -> dict:
     except Exception:
         pass  # degrade silently — live status still present without history
 
-    daisy = sync_section("daisy_audit", _daisy_audit_summary) or {}
+    daisy = await sync_section("daisy_audit", _daisy_audit_summary) or {}
     # Augment the daisy summary with two extra signals the audit identified.
-    # Both are synchronous + cheap; sync_section guarantees they never escape.
-    pi_ctx = sync_section("daisy_pi_context", _daisy_pi_context)
+    # Each probe runs in a worker and degrades independently on failure.
+    pi_ctx = await sync_section("daisy_pi_context", _daisy_pi_context)
     if pi_ctx is not None:
         daisy["pi_context"] = pi_ctx
-    bridge = sync_section("daisy_telegram_bridge", _daisy_telegram_bridge)
+    bridge = await sync_section("daisy_telegram_bridge", _daisy_telegram_bridge)
     if bridge is not None:
         daisy["telegram_bridge"] = bridge
-    drift = sync_section("workflow_drift", _workflow_drift_status)
+    drift = await sync_section("workflow_drift", _workflow_drift_status)
 
     # ------------------------------------------------------------------
     # Banner severity.
@@ -3878,10 +3901,10 @@ async def build_status_payload(config: dict) -> dict:
         pct = part.get("pct_used") or 0
         if pct >= 95:
             system_health = _bump(system_health, "bad")
-            sh_reasons.append(("bad", _disk_pressure_reason(part, config)))
+            sh_reasons.append(("bad", await asyncio.to_thread(_disk_pressure_reason, part, config)))
         elif pct >= 85:
             system_health = _bump(system_health, "warn")
-            sh_reasons.append(("warn", _disk_pressure_reason(part, config)))
+            sh_reasons.append(("warn", await asyncio.to_thread(_disk_pressure_reason, part, config)))
 
     # Thermal — CPU.
     cpu_state = thermal.get("cpu_thermal_state")
@@ -4126,13 +4149,34 @@ def _build_models(
     }
 
 
+async def _rebuild_cached_status(config: dict) -> dict:
+    global _BUILD_TASK
+    try:
+        data = await build_status_payload(config)
+        # A long rebuild must not use up the TTL before it becomes available.
+        _CACHE["data"] = data
+        _CACHE["ts"] = time.monotonic()
+        return data
+    finally:
+        _BUILD_TASK = None
+
+
+def _consume_build_exception(task: asyncio.Task) -> None:
+    # A disconnected sole caller leaves the shielded build running. Retrieve
+    # failures even then; awaiting callers still receive the same exception.
+    if not task.cancelled():
+        task.exception()
+
+
 async def get_cached_status(config: dict) -> dict:
+    global _BUILD_TASK
     now = time.monotonic()
     if _CACHE["data"] is not None and (now - _CACHE["ts"]) < _CACHE_TTL_S:
         data = dict(_CACHE["data"])
         data["cache_age_s"] = round(now - _CACHE["ts"], 2)
         return data
-    data = await build_status_payload(config)
-    _CACHE["data"] = data
-    _CACHE["ts"] = now
-    return data
+    if _BUILD_TASK is None:
+        _BUILD_TASK = asyncio.create_task(_rebuild_cached_status(config))
+        _BUILD_TASK.add_done_callback(_consume_build_exception)
+    # One cancelled HTTP request must not cancel every other waiter.
+    return await asyncio.shield(_BUILD_TASK)

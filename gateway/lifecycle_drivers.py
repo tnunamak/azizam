@@ -395,7 +395,8 @@ class DockerDriver:
         if not container:
             return "docker driver_config.container is required but not set"
         try:
-            result = subprocess.run(
+            result = await asyncio.to_thread(
+                subprocess.run,
                 ["docker", "inspect", "--format", "{{.Name}}", container],
                 capture_output=True,
                 timeout=self._DOCKER_CMD_TIMEOUT_S,

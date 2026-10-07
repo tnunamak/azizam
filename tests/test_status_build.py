@@ -9,6 +9,7 @@ import sys
 import threading
 import time
 import unittest
+from collections import OrderedDict
 from contextlib import ExitStack
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -53,8 +54,10 @@ class StatusBuildTests(unittest.IsolatedAsyncioTestCase):
     async def test_blocking_section_does_not_delay_loop(self):
         self.isolate_sections()
         started = threading.Event()
+        started_at = []
 
         def blocking_metrics(*_args):
+            started_at.append(time.monotonic())
             started.set()
             time.sleep(1.0)
             return {"available": True}
@@ -65,6 +68,7 @@ class StatusBuildTests(unittest.IsolatedAsyncioTestCase):
         while not started.is_set() and time.monotonic() < deadline:
             await asyncio.sleep(0.001)
         self.assertTrue(started.is_set())
+        self.assertLess(time.monotonic() - started_at[0], 0.1)
         self.assertFalse(build.done(), "the event loop could not run until the section finished")
         before = time.monotonic()
         await asyncio.wait_for(asyncio.sleep(0.01), timeout=0.1)
@@ -131,10 +135,126 @@ class StatusBuildTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await second, {"ok": True})
         self.assertEqual(build_fn.await_count, 1)
 
+    async def test_worker_uses_detached_config_and_live_jobs_stay_on_loop(self):
+        proxy = self.isolate_sections()
+        proxy._video_progress = {"test": {"status": "running", "percent": 50}}
+        config = {"images": {"default_model": "original"}}
+        loop_thread = threading.get_ident()
+        worker_started = threading.Event()
+        worker_release = threading.Event()
+
+        def models(worker_config, *_args, **_kwargs):
+            self.assertNotEqual(threading.get_ident(), loop_thread)
+            worker_started.set()
+            self.assertTrue(worker_release.wait(timeout=2))
+            return {"model": worker_config["images"]["default_model"]}
+
+        live_jobs = status._live_video_jobs
+
+        def jobs(*args):
+            self.assertEqual(threading.get_ident(), loop_thread)
+            return live_jobs(*args)
+
+        self.patches.enter_context(patch.object(status, "_build_models", models))
+        self.patches.enter_context(patch.object(status, "_live_video_jobs", jobs))
+        build = asyncio.create_task(status.get_cached_status(config))
+        try:
+            deadline = time.monotonic() + 2
+            while not worker_started.is_set() and time.monotonic() < deadline:
+                await asyncio.sleep(0.001)
+            self.assertTrue(worker_started.is_set())
+            config["images"]["default_model"] = "edited"
+            proxy._video_progress["test"]["percent"] = 75
+        finally:
+            worker_release.set()
+        payload = await build
+        self.assertEqual(payload["models"], {"model": "original"})
+        self.assertEqual(payload["video_jobs"][0]["percent"], 75)
+
+    async def test_cache_ttl_starts_when_build_finishes(self):
+        clock = [100.0]
+
+        async def build(_config):
+            clock[0] += status._CACHE_TTL_S + 1
+            return {"cache_age_s": 0}
+
+        with patch.object(status, "time", SimpleNamespace(monotonic=lambda: clock[0])), patch.object(
+            status, "build_status_payload", AsyncMock(side_effect=build)
+        ) as build_fn:
+            await status.get_cached_status({})
+            clock[0] += 1
+            self.assertEqual((await status.get_cached_status({}))["cache_age_s"], 1)
+            self.assertEqual(build_fn.await_count, 1)
+
+    async def test_disk_pressure_stat_does_not_delay_loop(self):
+        self.isolate_sections()
+        started = threading.Event()
+        started_at = []
+
+        def stat():
+            started_at.append(time.monotonic())
+            started.set()
+            time.sleep(0.5)
+            return SimpleNamespace(st_dev=1)
+
+        def path(value):
+            if value in ("/test-models", "/test-disk"):
+                return SimpleNamespace(stat=stat)
+            return Path(value)
+
+        self.patches.enter_context(patch.object(status, "Path", side_effect=path))
+        self.patches.enter_context(patch.object(status, "_disk_partitions", return_value=[
+            {"target": "/test-disk", "pct_used": 90}
+        ]))
+        build = asyncio.create_task(status.get_cached_status({
+            "model_routing": {"model_dir": "/test-models"}
+        }))
+        deadline = time.monotonic() + 5
+        while not started.is_set() and time.monotonic() < deadline:
+            await asyncio.sleep(0.001)
+        self.assertTrue(started.is_set())
+        self.assertLess(time.monotonic() - started_at[0], 0.1)
+        self.assertFalse(build.done(), "disk stat blocked the loop until completion")
+        before = time.monotonic()
+        await asyncio.wait_for(asyncio.sleep(0.01), timeout=0.1)
+        self.assertLess(time.monotonic() - before, 0.1)
+        self.assertIn("models", " ".join((await build)["system_health_reasons"]).lower())
+
+
+class LifecycleProbeLoopTests(unittest.IsolatedAsyncioTestCase):
+    async def test_docker_preflight_does_not_delay_loop(self):
+        started = threading.Event()
+        started_at = []
+        driver = status.lifecycle_drivers.DockerDriver()
+
+        def inspect(*_args, **_kwargs):
+            started_at.append(time.monotonic())
+            started.set()
+            time.sleep(1.0)
+            return SimpleNamespace(returncode=0, stderr=b"", stdout=b"/test")
+
+        target = {"key": "test", "name": "Test", "role": "optional", "service": {
+            "lifecycle": {"driver": "docker", "driver_config": {"container": "test"}}
+        }}
+        with patch.object(status.lifecycle_drivers, "driver_for_service", return_value=driver), patch.object(
+            status.lifecycle_drivers.subprocess, "run", side_effect=inspect
+        ), patch.object(driver, "status", AsyncMock(return_value="stopped")):
+            probe = asyncio.create_task(status._lifecycle_probe(target, {}))
+            deadline = time.monotonic() + 5
+            while not started.is_set() and time.monotonic() < deadline:
+                await asyncio.sleep(0.001)
+            self.assertTrue(started.is_set())
+            self.assertLess(time.monotonic() - started_at[0], 0.1)
+            self.assertFalse(probe.done(), "Docker inspect blocked the loop until completion")
+            before = time.monotonic()
+            await asyncio.wait_for(asyncio.sleep(0.01), timeout=0.1)
+            self.assertLess(time.monotonic() - before, 0.1)
+            self.assertEqual((await probe)["live_status"], "stopped")
+
 
 class VideoProbeCacheTests(unittest.TestCase):
     def test_unchanged_file_hits_and_nanosecond_mtime_or_size_invalidates(self):
-        with TemporaryDirectory() as directory, patch.object(status, "_FFPROBE_CACHE", {}):
+        with TemporaryDirectory() as directory, patch.object(status, "_FFPROBE_CACHE", OrderedDict()):
             video = Path(directory) / "test_0001_.mp4"
             video.write_bytes(b"video")
             probe_json = json.dumps({"format": {"duration": "1"}, "streams": []})
@@ -152,6 +272,20 @@ class VideoProbeCacheTests(unittest.TestCase):
                 os.utime(video, ns=(old_stat.st_atime_ns, old_stat.st_mtime_ns + 1))
                 status._recent_renders_videos()
                 self.assertEqual(run.call_count, 3)
+
+    def test_cache_is_bounded_and_recent_hits_survive_eviction(self):
+        with patch.object(status, "_FFPROBE_CACHE", OrderedDict()), patch.object(
+            status, "_FFPROBE_CACHE_MAX", 3
+        ), patch.object(status, "_run", return_value=(0, '{"streams": []}', "")) as run:
+            for index in range(3):
+                status._ffprobe_video(Path(str(index)), size=1, mtime_ns=1)
+            status._ffprobe_video(Path("0"), size=1, mtime_ns=1)
+            status._ffprobe_video(Path("3"), size=1, mtime_ns=1)
+            self.assertEqual(len(status._FFPROBE_CACHE), 3)
+            status._ffprobe_video(Path("0"), size=1, mtime_ns=1)
+            self.assertEqual(run.call_count, 4)
+            status._ffprobe_video(Path("1"), size=1, mtime_ns=1)
+            self.assertEqual(run.call_count, 5)
 
 
 if __name__ == "__main__":
