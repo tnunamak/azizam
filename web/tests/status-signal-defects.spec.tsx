@@ -1,7 +1,11 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { api, type StatusPayload } from "@/lib/api";
+import { ApiError, api, type StatusPayload } from "@/lib/api";
+import { productApi } from "@/lib/product-api";
+import * as session from "@/components/shell/session";
+import EnginesPage from "@/app/engines/page";
+import { MemberStatus } from "@/app/status/status-view";
 import type { ProviderStatusView } from "@/lib/provider-status";
 import { StatusClient } from "@/app/status/status-client";
 
@@ -60,4 +64,52 @@ it("counts every provider failure and signal, deduplicating identical source/rea
     const row = screen.getByText(reason).parentElement!.parentElement!;
     expect(within(row).getByRole("button", { name: "Free disk space" })).toBeVisible();
   }
+});
+
+
+function mountHealthErrorPage(page: React.ReactNode) {
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, retryDelay: 0, gcTime: 0 } } })}>{page}</QueryClientProvider>);
+}
+
+function statusResponseError(status: number) {
+  // Model an HTTP response without depending on the ApiError constructor signature.
+  return Object.assign(Object.create(ApiError.prototype) as ApiError, {
+    status,
+    message: "Status response failed",
+  });
+}
+
+it("reports an engine list load failure with unknown engine states and working Retry", async () => {
+  vi.spyOn(session, "useViewer").mockReturnValue({ admin: true } as ReturnType<typeof session.useViewer>);
+  const registry = vi.spyOn(api.services, "registry").mockRejectedValue(new Error("Registry request failed"));
+  vi.spyOn(api, "status").mockResolvedValue({});
+  mountHealthErrorPage(<EnginesPage />);
+  expect(await screen.findByText("Engine list could not be loaded")).toBeVisible();
+  expect(screen.getByText(/Each engine's state is unknown\./)).toBeVisible();
+  expect(screen.queryByText("Engines unavailable")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(registry).toHaveBeenCalledTimes(2));
+});
+
+it.each([403, 500, 503])("attributes member status HTTP %s errors to the server without connection blame", async (status) => {
+  vi.spyOn(productApi, "status").mockRejectedValue(statusResponseError(status));
+  mountHealthErrorPage(<MemberStatus />);
+  expect(await screen.findByText("Your model status check failed on the server side. The gateway owner can see details. Try again.")).toBeVisible();
+  expect(screen.queryByText(/Check your connection/)).toBeNull();
+});
+
+it.each([new TypeError("Failed to fetch"), new Error("Unexpected failure")])("keeps unclassified member status errors neutral: %s", async (error) => {
+  vi.spyOn(productApi, "status").mockRejectedValue(error);
+  mountHealthErrorPage(<MemberStatus />);
+  expect(await screen.findByText("Your model status could not be loaded. Try again.")).toBeVisible();
+  expect(screen.queryByText(/Check your connection/)).toBeNull();
+  expect(screen.queryByText(/failed on the server side/)).toBeNull();
+});
+
+it("keeps the member status sign-in action for HTTP 401", async () => {
+  vi.spyOn(productApi, "status").mockRejectedValue(statusResponseError(401));
+  mountHealthErrorPage(<MemberStatus />);
+  expect(await screen.findByText("Sign in to see your status")).toBeVisible();
+  expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/sign-in/?return_to=%2Fui%2Fstatus%2F");
+  expect(screen.queryByText(/failed on the server side/)).toBeNull();
 });

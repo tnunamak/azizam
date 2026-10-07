@@ -597,8 +597,8 @@ function EnginesContents() {
         <SectionActionHeader as="h1" title="Engines" />
         <IncidentBanner
           tone="bad"
-          title="Engines unavailable"
-          detail={errorMessage(registryError)}
+          title="Engine list could not be loaded"
+          detail={`Each engine's state is unknown. ${errorMessage(registryError)}`}
           actions={
             <Button size="sm" onClick={() => void refetchRegistry()}>
               Retry

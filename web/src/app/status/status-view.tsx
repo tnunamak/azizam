@@ -171,7 +171,11 @@ export function MemberStatus() {
         />
       ) : isError ? (
         <ErrorState
-          message="Your model status could not be loaded. Check your connection and try again."
+          message={
+            error instanceof ApiError && error.status >= 400
+              ? "Your model status check failed on the server side. The gateway owner can see details. Try again."
+              : "Your model status could not be loaded. Try again."
+          }
           onRetry={() => void refetch()}
           retrying={isFetching}
         />
