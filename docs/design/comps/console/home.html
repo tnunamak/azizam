@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Home · Azizam (Console comp)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400&family=IBM+Plex+Sans+Condensed:wght@600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#102A2B;--text:#F2F7F6;--accent:#99BFD5;--ok:#8ECBB0;--warn:#E1B975;--fail:#F09B93;
+  --line:rgba(242,247,246,.24);--sep:rgba(242,247,246,.16);
+  color-scheme:dark;
+}
+@media (prefers-color-scheme: light){
+  :root{
+    --bg:#F3F7F6;--text:#173332;--accent:#315E80;--ok:#246447;--warn:#815115;--fail:#A03932;
+    --line:rgba(23,51,50,.24);--sep:rgba(23,51,50,.16);
+    color-scheme:light;
+  }
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--text)}
+body{font-family:"IBM Plex Sans",sans-serif;font-size:16px;line-height:24px;font-weight:400;
+  -webkit-font-smoothing:antialiased}
+a{color:inherit}
+img{display:block}
+ul{list-style:none}
+.display{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:600;letter-spacing:-.015em}
+h1{font-size:28px;line-height:34px;font-weight:600;letter-spacing:-.01em}
+h2{font-size:20px;line-height:26px;font-weight:600}
+.small{font-size:14px;line-height:20px}
+.label{font-size:14px;line-height:20px;font-weight:500}
+.num{font-variant-numeric:tabular-nums;font-weight:500}
+.mono{font-family:"IBM Plex Mono",monospace;font-size:14px;line-height:20px}
+.ic{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;
+  stroke-linecap:square;stroke-linejoin:miter}
+.ic *{vector-effect:non-scaling-stroke}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.fail{color:var(--fail)}.unknown{color:var(--accent)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;
+  padding:0 16px;border-radius:4px;font:500 16px/24px "IBM Plex Sans",sans-serif;
+  text-decoration:none;cursor:pointer;white-space:nowrap}
+.btn-primary{background:var(--accent);color:var(--bg);border:1px solid var(--accent)}
+.btn-secondary{background:transparent;color:var(--text);border:1px solid var(--accent)}
+.btn:focus-visible,a:focus-visible,button:focus-visible,select:focus-visible,input:focus-visible{
+  outline:2px solid var(--accent);outline-offset:2px}
+.state{display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+.top{height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;
+  border-bottom:1px solid var(--line)}
+.top .brand{font-size:20px;line-height:26px;font-weight:600}
+.acct{width:44px;height:44px;display:grid;place-items:center;background:none;border:0;color:var(--text);cursor:pointer}
+.avatar{width:32px;height:32px;display:grid;place-items:center;border:1px solid var(--text);border-radius:4px;
+  font-size:14px;line-height:20px;font-weight:600}
+main{padding:16px 16px calc(64px + env(safe-area-inset-bottom) + 24px)}
+h1{font-size:26px;line-height:32px}
+.task{margin-top:12px;border:1px solid var(--line);border-radius:8px;padding:16px}
+.task-top{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.ready{font-size:30px;line-height:34px;display:flex;align-items:center;gap:6px;white-space:nowrap}
+.ready .ic{width:24px;height:24px}
+.evidence{margin-top:4px}
+.art{width:96px;height:80px;object-fit:cover;border-radius:4px;flex:none}
+.task .actions{display:grid;gap:8px;margin-top:16px}
+.task .btn{min-height:48px;width:100%}
+.block{margin-top:24px}
+.block-head{display:flex;align-items:center;justify-content:space-between;min-height:44px}
+.rows li{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:48px}
+.rows li+li{border-top:1px solid var(--sep)}
+.recent{display:grid;grid-template-columns:64px 1fr auto;gap:12px;align-items:center;margin-top:8px}
+.recent img{width:64px;height:64px;object-fit:cover}
+.recent .small{display:block}
+.recent .t{font-size:14px;line-height:20px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.limits{margin-top:24px;padding-top:16px;border-top:1px solid var(--line);display:grid;gap:16px}
+.limits li{display:grid;grid-template-columns:20px 1fr;gap:12px}
+.limits li .ic{margin-top:2px}
+.tabbar{position:fixed;left:0;right:0;bottom:0;background:var(--bg);border-top:1px solid var(--line);
+  display:grid;grid-template-columns:repeat(4,1fr);height:calc(64px + env(safe-area-inset-bottom));
+  padding-bottom:env(safe-area-inset-bottom)}
+.tabbar a{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  text-decoration:none;font-size:14px;line-height:20px;min-height:44px}
+.tabbar a .ic{width:24px;height:24px}
+.tabbar a[aria-current="page"]{font-weight:600;color:var(--accent)}
+.tabbar a[aria-current="page"] .ic{stroke-width:2.25}
+body.capture-full .tabbar{position:static}
+body.capture-full main{padding-bottom:24px}
+</style>
+</head>
+<body>
+<header class="top">
+  <span class="brand">Azizam</span>
+  <button class="acct" type="button" aria-label="Account, Robin"><span class="avatar">R</span></button>
+</header>
+<main>
+  <h1>Home</h1>
+  <section class="task" aria-labelledby="ready">
+    <div class="task-top">
+      <p class="ready display" id="ready"><svg class="ic ok" width="24" height="24" viewBox="0 0 20 20" role="img" aria-label="OK"><path d="M4 10.5l4 4 8-9"/></svg>Chat is ready.</p>
+      <img class="art" src="assets/fin-art-crop.png" alt="" width="96" height="80">
+    </div>
+    <p class="small evidence">Your last chat request worked 20h ago.</p>
+    <div class="actions">
+      <a class="btn btn-primary" href="#">Open chat</a>
+      <a class="btn btn-secondary" href="#">Connect an app</a>
+    </div>
+  </section>
+
+  <section class="block" aria-labelledby="apps">
+    <div class="block-head"><h2 id="apps">Your apps</h2><a class="btn btn-secondary" href="#">View all</a></div>
+    <ul class="rows">
+      <li><span>Robin's personal app</span><span class="small">Last used 1h ago</span></li>
+      <li><span>Open WebUI</span><span class="small">Last used 4h ago</span></li>
+      <li><span>Telegram helper</span><span class="small">Not used yet</span></li>
+    </ul>
+  </section>
+
+  <section class="block" aria-labelledby="recent">
+    <h2 id="recent">Recent creation</h2>
+    <div class="recent">
+      <img src="assets/garden-plan.webp" alt="" width="64" height="64">
+      <div><span class="t">An overhead photograph of a backyard raised vegetable bed with tomatoes, lettuce and marigolds, gardening gloves on the cedar edge, late afternoon sunlight, warm documentary style.</span><span class="small">11h ago</span></div>
+      <a class="btn btn-secondary" href="#">Open</a>
+    </div>
+  </section>
+
+  <ul class="limits">
+    <li><svg class="ic fail" width="20" height="20" viewBox="0 0 20 20" role="img" aria-label="Failed"><path d="M5 5l10 10M15 5 5 15"/></svg><p>Video is unavailable. The problem is in Sam's video engine, not your app.</p></li>
+    <li><svg class="ic " width="20" height="20" viewBox="0 0 20 20" role="img" aria-label="Paused"><path d="M7.5 5v10M12.5 5v10"/></svg><p>Embeddings are paused. Ask Sam to turn them back on.</p></li>
+  </ul>
+</main>
+<nav class="tabbar" aria-label="Main"><a href="#" aria-current="page"><svg class="ic " width="24" height="24" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 9 10 3l7 6v8h-5v-5H8v5H3z"/></svg><span>Home</span></a><a href="#"><svg class="ic " width="24" height="24" viewBox="0 0 20 20" aria-hidden="true"><circle cx="6.5" cy="13.5" r="3.5"/><path d="M9 11l7-7M13 7l2 2M15 5l2 2"/></svg><span>Apps & keys</span></a><a href="#"><svg class="ic " width="24" height="24" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4" width="14" height="12"/><path d="M3 13l5-4 4 4 2-2 3 3"/><circle cx="13" cy="7.5" r="1.2"/></svg><span>Library</span></a><a href="#"><svg class="ic " width="24" height="24" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h.5M10 10h.5M16 10h.5" stroke-width="2.5"/></svg><span>More</span></a></nav>
+</body>
+</html>
