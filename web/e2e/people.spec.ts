@@ -319,7 +319,9 @@ test("people lane invite create, plan change, disable, reset and remove journeys
   expect(writes[0]).toEqual({ method: "PATCH", body: { profile_id: plan.id } });
   await page.getByRole("button", { name: "Actions for Morgan Rivera" }).click();
   await page.getByRole("menuitem", { name: "Disable access" }).click();
-  await page.getByRole("button", { name: "Confirm", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Disable access", exact: true })
+    .click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   expect(writes[1]).toEqual({ method: "PATCH", body: { disabled: true } });
   await page.route(`**/admin/api/people/${person.id}/reset`, (route) =>
@@ -341,10 +343,12 @@ test("people lane invite create, plan change, disable, reset and remove journeys
     .getByRole("menuitem", { name: "Remove person", exact: true })
     .click();
   await expect(
-    page.getByRole("button", { name: "Confirm", exact: true }),
+    page.getByRole("button", { name: "Remove person", exact: true }),
   ).toBeDisabled();
   await page.getByLabel("Type Morgan Rivera to confirm").fill("Morgan Rivera");
-  await page.getByRole("button", { name: "Confirm", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Remove person", exact: true })
+    .click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   expect(writes[2]).toEqual({ method: "DELETE", body: null });
 });
@@ -500,7 +504,9 @@ test("people lane failed list retries, pending invitation revokes with confirmat
     .getByRole("button", { name: "Actions for invitation to sam@example.test" })
     .click();
   await page.getByRole("menuitem", { name: "Revoke invitation" }).click();
-  await page.getByRole("button", { name: "Confirm", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Revoke invitation", exact: true })
+    .click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   expect(revoked).toBe(true);
 });
@@ -612,9 +618,7 @@ test("people lane OIDC invitation resumes its private token and accepts with ses
       name: "Sam Rivera",
       email: invitation.email,
     });
-    expect(route.request().headers()["x-azizam-csrf"]).toBe(
-      "test-oidc-csrf",
-    );
+    expect(route.request().headers()["x-azizam-csrf"]).toBe("test-oidc-csrf");
     return route.fulfill({
       json: { next: "/ui/", credential: { api_key: "oidc-test-display-once" } },
     });
@@ -810,4 +814,214 @@ test("people lane protects owner actions and explains permanent key revocation",
   await expect(page.getByRole("dialog")).toContainText(
     "Previously revoked keys stay revoked",
   );
+});
+
+// People/Settings red-team regression coverage; all API state is test-owned.
+test("administrators cannot invite or manage people but can view access plans", async ({
+  page,
+}) => {
+  await mock(page, "seeded");
+  await page.route("**/me/api/session", (route) =>
+    route.fulfill({
+      json: {
+        authenticated: true,
+        user: {
+          id: "admin",
+          name: "Admin",
+          email: "admin@example.test",
+          role: "admin",
+        },
+      },
+    }),
+  );
+  await page.goto("/ui/people/");
+  await expect(
+    page.getByRole("button", { name: "Invite someone", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Actions for Morgan Rivera" }),
+  ).toHaveCount(0);
+  await page.getByRole("tab", { name: "Invites", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: /Actions for invitation/ }),
+  ).toHaveCount(0);
+  await page.getByRole("tab", { name: "Access plans", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Edit plan" })).toBeVisible();
+});
+
+test("invalid policy shapes stay editable with an inline error", async ({
+  page,
+}) => {
+  await mock(page, "seeded");
+  await page.goto("/ui/people/?tab=plans");
+  await page.getByRole("button", { name: "Edit plan" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByText("Advanced", { exact: true }).click();
+  await dialog.getByText("Complete policy document", { exact: true }).click();
+  await dialog.getByLabel("Policy JSON").fill('{"models":"invalid"}');
+  await expect(dialog.getByRole("alert")).toHaveText(
+    "models must be an array of strings.",
+  );
+  await expect(dialog.getByLabel("Policy JSON")).toHaveValue(
+    '{"models":"invalid"}',
+  );
+  await expect(
+    dialog.getByRole("button", { name: "Save access plan" }),
+  ).toBeDisabled();
+  await dialog.getByLabel("Policy JSON").fill('{"models":[]}');
+  await expect(dialog.getByRole("alert")).toHaveCount(0);
+  await expect(
+    dialog.getByRole("button", { name: "Save access plan" }),
+  ).toBeEnabled();
+});
+
+for (const disabled of [false, true]) {
+  test(`${disabled ? "enable" : "disable"} confirmation names its person and restores keyboard focus`, async ({
+    page,
+  }) => {
+    await mock(page, "seeded");
+    await page.route("**/admin/api/people", (route) =>
+      route.fulfill({
+        json: { people: [{ ...person, disabled }], profiles: [plan] },
+      }),
+    );
+    await page.goto("/ui/people/");
+    const trigger = page.getByRole("button", {
+      name: "Actions for Morgan Rivera",
+    });
+    await trigger.focus();
+    await page.keyboard.press("Enter");
+    const action = disabled ? "Enable access" : "Disable access";
+    await page.getByRole("menuitem", { name: action }).click();
+    await expect(page.getByRole("dialog")).toContainText(
+      "Morgan Rivera (morgan@example.test)",
+    );
+    await expect(
+      page.getByRole("dialog").getByRole("button", { name: action }),
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(trigger).toBeFocused();
+  });
+}
+
+test("invitation revoke names the recipient and link dialogs use the public URL", async ({
+  page,
+}) => {
+  await mock(page, "seeded");
+  await page.route("**/admin/api/settings/instance", (route) =>
+    route.fulfill({
+      json: { instance: { base_url: "https://public.example.test" } },
+    }),
+  );
+  await page.route("**/admin/api/invites/invitation-family/link", (route) =>
+    route.fulfill({ json: { url: "/ui/invite/#token=fixture" } }),
+  );
+  await page.goto("/ui/people/?tab=invites");
+  const trigger = page.getByRole("button", {
+    name: "Actions for invitation to sam@example.test",
+  });
+  await trigger.click();
+  await page.getByRole("menuitem", { name: "Revoke invitation" }).click();
+  await expect(page.getByRole("dialog")).toContainText("sam@example.test");
+  await expect(
+    page.getByRole("dialog").getByRole("button", { name: "Revoke invitation" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  await page.getByRole("menuitem", { name: "Copy invite link" }).click();
+  await expect(
+    page.getByRole("textbox", { name: "Link", exact: true }),
+  ).toHaveValue("https://public.example.test/ui/invite/#token=fixture");
+  await page.getByRole("button", { name: "I’ve saved the link" }).click();
+  await expect(trigger).toBeFocused();
+});
+
+for (const width of [390, 1440]) {
+  test(`long person and plan names wrap within their rows at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await mock(page, "seeded");
+    await page.route("**/admin/api/people", (route) =>
+      route.fulfill({
+        json: {
+          people: [
+            { ...person, name: "n".repeat(300), plan_name: "p".repeat(300) },
+          ],
+          profiles: [plan],
+        },
+      }),
+    );
+    await page.goto("/ui/people/");
+    for (const text of ["n".repeat(300), "p".repeat(300)]) {
+      const name = page.getByText(text);
+      await expect(name).toBeVisible();
+      expect(
+        await name.evaluate((el) => {
+          const rect = el.getBoundingClientRect();
+          return (
+            getComputedStyle(el).overflowWrap === "anywhere" &&
+            rect.right <= innerWidth &&
+            el.scrollWidth <= el.clientWidth
+          );
+        }),
+      ).toBe(true);
+    }
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+  });
+}
+
+test("relative links wait for public settings while absolute server links are immediately usable", async ({
+  page,
+}) => {
+  await mock(page, "seeded");
+  let release: () => void = () => {};
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/admin/api/settings/instance", async (route) => {
+    await pending;
+    await route.fulfill({
+      json: { instance: { base_url: "https://public.example.test" } },
+    });
+  });
+  await page.route("**/admin/api/invites/invitation-family/link", (route) =>
+    route.fulfill({ json: { url: "/ui/invite/#token=fixture" } }),
+  );
+  await page.goto("/ui/people/?tab=invites");
+  await page
+    .getByRole("button", { name: "Actions for invitation to sam@example.test" })
+    .click();
+  await page.getByRole("menuitem", { name: "Copy invite link" }).click();
+  await expect(
+    page.getByRole("textbox", { name: "Link", exact: true }),
+  ).toHaveValue("");
+  await expect(
+    page.getByRole("button", { name: "Copy link", exact: true }),
+  ).toBeDisabled();
+  release();
+  await expect(
+    page.getByRole("textbox", { name: "Link", exact: true }),
+  ).toHaveValue("https://public.example.test/ui/invite/#token=fixture");
+  await expect(
+    page.getByRole("button", { name: "Copy link", exact: true }),
+  ).toBeEnabled();
+  await page.getByRole("button", { name: "I’ve saved the link" }).click();
+  await page.route("**/admin/api/invites/invitation-family/link", (route) =>
+    route.fulfill({
+      json: { url: "https://server.example.test/ui/invite/#token=absolute" },
+    }),
+  );
+  await page
+    .getByRole("button", { name: "Actions for invitation to sam@example.test" })
+    .click();
+  await page.getByRole("menuitem", { name: "Copy invite link" }).click();
+  await expect(
+    page.getByRole("textbox", { name: "Link", exact: true }),
+  ).toHaveValue("https://server.example.test/ui/invite/#token=absolute");
 });

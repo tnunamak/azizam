@@ -26,6 +26,53 @@ const errorMessage = (error: unknown) =>
     ? error.message
     : "The change could not be saved. Try again.";
 
+function policyShapeError(value: unknown): string | null {
+  const object = (v: unknown): v is Record<string, unknown> =>
+    v !== null && typeof v === "object" && !Array.isArray(v);
+  if (!object(value)) return "Enter a valid JSON object before saving.";
+  const stringList = (v: unknown) =>
+    Array.isArray(v) && v.every((item) => typeof item === "string");
+  const lists: Record<string, string[]> = {
+    "": ["models", "protocols", "workflows", "backends"],
+    allow: ["intents", "exposure", "trust_tiers", "resource_tiers", "tags"],
+    remote: ["providers"],
+    native_passthrough: ["allowed_backends", "allowed_operations"],
+  };
+  for (const section of [
+    "allow",
+    "fallback",
+    "remote",
+    "native_passthrough",
+    "status_visibility",
+    "target_policy",
+    "model_access",
+  ]) {
+    if (section in value && !object(value[section]))
+      return `${section} must be an object.`;
+  }
+  for (const [section, fields] of Object.entries(lists)) {
+    const record = section ? value[section] : value;
+    if (!object(record)) continue;
+    for (const field of fields) {
+      if (field in record && !stringList(record[field]))
+        return `${section ? `${section}.` : ""}${field} must be an array of strings.`;
+    }
+  }
+  for (const [section, fields] of Object.entries({
+    fallback: ["cloud_allowed"],
+    remote: ["allow_paid_fallback"],
+    native_passthrough: ["enabled", "audit"],
+  })) {
+    const record = value[section];
+    if (!object(record)) continue;
+    for (const field of fields) {
+      if (field in record && typeof record[field] !== "boolean")
+        return `${section}.${field} must be a boolean.`;
+    }
+  }
+  return null;
+}
+
 function PolicySet({
   label,
   value,
@@ -95,8 +142,10 @@ export function PlanEditor({
   plan,
   close,
   saved,
+  restoreFocus,
 }: {
   plan: Profile | null;
+  restoreFocus?: (event: Event) => void;
   close: () => void;
   saved: () => Promise<void>;
 }) {
@@ -111,7 +160,10 @@ export function PlanEditor({
   });
   return (
     <Dialog open onOpenChange={(open) => !open && close()}>
-      <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent
+        onCloseAutoFocus={restoreFocus}
+        className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl"
+      >
         <DialogHeader>
           <DialogTitle>
             {plan ? "Edit access plan" : "New access plan"}
@@ -343,12 +395,11 @@ function PlanForm({
                 setRaw(e.target.value);
                 try {
                   const parsed = JSON.parse(e.target.value);
-                  if (
-                    !parsed ||
-                    typeof parsed !== "object" ||
-                    Array.isArray(parsed)
-                  )
-                    throw new Error();
+                  const shapeError = policyShapeError(parsed);
+                  if (shapeError) {
+                    setRawError(shapeError);
+                    return;
+                  }
                   setPolicy(parsed);
                   setRawError("");
                 } catch {
@@ -389,8 +440,10 @@ function PlanForm({
 export function TestAccess({
   plan,
   close,
+  restoreFocus,
 }: {
   plan: Profile;
+  restoreFocus?: (event: Event) => void;
   close: () => void;
 }) {
   const [model, setModel] = useState("");
@@ -414,7 +467,7 @@ export function TestAccess({
       open
       onOpenChange={(open) => !open && !mutation.isPending && close()}
     >
-      <DialogContent>
+      <DialogContent onCloseAutoFocus={restoreFocus}>
         <DialogHeader>
           <DialogTitle>Test access · {plan.name}</DialogTitle>
           <DialogDescription>

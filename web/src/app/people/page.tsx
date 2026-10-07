@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MoreHorizontal, Plus, Users, Mail, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
-import { api, type Profile } from "@/lib/api";
+import { api, adminFetch, ApiError, type Profile } from "@/lib/api";
+import { useViewer } from "@/components/shell/session";
 import { formatPersonName } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -103,16 +104,42 @@ function Loading({ label }: { label: string }) {
 
 export default function PeoplePage() {
   const client = useQueryClient();
+  const owner = useViewer().role === "owner";
+  const container = useRef<HTMLDivElement>(null);
+  const invoker = useRef<HTMLElement | null>(null);
+  const restoreFocus = (event: Event) => {
+    event.preventDefault();
+    (invoker.current?.isConnected
+      ? invoker.current
+      : container.current
+    )?.focus();
+  };
+  const {
+    data: instanceData,
+    isPending: instanceIsPending,
+    isError: instanceIsError,
+    error: instanceError,
+    refetch: instanceRefetch,
+  } = useQuery({
+    queryKey: ["settings", "instance"],
+    queryFn: () =>
+      adminFetch<{ instance: { base_url: string } }>(
+        "/admin/api/settings/instance",
+      ),
+    enabled: owner,
+  });
   const {
     data: peopleData,
     isPending: peopleIsPending,
     isError: peopleIsError,
+    error: peopleError,
     refetch: peopleRefetch,
   } = useQuery({ queryKey: peopleKey, queryFn: peopleApi.people });
   const {
     data: invitesData,
     isPending: invitesIsPending,
     isError: invitesIsError,
+    error: invitesError,
     refetch: invitesRefetch,
   } = useQuery({
     queryKey: invitesKey,
@@ -134,6 +161,7 @@ export default function PeoplePage() {
   const [personPlan, setPersonPlan] = useState<Person | null>(null);
   const [confirmation, setConfirmation] = useState<{
     title: string;
+    confirmLabel: string;
     name?: string;
     description: string;
     run: () => Promise<unknown>;
@@ -143,6 +171,7 @@ export default function PeoplePage() {
     expires_at: number;
     title: string;
   } | null>(null);
+  const linkNeedsPublicBase = link && !/^https?:\/\//i.test(link.url);
   const [editor, setEditor] = useState<Profile | "new" | null>(null);
   const [testing, setTesting] = useState<Profile | null>(null);
   const refresh = async () => {
@@ -169,7 +198,7 @@ export default function PeoplePage() {
     plansData || peopleData?.profiles || invitesData?.profiles || [];
   const invites = invitesData?.invites || [];
   const actions = (person: Person) =>
-    person.protected && person.builtin === false ? null : (
+    !owner || (person.protected && person.builtin === false) ? null : (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
@@ -202,9 +231,14 @@ export default function PeoplePage() {
                     title: person.disabled
                       ? "Enable access?"
                       : "Disable access?",
-                    description: person.disabled
-                      ? "This person can sign in again. Previously revoked keys stay revoked; create new keys for their apps."
-                      : "This person cannot sign in. Their apps are disabled and their keys are permanently revoked.",
+                    confirmLabel: person.disabled
+                      ? "Enable access"
+                      : "Disable access",
+                    description:
+                      `${formatPersonName(person.name, person.email || "this person")}${person.name && person.email ? ` (${person.email})` : ""}: ` +
+                      (person.disabled
+                        ? "This person can sign in again. Previously revoked keys stay revoked; create new keys for their apps."
+                        : "This person cannot sign in. Their apps are disabled and their keys are permanently revoked."),
                     run: () =>
                       peopleApi.change(person.id, {
                         disabled: !person.disabled,
@@ -224,6 +258,7 @@ export default function PeoplePage() {
                 onSelect={() =>
                   setConfirmation({
                     title: "Remove person?",
+                    confirmLabel: "Remove person",
                     name: formatPersonName(person.name, "person"),
                     description:
                       "This permanently removes the account and revokes access to its apps and keys.",
@@ -242,13 +277,24 @@ export default function PeoplePage() {
     (person) => person.requests_this_month != null,
   );
   return (
-    <div>
+    <div
+      ref={container}
+      tabIndex={-1}
+      aria-label="People workspace"
+      onFocusCapture={(event) => {
+        if (
+          event.target instanceof HTMLButtonElement &&
+          !event.target.closest('[role="dialog"]')
+        )
+          invoker.current = event.target;
+      }}
+    >
       <PageHeader
         title="People"
         primaryAction={
           <Button
             onClick={() => setInviteOpen(true)}
-            disabled={!profiles.length}
+            disabled={!owner || !profiles.length}
           >
             <Plus />
             Invite someone
@@ -272,8 +318,18 @@ export default function PeoplePage() {
             <Loading label="Loading people" />
           ) : peopleIsError ? (
             <ErrorState
-              message="People could not be loaded. Try again."
-              onRetry={() => void peopleRefetch()}
+              heading="Couldn’t load this"
+              error={peopleError}
+              message={
+                peopleError instanceof ApiError && peopleError.status === 403
+                  ? "Only the owner can change this."
+                  : "People could not be loaded. Try again."
+              }
+              onRetry={
+                peopleError instanceof ApiError && peopleError.status === 403
+                  ? undefined
+                  : () => void peopleRefetch()
+              }
             />
           ) : !peopleData.people.length ? (
             <EmptyState
@@ -282,6 +338,7 @@ export default function PeoplePage() {
               description="Invite someone to list their access and activity."
               action={
                 <Button
+                  disabled={!owner}
                   onClick={() =>
                     profiles.length
                       ? setInviteOpen(true)
@@ -311,7 +368,7 @@ export default function PeoplePage() {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       {formatPersonName(person.name, "") && (
-                        <span className="font-medium break-words">
+                        <span className="min-w-0 font-medium [overflow-wrap:anywhere]">
                           {formatPersonName(person.name, "")}
                         </span>
                       )}
@@ -334,7 +391,7 @@ export default function PeoplePage() {
                       </p>
                     )}
                   </div>
-                  <div className="col-start-1 text-sm md:col-auto">
+                  <div className="col-start-1 min-w-0 text-sm [overflow-wrap:anywhere] md:col-auto">
                     <span className="text-muted-foreground md:hidden">
                       Access plan ·{" "}
                     </span>
@@ -370,8 +427,18 @@ export default function PeoplePage() {
             <Loading label="Loading invites" />
           ) : invitesIsError ? (
             <ErrorState
-              message="Invites could not be loaded. Try again."
-              onRetry={() => void invitesRefetch()}
+              heading="Couldn’t load this"
+              error={invitesError}
+              message={
+                invitesError instanceof ApiError && invitesError.status === 403
+                  ? "Only the owner can change this."
+                  : "Invites could not be loaded. Try again."
+              }
+              onRetry={
+                invitesError instanceof ApiError && invitesError.status === 403
+                  ? undefined
+                  : () => void invitesRefetch()
+              }
             />
           ) : !invites.length ? (
             <EmptyState
@@ -380,7 +447,7 @@ export default function PeoplePage() {
               description="Create a single-use link for one access plan."
               action={
                 <Button
-                  disabled={!profiles.length}
+                  disabled={!owner || !profiles.length}
                   onClick={() => setInviteOpen(true)}
                 >
                   Invite someone
@@ -395,11 +462,12 @@ export default function PeoplePage() {
                   invite={invite}
                   copy={() => copyInvite.mutate(invite)}
                   copying={copyInvite.isPending}
+                  owner={owner}
                   revoke={() =>
                     setConfirmation({
                       title: "Revoke invitation?",
-                      description:
-                        "This link will stop working. You can create a new invitation later.",
+                      confirmLabel: "Revoke invitation",
+                      description: `Invitation for ${invite.email || "anyone with the link"}: This link will stop working. You can create a new invitation later.`,
                       run: () => peopleApi.revoke(invite.id),
                     })
                   }
@@ -449,7 +517,7 @@ export default function PeoplePage() {
                   className="bg-card flex min-w-0 flex-col rounded-xl border p-5"
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <h2 className="text-base font-semibold break-words">
+                    <h2 className="min-w-0 text-base font-semibold [overflow-wrap:anywhere]">
                       {plan.name}
                     </h2>
                     <DropdownMenu>
@@ -472,6 +540,7 @@ export default function PeoplePage() {
                           onSelect={() =>
                             setConfirmation({
                               title: "Delete access plan?",
+                              confirmLabel: "Delete access plan",
                               name: plan.name,
                               description:
                                 "The gateway blocks deletion while this plan is in use. Reassign people, apps and invitations first.",
@@ -513,6 +582,7 @@ export default function PeoplePage() {
       </Tabs>
       {inviteOpen && (
         <InviteDialog
+          restoreFocus={restoreFocus}
           profiles={profiles}
           close={() => setInviteOpen(false)}
           saved={async (data) => {
@@ -528,6 +598,7 @@ export default function PeoplePage() {
       )}
       {personPlan && (
         <ChangePlan
+          restoreFocus={restoreFocus}
           person={personPlan}
           profiles={profiles}
           close={() => setPersonPlan(null)}
@@ -536,6 +607,7 @@ export default function PeoplePage() {
       )}
       {confirmation && (
         <Confirmation
+          restoreFocus={restoreFocus}
           {...confirmation}
           close={() => setConfirmation(null)}
           saved={refresh}
@@ -543,7 +615,7 @@ export default function PeoplePage() {
       )}
       {link && (
         <Dialog open onOpenChange={(open) => !open && setLink(null)}>
-          <DialogContent>
+          <DialogContent onCloseAutoFocus={restoreFocus}>
             <DialogHeader>
               <DialogTitle>{link.title}</DialogTitle>
               <DialogDescription>
@@ -552,10 +624,34 @@ export default function PeoplePage() {
                   : "Copy and share this link privately. Each invitation can be accepted once."}
               </DialogDescription>
             </DialogHeader>
-            <CopyField
-              value={new URL(link.url, window.location.origin).href}
-              label="Link"
-            />
+            {linkNeedsPublicBase && instanceIsError ? (
+              <ErrorState
+                error={instanceError}
+                message={
+                  instanceError instanceof ApiError &&
+                  instanceError.status === 403
+                    ? "Only the owner can change this."
+                    : "The public URL could not be loaded. Try again before copying this link."
+                }
+                onRetry={
+                  instanceError instanceof ApiError &&
+                  instanceError.status === 403
+                    ? undefined
+                    : () => void instanceRefetch()
+                }
+              />
+            ) : (
+              <CopyField
+                loading={Boolean(linkNeedsPublicBase && instanceIsPending)}
+                value={
+                  new URL(
+                    link.url,
+                    instanceData?.instance.base_url || window.location.origin,
+                  ).href
+                }
+                label="Link"
+              />
+            )}
             <p className="text-muted-foreground text-sm">
               Expires <RelativeTime ts={link.expires_at} />
             </p>
@@ -567,12 +663,19 @@ export default function PeoplePage() {
       )}
       {editor && (
         <PlanEditor
+          restoreFocus={restoreFocus}
           plan={editor === "new" ? null : editor}
           close={() => setEditor(null)}
           saved={refresh}
         />
       )}
-      {testing && <TestAccess plan={testing} close={() => setTesting(null)} />}
+      {testing && (
+        <TestAccess
+          restoreFocus={restoreFocus}
+          plan={testing}
+          close={() => setTesting(null)}
+        />
+      )}
     </div>
   );
 }
@@ -582,11 +685,13 @@ function InviteRow({
   revoke,
   copy,
   copying,
+  owner,
 }: {
   invite: Invite;
   revoke: () => void;
   copy: () => void;
   copying: boolean;
+  owner: boolean;
 }) {
   const isPending =
     !invite.used_at &&
@@ -607,7 +712,7 @@ function InviteRow({
         </p>
         <div className="mt-1 flex flex-wrap items-center gap-2">
           <Badge variant={isPending ? "default" : "secondary"}>{status}</Badge>
-          <p className="text-muted-foreground text-sm">
+          <p className="text-muted-foreground min-w-0 text-sm [overflow-wrap:anywhere]">
             {invite.plan_name} ·{" "}
             {status === "Accepted" && invite.used_at ? (
               <>
@@ -629,30 +734,32 @@ function InviteRow({
           </p>
         </div>
       </div>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={`Actions for invitation to ${invite.email || "anyone"}`}
-          >
-            <MoreHorizontal />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem onSelect={copy} disabled={copying || !isPending}>
-            Copy invite link
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem
-            variant="destructive"
-            onSelect={revoke}
-            disabled={!isPending}
-          >
-            Revoke invitation
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      {owner && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={`Actions for invitation to ${invite.email || "anyone"}`}
+            >
+              <MoreHorizontal />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={copy} disabled={copying || !isPending}>
+              Copy invite link
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              variant="destructive"
+              onSelect={revoke}
+              disabled={!isPending}
+            >
+              Revoke invitation
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </div>
   );
 }
@@ -660,8 +767,10 @@ function InviteDialog({
   profiles,
   close,
   saved,
+  restoreFocus,
 }: {
   profiles: Profile[];
+  restoreFocus: (event: Event) => void;
   close: () => void;
   saved: (data: { invite: Invite; url: string }) => Promise<void>;
 }) {
@@ -683,7 +792,7 @@ function InviteDialog({
       open
       onOpenChange={(open) => !open && !mutation.isPending && close()}
     >
-      <DialogContent>
+      <DialogContent onCloseAutoFocus={restoreFocus}>
         <DialogHeader>
           <DialogTitle>Invite someone</DialogTitle>
           <DialogDescription>
@@ -755,9 +864,11 @@ function ChangePlan({
   profiles,
   close,
   saved,
+  restoreFocus,
 }: {
   person: Person;
   profiles: Profile[];
+  restoreFocus: (event: Event) => void;
   close: () => void;
   saved: () => Promise<void>;
 }) {
@@ -775,7 +886,7 @@ function ChangePlan({
       open
       onOpenChange={(open) => !open && !mutation.isPending && close()}
     >
-      <DialogContent>
+      <DialogContent onCloseAutoFocus={restoreFocus}>
         <DialogHeader>
           <DialogTitle>Change access plan</DialogTitle>
           <DialogDescription>
@@ -808,7 +919,9 @@ function ChangePlan({
 function PlanPreview({ plan }: { plan: Profile }) {
   return (
     <div className="rounded-lg border p-4">
-      <p className="text-sm font-medium">{plan.name}</p>
+      <p className="min-w-0 text-sm font-medium [overflow-wrap:anywhere]">
+        {plan.name}
+      </p>
       <p className="text-muted-foreground mt-2 text-sm leading-6">
         {planSummary(plan.profile)}
       </p>
@@ -825,16 +938,20 @@ function PlanPreview({ plan }: { plan: Profile }) {
 }
 function Confirmation({
   title,
+  confirmLabel,
   name,
   description,
   run,
   close,
   saved,
+  restoreFocus,
 }: {
   title: string;
+  confirmLabel: string;
   name?: string;
   description: string;
   run: () => Promise<unknown>;
+  restoreFocus: (event: Event) => void;
   close: () => void;
   saved: () => Promise<void>;
 }) {
@@ -851,7 +968,7 @@ function Confirmation({
       open
       onOpenChange={(open) => !open && !mutation.isPending && close()}
     >
-      <DialogContent>
+      <DialogContent onCloseAutoFocus={restoreFocus}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
@@ -882,7 +999,7 @@ function Confirmation({
             disabled={mutation.isPending || (!!name && typed !== name)}
             onClick={() => mutation.mutate()}
           >
-            {mutation.isPending ? "Saving…" : "Confirm"}
+            {mutation.isPending ? "Saving…" : confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>
