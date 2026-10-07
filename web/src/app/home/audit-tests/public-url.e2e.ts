@@ -7,7 +7,7 @@ test("Home uses the saved public URL without assuming every key can call Chat", 
   const path = "/admin/api/settings/instance";
   const originalResponse = await request.get(path);
   expect(originalResponse.ok()).toBe(true);
-  const { instance } = await originalResponse.json();
+  const { instance, revision } = await originalResponse.json();
   const session = await (await request.get("/admin/api/session")).json();
   const headers = {
     "x-azizam-admin-action": "1",
@@ -18,7 +18,7 @@ test("Home uses the saved public URL without assuming every key can call Chat", 
     expect(
       (
         await request.put(path, {
-          headers,
+          headers: { ...headers, "If-Match": revision },
           data: { ...instance, base_url: publicUrl },
         })
       ).ok(),
@@ -55,8 +55,14 @@ test("Home uses the saved public URL without assuming every key can call Chat", 
     }
     expect(new URL(page.url()).origin).not.toBe(publicUrl);
   } finally {
-    expect((await request.put(path, { headers, data: instance })).ok()).toBe(
-      true,
-    );
+    const latest = await (await request.get(path)).json();
+    expect(
+      (
+        await request.put(path, {
+          headers: { ...headers, "If-Match": latest.revision },
+          data: instance,
+        })
+      ).ok(),
+    ).toBe(true);
   }
 });

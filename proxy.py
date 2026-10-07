@@ -15781,6 +15781,8 @@ def _admin_service_override_controls(
 
 
 def _admin_media_job_admission_controls() -> list[dict[str, Any]]:
+    revision = admin_store.operator_setting_revision(admin_store.get_operator_setting(
+        "media_job_admission_overrides", path=ADMIN_STORE.path))
     effective = _effective_media_job_admission_cfg()
     override_present = bool(_operator_media_job_admission_overrides())
     summary_parts = []
@@ -15798,6 +15800,7 @@ def _admin_media_job_admission_controls() -> list[dict[str, Any]]:
             "key": "media-job-admission",
             "label": "Media job admission",
             "form": "media_job_admission",
+            "revision": revision,
             "action_url": "/admin/api/operator/media-job-admission",
             "method": "PUT",
             "current": effective,
@@ -16123,6 +16126,9 @@ async def admin_dashboard(request: Request):
     snapshot["model_visibility"] = _admin_model_visibility(status_payload)
     snapshot["identity_mappings"] = _admin_identity_mappings()
     try:
+        # Capture revision before values so a concurrent update fails closed.
+        snapshot["oidc_config_revision"] = admin_store.operator_setting_revision(
+            admin_store.get_operator_setting("oidc_provider_config", path=ADMIN_STORE.path))
         snapshot["oidc_config"] = _admin_oidc_config_snapshot()
     except Exception as exc:  # noqa: BLE001
         print(f"[proxy] admin OIDC setting read failed: {exc}", flush=True)

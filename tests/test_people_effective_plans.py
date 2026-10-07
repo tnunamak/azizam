@@ -1,11 +1,8 @@
-"""Regressions for settings concurrency, grant audits and effective People plans."""
-from concurrent.futures import ThreadPoolExecutor
-import sqlite3
+"""People and authorization must resolve the same effective access plan."""
 
 import pytest
 
 from gateway import accounts, admin_store
-from gateway.admin_api import AdminContext
 from gateway.admin_oidc import CookieConfig, session_from_claims
 from gateway.admin_runtime import AdminSQLiteStore
 
@@ -34,7 +31,7 @@ def test_people_effective_plan_matches_session_and_app_authorization(db, monkeyp
     admin_store.create_runtime_profile_mapping(source_kind=kind, source_value=value, profile_id=plan["id"], path=db)
     person = accounts.people(path=db, effective_plan_resolver=proxy._effective_plan_for_person)[0]
     session = session_from_claims({"sub": user["id"], "email": user["email"]}, role="none", cookie=CookieConfig())
-    app = admin_store.create_app("App", owner_user_id=user["id"], path=db)
+    app = admin_store.create_app("App", kind="personal", owner_user_id=user["id"], path=db)
     assert person["profile_id"] == proxy._default_profile_id_for_session(session) == proxy._inherited_profile_id_for_app(app) == plan["id"]
     assert person["plan_source"] == source
     assert person["plan_name"] == "Mapped plan"

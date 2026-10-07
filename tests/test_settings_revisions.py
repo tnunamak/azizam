@@ -67,5 +67,3 @@ def test_oidc_read_merge_race_is_checked_inside_write_transaction(client_store):
     result = client.put('/admin/api/oidc-config', json={'enabled': False, 'admin_emails': ['stale@example.test']}, headers={'If-Match': '0'})
     assert result.status_code == 409
     assert store.get_oidc_config_setting_raw()['admin_emails'] == ['new@example.test']
-
-

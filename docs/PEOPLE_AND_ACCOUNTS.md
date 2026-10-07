@@ -42,10 +42,10 @@ members and administrators cannot use the owner-only People/invitation APIs.
 | --- | --- |
 | `GET /auth/api/options` | Available built-in/OIDC methods; signed-in OIDC identity and its CSRF token when present |
 | `POST /auth/api/login` | `{email,password}`; sets browser session, returns Home destination |
-| `GET /auth/api/invite?token=...` | Invitation email, expiry and existing access plan |
+| `POST /auth/api/invite` | JSON `{token}`; returns invitation email, expiry and existing access plan |
 | `POST /auth/api/invite/accept` | `{token,email,name,password}` for built-in; omit password and send session CSRF for OIDC |
 | `POST /auth/api/password-reset` | `{token,password}`; consumes reset link and invalidates earlier sessions |
-| `GET /admin/api/people` | People, assigned plan, last active, builtin/protected/role flags, profiles |
+| `GET /admin/api/people` | People, effective plan and source, grant provenance, last active, builtin/protected/role flags, profiles |
 | `PATCH /admin/api/people/{id}` | `{profile_id?,disabled?}`; updates member policy or availability |
 | `DELETE /admin/api/people/{id}` | Removes member from People and revokes access |
 | `POST /admin/api/people/{id}/reset` | `{expires_in:3600}`; generates a built-in password reset link |

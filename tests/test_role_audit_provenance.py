@@ -1,12 +1,10 @@
-"""Regressions for settings concurrency, grant audits and effective People plans."""
-from concurrent.futures import ThreadPoolExecutor
+"""Role changes commit their audit evidence and preserve the real actor."""
 import sqlite3
 
 import pytest
 
 from gateway import accounts, admin_store
 from gateway.admin_api import AdminContext
-from gateway.admin_oidc import CookieConfig, session_from_claims
 from gateway.admin_runtime import AdminSQLiteStore, runtime_identity_for_app_credential_hash
 
 
@@ -53,8 +51,6 @@ def test_manual_role_audit_preserves_service_actor_and_rolls_back_failed_grant(d
     with pytest.raises(sqlite3.IntegrityError, match="audit failed"):
         admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=user["id"], actor=actor, path=db)
     assert admin_store.list_admin_roles(path=db) == []
-
-
 
 
 def test_new_app_credential_for_suspended_owner_cannot_authenticate(db):

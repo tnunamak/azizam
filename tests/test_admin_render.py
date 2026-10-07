@@ -214,7 +214,7 @@ class AdminRenderHappyPathTests(unittest.TestCase):
         self.assertIn('name="client_secret"', identity_section)
         self.assertIn("Runtime access still comes from Profiles", identity_section)
         self.assertIn("oidcForm", html)
-        self.assertIn("json(f.action,body,'PUT')", html)
+        self.assertIn("json(f.action,body,'PUT',f.dataset.settingsRevision)", html)
 
     def test_oidc_provider_settings_redacts_saved_secret(self) -> None:
         snapshot = _snapshot()
@@ -1124,3 +1124,29 @@ class AdminRenderCustomEndpointsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_settings_forms_use_the_revision_captured_with_rendered_values():
+    snapshot = _snapshot()
+    snapshot["oidc_config"] = {"enabled": True, "issuer": "https://identity.test"}
+    snapshot["oidc_config_revision"] = "17"
+    snapshot["resource_overrides"] = [{
+        "key": "media-job-admission", "label": "Media job admission",
+        "form": "media_job_admission", "action_url": "/admin/api/operator/media-job-admission",
+        "method": "PUT", "revision": "23", "current": {"max_queue_depth": 8},
+    }]
+    html = render_admin_dashboard(snapshot)
+    assert 'data-oidc-config data-settings-revision="17"' in html
+    assert 'data-settings-revision="23" data-list-fields=' in html
+    assert "headers['If-Match']=settingsRevision" in html
+    assert "json(f.action,body,'PUT',f.dataset.settingsRevision)" in html
+    assert "json(f.action,body,f.dataset.method||'PATCH',f.dataset.settingsRevision)" in html
+    # A conflict reports the server error while leaving the form draft in place.
+    assert "json(f.action,body,'PUT',f.dataset.settingsRevision);await refreshMain();show(data)}catch(err){showError(err)}" in html
+
+
+def test_settings_form_revision_is_html_escaped():
+    snapshot = _snapshot()
+    snapshot["oidc_config_revision"] = '\" onfocus=\"alert(1)'
+    html = render_admin_dashboard(snapshot)
+    assert 'data-settings-revision="&quot; onfocus=&quot;alert(1)"' in html

@@ -1929,6 +1929,8 @@ def _operator_control_form(record: Mapping[str, Any]) -> str:
             + _esc(action)
             + '" data-operator-control data-method="'
             + method
+            + '" data-settings-revision="'
+            + _esc(record.get("revision", "0"))
             + '" data-list-fields="disabled_intents disabled_resource_classes reserved_tokens">'
             f'<input name="disabled_intents" value="{disabled_intents}" placeholder="Disabled intents" aria-label="Disabled intents">'
             f'<input name="disabled_resource_classes" value="{disabled_resources}" placeholder="Disabled resources" aria-label="Disabled resource classes">'
@@ -2656,6 +2658,7 @@ def _oidc_config_form(
     config: Mapping[str, Any] | None,
     *,
     oidc_config_action: str,
+    revision: str = "0",
 ) -> str:
     record = config if isinstance(config, Mapping) else {}
     enabled = bool(record.get("enabled"))
@@ -2676,7 +2679,9 @@ def _oidc_config_form(
     return (
         '<form class="flow" method="post" action="'
         + _esc(oidc_config_action)
-        + '" data-oidc-config>'
+        + '" data-oidc-config data-settings-revision="'
+        + _esc(revision)
+        + '">'
         "<label>OIDC browser login</label>"
         '<p class="form-note">Controls who can sign in to this dashboard. Runtime access still comes from Profiles and identity mappings.</p>'
         + source_note
@@ -3000,6 +3005,7 @@ def render_admin_dashboard(
     oidc_config_html = _oidc_config_form(
         oidc_config,
         oidc_config_action=oidc_config_action,
+        revision=str(snapshot.get("oidc_config_revision", "0")),
     )
 
     result_html = (
@@ -3161,7 +3167,7 @@ def render_admin_dashboard(
         "if(!r.ok)return;const html=await r.text();const doc=new DOMParser().parseFromString(html,'text/html');"
         "const next=doc.querySelector('main.shell-main'),main=document.querySelector('main.shell-main');"
         "if(next&&main){main.replaceWith(next);initProfileForm();if(window.__adminNavInit)window.__adminNavInit();if(document.getElementById('litellm-keys-list'))loadLitellmKeys()}};"
-        "const json=async(url,body,method='POST')=>{const headers={'content-type':'application/json','x-azizam-admin-action':'1','x-azizam-csrf':csrfToken};if(isRegistryMutation(url,method)){if(!serviceRegistryEtag)await refreshRegistryEtag();headers['If-Match']=serviceRegistryEtag||''}const r=await fetch(url,{method,credentials:'same-origin',headers,body:JSON.stringify(body)});"
+        "const json=async(url,body,method='POST',settingsRevision)=>{const headers={'content-type':'application/json','x-azizam-admin-action':'1','x-azizam-csrf':csrfToken};if(settingsRevision!==undefined)headers['If-Match']=settingsRevision;if(isRegistryMutation(url,method)){if(!serviceRegistryEtag)await refreshRegistryEtag();headers['If-Match']=serviceRegistryEtag||''}const r=await fetch(url,{method,credentials:'same-origin',headers,body:JSON.stringify(body)});"
         "const text=await r.text();let data;try{data=text?JSON.parse(text):{}}catch{data={error:text}};"
         "if(r.headers.get('etag'))serviceRegistryEtag=r.headers.get('etag');if(!r.ok){if(r.status===412){data.status=412}throw data}return data};"
         "document.addEventListener('submit',async e=>{"
@@ -3180,7 +3186,7 @@ def render_admin_dashboard(
         "const secret=String(fd.get('client_secret')||'').trim();if(secret)body.client_secret=secret;"
         "['scopes','allowed_email_domains','admin_groups','admin_roles'].forEach(k=>{body[k]=list(fd.get(k))});"
         "const skew=String(fd.get('clock_skew_seconds')||'').trim();if(skew)body.clock_skew_seconds=Number(skew);"
-        "try{const data=await json(f.action,body,'PUT');await refreshMain();show(data)}catch(err){showError(err)}return}"
+        "try{const data=await json(f.action,body,'PUT',f.dataset.settingsRevision);await refreshMain();show(data)}catch(err){showError(err)}return}"
         "if(profileForm){const f=profileForm,fd=new FormData(f);const label=String(fd.get('label')||'').trim();const profile=buildProfileFromForm(fd,f,String(fd.get('id')||'').trim()||slug(label));"
         "const extra=String(fd.get('advanced_json')||'').trim();"
         "try{if(extra){Object.assign(profile,JSON.parse(extra))}"
@@ -3199,7 +3205,7 @@ def render_admin_dashboard(
         "try{const data=await json(f.action,body,'PATCH');await refreshMain();show(data)}catch(err){showError(err)}return}"
         "if(operatorForm){const f=operatorForm,fd=new FormData(f),body={},listFields=new Set(String(f.dataset.listFields||'').split(/\\s+/).filter(Boolean));"
         "fd.forEach((v,k)=>{if(listFields.has(k)){assign(body,k,list(v));return}if(v==='')return;assign(body,k,v)});"
-        "try{const data=await json(f.action,body,f.dataset.method||'PATCH');await refreshMain();show(data)}catch(err){showError(err)}return}"
+        "try{const data=await json(f.action,body,f.dataset.method||'PATCH',f.dataset.settingsRevision);await refreshMain();show(data)}catch(err){showError(err)}return}"
         "if(extensionForm){const f=extensionForm,fd=new FormData(f),type=String(fd.get('source_type')||'local_directory').trim();const source={type};"
         "['path','url','ref','subdir'].forEach(k=>{const v=String(fd.get(k)||'').trim();if(v)source[k]=v});"
         "const enable=e.submitter&&e.submitter.dataset.enableExtensionPackage!==undefined;const url=enable?f.dataset.enableAction:f.action;"

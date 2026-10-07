@@ -1,13 +1,9 @@
-"""Regressions for settings concurrency, grant audits and effective People plans."""
+"""Settings writes serialize revisions with their audit facts."""
 from concurrent.futures import ThreadPoolExecutor
-import sqlite3
 
 import pytest
 
 from gateway import accounts, admin_store
-from gateway.admin_api import AdminContext
-from gateway.admin_oidc import CookieConfig, session_from_claims
-from gateway.admin_runtime import AdminSQLiteStore
 
 
 @pytest.fixture
@@ -55,5 +51,3 @@ def test_settings_generation_migration_is_idempotent_and_all_writers_advance(db)
     assert admin_store.get_operator_setting("instance", path=db)["revision"] == "1"
     admin_store.put_operator_setting("instance", {"name": "New"}, path=db)
     assert admin_store.get_operator_setting("instance", path=db)["revision"] == "2"
-
-
