@@ -1,0 +1,274 @@
+[
+  {
+    "file": "anti/home-seeded-light-1440.webp",
+    "width": 1440,
+    "height": 1000,
+    "bytes": 37950,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "file:///home/tnunamak/Documents/azizam/ux-findings/screens/2026-10-07/home-seeded-light-1440.png"
+  },
+  {
+    "file": "anti/home-seeded-light-390.webp",
+    "width": 390,
+    "height": 1800,
+    "bytes": 29338,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "file:///home/tnunamak/Documents/azizam/ux-findings/screens/2026-10-07/home-seeded-light-390.png"
+  },
+  {
+    "file": "anti/models-seeded-light-1440.webp",
+    "width": 1440,
+    "height": 1000,
+    "bytes": 19332,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "file:///home/tnunamak/Documents/azizam/ux-findings/screens/2026-10-07/models-seeded-light-1440.png"
+  },
+  {
+    "file": "anti/status-seeded-dark-1440.webp",
+    "width": 1440,
+    "height": 1000,
+    "bytes": 26312,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "file:///home/tnunamak/Documents/azizam/ux-findings/screens/2026-10-07/status-seeded-dark-1440.png"
+  },
+  {
+    "file": "anti/status-seeded-light-1440.webp",
+    "width": 1440,
+    "height": 1000,
+    "bytes": 26022,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "file:///home/tnunamak/Documents/azizam/ux-findings/screens/2026-10-07/status-seeded-light-1440.png"
+  },
+  {
+    "file": "anti/usage-seeded-light-1440.webp",
+    "width": 1440,
+    "height": 1237,
+    "bytes": 29740,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "file:///home/tnunamak/Documents/azizam/ux-findings/screens/2026-10-07/usage-seeded-light-1440.png"
+  },
+  {
+    "file": "public/github-status-desktop.webp",
+    "width": 1440,
+    "height": 900,
+    "bytes": 66936,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://www.githubstatus.com/"
+  },
+  {
+    "file": "public/github-status-full.webp",
+    "width": 1440,
+    "height": 2255,
+    "bytes": 126342,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://www.githubstatus.com/"
+  },
+  {
+    "file": "public/github-status-mobile.webp",
+    "width": 390,
+    "height": 844,
+    "bytes": 26060,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://www.githubstatus.com/"
+  },
+  {
+    "file": "public/grafana-desktop.webp",
+    "width": 1440,
+    "height": 900,
+    "bytes": 73262,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://play.grafana.org/"
+  },
+  {
+    "file": "public/grafana-mobile.webp",
+    "width": 390,
+    "height": 844,
+    "bytes": 23048,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://play.grafana.org/"
+  },
+  {
+    "file": "public/home-assistant-desktop.webp",
+    "width": 1440,
+    "height": 900,
+    "bytes": 53830,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://demo.home-assistant.io/#/lovelace/home"
+  },
+  {
+    "file": "public/home-assistant-mobile.webp",
+    "width": 390,
+    "height": 844,
+    "bytes": 17666,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://demo.home-assistant.io/#/lovelace/home"
+  },
+  {
+    "file": "public/kuma-desktop.webp",
+    "width": 1440,
+    "height": 900,
+    "bytes": 37762,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://status.kuma.pet/"
+  },
+  {
+    "file": "public/kuma-mobile.webp",
+    "width": 390,
+    "height": 844,
+    "bytes": 17572,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://status.kuma.pet/"
+  },
+  {
+    "file": "public/linear-ui.webp",
+    "width": 1280,
+    "height": 407,
+    "bytes": 20028,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://linear.app/"
+  },
+  {
+    "file": "public/mcp-desktop.webp",
+    "width": 1440,
+    "height": 900,
+    "bytes": 66810,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://modelcontextprotocol.io/docs/2026-07-28/getting-started/intro"
+  },
+  {
+    "file": "public/mcp-mobile.webp",
+    "width": 390,
+    "height": 844,
+    "bytes": 35798,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://modelcontextprotocol.io/docs/2026-07-28/getting-started/intro"
+  },
+  {
+    "file": "public/openai-status-desktop.webp",
+    "width": 1440,
+    "height": 900,
+    "bytes": 38808,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://status.openai.com/"
+  },
+  {
+    "file": "public/openai-status-full.webp",
+    "width": 1440,
+    "height": 900,
+    "bytes": 38808,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://status.openai.com/"
+  },
+  {
+    "file": "public/openai-status-mobile.webp",
+    "width": 390,
+    "height": 844,
+    "bytes": 17682,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://status.openai.com/"
+  },
+  {
+    "file": "public/photos-ui-0.webp",
+    "width": 246,
+    "height": 505,
+    "bytes": 17938,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://support.apple.com/guide/iphone/view-photos-and-videos-iph3d267610/ios"
+  },
+  {
+    "file": "public/photos-ui-4.webp",
+    "width": 246,
+    "height": 505,
+    "bytes": 17346,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://support.apple.com/guide/iphone/view-photos-and-videos-iph3d267610/ios"
+  },
+  {
+    "file": "public/plex-desktop.webp",
+    "width": 1440,
+    "height": 900,
+    "bytes": 87846,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://watch.plex.tv/"
+  },
+  {
+    "file": "public/plex-mobile.webp",
+    "width": 390,
+    "height": 844,
+    "bytes": 50924,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://watch.plex.tv/"
+  },
+  {
+    "file": "public/stripe-report-ui.webp",
+    "width": 832,
+    "height": 471,
+    "bytes": 15580,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://stripe.com/payments"
+  },
+  {
+    "file": "public/tailscale-invites-ui-1.webp",
+    "width": 501,
+    "height": 331,
+    "bytes": 13826,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://tailscale.com/kb/1064/invite-users"
+  },
+  {
+    "file": "public/tailscale-invites-ui-2.webp",
+    "width": 501,
+    "height": 446,
+    "bytes": 15640,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://tailscale.com/kb/1064/invite-users"
+  },
+  {
+    "file": "public/tailscale-status-desktop.webp",
+    "width": 1440,
+    "height": 900,
+    "bytes": 27012,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://status.tailscale.com/"
+  },
+  {
+    "file": "public/tailscale-status-full.webp",
+    "width": 1440,
+    "height": 1092,
+    "bytes": 30008,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://status.tailscale.com/"
+  },
+  {
+    "file": "public/tailscale-status-mobile.webp",
+    "width": 390,
+    "height": 844,
+    "bytes": 19300,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://status.tailscale.com/"
+  },
+  {
+    "file": "public/vercel-status-desktop.webp",
+    "width": 1440,
+    "height": 900,
+    "bytes": 47678,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://www.vercel-status.com/"
+  },
+  {
+    "file": "public/vercel-status-full.webp",
+    "width": 1440,
+    "height": 5545,
+    "bytes": 245476,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://www.vercel-status.com/"
+  },
+  {
+    "file": "public/vercel-status-mobile.webp",
+    "width": 390,
+    "height": 844,
+    "bytes": 24442,
+    "captureDate": "2026-10-07",
+    "sourceUrl": "https://www.vercel-status.com/"
+  }
+]
