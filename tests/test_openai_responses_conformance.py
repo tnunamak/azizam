@@ -128,6 +128,71 @@ class ResponsesConformanceTests(unittest.TestCase):
         call = r.json()["output"][0]
         self.assertEqual((call["type"], call["call_id"], call["name"]), ("function_call", "call_1", "get_weather"))
 
+    def test_codex_style_custom_patch_request_and_continuation_offline(self):
+        patch_input = '*** Begin Patch\n*** Add File: hello.txt\n+"سلام 🌍"\n*** End Patch\n'
+        # Hand-built from Codex ResponsesApiRequest and its apply_patch declaration.
+        tool = {"type": "custom", "name": "apply_patch", "description": "Edit files with a freeform patch.",
+                "format": {"type": "grammar", "syntax": "lark", "definition": 'start: "*** Begin Patch"'}}
+        body = {"input": [{"role": "developer", "content": [{"type": "input_text", "text": "Edit the project."}]},
+                          {"role": "user", "content": [{"type": "input_text", "text": "Create hello.txt"}]}],
+                "tools": [tool, {"type": "function", "name": "exec_command", "parameters": {"type": "object"}}],
+                "tool_choice": "auto", "parallel_tool_calls": True, "store": False,
+                "reasoning": {"effort": "medium", "summary": "auto"}, "include": ["reasoning.encrypted_content"]}
+        arguments = json.dumps({"input": patch_input}, ensure_ascii=False)
+        calls = [{"index": 0, "id": "call_patch", "type": "function",
+                  "function": {"name": "apply_patch", "arguments": arguments}},
+                 {"index": 1, "id": "call_exec", "type": "function",
+                  "function": {"name": "exec_command", "arguments": '{"cmd":"ls"}'}}]
+        for stream in (False, True):
+            with self.subTest(stream=stream):
+                up = sse([chunk({"tool_calls": calls}), chunk({}, "tool_calls")]) if stream else chat_completion(
+                    {"content": None, "tool_calls": calls}, "tool_calls")
+                r = self.create(up, {**body, "stream": stream})
+                self.assertEqual(r.status_code, 200, r.text)
+                if stream:
+                    events = parse_events(r.text)
+                    self.check_stream(events)
+                    obj = events[-1]["response"]
+                    done = next(e for e in events if e["type"] == "response.custom_tool_call_input.done")
+                    self.assertEqual(done["input"], patch_input)
+                    self.assertEqual(next(e for e in events if e["type"] == "response.custom_tool_call_input.delta")["delta"], patch_input)
+                else:
+                    obj = r.json()
+                validate("Response", obj)
+                self.assertEqual([i["type"] for i in obj["output"]], ["custom_tool_call", "function_call"])
+                self.assertEqual(obj["output"][0]["input"], patch_input)
+                continuation = self.create(chat_completion({"content": "Done."}), {**body, "input": [
+                    *body["input"], *obj["output"],
+                    {"type": "custom_tool_call_output", "call_id": "call_patch", "output": "Success."},
+                    {"type": "function_call_output", "call_id": "call_exec", "output": "hello.txt"}]})
+                self.assertEqual(continuation.status_code, 200, continuation.text)
+                validate("Response", continuation.json())
+                self.assertEqual(self.sent[-1]["messages"][-2],
+                                 {"role": "tool", "tool_call_id": "call_patch", "content": "Success."})
+                self.assertEqual(json.loads(self.sent[-1]["messages"][2]["tool_calls"][0]["function"]["arguments"])["input"], patch_input)
+
+    def test_malformed_upstream_custom_call_returns_502_without_executable_output(self):
+        up = chat_completion({"tool_calls": [{"id": "call_patch", "type": "function",
+                              "function": {"name": "apply_patch", "arguments": '{"input":false}'}}]}, "tool_calls")
+        r = self.create(up, {"input": "Edit", "tools": [{"type": "custom", "name": "apply_patch"}]})
+        self.assertEqual(r.status_code, 502, r.text)
+        self.assertEqual(r.json()["error"]["code"], "upstream_error")
+        self.assertNotIn("output", r.json())
+
+    def test_custom_previous_response_chain_replays_wrapped_input(self):
+        patch_input = "*** Begin Patch\n*** Delete File: hello.txt\n*** End Patch\n"
+        tools = [{"type": "custom", "name": "apply_patch"}]
+        up = chat_completion({"tool_calls": [{"id": "call_patch", "type": "function", "function": {
+            "name": "apply_patch", "arguments": json.dumps({"input": patch_input})}}]}, "tool_calls")
+        made = self.create(up, {"input": "Delete hello.txt", "tools": tools, "store": True})
+        self.assertEqual(made.status_code, 200, made.text)
+        next_response = self.create(chat_completion({"content": "Done."}), {
+            "previous_response_id": made.json()["id"], "tools": tools,
+            "input": [{"type": "custom_tool_call_output", "call_id": "call_patch", "output": "Deleted."}]})
+        self.assertEqual(next_response.status_code, 200, next_response.text)
+        self.assertEqual([m["role"] for m in self.sent[-1]["messages"]], ["user", "assistant", "tool"])
+        self.assertEqual(json.loads(self.sent[-1]["messages"][1]["tool_calls"][0]["function"]["arguments"])["input"], patch_input)
+
     def test_reasoning_item_and_usage_details_match_schema(self) -> None:
         up = chat_completion(
             {"role": "assistant", "content": "4", "reasoning_content": "2+2"},
@@ -409,8 +474,9 @@ class ResponsesConformanceTests(unittest.TestCase):
         self.assertEqual(next(e for e in events if e["type"] == "response.refusal.done")["refusal"], "Cannot help.")
 
     def test_unsupported_requests_return_parameter_errors_without_forwarding(self):
-        cases = [({"tools": [{"type": "custom", "name": "echo"}]}, "tools[0].type"),
-                 ({"tool_choice": {"type": "allowed_tools", "mode": "required", "tools": []}}, "tool_choice"),
+        cases = [({"tool_choice": {"type": "allowed_tools", "mode": "required", "tools": []}}, "tool_choice"),
+                 ({"tools": [{"type": "namespace", "name": "functions", "tools": []}]}, "tools[0].type"),
+                 ({"input": [{"type": "additional_tools", "role": "developer", "tools": []}]}, "input[0].type"),
                  ({"input": [{"role": "user", "content": [{"type": "input_file", "file_id": "file_test"}]}]},
                   "input[0].content[0]"),
                  ({"input": [{"role": "user", "content": [{"type": "input_image", "file_id": "file_test"}]}]},

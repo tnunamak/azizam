@@ -103,15 +103,16 @@ class ResponsesTranslatorTests(unittest.TestCase):
             self.assertEqual(raised.exception.param, "input[0].content[1]")
             self.assertEqual(raised.exception.code, "unsupported_operation")
 
-    def test_custom_tools_and_custom_outputs_are_rejected(self):
+    def test_custom_tools_and_custom_outputs_map_to_chat(self):
         for tool_format in ({"type": "text"}, {"type": "grammar", "syntax": "lark", "definition": 'start: "hi"'}):
-            with self.subTest(format=tool_format), self.assertRaises(rt.ResponsesTranslationError) as raised:
-                rt.to_chat_completions({"input": "hi", "tools": [
+            with self.subTest(format=tool_format):
+                cc = rt.to_chat_completions({"input": "hi", "tools": [
                     {"type": "custom", "name": "custom", "format": tool_format}]})
-            self.assertEqual(raised.exception.param, "tools[0].type")
-        with self.assertRaises(rt.ResponsesTranslationError) as raised:
-            rt.to_chat_completions({"input": [{"type": "custom_tool_call_output", "call_id": "call_test", "output": "hi"}]})
-        self.assertEqual(raised.exception.param, "input[0].type")
+                fn = cc["tools"][0]["function"]
+                self.assertEqual(fn["name"], "custom")
+                self.assertEqual(fn["parameters"]["properties"], {"input": {"type": "string"}})
+        cc = rt.to_chat_completions({"input": [{"type": "custom_tool_call_output", "call_id": "call_test", "output": "hi"}]})
+        self.assertEqual(cc["messages"], [{"role": "tool", "tool_call_id": "call_test", "content": "hi"}])
 
     def test_buffered_refusal_is_response_content(self):
         out = rt.from_chat_completions({"choices": [{"message": {"content": None, "refusal": "Cannot help."},
