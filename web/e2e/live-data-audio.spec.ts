@@ -27,7 +27,7 @@ test("signed audio plays and seeks through the gateway delivery route", async ({
   await page.getByRole("button", { name: "Audio", exact: true }).click();
   const audio = page.locator("article audio").first();
   await expect(audio).toBeAttached();
-  await expect(audio).toHaveAttribute("preload", "metadata");
+  await expect(audio).toHaveAttribute("preload", "none");
   const player = audio.locator("..");
   const play = player.getByRole("button", { name: /^Play / });
   await expect(play).toBeVisible();

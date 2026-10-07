@@ -145,9 +145,10 @@ test("audit has a useful empty filter state and recovers after an API error", as
   page,
 }) => {
   await page.goto("/ui/activity/");
-  await page.getByText("Find a person", { exact: true }).click();
+  // OWNER-05: people are picked by name; raw IDs live under a technical disclosure.
+  await page.getByText("Technical: filter by person ID", { exact: true }).click();
   await page
-    .getByRole("textbox", { name: "Person ID" })
+    .getByRole("textbox", { name: "Technical person ID" })
     .fill("no-such-test-actor");
   await page.getByRole("button", { name: "Apply", exact: true }).click();
   await expect(

@@ -419,7 +419,8 @@ test("personal access app hides only its exact generated email-based name", asyn
   await card
     .getByRole("button", { name: "Actions for Personal access" })
     .click();
-  await page.getByRole("menuitem", { name: "Create another key" }).click();
+  // APPS-01: an app with no keys offers "Create key"; "Create another key" is only for apps that have one.
+  await page.getByRole("menuitem", { name: "Create key", exact: true }).click();
   await expect(
     page.getByRole("dialog", { name: "Connect Personal access" }),
   ).toBeVisible();

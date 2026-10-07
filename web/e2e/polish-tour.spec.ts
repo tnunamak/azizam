@@ -88,7 +88,7 @@ async function inspect(page: Page, name: string) {
     // Exercise visible custom controls before the settled capture.
     const player = page.locator("article audio").first();
     await expect(player).toBeAttached();
-    await expect(player).toHaveAttribute("preload", "metadata");
+    await expect(player).toHaveAttribute("preload", "none");
     const controls = player.locator("..");
     await controls.getByRole("button", { name: /^Play / }).click();
     await expect
