@@ -56,7 +56,8 @@ On Linux, Compose also maps `host.docker.internal` to `host-gateway` for the
 gateway container. The engine must still listen on an address reachable from
 the container. If a local engine only binds to `127.0.0.1` on the host, either
 start it on `0.0.0.0` for local setup or use another host address the container
-can reach.
+can reach. Binding to `0.0.0.0` exposes the engine to your whole network; restrict
+its port with your firewall so only the gateway container can reach it.
 
 To override the port, store paths, or session key, copy `.env.example` to
 `.env` and uncomment the relevant lines before starting:
