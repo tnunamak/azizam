@@ -34,3 +34,36 @@ describe("owner engine alerts", () => {
     expect(ownerEngineAlert(health(true))).toMatch(/Engine is unavailable/);
   });
 });
+
+it("uses the observed display label, including long labels", () => {
+  const observed = health(true);
+  const label = "Azizam owner engine ".repeat(20);
+  observed.services[0].name = "internal-service";
+  observed.services[0].engine_label = label;
+  expect(ownerEngineAlert(observed)).toBe(
+    `${label} is unavailable. Check its connection on Status.`,
+  );
+});
+
+it("prefers the registry display name over an observation label", () => {
+  const observed = health(true);
+  observed.services[0].engine_label = "Observation name";
+  expect(
+    ownerEngineAlert(observed, {
+      schema_version: 1,
+      services: {
+        engine: {
+          id: "engine",
+          name: "internal",
+          display_name: "Azizam chat",
+          kind: "generic",
+          source: "ui",
+          editable: true,
+          enabled: true,
+          capabilities: [],
+          config: {},
+        },
+      },
+    }),
+  ).toBe("Azizam chat is unavailable. Check its connection on Status.");
+});

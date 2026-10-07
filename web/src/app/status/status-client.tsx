@@ -37,6 +37,11 @@ import {
 } from "@/components/ui/sheet";
 import { useOptionalProviderStatus } from "@/lib/provider-status";
 
+import {
+  engineDisplayName,
+  engineHealthPresentation,
+} from "@/lib/health-presentation";
+
 type Tone = "ok" | "warn" | "bad" | "neutral";
 type LiveBackend = NonNullable<StatusPayload["backends"]>[number];
 type EngineView = {
@@ -55,11 +60,6 @@ type EngineView = {
   lastError: string | null;
 };
 
-function asTone(value?: string): Tone {
-  return value === "ok" || value === "warn" || value === "bad"
-    ? value
-    : "neutral";
-}
 function toneClass(tone: Tone): string {
   return tone === "ok"
     ? "border border-success/40 bg-success/10 text-success"
@@ -98,34 +98,6 @@ function errorMessage(error: unknown): string {
   if (error instanceof ApiError) return error.message;
   if (error instanceof Error) return error.message;
   return "Something went wrong. Try again.";
-}
-
-function observedTone(service?: CurrentHealthService): Tone {
-  if (!service || !service.enabled) return "neutral";
-  if (service.observation === "up") return asTone(service.tone);
-  if (service.observation === "down")
-    return service.tone === "warn" ? "warn" : "bad";
-  if (service.observation === "degraded") return "warn";
-  return "neutral";
-}
-
-function observationLabel(service?: CurrentHealthService): string {
-  if (!service) return "";
-  if (!service.enabled || service.observation === "disabled") return "Disabled";
-  if (service.observation === "up")
-    return service.tone === "bad"
-      ? "Unavailable"
-      : service.tone === "warn"
-        ? "Degraded"
-        : "Ready";
-  if (service.observation === "down") return "Unavailable";
-  if (service.observation === "degraded") return "Degraded";
-  if (service.observation === "idle") return "Ready to start";
-  if (service.observation === "busy") return "Busy";
-  if (service.observation === "starting") return "Starting";
-  if (service.observation === "standby_stopped") return "Standby, stopped";
-  if (service.observation === "unavailable") return "";
-  return service.observation.replace(/_/g, " ");
 }
 
 function endpoint(service: Service, backend?: LiveBackend): string {
@@ -186,31 +158,23 @@ function enginesFrom(
       const backendExtras = backend as
         | (LiveBackend & { queue?: unknown; queue_depth?: unknown })
         | undefined;
+      const healthPresentation = engineHealthPresentation(
+        service.enabled,
+        status?.current_health?.observation_available === true,
+        h,
+        backend?.live_status ?? backend?.status,
+      );
       return {
         service,
         health: h,
         backend,
-        name: service.display_name || display?.engine_label || service.name || "Engine",
+        name: engineDisplayName(service, display),
         label:
           display?.capability_labels?.filter((label) => !/\((?:speech|transcription)\)/i.test(label)).join(", ") || "",
         group: display?.capability_title || "Engines",
         role: service.role || h?.role || titleize(service.kind || "engine"),
-        state: !service.enabled
-          ? "Disabled"
-          : observationLabel(
-              h ?? {
-                ...({} as CurrentHealthService),
-                enabled: service.enabled,
-                observation: service.enabled ? "unavailable" : "disabled",
-              },
-            ),
-        tone: !service.enabled
-          ? "neutral"
-          : !h || h.observation === "idle" || h.observation === "standby_stopped"
-            ? "neutral"
-            : observationLabel(h) === "Ready"
-              ? "ok"
-              : observedTone(h),
+        state: healthPresentation.label,
+        tone: healthPresentation.tone,
         endpoint: endpoint(service, backend),
         models: serviceModels(service),
         queue: valueText(backendExtras?.queue ?? backendExtras?.queue_depth),
@@ -410,7 +374,7 @@ export function StatusClient() {
   });
   const providers = useOptionalProviderStatus();
   const observedStatus =
-    statusIsError || statusData?.current_health?.observation_available === false
+    statusIsError || statusData?.current_health?.observation_available !== true
       ? undefined
       : statusData;
   const engines = useMemo(
@@ -444,7 +408,7 @@ export function StatusClient() {
     ? `${providerFailure.name} needs owner action: ${providerFailure.reachable === false ? "provider is unreachable" : "provider key is missing"}.`
     : null;
   const firstHostWarning = hostWarnings[0];
-  const apiSignal = statusData?.current_health?.signals?.find(
+  const apiSignal = observedStatus?.current_health?.signals?.find(
     (signal) => signal.source === "api",
   );
   const hostWarning = apiSignal?.reasons[0]
@@ -509,16 +473,46 @@ export function StatusClient() {
       href: string | null;
     } => row != null,
   );
-  const answer =
-    registryIsPending || statusIsPending
-      ? "Checking engine status..."
-      : statusData?.current_health?.state === "empty"
-        ? "No engines configured"
-      : actionRows.length
-        ? actionRows.length === 1
-          ? "1 problem needs you"
-          : `${actionRows.length} problems need you`
-        : "All systems normal";
+  const health = observedStatus?.current_health;
+  const incomplete = Object.values(health?.incomplete ?? {}).some(
+    (gaps) => gaps?.length,
+  );
+  const providersIncomplete =
+    providers.state === "ready" &&
+    providers.providers.some(
+      (provider) =>
+        provider.enabled === null ||
+        (provider.enabled &&
+          (provider.reachable === null || provider.keyState === "unknown")),
+    );
+  let answer: string;
+  if (registryIsPending || statusIsPending || providers.state === "loading") {
+    answer = "Checking system status...";
+  } else if (statusIsError || registryIsError) {
+    answer = "System status unavailable";
+  } else if (
+    statusData?.current_health?.state === "empty" &&
+    engines.length === 0 &&
+    providers.state !== "error"
+  ) {
+    answer = "No engines configured";
+  } else if (!health) {
+    answer = "System status unknown";
+  } else if (providers.state === "error" || incomplete) {
+    answer = "System status partially checked";
+  } else if (health.state === "empty") {
+    answer = "No engines configured";
+  } else if (actionRows.length) {
+    answer = actionRows.length === 1
+      ? "1 problem needs you"
+      : `${actionRows.length} problems need you`;
+  } else if (health.state === "warn" || health.state === "bad") {
+    answer = "System needs attention";
+  } else if (health.state !== "ok" || !allVisibleEnginesHealthy || providersIncomplete) {
+    answer = "System status partially checked";
+  } else {
+    answer = "All systems normal";
+  }
   const startingOnRequest = visibleEngines.filter(
     (engine) => engine.service.enabled && engine.state === "Ready to start",
   ).length;
@@ -531,7 +525,7 @@ export function StatusClient() {
       <div className="mx-auto flex max-w-6xl flex-col gap-6" aria-busy="true">
         <h1 className="text-3xl font-semibold tracking-tight">Status</h1>
         <div className="bg-card text-muted-foreground rounded-lg border p-4">
-          Loading engine status…
+          <p role="status" aria-live="polite" aria-atomic="true">{answer}</p>
         </div>
         <div className="bg-card h-40 rounded-lg border" />
       </div>
@@ -568,7 +562,7 @@ export function StatusClient() {
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-        <p className="text-lg font-medium">{answer}</p>
+        <p role="status" aria-live="polite" aria-atomic="true" className="text-lg font-medium">{answer}</p>
       </header>
       <Section title={actionRows.length ? "Needs attention" : "Summary"}>
         {actionRows.length ? (
@@ -599,7 +593,9 @@ export function StatusClient() {
           <p className="text-muted-foreground text-sm">
             {statusData?.current_health?.state === "empty"
               ? "Add an engine to start routing."
-              : "No owner action is needed from the latest observation."}
+              : answer === "All systems normal"
+                ? "No owner action is needed from the latest observation."
+                : "A complete current check is needed to confirm system health."}
           </p>
         )}
       </Section>

@@ -51,7 +51,11 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 
-type Tone = "ok" | "warn" | "bad" | "neutral";
+import {
+  engineDisplayName,
+  engineHealthPresentation,
+} from "@/lib/health-presentation";
+
 type Backend = NonNullable<StatusPayload["backends"]>[number];
 
 function engineName(service: Service): string {
@@ -122,74 +126,18 @@ function endpointFields(baseUrl: string): Record<string, unknown> {
   };
 }
 
-function tone(value: unknown): Tone {
-  return value === "ok" || value === "warn" || value === "bad"
-    ? value
-    : "neutral";
-}
-
-function observedTone(
-  value: unknown,
-  fallback: Exclude<Tone, "neutral">,
-): Tone {
-  const next = tone(value);
-  return next === "neutral" ? fallback : next;
-}
-
 function state(
   service: Service,
   backend: Backend | undefined,
   health: CurrentHealthService | undefined,
   observationAvailable: boolean,
-): { label: string; tone: Tone } {
-  if (!service.enabled) return { label: "Disabled", tone: "neutral" };
-  if (!observationAvailable) {
-    return { label: "", tone: "neutral" };
-  }
-  if (health) {
-    if (health.observation === "up") {
-      const healthTone = observedTone(health.tone, "ok");
-      return healthTone === "bad"
-        ? { label: "Unavailable", tone: "bad" }
-        : healthTone === "warn"
-          ? { label: "Ready with warning", tone: "warn" }
-          : { label: "Ready", tone: healthTone };
-    }
-    if (health.observation === "degraded") {
-      return {
-        label: "Unavailable",
-        tone: observedTone(health.tone, "warn"),
-      };
-    }
-    if (health.observation === "down") {
-      return { label: "Unavailable", tone: observedTone(health.tone, "bad") };
-    }
-    if (health.observation === "standby_stopped") {
-      return {
-        label: "Idle",
-        tone: "neutral",
-      };
-    }
-    if (health.observation === "idle") {
-      return { label: "Ready to start", tone: "neutral" };
-    }
-    if (health.observation === "busy") {
-      return { label: "Busy", tone: observedTone(health.tone, "warn") };
-    }
-    if (health.observation === "starting") {
-      return { label: "Starting", tone: "neutral" };
-    }
-    if (health.observation === "unavailable") {
-      return { label: "", tone: "neutral" };
-    }
-  }
-  const status = String(
-    backend?.live_status ?? backend?.status ?? "",
-  ).toLowerCase();
-  if (status === "up") return { label: "Ready", tone: "ok" };
-  if (status === "degraded") return { label: "Unavailable", tone: "warn" };
-  if (status === "down") return { label: "Unavailable", tone: "bad" };
-  return { label: "", tone: "neutral" };
+) {
+  return engineHealthPresentation(
+    service.enabled,
+    observationAvailable,
+    health,
+    backend?.live_status ?? backend?.status,
+  );
 }
 
 function servicesFromRegistry(
@@ -273,17 +221,14 @@ function EditEngineDialog({
   onSaved,
   returnFocus,
   displayName,
-  onToggle,
-  toggling,
 }: {
   service: Service;
   onClose: () => void;
   onSaved: (registry: ServiceRegistry, options?: { close?: boolean }) => void;
   returnFocus: HTMLElement | null;
   displayName: string;
-  onToggle: (enabled: boolean) => void;
-  toggling: boolean;
 }) {
+  const [enabled, setEnabled] = useState(service.enabled);
   const [name, setName] = useState(service.name);
   const [baseUrl, setBaseUrl] = useState(composeBaseUrl(service.config));
   const [note, setNote] = useState(String(service.config.note ?? ""));
@@ -299,7 +244,7 @@ function EditEngineDialog({
         service.editable === false
           ? managedUpdateBody(service, name, note)
           : editableUpdateBody(service, name, baseUrl, note, advanced);
-      return api.services.edit(service.id, body);
+      return api.services.edit(service.id, { ...body, enabled });
     },
     onSuccess: (registry) => onSaved(registry, { close: true }),
     onError: (err) => setError(errorMessage(err)),
@@ -331,10 +276,10 @@ function EditEngineDialog({
           >
             <Switch
               id={`engine-enabled-${service.id}`}
-              checked={service.enabled}
+              checked={enabled}
               aria-label={`Toggle ${displayName}`}
-              disabled={toggling}
-              onCheckedChange={onToggle}
+              disabled={edit.isPending}
+              onCheckedChange={setEnabled}
             />
             Enabled
           </label>
@@ -543,7 +488,7 @@ function EnginesContents() {
   );
 
   function displayName(service: Service) {
-    return service.display_name || healthByService.get(service.id)?.engine_label || service.name;
+    return engineDisplayName(service, healthByService.get(service.id));
   }
 
   function updateRegistry(registry: ServiceRegistry) {
@@ -553,21 +498,6 @@ function EnginesContents() {
     );
     void queryClient.invalidateQueries({ queryKey: queryKeys.status });
   }
-
-  const toggle = useMutation({
-    mutationFn: ({
-      service,
-      enabled,
-    }: {
-      service: Service;
-      enabled: boolean;
-    }) => api.services.toggleEnabled(service.id, enabled),
-    onSuccess: updateRegistry,
-    onError: (err) =>
-      toast.error("Engine could not be updated", {
-        description: errorMessage(err),
-      }),
-  });
 
   const remove = useMutation({
     mutationFn: (service: Service) => api.services.remove(service.id),
@@ -810,10 +740,6 @@ function EnginesContents() {
           service={editTarget}
           returnFocus={editInvoker.current}
           displayName={displayName(editTarget)}
-          toggling={toggle.isPending}
-          onToggle={(enabled) =>
-            toggle.mutate({ service: editTarget, enabled })
-          }
           onClose={() => setEditTarget(null)}
           onSaved={(registry, options) => {
             updateRegistry(registry);

@@ -92,3 +92,78 @@ describe("engine progressive disclosure", () => {
     expect(presets).toHaveBeenCalledTimes(1);
   });
 });
+
+it.each(["Cancel", "Escape"])(
+  "stages Enabled and discards it on %s",
+  async (dismiss) => {
+    vi.spyOn(api.services, "registry").mockResolvedValue(registry);
+    vi.spyOn(api, "status").mockResolvedValue({});
+    const toggle = vi
+      .spyOn(api.services, "toggleEnabled")
+      .mockResolvedValue(registry);
+    const edit = vi.spyOn(api.services, "edit").mockResolvedValue(registry);
+    const user = userEvent.setup();
+    mount();
+    await user.click(await screen.findByRole("button", { name: /^primary\b/ }));
+    await user.click(screen.getByRole("switch", { name: "Toggle primary" }));
+    expect(
+      screen.getByRole("switch", { name: "Toggle primary" }),
+    ).not.toBeChecked();
+    expect(toggle).not.toHaveBeenCalled();
+    expect(edit).not.toHaveBeenCalled();
+    if (dismiss === "Escape") await user.keyboard("{Escape}");
+    else await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: /^primary\b/ }));
+    expect(
+      screen.getByRole("switch", { name: "Toggle primary" }),
+    ).toBeChecked();
+  },
+);
+it("saves Enabled together with the other edit fields", async () => {
+  vi.spyOn(api.services, "registry").mockResolvedValue(registry);
+  vi.spyOn(api, "status").mockResolvedValue({});
+  const edit = vi.spyOn(api.services, "edit").mockResolvedValue(registry);
+  const user = userEvent.setup();
+  mount();
+  await user.click(await screen.findByRole("button", { name: /^primary\b/ }));
+  await user.click(screen.getByRole("switch", { name: "Toggle primary" }));
+  await user.click(screen.getByRole("button", { name: "Save engine" }));
+  expect(edit).toHaveBeenCalledWith(
+    "primary",
+    expect.objectContaining({ enabled: false }),
+  );
+});
+it.each([true, false])(
+  "keeps degraded observations and backend fallback consistent (health=%s)",
+  async (useHealth) => {
+    vi.spyOn(api.services, "registry").mockResolvedValue(registry);
+    vi.spyOn(api, "status").mockResolvedValue({
+      current_health: {
+        state: "warn",
+        tone: "warn",
+        label: "",
+        detail: "",
+        observation_available: true,
+        services: useHealth
+          ? [
+              {
+                service_id: "primary",
+                name: "primary",
+                enabled: true,
+                configured: true,
+                role: "primary",
+                routable: true,
+                observation: "degraded",
+                tone: "warn",
+                last_error: null,
+              },
+            ]
+          : [],
+      },
+      backends: [{ service_id: "primary", status: "degraded" }],
+    });
+    mount();
+    expect(await screen.findByText("Degraded", { exact: true })).toBeVisible();
+    expect(screen.queryByText("Unavailable", { exact: true })).toBeNull();
+  },
+);
