@@ -1291,7 +1291,7 @@ def _usage_model(receipt: Mapping[str, Any]) -> str:
         receipt.get("model"),
         _nested(receipt, "metadata", "model"),
     )
-    return model
+    return model or ""
 
 
 def _capability_label(capability: str) -> str:

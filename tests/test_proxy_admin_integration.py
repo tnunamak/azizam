@@ -2975,7 +2975,9 @@ class AdminAuditEventsEndpointTests(unittest.TestCase):
         self.client.post(
             "/admin/api/apps", json={"name": "Audit App"}, headers=self._auth()
         )
-        resp = self.client.get("/admin/api/audit-events", headers=self._auth())
+        resp = self.client.get(
+            "/admin/api/audit-events?show_automated=true", headers=self._auth()
+        )
         self.assertEqual(resp.status_code, 200, resp.text)
         body = resp.json()
         # New response shape: {records, next_cursor}
