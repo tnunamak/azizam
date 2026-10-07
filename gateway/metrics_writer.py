@@ -149,7 +149,10 @@ class MetricsWriter:
                     command = self._queue.get(timeout=0.1)
                 except queue.Empty:
                     with self._lock:
-                        if not self._accepting:
+                        # A producer may have admitted work after get() timed
+                        # out and before close() stopped admission. Recheck
+                        # emptiness under the same lock used by both of them.
+                        if not self._accepting and self._queue.empty():
                             break
                     continue
                 try:

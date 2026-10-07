@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import queue
 import sqlite3
 import threading
 import time
@@ -155,6 +156,52 @@ class MetricsWriterTests(unittest.TestCase):
         with sqlite3.connect(self.db) as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM samples").fetchone()[0], accepted)
         self.assertFalse(writer._thread.is_alive())
+
+    def test_shutdown_drains_sample_admitted_after_worker_observes_empty_queue(self):
+        empty_seen = threading.Event()
+        resume = threading.Event()
+        closing = threading.Event()
+        base_queue = queue.Queue
+
+        class PausedEmpty(base_queue):
+            def get(self, *args, **kwargs):
+                try:
+                    return super().get(*args, **kwargs)
+                except queue.Empty:
+                    if not empty_seen.is_set():
+                        empty_seen.set()
+                        if not resume.wait(5):
+                            raise RuntimeError("test did not release empty observation")
+                    raise
+
+        with patch.object(metrics_writer.queue, "Queue", PausedEmpty):
+            writer = self.writer()
+        try:
+            self.assertTrue(empty_seen.wait(2))
+            self.assertTrue(writer.record_sample(1, "accepted", 7))
+            join = writer._thread.join
+
+            def observed_join(*args, **kwargs):
+                closing.set()
+                return join(*args, **kwargs)
+
+            with patch.object(writer._thread, "join", observed_join):
+                closer = threading.Thread(target=writer.close)
+                closer.start()
+                try:
+                    self.assertTrue(closing.wait(2))
+                finally:
+                    resume.set()
+                    closer.join(5)
+            self.assertFalse(closer.is_alive())
+        finally:
+            resume.set()
+            writer.close()
+        with sqlite3.connect(self.db) as conn:
+            self.assertEqual(conn.execute("SELECT ts, metric, value FROM samples").fetchall(),
+                             [(1, "accepted", 7)])
+        self.assertEqual(writer.stats["dropped_samples"], 0)
+        self.assertEqual(writer.stats["write_errors"], 0)
 
     def test_persistence_failure_is_reported_by_flush_and_close(self):
         writer = self.writer()
