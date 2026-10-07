@@ -44,6 +44,7 @@ import fcntl
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -163,12 +164,31 @@ def http_request(
 
 
 def run_command(cmd: Sequence[str], timeout: float) -> int:
+    """Run cmd in its own process group; on timeout or interrupt, kill the group.
+
+    `npm run build` starts `next build` as a grandchild. Killing only npm would
+    leave the build running on the serving host.
+    """
     try:
-        return subprocess.run(list(cmd), timeout=timeout, check=False).returncode
-    except subprocess.TimeoutExpired:
-        return 124
+        proc = subprocess.Popen(list(cmd), start_new_session=True)
     except FileNotFoundError:
         return 127
+    try:
+        return proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_process_group(proc)
+        return 124
+    except BaseException:
+        _kill_process_group(proc)
+        raise
+
+
+def _kill_process_group(proc: subprocess.Popen) -> None:
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    proc.wait()
 
 
 def resolve_token(env: Mapping[str, str]) -> str | None:

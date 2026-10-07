@@ -6,6 +6,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import time
 import shutil
 import tempfile
 import unittest
@@ -441,6 +442,30 @@ class MainTests(unittest.TestCase):
             finally:
                 handle.close()
         self.assertEqual(code, sr.EXIT_LOCKED)
+
+
+class RunCommandTests(unittest.TestCase):
+    def test_timeout_kills_grandchildren(self):
+        # Like `npm run build` -> sh -> `next build`: the grandchild must die too.
+        with tempfile.TemporaryDirectory() as tmp:
+            pid_file = Path(tmp) / "grandchild.pid"
+            script = f"sleep 60 & echo $! > {pid_file}; wait"
+            code = sr.run_command(["sh", "-c", f"sh -c '{script}'"], timeout=1)
+            self.assertEqual(code, 124)
+            grandchild = int(pid_file.read_text())
+            deadline = time.time() + 5
+            while time.time() < deadline:
+                try:
+                    os.kill(grandchild, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.05)
+            else:
+                os.kill(grandchild, 9)
+                self.fail("grandchild survived the timeout")
+
+    def test_missing_command(self):
+        self.assertEqual(sr.run_command(["/nonexistent/azizam-cmd"], timeout=1), 127)
 
 
 class WebBuildTests(unittest.TestCase):
