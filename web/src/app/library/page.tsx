@@ -399,20 +399,16 @@ function Preview({
         className="w-full"
       />
     ) : (
-      <div className="bg-capability-voice/10 text-capability-voice flex h-full flex-col items-center justify-center gap-3 pb-12">
+      <div className="bg-muted text-muted-foreground flex h-full flex-col items-center justify-center gap-3 pb-12">
         <AudioLines className="size-12" aria-hidden />
-        {!src && (
-          <p className="text-foreground text-sm">Audio preview unavailable</p>
-        )}
+        {!src && <p className="text-sm">Audio preview unavailable</p>}
       </div>
     );
   return (
     <div
       className={cn(
         "flex h-full items-center justify-center",
-        asset.kind === "video"
-          ? "bg-capability-video/10 text-capability-video"
-          : "bg-capability-image/10 text-capability-image",
+        "bg-muted text-muted-foreground",
       )}
     >
       <Icon className="size-8" aria-hidden />

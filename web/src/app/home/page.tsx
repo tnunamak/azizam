@@ -16,6 +16,8 @@ import {
   Music2,
   Waves,
   ListFilter,
+  Pause,
+  Play,
 } from "lucide-react";
 import { formatAppName } from "@/lib/format";
 import { availabilityReason, statusSummaryCopy } from "@/lib/status-copy";
@@ -625,13 +627,20 @@ function Capabilities({
             const copy = capabilityCopy[capability.capability];
             if (!copy) return null;
             const label = capability.capability_title ?? copy.label;
-            const reason = availabilityReason(capability.status, capability.reason_code);
+            const reason = availabilityReason(
+              capability.status,
+              capability.reason_code,
+            );
             return (
               <Link
                 key={capability.capability}
                 href={capabilityHref(capability.capability)}
                 title={capability.available ? undefined : reason}
-                aria-label={reason && !capability.available ? `${label}: ${reason}` : label}
+                aria-label={
+                  reason && !capability.available
+                    ? `${label}: ${reason}`
+                    : label
+                }
                 className={`hover:border-primary/50 focus-visible:ring-ring inline-flex min-h-11 max-w-full min-w-0 items-center gap-2 rounded-full border px-3 py-1.5 transition-colors focus-visible:ring-2 ${capability.available ? capabilityTint[copy.icon] : "border-border bg-muted/30 text-muted-foreground"}`}
               >
                 <HomeCapabilityIcon row={capability} />
@@ -665,6 +674,10 @@ function CreationMedia({
     retry: false,
   });
   const posterUrl = poster?.download_url;
+  const [posterFailed, setPosterFailed] = useState(false);
+  const [videoFailed, setVideoFailed] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const audioRef = useRef<HTMLAudioElement>(null);
 
   if (creation.kind === "image" && creation.download_url) {
     return (
@@ -679,34 +692,87 @@ function CreationMedia({
     );
   }
 
-  if (creation.kind === "video" && posterUrl) {
+  if (creation.kind === "video" && posterUrl && !posterFailed) {
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img
         src={posterUrl}
         alt=""
         loading="lazy"
+        onError={() => setPosterFailed(true)}
         className="size-full object-cover transition-transform group-hover:scale-[1.02] motion-reduce:transform-none"
+      />
+    );
+  }
+
+  if (creation.kind === "video" && creation.download_url && !videoFailed) {
+    return (
+      <video
+        src={creation.download_url}
+        preload="metadata"
+        muted
+        playsInline
+        onLoadedMetadata={(event) => {
+          const video = event.currentTarget;
+          if (Number.isFinite(video.duration) && video.duration > 0) {
+            video.currentTime = Math.min(0.1, video.duration / 2);
+          }
+        }}
+        onError={() => setVideoFailed(true)}
+        className="size-full object-cover"
+        aria-label={`${title} video preview`}
       />
     );
   }
 
   if (creation.kind === "audio" && creation.download_url) {
     return (
-      <div className="flex size-full items-center justify-center p-4">
+      <div className="flex size-full flex-col items-center justify-center gap-4 p-4">
+        <AudioLines aria-hidden="true" className="size-12" />
         <audio
-          controls
+          ref={audioRef}
           preload="metadata"
           src={creation.download_url}
-          aria-label={`Play ${title}`}
-          className="w-full max-w-xs"
+          onPlay={() => setIsPlaying(true)}
+          onPause={() => setIsPlaying(false)}
+          onEnded={() => setIsPlaying(false)}
+          className="sr-only"
         />
+        <Button
+          type="button"
+          variant="secondary"
+          size="icon"
+          className="size-11"
+          aria-label={`${isPlaying ? "Pause" : "Play"} ${title}`}
+          onClick={async () => {
+            const audio = audioRef.current;
+            if (!audio) return;
+            if (isPlaying) audio.pause();
+            else {
+              try {
+                await audio.play();
+              } catch {
+                setIsPlaying(false);
+              }
+            }
+          }}
+        >
+          {isPlaying ? (
+            <Pause aria-hidden="true" />
+          ) : (
+            <Play aria-hidden="true" />
+          )}
+        </Button>
       </div>
     );
   }
 
   return (
-    <div className="flex size-full flex-col items-center justify-center gap-2 p-4 text-center">
+    <div
+      role="img"
+      aria-label={`${creation.kind[0].toUpperCase()}${creation.kind.slice(1)} preview unavailable`}
+      className="bg-muted text-muted-foreground flex size-full flex-col items-center justify-center gap-2 p-4 text-center"
+    >
       <Icon aria-hidden="true" className="size-8" />
     </div>
   );
@@ -726,7 +792,7 @@ function CreationPreview({ creation }: { creation: HomeCreation }) {
   const body = (
     <>
       <div
-        className={`flex aspect-[4/3] w-full items-center justify-center overflow-hidden ${creation.kind === "video" ? "bg-capability-video/10 text-capability-video" : creation.kind === "audio" ? "bg-capability-voice/10 text-capability-voice" : "bg-capability-image/10 text-capability-image"}`}
+        className={`flex aspect-[4/3] w-full items-center justify-center overflow-hidden ${creation.kind === "video" || (creation.kind === "audio" && !creation.download_url) ? "bg-muted text-muted-foreground" : creation.kind === "audio" ? "bg-capability-voice/10 text-capability-voice" : "bg-capability-image/10 text-capability-image"}`}
       >
         <CreationMedia creation={creation} title={title} />
       </div>
@@ -813,9 +879,10 @@ export default function HomePage() {
   } = useQuery({ queryKey: homeKey, queryFn: homeApi.home });
   const isOwner = home?.authenticated && home.user.role === "owner";
   const ownerAlert = useOwnerAlertTarget(Boolean(isOwner));
-  const statusCopy = home && "status" in home && home.status.state === "unavailable"
-    ? statusSummaryCopy(home.status)
-    : undefined;
+  const statusCopy =
+    home && "status" in home && home.status.state === "unavailable"
+      ? statusSummaryCopy(home.status)
+      : undefined;
   return (
     <div className="min-w-0 space-y-4 sm:space-y-6">
       {/* The visible page starts with "Connect an app"; the h1 keeps the page outline for assistive technology. */}
@@ -845,19 +912,19 @@ export default function HomePage() {
       ) : (
         <>
           {isOwner && statusCopy && !ownerAlert && (
-              <div
-                role="status"
-                className="text-muted-foreground flex flex-wrap items-center gap-2 text-sm"
+            <div
+              role="status"
+              className="text-muted-foreground flex flex-wrap items-center gap-2 text-sm"
+            >
+              <span>{statusCopy}</span>
+              <Link
+                className="text-primary underline underline-offset-4"
+                href="/status/"
               >
-                <span>{statusCopy}</span>
-                <Link
-                  className="text-primary underline underline-offset-4"
-                  href="/status/"
-                >
-                  Fix in Status
-                </Link>
-              </div>
-            )}
+                Fix in Status
+              </Link>
+            </div>
+          )}
           <Connect home={home} />
           <Capabilities
             capabilities={home.capabilities}
