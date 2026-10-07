@@ -7,10 +7,15 @@ Azizam is the working name of the `azizam` gateway. Any OpenAI-compatible gatewa
 ## Install
 
 ```bash
-pi install npm:pi-provider-azizam          # once published
-pi install /path/to/azizam/integrations/pi   # from a checkout
-pi -e /path/to/azizam/integrations/pi        # try for one run, no install
+pi install git:github.com/tnunamak/pi-provider-azizam@v0.1.0   # from the git mirror
+pi install /path/to/azizam/integrations/pi                     # from a checkout
+pi -e /path/to/azizam/integrations/pi                          # try for one run, no install
 ```
+
+The package is not on npm yet. Pi installs git packages only from a repo
+root, so `tnunamak/pi-provider-azizam` mirrors this directory.
+`scripts/sync-pi-mirror --tag` updates the mirror and tags the version in
+`package.json`.
 
 ## Configure
 

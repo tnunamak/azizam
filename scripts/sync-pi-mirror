@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Publish integrations/pi to its own repo so Pi can install it from git:
+#   pi install git:github.com/tnunamak/pi-provider-azizam@v<version>
+# Pi installs git packages from a repo root only, so the package needs a
+# repo of its own. This is the install path until the npm release.
+#
+# Usage: scripts/sync-pi-mirror [--tag]
+#   --tag  also push tag v<version> from integrations/pi/package.json
+set -euo pipefail
+
+mirror="${AZIZAM_PI_MIRROR:-git@github.com:tnunamak/pi-provider-azizam.git}"
+repo_root=$(git -C "$(dirname "${BASH_SOURCE[0]}")/.." rev-parse --show-toplevel)
+cd "$repo_root"
+
+if [[ -n "$(git status --porcelain -- integrations/pi)" ]]; then
+  echo "sync-pi-mirror: integrations/pi has uncommitted changes" >&2
+  exit 1
+fi
+
+split=$(git subtree split --prefix integrations/pi HEAD)
+git push "$mirror" "$split:refs/heads/main"
+echo "mirror main -> ${split:0:12}"
+
+if [[ "${1:-}" == "--tag" ]]; then
+  version=$(python3 -c 'import json; print(json.load(open("integrations/pi/package.json"))["version"])')
+  git push "$mirror" "$split:refs/tags/v$version"
+  echo "mirror tag v$version -> ${split:0:12}"
+fi
