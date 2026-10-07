@@ -4,6 +4,7 @@ version: "0.1.0"
 id: image.generate.krea2-turbo-snofs
 intent: image.generate
 display_name: Krea 2 Turbo + SNOFS (uncensored)
+purpose: Uncensored photoreal images from a prompt
 description: Local T2I workflow for uncensored output. Krea 2 Turbo (int8_convrot) plus the SNOFS v1.4 LoKr (Ashen3) loaded with stock LoraLoaderModelOnly at strength 1.0. Bake-off 2026-10-03 showed no visible SFW quality loss and explicit output where stock Krea 2 Turbo returns clothed images. Write natural-language prompts that say 'photograph' (not 'photorealistic'). CFG-distilled turbo model, CFG fixed at 1.0. Only depict adults.
 source: local
 trusted: true

@@ -160,7 +160,9 @@ def _workflow_row(
     engine_binding = _engine_binding_label(summary.get("supported_backends") or [], capability_rows)
     availability = _availability(capability_rows)
     capability = _capability_from_intent(record.intent, record.manifest.get("capability"))
-    description = _workflow_description(summary.get("description"), capability)
+    manifest_purpose = summary.get("purpose")
+    purpose = manifest_purpose.strip() if isinstance(manifest_purpose, str) else ""
+    description = purpose or _workflow_description(summary.get("description"), capability)
     technical_notes = _workflow_technical_notes(summary.get("description"), description)
 
     row = {
@@ -169,6 +171,7 @@ def _workflow_row(
         "capability": capability,
         "intent": record.intent,
         "title": summary.get("display_name") or record.id,
+        "purpose": purpose or None,
         "description": description,
         "inputs": effective_inputs,
         "outputs": summary.get("outputs") or [],

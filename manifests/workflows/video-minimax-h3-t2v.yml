@@ -4,6 +4,7 @@ version: 0.1.0
 id: video.generate.minimax-h3-t2v
 intent: video.generate
 display_name: MiniMax H3 T2V
+purpose: Video with stereo sound from a prompt
 description: 'MiniMax H3 FL2VA text-to-video with native stereo audio (int8_convrot, 8-step turbo LoRA).
   Put sound cues after an ''Audio:'' paragraph in the prompt. Request via POST /v1/videos: size multiples
   of 32 (max 1344x768; default 960x544), seconds 2-10 at 24 fps (frames are 17k+5). 120-250 s for 5 s

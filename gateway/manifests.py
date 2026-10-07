@@ -97,6 +97,12 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
         raise ManifestError("manifest inputs must be a mapping")
     if not isinstance(manifest["bindings"], dict):
         raise ManifestError("manifest bindings must be a mapping")
+    if "purpose" in manifest:
+        purpose = manifest["purpose"]
+        if not isinstance(purpose, str) or not purpose.strip():
+            raise ManifestError("manifest purpose must be a non-empty string")
+        if len(purpose.split()) > 8:
+            raise ManifestError("manifest purpose must contain at most 8 words")
 
 
 def validate_inputs(

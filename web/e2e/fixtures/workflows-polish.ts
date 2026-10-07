@@ -5,6 +5,7 @@ export const workflowsPolishCatalog = {
       id: "image.product-render",
       capability: "image",
       title: "Product render",
+      purpose: "Create a clean product render",
       description:
         "Create a clean product render with a local workflow. Long manifest guidance stays searchable and available inside Technical details without turning browse cards into documentation blocks. Use it when the operator needs exact route behavior, backend binding context, and alias provenance.",
       inputs: [

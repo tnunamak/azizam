@@ -91,6 +91,73 @@ test("owner access audit rows stay hidden until the filter is enabled", async ({
   ).toHaveCount(0);
 });
 
+test("automated changes are grouped by default and use plain wording when shown", async ({
+  page,
+}) => {
+  const rows = [
+    {
+      id: "human-backfill",
+      action: "operator.service_registry.backfill",
+      actor_kind: "user",
+      actor_id: "owner-user",
+      actor_label: "Owner",
+      target_kind: "operator_setting",
+      target_id: "service_registry",
+      metadata: {},
+      created_at: 1_760_000_000,
+    },
+    {
+      id: "automated-key",
+      action: "credential.create",
+      actor_kind: "service_account",
+      actor_id: "svc_deploy",
+      actor_label: "safe-restart",
+      target_kind: "credential",
+      target_id: "cred_1",
+      metadata: {},
+      created_at: 1_760_000_002,
+    },
+    {
+      id: "automated-app",
+      action: "app.create",
+      actor_kind: "service_account",
+      actor_id: "svc_deploy",
+      actor_label: "safe-restart",
+      target_kind: "app",
+      target_id: "app_1",
+      metadata: {},
+      created_at: 1_760_000_001,
+    },
+  ];
+  await page.route("**/admin/api/audit?*", (route) => {
+    const url = new URL(route.request().url());
+    const showAutomated = url.searchParams.get("show_automated") === "true";
+    return route.fulfill({
+      json: {
+        records: showAutomated
+          ? rows
+          : rows.filter((row) => row.actor_kind !== "service_account"),
+        next_cursor: null,
+        automated_count: 2,
+      },
+    });
+  });
+
+  await page.goto("/ui/activity/");
+  await expect(page.getByText("2 automated changes hidden")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /Updated engine configuration/ }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: /Created a key/ })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Show automated changes" }).click();
+  await expect(page.getByText("Showing 2 automated changes")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /Created a key by Automation/ }),
+  ).toBeVisible();
+  await expect(page.getByText(/registry|safe-restart/i)).toHaveCount(0);
+});
+
 for (const theme of ["light", "dark"] as const) {
   for (const width of [1440, 390]) {
     for (const state of ["seeded", "empty", "error"] as const) {

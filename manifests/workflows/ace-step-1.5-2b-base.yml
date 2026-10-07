@@ -5,6 +5,7 @@ id: audio.generate.ace-step-1.5-2b-base
 intent: audio.generate
 capability: music
 display_name: ACE-Step 1.5 2B Base
+purpose: Create a song from lyrics and tags
 description: Portable audio.generate contract bound to the ACE-Step 1.5 2B Base ComfyUI workflow.
 source: local
 trusted: true

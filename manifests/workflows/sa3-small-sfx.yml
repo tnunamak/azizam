@@ -5,6 +5,7 @@ id: audio.generate.sa3-small-sfx
 intent: audio.generate
 capability: sfx
 display_name: Stable Audio 3 Small SFX
+purpose: Sound effects from a description
 description: Sound effects from a description
 technical_description: 'Stable Audio 3 small-sfx text-to-sound-effect, stereo 44.1 kHz FLAC. Default sfx model.
   About 1 s warm for 10 s of audio. Output is peak-normalized by the gateway (raw model output is quiet).

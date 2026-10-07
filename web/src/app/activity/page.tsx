@@ -65,21 +65,31 @@ function changedName(entry: AuditEntry) {
   return labels[entry.target_kind ?? ""] ?? auditTargetName(entry);
 }
 
-function activityActorName(label: string) {
+function activityActorName(
+  label: string,
+  actorKind: AuditEntry["actor_kind"] = null,
+) {
+  if (actorKind === "service_account") return "Automation";
   return label.includes("@") ? "Person" : label;
 }
 
 export default function ActivityPage() {
   const [category, setCategory] = useState("");
   const [showAccessAudit, setShowAccessAudit] = useState(false);
+  const [showAutomated, setShowAutomated] = useState(false);
   const [actor, setActor] = useState("");
   const [actorInput, setActorInput] = useState("");
   const [entry, setEntry] = useState<AuditEntry | null>(null);
   // Filter choices come from an unfiltered page; labels never infer identity
   // from an opaque actor ID. The filter itself is applied by the server.
   const { data: optionsData } = useQuery({
-    queryKey: ["activity", "actors", showAccessAudit],
-    queryFn: () => api.audit.list({ limit: 100, exclude_access_audit: !showAccessAudit }),
+    queryKey: ["activity", "actors", showAccessAudit, showAutomated],
+    queryFn: () =>
+      api.audit.list({
+        limit: 100,
+        exclude_access_audit: !showAccessAudit,
+        show_automated: showAutomated,
+      }),
   });
   const {
     data: auditData,
@@ -92,7 +102,7 @@ export default function ActivityPage() {
     hasNextPage,
     isFetchingNextPage: fetchingNextPage,
   } = useInfiniteQuery({
-    queryKey: ["activity", "audit", category, actor, showAccessAudit],
+    queryKey: ["activity", "audit", category, actor, showAccessAudit, showAutomated],
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
       api.audit.list({
@@ -100,6 +110,7 @@ export default function ActivityPage() {
         action_prefix: category || undefined,
         actor_id: actor || undefined,
         exclude_access_audit: !showAccessAudit,
+        show_automated: showAutomated,
         before: pageParam,
       }),
     getNextPageParam: (page) => page.next_cursor ?? undefined,
@@ -109,10 +120,12 @@ export default function ActivityPage() {
     new Map(
       (optionsData?.records ?? []).map((row) => [
         row.actor_id,
-        activityActorName(row.actor_label),
+        activityActorName(row.actor_label, row.actor_kind),
       ]),
     ),
   );
+  const automatedCount =
+    auditData?.pages[0]?.automated_count ?? optionsData?.automated_count ?? 0;
   return (
     <div className="space-y-8">
       <PageHeader title="Activity" subtitle="Changes and request outcomes" />
@@ -209,6 +222,28 @@ export default function ActivityPage() {
             )}
           </div>
           <div className="flex flex-wrap items-center gap-3">
+            {automatedCount > 0 && (
+              <div
+                role="group"
+                aria-label="Automated activity filter"
+                className="text-muted-foreground flex flex-wrap items-center gap-3 text-sm"
+              >
+                <span>
+                  {showAutomated
+                    ? `Showing ${automatedCount} automated changes`
+                    : `${automatedCount} automated changes hidden`}
+                </span>
+                <Button
+                  variant="outline"
+                  aria-pressed={showAutomated}
+                  onClick={() => setShowAutomated((value) => !value)}
+                >
+                  {showAutomated
+                    ? "Hide automated changes"
+                    : "Show automated changes"}
+                </Button>
+              </div>
+            )}
             <Button
               variant="outline"
               aria-pressed={showAccessAudit}
@@ -292,7 +327,7 @@ export default function ActivityPage() {
                   <button
                     type="button"
                     key={row.id}
-                    aria-label={`Details: ${auditSummary(row)} by ${activityActorName(row.actor_label)}`}
+                    aria-label={`Details: ${auditSummary(row)} by ${activityActorName(row.actor_label, row.actor_kind)}`}
                     onClick={() => setEntry(row)}
                     className="group hover:bg-muted/40 focus-visible:outline-ring flex w-full items-center gap-4 py-4 text-left transition-colors focus-visible:outline-2"
                   >
@@ -305,7 +340,7 @@ export default function ActivityPage() {
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium">{auditSummary(row)}</p>
                       <p className="text-muted-foreground mt-1 text-xs break-words">
-                        {activityActorName(row.actor_label)}
+                        {activityActorName(row.actor_label, row.actor_kind)}
                         {changedName(row) ? ` · ${changedName(row)}` : ""}
                       </p>
                     </div>
@@ -361,14 +396,14 @@ export default function ActivityPage() {
               <SheetHeader className="pr-14">
                 <SheetTitle>{auditSummary(entry)}</SheetTitle>
                 <SheetDescription>
-                  {activityActorName(entry.actor_label)} · <RelativeTime ts={entry.created_at} />
+                  {activityActorName(entry.actor_label, entry.actor_kind)} · <RelativeTime ts={entry.created_at} />
                 </SheetDescription>
               </SheetHeader>
               <div className="min-w-0 space-y-6 px-4 pb-8">
                 <dl className="space-y-4 text-sm">
                   <div>
-                    <dt className="text-muted-foreground">Person</dt>
-                    <dd className="mt-1">{activityActorName(entry.actor_label)}</dd>
+                    <dt className="text-muted-foreground">Changed by</dt>
+                    <dd className="mt-1">{activityActorName(entry.actor_label, entry.actor_kind)}</dd>
                   </div>
                   {changedName(entry) && (
                     <div>

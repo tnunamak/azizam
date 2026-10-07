@@ -1307,6 +1307,7 @@ class AdminSQLiteStore:
         action_prefix: str | None = None,
         exclude_access_audit: bool = False,
         include_internal: bool = False,
+        include_automated: bool = False,
         before_created_at: int | None = None,
         before_id: str | None = None,
         target_kind: str | None = None,
@@ -1327,6 +1328,7 @@ class AdminSQLiteStore:
             action_prefix=action_prefix,
             exclude_access_audit=exclude_access_audit,
             exclude_internal_activity=not include_internal,
+            exclude_service_account_activity=not include_automated,
             before_created_at=before_created_at,
             before_id=before_id,
             limit=fetch_limit,
@@ -1341,6 +1343,7 @@ class AdminSQLiteStore:
         return {
             "records": [self._present_audit_event(row) for row in page],
             "next_cursor": next_cursor,
+            "automated_count": admin_store.count_service_account_audit(path=self.path),
         }
 
     def profile_for_id(self, profile_id: str):

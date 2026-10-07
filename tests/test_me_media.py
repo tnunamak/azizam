@@ -721,7 +721,7 @@ class MeMediaRouterTests(unittest.TestCase):
         for invalid in ("NaN", "Infinity", "-1", "bad", True):
             self.assertIsNone(me_media._receipt_cost({"metadata": {"litellm": {"response_cost": invalid}}}))
 
-    def test_usage_summary_uses_request_routes_when_model_is_not_recorded(self) -> None:
+    def test_usage_summary_omits_route_when_model_is_not_recorded(self) -> None:
         self.assertEqual(me_media._capability({"intent": "default"}), "chat")
         self.assertEqual(me_media._capability({"intent": "stt"}), "transcribe")
         self._receipt(
@@ -761,9 +761,11 @@ class MeMediaRouterTests(unittest.TestCase):
         usage = self.client.get("/me/api/usage/summary").json()
         rows = {(row["capability"], row["model"]): row for row in usage["by_model"]}
 
-        self.assertEqual(rows[("transcribe", "/v1/audio/transcriptions")]["requests"], 1)
-        self.assertEqual(rows[("chat", "/v1/chat/completions")]["requests"], 1)
-        self.assertEqual(rows[("other", "/v1/unknown")]["requests"], 1)
+        self.assertEqual(rows[("transcribe", "")]["requests"], 1)
+        self.assertEqual(rows[("chat", "")]["requests"], 1)
+        self.assertEqual(rows[("other", "")]["requests"], 1)
+        self.assertNotIn("/v1/audio/transcriptions", str(usage["by_model"]))
+        self.assertNotIn("/v1/chat/completions", str(usage["by_model"]))
         self.assertEqual(usage["paid_requests"], 1)
         self.assertEqual(usage["remote_spend"], 0.25)
 

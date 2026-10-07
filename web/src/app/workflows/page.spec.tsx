@@ -15,6 +15,7 @@ const workflows = [
     id: "workflow.image.upscale",
     capability: "image",
     title: "Upscale image",
+    purpose: "Upscale and restore an image",
     description: "Make an image larger without changing the prompt.",
     inputs: [
       {
@@ -96,6 +97,7 @@ describe("WorkflowsPage empathy copy", () => {
     renderWorkflows();
 
     expect(await screen.findByText("Upscale image")).toBeVisible();
+    expect(screen.getByText("Upscale and restore an image")).toBeVisible();
     expect(screen.getByText("Clean text")).toBeVisible();
     expect(screen.getByLabelText("Image input")).toBeVisible();
     expect(screen.getByText("Needs an image")).toBeVisible();

@@ -1647,6 +1647,7 @@ def list_audit(
     action_prefix: str | None = None,
     exclude_access_audit: bool = False,
     exclude_internal_activity: bool = False,
+    exclude_service_account_activity: bool = False,
     before_created_at: int | None = None,
     before_id: str | None = None,
     limit: int = 100,
@@ -1689,6 +1690,9 @@ def list_audit(
         placeholders = ", ".join("?" for _ in INTERNAL_ACTIVITY_ACTIONS)
         clauses.append(f"action NOT IN ({placeholders})")
         params.extend(sorted(INTERNAL_ACTIVITY_ACTIONS))
+    if exclude_service_account_activity:
+        clauses.append("(actor_kind IS NULL OR actor_kind != ?)")
+        params.append("service_account")
     if before_created_at is not None and before_id is not None:
         # Composite keyset: (created_at, id) < (before_created_at, before_id)
         # This is correct for ORDER BY created_at DESC, id DESC because we
@@ -1706,6 +1710,16 @@ def list_audit(
             params,
         ).fetchall()
     return [_audit_row_to_dict(r) for r in rows]
+
+
+def count_service_account_audit(*, path: Path = DB_PATH) -> int:
+    """Count service-account audit events for the activity summary group."""
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM audit_events WHERE actor_kind = ?",
+            ("service_account",),
+        ).fetchone()
+    return int(row[0]) if row else 0
 
 
 def get_audit_event(event_id: str, *, path: Path = DB_PATH) -> dict[str, Any] | None:

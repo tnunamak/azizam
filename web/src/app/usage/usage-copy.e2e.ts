@@ -305,7 +305,7 @@ test("Usage labels local and unknown paid spend honestly", async ({ page }) => {
         unknown_paid_requests: unknownPaid ? 2 : 0,
         by_model: [
           {
-            model: "/v1/audio/transcriptions",
+            model: "",
             capability: "transcribe",
             requests: 6,
             remote_spend: null,
@@ -324,9 +324,8 @@ test("Usage labels local and unknown paid spend honestly", async ({ page }) => {
   await page.goto("/ui/usage/");
   await expect(page.getByText("Remote spend", { exact: true })).toBeVisible();
   await expect(page.getByText("No paid requests")).toBeVisible();
-  await expect(
-    page.getByText("/v1/audio/transcriptions"),
-  ).toBeVisible();
+  await expect(page.getByText("Transcription", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("/v1/audio/transcriptions")).toHaveCount(0);
   await expect(page.getByText("Unknown model")).toHaveCount(0);
   await expect(page.getByRole("table").last()).not.toContainText("$0.00");
 

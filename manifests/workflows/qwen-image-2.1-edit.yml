@@ -4,6 +4,7 @@ version: "0.1.0"
 id: image.edit.qwen-image-2.1-edit
 intent: image.edit
 display_name: Qwen-Image 2.1 Edit
+purpose: Edit a photo from a text instruction
 description: >-
   Single-image instruction edit via Qwen-Image 2.1 (int8_convrot) + qwen3vl_8b_w4a8 text encoder +
   madebyollin texture-fix VAE. Community consensus (Sep 2026, r/StableDiffusion) ranks this the best

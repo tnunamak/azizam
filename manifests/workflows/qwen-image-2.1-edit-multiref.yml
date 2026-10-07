@@ -4,6 +4,7 @@ version: "0.1.0"
 id: image.edit.qwen-image-2.1-edit-multiref
 intent: image.edit
 display_name: Qwen-Image 2.1 Multi-Reference Edit
+purpose: Combine two reference images into one
 description: >-
   2-image reference composite/edit via Qwen-Image 2.1's native multi-image conditioning
   (TextEncodeQwenImage21's Autogrow `images` input, tested up to 16 slots upstream; this workflow

@@ -5,6 +5,7 @@ id: audio.generate.tangoflux
 intent: audio.generate
 capability: sfx
 display_name: TangoFlux
+purpose: Create a sound effect from text
 description: Create a sound effect from a text prompt.
 source: local
 trusted: true

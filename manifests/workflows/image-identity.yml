@@ -4,6 +4,7 @@ version: "0.1.0"
 id: image.edit.image-identity
 intent: image.edit
 display_name: Identity Scene (real people into a new scene)
+purpose: Place real people in a new scene
 description: >-
   Put the real people from one or more reference photos into a new scene or pose and return the best
   of N seeds with objective likeness scores. The gateway crops a roomy head per person from the ORIGINAL

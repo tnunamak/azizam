@@ -212,6 +212,9 @@ test("workflow cards use the available width at phone, tablet and desktop sizes"
     [1440, 3],
   ] as const) {
     await preparePage(page, "light", width, workflowsPolishCatalog);
+    await expect(
+      page.getByText("Create a clean product render", { exact: true }),
+    ).toBeVisible();
     const cards = page
       .getByRole("region", { name: "Images workflows" })
       .locator("article");

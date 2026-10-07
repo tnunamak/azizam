@@ -154,6 +154,7 @@ function conciseWords(value: string, maxWords = 12) {
 }
 
 function purposeLabel(workflow: WorkflowRow) {
+  if (workflow.purpose?.trim()) return workflow.purpose.trim();
   const description = workflow.description.trim();
   if (!description) return "";
   const sentence = description.split(/(?<=[.!?])\s+/)[0];

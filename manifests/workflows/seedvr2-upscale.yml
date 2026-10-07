@@ -4,6 +4,7 @@ version: "0.1.0"
 id: image.edit.seedvr2-upscale
 intent: image.edit
 display_name: SeedVR2 7B Sharp Upscale
+purpose: Upscale and restore an image
 description: >-
   One-step image upscale/restore via SeedVR2 7B Sharp (int8_convrot, Apache-2.0, ICLR 2026). Verified
   at 2x (1024->2048) and 4x (1024->4096): both sharp, no grid/halo artifacts, genuinely enhanced

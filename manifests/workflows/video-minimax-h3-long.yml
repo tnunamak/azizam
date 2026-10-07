@@ -4,6 +4,7 @@ version: "0.1.0"
 id: video.generate.minimax-h3-long
 intent: video.generate
 display_name: MiniMax H3 Long
+purpose: Long videos with sound
 description: >-
   MiniMax H3 long video with native audio. The manifest binds the single-segment (10 s) reference
   graph; POST /v1/videos builds longer chains (shots, seconds past 10 s) and POST /v1/videos/extensions

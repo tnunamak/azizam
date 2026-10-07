@@ -4,6 +4,7 @@ version: "0.1.0"
 id: image.generate.flux2-klein-4b
 intent: image.generate
 display_name: Flux2 Klein 4B
+purpose: Fast images from a prompt
 description: Portable image generation contract bound to the FLUX.2 Klein 4B txt2img ComfyUI workflow.
 source: local
 trusted: true

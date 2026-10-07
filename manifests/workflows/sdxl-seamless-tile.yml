@@ -4,6 +4,7 @@ version: "0.1.1"
 id: image.generate.sdxl-seamless-tile
 intent: image.generate
 display_name: SDXL Seamless Tile
+purpose: Seamless textures in the SDXL style
 description: Portable image generation contract for SDXL texture tiles with manifest-backed seamless postprocessing controls.
 source: local
 trusted: true

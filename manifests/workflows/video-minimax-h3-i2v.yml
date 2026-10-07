@@ -4,6 +4,7 @@ version: 0.1.0
 id: video.generate.minimax-h3-i2v
 intent: video.generate
 display_name: MiniMax H3 I2V
+purpose: Animate an image with stereo sound
 description: 'MiniMax H3 FL2VA first-frame image-to-video with native stereo audio. Selected automatically
   when /v1/videos gets input_reference with model minimax-h3, or by model id. Same size and length rules
   as minimax-h3. About 185 s for 5 s at 960x544. LICENSE: the MiniMax H3 Community License excludes use

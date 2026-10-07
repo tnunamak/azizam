@@ -4,6 +4,7 @@ version: "0.1.1"
 id: image.edit.flux2-klein-4b-inpaint
 intent: image.edit
 display_name: Flux2 Klein 4B Inpaint
+purpose: Repaint a marked area of an image
 description: Mask-bound FLUX.2 Klein edit workflow. The OpenAI image edit mask is normalized by the gateway and applied inside ComfyUI with SetLatentNoiseMask.
 source: local
 trusted: true

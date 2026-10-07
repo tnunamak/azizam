@@ -182,6 +182,7 @@ def summarize_workflow(record: WorkflowRecord, audience: str) -> dict[str, Any]:
         "version": manifest.get("version"),
         "schema_version": manifest.get("schema_version"),
         "display_name": manifest.get("display_name"),
+        "purpose": manifest.get("purpose"),
         "description": manifest.get("description"),
         "exposure": _manifest_string(manifest, "exposure", default="default"),
         "trust_tier": _manifest_string(

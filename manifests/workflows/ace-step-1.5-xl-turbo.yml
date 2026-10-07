@@ -5,6 +5,7 @@ id: audio.generate.ace-step-1.5-xl-turbo
 intent: audio.generate
 capability: music
 display_name: ACE-Step 1.5 XL Turbo
+purpose: Songs and instrumentals from a prompt
 description: Songs and instrumentals from a prompt
 technical_description: Portable audio.generate contract bound to the ACE-Step 1.5 XL Turbo ComfyUI workflow.
 source: local

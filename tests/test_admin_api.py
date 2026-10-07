@@ -1160,6 +1160,7 @@ class FakeAdminStore:
         action_prefix: str | None = None,
         exclude_access_audit: bool = False,
         include_internal: bool = False,
+        include_automated: bool = False,
         before_created_at: int | None = None,
         before_id: str | None = None,
         target_kind: str | None = None,
@@ -1167,6 +1168,9 @@ class FakeAdminStore:
     ) -> dict[str, Any]:
         """Minimal in-memory implementation of cursor-paged audit for route tests."""
         rows = list(self.audit)
+        automated_count = sum(
+            row.get("actor_kind") == "service_account" for row in rows
+        )
         # Apply keyset cursor (audit rows in this fake store have a 'created_at'
         # and 'id' field when the real store is used; the fake rows may only
         # have partial fields — fall back gracefully).
@@ -1201,6 +1205,8 @@ class FakeAdminStore:
                     "service-account.deploy-smoke",
                 }
             ]
+        if not include_automated:
+            rows = [row for row in rows if row.get("actor_kind") != "service_account"]
         if target_kind is not None:
             rows = [r for r in rows if r.get("target_kind") == target_kind]
         if target_id is not None:
@@ -1218,7 +1224,11 @@ class FakeAdminStore:
         if has_more and page:
             last = page[-1]
             next_cursor = f"{last.get('created_at', 0)}:{last.get('id', '')}"
-        return {"records": page, "next_cursor": next_cursor}
+        return {
+            "records": page,
+            "next_cursor": next_cursor,
+            "automated_count": automated_count,
+        }
 
     def get_oidc_config_setting(self) -> dict[str, Any] | None:
         raw: dict[str, Any] | None = getattr(self, "_oidc_config", None)
@@ -2210,6 +2220,45 @@ class AdminPolicySimulationTests(unittest.TestCase):
 
 
 class AdminAuditTests(unittest.TestCase):
+    def test_service_account_activity_is_grouped_and_hidden_by_default(self) -> None:
+        client, store = _make_client()
+        store.audit.extend(
+            [
+                {
+                    "id": "human-change",
+                    "created_at": 1,
+                    "actor_kind": "user",
+                    "action": "operator.service_registry.backfill",
+                },
+                {
+                    "id": "automated-key",
+                    "created_at": 2,
+                    "actor_kind": "service_account",
+                    "actor_id": "svc_deploy",
+                    "actor_label": "safe-restart",
+                    "action": "credential.create",
+                },
+                {
+                    "id": "automated-app",
+                    "created_at": 3,
+                    "actor_kind": "service_account",
+                    "actor_id": "svc_deploy",
+                    "actor_label": "safe-restart",
+                    "action": "app.create",
+                },
+            ]
+        )
+
+        hidden = client.get("/admin/api/audit", headers=_auth()).json()
+        self.assertEqual([row["id"] for row in hidden["records"]], ["human-change"])
+        self.assertEqual(hidden["automated_count"], 2)
+
+        shown = client.get(
+            "/admin/api/audit?show_automated=true", headers=_auth()
+        ).json()
+        self.assertEqual(len(shown["records"]), 3)
+        self.assertEqual(shown["automated_count"], 2)
+
     def test_audit_prefix_fields_accept_only_derived_public_prefixes(self) -> None:
         client, store = _make_client()
         public_prefix = "opk_" + "A" * 14
@@ -2253,7 +2302,9 @@ class AdminAuditTests(unittest.TestCase):
                 "innocuous": "also-secret",
             },
         })
-        response = client.get("/admin/api/audit", headers=_auth())
+        response = client.get(
+            "/admin/api/audit?show_automated=true", headers=_auth()
+        )
         self.assertEqual(response.status_code, 200, response.text)
         record = response.json()["records"][0]
         self.assertEqual(record["actor_kind"], "service_account")

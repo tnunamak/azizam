@@ -4,6 +4,7 @@ version: "0.1.0"
 id: video.generate.wan-2.2-ti2v-5b-q8
 intent: video.generate
 display_name: WAN 2.2 TI2V 5B Q8
+purpose: Short videos from a prompt or image
 description: Minimal video.generate contract bound to the WAN 2.2 TI2V 5B Q8 ComfyUI workflow.
 source: local
 trusted: true

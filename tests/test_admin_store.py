@@ -704,6 +704,26 @@ class TestProfilesAndAudit(AdminStoreTestBase):
         self.assertEqual(listed[0]["action"], "credential.create")
         self.assertEqual(listed[0]["metadata"], {"prefix": "sk_live_brother"})
 
+    def test_audit_can_hide_service_account_activity_and_count_the_group(self) -> None:
+        admin_store.record_audit(
+            "credential.create",
+            actor_kind="service_account",
+            actor_id="svc_deploy",
+            path=self.db,
+        )
+        admin_store.record_audit(
+            "credential.create",
+            actor_kind="user",
+            actor_id="usr_owner",
+            path=self.db,
+        )
+
+        visible = admin_store.list_audit(
+            exclude_service_account_activity=True, path=self.db
+        )
+        self.assertEqual([row["actor_kind"] for row in visible], ["user"])
+        self.assertEqual(admin_store.count_service_account_audit(path=self.db), 1)
+
 
 class TestAdminRoles(AdminStoreTestBase):
     def test_role_must_target_control_plane_subject(self) -> None:

@@ -16,6 +16,7 @@ export interface Workflow {
   id: string;
   capability: string;
   title: string;
+  purpose?: string;
   description: string;
   technical_notes?: string;
   inputs: WorkflowInput[];

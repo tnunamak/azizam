@@ -253,6 +253,7 @@ class AdminStore(Protocol):
         action_prefix: str | None = None,
         exclude_access_audit: bool = False,
         include_internal: bool = False,
+        include_automated: bool = False,
         before_created_at: int | None = None,
         before_id: str | None = None,
         target_kind: str | None = None,
@@ -3044,7 +3045,11 @@ def create_admin_router(
         actor_id = request.query_params.get("actor_id") or None
         action_prefix = request.query_params.get("action_prefix") or None
         exclude_access_audit = request.query_params.get("exclude_access_audit") == "true"
-        include_internal = request.query_params.get("show_internal") == "true"
+        include_automated = request.query_params.get("show_automated") == "true"
+        include_internal = (
+            request.query_params.get("show_internal") == "true"
+            or include_automated
+        )
         before_created_at: int | None = None
         before_id: str | None = None
         before_raw = request.query_params.get("before") or None
@@ -3080,6 +3085,7 @@ def create_admin_router(
             actor_id=actor_id,
             action_prefix=action_prefix,
             include_internal=include_internal,
+            include_automated=include_automated,
             before_created_at=before_created_at,
             before_id=before_id,
             **page_filters,
@@ -3089,6 +3095,7 @@ def create_admin_router(
             content={
                 "records": [_safe_audit_record(row) for row in page["records"]],
                 "next_cursor": page["next_cursor"],
+                "automated_count": page.get("automated_count", 0),
             },
         )
 

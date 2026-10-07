@@ -463,6 +463,7 @@ export interface OidcConfigUpdate {
 /** Response shape for GET /admin/api/audit (keyset-paginated). */
 export interface AuditPage {
   records: AuditEntry[];
+  automated_count?: number;
   /** Opaque cursor "<created_at>:<id>"; null when no more rows exist for the
    * current filter set. Pass verbatim as the `before` query param. */
   next_cursor: string | null;
@@ -474,6 +475,7 @@ export interface AuditQueryParams {
   actor_id?: string;
   action_prefix?: string;
   exclude_access_audit?: boolean;
+  show_automated?: boolean;
   /** Keyset cursor from a prior next_cursor. */
   before?: string;
 }
@@ -1045,6 +1047,8 @@ export const api = {
       if (params.action_prefix) q.set("action_prefix", params.action_prefix);
       if (params.exclude_access_audit !== undefined)
         q.set("exclude_access_audit", String(params.exclude_access_audit));
+      if (params.show_automated !== undefined)
+        q.set("show_automated", String(params.show_automated));
       if (params.before) q.set("before", params.before);
       const qs = q.toString();
       return adminFetch<AuditPage>(`/admin/api/audit${qs ? `?${qs}` : ""}`);

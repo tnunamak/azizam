@@ -4,6 +4,7 @@ version: "0.1.0"
 id: image.edit.qwen-image-2.1-inpaint
 intent: image.edit
 display_name: Qwen-Image 2.1 Inpaint (LanPaint)
+purpose: Repaint a marked area in fine detail
 description: >-
   Mask-bound inpaint combining Qwen-Image 2.1 with LanPaint (scraed/LanPaint; no dedicated Qwen 2.1
   inpaint checkpoint exists, LanPaint is the community-consensus universal inpainting tool, updated

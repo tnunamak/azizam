@@ -279,6 +279,45 @@ class WorkflowsCatalogTests(unittest.TestCase):
         image = next(row for row in payload["workflows"] if row["id"] == "image.generate.simple")
         self.assertEqual(image["description"], "Generate or edit images from your prompts.")
         self.assertEqual(image["technical_notes"], "Test image workflow.")
+        self.assertNotIn("purpose", image)
+
+    def test_every_exposed_builtin_workflow_has_a_distinct_short_purpose(self) -> None:
+        manifest_root = Path(__file__).resolve().parents[1] / "manifests" / "workflows"
+        registry = WorkflowRegistry.from_directory(manifest_root)
+        self.assertEqual(registry.errors, [])
+        records = registry.records()
+        payload = build_workflows_catalog(
+            records=records,
+            capabilities=[
+                Capability(
+                    intent=record.intent,
+                    backend=record.supported_backends[0],
+                    workflow=record.id,
+                )
+                for record in records
+            ],
+        )
+
+        purposes = [row.get("purpose", "").strip() for row in payload["workflows"]]
+        self.assertEqual(len(payload["workflows"]), len(records))
+        self.assertTrue(all(purposes), "every exposed workflow needs a purpose")
+        self.assertTrue(
+            all(len(purpose.split()) <= 8 for purpose in purposes),
+            "workflow purposes must use at most 8 words",
+        )
+        self.assertEqual(
+            len({purpose.casefold() for purpose in purposes}),
+            len(purposes),
+            "workflow purposes must be distinct",
+        )
+        self.assertTrue(
+            all(row["description"] == row["purpose"] for row in payload["workflows"]),
+            "capability fallback descriptions should not appear when purpose is set",
+        )
+        face = next(
+            row for row in payload["workflows"] if row["id"] == "image.analyze.face-likeness"
+        )
+        self.assertIn("Objective likeness check", face["technical_notes"])
 
     def test_catalog_description_rejects_internal_tokens_files_and_license_notes(self) -> None:
         for description in (

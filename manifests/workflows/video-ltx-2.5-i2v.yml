@@ -4,6 +4,7 @@ version: 0.1.0
 id: video.generate.ltx-2.5-i2v
 intent: video.generate
 display_name: LTX 2.5 Distilled I2V
+purpose: Animate an image, with sound
 description: 'LTX-2.5 22B distilled image-to-video with synchronized audio. Selected automatically when
   /v1/videos gets input_reference with model ltx-2.5, or by model id. Same size and length rules as ltx-2.5
   (multiples of 64, max 1280x704, 1-10 s). About 85 s for 5 s at 960x512. image_strength default 0.7.

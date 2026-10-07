@@ -1066,7 +1066,7 @@ def _usage_summary(
         capability = _capability(receipt)
         daily = by_day.setdefault(day, {"date": day})
         daily[capability] = daily.get(capability, 0) + 1
-        model = _usage_model(receipt, capability)
+        model = _usage_model(receipt)
         row = by_model.setdefault((model, capability), {"model": model, "requests": 0, "remote_spend": None,
                                           "capability": capability})
         row["requests"] += 1
@@ -1284,21 +1284,14 @@ def _capability(receipt: Mapping[str, Any]) -> str:
     return prefix or "other"
 
 
-def _usage_model(receipt: Mapping[str, Any], capability: str) -> str:
+def _usage_model(receipt: Mapping[str, Any]) -> str:
     model = _string_first(
         receipt.get("resolved_model"),
         receipt.get("requested_model"),
         receipt.get("model"),
         _nested(receipt, "metadata", "model"),
     )
-    if model:
-        return model
-    route = _string_first(
-        receipt.get("route_path"), receipt.get("route"), receipt.get("path")
-    )
-    if route:
-        return route
-    return ""
+    return model
 
 
 def _capability_label(capability: str) -> str:

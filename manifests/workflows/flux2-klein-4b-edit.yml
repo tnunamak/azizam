@@ -4,6 +4,7 @@ version: "0.3.0"
 id: image.edit.flux2-klein-4b
 intent: image.edit
 display_name: Flux2 Klein 4B Edit
+purpose: Edit an image from an instruction
 description: Portable image edit contract bound to the existing ComfyUI workflow.
 source: local
 trusted: true
