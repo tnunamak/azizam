@@ -170,13 +170,14 @@ export default function UsagePage() {
   const owner = ["owner", "superadmin"].includes(viewer.role);
   const effectivePerson =
     person === "default" ? (owner ? "all" : "self") : person;
-  const [selected, setSelected] = useState<UsageReceipt | null>(null);
+  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
   const { data, isPending, isFetching, isError, refetch } = useQuery({
     queryKey: ["usage", "summary", effectivePerson, source, owner],
     queryFn: () =>
       fetchUsageSummary(owner ? effectivePerson : "default", source),
     retry: false,
   });
+  const selected = data?.receipts.find((receipt) => receipt.requestId === selectedRequestId) ?? null;
   const hasUsage = Boolean(
     data && (data.requests > 0 || data.mediaCount > 0 || data.receipts.length),
   );
@@ -290,7 +291,7 @@ export default function UsagePage() {
             <ReceiptsList
               receipts={data.receipts}
               loading={isFetching}
-              onSelect={setSelected}
+              onSelect={(receipt) => setSelectedRequestId(receipt.requestId)}
             />
           ) : null}
           <CoverageNote summary={data} />
@@ -305,7 +306,7 @@ export default function UsagePage() {
       <ReceiptSheet
         receipt={selected}
         onOpenChange={(open) => {
-          if (!open) setSelected(null);
+          if (!open) setSelectedRequestId(null);
         }}
       />
     </div>

@@ -174,7 +174,7 @@ function duration(ms?: number | null) {
 export function Requests() {
   const [person, setPerson] = useState("");
   const [source, setSource] = useState("all");
-  const [record, setRecord] = useState<RequestRecord | null>(null);
+  const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null);
   const {
     data,
     isPending,
@@ -208,6 +208,7 @@ export function Requests() {
   }, [refetch]);
   const rows = data?.pages.flatMap((page) => page.records) ?? [];
   const people = data?.pages[0]?.people ?? [];
+  const record = rows.find((row) => row.receipt.request_id === selectedRequestId) ?? null;
   return (
     <div className="space-y-6">
       <p className="text-muted-foreground text-sm">
@@ -324,7 +325,7 @@ export function Requests() {
                 type="button"
                 aria-label={`Request details: ${requestSummary(row.receipt)} by ${row.person_label}`}
                 className="hover:bg-muted/40 focus-visible:outline-ring flex w-full min-w-0 items-center gap-3 py-4 text-left focus-visible:outline-2"
-                onClick={() => setRecord(row)}
+                onClick={() => setSelectedRequestId(row.receipt.request_id)}
               >
                 <div className="bg-muted hidden size-9 shrink-0 items-center justify-center rounded-full sm:flex">
                   <ReceiptText
@@ -403,7 +404,7 @@ export function Requests() {
       <Sheet
         open={record !== null}
         onOpenChange={(open) => {
-          if (!open) setRecord(null);
+          if (!open) setSelectedRequestId(null);
         }}
       >
         <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
