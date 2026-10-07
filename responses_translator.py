@@ -11,6 +11,8 @@ Mapping summary (Responses -> Chat Completions, on request):
                                    prior conversation is reconstructed as
                                    leading messages
   tools[type=function]          -> tools[type=function]  (shape differs)
+  tools[type=custom]            -> function with one string `input` parameter
+                                   (grammar is advisory description text)
   tools[type=hosted]            -> 400 not_supported_error
   tool_choice                   -> tool_choice (compatible shapes pass through)
   parallel_tool_calls           -> parallel_tool_calls
@@ -29,7 +31,7 @@ Mapping summary (Responses -> Chat Completions, on request):
 Mapping back (Chat Completions -> Responses, on response):
   choices[0].message.content    -> output: [ {type: message, role: assistant,
                                               content: [{type: output_text, text: ...}]} ]
-  choices[0].message.tool_calls -> output: [ {type: function_call, ...} ]
+  choices[0].message.tool_calls -> function_call or custom_tool_call, by request tool name
   usage                         -> usage (input_tokens / output_tokens / total_tokens)
   finish_reason=length          -> status=incomplete, incomplete_details
 
@@ -183,17 +185,20 @@ def _input_item_to_messages(item: dict, *, param: str = "input") -> list[dict]:
       - message (role + content)
       - function_call (assistant tool call)
       - function_call_output (tool result, role=tool)
+      - custom_tool_call (freeform input wrapped as function arguments)
+      - custom_tool_call_output (tool result, role=tool)
       - reasoning, refusal, image_generation_call, etc. -> dropped
     """
     if not isinstance(item, dict):
         return []
     itype = item.get("type")
-    if itype in ("custom_tool_call", "custom_tool_call_output"):
+    if itype == "additional_tools":
         raise ResponsesTranslationError(
-            "Azizam does not support custom tool calls or outputs.",
-            code="unsupported_operation",
-            param=f"{param}.type",
+            "Azizam does not support additional_tools input declarations. Put function and custom tools in tools.",
+            code="unsupported_operation", param=f"{param}.type",
         )
+    if itype == "custom_tool_call" and not isinstance(item.get("input"), str):
+        raise ResponsesTranslationError("Custom tool call input must be a string.", param=f"{param}.input")
     # "message" is the common case. Easy-input messages without an explicit
     # type still have role + content and should be treated as messages.
     if itype == "message" or (itype is None and "role" in item):
@@ -202,7 +207,7 @@ def _input_item_to_messages(item: dict, *, param: str = "input") -> list[dict]:
         if role == "developer":
             role = "system"
         return [{"role": role, "content": _content_to_chat_content(item.get("content"), param=f"{param}.content")}]
-    if itype == "function_call":
+    if itype in ("function_call", "custom_tool_call"):
         # Responses assistant tool call -> Chat assistant message with tool_calls.
         call_id = item.get("call_id") or item.get("id") or f"call_{secrets.token_hex(8)}"
         return [{
@@ -213,11 +218,15 @@ def _input_item_to_messages(item: dict, *, param: str = "input") -> list[dict]:
                 "type": "function",
                 "function": {
                     "name": item.get("name", ""),
-                    "arguments": item.get("arguments", "") or "",
+                    "arguments": (
+                        json.dumps({"input": item["input"]}, ensure_ascii=False)
+                        if itype == "custom_tool_call"
+                        else item.get("arguments", "") or ""
+                    ),
                 },
             }],
         }]
-    if itype == "function_call_output":
+    if itype in ("function_call_output", "custom_tool_call_output"):
         call_id = item.get("call_id") or item.get("id") or ""
         output = item.get("output", "")
         if isinstance(output, (list, dict)):
@@ -271,7 +280,7 @@ def _input_to_messages(input_value: Any) -> list[dict]:
 def _translate_tools(tools: Any) -> list[dict]:
     """Translate Responses `tools` -> Chat Completions `tools`.
 
-    Hosted tools are rejected. Function tools map cleanly.
+    Hosted tools are rejected. Custom tools use a reversible string wrapper.
     """
     if tools is None:
         return []
@@ -291,8 +300,7 @@ def _translate_tools(tools: Any) -> list[dict]:
         if ttype in HOSTED_TOOL_TYPES:
             raise ResponsesTranslationError(
                 f"Hosted tool '{ttype}' is not supported by this proxy. "
-                f"Only `type: 'function'` tools are accepted; the proxy backs "
-                f"onto a local llama-server which has no first-party search, "
+                f"Only function and custom tools are accepted; the gateway has no first-party search, "
                 f"file search, code interpreter, or computer-use surface.",
                 code="hosted_tool_not_supported",
                 param=f"tools[{i}].type",
@@ -324,15 +332,36 @@ def _translate_tools(tools: Any) -> list[dict]:
             out.append({"type": "function", "function": fn})
             continue
         if ttype == "custom":
-            raise ResponsesTranslationError(
-                "Azizam does not support custom tools. Use function tools with JSON schemas.",
-                code="unsupported_operation",
-                param=f"tools[{i}].type",
-            )
+            name = tool.get("name")
+            if not isinstance(name, str) or not name:
+                raise ResponsesTranslationError("Custom tools require a non-empty name.", param=f"tools[{i}].name")
+            fmt = tool.get("format", {"type": "text"})
+            if not isinstance(fmt, dict) or fmt.get("type") not in ("text", "grammar"):
+                raise ResponsesTranslationError("Custom tool format must be text or grammar.", param=f"tools[{i}].format")
+            guidance = "Pass the freeform text verbatim in the string parameter input. Format: text."
+            if fmt["type"] == "grammar":
+                if fmt.get("syntax") not in ("lark", "regex") or not isinstance(fmt.get("definition"), str):
+                    raise ResponsesTranslationError("Grammar format requires lark or regex syntax and a string definition.", param=f"tools[{i}].format")
+                guidance = (
+                    "Pass the freeform text verbatim in the string parameter input. "
+                    f"Format: grammar ({fmt['syntax']}); advisory only, not enforced by Azizam.\n"
+                    + fmt["definition"]
+                )
+            out.append({"type": "function", "function": {
+                "name": name,
+                "description": ((tool.get("description") or "") + "\n\n" + guidance).strip(),
+                "parameters": {"type": "object", "properties": {"input": {"type": "string"}},
+                               "required": ["input"], "additionalProperties": False},
+            }})
+            continue
         raise ResponsesTranslationError(
             f"Unknown tool type '{ttype}' at tools[{i}].",
             param=f"tools[{i}].type",
         )
+    names = [tool["function"].get("name") for tool in out]
+    custom_names = {tool["name"] for tool in tools if tool.get("type") == "custom"}
+    if any(names.count(name) != 1 for name in custom_names):
+        raise ResponsesTranslationError("Tool names must be unique to distinguish function and custom calls.", param="tools")
     return out
 
 
@@ -348,12 +377,12 @@ def _translate_tool_choice(tc: Any) -> Any:
         return tc
     if isinstance(tc, dict):
         t = tc.get("type")
-        if t == "function":
+        if t in ("function", "custom"):
             name = tc.get("name") or (tc.get("function") or {}).get("name")
             if not name:
                 return "auto"
             return {"type": "function", "function": {"name": name}}
-        if t in ("allowed_tools", "custom"):
+        if t == "allowed_tools":
             raise ResponsesTranslationError(
                 f"Azizam does not support tool_choice type '{t}'.",
                 code="unsupported_operation",
@@ -593,7 +622,38 @@ def _reasoning_item(item_id: str, text: str, status: str = "completed") -> dict:
     }
 
 
-def _build_output_items_from_message(msg: dict) -> list[dict]:
+def _custom_tool_names(req: dict) -> set[str]:
+    """Request-local identity; never send translation metadata to a backend."""
+    return {tool["name"] for tool in req.get("tools") or []
+            if isinstance(tool, dict) and tool.get("type") == "custom" and isinstance(tool.get("name"), str)}
+
+
+def _custom_tool_input(arguments: str) -> str:
+    """Decode only the advertised wrapper, never guess at a malformed tool call."""
+    try:
+        value = json.loads(arguments)
+    except (ValueError, TypeError) as error:
+        raise ValueError("Upstream custom tool arguments must be a JSON object with one string input field.") from error
+    if not isinstance(value, dict) or set(value) != {"input"} or not isinstance(value["input"], str):
+        raise ValueError("Upstream custom tool arguments must be a JSON object with one string input field.")
+    return value["input"]
+
+
+def _tool_call_item(*, item_id: str, call_id: str, name: str, arguments: str,
+                    custom_names: set[str], status: str = "completed") -> dict:
+    custom = name in custom_names
+    return {
+        "id": item_id,
+        "type": "custom_tool_call" if custom else "function_call",
+        **({} if custom else {"status": status}),
+        "call_id": call_id,
+        "name": name,
+        **({"input": _custom_tool_input(arguments) if status == "completed" else ""}
+           if custom else {"arguments": arguments}),
+    }
+
+
+def _build_output_items_from_message(msg: dict, custom_names: set[str]) -> list[dict]:
     """Map a Chat Completions assistant message to Responses output items.
 
     llama-server returns reasoning in a separate `reasoning_content` field
@@ -627,14 +687,12 @@ def _build_output_items_from_message(msg: dict) -> list[dict]:
         if not isinstance(tc, dict):
             continue
         fn = tc.get("function") or {}
-        items.append({
-            "id": "fc_" + secrets.token_hex(12),
-            "type": "function_call",
-            "status": "completed",
-            "call_id": tc.get("id") or ("call_" + secrets.token_hex(8)),
-            "name": fn.get("name", ""),
-            "arguments": fn.get("arguments", "") or "",
-        })
+        name = fn.get("name", "")
+        items.append(_tool_call_item(
+            item_id=("ctc_" if name in custom_names else "fc_") + secrets.token_hex(12),
+            call_id=tc.get("id") or ("call_" + secrets.token_hex(8)),
+            name=name, arguments=fn.get("arguments", "") or "", custom_names=custom_names,
+        ))
     return items
 
 
@@ -690,7 +748,7 @@ def from_chat_completions(
     choices = cc_resp.get("choices") or []
     first = choices[0] if choices else {}
     msg = first.get("message") or {}
-    output = _build_output_items_from_message(msg)
+    output = _build_output_items_from_message(msg, _custom_tool_names(original_request))
 
     finish_reason = first.get("finish_reason")
     status = "completed"
@@ -771,20 +829,8 @@ def stored_chain_to_messages(chain: list[dict]) -> list[dict]:
             if itype == "message":
                 text = _coerce_content_to_text(item.get("content"))
                 messages.append({"role": "assistant", "content": text})
-            elif itype == "function_call":
-                call_id = item.get("call_id") or item.get("id") or f"call_{secrets.token_hex(8)}"
-                messages.append({
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [{
-                        "id": call_id,
-                        "type": "function",
-                        "function": {
-                            "name": item.get("name", ""),
-                            "arguments": item.get("arguments", "") or "",
-                        },
-                    }],
-                })
+            elif itype in ("function_call", "custom_tool_call"):
+                messages.extend(_input_item_to_messages(item))
     return messages
 
 
@@ -838,6 +884,7 @@ class StreamTranslator:
         self.response_id = response_id
         self.created_at = int(created_at)
         self.original_request = original_request
+        self._custom_names = _custom_tool_names(original_request)
         self._seq = 0
         self._started = False
         self._buf = ""
@@ -1035,6 +1082,22 @@ class StreamTranslator:
 
     def _ensure_tool_call_item(self, tc_index: int, tc_id: Optional[str], name: Optional[str]) -> tuple[list[bytes], dict]:
         out_events: list[bytes] = self._close_reasoning()
+        if self._custom_names:
+            # Buffer mixed tool calls until names and JSON wrappers are complete.
+            # A name can itself arrive in fragments; announcing it early could
+            # incorrectly commit a custom call to the function-call wire shape.
+            if tc_index not in self._tool_calls:
+                self._tool_calls[tc_index] = {
+                    "item_id": "tc_" + secrets.token_hex(12),
+                    "call_id": tc_id or ("call_" + secrets.token_hex(8)),
+                    "name": "", "arguments": "",
+                }
+            entry = self._tool_calls[tc_index]
+            if tc_id:
+                entry["call_id"] = tc_id
+            if name:
+                entry["name"] += name
+            return out_events, entry
         if tc_index not in self._tool_calls:
             order_idx = len(self._output_order)
             fc_id = "fc_" + secrets.token_hex(12)
@@ -1196,6 +1259,8 @@ class StreamTranslator:
                 events.extend(ev)
                 if args_chunk:
                     entry["arguments"] += args_chunk
+                    if self._custom_names:
+                        continue
                     events.append(sse_pack("response.function_call_arguments.delta", {
                         "type": "response.function_call_arguments.delta",
                         "sequence_number": self._next_seq(),
@@ -1227,6 +1292,15 @@ class StreamTranslator:
                 events.extend(self.fail("Upstream stream ended with incomplete UTF-8."))
         if not self._error and self._finish_reason is None:
             events.extend(self.fail("Upstream stream ended without a finish_reason."))
+        if self._custom_names and not self._error:
+            try:
+                for entry in self._tool_calls.values():
+                    entry["item"] = _tool_call_item(
+                        item_id=entry["item_id"], call_id=entry["call_id"], name=entry["name"],
+                        arguments=entry["arguments"], custom_names=self._custom_names,
+                    )
+            except ValueError as error:
+                events.extend(self.fail(str(error), code="upstream_error"))
         self._finished = True
         events.extend(self._close_reasoning())
 
@@ -1268,26 +1342,49 @@ class StreamTranslator:
 
         # Close tool-call items.
         for tc_index, entry in self._tool_calls.items():
-            events.append(sse_pack("response.function_call_arguments.done", {
-                "type": "response.function_call_arguments.done",
+            if self._custom_names and self._error:
+                continue
+            item = entry.get("item") or _tool_call_item(
+                item_id=entry["item_id"], call_id=entry["call_id"], name=entry["name"],
+                arguments=entry["arguments"], custom_names=self._custom_names,
+            )
+            custom = item["type"] == "custom_tool_call"
+            event_prefix = "response.custom_tool_call_input" if custom else "response.function_call_arguments"
+            field = "input" if custom else "arguments"
+            if self._custom_names:
+                # Do not reserve an output slot before its added event. SDK
+                # accumulators append items and index subsequent deltas directly.
+                entry["order_index"] = len(self._output_order)
+                self._output_order.append(("function_call", tc_index))
+                events.append(sse_pack("response.output_item.added", {
+                    "type": "response.output_item.added",
+                    "sequence_number": self._next_seq(),
+                    "output_index": entry["order_index"],
+                    "item": _tool_call_item(
+                        item_id=entry["item_id"], call_id=entry["call_id"], name=entry["name"],
+                        arguments="", custom_names=self._custom_names, status="in_progress",
+                    ),
+                }))
+                if item[field]:
+                    events.append(sse_pack(event_prefix + ".delta", {
+                        "type": event_prefix + ".delta", "sequence_number": self._next_seq(),
+                        "item_id": entry["item_id"], "output_index": entry["order_index"],
+                        "delta": item[field],
+                    }))
+            events.append(sse_pack(event_prefix + ".done", {
+                "type": event_prefix + ".done",
                 "sequence_number": self._next_seq(),
                 "item_id": entry["item_id"],
                 "output_index": entry["order_index"],
-                "arguments": entry["arguments"],
+                field: item[field],
             }))
             events.append(sse_pack("response.output_item.done", {
                 "type": "response.output_item.done",
                 "sequence_number": self._next_seq(),
                 "output_index": entry["order_index"],
-                "item": {
-                    "id": entry["item_id"],
-                    "type": "function_call",
-                    "status": "completed",
-                    "call_id": entry["call_id"],
-                    "name": entry["name"],
-                    "arguments": entry["arguments"],
-                },
+                "item": item,
             }))
+            entry["emitted"] = True
 
         if emit_terminal:
             events.extend(self.terminal_event())
@@ -1331,16 +1428,12 @@ class StreamTranslator:
                 })
             elif kind == "function_call":
                 entry = self._tool_calls.get(key)
-                if not entry:
+                if not entry or (self._custom_names and not entry.get("emitted")):
                     continue
-                output.append({
-                    "id": entry["item_id"],
-                    "type": "function_call",
-                    "status": "completed",
-                    "call_id": entry["call_id"],
-                    "name": entry["name"],
-                    "arguments": entry["arguments"],
-                })
+                output.append(entry.get("item") or _tool_call_item(
+                    item_id=entry["item_id"], call_id=entry["call_id"], name=entry["name"],
+                    arguments=entry["arguments"], custom_names=self._custom_names,
+                ))
 
         status = "completed"
         incomplete_details = None

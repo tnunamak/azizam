@@ -25598,12 +25598,16 @@ async def create_response(request: Request):
                     status=502,
                 )
 
-            resp_json = responses_translator.from_chat_completions(
-                cc_json,
-                response_id=response_id,
-                created_at=created_at,
-                original_request=req_body,
-            )
+            try:
+                resp_json = responses_translator.from_chat_completions(
+                    cc_json,
+                    response_id=response_id,
+                    created_at=created_at,
+                    original_request=req_body,
+                )
+            except ValueError as error:
+                owner.report(status="failed", reason="read_error")
+                return _responses_error(str(error), code="upstream_error", status=502)
 
             if store:
                 try:
