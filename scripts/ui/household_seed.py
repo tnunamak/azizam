@@ -14,6 +14,13 @@ from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+STABLE_TARGETS = {
+    "fast": "qwen-8b",
+    "default": "qwen-27b",
+    "coder": "qwen-coder",
+    "image": "krea2-turbo",
+    "voice": "tts-1",
+}
 PASSWORD = "Household browser password 2026"
 FIXTURES = Path(__file__).parent / "fixtures" / "household"
 # Engine and model knowledge is fixture DATA, authored through registry contracts.
@@ -56,6 +63,54 @@ SERVICE_NAMES = {
     "household-remote": "Remote backup",
 }
 
+MODEL_METADATA = {
+    "chat": {
+        "type": "language",
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+    },
+    "image": {
+        "type": "image",
+        "input_modalities": ["text"],
+        "output_modalities": ["image"],
+    },
+    "image-edit": {
+        "type": "image",
+        "input_modalities": ["text", "image"],
+        "output_modalities": ["image"],
+    },
+    "tts": {
+        "type": "audio",
+        "input_modalities": ["text"],
+        "output_modalities": ["audio"],
+    },
+    "stt": {
+        "type": "audio",
+        "input_modalities": ["audio"],
+        "output_modalities": ["text"],
+    },
+    "music": {
+        "type": "audio",
+        "input_modalities": ["text"],
+        "output_modalities": ["audio"],
+    },
+    "sfx": {
+        "type": "audio",
+        "input_modalities": ["text"],
+        "output_modalities": ["audio"],
+    },
+    "video": {
+        "type": "video",
+        "input_modalities": ["text"],
+        "output_modalities": ["video"],
+    },
+    "embeddings": {
+        "type": "embedding",
+        "input_modalities": ["text"],
+        "output_modalities": ["embedding"],
+    },
+}
+
 
 def registry(engine_port: int) -> dict:
     from gateway.service_registry import normalize_service_registry
@@ -75,10 +130,17 @@ def registry(engine_port: int) -> dict:
                 {
                     "id": mid,
                     "model_group": mid,
-                    "upstream_model": mid,
+                    "upstream_model": STABLE_TARGETS.get(mid, mid),
+                    **(
+                        {"base_model_id": STABLE_TARGETS[mid]}
+                        if mid in STABLE_TARGETS
+                        else {}
+                    ),
                     "name": name,
                     "capabilities": [cap],
                     "mode": cap,
+                    "model_metadata": MODEL_METADATA[cap],
+                    "capability": cap,
                     "context_length": 131072 if cap == "chat" else None,
                     "input_cost_per_token": (
                         0.0000004 if mid == "gpt-mini" else 0.000003
@@ -112,7 +174,9 @@ def registry(engine_port: int) -> dict:
             "role": "optional"
             if sid in {"household-video", "household-embedding"}
             else "required",
-            "capabilities": sorted({cap for _, _, cap in models}),
+            "capabilities": ["audio", "music", "sfx"]
+            if sid == "household-voice"
+            else sorted({cap for _, _, cap in models}),
             "config": config,
             "lifecycle": {"type": "external", "managed": False},
         }
@@ -202,6 +266,26 @@ def seed(state: Path, port: int) -> dict:
     metrics_store.init_db(paths["metrics"])
     providers.ensure_ledger(paths["provider_spend"])
     now = int(time.time())
+    config_path = state / "config.yml"
+    if config_path.is_file():
+        import yaml
+
+        document = yaml.safe_load(config_path.read_text())
+        document["model_aliases"] = {
+            "chat": {
+                "stable": {
+                    name: STABLE_TARGETS[name] for name in ("fast", "default", "coder")
+                }
+            },
+            "images": {"stable": {"image": "krea2-turbo"}},
+            "speech": {
+                "stable": {"voice": ["tts-1"]},
+                "engines": {
+                    "tts-1": {"service": "household-voice", "model": "tts-1"}
+                },
+            },
+        }
+        config_path.write_text(yaml.safe_dump(document))
     reg = registry(port + 1)
     admin_store.write_service_registry(
         reg, expected_generation=0, updated_by="household-fixture", path=paths["admin"]

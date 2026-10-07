@@ -431,7 +431,11 @@ for (const width of [390, 1440]) {
     });
     await page.goto("/ui/library/");
     await page.getByRole("button", { name: "Load more", exact: true }).click();
-    await expect(page.getByRole("alert")).toBeVisible();
+    await expect(
+      page.getByRole("alert").filter({
+        hasText: "More library items could not be loaded.",
+      }),
+    ).toBeVisible();
     await expect(
       page.getByRole("button", { name: `Open ${prompt}` }),
     ).toBeVisible();

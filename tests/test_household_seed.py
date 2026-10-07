@@ -156,3 +156,37 @@ def test_household_media_process_boundary(tmp_path):
             {18184},
             cache,
         )
+
+
+def test_household_model_declarations_override_language_discovery():
+    from gateway import model_metadata
+    from gateway.model_presentation import LISTED_METADATA_KEY, product_capability
+    from scripts.ui.household_seed import registry
+
+    expected = {
+        "krea2-turbo": "image",
+        "qwen-image-edit": "image",
+        "tts-1": "speech",
+        "whisper-large": "transcribe",
+        "musicgen": "music",
+        "audio-sfx": "sfx",
+        "ltx-2.5": "video",
+        "bge-m3": "embed",
+    }
+    rows = {
+        model["id"]: model
+        for service in registry(18185)["services"].values()
+        for model in service["config"].get("models", [])
+    }
+    for model_id, capability in expected.items():
+        row = rows[model_id]
+        declared = model_metadata.apply_declared(
+            model_metadata.from_capability("chat.completions"), row["model_metadata"]
+        )
+        assert (
+            product_capability(
+                "speech.synthesis" if model_id == "tts-1" else "audio.generate",
+                {**row, LISTED_METADATA_KEY: declared.to_fields()},
+            )
+            == capability
+        )

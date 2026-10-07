@@ -40,3 +40,27 @@ After the screenshot tour, use `scripts/ui/collect_screens.py --destination
 <review-directory> --since <run-start-unix-seconds>` to exclude earlier captures.
 Compatibility admin routes reuse their destination's screenshot matrix. Retired
 admin pages and fixtures are excluded even if their old screenshots remain.
+
+For the seeded household review, run `scripts/ui/design-review-capture [output-directory]`
+from any directory. It starts the isolated `serve.py`
+supervisor with the household profile, signs in as Sam (owner) and Robin
+(member), then captures every product route at 1440px and 390px in light and
+dark themes. Screenshots and `manifest.json` go to
+`~/.tmp/gw-product/ui-review/household` by default; pass a new or empty output
+directory or set `UI_CAPTURE_DIR` to choose another destination. The runner
+refuses to write into a nonempty directory. `UI_E2E_PORT` can select an isolated port from
+18000–18998. The manifest records requested route, view, theme, width, observed
+state, actual route after navigation, filename, and adjacent body-text file.
+Member admin API restrictions include their HTTP status; redirects include the
+requested and actual route. The manifest records interactions that could not be opened under
+`skipped_states`. Every requested owner interaction must be captured for all
+four theme/width combinations or the run fails with a diagnostic manifest.
+Member People and Activity tabs can be unavailable by design. The tour captures
+People invite/plan tabs, Activity Changes and Requests tabs, a failed Activity
+receipt, the Status alert, New app, invite dialog, Try result, and Library detail.
+
+`UI_SEED_PROFILE=household` is opt-in for `scripts/ui/serve.py`; it seeds only
+fresh isolated harness state. The fixture covers Sam, Robin, a restricted
+member, apps, requests, provider spend, engine health, and generated media.
+Remote provider behavior and login use synthetic local fixtures; the harness
+does not contact an external identity provider or remote model service.
