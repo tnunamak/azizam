@@ -1895,18 +1895,27 @@ export default function ProvidersPage() {
     error: providersError,
     isError: providersIsError,
     isPending: providersIsPending,
-    refetch: refetchProviders,
   } = useQuery({
     queryKey: ["providers"],
     queryFn: () => jsonFetch("/admin/api/providers"),
     retry: false,
   });
-  const { data: catalogData, isPending: catalogIsPending } = useQuery({
+  const {
+    data: catalogData,
+    error: catalogError,
+    isError: catalogIsError,
+    isPending: catalogIsPending,
+  } = useQuery({
     queryKey: ["providers", "catalog"],
     queryFn: () => jsonFetch("/admin/api/providers/-/catalog").then(mapCatalog),
     retry: false,
   });
-  const { data: plansData, isPending: plansIsPending } = useQuery({
+  const {
+    data: plansData,
+    error: plansError,
+    isError: plansIsError,
+    isPending: plansIsPending,
+  } = useQuery({
     queryKey: ["providers", "plans"],
     queryFn: () => jsonFetch("/admin/api/profiles").then(mapPlans),
     retry: false,
@@ -2026,6 +2035,8 @@ export default function ProvidersPage() {
   });
 
   const loading = providersIsPending || catalogIsPending || plansIsPending;
+  const loadFailed = providersIsError || catalogIsError || plansIsError;
+  const loadError = providersError ?? catalogError ?? plansError;
   const missingApi =
     providersError instanceof Error &&
     /404|not found/i.test(providersError.message);
@@ -2071,14 +2082,14 @@ export default function ProvidersPage() {
             description="This gateway does not expose the provider admin API yet. Local engines and explicit model aliases keep working."
             icon={ServerOff}
           />
-        ) : providersIsError ? (
+        ) : loadFailed ? (
           <div
             role="alert"
             className="border-danger/30 bg-danger/10 text-danger rounded-lg border p-4 text-sm"
           >
             <p>
-              {providersError instanceof Error
-                ? providersError.message
+              {loadError instanceof Error
+                ? loadError.message
                 : "Provider status failed."}
             </p>
             <Button
@@ -2086,7 +2097,7 @@ export default function ProvidersPage() {
               variant="outline"
               size="sm"
               className="mt-3"
-              onClick={() => refetchProviders()}
+              onClick={() => queryClient.refetchQueries({ queryKey: ["providers"] })}
             >
               <RefreshCw aria-hidden="true" /> Retry providers
             </Button>
