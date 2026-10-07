@@ -312,26 +312,32 @@ function controlFor(
       />
     );
   }
-  if (String(value ?? "").length > 80) {
-    return (
-      <Textarea
-        id={id}
-        aria-label={label}
-        aria-required={input.required || undefined}
-        disabled={disabled}
-        value={String(value ?? "")}
-        onChange={(event) => onChange(event.currentTarget.value)}
-      />
-    );
-  }
   return (
-    <Input
+    <Textarea
       id={id}
+      rows={1}
+      className={
+        String(value ?? "").length <= 80
+          ? "h-11 min-h-11 resize-none field-sizing-fixed py-1 shadow-none"
+          : undefined
+      }
       aria-label={label}
       aria-required={input.required || undefined}
       disabled={disabled}
       value={String(value ?? "")}
       onChange={(event) => onChange(event.currentTarget.value)}
+      onKeyDown={(event) => {
+        if (
+          event.key === "Enter" &&
+          !event.nativeEvent.isComposing &&
+          event.currentTarget.value.length <= 80
+        ) {
+          event.preventDefault();
+          event.currentTarget.form
+            ?.querySelector<HTMLButtonElement>('button[type="submit"]')
+            ?.click();
+        }
+      }}
     />
   );
 }

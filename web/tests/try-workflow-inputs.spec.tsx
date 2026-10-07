@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 
 import {
   WorkflowInputs,
@@ -297,6 +299,79 @@ describe("workflow input helpers", () => {
 });
 
 describe("WorkflowInputs", () => {
+  it("keeps short-string Enter submission and long-string multiline editing", async () => {
+    const submitted = vi.fn();
+    function Form() {
+      const [json, setJson] = useState(JSON.stringify({ prompt: "short" }));
+      return (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            submitted();
+          }}
+        >
+          <WorkflowInputs
+            inputs={[{ name: "prompt", type: "string" }]}
+            json={json}
+            onChange={setJson}
+          />
+          <button type="submit">Run</button>
+        </form>
+      );
+    }
+    const user = userEvent.setup();
+    render(<Form />);
+    const prompt = screen.getByRole("textbox", { name: "prompt" });
+    await user.click(prompt);
+    await user.keyboard("{Enter}");
+    expect(submitted).toHaveBeenCalledTimes(1);
+    expect(prompt).toHaveValue("short");
+    fireEvent.keyDown(prompt, { key: "Enter", isComposing: true });
+    expect(submitted).toHaveBeenCalledTimes(1);
+    await user.clear(prompt);
+    await user.paste("x".repeat(81));
+    await user.keyboard("{Enter}");
+    expect(prompt).toHaveValue("x".repeat(81) + "\n");
+    expect(submitted).toHaveBeenCalledTimes(1);
+    await user.clear(prompt);
+    screen.getByRole("button", { name: "Run" }).setAttribute("disabled", "");
+    await user.keyboard("{Enter}");
+    expect(submitted).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves the focused string control and caret across 80 characters", async () => {
+    function ControlledInputs() {
+      const [json, setJson] = useState(
+        JSON.stringify({ prompt: "x".repeat(79) }),
+      );
+      return (
+        <WorkflowInputs
+          inputs={[{ name: "prompt", type: "string" }]}
+          json={json}
+          onChange={setJson}
+        />
+      );
+    }
+    const user = userEvent.setup();
+    render(<ControlledInputs />);
+    const prompt = screen.getByRole("textbox", { name: "prompt" });
+    await user.click(prompt);
+    await user.keyboard("ab");
+    expect(screen.getByRole("textbox", { name: "prompt" })).toBe(prompt);
+    expect(prompt).toHaveFocus();
+    expect(prompt).toHaveValue("x".repeat(79) + "ab");
+    expect((prompt as HTMLTextAreaElement).selectionStart).toBe(81);
+    await user.keyboard("{Backspace}{Backspace}");
+    expect(screen.getByRole("textbox", { name: "prompt" })).toBe(prompt);
+    expect(prompt).toHaveFocus();
+    expect((prompt as HTMLTextAreaElement).selectionStart).toBe(79);
+    await user.paste("long pasted text");
+    expect(screen.getByRole("textbox", { name: "prompt" })).toBe(prompt);
+    expect(prompt).toHaveFocus();
+    expect(prompt).toHaveValue("x".repeat(79) + "long pasted text");
+    expect((prompt as HTMLTextAreaElement).selectionStart).toBe(95);
+  });
+
   it("updates the exact native request field and preserves advanced JSON", () => {
     const onChange = vi.fn();
     render(
