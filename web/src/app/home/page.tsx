@@ -813,7 +813,7 @@ function CreationMedia({
           type="button"
           variant="secondary"
           size="icon"
-          className="size-11"
+          className="relative z-10 size-11"
           aria-label={`${isPlaying ? "Pause" : "Play"} ${title}`}
           onClick={async () => {
             const audio = audioRef.current;
@@ -900,7 +900,16 @@ function CreationPreview({ creation }: { creation: HomeCreation }) {
     </>
   );
   if (creation.kind === "audio") {
-    return <article className={cardClass}>{body}</article>;
+    return (
+      <article className={`relative ${cardClass}`}>
+        {body}
+        <Link
+          href={`/library/?asset=${encodeURIComponent(creation.asset_id)}`}
+          aria-label={linkLabel}
+          className="focus-visible:ring-ring absolute inset-0 rounded-xl focus-visible:ring-2"
+        />
+      </article>
+    );
   }
   return (
     <Link

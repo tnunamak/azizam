@@ -297,3 +297,65 @@ describe("Home recent media recovery", () => {
     ).toBeVisible();
   });
 });
+
+describe("Home audio Library navigation", () => {
+  it.each([
+    ["spoken result", "Open Audio in Library: spoken result"],
+    ["", "Open Audio in Library"],
+  ])("HA-08 links audio to Library with prompt %j", async (prompt, name) => {
+    mockHomeMedia([
+      {
+        asset_id: "audio/with space",
+        kind: "audio",
+        prompt,
+        download_url: "/audio.wav",
+      },
+    ]);
+    renderHome();
+
+    expect(await screen.findByRole("link", { name })).toHaveAttribute(
+      "href",
+      "/library?asset=audio%2Fwith%20space",
+    );
+  });
+
+  it("HA-08 keeps audio play and pause separate from the Library link", async () => {
+    mockHomeMedia([
+      {
+        asset_id: "audio",
+        kind: "audio",
+        prompt: "spoken result",
+        download_url: "/audio.wav",
+      },
+    ]);
+    const play = vi
+      .spyOn(HTMLMediaElement.prototype, "play")
+      .mockImplementation(function (this: HTMLMediaElement) {
+        fireEvent.play(this);
+        return Promise.resolve();
+      });
+    const pause = vi
+      .spyOn(HTMLMediaElement.prototype, "pause")
+      .mockImplementation(function (this: HTMLMediaElement) {
+        fireEvent.pause(this);
+      });
+    renderHome();
+    const link = await screen.findByRole("link", {
+      name: "Open Audio in Library: spoken result",
+    });
+    const navigate = vi.fn();
+    link.addEventListener("click", navigate);
+    const button = screen.getByRole("button", { name: "Play spoken result" });
+    expect(button.closest("a")).toBeNull();
+    await userEvent.click(button);
+    expect(play).toHaveBeenCalledOnce();
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Pause spoken result" }),
+    );
+    expect(pause).toHaveBeenCalledOnce();
+    expect(navigate).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "Play spoken result" }),
+    ).toBeVisible();
+  });
+});
