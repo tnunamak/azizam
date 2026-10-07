@@ -13,15 +13,16 @@ test("receipt selection preserves real IDs and avoids duplicate and fallback col
   ];
   const keys = receiptSelectionKeys(receipts);
   expect(new Set(keys).size).toBe(receipts.length);
-  expect(keys[1]).toBe(fallback);
-  expect(receiptSelectionKeys([{ request_id: "real" }])).toEqual(["real"]);
+  expect(keys[1]).toBe(`id:${fallback}`);
+  expect(keys[1]).not.toBe(keys[0]);
+  expect(receiptSelectionKeys([{ request_id: "real" }])).toEqual(["id:real"]);
   expect(keys).toEqual(
     receiptSelectionKeys(receipts.map((receipt) => ({ ...receipt }))),
   );
   expect(
     receiptSelectionKeys([{ metadata: { a: 1, b: 2 }, intent: "chat" }])[0],
   ).toBe(fallback);
-  expect(receiptSelectionKeys([{ id: "legacy" }])).toEqual(["legacy"]);
+  expect(receiptSelectionKeys([{ id: "legacy" }])).toEqual(["id:legacy"]);
 });
 
 test("reordering duplicate real IDs keeps each key on its own receipt", () => {
@@ -45,4 +46,15 @@ test("removing a row cannot hand its key to an ID-less row that shifts up", () =
   const after = receiptSelectionKeys([{ ...receipt }], [bob]);
   expect(after).not.toContain(before[0]);
   expect(after[0]).toBe(before[1]);
+});
+
+test("a real ID equal to a generated key cannot take an existing selection", () => {
+  const running = { status: "running" };
+  const [selected] = receiptSelectionKeys([running]);
+  const after = receiptSelectionKeys([
+    { ...running },
+    { request_id: selected, status: "failed", capability: "image" },
+  ]);
+  expect(after[0]).toBe(selected);
+  expect(after[1]).not.toBe(selected);
 });
