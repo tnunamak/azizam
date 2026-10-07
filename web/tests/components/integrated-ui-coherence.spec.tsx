@@ -281,7 +281,7 @@ describe("integrated UI coherence", () => {
     expect(await screen.findByText("A quiet gateway")).toBeVisible();
     expect(
       screen.getByRole("link", { name: /A quiet gateway/ }),
-    ).toHaveAttribute("href", "/library");
+    ).toHaveAttribute("href", "/library?asset=img_recent");
     expect(requested).toContain("/me/api/media?limit=50");
     expect(requested.some((url) => url.includes("scope=everyone"))).toBe(false);
   });

@@ -108,7 +108,9 @@ describe("Home and Library polish", () => {
     ).toBeVisible();
     expect(screen.queryByText(/^(Welcome to|Hello,)/)).toBeNull();
     // The page outline keeps an h1, but no visible title repeats the navigation.
-    expect(screen.getByRole("heading", { level: 1, name: "Home" })).toHaveClass("sr-only");
+    expect(screen.getByRole("heading", { level: 1, name: "Home" })).toHaveClass(
+      "sr-only",
+    );
     const connect = screen.getByRole("region", { name: "Connect an app" });
     expect(
       within(connect).getByText("One address. A key for each app."),
@@ -250,21 +252,31 @@ describe("Home and Library polish", () => {
     await screen.findByRole("button", { name: "Open Ocean sounds" });
     const audio = container.querySelector("audio");
     expect(audio).not.toHaveAttribute("controls");
-    expect(audio).toHaveAttribute("preload", "metadata");
+    expect(audio).toHaveAttribute("preload", "none");
     const play = screen.getByRole("button", { name: "Play Ocean sounds" });
     expect(
       screen.getByRole("button", { name: "Open Ocean sounds" }).contains(play),
     ).toBe(false);
-    expect(audio).toHaveAttribute("src", "/signed/audio1");
+    expect(audio).not.toHaveAttribute("src");
     expect(audio?.closest("button")).toBeNull();
     expect(container.querySelector("video")).not.toBeNull();
     expect(screen.getByText("0:06")).toBeVisible();
     expect(screen.getByText("0:12")).toBeVisible();
     const playAudio = vi
       .spyOn(HTMLMediaElement.prototype, "play")
-      .mockResolvedValue();
+      .mockImplementation(function (this: HTMLMediaElement) {
+        expect(this).toHaveAttribute(
+          "src",
+          expect.stringContaining("/signed/audio1"),
+        );
+        return Promise.resolve();
+      });
     await userEvent.click(play);
     expect(playAudio).toHaveBeenCalledOnce();
+    expect(audio).toHaveAttribute(
+      "src",
+      expect.stringContaining("/signed/audio1"),
+    );
     expect(screen.queryByRole("dialog")).toBeNull();
     await userEvent.click(
       screen.getByRole("button", { name: "Open Ocean sounds" }),

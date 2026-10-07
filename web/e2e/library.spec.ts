@@ -336,7 +336,7 @@ test("library audio plays independently and video uses its recorded poster", asy
   await page.goto("/ui/library/");
   const audio = page.locator("article audio");
   await expect(audio).not.toHaveAttribute("controls", "");
-  await expect(audio).toHaveAttribute("preload", "metadata");
+  await expect(audio).toHaveAttribute("preload", "none");
   expect(await audio.evaluate((player) => player.closest("button"))).toBeNull();
   const play = page.getByRole("button", {
     name: `Play ${mediaFixture.assets[2].prompt}`,
@@ -392,4 +392,147 @@ test("library audio plays independently and video uses its recorded poster", asy
   );
   await expect(page.locator('[role="listbox"]')).toHaveCount(0);
   await auditPage(page);
+});
+
+for (const width of [390, 1440]) {
+  test(`Library retains pagination failures and wraps long prompts at ${width}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const prompt = "Azizam".repeat(90);
+    let attempts = 0;
+    await page.route("**/me/api/media?**", (route) => {
+      if (new URL(route.request().url()).searchParams.has("cursor")) {
+        attempts++;
+        return attempts === 1
+          ? route.fulfill({
+              status: 503,
+              json: { error: { message: "Page unavailable" } },
+            })
+          : route.fulfill({
+              json: {
+                assets: [
+                  {
+                    ...mediaFixture.assets[0],
+                    asset_id: "second",
+                    prompt: "Second saved image",
+                  },
+                ],
+                next_cursor: null,
+              },
+            });
+      }
+      return route.fulfill({
+        json: {
+          assets: [{ ...mediaFixture.assets[0], prompt }],
+          next_cursor: "next",
+        },
+      });
+    });
+    await page.goto("/ui/library/");
+    await page.getByRole("button", { name: "Load more", exact: true }).click();
+    await expect(page.getByRole("alert")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: `Open ${prompt}` }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: /Load more|Retry/i }).click();
+    await expect(
+      page.getByRole("button", { name: "Open Second saved image" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: `Open ${prompt}` }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    expect(
+      await dialog.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth,
+      ),
+    ).toBe(true);
+    await auditPage(page);
+  });
+}
+
+test("Library failed preview retries in place with the same URL", async ({
+  page,
+}) => {
+  let broken = true;
+  await page.route("**/me/api/media?**", (route) =>
+    route.fulfill({
+      json: {
+        assets: [
+          { ...mediaFixture.assets[0], download_url: "/azizam-retry.png" },
+        ],
+        next_cursor: null,
+      },
+    }),
+  );
+  await page.route("**/me/api/media/asset_image_1/download*", (route) =>
+    route.fulfill({ json: { download_url: "/azizam-retry.png" } }),
+  );
+  await page.route("**/azizam-retry.png", (route) =>
+    broken
+      ? route.fulfill({ status: 503, body: "Unavailable" })
+      : route.fulfill({
+          body: '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="teal"/></svg>',
+          contentType: "image/svg+xml",
+        }),
+  );
+  await page.goto("/ui/library/");
+  await expect(
+    page.getByRole("img", { name: "Image preview unavailable" }),
+  ).toBeVisible();
+  broken = false;
+  await page.getByRole("button", { name: /Retry/i }).click();
+  await expect(page.locator("article img")).toBeVisible();
+  await expect(
+    page.getByRole("img", { name: "Image preview unavailable" }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("Library waits for posters and exposes recovery after both candidates fail", async ({
+  page,
+}) => {
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let videoRequests = 0;
+  await page.route("**/me/api/media?**", (route) =>
+    route.fulfill({
+      json: {
+        assets: [
+          {
+            ...mediaFixture.assets[1],
+            download_url: "/azizam-broken.mp4",
+            poster_asset_id: "azizam-poster",
+          },
+        ],
+        next_cursor: null,
+      },
+    }),
+  );
+  await page.route("**/me/api/media/azizam-poster/download*", async (route) => {
+    await pending;
+    await route.fulfill({
+      json: { download_url: "/azizam-broken-poster.png" },
+    });
+  });
+  await page.route("**/azizam-broken-poster.png", (route) =>
+    route.fulfill({ status: 404, body: "Unavailable" }),
+  );
+  await page.route("**/azizam-broken.mp4", (route) => {
+    videoRequests++;
+    return route.fulfill({ status: 404, body: "Unavailable" });
+  });
+  await page.goto("/ui/library/", { waitUntil: "domcontentloaded" });
+  await expect(
+    page.getByRole("button", { name: /Open Gateway status/ }),
+  ).toBeVisible();
+  expect(videoRequests).toBe(0);
+  await expect(page.locator("article video")).toHaveCount(0);
+  release();
+  await expect(
+    page.getByRole("img", { name: "Video preview unavailable" }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: /Retry/i })).toBeVisible();
 });

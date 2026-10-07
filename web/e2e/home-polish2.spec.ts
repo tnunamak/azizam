@@ -375,7 +375,7 @@ test("Home recent media carries content while requests stay in receipts", async 
   ).toBeVisible();
   await expect(
     page.locator('audio[src="/signed/polish-audio"]'),
-  ).toHaveAttribute("preload", "metadata");
+  ).toHaveAttribute("preload", "none");
   await expect(page.locator("main")).not.toContainText(
     "audio.generate.ace-step-1.5-2b-base",
   );
@@ -433,7 +433,7 @@ test("Home and Library render a frame from posterless video", async ({
     await page.goto(`/ui/${route}/`);
     const video = page.locator("main video");
     await expect(video).toBeVisible();
-    await expect(video).toHaveAttribute("preload", "metadata");
+    await expect(video).toHaveAttribute("preload", "none");
     await expect(video).toHaveJSProperty("muted", true);
     await expect
       .poll(() =>
@@ -465,4 +465,88 @@ test("Home and Library render a frame from posterless video", async ({
     );
     expect(violations).toEqual([]);
   }
+});
+
+for (const width of [390, 1440]) {
+  test(`Home names promptless links and wraps long prompts at ${width}`, async ({
+    page,
+    request,
+  }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await fixture(page, request);
+    const prompt = "Azizam".repeat(90);
+    const imageUrl =
+      "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Crect width='32' height='32' fill='teal'/%3E%3C/svg%3E";
+    await page.route("**/me/api/media?**", (route) =>
+      route.fulfill({
+        json: {
+          assets: [
+            {
+              asset_id: "empty-prompt",
+              kind: "image",
+              prompt: "  ",
+              download_url: imageUrl,
+            },
+            {
+              asset_id: "long-prompt",
+              kind: "image",
+              prompt,
+              download_url: imageUrl,
+            },
+          ],
+          has_more: false,
+        },
+      }),
+    );
+    await page.goto("/ui/home/");
+    await expect(
+      page.getByRole("link", { name: "Open Image in Library", exact: true }),
+    ).toBeVisible();
+    const longCard = page.getByRole("link", {
+      name: `Open Image in Library: ${prompt}`,
+    });
+    await expect(longCard).toBeVisible();
+    expect(
+      await longCard.evaluate(
+        (element) => element.scrollWidth <= element.clientWidth,
+      ),
+    ).toBe(true);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+  });
+}
+
+test("Home failed images show a named unavailable preview", async ({
+  page,
+  request,
+}) => {
+  await fixture(page, request);
+  await page.route("**/me/api/media?**", (route) =>
+    route.fulfill({
+      json: {
+        assets: [
+          {
+            asset_id: "broken",
+            kind: "image",
+            prompt: null,
+            download_url: "/azizam-home-broken.png",
+          },
+        ],
+        has_more: false,
+      },
+    }),
+  );
+  await page.route("**/azizam-home-broken.png", (route) =>
+    route.fulfill({ status: 404, body: "Unavailable" }),
+  );
+  await page.goto("/ui/home/");
+  await expect(
+    page.getByRole("img", { name: "Image preview unavailable" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Open Image in Library", exact: true }),
+  ).toBeVisible();
 });

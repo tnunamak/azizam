@@ -340,14 +340,13 @@ for (const width of [1440, 390] as const) {
     );
     await page.goto("/ui/library/");
     await expect(
-      page.getByText(
-        "Preview could not be loaded. Refresh the library to try again.",
-      ),
+      page.getByRole("img", { name: "Image preview unavailable" }),
     ).toBeVisible();
-    const refreshed = page.waitForEvent("load");
-    await page.getByRole("button", { name: "Refresh library" }).click();
-    await refreshed;
+    await page.getByRole("button", { name: "Retry" }).click();
     await expect.poll(() => requests).toBeGreaterThan(1);
+    await expect(
+      page.getByRole("img", { name: "Image preview unavailable" }),
+    ).toBeVisible();
     await expect(page.getByRole("dialog")).toHaveCount(0);
   });
 
@@ -373,9 +372,7 @@ for (const width of [1440, 390] as const) {
     await page.screenshot({
       path: `${REVIEW_DIR}/library-missing-media-light-${width}.png`,
     });
-    const refreshed = page.waitForEvent("load");
     await page.getByRole("button", { name: "Refresh library" }).click();
-    await refreshed;
     await expect.poll(() => requests).toBeGreaterThan(1);
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(page).not.toHaveURL(/asset=/);

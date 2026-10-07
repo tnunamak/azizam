@@ -221,7 +221,7 @@ describe("Home audit component behavior", () => {
     const video = document.querySelector(
       'video[src="https://media.example/video-no-poster.mp4"]',
     );
-    expect(video).toHaveAttribute("preload", "metadata");
+    expect(video).toHaveAttribute("preload", "none");
     expect((video as HTMLVideoElement).muted).toBe(true);
     expect(screen.queryByText("Video preview unavailable")).toBeNull();
   });

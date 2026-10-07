@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import NextImage from "next/image";
 import { useSearchParams } from "next/navigation";
 import {
@@ -176,6 +176,67 @@ async function mediaRequest<T>(
   return payload as T;
 }
 
+function useDebouncedValue<T>(value: T, delayMs: number) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(timer);
+  }, [delayMs, value]);
+  return debounced;
+}
+
+function usePreviewVisible() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(
+    typeof IntersectionObserver === "undefined",
+  );
+  useEffect(() => {
+    const node = ref.current;
+    if (!node || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting) {
+          setVisible(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  return { ref, visible };
+}
+
+function UnavailablePreview({
+  kind,
+  onRetry,
+}: {
+  kind: MediaKind;
+  onRetry?: (event: MouseEvent<HTMLButtonElement>) => void;
+}) {
+  const Icon = kindIcon(kind);
+  return (
+    <div className="bg-muted text-muted-foreground flex h-full min-h-32 flex-col items-center justify-center gap-3 p-4 text-center">
+      <div role="img" aria-label={`${kindLabel(kind)} preview unavailable`}>
+        <Icon aria-hidden="true" className="mx-auto size-8" />
+        <p className="mt-3 text-sm">Preview unavailable</p>
+      </div>
+      {onRetry ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="relative z-20"
+          onClick={onRetry}
+        >
+          Retry
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
 async function prepareDownload(asset: MediaAsset, everyone: boolean) {
   const path = `/me/api/media/${encodeURIComponent(asset.asset_id)}/download?scope=${everyone ? "everyone" : "me"}`;
   const response = await fetch(path, { credentials: "same-origin" });
@@ -219,6 +280,19 @@ function MiniAudioPlayer({
   );
   const [error, setError] = useState<"media" | "playback" | null>(null);
 
+  useEffect(() => {
+    setIsPlaying(false);
+    setMeasuredDuration(duration ?? null);
+    setError(null);
+    const audio = audioRef.current;
+    if (audio) {
+      const hadSource = audio.hasAttribute("src");
+      if (hadSource) audio.pause();
+      audio.removeAttribute("src");
+      if (hadSource) audio.load();
+    }
+  }, [duration, src]);
+
   const label = isPlaying ? `Pause ${title}` : `Play ${title}`;
   const durationLabel =
     error === "media"
@@ -238,8 +312,7 @@ function MiniAudioPlayer({
     >
       <audio
         ref={audioRef}
-        src={src}
-        preload="metadata"
+        preload="none"
         onLoadedMetadata={(event) => {
           setError(null);
           setMeasuredDuration(event.currentTarget.duration);
@@ -269,6 +342,9 @@ function MiniAudioPlayer({
             setIsPlaying(false);
             return;
           }
+          if (audio.getAttribute("src") !== src) {
+            audio.setAttribute("src", src);
+          }
           if (error === "media") {
             audio.load();
           }
@@ -288,6 +364,7 @@ function MiniAudioPlayer({
         <p className="truncate text-xs font-medium">Audio preview</p>
         {durationLabel ? (
           <p
+            role={error ? "status" : undefined}
             className={cn(
               "text-muted-foreground text-xs",
               error === "media" && "text-destructive",
@@ -305,16 +382,27 @@ function Preview({
   asset,
   large = false,
   everyone = false,
+  visible = true,
 }: {
   asset: MediaAsset;
   large?: boolean;
   everyone?: boolean;
+  visible?: boolean;
 }) {
   const src = asset.download_url ?? null;
   const Icon = kindIcon(asset.kind);
-  const [failed, setFailed] = useState(false);
+  const queryClient = useQueryClient();
+  const [mediaFailed, setMediaFailed] = useState(false);
   const [posterFailed, setPosterFailed] = useState(false);
-  const { data: poster } = useQuery({
+  const [retryKey, setRetryKey] = useState(0);
+  const [retrySrc, setRetrySrc] = useState<string | null>(null);
+  const [recovered, setRecovered] = useState(false);
+  const {
+    data: poster,
+    isPending: posterPending,
+    isError: posterLoadFailed,
+    refetch: refetchPoster,
+  } = useQuery({
     queryKey: ["library", "poster", asset.poster_asset_id, everyone],
     enabled: asset.kind === "video" && !!asset.poster_asset_id,
     queryFn: () =>
@@ -323,28 +411,79 @@ function Preview({
       ),
     retry: false,
   });
-  if (
-    asset.available === false ||
-    (failed && !(asset.kind === "video" && poster?.download_url))
-  )
+
+  useEffect(() => {
+    setMediaFailed(false);
+    setPosterFailed(false);
+    setRetryKey(0);
+    setRetrySrc(null);
+    setRecovered(false);
+  }, [asset.asset_id, src, asset.poster_asset_id]);
+
+  const posterUrl = poster?.download_url;
+  const effectivePosterUrl = posterFailed ? undefined : posterUrl;
+  const currentSrc = retrySrc ?? src;
+  const waitingForPoster =
+    asset.kind === "video" && !!asset.poster_asset_id && posterPending;
+  const posterUnavailable =
+    asset.kind !== "video" ||
+    !asset.poster_asset_id ||
+    posterLoadFailed ||
+    posterFailed ||
+    !effectivePosterUrl;
+  const mediaUnavailable =
+    !currentSrc || mediaFailed || (asset.available === false && !recovered);
+  const unavailable =
+    (asset.available === false && !recovered) ||
+    (large && mediaFailed) ||
+    (asset.kind === "video"
+      ? posterUnavailable && mediaUnavailable
+      : mediaUnavailable);
+  if (waitingForPoster && asset.available !== false)
     return (
       <div
-        role="img"
-        className="bg-muted text-muted-foreground flex h-full min-h-32 items-center justify-center"
-        aria-label={`${kindLabel(asset.kind)} preview unavailable`}
-      >
-        <Icon aria-hidden="true" className="size-8" />
-      </div>
+        role="status"
+        aria-label="Loading video poster"
+        className="bg-muted h-full min-h-32"
+      />
     );
-  if (asset.kind === "image" && src)
+  if (unavailable)
+    return (
+      <UnavailablePreview
+        kind={asset.kind}
+        onRetry={(event) => {
+          event.stopPropagation();
+          setMediaFailed(false);
+          setPosterFailed(false);
+          setRetryKey((value) => value + 1);
+          if (asset.poster_asset_id) void refetchPoster();
+          void mediaRequest<{ download_url?: string }>(
+            `/me/api/media/${encodeURIComponent(asset.asset_id)}/download?scope=${everyone ? "everyone" : "me"}`,
+          ).then(
+            (payload) => {
+              if (payload.download_url) {
+                setRetrySrc(payload.download_url);
+                setRecovered(true);
+                setMediaFailed(false);
+                setRetryKey((value) => value + 1);
+              }
+            },
+            () => undefined,
+          );
+          void queryClient.invalidateQueries({ queryKey: ["library"] });
+        }}
+      />
+    );
+  if (asset.kind === "image" && currentSrc)
     return (
       <NextImage
+        key={`image-${asset.asset_id}-${retryKey}-${currentSrc}`}
         unoptimized
         width={asset.width ?? 1024}
         height={asset.height ?? 768}
-        src={src}
+        src={currentSrc}
         alt={assetTitle(asset)}
-        onError={() => setFailed(true)}
+        onError={() => setMediaFailed(true)}
         className={cn(
           "h-full w-full",
           large ? "rounded-lg object-contain" : "object-cover",
@@ -353,23 +492,29 @@ function Preview({
     );
   if (
     asset.kind === "video" &&
-    src &&
-    (large || !poster?.download_url || posterFailed)
+    currentSrc &&
+    (!asset.poster_asset_id || !waitingForPoster) &&
+    (large || posterUnavailable)
   )
     return (
       <video
-        src={src}
-        poster={poster?.download_url}
-        preload="metadata"
+        key={`video-${asset.asset_id}-${retryKey}`}
+        src={large || visible ? currentSrc : undefined}
+        poster={effectivePosterUrl}
+        preload="none"
+        autoPlay={!large && visible}
         muted={!large}
         playsInline
+        onLoadedData={(event) => {
+          if (!large) event.currentTarget.pause();
+        }}
         onLoadedMetadata={(event) => {
           const video = event.currentTarget;
           if (!large && Number.isFinite(video.duration) && video.duration > 0) {
             video.currentTime = Math.min(0.1, video.duration / 2);
           }
         }}
-        onError={() => setFailed(true)}
+        onError={() => setMediaFailed(true)}
         className={cn(
           "h-full w-full",
           large ? "rounded-lg object-contain" : "object-cover",
@@ -378,23 +523,25 @@ function Preview({
         aria-label={assetTitle(asset)}
       />
     );
-  if (asset.kind === "video" && poster?.download_url)
+  if (asset.kind === "video" && effectivePosterUrl)
     return (
       <NextImage
         unoptimized
         width={asset.width ?? 1024}
         height={asset.height ?? 768}
-        src={poster.download_url}
+        src={effectivePosterUrl}
         alt={assetTitle(asset)}
         onError={() => setPosterFailed(true)}
         className="h-full w-full object-cover"
       />
     );
   if (asset.kind === "audio")
-    return large && src ? (
+    return large && currentSrc ? (
       <audio
         controls
-        src={src}
+        src={currentSrc}
+        preload="none"
+        onError={() => setMediaFailed(true)}
         aria-label="Generated audio"
         className="w-full"
       />
@@ -410,6 +557,8 @@ function Preview({
         "flex h-full items-center justify-center",
         "bg-muted text-muted-foreground",
       )}
+      role="img"
+      aria-label={`${kindLabel(asset.kind)} preview unavailable`}
     >
       <Icon className="size-8" aria-hidden />
     </div>
@@ -428,6 +577,7 @@ function AssetCard({
   modelCatalog?: ModelCatalog;
 }) {
   const Icon = kindIcon(asset.kind);
+  const { ref: visibilityRef, visible } = usePreviewVisible();
   return (
     <article className="group bg-card hover:border-primary/50 relative min-w-0 overflow-hidden rounded-xl border transition">
       <button
@@ -436,11 +586,12 @@ function AssetCard({
         className="focus-visible:ring-ring absolute inset-0 z-10 rounded-xl focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset"
         aria-label={`Open ${assetTitle(asset)}`}
       />
-      <div className="bg-muted relative aspect-[4/3]">
+      <div ref={visibilityRef} className="bg-muted relative aspect-[4/3]">
         <Preview
           key={`preview-${asset.asset_id}-${asset.download_url}`}
           asset={asset}
           everyone={everyone}
+          visible={visible}
         />
         <Badge
           variant="secondary"
@@ -470,14 +621,14 @@ function AssetCard({
       </div>
       <div className="space-y-1 p-3">
         {asset.prompt?.trim() ? (
-          <p className="line-clamp-2 min-h-10 text-sm font-medium">
+          <p className="line-clamp-2 min-h-10 min-w-0 text-sm font-medium break-words">
             {asset.prompt.trim()}
           </p>
         ) : null}
         {asset.model || asset.created_at ? (
-          <div className="text-muted-foreground flex items-center justify-between gap-2 text-xs">
+          <div className="text-muted-foreground flex min-w-0 items-center justify-between gap-2 text-xs">
             {asset.model && modelDisplayName(asset.model, modelCatalog) ? (
-              <span className="truncate">
+              <span className="min-w-0 truncate">
                 {modelDisplayName(asset.model, modelCatalog)}
               </span>
             ) : null}
@@ -652,7 +803,8 @@ export default function LibraryPage() {
   );
   const instanceView =
     ["owner", "superadmin"].includes(viewer.role) && owner !== "mine";
-  const filters = { kind, model, date, search, owner, source };
+  const debouncedSearch = useDebouncedValue(search, 250);
+  const filters = { kind, model, date, search: debouncedSearch, owner, source };
   const activeFilters = hasActiveFilters(filters);
   const mediaPath = buildMediaPath(filters);
   const deepLinkedAssetId = searchParams?.get("asset") ?? "";
@@ -689,27 +841,43 @@ export default function LibraryPage() {
     isError,
     isFetching,
     isFetchingNextPage,
+    isFetchNextPageError,
+    isPlaceholderData,
     hasNextPage,
     fetchNextPage,
     refetch,
   } = useInfiniteQuery({
     queryKey: ["library", filters],
     initialPageParam: "",
-    queryFn: ({ pageParam }) =>
+    placeholderData: (previous) => previous,
+    queryFn: ({ pageParam, signal }) =>
       mediaRequest<MediaResponse>(
         mediaPath +
-          (pageParam ? `&cursor=${encodeURIComponent(pageParam)}` : ""),
+          (pageParam ? `&cursor=${encodeURIComponent(String(pageParam))}` : ""),
+        { signal },
       ),
-    getNextPageParam: (last) => last.next_cursor ?? undefined,
+    getNextPageParam: (last: MediaResponse) => last.next_cursor ?? undefined,
     retry: false,
   });
+  const lastLoadedPages = useRef<MediaResponse[]>([]);
+  useEffect(() => {
+    if (data && !isPlaceholderData) lastLoadedPages.current = data.pages;
+  }, [data, isPlaceholderData]);
+  const mediaPages = useMemo(
+    () => data?.pages ?? (isError ? lastLoadedPages.current : []),
+    [data?.pages, isError],
+  );
   const assets = useMemo(
     () =>
-      (data?.pages.flatMap((page) => page.assets) ?? []).filter((item) =>
-        isMediaKind(item.kind),
-      ),
-    [data?.pages],
+      mediaPages
+        .flatMap((page) => page.assets)
+        .filter((item) => isMediaKind(item.kind)),
+    [mediaPages],
   );
+  const hasLoadedAssets = assets.length > 0;
+  const showInitialError = isError && !hasLoadedAssets && !isFetchNextPageError;
+  const showRetainedError =
+    (isError || isFetchNextPageError) && hasLoadedAssets;
   const unavailableAssets = assets.filter(
     (asset) => asset.available === false,
   ).length;
@@ -759,12 +927,19 @@ export default function LibraryPage() {
     () =>
       Array.from(
         new Set([
-          ...(data?.pages[0]?.models ?? []),
+          ...(mediaPages[0]?.models ?? []),
           ...assets.map((asset) => asset.model).filter(Boolean),
         ]),
       ).sort(),
-    [assets, data?.pages],
+    [assets, mediaPages],
   );
+  const retryRetainedError = () => {
+    if (isFetchNextPageError) {
+      void fetchNextPage();
+      return;
+    }
+    void refetch();
+  };
   const deleteMutation = useMutation({
     mutationFn: async (asset: MediaAsset) => {
       const session = await mediaRequest<{ csrf_token: string }>(
@@ -821,7 +996,7 @@ export default function LibraryPage() {
               setOwner={setOwner}
               source={source}
               setSource={setSource}
-              sources={data?.pages[0]?.sources ?? []}
+              sources={mediaPages[0]?.sources ?? []}
               instanceView={instanceView}
               canChooseOwner={["owner", "superadmin"].includes(viewer.role)}
               mobileLabels
@@ -843,7 +1018,7 @@ export default function LibraryPage() {
             setOwner={setOwner}
             source={source}
             setSource={setSource}
-            sources={data?.pages[0]?.sources ?? []}
+            sources={mediaPages[0]?.sources ?? []}
             instanceView={instanceView}
             canChooseOwner={["owner", "superadmin"].includes(viewer.role)}
           />
@@ -865,7 +1040,7 @@ export default function LibraryPage() {
           />
         </div>
       ) : null}
-      {unavailableAssets > 1 ? (
+      {unavailableAssets > 0 ? (
         <div
           className="mb-4 flex flex-wrap items-center gap-3 text-sm"
           role="status"
@@ -888,14 +1063,14 @@ export default function LibraryPage() {
           ))}
         </div>
       ) : null}
-      {isError ? (
+      {showInitialError ? (
         <ErrorState
           message="Your library could not be loaded. Try again."
           onRetry={() => void refetch()}
           retrying={isFetching}
         />
       ) : null}
-      {!isLoading && !isError && assets.length === 0 ? (
+      {!isLoading && !showInitialError && assets.length === 0 ? (
         <EmptyState
           icon={CalendarDays}
           title={activeFilters ? "No matching media" : "No media yet"}
@@ -917,7 +1092,7 @@ export default function LibraryPage() {
           }
         />
       ) : null}
-      {!isLoading && !isError && assets.length > 0 ? (
+      {!isLoading && !showInitialError && assets.length > 0 ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {assets.map((asset) => (
             <AssetCard
@@ -930,7 +1105,30 @@ export default function LibraryPage() {
           ))}
         </div>
       ) : null}
-      {hasNextPage && !isError ? (
+      {showRetainedError ? (
+        <div
+          role="alert"
+          className="border-destructive/30 bg-destructive/5 text-destructive mt-6 flex flex-wrap items-center justify-center gap-3 rounded-lg border p-3 text-sm"
+        >
+          <span>
+            {isFetchNextPageError
+              ? "More library items could not be loaded."
+              : "Library results could not be refreshed."}
+          </span>
+          <Button
+            variant="outline"
+            disabled={isFetchingNextPage}
+            onClick={retryRetainedError}
+          >
+            {isFetchingNextPage
+              ? "Loading more…"
+              : isFetchNextPageError
+                ? "Load more / Retry"
+                : "Retry"}
+          </Button>
+        </div>
+      ) : null}
+      {hasNextPage && !showInitialError && !showRetainedError ? (
         <div className="mt-6 flex justify-center">
           <Button
             variant="outline"
@@ -949,7 +1147,9 @@ export default function LibraryPage() {
           {selected ? (
             <>
               <SheetHeader>
-                <SheetTitle>{assetTitle(selected)}</SheetTitle>
+                <SheetTitle className="min-w-0 break-words">
+                  {assetTitle(selected)}
+                </SheetTitle>
                 <SheetDescription>
                   {kindLabel(selected.kind)}
                   {selected.model &&
@@ -970,7 +1170,7 @@ export default function LibraryPage() {
                 {selected.prompt ? (
                   <section>
                     <h2 className="mb-2 text-sm font-medium">Prompt</h2>
-                    <p className="bg-muted/30 rounded-lg border p-3 text-sm">
+                    <p className="bg-muted/30 min-w-0 rounded-lg border p-3 text-sm break-words">
                       {selected.prompt}
                     </p>
                   </section>

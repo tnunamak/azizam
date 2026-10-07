@@ -41,17 +41,17 @@ test("library mini audio player handles live-data audio playback", async ({
   expect(buttonBox?.height).toBeGreaterThanOrEqual(44);
 
   const audio = card.locator("audio");
-  await expect(audio).toHaveAttribute("preload", "metadata");
+  await expect(audio).toHaveAttribute("preload", "none");
   await expect(audio).not.toBeVisible();
-  await expect
-    .poll(() => audio.evaluate((element: HTMLAudioElement) => element.duration))
-    .toBeGreaterThan(2.5);
-  await expect(card.getByText("0:03")).toBeVisible();
 
   await audio.evaluate((element: HTMLAudioElement) => {
     element.muted = true;
   });
   await playButton.click();
+  await expect
+    .poll(() => audio.evaluate((element: HTMLAudioElement) => element.duration))
+    .toBeGreaterThan(2.5);
+  await expect(card.getByText("0:03")).toBeVisible();
   await expect(
     card.getByRole("button", { name: "Pause Audio" }),
   ).toBeVisible();

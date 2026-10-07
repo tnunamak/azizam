@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUpRight,
@@ -149,6 +149,29 @@ const capabilityTint: Record<Capability, string> = {
 
 function formatMilliseconds(ms: number): string {
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`;
+}
+
+function useHomePreviewVisible() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(
+    typeof IntersectionObserver === "undefined",
+  );
+  useEffect(() => {
+    const node = ref.current;
+    if (!node || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting) {
+          setVisible(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  return { ref, visible };
 }
 
 function capabilityHref(capability: string): string {
@@ -657,9 +680,11 @@ function Capabilities({
 function CreationMedia({
   creation,
   title,
+  visible,
 }: {
   creation: HomeCreation;
   title: string;
+  visible: boolean;
 }) {
   const Icon =
     creation.kind === "video"
@@ -667,19 +692,38 @@ function CreationMedia({
       : creation.kind === "audio"
         ? AudioLines
         : ImageIcon;
-  const { data: poster } = useQuery({
-    queryKey: ["library", "home-recent-poster", creation.poster_asset_id],
+  const { data: poster, isPending: posterQueryPending } = useQuery({
+    queryKey: ["library", "poster", creation.poster_asset_id, false],
     enabled: creation.kind === "video" && !!creation.poster_asset_id,
     queryFn: () => homeApi.mediaDownload(creation.poster_asset_id!),
     retry: false,
   });
   const posterUrl = poster?.download_url;
+  const [imageFailed, setImageFailed] = useState(false);
   const [posterFailed, setPosterFailed] = useState(false);
+  const posterPending =
+    creation.kind === "video" &&
+    !!creation.poster_asset_id &&
+    posterQueryPending &&
+    !posterFailed;
   const [videoFailed, setVideoFailed] = useState(false);
+  const [audioError, setAudioError] = useState<"media" | "playback" | null>(
+    null,
+  );
+  const [audioSrc, setAudioSrc] = useState(creation.download_url ?? undefined);
   const [isPlaying, setIsPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
 
-  if (creation.kind === "image" && creation.download_url) {
+  useEffect(() => {
+    setImageFailed(false);
+    setPosterFailed(false);
+    setVideoFailed(false);
+    setAudioError(null);
+    setIsPlaying(false);
+    setAudioSrc(creation.download_url ?? undefined);
+  }, [creation.asset_id, creation.download_url, posterUrl]);
+
+  if (creation.kind === "image" && creation.download_url && !imageFailed) {
     return (
       // Recent uses the Library API's signed thumbnail-capable download URL.
       // eslint-disable-next-line @next/next/no-img-element
@@ -687,8 +731,21 @@ function CreationMedia({
         src={creation.download_url}
         alt=""
         loading="lazy"
+        onError={() => setImageFailed(true)}
         className="size-full object-cover transition-transform group-hover:scale-[1.02] motion-reduce:transform-none"
       />
+    );
+  }
+
+  if (posterPending) {
+    return (
+      <div
+        role="status"
+        aria-label="Loading video poster"
+        className="bg-muted text-muted-foreground flex size-full items-center justify-center"
+      >
+        <Loader2 aria-hidden="true" className="size-6 animate-spin" />
+      </div>
     );
   }
 
@@ -705,13 +762,20 @@ function CreationMedia({
     );
   }
 
-  if (creation.kind === "video" && creation.download_url && !videoFailed) {
+  if (
+    creation.kind === "video" &&
+    creation.download_url &&
+    !videoFailed &&
+    !posterPending
+  ) {
     return (
       <video
-        src={creation.download_url}
-        preload="metadata"
+        src={visible ? creation.download_url : undefined}
+        preload="none"
+        autoPlay={visible}
         muted
         playsInline
+        onLoadedData={(event) => event.currentTarget.pause()}
         onLoadedMetadata={(event) => {
           const video = event.currentTarget;
           if (Number.isFinite(video.duration) && video.duration > 0) {
@@ -727,15 +791,22 @@ function CreationMedia({
 
   if (creation.kind === "audio" && creation.download_url) {
     return (
-      <div className="flex size-full flex-col items-center justify-center gap-4 p-4">
+      <div className="flex size-full flex-col items-center justify-center gap-3 p-4 text-center">
         <AudioLines aria-hidden="true" className="size-12" />
         <audio
           ref={audioRef}
-          preload="metadata"
-          src={creation.download_url}
-          onPlay={() => setIsPlaying(true)}
+          preload="none"
+          src={audioSrc}
+          onPlay={() => {
+            setAudioError(null);
+            setIsPlaying(true);
+          }}
           onPause={() => setIsPlaying(false)}
           onEnded={() => setIsPlaying(false)}
+          onError={() => {
+            setIsPlaying(false);
+            setAudioError("media");
+          }}
           className="sr-only"
         />
         <Button
@@ -750,9 +821,23 @@ function CreationMedia({
             if (isPlaying) audio.pause();
             else {
               try {
+                if (audioError === "media") {
+                  const renewed = await homeApi.mediaDownload(
+                    creation.asset_id,
+                  );
+                  if (renewed.download_url) {
+                    setAudioSrc(renewed.download_url);
+                    audio.src = renewed.download_url;
+                  }
+                  audio.load();
+                }
                 await audio.play();
+                setAudioError(null);
               } catch {
                 setIsPlaying(false);
+                setAudioError(
+                  audioError === "media" || audio.error ? "media" : "playback",
+                );
               }
             }
           }}
@@ -763,6 +848,13 @@ function CreationMedia({
             <Play aria-hidden="true" />
           )}
         </Button>
+        {audioError ? (
+          <p role="status" className="text-destructive text-xs">
+            {audioError === "media"
+              ? "Audio preview unavailable. Play to retry."
+              : "Playback blocked. Try again."}
+          </p>
+        ) : null}
       </div>
     );
   }
@@ -774,11 +866,13 @@ function CreationMedia({
       className="bg-muted text-muted-foreground flex size-full flex-col items-center justify-center gap-2 p-4 text-center"
     >
       <Icon aria-hidden="true" className="size-8" />
+      <p className="text-sm">Preview unavailable</p>
     </div>
   );
 }
 
 function CreationPreview({ creation }: { creation: HomeCreation }) {
+  const { ref: visibilityRef, visible } = useHomePreviewVisible();
   const label =
     creation.kind === "video"
       ? "Video"
@@ -787,17 +881,21 @@ function CreationPreview({ creation }: { creation: HomeCreation }) {
         : "Image";
   const prompt = firstWords(creation.prompt);
   const title = prompt ?? label;
+  const linkLabel = prompt
+    ? `Open ${label} in Library: ${prompt}`
+    : `Open ${label} in Library`;
   const cardClass =
     "border-border bg-card hover:border-primary/40 focus-visible:ring-ring group flex min-w-0 flex-col overflow-hidden rounded-xl border focus-visible:ring-2";
   const body = (
     <>
       <div
+        ref={visibilityRef}
         className={`flex aspect-[4/3] w-full items-center justify-center overflow-hidden ${creation.kind === "video" || (creation.kind === "audio" && !creation.download_url) ? "bg-muted text-muted-foreground" : creation.kind === "audio" ? "bg-capability-voice/10 text-capability-voice" : "bg-capability-image/10 text-capability-image"}`}
       >
-        <CreationMedia creation={creation} title={title} />
+        <CreationMedia creation={creation} title={title} visible={visible} />
       </div>
       <div className="min-w-0 p-3">
-        {prompt && <p className="text-sm font-medium">{prompt}</p>}
+        {prompt && <p className="text-sm font-medium break-words">{prompt}</p>}
       </div>
     </>
   );
@@ -805,7 +903,11 @@ function CreationPreview({ creation }: { creation: HomeCreation }) {
     return <article className={cardClass}>{body}</article>;
   }
   return (
-    <Link href="/library/" className={cardClass}>
+    <Link
+      href={`/library/?asset=${encodeURIComponent(creation.asset_id)}`}
+      aria-label={linkLabel}
+      className={cardClass}
+    >
       {body}
     </Link>
   );
@@ -859,11 +961,18 @@ function Recent() {
           retrying={creationsFetching}
         />
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {recentCreations.map((creation) => (
-            <CreationPreview key={creation.asset_id} creation={creation} />
-          ))}
-        </div>
+        <>
+          {creations?.partial ? (
+            <p role="status" className="text-muted-foreground text-sm">
+              Recent results may be incomplete.
+            </p>
+          ) : null}
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {recentCreations.map((creation) => (
+              <CreationPreview key={creation.asset_id} creation={creation} />
+            ))}
+          </div>
+        </>
       )}
     </section>
   );

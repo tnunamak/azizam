@@ -169,7 +169,7 @@ for (const theme of ["light", "dark"] as const) {
             (app: { name: string }) => app.name === "Browser test app",
           );
           expect(seededApp?.credentials.length).toBeGreaterThan(0);
-          const thumbnail = page.locator('a[href="/ui/library/"] img');
+          const thumbnail = page.locator('a[href^="/ui/library/?asset="] img');
           await expect(thumbnail).toHaveCount(1);
           await thumbnail.scrollIntoViewIfNeeded();
           await expect

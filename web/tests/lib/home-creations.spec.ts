@@ -95,4 +95,77 @@ describe("Home recent creations", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(String(fetchMock.mock.calls[1][0])).toContain("cursor=older-page");
   });
+
+  it("bounds Recent pagination and returns accumulated fallbacks", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const page = new URL(
+        String(input),
+        "http://azizam.test",
+      ).searchParams.get("cursor");
+      return new Response(
+        JSON.stringify({
+          assets: [{ asset_id: `fallback-${page ?? "first"}`, kind: "image" }],
+          has_more: true,
+          next_cursor:
+            page === "page-2"
+              ? "page-3"
+              : page === "page-1"
+                ? "page-2"
+                : "page-1",
+        }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await homeApi.creations();
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(result.assets.map((asset) => asset.asset_id)).toEqual([
+      "fallback-first",
+      "fallback-page-1",
+      "fallback-page-2",
+    ]);
+  });
+
+  it("keeps accumulated Recent items when a later page fails", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            assets: [{ asset_id: "first", kind: "image" }],
+            has_more: true,
+            next_cursor: "older",
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: { message: "Failed" } }), {
+          status: 503,
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await homeApi.creations();
+
+    expect(result.assets.map((asset) => asset.asset_id)).toEqual(["first"]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.partial).toBe(true);
+  });
+
+  it("HL-07 stops when the server repeats a cursor", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        assets: [{ asset_id: "fallback", kind: "image" }],
+        has_more: true,
+        next_cursor: "same-cursor",
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await homeApi.creations();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.partial).toBe(true);
+  });
 });

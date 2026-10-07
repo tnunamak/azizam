@@ -52,6 +52,7 @@ export interface HomeCreationsResponse {
   assets: HomeCreation[];
   next_cursor?: string | null;
   has_more?: boolean;
+  partial?: boolean;
 }
 
 export function hasHomeCreationContent(creation: HomeCreation): boolean {
@@ -129,22 +130,45 @@ export const homeApi = {
   creations: async (): Promise<HomeCreationsResponse> => {
     const previewable: HomeCreation[] = [];
     const fallback: HomeCreation[] = [];
+    const seenCursors = new Set<string>();
+    const seenAssetIds = new Set<string>();
     let cursor: string | null | undefined;
     let hasMore = true;
-    while (hasMore && previewable.length < 4) {
+    let pagesScanned = 0;
+    let partial = false;
+    while (hasMore && previewable.length < 4 && pagesScanned < 3) {
       const query = new URLSearchParams({ limit: "50" });
       if (cursor) query.set("cursor", cursor);
-      const page = await homeRequest<HomeCreationsResponse>(
-        `/me/api/media?${query.toString()}`,
-      );
+      let page: HomeCreationsResponse;
+      try {
+        page = await homeRequest<HomeCreationsResponse>(
+          `/me/api/media?${query.toString()}`,
+        );
+      } catch (error) {
+        if (previewable.length > 0 || fallback.length > 0) {
+          partial = true;
+          break;
+        }
+        throw error;
+      }
+      pagesScanned += 1;
       for (const asset of page.assets.filter(hasHomeCreationContent)) {
+        if (seenAssetIds.has(asset.asset_id)) continue;
+        seenAssetIds.add(asset.asset_id);
         if (homeCreationPreviewRank(asset) > 0) previewable.push(asset);
         else if (fallback.length < 4) fallback.push(asset);
       }
-      cursor = page.next_cursor;
+      const nextCursor = page.next_cursor;
+      if (nextCursor && seenCursors.has(nextCursor)) {
+        partial = true;
+        break;
+      }
+      if (nextCursor) seenCursors.add(nextCursor);
+      cursor = nextCursor;
       hasMore = Boolean(page.has_more && cursor);
     }
-    return { assets: [...previewable, ...fallback].slice(0, 4) };
+    if (hasMore && previewable.length < 4) partial = true;
+    return { assets: [...previewable, ...fallback].slice(0, 4), partial };
   },
   mediaDownload: (assetId: string) =>
     homeRequest<{ download_url?: string }>(
