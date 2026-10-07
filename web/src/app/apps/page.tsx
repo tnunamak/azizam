@@ -460,7 +460,7 @@ function AppsContents() {
           if (!open && !busy) closeCreate();
         }}
       >
-        <DialogContent>
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{createdApp ? "Create key" : "New app"}</DialogTitle>
             <DialogDescription>

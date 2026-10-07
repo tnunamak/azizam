@@ -94,3 +94,16 @@ describe("Apps command destinations", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("App creation dialog sizing", () => {
+  it("limits creation dialog height and allows vertical scrolling", async () => {
+    const user = userEvent.setup();
+    show();
+    await screen.findByRole("button", { name: "Actions for Laptop" });
+    await user.click(screen.getByRole("button", { name: "New app" }));
+    expect(await screen.findByRole("dialog", { name: "New app" })).toHaveClass(
+      "max-h-[calc(100dvh-2rem)]",
+      "overflow-y-auto",
+    );
+  });
+});

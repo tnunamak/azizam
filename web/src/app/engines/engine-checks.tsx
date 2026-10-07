@@ -204,9 +204,11 @@ export function EngineChecks({
                 >
                   {result.retry === "detect" ? "Retry detection" : "Retry test"}
                 </Button>
-                <Button size="sm" variant="ghost" onClick={onEdit}>
-                  Edit endpoint
-                </Button>
+                {service.editable !== false && (
+                  <Button size="sm" variant="ghost" onClick={onEdit}>
+                    Edit endpoint
+                  </Button>
+                )}
               </div>
             ) : undefined
           }

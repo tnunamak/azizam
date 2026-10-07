@@ -265,3 +265,55 @@ describe("EngineChecks", () => {
     expect(adminRegistryMutationMock).not.toHaveBeenCalled();
   });
 });
+
+describe("EngineChecks managed recovery", () => {
+  it("hides endpoint editing after a managed connection failure and keeps retry working", async () => {
+    const user = userEvent.setup();
+    apiMock.services.testConnection
+      .mockResolvedValueOnce({
+        ok: false,
+        url: "http://127.0.0.1:18123/v1/models",
+        status: 503,
+        error: "backend unavailable",
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        url: "http://127.0.0.1:18123/v1/models",
+        status: 200,
+      });
+
+    renderChecks({ editable: false });
+    await user.click(screen.getByRole("button", { name: "Test" }));
+    expect(await screen.findByText("Demo engine: connection failed")).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Edit endpoint" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Detect" })).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: "Retry test" }));
+    expect(await screen.findByText("Demo engine: connection passed")).toBeVisible();
+    expect(apiMock.services.testConnection).toHaveBeenCalledTimes(2);
+  });
+
+  it("hides endpoint editing after managed detection errors and keeps retry working", async () => {
+    const user = userEvent.setup();
+    apiMock.services.detectModels
+      .mockRejectedValueOnce(new Error("models endpoint timed out"))
+      .mockResolvedValueOnce({ ok: true, models: ["retry-chat"], error: "" });
+
+    renderChecks({ editable: false });
+    await user.click(screen.getByRole("button", { name: "Detect" }));
+    expect(await screen.findByText("Demo engine: detection failed")).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Edit endpoint" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Test" })).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: "Retry detection" }));
+    expect(await screen.findByDisplayValue("retry-chat")).toBeVisible();
+    expect(apiMock.services.detectModels).toHaveBeenCalledTimes(2);
+    expect(
+      screen.queryByRole("button", { name: "Apply models" }),
+    ).not.toBeInTheDocument();
+  });
+});
