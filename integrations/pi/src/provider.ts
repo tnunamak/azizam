@@ -28,7 +28,7 @@ export const DEFAULT_COMPAT = {
  * cannot starve the fetch, which keeps at least half. One step cannot be bounded: Pi resolves a `models.json`
  * `!command` key with a blocking `spawnSync` (10 s cap) that no signal can interrupt.
  */
-export const PREFETCH_TIMEOUT_MS = 3_000;
+export const PREFETCH_TIMEOUT_MS = DEFAULT_TIMEOUT_MS;
 const PHASE_SHARE = 0.25;
 
 export interface AzizamProviderOptions {
@@ -135,15 +135,24 @@ export function azizamProvider(options: AzizamProviderOptions = {}): AzizamProvi
 				// A restore failure or stall (locked, unreadable or malformed store) counts as a miss.
 				const restore = phase();
 				await untilAborted(models.refresh({ allowNetwork: false, providers: [PROVIDER_ID], signal: restore }), restore);
-				if (signal.aborted || hasUsablePersistedCatalog()) return;
+				if (hasUsablePersistedCatalog()) return;
+				signal.throwIfAborted();
 				// Pi's credential store needs a writable agent dir even to read; the environment key needs nothing.
 				const lookup = phase();
 				const resolved = await untilAborted(models.getAuth(PROVIDER_ID, { signal: lookup }), lookup);
 				const apiKey = resolved?.auth.apiKey ?? (env().AZIZAM_API_KEY || undefined);
-				if (!apiKey || signal.aborted) return;
+				signal.throwIfAborted();
+				if (!apiKey) return;
 				await discover(apiKey, signal);
 			} catch {
-				// Pi's own refresh reports the error; the persisted catalog (if any) still applies.
+				// Short-lived CLI commands can exit before Pi's background refresh reports anything. Always show a
+				// safe error here; arbitrary fetch/store exceptions may contain credentials and must not be echoed.
+				const reason = signal.aborted ? ` exceeded the ${budgetMs} ms startup budget` : " failed";
+				console.error(
+					`[azizam] Model discovery${reason}; no saved catalog is available for this gateway. ` +
+					"Check that the gateway is reachable, AZIZAM_BASE_URL and your Azizam credentials, then retry Pi. " +
+					"Use AZIZAM_MODELS_TIMEOUT_MS to adjust the request timeout (startup is still bounded).",
+				);
 			}
 		},
 	};
