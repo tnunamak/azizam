@@ -344,35 +344,24 @@ from gateway.providers import provider_lookup
 # Configuration
 # =============================================================================
 
-_default_config = Path(__file__).parent / "proxy_config.yml"
-CONFIG_PATH = Path(get_env("AZIZAM_CONFIG_PATH")) if get_env("AZIZAM_CONFIG_PATH") else _default_config
+from gateway.bootstrap_config import (
+    bootstrap_config_path,
+    configured_admin_db_path as _configured_admin_db_path,
+    load_bootstrap_config,
+)
+
+CONFIG_PATH = bootstrap_config_path()
 
 
 def load_config() -> dict:
     """Load configuration from YAML file."""
-    if CONFIG_PATH.exists():
-        with open(CONFIG_PATH) as f:
-            return yaml.safe_load(f)
-    return {}
+    return load_bootstrap_config(CONFIG_PATH)
 
 
 config = load_config()
 # Preserve the raw YAML config so reload_runtime_config() can re-apply the
 # service-registry overlay without re-reading the file.
 _bootstrap_config: dict = dict(config)
-
-
-def _configured_admin_db_path(admin_config: Mapping[str, Any] | None = None) -> Path:
-    admin_config = admin_config or {}
-    raw = (
-        get_env("AZIZAM_ADMIN_DB")
-        or admin_config.get("db_path")
-        or "data/admin.db"
-    )
-    path = Path(str(raw))
-    if path.is_absolute():
-        return path
-    return Path(__file__).parent / path
 
 
 auth_cfg = config.get("auth", {})
@@ -447,7 +436,7 @@ def bool_from_config(value, default: bool) -> bool:
 
 # Proxy settings
 PROXY_HOST = config.get("proxy", {}).get("host", "127.0.0.1")
-PROXY_PORT = int(get_env("AZIZAM_PORT", os.environ.get("LLM_PROXY_PORT", config.get("proxy", {}).get("port", 5000))))
+PROXY_PORT = int(get_env("AZIZAM_PORT", config.get("proxy", {}).get("port", 5000)))
 
 # TabbyAPI backend
 tabby_cfg = config.get("backends", {}).get("tabby", {})
@@ -1502,15 +1491,7 @@ AUTH_PUBLIC_PATHS = auth_cfg.get("public_paths") or ["/health"]
 
 
 def _admin_db_path() -> Path:
-    raw = (
-        get_env("AZIZAM_ADMIN_DB")
-        or admin_cfg.get("db_path")
-        or "data/admin.db"
-    )
-    path = Path(str(raw))
-    if path.is_absolute():
-        return path
-    return Path(__file__).parent / path
+    return _configured_admin_db_path(admin_cfg)
 
 
 def _admin_session_signing_key_from_config() -> bytes | None:

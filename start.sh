@@ -94,16 +94,31 @@ if [ "${AZIZAM_MANAGE_LITELLM:-true}" != "false" ]; then
     fi
 
     LITELLM_CONFIG_PATH="${AZIZAM_LITELLM_CONFIG_PATH:-data/litellm.config.yaml}"
-    AZIZAM_ADMIN_DB_PATH="${AZIZAM_ADMIN_DB:-data/admin.db}"
+    AZIZAM_ADMIN_DB_PATH="$(python3 -m gateway.provider_sidecar db-path)" || exit 1
     mkdir -p "$(dirname "$LITELLM_CONFIG_PATH")"
     LITELLM_PID_FILE="${AZIZAM_LITELLM_PID_FILE:-data/litellm.pid}"
+    LITELLM_RUNTIME_HASH_FILE="${LITELLM_PID_FILE}.runtime-hash"
     LITELLM_PID=""
 
     start_litellm() {
-        python3 -m gateway.provider_sidecar run --db "$AZIZAM_ADMIN_DB_PATH" --config "$LITELLM_CONFIG_PATH" -- \
-            litellm --config "$LITELLM_CONFIG_PATH" --host 127.0.0.1 --port 4011 &
+        rm -f "$LITELLM_RUNTIME_HASH_FILE"
+        if [ -n "${LITELLM_LAUNCH_CONFIG_PATH:-}" ]; then
+            rm -f "$LITELLM_LAUNCH_CONFIG_PATH"
+        fi
+        LITELLM_LAUNCH_CONFIG_PATH="$(mktemp "${LITELLM_CONFIG_PATH}.launch.XXXXXXXX")" || return 1
+        python3 -m gateway.provider_sidecar run --db "$AZIZAM_ADMIN_DB_PATH" --config "$LITELLM_CONFIG_PATH" \
+            --launch-config "$LITELLM_LAUNCH_CONFIG_PATH" --runtime-hash-file "$LITELLM_RUNTIME_HASH_FILE" -- \
+            litellm --config "$LITELLM_LAUNCH_CONFIG_PATH" --host 127.0.0.1 --port 4011 &
         LITELLM_PID=$!
         echo "$LITELLM_PID" > "$LITELLM_PID_FILE"
+        while [ ! -s "$LITELLM_RUNTIME_HASH_FILE" ]; do
+            if ! kill -0 "$LITELLM_PID" >/dev/null 2>&1; then
+                wait "$LITELLM_PID" >/dev/null 2>&1 || true
+                echo "[start] LiteLLM sidecar failed before acknowledging its registry snapshot." >&2
+                return 1
+            fi
+            sleep 0.1
+        done
     }
 
     litellm_runtime_hash() {
@@ -114,7 +129,7 @@ if [ "${AZIZAM_MANAGE_LITELLM:-true}" != "false" ]; then
     }
 
     watch_litellm_config() {
-        trap 'if [ -n "$LITELLM_PID" ]; then kill "$LITELLM_PID" >/dev/null 2>&1 || true; fi; exit 0' EXIT INT TERM
+        trap 'if [ -n "$LITELLM_PID" ]; then kill "$LITELLM_PID" >/dev/null 2>&1 || true; wait "$LITELLM_PID" >/dev/null 2>&1 || true; fi; rm -f "$LITELLM_RUNTIME_HASH_FILE" "${LITELLM_LAUNCH_CONFIG_PATH:-}"; exit 0' EXIT INT TERM
         LAST_HASH=""
         while true; do
             while [ ! -s "$LITELLM_CONFIG_PATH" ]; do sleep 1; done
@@ -124,8 +139,11 @@ if [ "${AZIZAM_MANAGE_LITELLM:-true}" != "false" ]; then
                     kill "$LITELLM_PID" >/dev/null 2>&1 || true
                     wait "$LITELLM_PID" >/dev/null 2>&1 || true
                 fi
-                start_litellm
-                LAST_HASH="$NEXT_HASH"
+                if start_litellm; then
+                    LAST_HASH="$(cat "$LITELLM_RUNTIME_HASH_FILE")"
+                else
+                    LAST_HASH=""
+                fi
             fi
             sleep "${AZIZAM_LITELLM_RELOAD_INTERVAL:-2}"
         done

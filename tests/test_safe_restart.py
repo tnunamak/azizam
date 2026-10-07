@@ -6,6 +6,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -470,7 +471,12 @@ class WebBuildTests(unittest.TestCase):
                 if cmd[0] == "npm":
                     self.assertEqual(world.calls, [])
                     self.assertFalse(world.draining)
-                    self.assertEqual(cmd, ["npm", "--prefix", str(web), "run", "build"])
+                    self.assertEqual(cmd[:2], ["npm", "--prefix"])
+                    self.assertEqual(cmd[3:], ["run", "build"])
+                    build_web = Path(cmd[2])
+                    self.assertNotEqual(build_web, web)
+                    (build_web / "out").mkdir()
+                    (build_web / "out" / "index.html").write_text("built")
                     world.commands.append(list(cmd))
                     return 0
                 return original_run(cmd, timeout)
@@ -479,6 +485,74 @@ class WebBuildTests(unittest.TestCase):
             self.assertEqual(world.invoke(web_dir=web), sr.EXIT_OK)
             self.assertEqual([cmd[0] for cmd in world.commands], ["npm", "systemctl"])
             self.assertFalse(sr.web_build_required(web))
+
+    def test_export_failure_preserves_served_output(self):
+        for outcome in (1, 124, KeyboardInterrupt):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as tmp:
+                web = self.make_web(tmp)
+                original = (web / "out" / "index.html").read_bytes()
+                world = World()
+
+                def export(cmd, timeout):
+                    build_web = Path(cmd[2])
+                    shutil.rmtree(build_web / "out", ignore_errors=True)
+                    (build_web / "out").mkdir()
+                    (build_web / "out" / "partial.js").write_text("partial")
+                    if outcome is KeyboardInterrupt:
+                        raise KeyboardInterrupt
+                    return outcome
+
+                world.run = export
+                if outcome is KeyboardInterrupt:
+                    with self.assertRaises(KeyboardInterrupt):
+                        world.invoke(web_dir=web)
+                else:
+                    self.assertEqual(world.invoke(web_dir=web), sr.EXIT_WEB_BUILD)
+                self.assertTrue((web / "out" / "index.html").is_file())
+                self.assertEqual((web / "out" / "index.html").read_bytes(), original)
+                self.assertFalse((web / "out" / "partial.js").exists())
+                self.assertEqual(world.calls, [])
+
+    def test_successful_export_publishes_complete_output_after_build(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            web = self.make_web(tmp)
+            world = World()
+            original_run = world.run
+
+            def export(cmd, timeout):
+                if cmd[0] != "npm":
+                    return original_run(cmd, timeout)
+                build_web = Path(cmd[2])
+                shutil.rmtree(build_web / "out", ignore_errors=True)
+                (build_web / "out").mkdir()
+                (build_web / "out" / "index.html").write_text("new page")
+                self.assertEqual((web / "out" / "index.html").read_text(), "<html></html>\n")
+                (build_web / "out" / "app.js").write_text("complete bundle")
+                return 0
+
+            world.run = export
+            self.assertEqual(world.invoke(web_dir=web), sr.EXIT_OK)
+            self.assertEqual((web / "out" / "index.html").read_text(), "new page")
+            self.assertEqual((web / "out" / "app.js").read_text(), "complete bundle")
+            self.assertFalse(sr.web_build_required(web))
+
+    def test_publication_failure_preserves_served_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            web = self.make_web(tmp)
+            world = World()
+
+            def export(cmd, timeout):
+                build_web = Path(cmd[2])
+                (build_web / "out").mkdir()
+                (build_web / "out" / "index.html").write_text("new page")
+                return 0
+
+            world.run = export
+            with patch.object(sr, "publish_web_export", side_effect=OSError("exchange refused")):
+                self.assertEqual(world.invoke(web_dir=web), sr.EXIT_WEB_BUILD)
+            self.assertEqual((web / "out" / "index.html").read_text(), "<html></html>\n")
+            self.assertEqual(world.calls, [])
+            self.assertIn("exchange refused", world.text)
 
     def test_failed_build_never_drains_or_restarts_even_with_force(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -547,6 +621,9 @@ class WebBuildTests(unittest.TestCase):
 
             def run(cmd, timeout):
                 if cmd[0] == "npm":
+                    build_web = Path(cmd[2])
+                    (build_web / "out").mkdir()
+                    (build_web / "out" / "index.html").write_text("built")
                     source = web / "src" / "page.tsx"
                     source.write_text("export default function UpdatedPage() {}\n")
                     os.utime(source, (400, 400))

@@ -38,11 +38,15 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import ctypes
+import errno
 import fcntl
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -97,6 +101,26 @@ def web_build_required(web_dir: Path) -> bool:
     if sorted(str(path.relative_to(web_dir)) for path in sources) != exported_sources:
         return True
     return any(path.stat().st_mtime > stamp.stat().st_mtime for path in sources)
+
+
+def publish_web_export(staged_out: Path, served_out: Path) -> None:
+    """Publish a complete export with no gap at the directory served by FastAPI."""
+    if not served_out.exists():
+        os.replace(staged_out, served_out)
+        return
+    # Linux renameat2 exchanges two populated directories in one operation.
+    # A remove-then-rename fallback would expose missing files to live requests.
+    libc = ctypes.CDLL(None, use_errno=True)
+    try:
+        renameat2 = libc.renameat2
+    except AttributeError:
+        raise OSError(errno.ENOSYS, "atomic web publication requires renameat2") from None
+    renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    renameat2.restype = ctypes.c_int
+    at_fdcwd, rename_exchange = -100, 2
+    if renameat2(at_fdcwd, os.fsencode(staged_out), at_fdcwd, os.fsencode(served_out), rename_exchange) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), str(served_out))
 
 
 class DrainUnavailable(Exception):
@@ -390,14 +414,33 @@ class Restarter:
                 build_sources = sorted(
                     str(path.relative_to(self.web_dir)) for path in web_source_files(self.web_dir)
                 )
-                code = self.run(["npm", "--prefix", str(self.web_dir), "run", "build"], DEFAULT_WEB_BUILD_TIMEOUT_S)
-                if code != 0 or not (self.web_dir / "out" / "index.html").is_file():
-                    self.say(f"web build failed (exit {code}); NOT draining or restarting {target}")
+                try:
+                    # Keep the staging tree beside web: publication stays on one
+                    # filesystem and generated inputs cannot enter its manifest.
+                    with tempfile.TemporaryDirectory(prefix=".azizam-web-build-", dir=self.web_dir.parent) as tmp:
+                        staged_web = Path(tmp) / "web"
+                        shutil.copytree(
+                            self.web_dir, staged_web,
+                            ignore=shutil.ignore_patterns(
+                                "node_modules", ".next", "out", ".git", "*.tsbuildinfo",
+                            ),
+                        )
+                        dependencies = self.web_dir / "node_modules"
+                        if dependencies.exists():
+                            (staged_web / "node_modules").symlink_to(dependencies.resolve(), target_is_directory=True)
+                        code = self.run(["npm", "--prefix", str(staged_web), "run", "build"], DEFAULT_WEB_BUILD_TIMEOUT_S)
+                        staged_out = staged_web / "out"
+                        if code != 0 or not (staged_out / "index.html").is_file():
+                            self.say(f"web build failed (exit {code}); NOT draining or restarting {target}")
+                            return EXIT_WEB_BUILD
+                        stamp = staged_out / WEB_BUILD_STAMP
+                        stamp.write_text(json.dumps(build_sources))
+                        # Keep edits during compilation newer than this marker.
+                        os.utime(stamp, (build_started_at, build_started_at))
+                        publish_web_export(staged_out, self.web_dir / "out")
+                except OSError as exc:
+                    self.say(f"web build or publication failed: {exc}; NOT draining or restarting {target}")
                     return EXIT_WEB_BUILD
-                stamp = self.web_dir / "out" / WEB_BUILD_STAMP
-                stamp.write_text(json.dumps(build_sources))
-                # Keep edits during compilation newer than this export marker.
-                os.utime(stamp, (build_started_at, build_started_at))
         snapshot: dict[str, Any] | None = None
         try:
             snapshot = self.get_drain()

@@ -42,7 +42,12 @@ The key is never printed.
 
 - Before a gateway restart, the script checks the static UI export served at
   `/ui`. If `web/out/index.html` is missing or a web input is newer than the
-  last completed export, it runs `npm --prefix web run build` in the checkout.
+  last completed export, it copies the web sources into a temporary sibling
+  directory and runs `npm run build` there, using the installed dependencies.
+  After a successful export, it atomically exchanges the staged `out` directory
+  with `web/out` using Linux `renameat2`. The live export stays intact during
+  compilation, including if the build fails, times out, or is interrupted.
+  A publication failure also stops the restart and leaves the live export intact.
   It ignores `node_modules`, `.next`, `out`, and generated TypeScript files.
   The completion marker records the source paths, so removing an input also
   triggers a rebuild. An older export without this marker is rebuilt once

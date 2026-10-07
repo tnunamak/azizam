@@ -1,5 +1,10 @@
 # devspecs feedback
 
+## 2026-10-06 — retirement review fixes
+
+- `ds tldr` and `ds recent` returned promptly. Recent topics identified the two naming commits and their affected files, which helped confirm the branch context for the explicit review findings.
+- The task was already bounded by a findings document; direct source inspection and regression tests supplied the implementation evidence. No task pack was needed.
+
 ## 2026-10-03 — UI polish round 2
 
 - `ds tldr` and `ds recent` returned useful guidance and relevant Home, shell, and polish commits. Two `ds map` runs exited successfully without any map output.

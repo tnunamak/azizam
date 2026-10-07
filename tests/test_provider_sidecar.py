@@ -356,6 +356,7 @@ def test_run_does_not_exec_when_config_compile_fails(
 
     monkeypatch.setattr(provider_sidecar, "write_litellm_config_artifact", fail)
     monkeypatch.setattr(os, "execvpe", unexpected_exec)
+    _write_registry_json(tmp_path / "admin.db", {"services": {}})
     with pytest.raises(ValueError, match="invalid registry"):
         main(["run", "--db", str(tmp_path / "admin.db"), "--config", str(tmp_path / "selected.yaml"), "--", "litellm"])
 
