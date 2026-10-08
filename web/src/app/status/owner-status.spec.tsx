@@ -353,8 +353,9 @@ it("summarizes connection failures without putting raw transport text in the ans
     expect(screen.getByRole("status")).toHaveTextContent("Chat down"),
   );
   expect(
-    screen.getAllByText("Local chat is not accepting connections.", {
-      exact: true,
+    // The card's title is the fault in plain words, once.
+    screen.getAllByRole("heading", {
+      name: "Local chat is not accepting connections",
     }),
   ).toHaveLength(1);
   expect(
@@ -369,7 +370,7 @@ it("summarizes connection failures without putting raw transport text in the ans
     within(header).queryByText("Connection refused", { exact: true }),
   ).not.toBeInTheDocument();
   expect(
-    within(header).queryByText("Local chat is not accepting connections.", {
+    within(header).queryByText("Local chat is not accepting connections", {
       exact: true,
     }),
   ).not.toBeInTheDocument();
@@ -436,10 +437,12 @@ it("groups engines with the same problem into one action row", async () => {
     .closest("section")!;
   expect(within(attention).getAllByRole("article")).toHaveLength(1);
   expect(
-    within(attention).getAllByText(/(is|are) not accepting connections\./),
+    within(attention).getAllByText(/(is|are) not accepting connections/),
   ).toHaveLength(1);
   expect(
-    within(attention).getByText(/^2 engines are not accepting connections\./),
+    within(attention).getByRole("heading", {
+      name: "2 engines are not accepting connections",
+    }),
   ).toBeVisible();
   expect(
     within(attention).getByRole("link", { name: "Inspect engines" }),

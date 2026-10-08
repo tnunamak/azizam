@@ -125,3 +125,9 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* Icons at 16–20 px read heavy at lucide's default 2 px stroke next to 13–14 px
+   text; 1.75 matches the weight of the benchmark icon sets (Apple, Midjourney). */
+svg.lucide {
+  stroke-width: 1.75;
+}

@@ -47,6 +47,7 @@ import { cn } from "@/lib/cn";
 import { SectionHeading } from "@/components/product/readiness";
 import {
   Callout,
+  CapabilityChips,
   CapabilityList,
   StateWord,
   StatusLine,
@@ -419,7 +420,12 @@ function engineProblems(
       const slots = hourSlots(series, end);
       const { up, checked } = hoursUp(slots);
       const since = failingSince(slots);
-      if (since) facts.push(["Failing since", `The hour from ${clock(since)}`]);
+      // Hourly checks place the start within an hour, no closer.
+      if (since)
+        facts.push([
+          "Started",
+          `Between ${clock(since)} and ${clock(since + 3600)}`,
+        ]);
       if (series?.length)
         facts.push([
           "Health checks",
@@ -427,7 +433,12 @@ function engineProblems(
             <span>
               {up} of {checked} checked hours up, last 24 h
             </span>
-            <UptimeBar series={series} end={end} label={first.shortName} />
+            <UptimeBar
+              series={series}
+              end={end}
+              label={first.shortName}
+              showLegend
+            />
           </div>,
         ]);
     } else {
@@ -451,9 +462,15 @@ function engineProblems(
         : `engines:${affected.map((e) => e.service.id).join(",")}`,
       severity: key === "down" && exposed.length ? "critical" : "attention",
       tone: exposed.length ? STATE_WORDS[key].tone : "warn",
+      // The title is the fault in plain words; the verdict line above
+      // already carries the state word, so it is not repeated here.
       title: single
-        ? `${first.shortName} is ${word}`
-        : `${affected.length} engines are ${word}`,
+        ? symptomOf(first).replace(/\.$/, "")
+        : `${affected.length} engines ${symptomOf(first)
+            .replace(first.shortName, "")
+            .trim()
+            .replace(/^is /, "are ")
+            .replace(/\.$/, "")}`,
       headline: exposed.length
         ? exposed.length > 2
           ? `${exposed.length} capabilities ${word}`
@@ -462,11 +479,7 @@ function engineProblems(
           ? `${first.shortName} ${word}`
           : `${affected.length} engines ${word}`,
       facts,
-      body: single
-        ? [symptomOf(first), engineRemedy(first.lastError)]
-        : [
-            `${affected.length} engines ${symptomOf(first).replace(first.shortName, "").trim().replace(/^is /, "are ")}`,
-          ],
+      body: single ? [engineRemedy(first.lastError)] : undefined,
       href: single
         ? `/engines/?service=${encodeURIComponent(first.service.id)}`
         : "/engines/",
@@ -608,11 +621,10 @@ function ProblemCard({
     <Callout
       as="article"
       headingLevel={3}
-      split
       severity={problem.severity}
       title={problem.title}
       facts={problem.facts}
-      actions={
+      headerAction={
         problem.href || problem.disk ? (
           <>
             {problem.href ? (
@@ -792,7 +804,6 @@ export function StatusClient() {
   const selectedServiceId = searchParams.get("service");
   const [diskHelpOpen, setDiskHelpOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
-  const [showAllCaps, setShowAllCaps] = useState(false);
   const {
     data: statusData,
     isError: statusIsError,
@@ -1125,17 +1136,7 @@ export function StatusClient() {
   }
   if (providers.state === "error") note = "Provider status did not load.";
   const tableOpen = showAll || !problems.length;
-  const capsOpen = showAllCaps || !problems.length;
-  const capabilitySummary = (
-    ["down", "blocked", "degraded", "unknown", "busy", "ready", "off"] as const
-  )
-    .map(
-      (key) =>
-        [key, model.views.filter((view) => view.state === key).length] as const,
-    )
-    .filter(([, n]) => n > 0)
-    .map(([key, n]) => `${n} ${STATE_WORDS[key].word.toLowerCase()}`)
-    .join(", ");
+  const capsOpen = !problems.length;
   // Engines that already have a card are not counted again in the summary.
   const troubled = new Set(
     problems.flatMap((problem) => {
@@ -1313,19 +1314,7 @@ export function StatusClient() {
                     columns={2}
                   />
                 ) : (
-                  // While cards explain a problem, the list folds to its
-                  // counts, like the engines below (principle 7).
-                  <button
-                    type="button"
-                    onClick={() => setShowAllCaps(true)}
-                    className="bg-card hover:border-input rounded-panel flex min-h-11 w-full flex-wrap items-center justify-between gap-x-3 gap-y-1 border px-5 py-3 text-left text-sm"
-                  >
-                    <span>{capabilitySummary}</span>
-                    <span className="text-link inline-flex shrink-0 items-center gap-1 font-medium whitespace-nowrap">
-                      Show capabilities
-                      <ChevronRight aria-hidden="true" className="size-4" />
-                    </span>
-                  </button>
+                  <CapabilityChips views={model.views} />
                 )}
               </section>
             ) : null}

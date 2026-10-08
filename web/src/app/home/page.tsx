@@ -49,6 +49,8 @@ import {
   activeCapRefusal,
   CAP_WARNING,
   isInFlight,
+  isSuccess,
+  requestCapability,
   type CapabilityView,
 } from "@/lib/capability-state";
 import { useCapabilityViews } from "@/lib/use-capability-views";
@@ -148,39 +150,17 @@ function HomeLoading() {
 interface Task {
   key: string;
   title: string;
-  hint: string;
   tab: string;
 }
-const PRIMARY_TASKS: Task[] = [
-  {
-    key: "image",
-    title: "Make a picture",
-    hint: "Describe it and get an image.",
-    tab: "image",
-  },
-  {
-    key: "speech",
-    title: "Read text aloud",
-    hint: "Paste text and hear it spoken.",
-    tab: "speech",
-  },
-  {
-    key: "chat",
-    title: "Chat",
-    hint: "Ask a question or get help writing.",
-    tab: "chat",
-  },
-];
-const MORE_TASKS: Task[] = [
-  { key: "music", title: "Make music", hint: "", tab: "audio" },
-  { key: "sfx", title: "Make a sound effect", hint: "", tab: "audio" },
-  { key: "video", title: "Make a video", hint: "", tab: "video" },
-  {
-    key: "transcribe",
-    title: "Turn a recording into text",
-    hint: "",
-    tab: "transcribe",
-  },
+/* The person's own tasks, most-asked first (brief D1.1 item 4). */
+const TASKS: Task[] = [
+  { key: "image", title: "Make a picture", tab: "image" },
+  { key: "speech", title: "Read text aloud", tab: "speech" },
+  { key: "chat", title: "Chat", tab: "chat" },
+  { key: "music", title: "Make music", tab: "audio" },
+  { key: "sfx", title: "Make a sound effect", tab: "audio" },
+  { key: "video", title: "Make a video", tab: "video" },
+  { key: "transcribe", title: "Turn a recording into text", tab: "transcribe" },
 ];
 const USABLE = new Set(["ready", "busy", "degraded", "unknown"]);
 
@@ -191,44 +171,67 @@ function taskHref(task: Task, models: Record<string, string | undefined>) {
   return `/try/?${params.toString()}`;
 }
 
-function TaskCard({
+/** When this person last got a result from each capability, from their receipts. */
+function lastUses(receipts: HomeReceipt[]): Map<string, number> {
+  const uses = new Map<string, number>();
+  for (const receipt of receipts) {
+    if (!isSuccess(receipt.status)) continue;
+    const capability = requestCapability(receipt.intent, receipt.path);
+    const at = receipt.accepted_at_ms
+      ? receipt.accepted_at_ms / 1000
+      : (receipt._stored_at ?? null);
+    if (!capability || at == null) continue;
+    uses.set(capability, Math.max(uses.get(capability) ?? 0, at));
+  }
+  return uses;
+}
+
+/**
+ * One row grammar for every task: a tinted icon, the task, and on the right
+ * the one reason that is true for this person (its state when it is not
+ * Ready, otherwise when they last used it). Every row is the same height.
+ */
+function TaskRow({
   task,
   view,
   href,
-  primary,
+  usedAt,
 }: {
   task: Task;
   view: CapabilityView;
   href: string;
-  primary: boolean;
+  usedAt: number | null;
 }) {
   const meta = capabilityMeta(task.key);
   const Icon = meta.icon;
   const usable = USABLE.has(view.state);
-  const showState = view.state !== "ready";
+  const trailing =
+    view.state !== "ready" ? (
+      <span className="flex min-w-0 items-center gap-2">
+        <StateWord tone={view.tone} word={view.word} className="shrink-0" />
+        {!usable && view.detail ? (
+          <span className="text-muted-foreground truncate text-sm">
+            {view.detail}
+          </span>
+        ) : null}
+      </span>
+    ) : usedAt ? (
+      <span className="text-muted-foreground text-sm whitespace-nowrap">
+        Used <RelativeTime ts={usedAt} fallback="" />
+      </span>
+    ) : null;
   const body = (
     <>
-      <span className="bg-muted text-foreground rounded-control flex size-9 shrink-0 items-center justify-center">
-        <Icon aria-hidden="true" className="size-4.5" />
+      <span
+        className={cn(
+          "rounded-control flex size-8 shrink-0 items-center justify-center",
+          usable ? cn(meta.tint, meta.tone) : "bg-muted text-muted-foreground",
+        )}
+      >
+        <Icon aria-hidden="true" className="size-4" />
       </span>
-      <span className="min-w-0 flex-1">
-        <span className="block font-medium">{task.title}</span>
-        {primary && task.hint ? (
-          <span className="text-muted-foreground block text-sm">
-            {task.hint}
-          </span>
-        ) : null}
-        {showState ? (
-          <span className="mt-1 flex flex-wrap items-center gap-x-2">
-            <StateWord tone={view.tone} word={view.word} />
-            {!usable && view.detail ? (
-              <span className="text-muted-foreground text-sm">
-                {view.detail}
-              </span>
-            ) : null}
-          </span>
-        ) : null}
-      </span>
+      <span className="min-w-0 flex-1 truncate font-medium">{task.title}</span>
+      {trailing}
       {usable ? (
         <ChevronRight
           aria-hidden="true"
@@ -237,14 +240,11 @@ function TaskCard({
       ) : null}
     </>
   );
-  const shell = cn(
-    "flex min-h-11 min-w-0 items-center gap-3 rounded-panel border px-3.5",
-    primary ? "py-3.5" : "py-2.5",
-  );
+  const row = "bg-card flex h-14 min-w-0 items-center gap-3 px-4";
   if (!usable)
     return (
       <li
-        className={cn(shell, "bg-muted/40 text-muted-foreground")}
+        className={cn(row, "text-muted-foreground")}
         title={view.detail ?? undefined}
       >
         {body}
@@ -252,13 +252,7 @@ function TaskCard({
     );
   return (
     <li className="min-w-0">
-      <Link
-        href={href}
-        className={cn(
-          shell,
-          "bg-card hover:border-input h-full transition-colors",
-        )}
-      >
+      <Link href={href} className={cn(row, "hover:bg-muted transition-colors")}>
         {body}
       </Link>
     </li>
@@ -268,43 +262,35 @@ function TaskCard({
 function Tasks({
   views,
   models,
+  receipts,
 }: {
   views: CapabilityView[];
   models: Record<string, string | undefined>;
+  receipts: HomeReceipt[];
 }) {
   const byKey = new Map(views.map((view) => [view.key, view]));
-  const primary = PRIMARY_TASKS.filter((task) => byKey.has(task.key));
-  const more = MORE_TASKS.filter((task) => byKey.has(task.key));
-  if (!primary.length && !more.length) return null;
+  const tasks = TASKS.filter((task) => byKey.has(task.key));
+  if (!tasks.length) return null;
+  const used = lastUses(receipts);
   return (
-    <section aria-labelledby="tasks-heading" className="space-y-3">
+    <section aria-labelledby="tasks-heading">
       <SectionHeading id="tasks-heading" title="Make something" />
-      {primary.length ? (
-        <ul className="grid gap-2 md:grid-cols-3">
-          {primary.map((task) => (
-            <TaskCard
-              key={task.key}
-              task={task}
-              view={byKey.get(task.key)!}
-              href={taskHref(task, models)}
-              primary
-            />
-          ))}
-        </ul>
-      ) : null}
-      {more.length ? (
-        <ul className="grid gap-2 sm:grid-cols-2">
-          {more.map((task) => (
-            <TaskCard
-              key={task.key}
-              task={task}
-              view={byKey.get(task.key)!}
-              href={taskHref(task, models)}
-              primary={false}
-            />
-          ))}
-        </ul>
-      ) : null}
+      {/* Hairlines are the 1 px gaps of the grid, so one and two columns
+          share one row grammar. */}
+      <ul className="bg-border rounded-panel grid gap-px overflow-hidden border md:grid-cols-2">
+        {tasks.map((task) => (
+          <TaskRow
+            key={task.key}
+            task={task}
+            view={byKey.get(task.key)!}
+            href={taskHref(task, models)}
+            usedAt={used.get(task.key) ?? null}
+          />
+        ))}
+        {tasks.length % 2 ? (
+          <li aria-hidden="true" className="bg-card max-md:hidden" />
+        ) : null}
+      </ul>
     </section>
   );
 }
@@ -481,7 +467,7 @@ function Connect({
     <section
       id="connect"
       aria-labelledby="connect-heading"
-      className="bg-card rounded-panel border"
+      className="bg-card rounded-panel scroll-mt-20 border"
     >
       <div className="space-y-5 p-5">
         <div>
@@ -1282,7 +1268,19 @@ export default function HomePage() {
         </>
       ) : (
         <>
-          <PageHeader title="Home">
+          <PageHeader
+            title="Home"
+            actions={
+              // Connecting an app is secondary, but one tap from the top
+              // (Apple Home puts "+" in the top bar).
+              <Button variant="outline" size="sm" asChild className="lg:hidden">
+                <a href="#connect">
+                  <Plus aria-hidden="true" />
+                  Connect an app
+                </a>
+              </Button>
+            }
+          >
             <StatusLine
               tone={verdict.tone}
               text={verdict.text}
@@ -1312,10 +1310,15 @@ export default function HomePage() {
                   owner={isOwner}
                 />
               ) : null}
-              <Tasks views={views} models={models} />
+              <Tasks
+                views={views}
+                models={models}
+                receipts={home.receipts ?? []}
+              />
               <Recent receipts={home.receipts ?? []} />
             </div>
-            <div className="min-w-0 lg:col-start-2 lg:row-start-1">
+            {/* Top aligned with the first list, under its section heading. */}
+            <div className="min-w-0 lg:col-start-2 lg:row-start-1 lg:mt-11">
               <Connect home={home} startOpen={newcomer} />
             </div>
           </div>

@@ -16,7 +16,9 @@ export function hourSlots(
     );
     return {
       start,
-      value: inSlot.length ? Math.min(...inSlot.map(([, value]) => value)) : null,
+      value: inSlot.length
+        ? Math.min(...inSlot.map(([, value]) => value))
+        : null,
     };
   });
 }
@@ -79,6 +81,7 @@ export function UptimeBar({
   label,
   className,
   showAxis = true,
+  showLegend = false,
 }: {
   series: SeriesPoint[] | undefined;
   /** End of the window, epoch seconds: the status payload's time. */
@@ -87,6 +90,8 @@ export function UptimeBar({
   label: string;
   className?: string;
   showAxis?: boolean;
+  /** Name each colour once, so the last amber or red cell explains itself. */
+  showLegend?: boolean;
 }) {
   if (!series?.length) return null;
   const slots = hourSlots(series, end);
@@ -96,7 +101,11 @@ export function UptimeBar({
     : `${label}: ${up} of ${checked} checked hours up in the last 24 hours${checked < 24 ? `; ${24 - checked} hours had no check` : ""}`;
   return (
     <div className={cn("min-w-0", className)}>
-      <div role="img" aria-label={summary} className="flex h-4 min-w-0 items-end gap-0.5">
+      <div
+        role="img"
+        aria-label={summary}
+        className="flex h-4 min-w-0 items-end gap-0.5"
+      >
         {slots.map((slot) => (
           <span
             key={slot.start}
@@ -104,20 +113,46 @@ export function UptimeBar({
             className={cn(
               "flex-1 rounded-xs",
               slotClass(slot.value, enabled),
-              slot.value !== null && slot.value < 1 && enabled ? "h-4" : "h-2.5",
+              slot.value !== null && slot.value < 1 && enabled
+                ? "h-4"
+                : "h-2.5",
             )}
           />
         ))}
       </div>
       {showAxis ? (
-        <div aria-hidden="true" className="text-subtle-foreground mt-1 flex justify-between text-xs">
+        <div
+          aria-hidden="true"
+          className="text-subtle-foreground mt-1 flex justify-between text-xs"
+        >
           <span>24 h ago</span>
           <span>Now</span>
         </div>
       ) : null}
-      {enabled && slots.some((slot) => slot.value !== null && slot.value < 1) ? (
+      {showLegend ? (
+        <ul className="text-muted-foreground mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+          {[
+            ["bg-success/70", "Up"],
+            ["bg-warning", "Degraded"],
+            ["bg-danger", "Down"],
+            ["bg-muted", "No check"],
+          ].map(([swatch, word]) => (
+            <li key={word} className="flex items-center gap-1.5">
+              <span
+                aria-hidden="true"
+                className={cn("size-2 rounded-xs", swatch)}
+              />
+              {word}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {enabled &&
+      slots.some((slot) => slot.value !== null && slot.value < 1) ? (
         <details className="text-muted-foreground mt-1 text-xs">
-          <summary className="w-fit cursor-pointer max-sm:min-h-11 max-sm:py-3">Hour by hour</summary>
+          <summary className="w-fit cursor-pointer max-sm:min-h-11 max-sm:py-3">
+            Hour by hour
+          </summary>
           <ul className="mt-1 grid grid-cols-2 gap-x-4 sm:grid-cols-3">
             {slots.map((slot) => (
               <li key={slot.start}>

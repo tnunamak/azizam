@@ -1715,8 +1715,13 @@ export default function LibraryPage() {
     const posters = new Set(
       listed.map((item) => item.poster_asset_id).filter(Boolean),
     );
-    return listed.filter((item) => !posters.has(item.asset_id));
-  }, [mediaPages]);
+    // The kind is known for every item, so a new kind applies at once, even
+    // while the previous grid stands in for the request.
+    return listed.filter(
+      (item) =>
+        !posters.has(item.asset_id) && (kind === "all" || item.kind === kind),
+    );
+  }, [mediaPages, kind]);
   const sources = useMemo(() => mediaPages[0]?.sources ?? [], [mediaPages]);
   const { people, lookup: personFor } = usePeople(canChooseOwner, sources);
   const viewerPerson =
@@ -1946,7 +1951,7 @@ export default function LibraryPage() {
     <div>
       {/* PageHeader's title and count, with search in the actions slot; the
           heading keeps a ref so the viewer can return focus to it. */}
-      <header className="mb-5 flex min-h-10 flex-wrap items-center justify-between gap-x-6 gap-y-3">
+      <header className="mb-4 flex min-h-10 flex-wrap items-center justify-between gap-x-6 gap-y-3">
         <h1
           ref={headingRef}
           tabIndex={-1}
@@ -1975,7 +1980,7 @@ export default function LibraryPage() {
       </header>
       <section
         aria-label="Library filters"
-        className="mb-6 flex flex-wrap items-center gap-2"
+        className="mb-8 flex flex-wrap items-center gap-2"
       >
         <Segmented
           label="Kind"
