@@ -67,6 +67,9 @@ EXIT_INTERRUPTED = 130
 
 DEFAULT_GATEWAY_URL = "http://127.0.0.1:5000"
 DEFAULT_LLAMA_URL = "http://127.0.0.1:5051"
+# The reverse proxy marks the gateway down while it restarts and re-probes on
+# its own interval, so local health alone does not mean users can reach it.
+DEFAULT_PUBLIC_URL = "https://ai.vivid.fish"
 DEFAULT_TIMEOUT_S = 3600.0  # long enough to find a 5-minute idle window during normal use
 DEFAULT_QUIET_S = 300.0  # a person using an agent pauses for minutes between messages; 20 s only covered tool steps
 TOKEN_ENV_NAMES = ("AZIZAM_ADMIN_KEY",)
@@ -590,6 +593,17 @@ class Restarter:
         else:
             self.say("--force: nothing was in flight")
 
+    def _wait_public(self) -> None:
+        url = self.args.public_url.rstrip("/") + "/health"
+        self.say(f"waiting for public health at {url}")
+        if self.wait_health(url, self.args.public_timeout, name=url):
+            self.say("public health is OK")
+        else:
+            self.warn(
+                f"public health at {url} did not return 200 within {self.args.public_timeout:.0f}s; "
+                "the reverse proxy may still mark the gateway down"
+            )
+
     def _restart_and_verify(self, *, drained: bool) -> int:
         args = self.args
         target = self._unit()
@@ -608,6 +622,8 @@ class Restarter:
             status = EXIT_UNCONFIRMED
         else:
             self.say(f"{target} is healthy")
+            if not args.llama and args.public_url:
+                self._wait_public()
 
         if args.llama:
             # The gateway kept running through a llama restart, so its drain flag
@@ -658,6 +674,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--health-timeout", type=float, default=None, help="seconds to wait for health after restart (default 120; 600 with --llama)")
     parser.add_argument("--url", default=os.environ.get("AZIZAM_URL", DEFAULT_GATEWAY_URL), help="gateway base URL (loopback)")
     parser.add_argument("--llama-url", default=DEFAULT_LLAMA_URL)
+    parser.add_argument(
+        "--public-url",
+        default=os.environ.get("AZIZAM_PUBLIC_URL", DEFAULT_PUBLIC_URL),
+        help="public base URL to confirm after restart; empty to skip (default https://ai.vivid.fish)",
+    )
+    parser.add_argument("--public-timeout", type=float, default=60.0, help="seconds to wait for public health (default 60)")
     parser.add_argument("--unit", default="azizam")
     parser.add_argument("--llama-unit", default="llama-bee")
     parser.add_argument("--poll", type=float, default=2.0, help=argparse.SUPPRESS)

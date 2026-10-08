@@ -54,6 +54,7 @@ class World:
         self.drain_status = 200
         self.unreachable = False
         self.health_after_restart: list = [200]
+        self.public_health: list = [200]
         self.restarted = False
         self.systemctl_code = 0
         self.llama_slots: list = [[{"is_processing": False}]]
@@ -86,6 +87,9 @@ class World:
         if url.endswith("/slots"):
             current = self.llama_slots[0] if len(self.llama_slots) == 1 else self.llama_slots.pop(0)
             return 200, current
+        if url.startswith("https://") and url.endswith("/health"):
+            code = self.public_health[0] if len(self.public_health) == 1 else self.public_health.pop(0)
+            return code, {"status": "healthy"}
         if url.endswith("/health"):
             if not self.restarted:
                 return 200, {"status": "healthy"}
@@ -243,6 +247,23 @@ class SafeRestartTests(unittest.TestCase):
         code = world.invoke("--health-timeout", "4")
         self.assertEqual(code, sr.EXIT_UNCONFIRMED)
         self.assertIn("did not become healthy", world.text)
+
+    def test_waits_for_the_public_proxy_to_mark_the_gateway_up(self) -> None:
+        world = World()
+        world.public_health = [503, 503, 200]
+        self.assertEqual(world.invoke(), sr.EXIT_OK, world.text)
+        public = [c for c in world.calls if c[1] == "https://ai.vivid.fish/health"]
+        self.assertEqual(len(public), 3)
+        self.assertIn("public health is OK", world.text)
+
+    def test_public_health_timeout_warns_without_failing(self) -> None:
+        world = World()
+        world.public_health = [503]
+        self.assertEqual(world.invoke("--public-timeout", "4"), sr.EXIT_OK, world.text)
+        self.assertIn("did not return 200", world.text)
+        empty = World()
+        self.assertEqual(empty.invoke("--public-url", ""), sr.EXIT_OK)
+        self.assertFalse([c for c in empty.calls if c[1].startswith("https://")])
 
     def test_waits_through_connection_refused_while_starting(self) -> None:
         world = World()
