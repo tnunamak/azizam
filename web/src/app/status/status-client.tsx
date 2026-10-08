@@ -264,6 +264,8 @@ type Problem = {
   disk?: boolean;
   provider?: string;
   refusals?: RequestRecord[];
+  /** Service ids whose failed requests belong to this problem. */
+  backendIds?: string[];
 };
 
 function engineProblems(engines: EngineView[]): Problem[] {
@@ -389,9 +391,10 @@ function ProblemCard({
   alone: boolean;
 }) {
   const engine = problem.engines?.length === 1 ? problem.engines[0] : null;
-  const engineIds = new Set(
-    (problem.engines ?? []).map((item) => item.service.id),
-  );
+  const engineIds = new Set([
+    ...(problem.engines ?? []).map((item) => item.service.id),
+    ...(problem.backendIds ?? []),
+  ]);
   const failed = failures.filter(
     (record) =>
       record.receipt?.backend &&
@@ -510,9 +513,9 @@ function ProblemCard({
                   <PersonMark key={name} name={name} size="xs" />
                 ))}
                 <span>
-                  {latest.person_label ?? "Someone"}
-                  {failed.length > 1 ? ` and ${failed.length - 1} more` : ""},
-                  latest <RelativeTime ts={latest.created_at ?? null} fallback="" />
+                  {failed.length} request{failed.length === 1 ? "" : "s"}, latest{" "}
+                  <RelativeTime ts={latest.created_at ?? null} fallback="" />
+                  {latest.person_label ? ` by ${latest.person_label}` : ""}
                 </span>
                 {latest.receipt?.request_id ? (
                   <a
@@ -888,6 +891,7 @@ export function StatusClient() {
                   href: "/providers",
                   action: `Open ${provider.name}`,
                   provider: provider.name,
+                  backendIds: [provider.id],
                 },
               ]
             : [],
@@ -925,7 +929,17 @@ export function StatusClient() {
   const capProblems = capProblemsFrom(failures.data ?? []);
   const problems = [
     ...loadProblems,
-    ...engineProblems(engines),
+    // Provider services report through their own card when provider status loads.
+    ...engineProblems(
+      engines.filter(
+        (engine) =>
+          providers.state !== "ready" ||
+          !(
+            engine.service.kind.toLowerCase() === "provider" ||
+            (engine.service.role || "").toLowerCase() === "provider"
+          ),
+      ),
+    ),
     ...providerProblems,
     ...capProblems,
     ...signalProblems,

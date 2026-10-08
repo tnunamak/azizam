@@ -4,7 +4,7 @@ Owner: the D1 designer (Opus 5.5). Status: v1, 2026-10-08. Scope of this round: 
 
 ## Direction
 
-**Deep water, daylight.** The household's gateway is a calm, dark-teal frame that never changes, and everything a person came for sits on a clean daylight page inside it (a night page in dark theme). Every surface opens with one plain verdict sentence, says when that verdict was last checked, and shows the people in the household as their own coloured initials, so the product reads as one home with many members rather than an admin console. The memorable element is the pairing of the deep-water chrome with the verdict line: the chrome tells you whose gateway this is; the verdict tells you, in five words or fewer, whether it works. Nothing is decorative: colour carries state or identity, and every number on screen comes from the gateway.
+**Deep water, daylight.** The household's gateway is a calm, dark-teal frame that never changes, and everything a person came for sits on a clean daylight page inside it (a night page in dark theme). Every surface opens with one plain verdict sentence, says when that verdict was last checked, and shows the people in the household as their own coloured initials, so the product reads as one home with many members rather than an admin console. The memorable element is the pairing of the deep-water chrome, marked only by a goldfish-orange fish, with the verdict line: the chrome tells you whose gateway this is; the verdict tells you, in five words or fewer, whether it works. Nothing is decorative: colour carries state or identity, and every number on screen comes from the gateway.
 
 Why this direction and not another:
 
@@ -42,14 +42,14 @@ All raw values live in `web/src/styles/tokens.css`. Components use Tailwind util
 | Secondary ink | `--muted-foreground` | #4F6268 | #9AB0B6 | Labels, metadata (5.5:1 or better) |
 | Hairline | `--border` | #D7E0E2 | #213E46 | Structure |
 | Control edge | `--input` | #7B8E93 | #58777F | Inputs and outline buttons (3:1) |
-| Action | `--primary` | #0D4552 | #67CBD5 | The one primary button per view |
-| Link | `--link` | #0A6676 | #67CBD5 | Text links |
+| Action | `--primary` | #0D4552 | #8CC8CB | The one primary button per view (dark is sea glass, not neon cyan: Impeccable ai-color-palette) |
+| Link | `--link` | #0A6676 | #8CC8CB | Text links |
 | Selected | `--accent` / `--accent-foreground` | #DCF0F2 / #0B4A57 | #163C45 / #8FE0E7 | Selected options |
-| Focus | `--ring` | #1A8C9C | #67CBD5 | 2 px outline, 2 px offset |
+| Focus | `--ring` | #1A8C9C | #8CC8CB | 2 px outline, 2 px offset |
 | Chrome | `--chrome` | #0C2830 | #071A1F | Sidebar, phone header |
 | Chrome raised | `--chrome-raised` | #143841 | #0F2A31 | Hover and current item |
 | Chrome text | `--chrome-foreground` / `--chrome-muted` | #E3EEF0 / #93B0B7 | same | |
-| Chrome accent | `--chrome-accent` | #6FD3DC | same | Brand mark, current-item icon |
+| Chrome accent | `--chrome-accent` | #F2A65A (goldfish) | same | The brand mark and the current place in the sidebar; used nowhere else |
 | Media stage | `--media-stage` | #0A2229 | #050F12 | Behind media in the viewer |
 | Success | `--success` / tint | #17703F / #E3F3EA | #6FD39B / #12352A | Ready |
 | Warning | `--warning` / tint | #8F5300 / #FDF1DC | #E8B65A / #3A2E15 | Degraded, busy |
@@ -69,9 +69,9 @@ One family, Hanken Grotesk (OFL, variable 100–900); its figures are tabular by
 |---|---|---|---|
 | `text-3xl` | 30 / 36 | 600, −0.015em | Verdicts and page titles at ≥ 640 px |
 | `text-2xl` | 24 / 30 | 600 | Verdicts at 390 px |
-| `text-xl` | 20 / 28 | 600 | Viewer title |
-| `text-lg` | 17 / 24 | 600 | Section headings, card titles |
-| `text-base` | 15 / 22 | 400 | Body |
+| `text-xl` | 20 / 28 | 600 | Section headings, viewer title |
+| `text-lg` | 17 / 24 | 600 | Panel headings (Connect an app) |
+| `text-base` | 15 / 22 | 400–600 | Body; problem-card titles at 600 |
 | `text-sm` | 14 / 20 | 400–500 | Rows, controls, facts |
 | `text-xs` | 12 / 16 | 500 | Metadata, durations |
 | `text-2xs` | 10 / 12 | 600 | Initials inside a 20 px person mark only |
@@ -99,7 +99,7 @@ One family, Hanken Grotesk (OFL, variable 100–900); its figures are tabular by
 | Verdict | `components/product/readiness.tsx` | The opening sentence with its state icon and a detail line |
 | StateLabel, `availabilityState` | same | The one state vocabulary, as icon + colour + word |
 | EvidenceTime, `evidenceStamp` | same | "Checked …" vs "Used …" vs "Failed …" |
-| SectionHeading | same | Every titled region: 17 px heading, optional count and one action |
+| SectionHeading | same | Every titled region: 20 px heading, optional count and one action |
 | `capabilityMeta` | same | Capability name, icon and hue |
 | UptimeBar | `components/product/uptime-bar.tsx` | 24 hourly segments with an accessible summary |
 | PersonMark | `components/product/person-mark.tsx` | A person's initial in their stable hue |
@@ -110,7 +110,8 @@ One family, Hanken Grotesk (OFL, variable 100–900); its figures are tabular by
 | Input, Select, Popover, Dialog, Sheet, DropdownMenu, Tooltip, Skeleton | `components/ui/*` | shadcn primitives on the tokens |
 | EmptyState, ErrorState | `components/product/*` | Blank-slate with one action; error with heading, sentence and retry (Geist 12c) |
 | Capability tile | `app/home/page.tsx` | Icon, name, state; a link to Try when usable; "Inspect <engine>" for owners when not |
-| Problem card | `app/status/status-client.tsx` | Where, Affects, Last error, Last 24 hours, Recent failures, one action |
+| Notice | `components/product/notice.tsx` | One warning under a verdict: what happened, the gateway's own sentence, one action |
+| Problem card | `app/status/status-client.tsx` | Where, Affects, Last error, Last 24 hours, Recent failures or Refused, one action (only the first card's action is primary) |
 | Layer table | same | Engines and providers: name, serves, uptime bar, %, state; spend meter for providers |
 | Creation tile and viewer | `app/library/page.tsx` | Square media tile with maker; viewer with stage, facts and actions |
 
@@ -118,14 +119,24 @@ No new component without a director decision.
 
 ## Surfaces in this round
 
-- **Home.** Verdict, capability tiles (4 × 2 at 1440, compact rows at 390), "Connect an app" (gateway address, your apps with last use, add an app with the recipe flow), recent creations. Owners see the same Home, plus "Inspect <engine>" on any capability that is down.
-- **Status, owner.** Verdict with check time; "Needs attention" problem cards; every capability with its state; the layer table (folded while something needs attention). **Status, member.** The Home verdict, the member's own recent failure on a capability that is down now (with its receipt), their capabilities, their recent requests.
-- **Library.** One grid in buckets (this week, last week, months); kind as a segmented control; the owner's person filter; model, date and app behind "Filters"; the viewer with image, video and audio playback, download, prompt, receipt and cost.
+- **Home.** Verdict, capability tiles (4 × 2 at 1440, compact rows at 390), "Connect an app" (gateway address, your apps with last use, add an app with the recipe flow), recent creations whose files still exist. Owners see the same Home, plus "Inspect <engine>" in the verdict's detail line (or "N engines need you" past two). When the gateway refused a member's paid requests because an access plan's allowance is used, a Notice quotes the receipt's own sentence. Someone whose apps have never made a request sees "Connect an app" before the tiles on a phone.
+- **Status, owner.** Verdict with check time; "Needs attention" problem cards for engines, providers, the gateway's computer and access-plan spending caps (read from refused receipts); every capability with its state as a labelled icon; the layer table with hour-true uptime bars (folded while something needs attention). **Status, member.** The Home verdict, the member's own recent failure on a capability that is down now (with its receipt), their capabilities, their recent requests.
+- **Library.** One grid in buckets (this week, last week, months); kind as a segmented control; the owner's person filter; model, date and app behind "Filters"; the viewer with image, video and audio playback (a large play control and seek bar for audio), download, prompt, receipt and charge. Creations whose files are gone fold into one line that, for owners, says how long the gateway keeps files.
 
 ## Token drift, bans and exceptions
 
 - Run `scripts/ui/token_drift.py --fail` (default scope: the surfaces above and their primitives). Legacy routes report with `--all` and are out of D1 scope.
 - Ban-list exceptions: none recorded.
+- Impeccable detector exception: `layout-transition` (height) comes from Sonner's own toast stylesheet, a third-party package; no Azizam style animates height.
+- Console exception: signed-out pages get a 401 from `/admin/api/session` while the shell checks for a service key. It is expected and carries no user-facing error.
+
+## How the gates run (T-4)
+
+- `scripts/ui/token_drift.py --fail`: token drift.
+- `node web/e2e/d1-gates.mjs <out>`: axe WCAG 2 AA (contrast included), horizontal overflow, clipped text, 44 px targets at 390, visible focus on every tab stop, console errors and failed requests; owner and member, both themes, both widths, plus the Library viewer.
+- `node web/e2e/d1-snapshots.mjs <dir>` then `npx impeccable detect <url>` on each snapshot: the detector cannot sign in, so signed-in pages are saved without scripts and served locally.
+- `~/.tmp/gw-product/audit/{boot.py,crawl.mjs,lint.py}` on a copy of the production data: repeated facts and word budgets.
+- `scripts/ui/d1-states-capture <out>`: every state and scenario for the contact sheet.
 
 ## Backend asks
 
@@ -135,3 +146,5 @@ No new component without a director decision.
 4. **Failed receipts filter.** `/admin/api/activity/requests` ignores a status filter, so Status reads the latest 50 requests to find recent failures for an engine. Add `status=failed` and `backend=<service_id>` filters.
 5. **Provider connection checks.** `checked_at` is null until a connection test runs, so a configured provider reads "Not checked yet" indefinitely. A periodic provider check (or a last successful request time per provider) would let Status say more.
 6. **Video posters.** The seed's video has no `poster_asset_id` although a poster exists; the gateway could attach the first-frame poster it already extracts.
+7. **A member's own allowance.** Members learn that their plan's allowance is used only from refused receipts. A `plan_spend` block on `/me/api/home` (spent, cap, period, resets_at) would let Home say "USD 0.80 of USD 1.00 today" before anything is refused.
+8. **In-flight work.** Running media jobs are not in `/me/api/media`, so Library cannot show "Making your video, 42%". A `running` list (or the job in the list with `status`) would let Library and Home show work in progress.

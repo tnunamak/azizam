@@ -50,7 +50,7 @@ async function inspect(page, label, width) {
       const ellipsis = style.textOverflow === "ellipsis";
       const clamp = style.webkitLineClamp && style.webkitLineClamp !== "none";
       const textual = [...el.childNodes].some(n => n.nodeType === 3 && n.textContent.trim());
-      const visuallyHidden = style.clip !== "auto" && style.position === "absolute";
+      const visuallyHidden = style.position === "absolute" && (style.clip !== "auto" || style.clipPath !== "none") && rect.width <= 1;
       if (clipsX && textual && !ellipsis && !clamp && !visuallyHidden && !el.closest(".sr-only"))
         out.clipped.push(`${el.tagName.toLowerCase()}.${[...el.classList].slice(0, 3).join(".")}: ${el.textContent.trim().slice(0, 40)}`);
       if (width <= 390) {
