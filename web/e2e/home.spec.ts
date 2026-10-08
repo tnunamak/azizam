@@ -215,14 +215,20 @@ for (const theme of ["light", "dark"] as const) {
           ).toBeVisible();
           await expect(page.getByLabel("Loading Home")).toHaveCount(0);
           if (state === "empty") {
+            // D1.1: the shared verdict says nothing is set up; there is no
+            // task list to fake an empty "Make something".
             await expect(
-              page.getByText(
-                "No capabilities are available to your account yet.",
-                {
-                  exact: true,
-                },
-              ),
+              page
+                .locator("main")
+                .getByRole("status")
+                .filter({ hasText: "Nothing is set up yet" }),
             ).toHaveCount(1);
+            await expect(
+              page.getByRole("heading", {
+                name: "Make something",
+                exact: true,
+              }),
+            ).toHaveCount(0);
             await expect(
               page.getByRole("heading", {
                 name: "Finish setting up",
@@ -232,7 +238,7 @@ for (const theme of ["light", "dark"] as const) {
           } else if (state === "seeded") {
             await expect(
               page.getByRole("heading", {
-                name: "What you can use",
+                name: "Make something",
                 exact: true,
               }),
             ).toBeVisible();
@@ -245,13 +251,23 @@ for (const theme of ["light", "dark"] as const) {
             ).toHaveCount(0);
           }
           if (state === "seeded") {
+            // D1.1: Recent tiles carry the prompt in the tile's name and
+            // the image's alt text instead of a caption.
             await expect(
-              page.getByText("A recorded image from your gateway", {
+              page.getByRole("link", {
+                name: "Open Image in Library: A recorded image from your gateway",
                 exact: true,
               }),
             ).toBeVisible();
             await expect(
-              page.locator('a[href*="/models/?capability=chat"]'),
+              page.getByRole("img", {
+                name: "A recorded image from your gateway",
+                exact: true,
+              }),
+            ).toBeVisible();
+            // D1.1: tasks open Try in the right mode, not Models.
+            await expect(
+              page.locator('a[href*="/try/?capability=chat"]'),
             ).toHaveCount(1);
           }
         }
@@ -525,7 +541,7 @@ test("inline reveal-once key tests a real chat request and produces one owned re
       ).ok(),
     ).toBe(true);
     await page.goto(homePath);
-    await page.getByRole("button", { name: "Open WebUI", exact: true }).click();
+    await openClientInstructionsOnPhone(page, 1280);
     const mintResponse = page.waitForResponse(
       (response) =>
         /\/me\/api\/apps\/[^/]+\/keys$/.test(
@@ -565,7 +581,7 @@ test("inline reveal-once key tests a real chat request and produces one owned re
       "Secret must disappear after acknowledgement",
     ).toBe(false);
     await page.reload();
-    await page.getByRole("button", { name: "Open WebUI", exact: true }).click();
+    await openClientInstructionsOnPhone(page, 1280);
     await expect(page.getByLabel("Your key", { exact: true })).toHaveCount(0);
     expect(
       await page.evaluate((key) => {
@@ -580,7 +596,9 @@ test("inline reveal-once key tests a real chat request and produces one owned re
       }, secret),
       "Home must not persist or redisplay the key",
     ).toBeFalsy();
-    await chooseRecipeKey(page, /Open WebUI/);
+    // The new-key option reads "New key for Open WebUI" since D1.1; pick
+    // the key just minted for the Open WebUI app.
+    await chooseRecipeKey(page, /^Open WebUI · /);
 
     const before = await (
       await request.get("/me/api/activity?limit=100")
@@ -661,7 +679,7 @@ test("inline reveal-once key tests a real chat request and produces one owned re
       page.getByRole("button", { name: "Setup notes", exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "What you can use", exact: true }),
+      page.getByRole("heading", { name: "Make something", exact: true }),
     ).toBeVisible();
     await expect(
       page.getByRole("heading", { name: "Finish setting up", exact: true }),
@@ -737,11 +755,12 @@ test("a new inherited key cannot borrow a broader existing app's recipe", async 
     ).toBe(true);
     expect(snapshot.new_app_aliases).toEqual([]);
     await page.goto(homePath);
-    await page.getByRole("button", { name: "Open WebUI", exact: true }).click();
+    await openClientInstructionsOnPhone(page, 1280);
     const selector = page.getByRole("combobox", {
       name: "API key",
     });
-    await expect(selector).toContainText("New app");
+    // "New app · default access" reads "New key for Open WebUI" since D1.1.
+    await expect(selector).toContainText("New key for Open WebUI");
     await expect(page.getByRole("textbox", { name: "Model" })).toHaveCount(0);
     await chooseRecipeKey(page, /Browser test app/);
     await expect(page.getByRole("textbox", { name: "Model" })).toHaveCount(0);

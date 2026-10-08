@@ -95,17 +95,21 @@ test("Home capability link carries chat into Models", async ({ page }) => {
   await routeTryCatalog(page);
 
   await page.goto("/ui/home/");
+  // D1.1: Home lists tasks ("Make something") that open Try in the right
+  // mode, not capabilities that open Models. The chat entry point must still
+  // carry the chat capability and the home's chat model ("fast", not the
+  // catalog's first alias).
   await expect(
-    page.getByRole("heading", { name: "What you can use", exact: true }),
+    page.getByRole("heading", { name: "Make something", exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole("link", { name: "Reranking" })).toBeVisible();
 
-  const modelsLink = page
-    .locator('a[href*="/models"][href*="capability=chat"]')
+  const chatLink = page
+    .locator('a[href*="/try/"][href*="capability=chat"]')
     .first();
-  await expect(modelsLink).toHaveCount(1);
-  await modelsLink.click();
-  await expect(page).toHaveURL(/\/ui\/models\/\?capability=chat$/);
+  await expect(chatLink).toHaveCount(1);
+  await expect(chatLink).toHaveAttribute("href", /[?&]model=fast(&|$)/);
+  await chatLink.click();
+  await expect(page).toHaveURL(/\/ui\/try\/\?capability=chat&model=fast$/);
 });
 
 test("Home picks the app recipe before creating a key", async ({ page }) => {
@@ -117,7 +121,8 @@ test("Home picks the app recipe before creating a key", async ({ page }) => {
   await expect(
     page.getByRole("button", { name: "Create key for Open WebUI" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Other", exact: true }).click();
+  // The "Other" choice reads "Another app" since D1.1.
+  await page.getByRole("button", { name: "Another app", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Create key for Python" }),
   ).toBeVisible();

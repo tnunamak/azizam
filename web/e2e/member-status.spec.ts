@@ -70,6 +70,47 @@ for (const theme of ["light", "dark"] as const) {
             },
           }),
         );
+        // Status reads the member's capability states from their Home
+        // snapshot (the shared model), so Home carries the same rows.
+        const checkedAt = Math.floor(Date.now() / 1000) - 120;
+        const imageRow = {
+          capability: "image",
+          capability_title: "Images",
+          icon_key: "image",
+          title: "Flux",
+          recommended_model: "Flux",
+          use_names: ["image", "flux"],
+          summary: "Generate images with Flux.",
+          intent: "image.generate",
+          model: "image-model",
+          workflow: null,
+          available: false,
+          status: "unavailable",
+          reason_code: "unavailable",
+        };
+        await page.route("**/me/api/home", async (route) => {
+          const response = await route.fetch();
+          const home = await response.json();
+          return route.fulfill({
+            response,
+            json: {
+              ...home,
+              capabilities:
+                state === "empty"
+                  ? []
+                  : [
+                      {
+                        ...imageRow,
+                        availability: {
+                          evidence: { source: "status", observed_at_s: checkedAt },
+                        },
+                      },
+                    ],
+              aliases: [],
+              receipts: [],
+            },
+          });
+        });
         let failed = state === "error";
         await page.route("**/me/api/status", (route) =>
           failed
@@ -96,21 +137,9 @@ for (const theme of ["light", "dark"] as const) {
                       ? []
                       : [
                           {
-                            capability: "image",
-                            capability_title: "Images",
-                            icon_key: "image",
-                            title: "Flux",
-                            recommended_model: "Flux",
-                            use_names: ["image", "flux"],
-                            summary: "Generate images with Flux.",
-                            intent: "image.generate",
-                            model: "image-model",
-                            workflow: null,
-                            available: false,
-                            status: "unavailable",
-                            reason_code: "unavailable",
+                            ...imageRow,
                             measured: true,
-                            observed_at_s: 1790870400,
+                            observed_at_s: checkedAt,
                           },
                         ],
                   receipts:
@@ -129,25 +158,46 @@ for (const theme of ["light", "dark"] as const) {
                 },
               }),
         );
+        const yourCapabilities = page.getByRole("region", {
+          name: "Your capabilities",
+        });
         await page.goto("/ui/status/");
-        if (state === "error")
+        if (state === "error") {
           await expect(
             page.getByRole("button", { name: "Try again" }),
           ).toBeVisible();
-        else if (state === "empty")
+          // An HTTP answer proves only that the gateway answered.
           await expect(
-            page.getByText("No capabilities are available to your account yet.", {
+            page.getByText("The gateway returned an error. Try again.", {
               exact: true,
             }),
           ).toBeVisible();
-        else
+        } else if (state === "empty") {
           await expect(
-            page.getByRole("heading", { name: "Images" }),
+            page.getByText("No models are available to your account yet", {
+              exact: true,
+            }),
           ).toBeVisible();
-        if (state === "seeded")
           await expect(
-            page.getByText("Images are unavailable.", { exact: true }),
+            page.getByText(
+              "Ask the gateway owner to connect a model and give you access.",
+              { exact: true },
+            ),
           ).toBeVisible();
+        } else
+          await expect(
+            yourCapabilities.getByText("Images", { exact: true }),
+          ).toBeVisible();
+        if (state === "seeded") {
+          await expect(
+            yourCapabilities.getByRole("listitem").filter({ hasText: "Images" }),
+          ).toContainText("Down");
+          await expect(
+            page.getByText("Your app reached the gateway. Images is down now.", {
+              exact: true,
+            }),
+          ).toBeVisible();
+        }
         await expect(page.locator('[aria-busy="true"]:visible')).toHaveCount(0);
         await page.evaluate(() => document.fonts.ready);
         expect(
@@ -171,7 +221,7 @@ for (const theme of ["light", "dark"] as const) {
           failed = false;
           await page.getByRole("button", { name: "Try again" }).click();
           await expect(
-            page.getByRole("heading", { name: "Images" }),
+            yourCapabilities.getByText("Images", { exact: true }),
           ).toBeVisible();
         }
         expect(ownerCalls).toEqual([]);

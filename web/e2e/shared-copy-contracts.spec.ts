@@ -81,8 +81,12 @@ for (const theme of ["light", "dark"] as const) {
       await expect(
         page.getByRole("heading", { name: "Models", exact: true, level: 1 }),
       ).toBeVisible();
+      // A signed-in person sees the shared capability verdict, never the
+      // signed-out "Gateway reachable" (DESIGN.md, Status model rule 3).
       await expect(
-        page.getByRole("button", { name: "Gateway status: Gateway reachable" }),
+        page.getByRole("button", {
+          name: /^Gateway status: (All working|\d+ issues?|Busy|Nothing set up|Status unknown)$/,
+        }),
       ).toBeVisible();
       await checkAccessibility(page);
     });

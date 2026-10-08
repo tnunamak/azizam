@@ -186,9 +186,23 @@ for (const theme of ["light", "dark"] as const) {
       await fixture(page, request);
       await page.goto("/ui/home/");
       await expect(page.locator("main")).not.toContainText("Hello,");
-      await expect(
-        page.getByText("Images and video are disabled.", { exact: true }),
-      ).toBeVisible();
+      // D1.1: each task row says its own state. The disabled and unavailable
+      // capabilities are named on their rows and are not offered as links.
+      const tasks = page.getByRole("region", { name: "Make something" });
+      const picture = tasks.getByRole("listitem").filter({
+        hasText: "Make a picture",
+      });
+      await expect(picture).toContainText("Off");
+      await expect(picture).toContainText("Turned off by the owner.");
+      await expect(picture.getByRole("link")).toHaveCount(0);
+      const video = tasks.getByRole("listitem").filter({
+        hasText: "Make a video",
+      });
+      await expect(video).toContainText("Down");
+      await expect(video.getByRole("link")).toHaveCount(0);
+      await expect(page.getByRole("status").first()).not.toContainText(
+        /everything works/i,
+      );
       await expect(
         page.getByText("Some services are unavailable or not measured yet.", {
           exact: true,
@@ -197,9 +211,8 @@ for (const theme of ["light", "dark"] as const) {
       await expect(
         page.getByText("Here’s how to use your AI.", { exact: true }),
       ).toHaveCount(0);
-      await expect(page.locator('a[href*="/models/?capability="]')).toHaveCount(
-        4,
-      );
+      // Only the usable tasks (chat, speech) open Try.
+      await expect(page.locator('a[href*="/try/?capability="]')).toHaveCount(2);
       await expect(
         page.getByText("Unavailable right now", { exact: true }),
       ).toHaveCount(0);
@@ -433,7 +446,12 @@ test("Home and Library render a frame from posterless video", async ({
     await page.goto(`/ui/${route}/`);
     const video = page.locator("main video");
     await expect(video).toBeVisible();
-    await expect(video).toHaveAttribute("preload", "none");
+    // Home's tile preloads nothing until it plays; Library's posterless tile
+    // loads metadata only (D1.1, library page.spec). Both seek to 0.1 s.
+    await expect(video).toHaveAttribute(
+      "preload",
+      route === "home" ? "none" : "metadata",
+    );
     await expect(video).toHaveJSProperty("muted", true);
     await expect
       .poll(() =>

@@ -152,7 +152,11 @@ for (const mode of ["light", "dark"] as const) {
         route.fulfill({ json: { assets: [], models: [], next_cursor: null } }),
       );
       await page.goto("/ui/library/");
-      await expect(page.getByText("No media yet")).toBeVisible();
+      await expect(page.getByText("No creations yet")).toBeVisible();
+      // The empty state names the one action that fills it.
+      await expect(
+        page.getByRole("link", { name: "Make an image" }),
+      ).toHaveAttribute("href", "/ui/try/?capability=image");
       await auditPage(page);
       await page.screenshot({
         path: `test-results/screens/library-empty-${mode}-${width}.png`,
@@ -175,7 +179,10 @@ for (const mode of ["light", "dark"] as const) {
       });
       await page.goto("/ui/library/");
       await expect(
-        page.getByText("Your library could not be loaded. Try again."),
+        page.getByText("Couldn’t load your library", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "Try again" }),
       ).toBeVisible();
       await auditPage(page);
       await page.screenshot({
@@ -183,9 +190,13 @@ for (const mode of ["light", "dark"] as const) {
         fullPage: true,
       });
       await page.getByRole("button", { name: "Try again" }).click();
+      // Picture tiles carry no text; the tile is named by its prompt.
       await expect(
-        page.getByText("A clean product render", { exact: false }),
+        page.getByRole("button", { name: /Open A clean product render/ }),
       ).toBeVisible();
+      await expect(
+        page.getByText("Couldn’t load your library", { exact: true }),
+      ).toHaveCount(0);
       await page.screenshot({
         path: `test-results/screens/library-error-retry-${mode}-${width}.png`,
         fullPage: true,
@@ -209,10 +220,9 @@ test("library delete confirms before mutation", async ({ page }) => {
   });
   await page.goto("/ui/library/");
   await page
-    .getByLabel("Owner", { exact: true })
-    .filter({ visible: true })
+    .getByRole("combobox", { name: "Person", exact: true })
     .click();
-  await page.getByRole("option", { name: "Mine", exact: true }).click();
+  await page.getByRole("option", { name: /^(You|.+ \(you\))$/ }).click();
   await page.getByRole("button", { name: /A clean product render/ }).click();
   await page
     .getByRole("button", { name: /Actions for A clean product render/ })
@@ -362,30 +372,32 @@ test("library audio plays independently and video uses its recorded poster", asy
   await expect(page.locator("article video")).toHaveCount(0);
   await open.click({ position: { x: 20, y: 20 } });
   const detail = page.getByRole("dialog");
-  await expect(detail.getByLabel("Generated audio")).toHaveAttribute(
-    "controls",
-    "",
-  );
+  // The viewer has its own designed player: play, position and time.
+  const viewerAudio = detail.getByLabel("Generated audio");
+  await expect(viewerAudio).toHaveAttribute("src", "/test-audio.wav");
+  await expect(detail.getByRole("slider", { name: "Position" })).toBeVisible();
+  await detail
+    .getByRole("button", { name: `Play ${mediaFixture.assets[2].prompt}` })
+    .click();
+  await expect
+    .poll(() =>
+      viewerAudio.evaluate((player: HTMLAudioElement) => player.currentTime),
+    )
+    .toBeGreaterThan(0);
   await detail.getByRole("button", { name: "Close", exact: true }).click();
   await expect(page).not.toHaveURL(/asset=/);
   await expect(detail).toBeHidden();
   await expect
     .poll(() => posterRequests.at(-1) ?? "")
     .toContain("scope=everyone");
-  await page
-    .getByLabel("Owner", { exact: true })
-    .filter({ visible: true })
-    .click();
-  await page.getByRole("option", { name: "Mine", exact: true }).click();
+  await page.getByRole("combobox", { name: "Person", exact: true }).click();
+  await page.getByRole("option", { name: /^(You|.+ \(you\))$/ }).click();
   await expect.poll(() => posterRequests.at(-1) ?? "").toContain("scope=me");
-  await page
-    .getByLabel("Owner", { exact: true })
-    .filter({ visible: true })
-    .click();
-  await page.getByRole("option", { name: "Everyone's" }).click();
+  await page.getByRole("combobox", { name: "Person", exact: true }).click();
+  await page.getByRole("option", { name: "Everyone", exact: true }).click();
   await expect(
-    page.getByLabel("Owner", { exact: true }).filter({ visible: true }),
-  ).toContainText("Everyone's");
+    page.getByRole("combobox", { name: "Person", exact: true }),
+  ).toContainText("Everyone");
   // The instance poster is already cached from the default owner view.
   expect(posterRequests.some((url) => url.includes("scope=everyone"))).toBe(
     true,
