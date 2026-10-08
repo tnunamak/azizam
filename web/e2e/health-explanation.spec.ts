@@ -149,7 +149,8 @@ test("an unreachable gateway takes priority over unavailable member models", asy
   await page
     .getByRole("button", { name: "Gateway status: Gateway unreachable" })
     .click();
+  // D1.1: the popover separates reachability ("Gateway" row) from "Your AI".
   await expect(page.getByLabel("Gateway health")).toContainText(
-    "The gateway could not be reached.",
+    "GatewayNot reachable",
   );
 });

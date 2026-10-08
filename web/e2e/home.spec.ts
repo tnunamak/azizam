@@ -16,6 +16,11 @@ async function openClientInstructionsOnPhone(page: Page, _width: number) {
     name: "Open WebUI",
     exact: true,
   });
+  // D1.1: once an app has made a request, the app chooser sits behind
+  // "Add an app"; a newcomer sees it open.
+  const addApp = page.getByRole("button", { name: "Add an app", exact: true });
+  await expect(picker.or(addApp)).toBeVisible();
+  if (await addApp.isVisible()) await addApp.click();
   await expect(picker).toBeVisible();
   if ((await picker.getAttribute("aria-pressed")) !== "true") {
     await picker.click();
@@ -329,6 +334,7 @@ test("Home shows a loading skeleton until the real snapshot arrives", async ({
     "Loading Home must be accessible while its API is pending",
   ).toEqual([]);
   release();
+  await openClientInstructionsOnPhone(page, 1280);
   await expect(
     page.getByRole("button", { name: "Open WebUI", exact: true }),
   ).toBeVisible();
@@ -338,6 +344,7 @@ test("Home shows a loading skeleton until the real snapshot arrives", async ({
 test("signed-in landing redirects to Home", async ({ page }) => {
   await page.goto("/ui/");
   await expect(page).toHaveURL(/\/ui\/home\/$/);
+  await openClientInstructionsOnPhone(page, 1280);
   await expect(
     page.getByRole("button", { name: "Open WebUI", exact: true }),
   ).toBeVisible();
@@ -414,7 +421,7 @@ test("superadmin Home does not request the owner-only setup API", async ({
   );
   await page.goto(homePath);
   await expect(
-    page.getByRole("heading", { name: "What you can use", exact: true }),
+    page.getByRole("heading", { name: "Make something", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Recent", exact: true }),
@@ -450,7 +457,7 @@ for (const theme of ["light", "dark"] as const) {
         page.getByRole("heading", { name: "Connect an app", exact: true }),
       ).toBeVisible();
       await expect(
-        page.getByRole("heading", { name: "What you can use", exact: true }),
+        page.getByRole("heading", { name: "Make something", exact: true }),
       ).toBeVisible();
       await expect(
         page.getByRole("heading", { name: "Recent", exact: true }),

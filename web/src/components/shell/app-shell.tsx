@@ -359,7 +359,8 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
               "Checking"
             )}
           </dd>
-          {signedIn && !model.isPending && !model.isError ? (
+          {/* With the gateway unreachable, nothing current can be said about it. */}
+          {signedIn && !gatewayError && !model.isPending && !model.isError ? (
             <>
               <dt className="text-muted-foreground">Your AI</dt>
               <dd>{model.verdict.text}</dd>
