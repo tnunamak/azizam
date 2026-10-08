@@ -400,3 +400,103 @@ def test_household_model_declarations_override_language_discovery():
             )
             == capability
         )
+
+
+def test_budget_history_respects_every_applicable_cap(tmp_path):
+    _seed(tmp_path, "budget-exhausted")
+    with sqlite3.connect(tmp_path / "admin.db") as conn:
+        profiles = {
+            ident: json.loads(document)["remote"]
+            for ident, document in conn.execute("SELECT id,profile_json FROM profiles")
+        }
+        settings = json.loads(conn.execute(
+            "SELECT value_json FROM operator_settings WHERE key='provider_admin'"
+        ).fetchone()[0])
+    paid = []
+    rejected = 0
+    for ts, receipt in sorted(_receipts(tmp_path), key=lambda row: (row[0], row[1]["request_id"])):
+        if not receipt.get("remote"):
+            continue
+        month = int(datetime.fromtimestamp(ts, timezone.utc).replace(
+            day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
+        profile = profiles[receipt["app_profile"]]
+        provider = settings["providers"][receipt["backend"]]["caps"]
+        global_caps = settings["global_caps"]
+        exhausted = False
+        for matches, daily, monthly in (
+            (lambda r: r["app_profile"] == receipt["app_profile"],
+             profile["budget_usd_per_day"], profile["budget_usd_per_month"]),
+            (lambda r: r["backend"] == receipt["backend"],
+             provider["daily_usd"], provider["monthly_usd"]),
+            (lambda r: True, global_caps["daily_usd"], global_caps["monthly_usd"]),
+        ):
+            for since, cap in ((ts - 86400, daily), (month, monthly)):
+                spent = sum((Decimal(r["cost"]["usd"]) for when, r in paid
+                             if when >= since and matches(r)), Decimal(0))
+                exhausted |= spent >= Decimal(str(cap))
+        if receipt["status"] == "succeeded":
+            assert not exhausted, receipt["request_id"]
+            paid.append((ts, receipt))
+        elif receipt["metadata"].get("status_code") == 429:
+            rejected += 1
+            # The base household also has an independent per-request rejection.
+            estimate = Decimal(receipt["usage"]["prompt_tokens"]) * Decimal("0.000003")
+            assert exhausted or estimate > Decimal(profile["max_usd_per_request"])
+            assert receipt["status"] == "rejected"
+            assert receipt["usage"]["completion_tokens"] == 0
+            assert Decimal(receipt["cost"]["usd"]) == 0
+        if exhausted:
+            assert receipt["status"] == "rejected"
+            assert receipt["metadata"]["status_code"] == 429
+    assert paid and rejected >= 3
+    with sqlite3.connect(tmp_path / "provider_spend.db") as conn:
+        ledger = {rid: Decimal(cost) for rid, cost in conn.execute(
+            "SELECT request_id,actual_usd FROM provider_spend")}
+    assert ledger == {r["request_id"]: Decimal(r["cost"]["usd"]) for _, r in paid}
+
+
+def test_provider_outage_has_no_paid_successes(tmp_path):
+    manifest = _seed(tmp_path, "provider-down")
+    details = manifest["scenario_details"]
+    affected = [
+        r for ts, r in _receipts(tmp_path)
+        if ts > details["last_success_at"] and r.get("remote")
+        and r.get("backend") == details["provider"]
+    ]
+    assert affected
+    assert all(r["status"] != "succeeded" for r in affected)
+    for receipt in affected:
+        assert receipt["usage"]["completion_tokens"] == 0
+        assert Decimal(receipt["cost"]["usd"]) == 0
+    with sqlite3.connect(tmp_path / "provider_spend.db") as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM provider_spend WHERE provider=? AND created_at>?",
+            (details["provider"], details["last_success_at"]),
+        ).fetchone()[0] == 0
+
+
+@pytest.fixture
+def repeated_household_seeds(tmp_path):
+    paths = [tmp_path / "first", tmp_path / "second"]
+    for path in paths:
+        path.mkdir()
+        _seed(path, "running")
+    return paths
+
+
+def test_health_timings_are_varied_and_repeatable(repeated_household_seeds):
+    def timings(path):
+        with sqlite3.connect(path / "metrics.db") as conn:
+            return conn.execute(
+                "SELECT ts,json_extract(tags,'$.backend'),value FROM samples "
+                "WHERE metric='service_latency_ms' ORDER BY ts,tags"
+            ).fetchall()
+
+    first, second = map(timings, repeated_household_seeds)
+    assert first == second
+    for backend in {row[1] for row in first}:
+        values = [value for _, sid, value in first if sid == backend]
+        assert len(set(values)) > 20
+        assert any(a != b for a, b in zip(values, values[14:]))
+    down = [value for _, backend, value in first if backend == "household-embedding"]
+    assert len({value for value in down if value > 100}) > 20

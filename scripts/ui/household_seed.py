@@ -214,7 +214,8 @@ def registry(engine_port: int, scenario: str = "default") -> dict:
                 provider_type="paid-remote",
                 provider_id="household-remote",
                 api_key_env="UI_HOUSEHOLD_PROVIDER_KEY",
-                spend_caps_usd={"daily": 1, "monthly": 8},
+                spend_caps_usd={"daily": 5, "monthly": 40}
+                if scenario == "budget-exhausted" else {"daily": 1, "monthly": 8},
             )
         services[sid] = {
             "id": sid,
@@ -376,13 +377,13 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
             description="Local models only; paid models blocked"
             if not paid
             else "Local tools with a small remote backup allowance",
-            path=paths["admin"],
+            now=now, path=paths["admin"],
         )
     admin_store.create_runtime_profile_mapping(
         source_kind="all_users",
         source_value="*",
         profile_id=plans["Everyone"]["id"],
-        path=paths["admin"],
+        now=now, path=paths["admin"],
     )
     people, apps, hashes = {}, {}, {}
     for index, (slug, name, plan) in enumerate(
@@ -402,7 +403,7 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
             slug,
             email=f"{slug}@example.test",
             display_name=name,
-            path=paths["admin"],
+            now=now, path=paths["admin"],
         )
         people[slug] = user
         admin_store.set_local_password_verifier(
@@ -448,7 +449,7 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
             kind="personal",
             owner_user_id=user["id"],
             default_profile_id=plans[plan]["id"],
-            path=paths["admin"],
+            now=now, path=paths["admin"],
         )
         apps[slug] = app
     for slug, owner, name in [
@@ -463,7 +464,7 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
             kind="personal",
             owner_user_id=people[owner]["id"],
             default_profile_id=plans["Builder" if owner == "sam" else "Everyone"]["id"],
-            path=paths["admin"],
+            now=now, path=paths["admin"],
         )
     for index, (slug, app) in enumerate(apps.items()):
         digest = hash_api_key(f"household-fixture-key-{slug}-not-production")
@@ -508,14 +509,18 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
             "UPDATE credentials SET last_used_at=? WHERE app_id=?",
             (now - 9 * 86400, apps["librechat"]["id"]),
         )
+    from unittest.mock import patch
+
     for email in ["june@example.test", "morgan@example.test"]:
-        _link, _token = accounts.create_link(
-            "invite",
-            people["sam"]["id"],
-            email=email,
-            profile_id=plans["Everyone"]["id"],
-            path=paths["admin"],
-        )
+        with patch.object(accounts.time, "time", return_value=now):
+            _link, _token = accounts.create_link(
+                "invite",
+                people["sam"]["id"],
+                email=email,
+                profile_id=plans["Everyone"]["id"],
+                token_factory=lambda _link_id: f"household-fixture-invite-{email}",
+                path=paths["admin"],
+            )
     active_apps = [
         slug for slug in apps if slug not in {"casey", "librechat", "telegram"}
     ]
@@ -798,7 +803,8 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
                 [
                     (ts, "service_up", tags, int(up)),
                     (ts, "service_status_code", tags, 1 if up else 0),
-                    (ts, "service_latency_ms", tags, 22 + hour % 14 if up else 1400),
+                    (ts, "service_latency_ms", tags,
+                     _lognormal(rng, 28 if up else 1400, 0.4, 5, 10000)),
                     (ts, "service_error_kind", tags, 0 if up else 3),
                 ]
             )
@@ -814,7 +820,8 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
         {
             "providers": {
                 "household-remote": {
-                    "caps": {"daily_usd": 1, "monthly_usd": 8},
+                    "caps": {"daily_usd": 5, "monthly_usd": 40}
+                    if scenario == "budget-exhausted" else {"daily_usd": 1, "monthly_usd": 8},
                     # The last connection test failed; only this scenario stores one.
                     **(
                         {"connection": {"reachable": False, "checked_at": now - 120}}
@@ -823,7 +830,8 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
                     ),
                 }
             },
-            "global_caps": {"daily_usd": 1, "monthly_usd": 8},
+            "global_caps": {"daily_usd": 5, "monthly_usd": 40}
+            if scenario == "budget-exhausted" else {"daily_usd": 1, "monthly_usd": 8},
         },
         path=paths["admin"],
     )
@@ -941,38 +949,87 @@ def _scenario_budget_exhausted(ctx):
         day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
     day_cap, month_cap = Decimal(1), Decimal(8)
 
-    def total(since):
-        return sum((Decimal(row[4]) for row in ctx["spend"]
-                    if row[1] == profile and row[6] >= since), Decimal(0))
+    day_start = now - 86400
 
+    def total(since, until=now):
+        return sum((Decimal(row[4]) for row in ctx["spend"]
+                    if row[1] == profile and since <= row[6] <= until), Decimal(0))
+
+    # Reserve room for the existing history, then add dated candidates in order.
+    # This amount is exactly representable at the model's $0.000003 quantum.
+    # The last day's first $1 crossing will also cross $8 for the month.
+    remaining = max(Decimal(0), Decimal("6.999999") - total(month_start, day_start - 1))
     count = 0
 
-    def charge(ts):
+    def charge(ts, amount):
         nonlocal count
         count += 1
-        prompt, completion = _lognormal(rng, 3000, 0.4, 1500, 6000), _lognormal(rng, 2200, 0.4, 1000, 3800)
+        units = int(amount / Decimal("0.000003"))
+        prompt = min(units, 1000 + units % 5)
+        completion = (units - prompt) // 5
         _remote_receipt(ctx, request_id=f"req_household_budget_{count:03}", slug="robin", ts=ts,
                         status="succeeded", prompt_tokens=prompt, completion_tokens=completion,
                         cost=_usd(prompt, completion), latency_ms=_lognormal(rng, 5200, 0.4, 900, 40000))
 
-    # Earlier days: stay under the daily cap, accumulate toward the monthly cap.
-    day_start = now - 24 * 3600
-    for day in range(1, 27):
-        window_end = now - day * 86400
-        if window_end < month_start or total(month_start) >= month_cap:
+    for ts in range(month_start + 3600, day_start, 6 * 3600):
+        if remaining <= 0:
             break
-        for _ in range(rng.randint(3, 8)):
-            if total(window_end - 86400) >= Decimal("0.9") or total(month_start) >= month_cap:
-                break
-            charge(window_end - rng.randint(600, 80000))
-    while total(month_start) < month_cap - Decimal("1.1"):
-        charge(rng.randint(month_start, day_start - 3600))
-    # Last 24 hours: cross both caps; the final charge is the one that exhausts them.
-    last = day_start + 3600
-    while total(day_start) < day_cap or total(month_start) < month_cap:
-        last += rng.randint(900, 2400)
-        charge(min(last, now - 5400))
-    exhausted_at = max(row[6] for row in ctx["spend"] if row[1] == profile)
+        amount = min(Decimal("0.06"), remaining)
+        charge(ts, amount)
+        remaining -= amount
+    remaining = max(Decimal(0), Decimal("1.000002") - total(day_start))
+    for ts in range(day_start + 3600, now - 5400, 300):
+        if remaining <= 0:
+            break
+        amount = min(Decimal("0.06"), remaining)
+        charge(ts, amount)
+        remaining -= amount
+
+    # Replay every paid request. The crossing charge settles; later requests
+    # in an exhausted rolling-day/calendar-month scope are rejected.
+    from gateway import receipt_store
+
+    accepted = []
+    charges = {row[-1]: row for row in ctx["spend"]}
+    for index, row in sorted(enumerate(ctx["receipt_rows"]), key=lambda item: (item[1][1], item[1][0])):
+        data = json.loads(row[-1])
+        if not data.get("remote"):
+            continue
+        ts = row[1]
+        month = int(datetime.fromtimestamp(ts, timezone.utc).replace(
+            day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
+        exhausted = False
+        for scope, daily, monthly in (
+            (lambda charge: charge[1] == data["app_profile"], day_cap, month_cap),
+            (lambda charge: charge[0] == data["backend"], Decimal(5), Decimal(40)),
+            (lambda charge: True, Decimal(5), Decimal(40)),
+        ):
+            relevant = [charge for charge in accepted if scope(charge)]
+            exhausted |= any(
+                sum((Decimal(charge[4]) for charge in relevant if charge[6] >= since), Decimal(0)) >= cap
+                for since, cap in ((ts - 86400, daily), (month, monthly))
+            )
+        if exhausted:
+            had_error = data["status"] != "succeeded"
+            data.update(status="rejected", policy_decision="denied",
+                        policy_reasons=["budget_exceeded"],
+                        warnings=["The remote spending allowance is exhausted."])
+            data["usage"]["completion_tokens"] = 0
+            data["cost"]["usd"] = "0.000000000"
+            data["metadata"].update(status_code=429, litellm={"response_cost": "0.000000000"})
+            data["latency_ms"] = rng.randint(8, 40)
+            data["updated_at_ms"] = ts * 1000 + data["latency_ms"]
+            ctx["receipt_rows"][index] = receipt_store._row_values(data, created_at=ts)
+            if not had_error:
+                tags = json.dumps(
+                    {"key": data["api_key_name"], "app_id": data["app_id"],
+                     "model": data["requested_model"], "backend": data["backend"],
+                     "intent": data["intent"]}, sort_keys=True, separators=(",", ":"))
+                ctx["samples"].append((ts, "error", tags, 1))
+        elif data["request_id"] in charges:
+            accepted.append(charges[data["request_id"]])
+    ctx["spend"][:] = accepted
+    exhausted_at = max(row[6] for row in accepted if row[1] == profile)
     for number in range(1, 4):
         ts = exhausted_at + number * rng.randint(1200, 2400)
         prompt = _lognormal(rng, 1500, 0.4, 600, 3000)
@@ -995,6 +1052,30 @@ def _scenario_provider_down(ctx):
     rng, now = ctx["rng"], ctx["now"]
     last_success = now - REMOTE_DOWN_HOURS * 3600
     error = "HTTP 503: provider unavailable"
+    # Base requests share the same outage window as the explicit failures.
+    from gateway import receipt_store
+
+    failed_ids = set()
+    for index, row in enumerate(ctx["receipt_rows"]):
+        data = json.loads(row[-1])
+        if (row[1] > last_success and data.get("remote")
+                and data.get("backend") == REMOTE_SERVICE
+                and data["status"] == "succeeded"):
+            data.update(status="failed", policy_reasons=[],
+                        warnings=["Remote backup is not answering. Local models still work."])
+            data["usage"]["completion_tokens"] = 0
+            data["cost"]["usd"] = "0.000000000"
+            data["metadata"].update(status_code=503, litellm={"response_cost": "0.000000000"})
+            data["latency_ms"] = rng.randint(1500, 3200)
+            data["updated_at_ms"] = row[1] * 1000 + data["latency_ms"]
+            ctx["receipt_rows"][index] = receipt_store._row_values(data, created_at=row[1])
+            failed_ids.add(data["request_id"])
+            tags = json.dumps(
+                {"key": data["api_key_name"], "app_id": data["app_id"],
+                 "model": data["requested_model"], "backend": REMOTE_SERVICE,
+                 "intent": data["intent"]}, sort_keys=True, separators=(",", ":"))
+            ctx["samples"].append((row[1], "error", tags, 1))
+    ctx["spend"][:] = [row for row in ctx["spend"] if row[-1] not in failed_ids]
     for number, (slug, minutes) in enumerate(
         [("sam", 205), ("robin", 160), ("sam", 96), ("zoe", 50), ("robin", 12)], 1
     ):
