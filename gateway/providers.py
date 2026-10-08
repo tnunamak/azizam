@@ -16,6 +16,7 @@ import sqlite3
 import time
 import calendar
 import uuid
+from contextlib import closing
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -1084,6 +1085,83 @@ def _window_total(
 def _month_start_epoch(timestamp: int) -> int:
     parts = time.gmtime(timestamp)
     return calendar.timegm((parts.tm_year, parts.tm_mon, 1, 0, 0, 0))
+
+
+def _next_month_start_epoch(timestamp: int) -> int:
+    parts = time.gmtime(timestamp)
+    year, month = (parts.tm_year + 1, 1) if parts.tm_mon == 12 else (parts.tm_year, parts.tm_mon + 1)
+    return calendar.timegm((year, month, 1, 0, 0, 0))
+
+
+def plan_spend(
+    profile: AppProfile, *, path: Path | None, now: int | None = None
+) -> list[dict[str, Any]]:
+    """Read-only spend against a plan's daily and monthly caps.
+
+    Uses the reservation barrier's own accounting (``_window_total``): the
+    daily window is the rolling last 24 hours, the monthly window is the UTC
+    calendar month, and reserved, settled and unreconciled charges all count.
+    One entry per period that has a cap. ``spent_usd`` is ``None`` when the
+    spend is not known: no ledger was supplied, it cannot be read, or the plan
+    has unreconciled charges (whose actual cost is unknown, and which refuse
+    all paid requests until an owner settles them). A missing ledger file
+    means no paid request has reserved spend yet, which enforcement reads as 0.
+    """
+    caps = [(period, cap) for period, cap in (
+        ("daily", profile.remote.budget_usd_per_day),
+        ("monthly", profile.remote.budget_usd_per_month),
+    ) if cap is not None]
+    if not caps:
+        return []
+    timestamp = int(now if now is not None else time.time())
+    since = {"daily": timestamp - 24 * 60 * 60, "monthly": _month_start_epoch(timestamp)}
+    totals: dict[str, Decimal] = {}
+    oldest_daily: int | None = None
+    unknown: str | None = None
+    if path is None:
+        unknown = "ledger_unavailable"
+    elif path.exists():
+        try:
+            with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as conn:
+                has_table = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'provider_spend'"
+                ).fetchone()
+                if has_table and conn.execute(
+                    "SELECT 1 FROM provider_spend WHERE status = 'needs_reconciliation' AND profile_id = ? LIMIT 1",
+                    (profile.id,),
+                ).fetchone():
+                    unknown = "needs_reconciliation"
+                elif has_table:
+                    for period, _cap in caps:
+                        totals[period] = _window_total(conn, provider=None, profile_id=profile.id, since=since[period])
+                    oldest_daily = conn.execute(
+                        "SELECT MIN(created_at) FROM provider_spend WHERE profile_id = ? AND created_at >= ? "
+                        "AND status IN ('reserved', 'settled', 'needs_reconciliation')",
+                        (profile.id, since["daily"]),
+                    ).fetchone()[0]
+        except sqlite3.Error:
+            unknown = "ledger_unavailable"
+    out: list[dict[str, Any]] = []
+    for period, cap in caps:
+        if period == "daily":
+            # A rolling window has no single reset: this is when the oldest
+            # counted charge leaves the window and the spend first drops.
+            resets_at = int(oldest_daily) + 24 * 60 * 60 if oldest_daily is not None and unknown is None else None
+            window = "rolling_24h"
+        else:
+            resets_at = _next_month_start_epoch(timestamp)
+            window = "calendar_month_utc"
+        entry: dict[str, Any] = {
+            "period": period,
+            "window": window,
+            "spent_usd": None if unknown else format(_quantize_usd(totals.get(period, Decimal("0"))), "f"),
+            "cap_usd": str(cap),
+            "resets_at": resets_at,
+        }
+        if unknown:
+            entry["unknown_reason"] = unknown
+        out.append(entry)
+    return out
 
 
 def _enforce_provider_concurrency(

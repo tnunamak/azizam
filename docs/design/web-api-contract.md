@@ -1105,3 +1105,39 @@ A receipt for a request that a spending limit refused carries:
 - Written today by paid chat/embeddings execution and the paid OpenAI-style
   `/v1/decisions` path. The TypeSafe `/v1/decisions` receipts (a separate
   receipt type) carry `error_code: "budget_exceeded"` but no `limit`.
+
+### Plan spend (`plan_spend` on /me/api/home and on each /admin/api/profiles row)
+
+```json
+{ "plan_spend": [
+  { "period": "daily", "window": "rolling_24h",
+    "spent_usd": "0.300000000" | null, "cap_usd": "1",
+    "resets_at": 1765… | null },
+  { "period": "monthly", "window": "calendar_month_utc",
+    "spent_usd": "0.300000000" | null, "cap_usd": "8",
+    "resets_at": 1767… }
+] }
+```
+
+- One entry per period for which the plan has a cap
+  (`remote.budget_usd_per_day`, `remote.budget_usd_per_month`). A plan without
+  caps has `[]`. `plan_spend` is `null` when the plan itself cannot be loaded.
+- The numbers are the cap barrier's own accounting (the provider spend
+  ledger): the daily window is the rolling last 24 hours, the monthly window
+  is the UTC calendar month, and reserved (in-flight), settled and unreconciled
+  charges all count. USD values are decimal strings.
+- `spent_usd` is `null`, with `unknown_reason`, when the spend is not known:
+  `ledger_unavailable` (no ledger wired or it cannot be read) or
+  `needs_reconciliation` (the plan has a charge of unknown cost; paid requests
+  are refused until an owner settles it). It is never reported as `0` in
+  these cases. A ledger file that does not exist yet means no paid request has
+  reserved spend, which the barrier also counts as `0`.
+- `resets_at` (epoch seconds): for `monthly`, the start of the next UTC month.
+  For `daily`, the rolling window has no single reset; this is when the oldest
+  counted charge leaves the window and the spend first drops. `null` when no
+  charge is counted or the spend is unknown.
+- On `/me/api/home` this is the member's own plan (the plan their keys
+  inherit). The spend is the plan's total across everyone on it, because the
+  caps are shared; it names no person and no request.
+- Provider and global caps (owner settings) also refuse requests; they are not
+  part of `plan_spend`. A refused receipt names the limit (see `refusal`).

@@ -161,12 +161,22 @@ export interface HomeReceipt {
   source?: HomeReceiptSource;
 }
 
+export interface PlanSpend {
+  period: "daily" | "monthly";
+  window: "rolling_24h" | "calendar_month_utc";
+  spent_usd: string | null;
+  cap_usd: string;
+  resets_at: number | null;
+  unknown_reason?: "ledger_unavailable" | "needs_reconciliation";
+}
+
 export interface GatewayFacts {
   owner_name: string | null;
 }
 
 export interface HomeProjection {
   gateway: GatewayFacts;
+  plan_spend: Array<PlanSpend> | null;
   csrf_token: string;
   public_base_url: string;
   api_base_url: string;

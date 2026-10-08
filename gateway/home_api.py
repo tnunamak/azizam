@@ -19,7 +19,7 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store
+from gateway import admin_store, providers
 from gateway.admin_api import AdminAuthError
 from gateway.alias_policy import service_model_records
 from gateway.availability import availability_evidence_snapshot, project_service, project_capabilities
@@ -272,8 +272,13 @@ def _alias_rows(rows, views) -> list[dict[str, Any]]:
 def create_home_router(*, store, receipts_path: Callable[[], Path], require_session,
                        require_action, csrf_token, default_profile_id, capabilities,
                        aliases, public_base_url, status_provider, admin_auth,
-                       inherited_profile_id_for_app=None, self_service_enabled=lambda: True) -> APIRouter:
-    """Register session discovery, connection checks and owner setup evidence."""
+                       inherited_profile_id_for_app=None, self_service_enabled=lambda: True,
+                       spend_ledger_path: Callable[[], Path | None] = lambda: None) -> APIRouter:
+    """Register session discovery, connection checks and owner setup evidence.
+
+    ``spend_ledger_path`` returns the provider spend ledger that cap
+    enforcement uses; without it, plan spend is reported as unknown.
+    """
     router = APIRouter()
 
     async def live_status_payload() -> dict[str, Any]:
@@ -348,7 +353,13 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
         base = (public_base_url(request) or "").rstrip("/")
         activity = build_user_activity_snapshot(session, limit=5, path=store.path, receipts_path=receipts_path())
         gateway = {"owner_name": admin_store.owner_display_name(path=store.path)}
-        return _json({**account, "gateway": gateway, "csrf_token": csrf_token(session), "public_base_url": base,
+        # The person's own plan: the access plan their keys inherit. Spend is
+        # the plan's total across everyone on it, because the caps are shared.
+        plan_identity = _identity({}, None, inherited, store.path)
+        plan_spend = (providers.plan_spend(plan_identity.profile, path=spend_ledger_path())
+                      if plan_identity is not None else None)
+        return _json({**account, "gateway": gateway, "plan_spend": plan_spend,
+                      "csrf_token": csrf_token(session), "public_base_url": base,
                       "api_base_url": f"{base}/v1" if base else "/v1", "capabilities": rows,
                       "aliases": alias_rows, "credential_aliases": credential_aliases,
                       "new_app_aliases": new_app_aliases, "status": summary,

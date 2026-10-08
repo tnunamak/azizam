@@ -43,7 +43,8 @@ def home_case(tmp_path):
                            health={"backends": [{"key": "service", "live_status": "up"}]},
                            fast=True, health_error=False, inherited_profile=None, prospective_profile=None,
                            self_service=True, capabilities_override=None, aliases_override=None,
-                           registry={"services": {"service": {"enabled": True, "config": {"gateway_lifecycle": True}}}})
+                           registry={"services": {"service": {"enabled": True, "config": {"gateway_lifecycle": True}}}},
+                           ledger=tmp_path / "provider_spend.db")
     def require_session(request):
         if not case.logged_in:
             raise UserPortalError("login_required", "Sign in.", status_code=401)
@@ -76,7 +77,8 @@ def home_case(tmp_path):
                                          self_service_enabled=lambda: case.self_service,
                                          aliases=lambda: case.aliases_override or {"chat": {"stable": [{"alias": "fast", "resolves_to": "demo"}]}, "images": {"stable": [{"alias": "image", "resolves_to": "picture"}]}},
                                          public_base_url=lambda _request: "https://gateway.example",
-                                         status_provider=status, admin_auth=admin_auth))
+                                         status_provider=status, admin_auth=admin_auth,
+                                         spend_ledger_path=lambda: case.ledger))
     @app.post("/v1/chat/completions")
     async def chat(request: Request):
         case.calls.append((request.url.path, dict(request.headers), await request.json()))
@@ -948,3 +950,29 @@ def test_home_and_member_status_name_the_gateway_owner(home_case):
     assert "sam@example.test" not in str(home) and "sam@example.test" not in str(status)
     admin_store.revoke_admin_role(granted["id"], path=c.db)
     assert c.http.get("/me/api/home").json()["gateway"] == {"owner_name": None}
+
+
+def test_home_reports_the_members_own_plan_spend(home_case):
+    import sqlite3
+    import time as _time
+    from gateway.providers import ensure_ledger
+    c = home_case
+    c.owner = False
+    assert c.http.get("/me/api/home").json()["plan_spend"] == []  # the default plan has no caps
+    plan = admin_store.create_profile("Everyone", {"id": "everyone", "remote": {
+        "providers": ["typesafe"], "budget_usd_per_day": "1", "budget_usd_per_month": "8"}}, path=c.db)
+    c.prospective_profile = plan["id"]
+    ensure_ledger(c.ledger)
+    now = int(_time.time())
+    with sqlite3.connect(c.ledger) as conn:
+        for profile_id, usd in (("everyone", "0.30"), ("other-plan", "5.00")):
+            conn.execute("INSERT INTO provider_spend (provider, profile_id, status, estimated_usd, actual_usd, cost_source, created_at) "
+                         "VALUES ('typesafe', ?, 'settled', ?, ?, 'test', ?)", (profile_id, usd, usd, now - 60))
+    data = c.http.get("/me/api/home").json()
+    TypeAdapter(HomeProjection).validate_python(data)
+    daily = next(entry for entry in data["plan_spend"] if entry["period"] == "daily")
+    assert daily == {"period": "daily", "window": "rolling_24h", "spent_usd": "0.300000000",
+                     "cap_usd": "1", "resets_at": now - 60 + 86400}
+    monthly = next(entry for entry in data["plan_spend"] if entry["period"] == "monthly")
+    assert monthly["cap_usd"] == "8" and monthly["window"] == "calendar_month_utc"
+    assert "5.00" not in str(data["plan_spend"])
