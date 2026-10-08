@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import NextImage from "next/image";
 import { useSearchParams } from "next/navigation";
 import {
@@ -9,29 +16,33 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { Dialog as DialogPrimitive } from "radix-ui";
 import {
   AudioLines,
-  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
   Copy,
   Download,
-  ExternalLink,
   ImageIcon,
+  ListFilter,
   Pause,
   Play,
+  ReceiptText,
   Search,
   Trash2,
   Video,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { cn } from "@/lib/cn";
 import { formatAbsoluteUTC } from "@/lib/format";
 import { RelativeTime } from "@/components/product/relative-time";
-import { PageHeader } from "@/components/product/page-header";
 import { ErrorState } from "@/components/product/error-state";
 import { EmptyState } from "@/components/product/empty-state";
+import { PersonMark } from "@/components/product/person-mark";
+import { Segmented } from "@/components/product/segmented";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -41,12 +52,10 @@ import {
   OverflowMenuSeparator,
 } from "@/components/ui/overflow-menu";
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -55,8 +64,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useViewer } from "@/components/shell/session";
-import { FilterToggle } from "@/components/product/filter-toggle";
 import { productApi } from "@/lib/product-api";
+import { api } from "@/lib/api";
 
 type ModelCatalog = Awaited<ReturnType<typeof productApi.models>>;
 
@@ -81,7 +90,7 @@ interface MediaAsset {
   duration_s?: number | null;
   poster_asset_id?: string | null;
   owner_name?: string | null;
-  source?: { id?: string; kind: string; label: string };
+  source?: { id?: string; kind: string; label: string; app_id?: string };
   available?: boolean;
   unavailable_reason?: string | null;
 }
@@ -90,7 +99,15 @@ interface MediaResponse {
   assets: MediaAsset[];
   next_cursor?: string | null;
   models?: string[];
-  sources?: { id: string; label: string }[];
+  sources?: MediaSource[];
+}
+
+interface MediaSource {
+  id: string;
+  label: string;
+  kind?: string;
+  app_id?: string;
+  owner_user_id?: string | null;
 }
 
 function isMediaKind(value: string): value is MediaKind {
@@ -110,6 +127,15 @@ function kindLabel(kind: MediaKind) {
 function assetTitle(asset: MediaAsset) {
   const prompt = typeof asset.prompt === "string" ? asset.prompt.trim() : "";
   return prompt || kindLabel(asset.kind);
+}
+
+/** A heading-length title: the prompt's first clause, or its first words. */
+function shortTitle(asset: MediaAsset): string {
+  const prompt = typeof asset.prompt === "string" ? asset.prompt.trim() : "";
+  if (!prompt) return kindLabel(asset.kind);
+  const clause = prompt.split(/(?<=[.!?])\s|,\s/)[0]?.replace(/[.!?]$/, "") ?? prompt;
+  const words = clause.split(/\s+/);
+  return words.length <= 12 ? clause : `${words.slice(0, 10).join(" ")}…`;
 }
 
 function formatDuration(seconds: number) {
@@ -140,7 +166,8 @@ function buildMediaPath(filters: {
   }
   if (filters.search.trim()) params.set("q", filters.search.trim());
   if (filters.owner === "everyone") params.set("scope", "everyone");
-  if (filters.owner === "mine") params.set("scope", "me");
+  else if (filters.owner === "mine") params.set("scope", "me");
+  else if (filters.owner !== "default") params.set("person", filters.owner);
   if (filters.source !== "all") params.set("source", filters.source);
   return `/me/api/media?${params.toString()}`;
 }
@@ -208,6 +235,13 @@ function usePreviewVisible() {
   return { ref, visible };
 }
 
+/** Map the gateway's file reason to plain words; the raw text stays in Details. */
+function unavailableCopy(reason?: string | null): string {
+  const text = reason?.trim().replace(/[_-]+/g, " ") ?? "";
+  if (/missing or expired/i.test(text)) return "File no longer stored";
+  return text || "Preview unavailable";
+}
+
 function UnavailablePreview({
   kind,
   reason,
@@ -219,18 +253,16 @@ function UnavailablePreview({
 }) {
   const Icon = kindIcon(kind);
   return (
-    <div className="bg-muted text-muted-foreground flex h-full min-h-32 flex-col items-center justify-center gap-3 p-4 text-center">
+    <div className="bg-muted text-muted-foreground flex h-full min-h-32 flex-col items-center justify-center gap-2 p-3 text-center">
       <div role="img" aria-label={`${kindLabel(kind)} preview unavailable`}>
-        <Icon aria-hidden="true" className="mx-auto size-8" />
+        <Icon aria-hidden="true" className="mx-auto size-5" />
       </div>
-      <p className="mt-3 text-sm">
-        {reason?.trim().replace(/[_-]+/g, " ") || "Preview unavailable"}
-      </p>
+      <p className="text-xs">{unavailableCopy(reason)}</p>
       {onRetry ? (
         <Button
           type="button"
           variant="outline"
-          size="sm"
+          size="xs"
           className="relative z-20"
           onClick={onRetry}
         >
@@ -278,10 +310,12 @@ function MiniAudioPlayer({
   src,
   title,
   duration,
+  caption,
 }: {
   src: string;
   title: string;
   duration?: number | null;
+  caption?: string | null;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -317,7 +351,7 @@ function MiniAudioPlayer({
 
   return (
     <div
-      className="bg-background/95 absolute right-3 bottom-3 left-3 z-20 flex min-h-12 items-center gap-3 rounded-lg border p-2 shadow-sm backdrop-blur"
+      className="absolute right-2 bottom-2 left-2 z-20 flex items-center gap-2.5"
       onClick={(event) => event.stopPropagation()}
     >
       <audio
@@ -342,8 +376,7 @@ function MiniAudioPlayer({
       <Button
         type="button"
         size="icon"
-        variant="secondary"
-        className="size-11"
+        className="size-11 rounded-full"
         aria-label={label}
         onClick={async () => {
           const audio = audioRef.current;
@@ -372,17 +405,19 @@ function MiniAudioPlayer({
         {isPlaying ? <Pause aria-hidden /> : <Play aria-hidden />}
       </Button>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-xs font-medium">Audio preview</p>
         {durationLabel ? (
           <p
             role={error ? "status" : undefined}
             className={cn(
-              "text-muted-foreground text-xs",
+              "figures text-xs font-medium",
               error === "media" && "text-destructive",
             )}
           >
             {durationLabel}
           </p>
+        ) : null}
+        {caption ? (
+          <p className="text-muted-foreground truncate text-xs">{caption}</p>
         ) : null}
       </div>
     </div>
@@ -455,7 +490,7 @@ function Preview({
       <div
         role="status"
         aria-label="Loading video poster"
-        className="bg-muted h-full min-h-32"
+        className="bg-muted h-full min-h-32 animate-pulse"
       />
     );
   if (unavailable)
@@ -504,7 +539,7 @@ function Preview({
         onError={() => setMediaFailed(true)}
         className={cn(
           "h-full w-full",
-          large ? "rounded-lg object-contain" : "object-cover",
+          large ? "object-contain" : "object-cover",
         )}
       />
     );
@@ -519,7 +554,7 @@ function Preview({
         key={`video-${asset.asset_id}-${retryKey}`}
         src={large || visible ? currentSrc : undefined}
         poster={effectivePosterUrl}
-        preload="none"
+        preload={large ? "metadata" : "none"}
         autoPlay={!large && visible}
         muted={!large}
         playsInline
@@ -535,7 +570,7 @@ function Preview({
         onError={() => setMediaFailed(true)}
         className={cn(
           "h-full w-full",
-          large ? "rounded-lg object-contain" : "object-cover",
+          large ? "object-contain" : "object-cover",
         )}
         controls={large}
         aria-label={assetTitle(asset)}
@@ -558,15 +593,15 @@ function Preview({
       <audio
         controls
         src={currentSrc}
-        preload="none"
+        preload="metadata"
         onError={() => setMediaFailed(true)}
         aria-label="Generated audio"
         onPlay={(event) => pauseOtherAudio(event.currentTarget)}
-        className="w-full"
+        className="w-full max-w-md"
       />
     ) : (
-      <div className="bg-muted text-muted-foreground flex h-full flex-col items-center justify-center gap-3 pb-12">
-        <AudioLines className="size-12" aria-hidden />
+      <div className="text-muted-foreground flex h-full flex-col justify-between p-3 pb-16">
+        <AudioLines className="text-capability-voice size-5" aria-hidden />
         {!src && <p className="text-sm">Audio preview unavailable</p>}
       </div>
     );
@@ -584,221 +619,656 @@ function Preview({
   );
 }
 
-function AssetCard({
+/* ------------------------------------------------------------------ */
+/* People: who made a creation                                         */
+/* ------------------------------------------------------------------ */
+
+type PersonLookup = (asset: MediaAsset) => string | null;
+
+function usePeople(enabled: boolean, sources: MediaSource[]) {
+  const { data: users } = useQuery({
+    queryKey: ["library", "people"],
+    queryFn: api.users.list,
+    enabled,
+    retry: false,
+  });
+  const people = useMemo(
+    () =>
+      (users ?? [])
+        .map((user) => ({
+          id: user.id,
+          name: (user.display_name || user.name || "").trim(),
+        }))
+        .filter((person) => person.name && !person.name.includes("@")),
+    [users],
+  );
+  const lookup: PersonLookup = (asset) => {
+    if (asset.owner_name) return asset.owner_name;
+    const appId =
+      asset.source?.app_id ??
+      (asset.source?.id?.startsWith("app:")
+        ? asset.source.id.slice(4)
+        : undefined);
+    const owner = sources.find((source) => source.app_id === appId)
+      ?.owner_user_id;
+    return people.find((person) => person.id === owner)?.name ?? null;
+  };
+  return { people, lookup };
+}
+
+/* ------------------------------------------------------------------ */
+/* Grid                                                                */
+/* ------------------------------------------------------------------ */
+
+function startOfDay(date: Date): number {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
+function toDateValue(ts: MediaAsset["created_at"]): Date | null {
+  if (ts == null || ts === "") return null;
+  const date =
+    typeof ts === "number" ? new Date(ts < 5_000_000_000 ? ts * 1000 : ts) : new Date(ts);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function startOfWeek(date: Date): number {
+  const day = (date.getDay() + 6) % 7; // Monday starts the week
+  return startOfDay(date) - day * 86_400_000;
+}
+
+/**
+ * Buckets dense enough to fill rows for a household that makes a few things a
+ * day: this week, last week, then whole months (Apple Photos' months view).
+ */
+function bucketLabel(date: Date | null, now: Date): string {
+  if (!date) return "Undated";
+  const week = startOfWeek(now);
+  const time = date.getTime();
+  if (time >= week) return "This week";
+  if (time >= week - 7 * 86_400_000) return "Last week";
+  return date.toLocaleDateString(undefined, {
+    month: "long",
+    ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+  });
+}
+
+function groupByDay(assets: MediaAsset[]) {
+  const now = new Date();
+  const groups: { label: string; items: MediaAsset[] }[] = [];
+  for (const asset of assets) {
+    const label = bucketLabel(toDateValue(asset.created_at), now);
+    const last = groups.at(-1);
+    if (last?.label === label) last.items.push(asset);
+    else groups.push({ label, items: [asset] });
+  }
+  return groups;
+}
+
+function AudioTile({ asset, person }: { asset: MediaAsset; person: boolean }) {
+  const title = assetTitle(asset);
+  return (
+    <div className="bg-card flex h-full flex-col gap-2 border p-3 pb-16 rounded-media">
+      <AudioLines
+        aria-hidden="true"
+        className={cn(
+          "text-capability-voice size-5 shrink-0",
+          person && "ml-auto",
+        )}
+      />
+      <p className="line-clamp-3 min-w-0 text-sm font-medium break-words">
+        {asset.prompt?.trim() || title}
+      </p>
+    </div>
+  );
+}
+
+function AssetTile({
   asset,
   onOpen,
   everyone,
   modelCatalog,
+  person,
+  selected,
 }: {
   asset: MediaAsset;
   onOpen: (asset: MediaAsset) => void;
   everyone: boolean;
   modelCatalog?: ModelCatalog;
+  person: string | null;
+  selected: boolean;
 }) {
-  const Icon = kindIcon(asset.kind);
   const { ref: visibilityRef, visible } = usePreviewVisible();
+  const playableAudio =
+    asset.kind === "audio" && asset.download_url && asset.available !== false;
   return (
-    <article className="group bg-card hover:border-primary/50 relative min-w-0 overflow-hidden rounded-xl border transition">
+    <article
+      className={cn(
+        "group bg-muted relative aspect-square min-w-0 overflow-hidden rounded-media",
+        selected && "outline-ring outline-2 outline-offset-2",
+      )}
+    >
       <button
         type="button"
         onClick={() => onOpen(asset)}
-        className="focus-visible:ring-ring absolute inset-0 z-10 rounded-xl focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset"
+        className="absolute inset-0 z-10 rounded-media focus-visible:-outline-offset-2"
         aria-label={`Open ${assetTitle(asset)}`}
       />
-      <div ref={visibilityRef} className="bg-muted relative aspect-[4/3]">
-        <Preview
-          key={`preview-${asset.asset_id}-${asset.download_url}`}
-          asset={asset}
-          everyone={everyone}
-          visible={visible}
-        />
-        <Badge
-          variant="secondary"
-          className="bg-background/90 absolute top-2 left-2 gap-1 backdrop-blur"
-        >
-          <Icon className="size-3" />
-          {kindLabel(asset.kind)}
-        </Badge>
-        {asset.kind !== "audio" &&
-        asset.duration_s != null &&
-        Number.isFinite(asset.duration_s) ? (
-          <Badge
-            variant="secondary"
-            className="bg-background/90 absolute top-2 right-2 tabular-nums"
-          >
-            {formatDuration(asset.duration_s)}
-          </Badge>
-        ) : null}
-        {asset.kind === "audio" && asset.download_url && (
-          <MiniAudioPlayer
-            key={asset.download_url}
-            src={asset.download_url}
-            title={assetTitle(asset)}
-            duration={asset.duration_s}
+      <div ref={visibilityRef} className="relative size-full">
+        {playableAudio ? (
+          <AudioTile asset={asset} person={Boolean(person && everyone)} />
+        ) : (
+          <Preview
+            key={`preview-${asset.asset_id}-${asset.download_url}`}
+            asset={asset}
+            everyone={everyone}
+            visible={visible}
           />
         )}
-      </div>
-      <div className="space-y-1 p-3">
-        {asset.prompt?.trim() ? (
-          <p className="line-clamp-2 min-h-10 min-w-0 text-sm font-medium break-words">
-            {asset.prompt.trim()}
-          </p>
+        {asset.kind === "video" && asset.available !== false ? (
+          <span className="bg-chrome/80 text-chrome-foreground pointer-events-none absolute right-2 bottom-2 z-20 flex h-6 items-center gap-1 rounded-full px-2 text-xs font-medium">
+            <Play aria-hidden="true" className="size-3" />
+            {asset.duration_s != null && Number.isFinite(asset.duration_s)
+              ? formatDuration(asset.duration_s)
+              : "Video"}
+          </span>
         ) : null}
-        {asset.model || asset.created_at ? (
-          <div className="text-muted-foreground flex min-w-0 items-center justify-between gap-2 text-xs">
-            {asset.model && modelDisplayName(asset.model, modelCatalog) ? (
-              <span className="min-w-0 truncate">
-                {modelDisplayName(asset.model, modelCatalog)}
-              </span>
-            ) : null}
-            {asset.created_at ? (
-              <RelativeTime ts={asset.created_at} fallback="" />
-            ) : null}
-          </div>
+        {playableAudio ? (
+          <MiniAudioPlayer
+            key={asset.download_url}
+            src={asset.download_url!}
+            title={assetTitle(asset)}
+            duration={asset.duration_s}
+            caption={
+              asset.model ? modelDisplayName(asset.model, modelCatalog) : null
+            }
+          />
+        ) : null}
+        {person && everyone ? (
+          <PersonMark
+            name={person}
+            size="xs"
+            label={`Made by ${person}`}
+            className="ring-card pointer-events-none absolute top-2 left-2 z-20 ring-2"
+          />
         ) : null}
       </div>
     </article>
   );
 }
 
-function LibraryFilterControls({
-  kind,
-  setKind,
-  search,
-  setSearch,
+/* ------------------------------------------------------------------ */
+/* Filters                                                             */
+/* ------------------------------------------------------------------ */
+
+function MoreFilters({
   model,
   setModel,
   models,
   date,
   setDate,
-  owner,
-  setOwner,
   source,
   setSource,
   sources,
   instanceView,
-  canChooseOwner,
-  mobileLabels = false,
+  modelCatalog,
 }: {
-  kind: string;
-  setKind: (value: string) => void;
-  search: string;
-  setSearch: (value: string) => void;
   model: string;
   setModel: (value: string) => void;
   models: string[];
   date: DateFilter;
   setDate: (value: DateFilter) => void;
-  owner: string;
-  setOwner: (value: string) => void;
   source: string;
   setSource: (value: string) => void;
-  sources: { id: string; label: string }[];
+  sources: MediaSource[];
   instanceView: boolean;
-  canChooseOwner: boolean;
-  mobileLabels?: boolean;
+  modelCatalog?: ModelCatalog;
 }) {
+  const active =
+    (model !== "all" ? 1 : 0) +
+    (date !== "all" ? 1 : 0) +
+    (source !== "all" ? 1 : 0);
   return (
-    <>
-      <div role="group" aria-label="Kind" className="flex flex-wrap gap-2">
-        {[
-          { value: "all", label: "All kinds" },
-          { value: "image", label: "Images" },
-          { value: "video", label: "Video" },
-          { value: "audio", label: "Audio" },
-        ].map((filter) => (
-          <FilterToggle
-            key={filter.value}
-            pressed={kind === filter.value}
-            onClick={() => setKind(filter.value)}
-            aria-label={
-              mobileLabels ? `Filter kind ${filter.label}` : undefined
-            }
-          >
-            {filter.label}
-          </FilterToggle>
-        ))}
-      </div>
-      <div className="flex flex-wrap items-center gap-3">
-        <label className="relative block min-w-0 basis-full sm:flex-1 sm:basis-48">
-          <span className="sr-only">Search prompts</span>
-          <Search
-            className="text-muted-foreground pointer-events-none absolute top-3.5 left-3 size-4"
-            aria-hidden
-          />
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search prompts"
-            className="pl-9"
-          />
-        </label>
-        <Select value={model} onValueChange={setModel}>
-          <SelectTrigger aria-label="Model" className="w-full sm:w-44">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All models</SelectItem>
-            {models.map((m) => (
-              <SelectItem key={m} value={m}>
-                {m}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select
-          value={date}
-          onValueChange={(value) => setDate(value as DateFilter)}
-        >
-          <SelectTrigger aria-label="Date" className="w-full sm:w-36">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Any time</SelectItem>
-            <SelectItem value="7d">Last 7 days</SelectItem>
-            <SelectItem value="30d">Last 30 days</SelectItem>
-            <SelectItem value="90d">Last 90 days</SelectItem>
-          </SelectContent>
-        </Select>
-        {canChooseOwner ? (
-          <Select
-            value={owner === "default" ? "everyone" : owner}
-            onValueChange={(value) => {
-              setOwner(value);
-              setSource("all");
-            }}
-          >
-            <SelectTrigger
-              aria-label={mobileLabels ? "Filter owner" : "Owner"}
-              className="w-full sm:w-40"
-            >
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="outline" aria-label="More filters">
+          <ListFilter aria-hidden="true" />
+          <span className="max-sm:sr-only">Filters</span>
+          {active ? (
+            <span className="bg-primary text-primary-foreground figures flex size-5 items-center justify-center rounded-full text-xs">
+              {active}
+            </span>
+          ) : null}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-72 space-y-4">
+        <div className="space-y-1.5">
+          <p className="text-sm font-medium">Model</p>
+          <Select value={model} onValueChange={setModel}>
+            <SelectTrigger aria-label="Model" className="w-full">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="mine">Mine</SelectItem>
-              <SelectItem value="everyone">Everyone&apos;s</SelectItem>
-            </SelectContent>
-          </Select>
-        ) : null}
-        {instanceView ? (
-          <Select value={source} onValueChange={setSource}>
-            <SelectTrigger aria-label="Source" className="w-full sm:w-52">
-              <SelectValue placeholder="All sources" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All sources</SelectItem>
-              {sources.map((item) => (
-                <SelectItem key={item.id} value={item.id}>
-                  {item.label}
+              <SelectItem value="all">All models</SelectItem>
+              {models.map((m) => (
+                <SelectItem key={m} value={m}>
+                  {modelDisplayName(m, modelCatalog)}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
+        </div>
+        <div className="space-y-1.5">
+          <p className="text-sm font-medium">Date</p>
+          <Select
+            value={date}
+            onValueChange={(value) => setDate(value as DateFilter)}
+          >
+            <SelectTrigger aria-label="Date" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Any time</SelectItem>
+              <SelectItem value="7d">Last 7 days</SelectItem>
+              <SelectItem value="30d">Last 30 days</SelectItem>
+              <SelectItem value="90d">Last 90 days</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        {instanceView ? (
+          <div className="space-y-1.5">
+            <p className="text-sm font-medium">App</p>
+            <Select value={source} onValueChange={setSource}>
+              <SelectTrigger aria-label="Source" className="w-full">
+                <SelectValue placeholder="All apps" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All apps</SelectItem>
+                {sources.map((item) => (
+                  <SelectItem key={item.id} value={item.id}>
+                    {item.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         ) : null}
-      </div>
-    </>
+      </PopoverContent>
+    </Popover>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/* Selected creation                                                   */
+/* ------------------------------------------------------------------ */
+
+interface ReceiptCost {
+  remote?: boolean | null;
+  cost?: { cost_class?: string; usd?: string | number | null } | null;
+}
+
+function costText(receipt: ReceiptCost | undefined): string {
+  if (!receipt) return "Cost not recorded";
+  const usd = Number(receipt.cost?.usd);
+  if (receipt.cost && Number.isFinite(usd) && usd > 0)
+    return usd < 0.01 ? "Less than USD 0.01" : `USD ${usd.toFixed(2)}`;
+  if (receipt.remote === false && receipt.cost?.cost_class === "local")
+    return "Local · no provider charge";
+  return "Cost not recorded";
+}
+
+function Fact({ label, children }: { label: string; children: ReactNode }) {
+  if (children == null || children === "") return null;
+  return (
+    <div className="flex min-w-0 items-baseline justify-between gap-4 py-2">
+      <dt className="text-muted-foreground shrink-0 text-sm">{label}</dt>
+      <dd className="figures min-w-0 text-right text-sm break-words">
+        {children}
+      </dd>
+    </div>
+  );
+}
+
+function CreationViewer({
+  asset,
+  assets,
+  onSelect,
+  onClose,
+  everyone,
+  modelCatalog,
+  person,
+  downloading,
+  onDownload,
+  onDelete,
+}: {
+  asset: MediaAsset;
+  assets: MediaAsset[];
+  onSelect: (asset: MediaAsset) => void;
+  onClose: () => void;
+  everyone: boolean;
+  modelCatalog?: ModelCatalog;
+  person: string | null;
+  downloading: boolean;
+  onDownload: (asset: MediaAsset) => void;
+  onDelete: ((asset: MediaAsset) => void) | null;
+}) {
+  const index = assets.findIndex((item) => item.asset_id === asset.asset_id);
+  const previous = index > 0 ? assets[index - 1] : null;
+  const next = index >= 0 && index < assets.length - 1 ? assets[index + 1] : null;
+  const { data: receipt } = useQuery({
+    queryKey: ["library", "receipt", asset.request_id, everyone],
+    enabled: Boolean(asset.request_id),
+    queryFn: () =>
+      mediaRequest<ReceiptCost>(
+        `/me/api/receipts/${encodeURIComponent(asset.request_id!)}${everyone ? "?scope=everyone" : ""}`,
+      ),
+    retry: false,
+  });
+  const created = toDateValue(asset.created_at);
+  const model = asset.model ? modelDisplayName(asset.model, modelCatalog) : "";
+  const title = shortTitle(asset);
+  const prompt = asset.prompt?.trim() ?? "";
+  return (
+    <DialogPrimitive.Root open onOpenChange={(open) => !open && onClose()}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Overlay className="bg-overlay data-[state=open]:animate-in data-[state=open]:fade-in-0 fixed inset-0 z-50" />
+        <DialogPrimitive.Content
+          aria-describedby={undefined}
+          onKeyDown={(event) => {
+            if (event.target instanceof HTMLMediaElement) return;
+            if (event.key === "ArrowLeft" && previous) onSelect(previous);
+            if (event.key === "ArrowRight" && next) onSelect(next);
+          }}
+          className="bg-background shadow-overlay data-[state=open]:animate-in data-[state=open]:fade-in-0 fixed inset-0 z-50 flex flex-col overflow-y-auto md:inset-6 md:grid md:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] md:overflow-hidden md:rounded-panel md:border lg:inset-10"
+        >
+          <div className="bg-media-stage relative flex min-h-[50dvh] shrink-0 items-center justify-center md:min-h-0">
+            <div
+              className={cn(
+                "flex size-full items-center justify-center",
+                asset.kind === "audio" ? "p-6" : "p-0 md:p-8",
+              )}
+            >
+              <div
+                className={cn(
+                  "relative flex max-h-full w-full items-center justify-center overflow-hidden",
+                  asset.kind === "audio"
+                    ? "bg-card max-w-lg flex-col gap-5 rounded-panel p-6"
+                    : "h-full",
+                )}
+              >
+                {asset.kind === "audio" ? (
+                  <>
+                    <span className="bg-capability-voice/12 text-capability-voice flex size-14 items-center justify-center rounded-full">
+                      <AudioLines aria-hidden="true" className="size-6" />
+                    </span>
+                  </>
+                ) : null}
+                <Preview
+                  key={`${asset.asset_id}-${asset.download_url}`}
+                  asset={asset}
+                  large
+                  everyone={everyone}
+                />
+              </div>
+            </div>
+            {previous || next ? (
+              <div className="pointer-events-none absolute inset-x-3 top-1/2 hidden -translate-y-1/2 justify-between md:flex">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Previous creation"
+                  disabled={!previous}
+                  onClick={() => previous && onSelect(previous)}
+                  className="bg-chrome/70 text-chrome-foreground hover:bg-chrome pointer-events-auto rounded-full disabled:opacity-0"
+                >
+                  <ChevronLeft aria-hidden="true" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Next creation"
+                  disabled={!next}
+                  onClick={() => next && onSelect(next)}
+                  className="bg-chrome/70 text-chrome-foreground hover:bg-chrome pointer-events-auto rounded-full disabled:opacity-0"
+                >
+                  <ChevronRight aria-hidden="true" />
+                </Button>
+              </div>
+            ) : null}
+            <DialogPrimitive.Close
+              className="bg-chrome/70 text-chrome-foreground hover:bg-chrome absolute top-3 left-3 flex size-11 items-center justify-center rounded-full md:hidden"
+              aria-label="Close"
+            >
+              <X aria-hidden="true" className="size-5" />
+            </DialogPrimitive.Close>
+          </div>
+          <aside className="flex min-h-0 min-w-0 flex-col md:overflow-y-auto md:border-l">
+            <div className="flex-1 space-y-5 p-5">
+              <div className="flex items-start justify-between gap-3">
+                <DialogPrimitive.Title className="min-w-0 text-xl leading-snug font-semibold text-balance break-words">
+                  {title}
+                </DialogPrimitive.Title>
+                <DialogPrimitive.Close
+                  className="text-muted-foreground hover:bg-muted hover:text-foreground -mt-1.5 -mr-1.5 hidden size-9 shrink-0 items-center justify-center rounded-control md:flex"
+                  aria-label="Close"
+                >
+                  <X aria-hidden="true" className="size-4" />
+                </DialogPrimitive.Close>
+              </div>
+              <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+                {person ? (
+                  <>
+                    <PersonMark name={person} size="sm" />
+                    <span className="font-medium">{person}</span>
+                  </>
+                ) : (
+                  <span className="font-medium">{kindLabel(asset.kind)}</span>
+                )}
+                {asset.created_at ? (
+                  <span className="text-muted-foreground">
+                    <RelativeTime ts={asset.created_at} fallback="" />
+                  </span>
+                ) : null}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {asset.available !== false ? (
+                  <Button asChild size="sm" disabled={downloading}>
+                    <a
+                      href={
+                        asset.download_url ??
+                        `/me/api/media/${encodeURIComponent(asset.asset_id)}/download`
+                      }
+                      download
+                      onClick={(event) => {
+                        event.preventDefault();
+                        onDownload(asset);
+                      }}
+                    >
+                      <Download aria-hidden="true" />
+                      {downloading ? "Preparing…" : "Download"}
+                    </a>
+                  </Button>
+                ) : null}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!asset.prompt}
+                  onClick={() => {
+                    void navigator.clipboard.writeText(asset.prompt || "").then(
+                      () => toast.success("Prompt copied."),
+                      () =>
+                        toast.error(
+                          "Prompt could not be copied. Select the text to copy it.",
+                        ),
+                    );
+                  }}
+                >
+                  <Copy aria-hidden="true" />
+                  Copy prompt
+                </Button>
+                {asset.request_id ? (
+                  <Button asChild variant="outline" size="sm">
+                    <a
+                      href={`/r/${encodeURIComponent(asset.request_id)}`}
+                      aria-label={`Open receipt ${asset.request_id}`}
+                    >
+                      <ReceiptText aria-hidden="true" />
+                      Receipt
+                    </a>
+                  </Button>
+                ) : null}
+                {onDelete ? (
+                  <OverflowMenu label={`Actions for ${title}`}>
+                    <OverflowMenuSeparator />
+                    <OverflowMenuItem danger onSelect={() => onDelete(asset)}>
+                      <Trash2 className="size-4" aria-hidden />
+                      Delete
+                    </OverflowMenuItem>
+                  </OverflowMenu>
+                ) : null}
+              </div>
+              {asset.available === false ? (
+                <p className="bg-muted rounded-control p-3 text-sm">
+                  The gateway no longer stores this file. The prompt and
+                  receipt are still here.
+                </p>
+              ) : null}
+              <dl className="divide-y border-y">
+                <Fact label="Model">{model}</Fact>
+                <Fact label="Created">
+                  {created
+                    ? created.toLocaleString(undefined, {
+                        dateStyle: "medium",
+                        timeStyle: "short",
+                      })
+                    : ""}
+                </Fact>
+                <Fact label="Size">
+                  {asset.width && asset.height
+                    ? `${asset.width} × ${asset.height}`
+                    : ""}
+                </Fact>
+                <Fact label="Length">
+                  {asset.duration_s != null && Number.isFinite(asset.duration_s)
+                    ? formatDuration(asset.duration_s)
+                    : ""}
+                </Fact>
+                <Fact label="Made in">
+                  {asset.generation_ms == null
+                    ? ""
+                    : `${(asset.generation_ms / 1000).toFixed(1)} s`}
+                </Fact>
+                <Fact label="Cost">{asset.request_id ? costText(receipt) : "Cost not recorded"}</Fact>
+              </dl>
+              {prompt && prompt.replace(/[.!?]$/, "") !== title ? (
+                <section>
+                  <h3 className="text-muted-foreground mb-1 text-sm font-medium">
+                    Prompt
+                  </h3>
+                  <p className="text-sm break-words">{prompt}</p>
+                </section>
+              ) : null}
+              <details className="group">
+                <summary className="text-muted-foreground hover:text-foreground flex min-h-11 cursor-pointer items-center text-sm font-medium">
+                  Details
+                </summary>
+                <div className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
+                  <Detail
+                    label="Request receipt"
+                    value={
+                      asset.request_id ? (
+                        <a
+                          className="text-link font-mono text-xs break-all underline-offset-4 hover:underline"
+                          href={`/r/${encodeURIComponent(asset.request_id)}`}
+                          aria-label={`View receipt ${asset.request_id}`}
+                        >
+                          {asset.request_id}
+                        </a>
+                      ) : (
+                        "Not recorded"
+                      )
+                    }
+                    title={asset.request_id ?? undefined}
+                  />
+                  <Detail label="Model name" value={asset.model ?? ""} />
+                  <Detail label="Seed" value={asset.seed ?? ""} />
+                  {asset.source ? (
+                    <Detail label="App" value={asset.source.label} />
+                  ) : null}
+                  <Detail
+                    label="Created (UTC)"
+                    value={absolute(asset.created_at) ?? ""}
+                  />
+                  {asset.available === false && asset.unavailable_reason ? (
+                    <Detail label="File" value={asset.unavailable_reason} />
+                  ) : null}
+                </div>
+                <section className="mt-3">
+                  <h4 className="mb-1 text-sm font-medium">Workflow</h4>
+                  <pre className="bg-muted max-h-40 overflow-auto rounded-control p-3 font-mono text-xs whitespace-pre-wrap">
+                    {asset.workflow
+                      ? typeof asset.workflow === "string"
+                        ? asset.workflow
+                        : JSON.stringify(asset.workflow, null, 2)
+                      : "Not recorded"}
+                  </pre>
+                  {asset.workflow_download_url ? (
+                    <Button asChild variant="outline" size="sm" className="mt-2">
+                      <a href={asset.workflow_download_url} download>
+                        <Download aria-hidden="true" /> Download ComfyUI workflow
+                      </a>
+                    </Button>
+                  ) : null}
+                </section>
+              </details>
+            </div>
+            {previous || next ? (
+              <div className="flex items-center justify-between border-t px-3 py-2 md:hidden">
+                <Button
+                  variant="ghost"
+                  disabled={!previous}
+                  onClick={() => previous && onSelect(previous)}
+                >
+                  <ChevronLeft aria-hidden="true" /> Newer
+                </Button>
+                <Button
+                  variant="ghost"
+                  disabled={!next}
+                  onClick={() => next && onSelect(next)}
+                >
+                  Older <ChevronRight aria-hidden="true" />
+                </Button>
+              </div>
+            ) : null}
+          </aside>
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
+  );
+}
+
+function Detail({
+  label,
+  value,
+  title,
+}: {
+  label: string;
+  value: React.ReactNode;
+  title?: string;
+}) {
+  if (value == null || value === "") return null;
+  return (
+    <dl className="min-w-0 rounded-control border p-2.5">
+      <dt className="text-muted-foreground text-xs">{label}</dt>
+      <dd className="mt-0.5 truncate text-sm" title={title}>
+        {value}
+      </dd>
+    </dl>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Page                                                                */
+/* ------------------------------------------------------------------ */
 
 export default function LibraryPage() {
   const viewer = useViewer();
@@ -808,6 +1278,7 @@ export default function LibraryPage() {
     queryKey: ["models", "catalog"],
     queryFn: productApi.models,
   });
+  const canChooseOwner = ["owner", "superadmin"].includes(viewer.role);
   const [kind, setKind] = useState("all");
   const [model, setModel] = useState("all");
   const [date, setDate] = useState<DateFilter>("all");
@@ -820,8 +1291,7 @@ export default function LibraryPage() {
   const [downloadingAssetId, setDownloadingAssetId] = useState<string | null>(
     null,
   );
-  const instanceView =
-    ["owner", "superadmin"].includes(viewer.role) && owner !== "mine";
+  const instanceView = canChooseOwner && owner !== "mine";
   const debouncedSearch = useDebouncedValue(search, 250);
   const filters = { kind, model, date, search: debouncedSearch, owner, source };
   const activeFilters = hasActiveFilters(filters);
@@ -893,6 +1363,9 @@ export default function LibraryPage() {
         .filter((item) => isMediaKind(item.kind)),
     [mediaPages],
   );
+  const sources = useMemo(() => mediaPages[0]?.sources ?? [], [mediaPages]);
+  const { people, lookup: personFor } = usePeople(canChooseOwner, sources);
+  const viewerPerson = viewer.name && viewer.name !== "Your account" ? viewer.name : null;
   const hasLoadedAssets = assets.length > 0;
   const updating = isFetching && isPlaceholderData && hasLoadedAssets;
   const showInitialError = isError && !hasLoadedAssets && !isFetchNextPageError;
@@ -953,6 +1426,7 @@ export default function LibraryPage() {
       ).sort(),
     [assets, mediaPages],
   );
+  const groups = useMemo(() => groupByDay(assets), [assets]);
   const retryRetainedError = () => {
     if (isFetchNextPageError) {
       void fetchNextPage();
@@ -986,89 +1460,120 @@ export default function LibraryPage() {
         error instanceof Error ? error.message : "Delete failed. Try again.",
       ),
   });
+  const personOptions = canChooseOwner
+    ? [
+        { value: "everyone", label: "Everyone" },
+        ...(viewerPerson ? [{ value: "mine", label: `${viewerPerson} (you)` }] : [{ value: "mine", label: "You" }]),
+        ...people
+          .filter((person) => person.name !== viewerPerson)
+          .map((person) => ({ value: person.id, label: person.name })),
+      ]
+    : [];
+  const ownerValue = owner === "default" ? "everyone" : owner;
+  const selectedPerson = selected
+    ? instanceView
+      ? personFor(selected)
+      : viewerPerson
+    : null;
   return (
     <div>
-      <PageHeader
-        title="Library"
-        subtitle={
-          instanceView
-            ? "Everything made through your gateway."
-            : "Everything I’ve made."
-        }
-      />
-      <section aria-label="Library filters" className="mb-6">
-        <details className="group sm:hidden">
-          <summary className="border-input bg-background hover:bg-accent hover:text-accent-foreground focus-visible:ring-ring inline-flex min-h-11 cursor-pointer list-none items-center rounded-md border px-4 py-2 text-sm font-medium focus-visible:ring-2 focus-visible:outline-none">
-            Filter{activeFilters ? " applied" : ""}
-          </summary>
-          <div className="mt-4 space-y-4">
-            <LibraryFilterControls
-              kind={kind}
-              setKind={setKind}
-              search={search}
-              setSearch={setSearch}
-              model={model}
-              setModel={setModel}
-              models={models}
-              date={date}
-              setDate={setDate}
-              owner={owner}
-              setOwner={setOwner}
-              source={source}
-              setSource={setSource}
-              sources={mediaPages[0]?.sources ?? []}
-              instanceView={instanceView}
-              canChooseOwner={["owner", "superadmin"].includes(viewer.role)}
-              mobileLabels
-            />
-          </div>
-        </details>
-        <div className="hidden space-y-4 sm:block">
-          <LibraryFilterControls
-            kind={kind}
-            setKind={setKind}
-            search={search}
-            setSearch={setSearch}
-            model={model}
-            setModel={setModel}
-            models={models}
-            date={date}
-            setDate={setDate}
-            owner={owner}
-            setOwner={setOwner}
-            source={source}
-            setSource={setSource}
-            sources={mediaPages[0]?.sources ?? []}
-            instanceView={instanceView}
-            canChooseOwner={["owner", "superadmin"].includes(viewer.role)}
+      <header className="mb-5 flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+        <h1 className="text-3xl font-semibold tracking-tight">
+          Library
+          {hasLoadedAssets && !hasNextPage && !activeFilters ? (
+            <span className="text-muted-foreground figures ml-3 text-xl font-normal">
+              {assets.length}
+            </span>
+          ) : null}
+        </h1>
+        <label className="relative block w-full sm:w-72">
+          <span className="sr-only">Search prompts</span>
+          <Search
+            className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
+            aria-hidden
           />
-        </div>
-      </section>
-      {activeFilters ? (
-        <div className="mb-4">
-          <Button variant="ghost" size="sm" onClick={clearFilters}>
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search prompts"
+            className="pl-9"
+          />
+        </label>
+      </header>
+      <section
+        aria-label="Library filters"
+        className="mb-6 flex flex-wrap items-center gap-2"
+      >
+        <Segmented
+          label="Kind"
+          value={kind}
+          onChange={setKind}
+          options={[
+            { value: "all", label: "All" },
+            { value: "image", label: "Images" },
+            { value: "video", label: "Video" },
+            { value: "audio", label: "Audio" },
+          ]}
+        />
+        {canChooseOwner ? (
+          <Select
+            value={ownerValue}
+            onValueChange={(value) => {
+              setOwner(value);
+              setSource("all");
+            }}
+          >
+            <SelectTrigger aria-label="Person" className="w-auto min-w-40">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {personOptions.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : null}
+        <MoreFilters
+          model={model}
+          setModel={setModel}
+          models={models}
+          date={date}
+          setDate={setDate}
+          source={source}
+          setSource={setSource}
+          sources={sources}
+          instanceView={instanceView}
+          modelCatalog={modelCatalog}
+        />
+        {activeFilters ? (
+          <Button variant="ghost" onClick={clearFilters}>
             Clear filters
           </Button>
-        </div>
-      ) : null}
+        ) : null}
+        {unavailableAssets > 0 ? (
+          <p
+            className="text-muted-foreground flex items-center gap-2 text-sm sm:ml-auto"
+            role="status"
+          >
+            {unavailableAssets === 1
+              ? "1 file is no longer stored."
+              : `${unavailableAssets} files are no longer stored.`}
+            <Button variant="link" className="h-auto px-0" onClick={() => void refetch()}>
+              Refresh library
+            </Button>
+          </p>
+        ) : null}
+      </section>
       {deepLinkedAssetError ? (
         <div className="mb-4">
           <ErrorState
+            heading="Couldn’t open that creation"
             message="That library item could not be loaded. Try again."
             onRetry={() => void refetchDeepLinkedAsset()}
             retrying={deepLinkedAssetFetching}
           />
-        </div>
-      ) : null}
-      {unavailableAssets > 0 ? (
-        <div
-          className="mb-4 flex flex-wrap items-center gap-3 text-sm"
-          role="status"
-        >
-          <span>Some media items are unavailable.</span>
-          <Button variant="outline" size="sm" onClick={() => void refetch()}>
-            Refresh library
-          </Button>
         </div>
       ) : null}
       {isLoading ? (
@@ -1076,15 +1581,19 @@ export default function LibraryPage() {
           role="status"
           aria-label="Loading library"
           aria-busy="true"
-          className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
+          className="space-y-3"
         >
-          {Array.from({ length: 6 }).map((_, index) => (
-            <Skeleton key={index} className="h-72 rounded-xl" />
-          ))}
+          <Skeleton className="h-5 w-24" />
+          <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+            {Array.from({ length: 12 }).map((_, index) => (
+              <Skeleton key={index} className="aspect-square rounded-media" />
+            ))}
+          </div>
         </div>
       ) : null}
       {showInitialError ? (
         <ErrorState
+          heading="Couldn’t load your library"
           message="Your library could not be loaded. Try again."
           onRetry={() => void refetch()}
           retrying={isFetching}
@@ -1092,12 +1601,12 @@ export default function LibraryPage() {
       ) : null}
       {!isLoading && !showInitialError && assets.length === 0 ? (
         <EmptyState
-          icon={CalendarDays}
-          title={activeFilters ? "No matching media" : "No media yet"}
+          icon={activeFilters ? Search : ImageIcon}
+          title={activeFilters ? "No matching creations" : "No creations yet"}
           description={
             activeFilters
-              ? "No media matches these filters. Clear filters or try another kind, date, model or prompt."
-              : "Images, videos and audio you generate will appear here with the prompt, model, workflow and download links."
+              ? "Nothing matches these filters."
+              : "Images, video and audio made through the gateway appear here."
           }
           action={
             activeFilters ? (
@@ -1105,26 +1614,34 @@ export default function LibraryPage() {
                 Clear filters
               </Button>
             ) : (
-              <Button asChild variant="outline">
-                <a href="/ui/try/">Make something</a>
+              <Button asChild>
+                <a href="/ui/try/?capability=image">Make an image</a>
               </Button>
             )
           }
         />
       ) : null}
       {!isLoading && !showInitialError && assets.length > 0 ? (
-        <div
-          aria-busy={updating}
-          className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
-        >
-          {assets.map((asset) => (
-            <AssetCard
-              key={asset.asset_id}
-              asset={asset}
-              onOpen={openAsset}
-              everyone={instanceView}
-              modelCatalog={modelCatalog}
-            />
+        <div aria-busy={updating} className="space-y-7">
+          {groups.map((group) => (
+            <section key={group.label} aria-label={group.label}>
+              <h2 className="text-muted-foreground mb-2 text-sm font-semibold">
+                {group.label}
+              </h2>
+              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+                {group.items.map((asset) => (
+                  <AssetTile
+                    key={asset.asset_id}
+                    asset={asset}
+                    onOpen={openAsset}
+                    everyone={instanceView}
+                    modelCatalog={modelCatalog}
+                    person={instanceView ? personFor(asset) : null}
+                    selected={selected?.asset_id === asset.asset_id}
+                  />
+                ))}
+              </div>
+            </section>
           ))}
         </div>
       ) : null}
@@ -1136,7 +1653,7 @@ export default function LibraryPage() {
       {showRetainedError ? (
         <div
           role="alert"
-          className="border-destructive/30 bg-destructive/5 text-destructive mt-6 flex flex-wrap items-center justify-center gap-3 rounded-lg border p-3 text-sm"
+          className="border-destructive/30 bg-danger-tint text-destructive mt-6 flex flex-wrap items-center justify-center gap-3 rounded-panel border p-3 text-sm"
         >
           <span>
             {isFetchNextPageError
@@ -1157,7 +1674,7 @@ export default function LibraryPage() {
         </div>
       ) : null}
       {hasNextPage && !showInitialError && !showRetainedError ? (
-        <div className="mt-6 flex justify-center">
+        <div className="mt-8 flex justify-center">
           <Button
             variant="outline"
             disabled={isFetchingNextPage}
@@ -1167,237 +1684,46 @@ export default function LibraryPage() {
           </Button>
         </div>
       ) : null}
-      <Sheet
-        open={Boolean(selected)}
-        onOpenChange={(open) => !open && closeAsset()}
-      >
-        <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
-          {selected ? (
-            <>
-              <SheetHeader>
-                <SheetTitle className="min-w-0 break-words">
-                  {assetTitle(selected)}
-                </SheetTitle>
-                <SheetDescription>
-                  {kindLabel(selected.kind)}
-                  {selected.model &&
-                  modelDisplayName(selected.model, modelCatalog)
-                    ? ` · ${modelDisplayName(selected.model, modelCatalog)}`
-                    : ""}
-                </SheetDescription>
-              </SheetHeader>
-              <div className="space-y-5 px-4 pb-4">
-                <div className="bg-muted overflow-hidden rounded-lg border">
-                  <Preview
-                    key={selected.download_url}
-                    asset={selected}
-                    large
-                    everyone={instanceView}
-                  />
-                </div>
-                {selected.prompt ? (
-                  <section>
-                    <h2 className="mb-2 text-sm font-medium">Prompt</h2>
-                    <p className="bg-muted/30 min-w-0 rounded-lg border p-3 text-sm break-words">
-                      {selected.prompt}
-                    </p>
-                  </section>
-                ) : null}
-                <div className="flex flex-wrap gap-2">
-                  {selected.available !== false && (
-                    <Button
-                      asChild
-                      disabled={downloadingAssetId === selected.asset_id}
-                    >
-                      <a
-                        href={
-                          selected.download_url ??
-                          `/me/api/media/${encodeURIComponent(selected.asset_id)}/download`
-                        }
-                        download
-                        onClick={(event) => {
-                          event.preventDefault();
-                          setDownloadingAssetId(selected.asset_id);
-                          void prepareDownload(selected, instanceView).then(
-                            () => {
-                              toast.success("Download ready.");
-                              setDownloadingAssetId(null);
-                            },
-                            (error) => {
-                              toast.error(
-                                error instanceof Error
-                                  ? error.message
-                                  : "Download could not be prepared. Try again.",
-                              );
-                              setDownloadingAssetId(null);
-                            },
-                          );
-                        }}
-                      >
-                        <Download />
-                        {downloadingAssetId === selected.asset_id
-                          ? "Preparing…"
-                          : "Download"}
-                      </a>
-                    </Button>
-                  )}
-                  <Button
-                    variant="outline"
-                    disabled={!selected.prompt}
-                    onClick={() => {
-                      void navigator.clipboard
-                        .writeText(selected.prompt || "")
-                        .then(
-                          () => toast.success("Prompt copied."),
-                          () =>
-                            toast.error(
-                              "Prompt could not be copied. Select the text to copy it.",
-                            ),
-                        );
-                    }}
-                  >
-                    <Copy />
-                    Copy prompt
-                  </Button>
-                  {selected.request_id ? (
-                    <Button asChild variant="outline">
-                      <a
-                        href={`/r/${encodeURIComponent(selected.request_id)}`}
-                        aria-label={`Open receipt ${selected.request_id}`}
-                      >
-                        <ExternalLink /> View receipt
-                      </a>
-                    </Button>
-                  ) : null}
-                  {selected.workflow_download_url ? (
-                    <Button asChild variant="outline">
-                      <a href={selected.workflow_download_url} download>
-                        <ExternalLink /> Download ComfyUI workflow
-                      </a>
-                    </Button>
-                  ) : null}
-                  {!instanceView ? (
-                    <OverflowMenu label={`Actions for ${assetTitle(selected)}`}>
-                      <OverflowMenuSeparator />
-                      <OverflowMenuItem
-                        danger
-                        onSelect={() => setConfirming(selected)}
-                      >
-                        <Trash2 className="size-4" aria-hidden />
-                        Delete
-                      </OverflowMenuItem>
-                    </OverflowMenu>
-                  ) : null}
-                </div>
-                <details className="rounded-lg border p-4">
-                  <summary className="focus-visible:outline-ring min-h-11 cursor-pointer py-3 font-medium focus-visible:outline-2">
-                    Details
-                  </summary>
-                  <div className="mt-3 space-y-5">
-                    <div className="grid gap-3 text-sm sm:grid-cols-2">
-                      <Detail
-                        label="Model"
-                        value={
-                          selected.model
-                            ? modelDisplayName(selected.model, modelCatalog)
-                            : ""
-                        }
-                      />
-                      <Detail
-                        label="Created"
-                        value={
-                          <RelativeTime ts={selected.created_at} fallback="" />
-                        }
-                        title={absolute(selected.created_at)}
-                      />
-                      <Detail label="Seed" value={selected.seed ?? ""} />
-                      <Detail
-                        label="Size"
-                        value={
-                          selected.width && selected.height
-                            ? `${selected.width} × ${selected.height} px`
-                            : ""
-                        }
-                      />
-                      <Detail
-                        label="Generation time"
-                        value={
-                          selected.generation_ms == null
-                            ? ""
-                            : `${(selected.generation_ms / 1000).toFixed(1)} s`
-                        }
-                      />
-                      <Detail
-                        label="Request receipt"
-                        value={
-                          selected.request_id ? (
-                            <a
-                              className="text-primary text-xs break-all underline-offset-4 hover:underline"
-                              href={`/r/${encodeURIComponent(selected.request_id)}`}
-                              aria-label={`View receipt ${selected.request_id}`}
-                            >
-                              {selected.request_id}
-                            </a>
-                          ) : (
-                            "Not recorded"
-                          )
-                        }
-                        title={selected.request_id ?? undefined}
-                      />
-                      {selected.owner_name ? (
-                        <Detail label="Owner" value={selected.owner_name} />
-                      ) : null}
-                      {selected.source ? (
-                        <Detail label="Source" value={selected.source.label} />
-                      ) : null}
-                    </div>
-                    <section>
-                      <h2 className="mb-2 text-sm font-medium">Workflow</h2>
-                      <pre className="bg-muted/30 max-h-40 overflow-auto rounded-lg border p-3 text-xs whitespace-pre-wrap">
-                        {selected.workflow
-                          ? typeof selected.workflow === "string"
-                            ? selected.workflow
-                            : JSON.stringify(selected.workflow, null, 2)
-                          : "Not recorded"}
-                      </pre>
-                    </section>
-                  </div>
-                </details>
-              </div>
-            </>
-          ) : null}
-        </SheetContent>
-      </Sheet>
+      {selected ? (
+        <CreationViewer
+          asset={selected}
+          assets={assets}
+          onSelect={openAsset}
+          onClose={closeAsset}
+          everyone={instanceView}
+          modelCatalog={modelCatalog}
+          person={selectedPerson}
+          downloading={downloadingAssetId === selected.asset_id}
+          onDownload={(asset) => {
+            setDownloadingAssetId(asset.asset_id);
+            void prepareDownload(asset, instanceView).then(
+              () => {
+                toast.success("Download ready.");
+                setDownloadingAssetId(null);
+              },
+              (error) => {
+                toast.error(
+                  error instanceof Error
+                    ? error.message
+                    : "Download could not be prepared. Try again.",
+                );
+                setDownloadingAssetId(null);
+              },
+            );
+          }}
+          onDelete={!instanceView ? (asset) => setConfirming(asset) : null}
+        />
+      ) : null}
       <ConfirmDialog
         open={Boolean(confirming)}
         onOpenChange={(open) => !open && setConfirming(null)}
-        title={`Delete ${confirming ? assetTitle(confirming) : "this media item"}?`}
-        description="This removes the item from your library. Existing downloaded copies are not affected."
+        title={`Delete ${confirming ? assetTitle(confirming) : "this creation"}?`}
+        description="This removes the creation from your library. Copies you downloaded are not affected."
         confirmLabel="Delete"
         onConfirm={async () => {
           if (confirming) await deleteMutation.mutateAsync(confirming);
         }}
       />
     </div>
-  );
-}
-
-function Detail({
-  label,
-  value,
-  title,
-}: {
-  label: string;
-  value: React.ReactNode;
-  title?: string;
-}) {
-  if (value == null || value === "") return null;
-  return (
-    <dl className="min-w-0 rounded-lg border p-3">
-      <dt className="text-muted-foreground text-xs">{label}</dt>
-      <dd className="mt-1 truncate text-sm font-medium" title={title}>
-        {value}
-      </dd>
-    </dl>
   );
 }
