@@ -26,3 +26,30 @@ it("renders the effective mapped plan and manual/OIDC grant provenance from Peop
   expect(screen.getByText("owner · Manual")).toBeInTheDocument();
   expect(screen.getByText("admin · OIDC claim")).toBeInTheDocument();
 });
+
+it("opens on the person named in ?person= and leaves other rows unmarked", async () => {
+  const person = (id: string, name: string) => ({
+    id, name, email: `${id}@example.test`, profile_id: null, plan_name: null, plan_source: null,
+    disabled: false, protected: false, builtin: false, role: "member", last_active: null,
+    requests_this_month: null, grants: [],
+  });
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    const body = url.endsWith("/people")
+      ? { people: [person("robin", "Robin"), person("zoe", "Zoë")], profiles: [] }
+      : url.endsWith("/invites") ? { invites: [], profiles: [] } : { profiles: [] };
+    return Response.json(body);
+  }));
+  window.history.replaceState(null, "", "/people?tab=invites&person=zoe");
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  try {
+    render(<QueryClientProvider client={client}><PeoplePage /></QueryClientProvider>);
+    const zoe = (await screen.findByText("Zoë")).closest("[aria-current]");
+    expect(zoe).not.toBeNull();
+    expect(zoe).toHaveFocus();
+    expect(screen.getByText("Robin").closest("[aria-current]")).toBeNull();
+  } finally {
+    window.history.replaceState(null, "", "/");
+    client.clear();
+  }
+});

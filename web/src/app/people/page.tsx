@@ -159,6 +159,27 @@ export default function PeoplePage() {
     if (requested && ["people", "invites", "plans"].includes(requested))
       setTab(requested);
   }, []);
+  // The command palette links to /people?person=<id>: show that person's row.
+  const [requestedPerson] = useState(() =>
+    typeof window === "undefined"
+      ? null
+      : new URLSearchParams(window.location.search).get("person"),
+  );
+  const requestedFound = Boolean(
+    requestedPerson &&
+      peopleData?.people.some((person) => person.id === requestedPerson),
+  );
+  useEffect(() => {
+    if (requestedFound) setTab("people");
+  }, [requestedFound]);
+  // Focus the row once, when it first mounts (the tab content mounts late).
+  const requestedShown = useRef(false);
+  const showRequestedRow = (node: HTMLDivElement | null) => {
+    if (!node || requestedShown.current) return;
+    requestedShown.current = true;
+    node.scrollIntoView?.({ block: "center" });
+    node.focus();
+  };
   const [inviteOpen, setInviteOpen] = useState(false);
   const [personPlan, setPersonPlan] = useState<Person | null>(null);
   const [confirmation, setConfirmation] = useState<{
@@ -365,7 +386,12 @@ export default function PeoplePage() {
               {peopleData.people.map((person) => (
                 <div
                   key={person.id}
-                  className={`grid grid-cols-[minmax(0,1fr)_44px] gap-4 py-4 md:items-center ${hasUsageMeasurement ? "md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_44px]" : "md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_44px]"}`}
+                  {...(person.id === requestedPerson && {
+                    ref: showRequestedRow,
+                    tabIndex: -1,
+                    "aria-current": "true" as const,
+                  })}
+                  className={`${person.id === requestedPerson ? "bg-muted rounded-md px-2 " : ""}grid grid-cols-[minmax(0,1fr)_44px] gap-4 py-4 md:items-center ${hasUsageMeasurement ? "md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_44px]" : "md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_44px]"}`}
                 >
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
