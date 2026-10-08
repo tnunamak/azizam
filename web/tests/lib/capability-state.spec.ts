@@ -88,6 +88,25 @@ describe("capabilityView: one state word from recorded evidence", () => {
     );
     expect(view.state).toBe("degraded");
   });
+  it("reads an engine the gateway could not check as Unknown, with its last check", () => {
+    const view = capabilityView(
+      {
+        ...chat,
+        status: "unknown",
+        available: false,
+        evidence: { source: "health", kind: "no_response", observed_at_s: now },
+      },
+      {
+        now,
+        engines: [
+          engine({ observation: "unavailable", tone: "neutral", inUse: true, checkedAt: now - 7 * 3600 }),
+        ],
+      },
+    );
+    expect(view.state).toBe("unknown");
+    expect(view.detail).toBe("Last checked 7 h ago; no answer since.");
+    expect(view.checkedAt).toBeNull();
+  });
   it("reads an unavailable projection without a check time as Down", () => {
     const view = capabilityView(
       { ...chat, status: "unavailable", available: false, evidence: null },

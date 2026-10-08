@@ -38,6 +38,8 @@ export const FRESH_S = 15 * 60;
 
 export interface EvidenceInput {
   source?: string | null;
+  /** "no_response" when the latest check got no answer. */
+  kind?: string | null;
   observed_at_s?: number | null;
   receipt_status?: string | null;
 }
@@ -214,6 +216,9 @@ function engineFailing(engine: EngineSignal): boolean {
   // A stopped standby engine nobody uses is not failing: the gateway says neutral.
   if (engine.tone === "neutral" && engine.inUse === false) return false;
   if (engine.tone === "bad") return true;
+  // "unavailable" with a neutral judgement means the gateway could not
+  // check it: that is Unknown, not Down.
+  if (engine.observation === "unavailable" && engine.tone === "neutral") return false;
   return ["down", "degraded", "unavailable"].includes(engine.observation);
 }
 
@@ -294,11 +299,14 @@ export function capabilityView(
       .map((engine) => engine.checkedAt)
       .filter((value): value is number => typeof value === "number");
     const last = lastChecks.length ? Math.max(...lastChecks) : null;
+    const noAnswer = evidence?.kind === "no_response";
     return make(
       "unknown",
       last && now - last > FRESH_S
-        ? `No answer to the latest check. Last good check ${ageText(now - last)}.`
-        : "The gateway has no current check.",
+        ? `Last checked ${ageText(now - last)}; no answer since.`
+        : noAnswer
+          ? "No answer to the latest check."
+          : "The gateway has no current check.",
       { usedAt, checkedAt: null },
     );
   }

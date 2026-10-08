@@ -63,8 +63,10 @@ import { PersonMark } from "@/components/product/person-mark";
 import {
   isInFlight,
   isSuccess,
+  ageText,
   CAP_WARNING,
   capRefusalCurrent,
+  FRESH_S,
   engineRemedy,
   engineSymptom,
   isTerminalFailure,
@@ -80,7 +82,6 @@ import {
   useCapabilityViews,
   type ActivityRecord,
 } from "@/lib/use-capability-views";
-import { capLimitFrom } from "@/app/home/presentation";
 
 type LiveBackend = NonNullable<StatusPayload["backends"]>[number];
 type EngineView = {
@@ -539,7 +540,6 @@ function capProblems(
       (refused[0].receipt?.warnings ?? []).find((text) =>
         CAP_WARNING.test(text),
       ) ?? "";
-    const limit = capLimitFrom(warning);
     const facts: Array<[string, ReactNode]> = [
       [
         "Limits",
@@ -550,12 +550,23 @@ function capProblems(
           .filter(Boolean)
           .join(", ") || "Not recorded",
       ],
+      // The gateway does not report a plan's spend yet (DESIGN.md, Backend asks).
+      ["Spent", "Not reported by the gateway"],
       ["Reached", warning || "A spending limit"],
       [
         "Resets",
-        limit === "monthly"
-          ? `Monthly limit on ${resets} (UTC)`
-          : "As charges older than 24 hours roll off",
+        <span key="r" className="block space-y-0.5">
+          {daily != null ||
+          !/monthly/i.test(warning) ||
+          /daily/i.test(warning) ? (
+            <span className="block">
+              Daily: as charges older than 24 hours roll off
+            </span>
+          ) : null}
+          {monthly != null || /monthly/i.test(warning) ? (
+            <span className="block">Monthly: on {resets} (UTC)</span>
+          ) : null}
+        </span>,
       ],
       ["Refused", failedRequestsFact(refused)],
     ];
@@ -907,8 +918,29 @@ export function StatusClient() {
           const service = engines.find(
             (engine) => engine.service.id === provider.id,
           );
+          // A local engine that still serves the same capability keeps it working.
+          const labels = service?.label ? service.label.split(", ") : [];
+          const covered = labels.filter((label) =>
+            tableEngines.some(
+              (engine) =>
+                engineStateKey(engine) === "ready" &&
+                (engine.label ? engine.label.split(", ") : []).includes(label),
+            ),
+          );
+          const exposed = labels.length > covered.length;
           const facts: Array<[string, ReactNode]> = [
-            ["Affects", service?.label || "Requests that use this provider"],
+            [
+              "Affects",
+              labels.length
+                ? labels
+                    .map((label) =>
+                      covered.includes(label)
+                        ? `${label} (an engine on this computer still serves it)`
+                        : label,
+                    )
+                    .join(", ")
+                : "Requests that use this provider",
+            ],
             [
               "Last check",
               provider.checkedAt ? (
@@ -927,8 +959,10 @@ export function StatusClient() {
           return [
             {
               key: `provider:${provider.id}`,
-              severity: "critical" as CalloutSeverity,
-              tone: "bad" as StateTone,
+              severity: (exposed || !labels.length
+                ? "critical"
+                : "attention") as CalloutSeverity,
+              tone: (exposed || !labels.length ? "bad" : "warn") as StateTone,
               title: `${provider.name} is down`,
               headline: `${provider.name} down`,
               facts,
@@ -978,6 +1012,43 @@ export function StatusClient() {
         ]
       : []),
   ];
+  // An engine in use whose checks stopped answering: its capabilities read
+  // Unknown, so the owner needs to know which engine and since when.
+  const uncheckedProblems: Problem[] = statusIsError
+    ? []
+    : tableEngines.flatMap((engine) => {
+        if (!engine.service.enabled || engine.health?.in_use === false)
+          return [];
+        if (engineStateKey(engine) !== "unknown" || !engine.health) return [];
+        // The poller's last record; the type predates this field.
+        const observed = (
+          engine.backend as { observed_at_s?: number | null } | undefined
+        )?.observed_at_s;
+        const last = typeof observed === "number" ? observed : null;
+        if (last !== null && now - last <= FRESH_S) return [];
+        return [
+          {
+            key: `unchecked:${engine.service.id}`,
+            severity: "attention" as CalloutSeverity,
+            tone: "unknown" as StateTone,
+            title: `${engine.shortName} is not answering checks`,
+            headline: `${engine.shortName} unchecked`,
+            facts: [
+              ["Affects", engine.label || "Unknown"],
+              [
+                "Last check",
+                last ? `${ageText(now - last)}` : "Never recorded",
+              ],
+            ] as Array<[string, ReactNode]>,
+            body: [
+              "Its capabilities read Unknown until it answers.",
+              "Check that the engine is running and its health address answers.",
+            ],
+            href: `/engines/?service=${encodeURIComponent(engine.service.id)}`,
+            action: `Inspect ${engine.shortName}`,
+          } satisfies Problem,
+        ];
+      });
   const problems = [
     ...loadProblems,
     ...engineProblems(
@@ -989,6 +1060,7 @@ export function StatusClient() {
       records,
       end,
     ),
+    ...uncheckedProblems,
     ...providerProblems,
     ...capProblems(records, profiles, now),
     ...signalProblems,
@@ -1186,7 +1258,7 @@ export function StatusClient() {
                               : ""}
                           </span>
                         </span>
-                        <StateWord tone="busy" word="Running" />
+                        <StateWord tone="busy" word="In progress" />
                       </li>
                     );
                   })}
