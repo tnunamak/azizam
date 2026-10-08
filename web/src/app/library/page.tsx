@@ -830,7 +830,7 @@ function AssetTile({
   return (
     <article
       className={cn(
-        "group bg-muted relative aspect-square min-w-0 overflow-hidden rounded-media",
+        "group relative aspect-square min-w-0 overflow-hidden rounded-media",
         selected && "outline-ring outline-2 outline-offset-2",
       )}
     >
@@ -1065,7 +1065,7 @@ function CreationViewer({
             if (event.key === "ArrowLeft" && previous) onSelect(previous);
             if (event.key === "ArrowRight" && next) onSelect(next);
           }}
-          className="bg-background shadow-overlay data-[state=open]:animate-in data-[state=open]:fade-in-0 fixed inset-0 z-50 flex flex-col overflow-y-auto md:inset-6 md:grid md:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] md:overflow-hidden md:rounded-panel md:border lg:inset-10"
+          className="bg-background shadow-overlay data-[state=open]:animate-in data-[state=open]:fade-in-0 fixed inset-0 z-50 flex flex-col overflow-y-auto md:inset-6 md:grid md:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] md:overflow-hidden md:rounded-panel lg:inset-10"
         >
           <div className="bg-media-stage relative flex min-h-[50dvh] shrink-0 items-center justify-center md:min-h-0">
             <div
@@ -1260,7 +1260,7 @@ function CreationViewer({
                 <summary className="text-muted-foreground hover:text-foreground flex min-h-11 cursor-pointer items-center text-sm font-medium">
                   Details
                 </summary>
-                <div className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
+                <div className="mt-2 grid gap-x-4 gap-y-3 text-sm sm:grid-cols-2">
                   <Detail
                     label="Request receipt"
                     value={
@@ -1346,7 +1346,7 @@ function Detail({
 }) {
   if (value == null || value === "") return null;
   return (
-    <dl className="min-w-0 rounded-control border p-2.5">
+    <dl className="min-w-0">
       <dt className="text-muted-foreground text-xs">{label}</dt>
       <dd className="mt-0.5 truncate text-sm" title={title}>
         {value}

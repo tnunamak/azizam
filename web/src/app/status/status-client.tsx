@@ -419,7 +419,7 @@ function ProblemCard({
       )}
     >
       <div className="space-y-4 p-5">
-        <h3 className="text-lg font-semibold">{problem.title}</h3>
+        <h3 className="text-base font-semibold">{problem.title}</h3>
         <dl className="space-y-3">
           <FactRow label="Where">
             {problem.layer === "Hardware"

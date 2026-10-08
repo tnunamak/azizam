@@ -74,7 +74,7 @@ describe("member Status diagnosis", () => {
     const user = userEvent.setup();
     mount();
     expect(
-      await screen.findByRole("heading", { name: "Images" }),
+      await screen.findByText("Images", { selector: "p" }),
     ).toBeVisible();
     // The recommended model sits with the names, one tap away (word budget).
     expect(
@@ -186,7 +186,7 @@ describe("member Status diagnosis", () => {
     });
     mount();
     expect(
-      await screen.findByRole("heading", { name: "Capability" }),
+      await screen.findByText("Capability", { selector: "p" }),
     ).toBeVisible();
     await userEvent.click(screen.getByText("Model names", { exact: true }));
     expect(screen.getByText("Model details unavailable")).toBeVisible();
@@ -211,7 +211,7 @@ describe("member Status diagnosis", () => {
     });
     mount();
     expect(
-      await screen.findByRole("heading", { name: "Images" }),
+      await screen.findByText("Images", { selector: "p" }),
     ).toBeVisible();
     expect(
       screen.queryByText("Names you can use", { exact: true }),

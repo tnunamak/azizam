@@ -98,9 +98,9 @@ function MemberCapability({
       </span>
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-baseline justify-between gap-x-3">
-          <h3 className="truncate font-semibold">
+          <p className="truncate font-semibold">
             {capability.capability_title ?? "Capability"}
-          </h3>
+          </p>
           <StateLabel state={state} className="shrink-0" />
         </div>
         {stamp && stamp.kind === "used" ? (

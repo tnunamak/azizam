@@ -338,7 +338,7 @@ function YourApps({ home }: { home: HomeSnapshot }) {
                 href={`/apps/?app=${encodeURIComponent(app.id)}`}
                 className="group flex min-h-11 items-center gap-3 py-2"
               >
-                <span className="min-w-0 flex-1 truncate text-sm font-medium group-hover:underline">
+                <span className="line-clamp-2 min-w-0 flex-1 text-sm font-medium break-words group-hover:underline">
                   {formatAppName(app.name, home.user.email)}
                 </span>
                 <span className="text-muted-foreground shrink-0 text-xs">

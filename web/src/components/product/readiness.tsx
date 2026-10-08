@@ -325,7 +325,7 @@ export function SectionHeading({
         className,
       )}
     >
-      <h2 id={id} className="text-lg font-semibold">
+      <h2 id={id} className="text-xl font-semibold">
         {title}
         {typeof count === "number" ? (
           <span className="text-muted-foreground ml-2 font-normal">
