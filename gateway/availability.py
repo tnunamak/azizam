@@ -483,6 +483,13 @@ def _evidence_newer(incoming: Mapping[str, Any], current: Mapping[str, Any]) -> 
     incoming_ts = incoming.get("observed_at_s")
     current_ts = current.get("observed_at_s")
     if isinstance(incoming_ts, int) and isinstance(current_ts, int):
+        if incoming_ts == current_ts:
+            # Same-second tie: a check that saw the service ready is the
+            # stronger fact than a busy/degraded row, whatever the merge order.
+            if current.get("available") is True and _busy_like(incoming):
+                return False
+            if incoming.get("available") is True and _busy_like(current):
+                return True
         return incoming_ts >= current_ts
     if incoming.get("source") == "request" and current.get("source") in {None, ""}:
         return True

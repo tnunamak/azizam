@@ -1026,3 +1026,23 @@ def test_availability_projection_is_presentation_only_not_a_routing_input():
         ("capabilities_provider", "_gateway_capabilities_provider"),
         ("status_provider", "_status_payload_with_availability"),
     }
+
+
+@pytest.mark.parametrize("raw_status", ["busy", "degraded"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_same_second_ready_health_check_beats_busy_status_row(raw_status, reverse):
+    health = {"svc": {"source": "health", "status": "ready", "available": True, "observed_at_s": 500}}
+    status = evidence_from_status_rows([{"service_id": "svc", "live_status": raw_status}], observed_at_s=500)
+    sources = [health, status]
+    if reverse:
+        sources.reverse()
+    merged = merge_evidence(*sources)
+    assert merged["svc"]["source"] == "health"
+    projection = project_service("svc", service_records={"services": {"svc": {"enabled": True}}}, evidence=merged)
+    assert projection.status == "ready"
+
+
+def test_newer_busy_row_still_beats_older_ready_check():
+    health = {"svc": {"source": "health", "status": "ready", "available": True, "observed_at_s": 499}}
+    status = evidence_from_status_rows([{"service_id": "svc", "live_status": "busy"}], observed_at_s=500)
+    assert merge_evidence(health, status)["svc"]["source"] == "status"
