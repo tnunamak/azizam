@@ -43,6 +43,7 @@ import { capabilityMeta, SectionHeading } from "@/components/product/readiness";
 import { StateWord, StatusLine } from "@/components/product/status-ui";
 import { AppMark } from "@/components/product/app-mark";
 import { CapNotice } from "@/components/product/cap-notice";
+import { AudioCover } from "@/components/product/audio-cover";
 import { PageHeader } from "@/components/product/page-header";
 import {
   activeCapRefusal,
@@ -131,11 +132,11 @@ function HomeLoading() {
         <Skeleton className="h-9 w-3/4" />
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
-            <Skeleton className="h-28 w-full rounded-panel" key={i} />
+            <Skeleton className="rounded-panel h-28 w-full" key={i} />
           ))}
         </div>
       </div>
-      <Skeleton className="h-96 w-full rounded-panel" />
+      <Skeleton className="rounded-panel h-96 w-full" />
     </div>
   );
 }
@@ -151,15 +152,35 @@ interface Task {
   tab: string;
 }
 const PRIMARY_TASKS: Task[] = [
-  { key: "image", title: "Make a picture", hint: "Describe it and get an image.", tab: "image" },
-  { key: "speech", title: "Read text aloud", hint: "Paste text and hear it spoken.", tab: "speech" },
-  { key: "chat", title: "Chat", hint: "Ask a question or get help writing.", tab: "chat" },
+  {
+    key: "image",
+    title: "Make a picture",
+    hint: "Describe it and get an image.",
+    tab: "image",
+  },
+  {
+    key: "speech",
+    title: "Read text aloud",
+    hint: "Paste text and hear it spoken.",
+    tab: "speech",
+  },
+  {
+    key: "chat",
+    title: "Chat",
+    hint: "Ask a question or get help writing.",
+    tab: "chat",
+  },
 ];
 const MORE_TASKS: Task[] = [
   { key: "music", title: "Make music", hint: "", tab: "audio" },
   { key: "sfx", title: "Make a sound effect", hint: "", tab: "audio" },
   { key: "video", title: "Make a video", hint: "", tab: "video" },
-  { key: "transcribe", title: "Turn a recording into text", hint: "", tab: "transcribe" },
+  {
+    key: "transcribe",
+    title: "Turn a recording into text",
+    hint: "",
+    tab: "transcribe",
+  },
 ];
 const USABLE = new Set(["ready", "busy", "degraded", "unknown"]);
 
@@ -187,25 +208,32 @@ function TaskCard({
   const showState = view.state !== "ready";
   const body = (
     <>
-      <span className="bg-muted text-foreground flex size-9 shrink-0 items-center justify-center rounded-control">
+      <span className="bg-muted text-foreground rounded-control flex size-9 shrink-0 items-center justify-center">
         <Icon aria-hidden="true" className="size-4.5" />
       </span>
       <span className="min-w-0 flex-1">
         <span className="block font-medium">{task.title}</span>
         {primary && task.hint ? (
-          <span className="text-muted-foreground block text-sm">{task.hint}</span>
+          <span className="text-muted-foreground block text-sm">
+            {task.hint}
+          </span>
         ) : null}
         {showState ? (
           <span className="mt-1 flex flex-wrap items-center gap-x-2">
             <StateWord tone={view.tone} word={view.word} />
             {!usable && view.detail ? (
-              <span className="text-muted-foreground text-sm">{view.detail}</span>
+              <span className="text-muted-foreground text-sm">
+                {view.detail}
+              </span>
             ) : null}
           </span>
         ) : null}
       </span>
       {usable ? (
-        <ChevronRight aria-hidden="true" className="text-subtle-foreground size-4 shrink-0" />
+        <ChevronRight
+          aria-hidden="true"
+          className="text-subtle-foreground size-4 shrink-0"
+        />
       ) : null}
     </>
   );
@@ -215,13 +243,22 @@ function TaskCard({
   );
   if (!usable)
     return (
-      <li className={cn(shell, "bg-muted/40 text-muted-foreground")} title={view.detail ?? undefined}>
+      <li
+        className={cn(shell, "bg-muted/40 text-muted-foreground")}
+        title={view.detail ?? undefined}
+      >
         {body}
       </li>
     );
   return (
     <li className="min-w-0">
-      <Link href={href} className={cn(shell, "bg-card hover:border-input h-full transition-colors")}>
+      <Link
+        href={href}
+        className={cn(
+          shell,
+          "bg-card hover:border-input h-full transition-colors",
+        )}
+      >
         {body}
       </Link>
     </li>
@@ -468,7 +505,7 @@ function Connect({
                   key={name}
                   type="button"
                   className={cn(
-                    "flex min-h-11 items-center gap-2.5 rounded-control border px-2 text-left text-sm transition-colors disabled:opacity-50",
+                    "rounded-control flex min-h-11 items-center gap-2.5 border px-2 text-left text-sm transition-colors disabled:opacity-50",
                     appChoice === name
                       ? "border-ring bg-accent text-accent-foreground"
                       : "bg-card hover:border-input border-transparent",
@@ -554,7 +591,9 @@ function Connect({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="new">New key for {chosenAppName}</SelectItem>
+                  <SelectItem value="new">
+                    New key for {chosenAppName}
+                  </SelectItem>
                   {selectedCredentialId !== "new" &&
                     !keys.some((key) => key.id === selectedCredentialId) && (
                       <SelectItem value={selectedCredentialId}>
@@ -613,8 +652,8 @@ function Connect({
               )}
               {!canCreate && (
                 <p className="text-muted-foreground text-sm">
-                  Your access plan does not let you create keys. Ask the
-                  gateway owner for access.
+                  Your access plan does not let you create keys. Ask the gateway
+                  owner for access.
                 </p>
               )}
               {keyError && (
@@ -691,7 +730,7 @@ function Connect({
               <div
                 role="status"
                 className={cn(
-                  "space-y-1 rounded-control p-3 text-sm",
+                  "rounded-control space-y-1 p-3 text-sm",
                   testResult.ok ? "bg-success-tint" : "bg-danger-tint",
                 )}
               >
@@ -781,10 +820,12 @@ function CreationMedia({
   creation,
   title,
   visible,
+  maker,
 }: {
   creation: HomeCreation;
   title: string;
   visible: boolean;
+  maker?: string | null;
 }) {
   const Icon =
     creation.kind === "video"
@@ -890,72 +931,85 @@ function CreationMedia({
 
   if (creation.kind === "audio" && creation.download_url) {
     return (
-      <div className="bg-capability-voice/12 flex size-full flex-col justify-between p-3">
-        <p className="line-clamp-3 text-sm font-medium break-words">{title}</p>
-        <audio
-          ref={audioRef}
-          preload="none"
-          src={audioSrc}
-          onPlay={() => {
-            setAudioError(null);
-            setIsPlaying(true);
-          }}
-          onPause={() => setIsPlaying(false)}
-          onEnded={() => setIsPlaying(false)}
-          onError={() => {
-            setIsPlaying(false);
-            setAudioError("media");
-          }}
-          className="sr-only"
-        />
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            size="icon"
-            className="relative z-10 size-11 rounded-full"
-            aria-label={`${isPlaying ? "Pause" : "Play"} ${title}`}
-            onClick={async () => {
-              const audio = audioRef.current;
-              if (!audio) return;
-              if (isPlaying) audio.pause();
-              else {
-                try {
-                  if (audioError === "media") {
-                    const renewed = await homeApi.mediaDownload(
-                      creation.asset_id,
-                    );
-                    if (renewed.download_url) {
-                      setAudioSrc(renewed.download_url);
-                      audio.src = renewed.download_url;
-                    }
-                    audio.load();
-                  }
-                  await audio.play();
-                  setAudioError(null);
-                } catch {
-                  setIsPlaying(false);
-                  setAudioError(
-                    audioError === "media" || audio.error ? "media" : "playback",
-                  );
-                }
-              }
-            }}
-          >
-            {isPlaying ? (
-              <Pause aria-hidden="true" />
-            ) : (
-              <Play aria-hidden="true" />
-            )}
-          </Button>
-          {audioError ? (
-            <p role="status" className="text-destructive text-xs">
+      <AudioCover
+        compact
+        peaksKey={creation.asset_id}
+        src={audioSrc}
+        visible={visible}
+        maker={maker}
+        model={creation.model}
+        text={creation.prompt?.trim() || title}
+        className="rounded-none border-0"
+        status={
+          audioError ? (
+            <span role="status" className="text-destructive">
               {audioError === "media"
                 ? "Audio preview unavailable. Play to retry."
                 : "Playback didn't start. Try again."}
-            </p>
-          ) : null}
-        </div>
-      </div>
+            </span>
+          ) : null
+        }
+        control={
+          <>
+            <audio
+              ref={audioRef}
+              preload="none"
+              src={audioSrc}
+              onPlay={() => {
+                setAudioError(null);
+                setIsPlaying(true);
+              }}
+              onPause={() => setIsPlaying(false)}
+              onEnded={() => setIsPlaying(false)}
+              onError={() => {
+                setIsPlaying(false);
+                setAudioError("media");
+              }}
+              className="sr-only"
+            />
+            <Button
+              type="button"
+              size="icon"
+              className="relative z-10 size-9 shrink-0 rounded-full max-sm:size-11"
+              aria-label={`${isPlaying ? "Pause" : "Play"} ${title}`}
+              onClick={async () => {
+                const audio = audioRef.current;
+                if (!audio) return;
+                if (isPlaying) audio.pause();
+                else {
+                  try {
+                    if (audioError === "media") {
+                      const renewed = await homeApi.mediaDownload(
+                        creation.asset_id,
+                      );
+                      if (renewed.download_url) {
+                        setAudioSrc(renewed.download_url);
+                        audio.src = renewed.download_url;
+                      }
+                      audio.load();
+                    }
+                    await audio.play();
+                    setAudioError(null);
+                  } catch {
+                    setIsPlaying(false);
+                    setAudioError(
+                      audioError === "media" || audio.error
+                        ? "media"
+                        : "playback",
+                    );
+                  }
+                }
+              }}
+            >
+              {isPlaying ? (
+                <Pause aria-hidden="true" />
+              ) : (
+                <Play aria-hidden="true" />
+              )}
+            </Button>
+          </>
+        }
+      />
     );
   }
 
@@ -972,6 +1026,7 @@ function CreationMedia({
 }
 
 function CreationPreview({ creation }: { creation: HomeCreation }) {
+  const viewer = useViewer();
   const { ref: visibilityRef, visible } = useHomePreviewVisible();
   const label =
     creation.kind === "video"
@@ -988,7 +1043,13 @@ function CreationPreview({ creation }: { creation: HomeCreation }) {
     "bg-muted group relative block aspect-square min-w-0 overflow-hidden rounded-media";
   const body = (
     <div ref={visibilityRef} className="size-full">
-      <CreationMedia creation={creation} title={title} visible={visible} />
+      <CreationMedia
+        creation={creation}
+        title={title}
+        visible={visible}
+        // Home shows the viewer's own creations.
+        maker={viewer.name}
+      />
     </div>
   );
   if (creation.kind === "audio") {
@@ -998,7 +1059,7 @@ function CreationPreview({ creation }: { creation: HomeCreation }) {
         <Link
           href={`/library/?asset=${encodeURIComponent(creation.asset_id)}`}
           aria-label={linkLabel}
-          className="absolute inset-0 rounded-media"
+          className="rounded-media absolute inset-0"
         />
       </li>
     );
@@ -1021,12 +1082,19 @@ function CreationPreview({ creation }: { creation: HomeCreation }) {
   );
 }
 
-function inFlightKind(receipt: HomeReceipt): "image" | "video" | "audio" | null {
+function inFlightKind(
+  receipt: HomeReceipt,
+): "image" | "video" | "audio" | null {
   const intent = String(receipt.intent ?? "").toLowerCase();
   const path = String(receipt.path ?? "").toLowerCase();
   if (intent.startsWith("image") || path.includes("/images/")) return "image";
   if (intent.startsWith("video") || path.includes("/videos")) return "video";
-  if (intent.startsWith("audio") || intent.startsWith("speech") || path.includes("/audio/")) return "audio";
+  if (
+    intent.startsWith("audio") ||
+    intent.startsWith("speech") ||
+    path.includes("/audio/")
+  )
+    return "audio";
   return null;
 }
 
@@ -1080,7 +1148,10 @@ function Recent({ receipts }: { receipts: HomeReceipt[] }) {
           className="grid grid-cols-2 gap-2 md:grid-cols-4"
         >
           {[0, 1, 2, 3].map((item) => (
-            <Skeleton key={item} className="aspect-square w-full rounded-media" />
+            <Skeleton
+              key={item}
+              className="rounded-media aspect-square w-full"
+            />
           ))}
         </div>
       ) : creationsError ? (
@@ -1099,16 +1170,27 @@ function Recent({ receipts }: { receipts: HomeReceipt[] }) {
           <ul className="grid grid-cols-2 gap-2 md:grid-cols-4">
             {making.slice(0, 2).map((receipt) => {
               const kind = inFlightKind(receipt);
-              const Icon = kind === "video" ? Video : kind === "audio" ? AudioLines : ImageIcon;
-              const at = receipt.accepted_at_ms ? receipt.accepted_at_ms / 1000 : receipt._stored_at;
+              const Icon =
+                kind === "video"
+                  ? Video
+                  : kind === "audio"
+                    ? AudioLines
+                    : ImageIcon;
+              const at = receipt.accepted_at_ms
+                ? receipt.accepted_at_ms / 1000
+                : receipt._stored_at;
               return (
                 <li
                   key={receipt.request_id}
-                  className="bg-muted text-muted-foreground flex aspect-square flex-col justify-end gap-1 rounded-media p-3"
+                  className="bg-muted text-muted-foreground rounded-media flex aspect-square flex-col justify-end gap-1 p-3"
                 >
                   <Icon aria-hidden="true" className="size-5" />
                   <span className="text-foreground text-sm font-medium">
-                    {kind === "video" ? "Making your video" : kind === "audio" ? "Making your audio" : "Making your picture"}
+                    {kind === "video"
+                      ? "Making your video"
+                      : kind === "audio"
+                        ? "Making your audio"
+                        : "Making your picture"}
                   </span>
                   {at ? (
                     <span className="text-xs">
@@ -1118,9 +1200,11 @@ function Recent({ receipts }: { receipts: HomeReceipt[] }) {
                 </li>
               );
             })}
-            {recentCreations.slice(0, 4 - Math.min(making.length, 2)).map((creation) => (
-              <CreationPreview key={creation.asset_id} creation={creation} />
-            ))}
+            {recentCreations
+              .slice(0, 4 - Math.min(making.length, 2))
+              .map((creation) => (
+                <CreationPreview key={creation.asset_id} creation={creation} />
+              ))}
           </ul>
         </>
       )}
@@ -1143,8 +1227,8 @@ export default function HomePage() {
   } = useQuery({ queryKey: homeKey, queryFn: homeApi.home });
   const isOwner = Boolean(
     home?.authenticated &&
-      ["owner", "superadmin", "admin"].includes(home.user.role) &&
-      viewer.admin,
+    ["owner", "superadmin", "admin"].includes(home.user.role) &&
+    viewer.admin,
   );
   const model = useCapabilityViews(isOwner);
   const views = model.views;
@@ -1153,14 +1237,15 @@ export default function HomePage() {
   // Someone with no app that has ever made a request starts by connecting one.
   const newcomer = Boolean(
     home?.authenticated &&
-      !home.apps.some((app) =>
-        app.credentials.some((key) => typeof key.last_used_at === "number"),
-      ),
+    !home.apps.some((app) =>
+      app.credentials.some((key) => typeof key.last_used_at === "number"),
+    ),
   );
   const models: Record<string, string | undefined> = {};
   if (home && home.authenticated)
     for (const row of home.capabilities)
-      models[row.icon_key ?? row.capability] ??= row.use_name ?? row.model ?? undefined;
+      models[row.icon_key ?? row.capability] ??=
+        row.use_name ?? row.model ?? undefined;
   return (
     <div className="min-w-0">
       {homePending ? (
@@ -1218,7 +1303,11 @@ export default function HomePage() {
             <div className="min-w-0 space-y-10 lg:col-start-1 lg:row-start-1">
               {refusal ? (
                 <CapNotice
-                  warning={(refusal.warnings ?? []).find((text) => CAP_WARNING.test(text)) ?? ""}
+                  warning={
+                    (refusal.warnings ?? []).find((text) =>
+                      CAP_WARNING.test(text),
+                    ) ?? ""
+                  }
                   at={refusal.at}
                   owner={isOwner}
                 />

@@ -221,7 +221,7 @@ for (const colorScheme of ["light", "dark"] as const) {
       ).toBeVisible();
 
       const searchButton = page
-        .getByRole("button", { name: "Search", exact: true })
+        .getByRole("button", { name: "Go to", exact: true })
         .first();
       if (viewport.name === "desktop") {
         await expect(searchButton).toBeVisible();
@@ -259,14 +259,14 @@ for (const colorScheme of ["light", "dark"] as const) {
         await page.goto("/ui/");
         await page.getByRole("button", { name: "More", exact: true }).click();
         await sheet
-          .getByRole("button", { name: "Search", exact: true })
+          .getByRole("button", { name: "Go to", exact: true })
           .click();
         await expect(sheet).not.toBeVisible();
         await expect(
-          page.getByRole("dialog", { name: "Search your gateway" }),
+          page.getByRole("dialog", { name: "Go to" }),
         ).toBeVisible();
         await expect(
-          page.getByRole("combobox", { name: "Search your gateway" }),
+          page.getByRole("combobox", { name: "Go to" }),
         ).toBeFocused();
         await page.keyboard.press("Escape");
       }

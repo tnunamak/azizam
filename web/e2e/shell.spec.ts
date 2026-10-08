@@ -32,7 +32,7 @@ test("You navigation keeps Workflows between Models and Try", async ({
   ).toBeVisible();
   await page.keyboard.press("Control+k");
   await page
-    .getByRole("combobox", { name: "Search your gateway" })
+    .getByRole("combobox", { name: "Go to" })
     .fill("Workflows");
   await expect(
     page.getByRole("option", { name: "Workflows", exact: true }),
@@ -47,10 +47,10 @@ test("command palette navigates and runs three real actions", async ({
   await page.goto("/ui/");
   await page.keyboard.press("Control+k");
   await expect(
-    page.getByRole("dialog", { name: "Search your gateway" }),
+    page.getByRole("dialog", { name: "Go to" }),
   ).toBeVisible();
   await page
-    .getByRole("combobox", { name: "Search your gateway" })
+    .getByRole("combobox", { name: "Go to" })
     .fill("Models");
   await page.getByRole("option", { name: "Models", exact: true }).click();
   await expect(page).toHaveURL(/\/ui\/models\/?$/);
@@ -60,20 +60,20 @@ test("command palette navigates and runs three real actions", async ({
     response.url().endsWith("/.well-known/azizam"),
   );
   await page
-    .getByRole("combobox", { name: "Search your gateway" })
+    .getByRole("combobox", { name: "Go to" })
     .fill("Copy gateway address");
   await page
     .getByRole("option", { name: "Copy gateway address", exact: true })
     .click();
   const snapshot = await (await discovery).json();
   await expect(
-    page.getByRole("dialog", { name: "Search your gateway" }),
+    page.getByRole("dialog", { name: "Go to" }),
   ).not.toBeVisible();
   const copied = await page.evaluate(() => navigator.clipboard.readText());
   expect(copied).toBe(snapshot.recipes.openai.canonical_base_url);
   await page.keyboard.press("Control+k");
   await page
-    .getByRole("combobox", { name: "Search your gateway" })
+    .getByRole("combobox", { name: "Go to" })
     .fill("Check gateway reachability");
   const health = page.waitForResponse((response) =>
     response.url().endsWith("/health"),
@@ -90,7 +90,7 @@ test("command palette navigates and runs three real actions", async ({
   ).toBeVisible();
   await page.keyboard.press("Control+k");
   await page
-    .getByRole("combobox", { name: "Search your gateway" })
+    .getByRole("combobox", { name: "Go to" })
     .fill("Create key");
   await page.getByRole("option", { name: "Create key", exact: true }).click();
   await expect(page).toHaveURL(/\/ui\/apps\/\?action=create-key/);
@@ -137,11 +137,11 @@ test("command clipboard denial preserves and focuses the exact gateway address",
   );
   await page.goto("/ui/models/");
   const trigger = page.getByRole("button", {
-    name: "Search",
+    name: "Go to",
     exact: true,
   });
   await trigger.click();
-  const dialog = page.getByRole("dialog", { name: "Search your gateway" });
+  const dialog = page.getByRole("dialog", { name: "Go to" });
   await dialog.getByRole("combobox").fill("Copy gateway address");
   await dialog
     .getByRole("option", { name: "Copy gateway address", exact: true })
@@ -191,7 +191,7 @@ test("command discovery failure offers retry before attempting clipboard writes"
     route.fulfill({ status: 503, json: { error: "fixture unavailable" } }),
   );
   await page.keyboard.press("Control+k");
-  const dialog = page.getByRole("dialog", { name: "Search your gateway" });
+  const dialog = page.getByRole("dialog", { name: "Go to" });
   await dialog.getByRole("combobox").fill("Copy gateway address");
   await dialog
     .getByRole("option", { name: "Copy gateway address", exact: true })
@@ -317,7 +317,7 @@ test("member shell hides owner controls and makes no owner API calls", async ({
     await expect(page.getByRole("link", { name, exact: true })).toHaveCount(0);
   await page.keyboard.press("Control+k");
   await expect(
-    page.getByRole("dialog", { name: "Search your gateway" }),
+    page.getByRole("dialog", { name: "Go to" }),
   ).toBeVisible();
   for (const name of ownerPages)
     await expect(page.getByRole("option", { name, exact: true })).toHaveCount(

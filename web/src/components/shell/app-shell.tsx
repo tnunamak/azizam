@@ -26,7 +26,7 @@ import {
   Moon,
   Play,
   ReceiptText,
-  Search,
+  CornerDownRight,
   Settings,
   Sun,
   Users,
@@ -640,7 +640,7 @@ function CommandPalette({
         }}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
-          // Search opened from the navigation sheet: that button has left the
+          // "Go to" opened from the navigation sheet: that button has left the
           // page, so focus returns to the control that opened the sheet.
           const opener = commandInvoker.current;
           (opener?.isConnected && opener !== document.body
@@ -650,15 +650,15 @@ function CommandPalette({
         }}
       >
         <DialogHeader className="sr-only">
-          <DialogTitle>Search your gateway</DialogTitle>
+          <DialogTitle>Go to</DialogTitle>
           <DialogDescription>
             Find pages, models, apps and people, or run an action.
           </DialogDescription>
         </DialogHeader>
         <Command>
           <CommandInput
-            placeholder="Search pages, models, apps…"
-            aria-label="Search your gateway"
+            placeholder="A page, app, model or person…"
+            aria-label="Go to"
           />
           <CommandList>
             <CommandEmpty>No matches. Try a page or app name.</CommandEmpty>
@@ -1001,11 +1001,14 @@ function Shell({ children }: { children: React.ReactNode }) {
               <button
                 type="button"
                 onClick={() => setCommandOpen(true)}
-                aria-label="Search"
-                className="border-chrome-border bg-background text-chrome-muted hover:text-chrome-foreground hover:border-input rounded-control mb-5 flex min-h-11 items-center justify-center gap-2.5 border px-2.5 text-sm transition-colors lg:min-h-8 lg:justify-start"
+                aria-label="Go to"
+                // A jump list, not a search field: pages search their own
+                // content (Library searches creations), so this reads as a
+                // navigation row with its shortcut.
+                className="text-chrome-muted hover:text-chrome-foreground hover:bg-chrome-raised rounded-control mb-4 flex min-h-11 items-center justify-center gap-2.5 px-2.5 text-sm transition-colors lg:min-h-8 lg:justify-start"
               >
-                <Search className="size-4 shrink-0" aria-hidden="true" />
-                <span className="shell-nav-label flex-1 text-left">Search</span>
+                <CornerDownRight className="size-4 shrink-0" aria-hidden="true" />
+                <span className="shell-nav-label flex-1 text-left">Go to…</span>
                 <kbd
                   aria-hidden="true"
                   className="shell-nav-label font-sans text-xs"
@@ -1125,7 +1128,7 @@ function Shell({ children }: { children: React.ReactNode }) {
             className="max-h-[90dvh] overflow-y-auto"
             onCloseAutoFocus={(event) => {
               event.preventDefault();
-              // Search hands focus to its own dialog instead of the sheet invoker.
+              // "Go to" hands focus to its own dialog instead of the sheet invoker.
               if (!commandOpen) navigationInvoker.current?.focus();
             }}
           >
@@ -1153,8 +1156,8 @@ function Shell({ children }: { children: React.ReactNode }) {
                     setCommandOpen(true);
                   }}
                 >
-                  <Search />
-                  Search
+                  <CornerDownRight />
+                  Go to…
                 </Button>
                 <ThemeToggle />
               </div>

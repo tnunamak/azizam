@@ -166,7 +166,7 @@ describe("AppShell accessible names", () => {
       expect(link).toHaveTextContent("Azizam");
       expect(link).toHaveTextContent("Kitchen Gateway");
     }
-    expect(screen.getByRole("button", { name: /^Search$/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /^Go to$/ })).toBeVisible();
     expect(screen.queryByRole("button", { name: /⌘K/ })).toBeNull();
   });
 

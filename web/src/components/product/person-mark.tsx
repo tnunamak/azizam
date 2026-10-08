@@ -10,12 +10,31 @@ const hues = [
   "bg-person-7",
 ] as const;
 
-/** A person keeps one hue everywhere: the djb2 hash of their display name. */
-export function personHue(name: string): (typeof hues)[number] {
+/* The same hues at 16%, for surfaces that belong to a person (audio covers). */
+const tints = [
+  "bg-person-1/16",
+  "bg-person-2/16",
+  "bg-person-3/16",
+  "bg-person-4/16",
+  "bg-person-5/16",
+  "bg-person-6/16",
+  "bg-person-7/16",
+] as const;
+
+function hueIndex(name: string): number {
   const key = name.trim().toLowerCase();
   let hash = 5381;
   for (const char of key) hash = ((hash << 5) + hash + char.codePointAt(0)!) >>> 0;
-  return hues[hash % hues.length];
+  return hash % hues.length;
+}
+
+/** A person keeps one hue everywhere: the djb2 hash of their display name. */
+export function personHue(name: string): (typeof hues)[number] {
+  return hues[hueIndex(name)];
+}
+
+export function personTint(name: string): (typeof tints)[number] {
+  return tints[hueIndex(name)];
 }
 
 export function personInitial(name: string): string {

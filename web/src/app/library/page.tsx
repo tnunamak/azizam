@@ -43,6 +43,7 @@ import { RelativeTime } from "@/components/product/relative-time";
 import { ErrorState } from "@/components/product/error-state";
 import { EmptyState } from "@/components/product/empty-state";
 import { PersonMark } from "@/components/product/person-mark";
+import { AudioCover } from "@/components/product/audio-cover";
 import { Segmented } from "@/components/product/segmented";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -143,7 +144,8 @@ function assetTitle(asset: MediaAsset) {
 function shortTitle(asset: MediaAsset): string {
   const prompt = typeof asset.prompt === "string" ? asset.prompt.trim() : "";
   if (!prompt) return kindLabel(asset.kind);
-  const clause = prompt.split(/(?<=[.!?])\s|,\s/)[0]?.replace(/[.!?]$/, "") ?? prompt;
+  const clause =
+    prompt.split(/(?<=[.!?])\s|,\s/)[0]?.replace(/[.!?]$/, "") ?? prompt;
   const words = clause.split(/\s+/);
   return words.length <= 12 ? clause : `${words.slice(0, 10).join(" ")}…`;
 }
@@ -342,19 +344,28 @@ function DurationChip({
 }
 
 /**
- * An audio creation has no picture, so its tile is the media stage itself: the
- * prompt's first words, a duration chip and one play control.
+ * An audio creation has no picture, so its tile is an AudioCover: the maker's
+ * tint, the kind of sound, its words, its real waveform and its length, with
+ * one play control.
  */
 function AudioTile({
+  assetId,
   src,
   title,
   text,
   duration,
+  visible,
+  maker,
+  model,
 }: {
+  assetId: string;
   src: string;
   title: string;
   text: string;
   duration?: number | null;
+  visible: boolean;
+  maker?: string | null;
+  model?: string | null;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -391,77 +402,71 @@ function AudioTile({
       : null;
 
   return (
-    <div className="bg-media-stage relative size-full rounded-media">
-      <audio
-        ref={audioRef}
-        preload="none"
-        onLoadedMetadata={(event) => {
-          setError(null);
-          setMeasuredDuration(event.currentTarget.duration);
-        }}
-        onPlay={(event) => {
-          pauseOtherAudio(event.currentTarget);
-          setError(null);
-          setIsPlaying(true);
-        }}
-        onPause={() => setIsPlaying(false)}
-        onEnded={() => setIsPlaying(false)}
-        onError={() => {
-          setIsPlaying(false);
-          setError("media");
-        }}
-      />
-      <Button
-        type="button"
-        size="icon"
-        className="absolute top-1/2 left-1/2 z-20 size-11 -translate-x-1/2 -translate-y-1/2 rounded-full"
-        aria-label={label}
-        onClick={async (event) => {
-          event.stopPropagation();
-          const audio = audioRef.current;
-          if (!audio) return;
-          if (isPlaying) {
-            audio.pause();
-            setIsPlaying(false);
-            return;
-          }
-          if (audio.getAttribute("src") !== src) {
-            audio.setAttribute("src", src);
-          }
-          if (error === "media") {
-            audio.load();
-          }
-          try {
-            await audio.play();
-            setError(null);
-            setIsPlaying(true);
-          } catch {
-            setIsPlaying(false);
-            setError(audio.error ? "media" : "playback");
-          }
-        }}
-      >
-        {isPlaying ? <Pause aria-hidden /> : <Play aria-hidden />}
-      </Button>
-      <div className="pointer-events-none absolute inset-x-2 bottom-2 z-20 flex items-end gap-2">
-        <div className="min-w-0 flex-1">
-          {errorText ? (
-            <p
-              role="status"
-              className="text-chrome-foreground text-xs font-medium"
-            >
-              {errorText}
-            </p>
-          ) : null}
-          <p className="text-chrome-foreground line-clamp-2 min-w-0 text-sm font-medium break-words">
-            {text}
-          </p>
-        </div>
-        {durationText && !errorText ? (
-          <DurationChip icon={AudioLines}>{durationText}</DurationChip>
-        ) : null}
-      </div>
-    </div>
+    <AudioCover
+      peaksKey={assetId}
+      src={src}
+      visible={visible}
+      maker={maker}
+      model={model}
+      text={text}
+      duration={durationText}
+      status={errorText ? <span role="status">{errorText}</span> : null}
+      control={
+        <>
+          <audio
+            ref={audioRef}
+            preload="none"
+            onLoadedMetadata={(event) => {
+              setError(null);
+              setMeasuredDuration(event.currentTarget.duration);
+            }}
+            onPlay={(event) => {
+              pauseOtherAudio(event.currentTarget);
+              setError(null);
+              setIsPlaying(true);
+            }}
+            onPause={() => setIsPlaying(false)}
+            onEnded={() => setIsPlaying(false)}
+            onError={() => {
+              setIsPlaying(false);
+              setError("media");
+            }}
+          />
+          <Button
+            type="button"
+            size="icon"
+            className="relative z-20 size-9 shrink-0 rounded-full max-sm:size-11"
+            aria-label={label}
+            onClick={async (event) => {
+              event.stopPropagation();
+              const audio = audioRef.current;
+              if (!audio) return;
+              if (isPlaying) {
+                audio.pause();
+                setIsPlaying(false);
+                return;
+              }
+              if (audio.getAttribute("src") !== src) {
+                audio.setAttribute("src", src);
+              }
+              if (error === "media") {
+                audio.load();
+              }
+              try {
+                await audio.play();
+                setError(null);
+                setIsPlaying(true);
+              } catch {
+                setIsPlaying(false);
+                setError(audio.error ? "media" : "playback");
+              }
+            }}
+          >
+            {isPlaying ? <Pause aria-hidden /> : <Play aria-hidden />}
+          </Button>
+        </>
+      }
+    />
   );
 }
 
@@ -483,7 +488,10 @@ function LargeAudioPlayer({
   const [length, setLength] = useState<number | null>(duration ?? null);
   const [blocked, setBlocked] = useState(false);
   return (
-    <div data-media-controls className="flex w-full flex-col items-center gap-5">
+    <div
+      data-media-controls
+      className="flex w-full flex-col items-center gap-5"
+    >
       <audio
         ref={audioRef}
         src={src}
@@ -610,7 +618,10 @@ function LargeVideoPlayer({
             event.preventDefault();
             video.currentTime = Math.min(
               video.duration,
-              Math.max(0, video.currentTime + (event.key === "ArrowLeft" ? -5 : 5)),
+              Math.max(
+                0,
+                video.currentTime + (event.key === "ArrowLeft" ? -5 : 5),
+              ),
             );
           }
         }}
@@ -912,8 +923,9 @@ function usePeople(enabled: boolean, sources: MediaSource[]) {
       (asset.source?.id?.startsWith("app:")
         ? asset.source.id.slice(4)
         : undefined);
-    const owner = sources.find((source) => source.app_id === appId)
-      ?.owner_user_id;
+    const owner = sources.find(
+      (source) => source.app_id === appId,
+    )?.owner_user_id;
     return people.find((person) => person.id === owner)?.name ?? null;
   };
   return { people, lookup };
@@ -926,7 +938,9 @@ function usePeople(enabled: boolean, sources: MediaSource[]) {
 function toDateValue(ts: MediaAsset["created_at"]): Date | null {
   if (ts == null || ts === "") return null;
   const date =
-    typeof ts === "number" ? new Date(ts < 5_000_000_000 ? ts * 1000 : ts) : new Date(ts);
+    typeof ts === "number"
+      ? new Date(ts < 5_000_000_000 ? ts * 1000 : ts)
+      : new Date(ts);
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
@@ -946,7 +960,7 @@ function groupByWeek(assets: MediaAsset[], now: Date) {
 function InProgressTile({ item }: { item: InProgressItem }) {
   const Icon = kindIcon(item.kind);
   return (
-    <div className="bg-muted text-muted-foreground flex aspect-square min-w-0 flex-col items-center justify-center gap-2 rounded-media p-3 text-center">
+    <div className="bg-muted text-muted-foreground rounded-media flex aspect-square min-w-0 flex-col items-center justify-center gap-2 p-3 text-center">
       <Icon aria-hidden="true" className="size-5" />
       <p className="text-foreground text-sm font-medium">
         {MAKING_COPY[item.kind]}
@@ -979,7 +993,7 @@ function AssetTile({
   return (
     <article
       className={cn(
-        "group relative aspect-square min-w-0 overflow-hidden rounded-media",
+        "group rounded-media relative aspect-square min-w-0 overflow-hidden",
         selected && "outline-ring outline-2 outline-offset-2",
       )}
     >
@@ -987,17 +1001,21 @@ function AssetTile({
         type="button"
         data-asset-open={asset.asset_id}
         onClick={() => onOpen(asset)}
-        className="absolute inset-0 z-10 rounded-media focus-visible:-outline-offset-2"
+        className="rounded-media absolute inset-0 z-10 focus-visible:-outline-offset-2"
         aria-label={`Open ${assetTitle(asset)}`}
       />
       <div ref={visibilityRef} className="relative size-full">
         {playableAudio ? (
           <AudioTile
             key={asset.download_url}
+            assetId={asset.asset_id}
             src={asset.download_url!}
             title={assetTitle(asset)}
             text={asset.prompt?.trim() || kindLabel(asset.kind)}
             duration={asset.duration_s}
+            visible={visible}
+            maker={person}
+            model={asset.model}
           />
         ) : (
           <Preview
@@ -1187,7 +1205,8 @@ function CreationViewer({
 }) {
   const index = assets.findIndex((item) => item.asset_id === asset.asset_id);
   const previous = index > 0 ? assets[index - 1] : null;
-  const next = index >= 0 && index < assets.length - 1 ? assets[index + 1] : null;
+  const next =
+    index >= 0 && index < assets.length - 1 ? assets[index + 1] : null;
   const {
     data: receipt,
     isPending: receiptPending,
@@ -1244,7 +1263,7 @@ function CreationViewer({
             if (event.key === "ArrowLeft" && previous) onSelect(previous);
             if (event.key === "ArrowRight" && next) onSelect(next);
           }}
-          className="bg-background shadow-overlay data-[state=open]:animate-in data-[state=open]:fade-in-0 fixed inset-0 z-50 flex flex-col overflow-y-auto md:inset-6 md:grid md:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] md:overflow-hidden md:rounded-panel lg:inset-10"
+          className="bg-background shadow-overlay data-[state=open]:animate-in data-[state=open]:fade-in-0 md:rounded-panel fixed inset-0 z-50 flex flex-col overflow-y-auto md:inset-6 md:grid md:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] md:overflow-hidden lg:inset-10"
         >
           <div className="bg-media-stage relative flex min-h-[50dvh] shrink-0 items-center justify-center md:min-h-0">
             <div
@@ -1257,7 +1276,7 @@ function CreationViewer({
                 className={cn(
                   "relative flex max-h-full w-full items-center justify-center overflow-hidden",
                   asset.kind === "audio"
-                    ? "bg-card max-w-md flex-col gap-6 rounded-panel px-8 py-10"
+                    ? "bg-card rounded-panel max-w-md flex-col gap-6 px-8 py-10"
                     : "h-full",
                 )}
               >
@@ -1324,7 +1343,7 @@ function CreationViewer({
                     </OverflowMenu>
                   ) : null}
                   <DialogPrimitive.Close
-                    className="text-muted-foreground hover:bg-muted hover:text-foreground hidden size-9 items-center justify-center rounded-control md:flex"
+                    className="text-muted-foreground hover:bg-muted hover:text-foreground rounded-control hidden size-9 items-center justify-center md:flex"
                     aria-label="Close"
                   >
                     <X aria-hidden="true" className="size-4" />
@@ -1478,7 +1497,7 @@ function CreationViewer({
                 </div>
                 <section className="mt-3">
                   <h4 className="mb-1 text-sm font-medium">Workflow</h4>
-                  <pre className="bg-muted max-h-40 overflow-auto rounded-control p-3 font-mono text-xs whitespace-pre-wrap">
+                  <pre className="bg-muted rounded-control max-h-40 overflow-auto p-3 font-mono text-xs whitespace-pre-wrap">
                     {asset.workflow
                       ? typeof asset.workflow === "string"
                         ? asset.workflow
@@ -1486,9 +1505,15 @@ function CreationViewer({
                       : "Not recorded"}
                   </pre>
                   {asset.workflow_download_url ? (
-                    <Button asChild variant="outline" size="sm" className="mt-2">
+                    <Button
+                      asChild
+                      variant="outline"
+                      size="sm"
+                      className="mt-2"
+                    >
                       <a href={asset.workflow_download_url} download>
-                        <Download aria-hidden="true" /> Download ComfyUI workflow
+                        <Download aria-hidden="true" /> Download ComfyUI
+                        workflow
                       </a>
                     </Button>
                   ) : null}
@@ -1694,7 +1719,8 @@ export default function LibraryPage() {
   }, [mediaPages]);
   const sources = useMemo(() => mediaPages[0]?.sources ?? [], [mediaPages]);
   const { people, lookup: personFor } = usePeople(canChooseOwner, sources);
-  const viewerPerson = viewer.name && viewer.name !== "Your account" ? viewer.name : null;
+  const viewerPerson =
+    viewer.name && viewer.name !== "Your account" ? viewer.name : null;
   const hasLoadedAssets = assets.length > 0;
   const updating = isFetching && isPlaceholderData && hasLoadedAssets;
   const showInitialError = isError && !hasLoadedAssets && !isFetchNextPageError;
@@ -1794,7 +1820,9 @@ export default function LibraryPage() {
     retry: false,
   });
   const retention = (
-    gatewayStatus as { budgets?: { images?: { cache_ttl?: number | null } } } | undefined
+    gatewayStatus as
+      | { budgets?: { images?: { cache_ttl?: number | null } } }
+      | undefined
   )?.budgets?.images?.cache_ttl;
   const imageTtl =
     typeof retention === "number" && retention > 0 ? retention : null;
@@ -1900,7 +1928,9 @@ export default function LibraryPage() {
   const personOptions = canChooseOwner
     ? [
         { value: "everyone", label: "Everyone" },
-        ...(viewerPerson ? [{ value: "mine", label: `${viewerPerson} (you)` }] : [{ value: "mine", label: "You" }]),
+        ...(viewerPerson
+          ? [{ value: "mine", label: `${viewerPerson} (you)` }]
+          : [{ value: "mine", label: "You" }]),
         ...people
           .filter((person) => person.name !== viewerPerson)
           .map((person) => ({ value: person.id, label: person.name })),
@@ -2020,7 +2050,7 @@ export default function LibraryPage() {
           <Skeleton className="h-5 w-24" />
           <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             {Array.from({ length: 12 }).map((_, index) => (
-              <Skeleton key={index} className="aspect-square rounded-media" />
+              <Skeleton key={index} className="rounded-media aspect-square" />
             ))}
           </div>
         </div>
@@ -2159,7 +2189,7 @@ export default function LibraryPage() {
       {showRetainedError ? (
         <div
           role="alert"
-          className="border-destructive/30 bg-danger-tint text-destructive mt-6 flex flex-wrap items-center justify-center gap-3 rounded-panel border p-3 text-sm"
+          className="border-destructive/30 bg-danger-tint text-destructive rounded-panel mt-6 flex flex-wrap items-center justify-center gap-3 border p-3 text-sm"
         >
           <span>
             {isFetchNextPageError

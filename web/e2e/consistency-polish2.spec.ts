@@ -354,7 +354,7 @@ test("legacy email names remain contact details on People and in search", async 
   await expect(page.getByText(person.email, { exact: true })).toHaveCount(1);
   await page.keyboard.press("Control+k");
   await page
-    .getByRole("combobox", { name: "Search your gateway" })
+    .getByRole("combobox", { name: "Go to" })
     .fill(person.email);
   const result = page.getByRole("option", {
     name: `Person ${person.email}`,
