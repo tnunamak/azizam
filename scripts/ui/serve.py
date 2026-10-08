@@ -69,6 +69,8 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
         env['UI_HOUSEHOLD_PROVIDER_KEY'] = 'isolated-household-provider'
         env['AZIZAM_ADMIN_SESSION_KEY'] = 'household-fixture-session-not-production'
         env['AZIZAM_PROVIDER_LEDGER_DB'] = str(state / 'provider_spend.db')
+        # A household shows the address its members would use, not the loopback test port.
+        env['AZIZAM_PUBLIC_URL'] = 'https://ai.household.example'
         if os.environ.get('UI_HOUSEHOLD_MANIFEST_PATH'):
             env['UI_HOUSEHOLD_MANIFEST_PATH'] = os.environ['UI_HOUSEHOLD_MANIFEST_PATH']
         subprocess.run([sys.executable, '-m', 'scripts.ui.household_seed', str(state), str(PORT), SEED_SCENARIO],

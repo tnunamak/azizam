@@ -121,6 +121,14 @@ def test_household_consistency(tmp_path):
     assert len(assets) == len({asset["asset_id"] for asset in assets}) == 24
     assert {asset["owner"] for asset in assets} == {"sam", "robin", "alex"}
     assert {asset["kind"] for asset in assets} == {"image", "audio", "video"}
+    # The video's job asset names a poster that is cached and owned like the video.
+    with sqlite3.connect(tmp_path / "media_jobs.db") as conn:
+        jobs = [json.loads(row[0]) for row in conn.execute("SELECT job_json FROM media_jobs")]
+    posters = [a["poster_asset_id"] for job in jobs for a in job.get("assets", []) if a.get("poster_asset_id")]
+    assert len(posters) == 1
+    digest = posters[0].removeprefix("img_")
+    assert (tmp_path / "images" / f"{digest}.webp").is_file()
+    assert json.loads((tmp_path / "images" / f"{digest}.meta.json").read_text())["asset_id"] == posters[0]
     with sqlite3.connect(tmp_path / "admin.db") as conn:
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
         assert {row[0] for row in conn.execute("SELECT name FROM profiles")} == {
@@ -295,6 +303,12 @@ def test_stale_health_scenario(tmp_path):
         assert latest("household-voice") == FIXED_NOW - 7 * 3600  # hours old
         assert latest("household-embedding") is None  # never observed
         assert latest("household-chat") == FIXED_NOW  # the rest are fresh
+    # The voice service must not answer a live probe, or the UI would say "checked just now".
+    from scripts.ui.household_seed import registry
+
+    voice = lambda scenario: registry(18185, scenario)["services"]["household-voice"]["config"]["health_endpoint"]
+    assert voice("stale-health") == "/fixture/no-health"
+    assert voice("default") == "/health"
 
 
 def test_new_member_scenario(tmp_path):

@@ -151,7 +151,7 @@ function attachRecorder(page, origin) {
 
 async function newContext(seed, { width, theme }) {
   const context = await browser.newContext({
-    viewport: { width, height: width === 390 ? 844 : 1000 }, colorScheme: theme, reducedMotion: "reduce",
+    viewport: { width, height: width === 390 ? 844 : 900 }, colorScheme: theme, reducedMotion: "reduce",
     locale: browserLocale, timezoneId: browserTimezone,
   });
   await context.clock.setFixedTime(new Date(seed.now * 1000));
@@ -233,16 +233,19 @@ async function routeTargets(page, surface, mode) {
 class Skip extends Error {}
 const safeName = value => String(value).replace(/[^a-zA-Z0-9_-]+/g, "-");
 
-async function shoot(page, ctx, surface, state, { fullPage = true, notes = [], textFile = true } = {}) {
+async function shoot(page, ctx, surface, state, { notes = [], textFile = true } = {}) {
   const base = [scenario, ctx.role, surface, state, ctx.theme, ctx.width].map(safeName).join("_");
   const file = `${base}.png`;
-  const meta = { scenario, role: ctx.role, surface, state, theme: ctx.theme, width: ctx.width, file };
+  const viewportFile = `${base}_viewport.png`;
+  const meta = { scenario, role: ctx.role, surface, state, theme: ctx.theme, width: ctx.width, file, viewport_file: viewportFile };
   if (textFile) {
     const text = await page.evaluate(() => document.querySelector("main")?.innerText ?? "").catch(() => "");
     await writeFile(path.join(output, `${base}.txt`), `${text}\n`);
     meta.text_file = `${base}.txt`;
   }
-  await page.screenshot({ path: path.join(output, file), fullPage, animations: "disabled" });
+  // The viewport shot comes first so the full-page pass cannot scroll or lazy-load the first screen.
+  await page.screenshot({ path: path.join(output, viewportFile), fullPage: false, animations: "disabled" });
+  await page.screenshot({ path: path.join(output, file), fullPage: true, animations: "disabled" });
   ctx.pending.push({ ...meta, notes });
 }
 
@@ -299,7 +302,6 @@ async function stateLibraryDetail(ctx) {
     await open.click();
     await page.locator("[role=dialog]").first().waitFor({ state: "visible", timeout: 10_000 });
     await page.waitForTimeout(600);
-    await shoot(page, ctx, "library", "library-detail-viewport", { fullPage: false, notes, textFile: false });
     await shoot(page, ctx, "library", "library-detail", { notes });
     return notes;
   });
@@ -319,7 +321,8 @@ async function stateLibraryKind(ctx, kind) {
     await shoot(page, ctx, "library", `library-${lower}-grid`, { notes: [...notes] });
     const open = openAsset(page);
     if (!(await open.count())) throw new Skip(`Grid captured, but no \"Open ...\" button for ${lower} assets`);
-    await open.click();
+    // Audio tiles centre their own play button over the tile; open from a corner.
+    await open.click(kind === "Audio" ? { position: { x: 12, y: 12 } } : undefined);
     await page.locator("[role=dialog]").first().waitFor({ state: "visible", timeout: 10_000 });
     if (kind === "Video") {
       await page.waitForFunction(() => {

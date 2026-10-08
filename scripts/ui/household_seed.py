@@ -176,6 +176,9 @@ def registry(engine_port: int, scenario: str = "default") -> dict:
             if sid == "household-video"
             else "/fixture/down"
             if remote and scenario == "provider-down"
+            # The fake engine serves no such route, so the probe finds nothing to check.
+            else "/fixture/no-health"
+            if sid == "household-voice" and scenario == "stale-health"
             else "/health",
             "models": [
                 {
@@ -1194,6 +1197,23 @@ def _media(state, paths, apps, hashes, now, rng):
                 }
             )
         )
+        poster_asset_id = None
+        if entry.get("poster"):
+            # A video's poster is its own cached image asset, owned like the video.
+            poster_source = FIXTURES / entry["poster"]
+            poster_digest = hashlib.sha256(poster_source.read_bytes()).hexdigest()
+            poster_asset_id = f"img_{poster_digest}"
+            shutil.copyfile(poster_source, cache / f"{poster_digest}{poster_source.suffix}")
+            os.utime(cache / f"{poster_digest}{poster_source.suffix}", (ts, ts))
+            (cache / f"{poster_digest}.meta.json").write_text(
+                json.dumps(
+                    {
+                        "asset_id": poster_asset_id,
+                        "owner_key_hashes": [hashes[owner]],
+                        "updated_at": ts,
+                    }
+                )
+            )
         intent = {
             "image": "image.generate",
             "audio": "audio.speech",
@@ -1222,6 +1242,8 @@ def _media(state, paths, apps, hashes, now, rng):
             if key in entry
         }
         asset.update(asset_id=asset_id, media_type=mimetypes.guess_type(source.name)[0])
+        if poster_asset_id:
+            asset["poster_asset_id"] = poster_asset_id
         media_jobs.create(
             media_jobs.MediaJob(
                 request_id=request_id,

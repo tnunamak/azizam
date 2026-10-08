@@ -193,8 +193,11 @@ async function capture(page, entry) {
   const file = `${safe}.png`;
   const textFile = `${safe}.txt`;
   await writeFile(path.join(output, textFile), `${await page.locator("body").innerText()}\n`);
+  const viewportFile = `${safe}_viewport.png`;
+  // The viewport shot comes first so the full-page pass cannot scroll or lazy-load the first screen.
+  await page.screenshot({ path: path.join(output, viewportFile), fullPage: false, animations: "disabled" });
   await page.screenshot({ path: path.join(output, file), fullPage: true, animations: "disabled" });
-  captures.push({ ...entry, requested_route: entry.route, route: actualRoute, file, text_file: textFile });
+  captures.push({ ...entry, requested_route: entry.route, route: actualRoute, file, viewport_file: viewportFile, text_file: textFile });
 }
 
 try {
@@ -292,7 +295,7 @@ async function captureInteractions(page, { view, theme, width, base }) {
 
 async function newContext(seed, { width, theme }) {
   const context = await browser.newContext({
-    viewport: { width, height: width === 390 ? 844 : 1000 }, colorScheme: theme, reducedMotion: "reduce",
+    viewport: { width, height: width === 390 ? 844 : 900 }, colorScheme: theme, reducedMotion: "reduce",
     locale: browserLocale, timezoneId: browserTimezone,
   });
   // Freeze Date at the seeded instant; timers and animations keep running.
