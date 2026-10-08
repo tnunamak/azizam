@@ -6,68 +6,60 @@ import { useViewer } from "@/components/shell/session";
 import { Button } from "@/components/ui/button";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { Skeleton } from "@/components/ui/skeleton";
+import { RefreshCcw } from "lucide-react";
+import { ErrorState, EmptyState } from "@/components/product";
 import {
-  AudioLines,
-  GitBranch,
-  Image,
-  Layers,
-  ListFilter,
-  MessageSquare,
-  Mic,
-  Music2,
-  Video,
-  Waves,
-  CircleHelp,
-} from "lucide-react";
-import {
-  ErrorState,
-  PageHeader,
-  StatusPill,
-  EmptyState,
-} from "@/components/product";
+  availabilityState,
+  capabilityMeta,
+  evidenceStamp,
+  EvidenceTime,
+  SectionHeading,
+  StateLabel,
+  Verdict,
+  type EvidenceStamp,
+} from "@/components/product/readiness";
 import { ApiError } from "@/lib/api";
-import { productApi, type MemberStatusCapability } from "@/lib/product-api";
-import { availabilityReason, statusSummaryCopy } from "@/lib/status-copy";
+import {
+  productApi,
+  type MemberStatusCapability,
+  type MemberStatusReceipt,
+} from "@/lib/product-api";
+import { availabilityReason } from "@/lib/status-copy";
+import { cn } from "@/lib/cn";
+import { homeVerdict } from "@/app/home/presentation";
+import type { HomeCapability } from "@/app/home/home-api";
 import { StatusClient } from "./status-client";
 
-const capabilityIcons = {
-  chat: {
-    icon: MessageSquare,
-    color: "text-capability-chat bg-capability-chat/10",
-  },
-  image: { icon: Image, color: "text-capability-image bg-capability-image/10" },
-  video: { icon: Video, color: "text-capability-video bg-capability-video/10" },
-  music: {
-    icon: Music2,
-    color: "text-capability-voice bg-capability-voice/10",
-  },
-  sfx: { icon: Waves, color: "text-capability-voice bg-capability-voice/10" },
-  speech: {
-    icon: AudioLines,
-    color: "text-capability-voice bg-capability-voice/10",
-  },
-  transcribe: {
-    icon: Mic,
-    color: "text-capability-transcribe bg-capability-transcribe/10",
-  },
-  decide: {
-    icon: GitBranch,
-    color: "text-capability-decide bg-capability-decide/10",
-  },
-  embed: {
-    icon: Layers,
-    color: "text-capability-embed bg-capability-embed/10",
-  },
-  rerank: {
-    icon: ListFilter,
-    color: "text-capability-embed bg-capability-embed/10",
-  },
-};
+/** Request intents map to the capability a person recognises. */
+function intentCapability(intent: string | null | undefined): string | null {
+  const value = String(intent ?? "").toLowerCase();
+  if (!value) return null;
+  if (/^(chat|responses|text\.completions)/.test(value)) return "chat";
+  if (value.startsWith("image")) return "image";
+  if (value.startsWith("video")) return "video";
+  if (/transcri/.test(value)) return "transcribe";
+  if (/^(speech|audio\.speech)/.test(value)) return "speech";
+  if (/sfx/.test(value)) return "sfx";
+  if (/music/.test(value)) return "music";
+  if (value.startsWith("audio")) return "audio";
+  if (/embed/.test(value)) return "embed";
+  if (/rerank/.test(value)) return "rerank";
+  if (/decision|systemone/.test(value)) return "decide";
+  return null;
+}
+
+function failed(receipt: MemberStatusReceipt): boolean {
+  return ["failed", "error", "rejected"].includes(
+    String(receipt.status ?? "").toLowerCase(),
+  );
+}
 
 function MemberCapability({
   capability,
+  stamp,
 }: {
   capability: MemberStatusCapability;
+  stamp: EvidenceStamp | null;
 }) {
   const usableNames = Array.from(
     new Set(
@@ -76,44 +68,60 @@ function MemberCapability({
       ),
     ),
   );
-  const { icon: Icon, color } = capabilityIcons[
-    capability.icon_key as keyof typeof capabilityIcons
-  ] ?? {
-    icon: CircleHelp,
-    color: "text-muted-foreground bg-muted",
-  };
+  const meta = capabilityMeta(capability.icon_key);
+  const Icon = meta.icon;
+  const state = availabilityState(capability.status, capability.reason_code);
+  const reason = capability.available
+    ? null
+    : availabilityReason(capability.status, capability.reason_code);
   return (
-    <li className="flex min-w-0 items-start gap-3 border-b py-5 last:border-0">
+    <li className="flex min-w-0 items-start gap-3 py-3">
       <span
         role="img"
         aria-label={capability.capability_title ?? "Capability"}
         data-icon-key={capability.icon_key}
-        className={`inline-flex size-8 shrink-0 items-center justify-center rounded-md ${color}`}
+        className={cn(
+          "mt-0.5 inline-flex size-8 shrink-0 items-center justify-center rounded-control",
+          capability.available
+            ? cn(meta.tint, meta.tone)
+            : "bg-muted text-muted-foreground",
+        )}
       >
         <Icon aria-hidden="true" className="size-4" />
       </span>
-      <div className="min-w-0 flex-1 space-y-2 break-words">
-        <h3 className="font-medium">
-          {capability.capability_title ?? "Capability"}
-        </h3>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+          <h3 className="font-semibold">
+            {capability.capability_title ?? "Capability"}
+          </h3>
+          <StateLabel state={state} />
+        </div>
         <p className="text-muted-foreground text-sm">
           {capability.recommended_model ??
             capability.title ??
             "Model details unavailable"}
+          {stamp && stamp.kind === "used" ? (
+            <>
+              {" · "}
+              <EvidenceTime stamp={stamp} />
+            </>
+          ) : null}
         </p>
-        <StatusPill status={capability.status} reason={availabilityReason(capability.status, capability.reason_code)} />
+        {reason ? <p className="mt-1 text-sm">{reason}</p> : null}
         {(usableNames.length > 0 || capability.summary) && (
           <details className="text-sm">
-            <summary className="focus-visible:outline-ring text-muted-foreground flex min-h-11 cursor-pointer items-center focus-visible:outline focus-visible:outline-2">
+            <summary className="text-muted-foreground hover:text-foreground flex min-h-11 w-fit cursor-pointer items-center lg:min-h-8">
               Details
             </summary>
-            <div className="text-muted-foreground space-y-2 pb-2">
+            <div className="text-muted-foreground space-y-1 pb-2">
               {usableNames.length > 0 && (
                 <>
                   <h4 className="text-foreground text-sm font-medium">
                     Names you can use
                   </h4>
-                  <p className="break-all">{usableNames.join(", ")}</p>
+                  <p className="font-mono text-xs break-all">
+                    {usableNames.join(", ")}
+                  </p>
                 </>
               )}
               {capability.summary && <p>{capability.summary}</p>}
@@ -133,22 +141,67 @@ export function MemberStatus() {
       !(cause instanceof ApiError && cause.status < 500) && count < 2,
     refetchInterval: 30_000,
   });
+  // Home carries the evidence source, so a check is never shown as a use.
+  const { data: home } = useQuery({
+    queryKey: ["account", "home"],
+    queryFn: productApi.home,
+    retry: false,
+  });
+  const evidence = new Map(
+    (home?.capabilities ?? []).map((row) => [
+      row.capability,
+      evidenceStamp(row.availability?.evidence),
+    ]),
+  );
+  const checks = [...evidence.values()].filter(
+    (stamp): stamp is EvidenceStamp => stamp?.kind === "checked",
+  );
+  const oldest = checks.length
+    ? checks.reduce((a, b) => (b.at < a.at ? b : a))
+    : null;
   const expired = error instanceof ApiError && error.status === 401;
+  const verdict = data
+    ? homeVerdict(data.capabilities as unknown as HomeCapability[])
+    : null;
+  const unavailable = new Set(
+    (data?.capabilities ?? [])
+      .filter((capability) => !capability.available)
+      .map((capability) => capability.capability),
+  );
+  const recentFailure = (data?.receipts ?? []).find((receipt) => {
+    const capability = intentCapability(receipt.intent);
+    return failed(receipt) && capability && unavailable.has(capability);
+  });
+  const failureCapability = recentFailure
+    ? (data?.capabilities ?? []).find(
+        (capability) =>
+          capability.capability === intentCapability(recentFailure.intent),
+      )
+    : null;
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Status"
-        answer="Check the capabilities available to your account."
-        actions={
+    <div className="flex min-w-0 flex-col gap-10">
+      <header className="flex flex-col gap-6">
+        <div className="flex items-center justify-between gap-3">
+          <h1 className="text-muted-foreground text-base font-medium">Status</h1>
           <Button
             variant="outline"
+            size="sm"
             disabled={isFetching}
             onClick={() => void refetch()}
           >
+            <RefreshCcw aria-hidden="true" />
             {isFetching ? "Checking…" : "Refresh status"}
           </Button>
-        }
-      />
+        </div>
+        {verdict ? (
+          <Verdict
+            tone={verdict.tone}
+            detail={oldest ? <EvidenceTime stamp={oldest} className="text-base" /> : null}
+          >
+            {verdict.text}
+          </Verdict>
+        ) : null}
+      </header>
       {isPending ? (
         <div
           role="status"
@@ -156,8 +209,8 @@ export function MemberStatus() {
           aria-busy="true"
           className="space-y-4"
         >
-          <Skeleton className="h-12 w-full" />
-          <Skeleton className="h-40 w-full" />
+          <Skeleton className="h-10 w-2/3" />
+          <Skeleton className="h-64 w-full rounded-panel" />
         </div>
       ) : expired ? (
         <EmptyState
@@ -171,101 +224,119 @@ export function MemberStatus() {
         />
       ) : isError ? (
         <ErrorState
+          heading="Couldn’t check your status"
           message={
             error instanceof ApiError && error.status >= 400
-              ? `Your model status check failed (HTTP ${error.status}). The gateway owner can see details. Try again.`
-              : "Your model status could not be loaded. Try again."
+              ? `The gateway answered with an error (HTTP ${error.status}). The owner can see details. Try again.`
+              : "The gateway could not be reached. Check your connection and try again."
           }
           onRetry={() => void refetch()}
           retrying={isFetching}
         />
       ) : data ? (
-        <>
-          <div className="border-b pb-6">
-            <StatusPill
-              status={data.status.state}
-              reason={statusSummaryCopy(data.status)}
-            />
-          </div>
-          <section aria-labelledby="status-help-heading" className="space-y-4">
-            <h2 id="status-help-heading" className="text-lg font-semibold">
-              Need help with your app?
-            </h2>
-            <div className="flex flex-wrap gap-3">
-              <Button asChild>
-                <Link href="/home">Check your connection settings</Link>
-              </Button>
-              <Button variant="outline" asChild>
-                <Link href="/try">Try a request</Link>
-              </Button>
-              <Button variant="outline" asChild>
-                <a href="#recent-status-heading">View recent requests</a>
-              </Button>
-            </div>
-          </section>
-          <section aria-labelledby="capability-status-heading">
-            <h2
-              id="capability-status-heading"
-              className="text-lg font-semibold"
-            >
-              Your capabilities
-            </h2>
-            {data.capabilities.length ? (
-              <ul className="grid gap-x-8 sm:grid-cols-2">
-                {data.capabilities.map((capability) => (
-                  <MemberCapability
-                    key={capability.capability}
-                    capability={capability}
-                  />
-                ))}
-              </ul>
-            ) : (
-              <EmptyState
-                title="No models are available to your account yet"
-                description="Ask the gateway owner to connect a model and grant your account access."
+        <div className="grid items-start gap-x-12 gap-y-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,20rem)]">
+          <div className="min-w-0 space-y-10">
+            {recentFailure && failureCapability ? (
+              <section
+                aria-labelledby="your-failure-heading"
+                className="bg-card border-warning/40 space-y-2 rounded-panel border p-5"
+              >
+                <h2 id="your-failure-heading" className="text-lg font-semibold">
+                  Your{" "}
+                  {(
+                    failureCapability.capability_title ??
+                    capabilityMeta(failureCapability.capability).label
+                  ).toLowerCase()}{" "}
+                  request failed{" "}
+                  <RelativeTime ts={recentFailure.created_at} fallback="" />.
+                </h2>
+                <p className="text-sm">
+                  Your app reached the gateway.{" "}
+                  {failureCapability.capability_title ??
+                    capabilityMeta(failureCapability.capability).label}{" "}
+                  is{" "}
+                  {availabilityState(
+                    failureCapability.status,
+                    failureCapability.reason_code,
+                  ).label.toLowerCase()}{" "}
+                  right now.{" "}
+                  {availabilityReason(
+                    failureCapability.status,
+                    failureCapability.reason_code,
+                  )?.replace(/^[^.]*\.\s*/, "") || "Try again later."}
+                </p>
+                <Link
+                  href={recentFailure.href}
+                  className="text-link inline-flex min-h-11 items-center text-sm font-medium underline-offset-4 hover:underline"
+                >
+                  Open receipt
+                </Link>
+              </section>
+            ) : null}
+            <section aria-labelledby="capability-status-heading">
+              <SectionHeading
+                id="capability-status-heading"
+                title="Your capabilities"
               />
-            )}
-          </section>
-          <section
-            aria-labelledby="recent-status-heading"
-            className="space-y-3 border-t pt-6"
-          >
-            <h2 id="recent-status-heading" className="text-lg font-semibold">
-              Your recent requests
-            </h2>
-            <p className="text-muted-foreground text-sm">
-              Open a receipt to see what happened to a request. A past result
-              does not measure availability now.
-            </p>
+              {data.capabilities.length ? (
+                <ul className="divide-y">
+                  {data.capabilities.map((capability) => (
+                    <MemberCapability
+                      key={capability.capability}
+                      capability={capability}
+                      stamp={evidence.get(capability.capability) ?? null}
+                    />
+                  ))}
+                </ul>
+              ) : (
+                <EmptyState
+                  title="No models are available to your account yet"
+                  description="Ask the gateway owner to connect a model and grant your account access."
+                />
+              )}
+            </section>
+          </div>
+          <section aria-labelledby="recent-status-heading" className="min-w-0">
+            <SectionHeading
+              id="recent-status-heading"
+              title="Your recent requests"
+            />
             {data.receipts.length ? (
               <ul className="divide-y">
-                {data.receipts.map((receipt) => (
-                  <li
-                    key={receipt.request_id}
-                    className="flex min-w-0 flex-wrap items-center justify-between gap-3 py-3"
-                  >
-                    <div className="min-w-0 space-y-1">
-                      {(receipt.intent || receipt.status) && (
-                        <p className="text-sm break-all">
-                          {[receipt.intent, receipt.status]
-                            .filter(Boolean)
-                            .join(" · ")}
-                        </p>
-                      )}
-                      <p className="text-muted-foreground text-xs">
-                        <RelativeTime ts={receipt.created_at} fallback="" />
-                      </p>
-                    </div>
-                    <Button variant="outline" asChild>
+                {data.receipts.map((receipt) => {
+                  const capability = intentCapability(receipt.intent);
+                  const meta = capabilityMeta(capability);
+                  const Icon = meta.icon;
+                  const bad = failed(receipt);
+                  return (
+                    <li key={receipt.request_id}>
                       <Link
                         href={receipt.href}
                         aria-label={`View receipt ${receipt.request_id}`}
+                        className="group flex min-h-11 items-center gap-3 py-2.5"
                       >
-                        View receipt
+                        <Icon
+                          aria-hidden="true"
+                          className="text-muted-foreground size-4 shrink-0"
+                        />
+                        <span className="min-w-0 flex-1 truncate text-sm font-medium group-hover:underline">
+                          {capability ? meta.label : "Request"}
+                        </span>
+                        <span
+                          className={cn(
+                            "text-sm",
+                            bad ? "text-danger" : "text-muted-foreground",
+                          )}
+                        >
+                          {bad ? "Failed" : ""}
+                        </span>
+                        <span className="text-muted-foreground shrink-0 text-xs">
+                          <RelativeTime ts={receipt.created_at} fallback="" />
+                        </span>
                       </Link>
-                    </Button>
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
             ) : (
               <p className="text-muted-foreground text-sm">
@@ -273,8 +344,17 @@ export function MemberStatus() {
                 result here.
               </p>
             )}
+            <p className="text-muted-foreground mt-4 text-sm">
+              App still not working?{" "}
+              <Link
+                href="/home"
+                className="text-link font-medium underline-offset-4 hover:underline"
+              >
+                Check your connection
+              </Link>
+            </p>
           </section>
-        </>
+        </div>
       ) : null}
     </div>
   );

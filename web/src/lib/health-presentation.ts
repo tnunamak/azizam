@@ -47,3 +47,18 @@ export function engineHealthPresentation(
   if (observation === "disabled") return { label: "Disabled", tone: "neutral" };
   return { label: "", tone: "neutral" };
 }
+
+/** The engine's own name for actions ("Inspect Video studio"), without the
+ * capability suffix that status rows append ("Video studio (video)"). */
+export function engineShortName(
+  service?: Pick<Service, "display_name" | "name">,
+  health?: Pick<CurrentHealthService, "engine_label" | "name">,
+): string {
+  const name =
+    service?.display_name ||
+    service?.name ||
+    health?.engine_label ||
+    health?.name ||
+    "engine";
+  return name.replace(/\s*\([^)]*\)\s*$/, "") || name;
+}

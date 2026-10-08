@@ -15,6 +15,11 @@ export interface ProviderStatusView {
   keySuffix: string | null;
   spendText: string;
   tone: ProviderTone;
+  /** Recorded spend this month in USD; null when the gateway has no record. */
+  monthlySpend?: number | null;
+  monthlyCap?: number | null;
+  /** When the provider connection was last checked; null when never. */
+  checkedAt?: number | null;
 }
 
 export type OptionalProviderStatus =
@@ -93,6 +98,16 @@ function normalizedSpend(obj: Record<string, unknown>): string {
     : (amount ?? "Not measured yet");
 }
 
+function numberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function spendNumber(obj: Record<string, unknown>, field: string): number | null {
+  const spend = objectValue(obj.spend);
+  if (!spend || spend.status === "unknown") return null;
+  return numberOrNull(spend[field]);
+}
+
 function keyStateValue(obj: Record<string, unknown>): ProviderKeyState {
   const keyStatus = objectValue(obj.key_status);
   if (keyStatus) {
@@ -159,6 +174,9 @@ export function providerViews(raw: unknown): ProviderStatusView[] {
       keySuffix,
       spendText: normalizedSpend(obj),
       tone,
+      monthlySpend: spendNumber(obj, "monthly_usd"),
+      monthlyCap: numberOrNull(objectValue(obj.caps)?.monthly_usd),
+      checkedAt: numberOrNull(obj.checked_at),
     };
   });
 }
