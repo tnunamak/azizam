@@ -13,7 +13,9 @@ It replaces `../references/board.md` as the bar. That board stays useful for pat
 - All captures were made on 2026-10-08 (UTC; the evening of 2026-10-07 US time) in a fresh headless Chromium context with no login, using `capture.cjs`. Per-file source URLs are in `capture-log/<surface>.jsonl`. Images over 2400 px wide were scaled down to 2400 px.
 - Kind: **live** = a public page captured by us. **docs** = an official docs screenshot. **official shot** = official marketing or App Store imagery of the real UI.
 
-Totals: 13 surfaces, 41 benchmark screens, 77 WebP files.
+Totals: 13 surfaces, 38 benchmark entries, 66 WebP files.
+
+**v2 (2026-10-08):** blind calibration judges rejected 22 images as marketing heroes, download or docs pages, public share pages, device frames, redaction bars, annotations or clipped renders. They are in `_retired/` (reasons in NOTES.md). Their replacements are real logged-in app screenshots from official docs and support pages (Apple Support, Raycast manual, Tailscale KB, Hugging Face docs, Vercel docs), cropped to the app window.
 
 ---
 
@@ -44,7 +46,7 @@ Traits:
 4. The range picker is one segmented row (1W 4W 1Y MTD QTD YTD ALL) with one selected. [observed]
 5. The section can be edited by the user ("Edit" link on "Reports overview"). [observed]
 
-**Gap:** we found no public pixels of a best-in-class **desktop** member home that combines "what can I do" with "connect your first client". The closest same-category screen is the Vercel AI Gateway getting-started page (5c), which is a docs page.
+**Gap:** we found no public pixels of a best-in-class **desktop** member home that combines "what can I do" with "connect your first client". 
 **Anti-benchmark:** Home Assistant's demo dashboard (`../references/public/home-assistant-desktop.webp`) repeats the same card grammar for every item and has no single readiness verdict.
 
 ---
@@ -115,61 +117,49 @@ Traits:
 4. Phone: 2 columns, the grid starts within about 70 px of the top, and navigation is a bottom tab bar of 4 or fewer items. [observed]
 5. The create field stays visible (a bottom bar on phone). [observed]
 
-### 3b. Suno — song detail (generated item)
-![](library/suno-song-detail-desktop.webp) · phone: ![](library/suno-song-detail-phone.webp) · list: ![](library/suno-explore-desktop.webp)
-Source: https://suno.com/song/ee9cb5fb-02b7-4315-9e01-60cde0587c79 · https://suno.com/explore · Kind: live
-Job: show one generated item with who made it, when, with what model and from what prompt, plus play.
-Why: Suno leads the category for generated audio, and this was the only public generated-item detail page we found.
+### 3b. Apple Photos — library grid (iPhone), item viewer and Info panel (Mac)
+![](library/apple-photos-ios-library-phone.webp) · viewer: ![](library/apple-photos-mac-viewer-desktop.webp) · info: ![](library/apple-photos-mac-info-desktop.webp)
+Source: https://support.apple.com/guide/iphone/browse-your-photo-library-iph7d24753a5/ios · https://support.apple.com/guide/photos/view-photos-and-videos-pht8b9ba4aa9/mac · https://support.apple.com/guide/photos/see-photo-and-video-information-phta8b25fa42/mac · Kind: docs (Apple Support screenshots of the real apps; device frame and callouts cropped away)
+Job: a household's own media library: scan the grid on a phone, open one item, see who/when/where/with what.
+Why: the most-used personal media library, shown in its logged-in, populated state. It replaces Suno's public share pages.
 Traits:
-1. The creator's avatar and name sit next to the title. [observed]
-2. The exact timestamp ("October 1, 2026 at 3:58 AM") and a model badge ("V6-MINI") are on one line. [observed]
-3. The prompt summary appears as style tags, with a "Show full styles" expander. [observed]
-4. A player is always present at the bottom, and play is in the first viewport at 390 px. [observed]
-5. List cards show title, creator and count metadata with no hover. [observed: explore]
+1. Phone grid: 3 columns of square tiles, 1–2 px gutters, no per-tile text. A favourite shows only as a small heart badge on the tile. [observed]
+2. Phone: the large "Library" title and the date of the visible items ("Jul 13, 2025") float over the grid; "Select" and a filter button sit top right. There is no separate app bar. [observed]
+3. Phone: one floating bottom pill holds the zoom level as a segmented control (Years / Months / All), with search as a round button beside it, in thumb reach. [observed]
+4. Viewer: one centred meta line under the title gives place, exact time and position ("Los Angeles - Mar Vista · December 16, 2025 at 5:40:00 PM · 1,918 of 2,147"). [observed]
+5. Viewer: back at left; favourite, share and a text "Edit" at right; the library sidebar stays visible (Library, Pinned, Albums, Shared Albums). [observed]
+6. Info panel: provenance is a stack of short blocks separated by hairlines: title, filename, date with an "Adjust" link, device and settings ("Apple iPhone 16 Pro / Main Camera — 24 mm ƒ1.78"), caption, keywords, people, place. For Azizam: who, when, model, prompt. [observed]
+7. Info panel: empty fields are shown as grey editable placeholders ("Add a Caption", "Add a Keyword"), not hidden. [observed]
 
-### 3c. Apple Photos (iOS viewer) and Apple Music (audio list)
-![](library/apple-photos-ios-viewer.webp) · ![](library/apple-music-album-desktop.webp) · phone: ![](library/apple-music-album-phone.webp)
-Source: https://www.apple.com/ios/photos/ (official shot) · https://music.apple.com/us/album/abbey-road-remastered/1441164426 (live)
-Job: a single-item viewer, and an audio list with play.
+### 3c. Apple Music (audio list)
+![](library/apple-music-album-desktop.webp) · phone: ![](library/apple-music-album-phone.webp)
+Source: https://music.apple.com/us/album/abbey-road-remastered/1441164426 · Kind: live
+Job: an audio list with play.
 Traits:
-1. Viewer: the date and time are a single pill at the top. Back is on the left and an overflow menu on the right. [observed]
-2. Viewer: a filmstrip of neighbouring items sits above a bottom action bar of 5 icons in thumb reach. [observed]
-3. Audio row: index, title, right-aligned duration and an overflow menu. Row height is about 46 px. [observed]
-4. One large play button sits next to the title block, and a mini-player floats over the list. [observed]
-5. Provenance (who, details) is one tap away behind an info button, not on the canvas. [inferred]
+1. Audio row: index, title, right-aligned duration and an overflow menu. Row height is about 46 px. [observed]
+2. One large play button sits next to the title block, and a mini-player floats over the list. [observed]
 
-**Gap:** we found no public mixed-media library (image, audio and video in one list). **Anti-benchmarks:** Suno's phone view and Apple Music's web view both lose content height to "open the app" banners.
+**Gap:** we found no logged-in mixed-media library (image, audio and video in one list), and no logged-in library of *generated* media with prompt and model on the item (Midjourney's Organize docs were behind a Cloudflare challenge). Midjourney Explore (3a) is a public page; judge only its grid. **Anti-benchmark:** Apple Music's web view on phone loses content height to an "open the app" banner.
 
 ---
 
 ## 4. Try (playground)
 Azizam job: pick a model or workflow, enter input, run it, and see the result with time and cost.
 
-### 4a. Replicate — model playground
-![](try/replicate-flux-schnell-desktop.webp) · phone: ![](try/replicate-flux-schnell-phone.webp)
-Source: https://replicate.com/black-forest-labs/flux-schnell · Kind: live
-Job: input on the left, output on the right, with a form generated from the model's schema.
-Why: this is the standard model-playground layout that fal, Krea and others copy.
+### 4a. Raycast — AI Chat with chat settings
+![](try/raycast-ai-chat-desktop.webp)
+Source: https://manual.raycast.com/ai/ai-chat · Kind: docs (official app screenshot, cropped to the window)
+Job: pick a model, ask, and see a finished answer with its steps and follow-up actions.
+Why: a design-led native app whose chat sits on top of many providers, as Azizam's does.
 Traits:
-1. Two equal columns, Input and Output, with a divider. [observed]
-2. Price is shown before running ("$3 per thousand output images"). [observed]
-3. Readiness is a chip next to the model ("Warm"). [observed]
-4. Each field shows its name, a required marker, helper text and its default ("Default: 1:1"). [observed]
-5. The output pane shows an example result before the first run, so it is never empty. [observed]
-6. Anti-trait: on phone, the run action is not in the first 844 px. Azizam must beat this. [observed]
+1. The model is named under the chat title ("Claude Haiku 4.5") and is changed in one select in the side panel. [observed]
+2. A finished run shows the tool step as one grey line ("Search web: Raycast founders and 2 more terms") above the answer, and sources as small chips at the end of the answer. [observed]
+3. Under the answer is one row of 5 icon actions (copy, good, bad, branch, retry), with no labels. [observed]
+4. The composer is one line at the bottom ("Ask anything, @ tools, or / for commands..."), with "+" at its left. [observed]
+5. Run settings are a side panel of labelled controls (Title, Model, Additional Instructions, Creativity "Medium", toggles with one grey helper line each), not a modal. [observed]
+6. Anti-trait: no time, tokens or cost after the run. Azizam should show them. [observed absence]
 
-### 4b. Replicate — finished run
-![](try/replicate-prediction-desktop.webp) · phone: ![](try/replicate-prediction-phone.webp)
-Source: https://replicate.com/p/jd96x0dyqsrm00cj1jp90zeye0 · Kind: live
-Job: a finished run with status, duration and inputs. It also works as a Library item detail.
-Traits:
-1. A header row of labelled facts: model, ID, a "Succeeded" status chip, total duration "0.8s", and created time with the user. [observed]
-2. Phone: the output comes first, then "Generated in 0.8 seconds", then the next actions (Download, Tweak it, Iterate). [observed]
-3. Every input parameter is shown read-only, so the run can be reproduced. [observed]
-4. Inputs can be viewed as code (Form, JSON, Node.js, Python, HTTP), so the same run can be repeated from a client. [observed]
-5. Cost is not shown. Azizam should show it. [observed absence]
-
-### 4c. Vercel AI SDK Playground — model compare
+### 4b. Vercel AI SDK Playground — model compare; OpenRouter chat
 ![](try/ai-sdk-playground-desktop.webp) · phone: ![](try/ai-sdk-playground-phone.webp) · also: ![](try/openrouter-chat-desktop.webp) · ![](try/openrouter-chat-phone.webp)
 Source: https://ai-sdk.dev/playground · https://openrouter.ai/chat · Kind: live
 Job: pick models and chat side by side, with prices shown before running.
@@ -179,57 +169,48 @@ Traits:
 3. The composer is one line at the bottom of the pane. On phone it stays within the bottom 100 px. [observed: OpenRouter phone]
 4. Starter prompts are offered as chips above the composer. [observed: OpenRouter]
 
-**Gap:** no public playground shows cost and latency together after a run. **Anti-benchmark:** fal.ai's playground shows a grey "Idle" result box, and an announcement pop-up covered the form on every capture.
+**Gap:** no real-app screenshot shows a finished run with cost and latency together (Anthropic Workbench, OpenAI Playground, Vercel and Cloudflare playground docs have no screenshots; Hugging Face's playground image is empty). No phone playground from a logged-in app was found. **Anti-benchmark:** fal.ai's playground shows a grey "Idle" result box, and an announcement pop-up covered the form on every capture.
 
 ---
 
 ## 5. Models & Workflows catalog
 Azizam job: show what the gateway can do and which model fits which job, with price and speed.
 
-### 5a. Vercel AI Gateway — Models
-![](catalog/vercel-ai-gateway-models-desktop.webp) · phone: ![](catalog/vercel-ai-gateway-models-phone.webp)
-Source: https://vercel.com/ai-gateway/models · Kind: live
-Why: the same product category (an OpenAI-compatible gateway), from a named bar (Geist).
+### 5a. Raycast — Settings > AI > Manage Models
+![](catalog/raycast-manage-models-desktop.webp)
+Source: https://manual.raycast.com/ai/ai-chat · Kind: docs (official app screenshot, cropped to the window)
+Job: see what each model is good at and choose which ones members can pick.
 Traits:
-1. Modality tabs (All, Text, Image, Video, Audio…) and a search field are in one row. [observed]
-2. Each row shows name, input $/M, output $/M, latency in seconds, providers and release date, with no hover. [observed]
-3. Numeric columns are right-aligned. [observed]
-4. Missing values are shown as "—", not 0. [observed]
-5. Price tags ("Free", "50% off") sit next to the name as small pills. [observed]
+1. One sentence says what the screen is for ("Review model capabilities, and choose which ones appear in AI model pickers."). [observed]
+2. Columns are Model, Speed, Intelligence, Context. Speed and intelligence are 5-segment bars, so models compare at a glance without numbers; context is a number ("200k"). [observed]
+3. One sort control at top right ("Sort by Intelligence"). [observed]
+4. Each row ends in a checkbox. A model that is turned off stays in the list, greyed, so it can be turned back on. [observed]
+5. Each row starts with the vendor logo, then the model name; there is no description text. [observed]
+6. Anti-trait: no price column. Azizam should add cost. [observed absence]
 
-### 5b. OpenRouter — model list and model detail
-![](catalog/openrouter-models-desktop.webp) · phone: ![](catalog/openrouter-models-phone.webp) · detail: ![](catalog/openrouter-model-detail-desktop.webp) · ![](catalog/openrouter-model-detail-phone.webp)
-Source: https://openrouter.ai/models · https://openrouter.ai/anthropic/claude-haiku-4.5 · Kind: live
+### 5b. OpenRouter — model list
+![](catalog/openrouter-models-desktop.webp) · phone: ![](catalog/openrouter-models-phone.webp)
+Source: https://openrouter.ai/models · Kind: live
 Traits:
 1. A list row has the name, a 2-line description, vendor, date, context and price in and out. [observed]
 2. Category tabs show counts (for example "Text 467"). [observed]
-3. Detail: 4 summary facts (modalities, price, context, released) are above the fold. [observed]
-4. Phone detail: a bar fixed at the bottom holds Compare / API / Try, so the next step is in thumb reach. [observed]
 
-### 5c. Vercel AI Gateway — getting started (catalog to first call)
-![](keys/vercel-aigw-key-and-recipe.webp)
-Source: https://vercel.com/docs/ai-gateway/getting-started (scrolled about 1700 px) · Kind: live docs
-Job: connect "this model" to "here is the call that uses it".
-Traits:
-1. The model slug in the prose is the same slug as in the code snippet (`openai/gpt-6-astra`). [observed]
-2. The page opens with a goal-to-action table ("Choose how to start"). [inferred from page outline; not in this frame]
-
-**Anti-benchmark:** Replicate /explore is marketing-led and does not answer "which model for which job".
+**Gap:** no in-app catalog with price **and** speed in one row (Vercel's dashboard Models tab and Cloudflare's model list have no docs screenshots). **Anti-benchmark:** Replicate /explore and the public Vercel AI Gateway models page are marketing-led.
 
 ---
 
 ## 6. Apps & API keys
 Azizam job: create a key, show it once, and connect a named client.
 
-### 6a. Cloudflare — token created (shown once)
-![](keys/cloudflare-token-complete.webp)
-Source: https://developers.cloudflare.com/fundamentals/api/get-started/create-token/ · Kind: docs
+### 6a. Tailscale — "Generated new OAuth client" (shown once)
+![](keys/tailscale-oauth-client-desktop.webp)
+Source: https://tailscale.com/kb/1215/oauth-clients · Kind: docs (admin console dialog; the source is only 608 px wide)
 Traits:
-1. The success heading names the object ("Edit Zone DNS API token was successfully created"). [observed]
-2. The secret is in one boxed field with a copy icon inside the right edge. [observed]
-3. The "shown once" warning is one sentence of 15 words or fewer in the body ("For security this will not be shown again."), not a modal. [observed]
-4. The next step is a copyable test command already filled in with the new secret ("Test this token"). [observed]
-5. There is exactly one exit link ("View all API tokens"). [observed]
+1. The title names the object ("Generated new OAuth client"). [observed]
+2. The shown-once warning is the first line, one sentence of 15 words or fewer ("Be sure to copy the client secret below. It won't be shown in full again."), not a separate alert. [observed]
+3. Each value is a read-only boxed field in monospace with its own "Copy" text button inside the right edge. [observed]
+4. The secret keeps a readable prefix (`tskey-client-…`) and is truncated with "…". [observed]
+5. One exit: "Done" at bottom right, plus a close X. [observed]
 
 ### 6b. Resend — API keys list
 ![](keys/resend-api-keys-list.webp)
@@ -241,24 +222,7 @@ Traits:
 3. "Last used" is relative ("Never", "16 days ago"). A stale key gets a warning icon. [observed]
 4. Row actions are collapsed into one "…" menu. [observed]
 
-### 6c. Vercel AI Gateway — copy once, then a recipe per client
-![](keys/vercel-aigw-key-and-recipe.webp)
-Source: https://vercel.com/docs/ai-gateway/getting-started · Kind: live docs
-Traits:
-1. The copy-once instruction is plain words ("Copy the key immediately… You cannot retrieve its value again."). [observed]
-2. Recipe tabs number 3 (cURL, TypeScript, Python), with the first one selected. [observed]
-3. Each code block has a copy button at top right. [observed]
-4. The snippet is complete: base URL, auth header and model slug are all in it. [observed]
-
-### 6d. Tailscale — choose your device (connect a client)
-![](keys/tailscale-download-desktop.webp) · phone: ![](keys/tailscale-download-phone.webp)
-Source: https://tailscale.com/download · Kind: live
-Traits:
-1. One instruction line of 8 words or fewer under the title. [observed]
-2. Platforms are large tiles, each with an icon and a 1-word label. [observed]
-3. Phone: a full-width primary button for the detected OS is in the first viewport. [observed]
-4. The technical route is one copyable command with a copy button. [observed]
-
+**Gap:** no real-app screenshot of "connect a named client" (a key plus a ready-to-paste recipe per client) was found. Vercel AI Gateway, Stripe, OpenAI, Anthropic, GitHub and Supabase docs serve no usable key-creation pixels. Azizam sets this bar itself.
 **Note:** Stripe's documented rule (user-created keys are shown once; rotation keeps the old key valid for up to 7 days) is in divan `product-design/stripe-lets-you-re-reveal-only-keys…`. Its docs images are icons, so there are no Stripe pixels for this job.
 
 ---
@@ -266,16 +230,17 @@ Traits:
 ## 7. Usage & Activity
 Azizam job: show spend, requests, a per-request receipt, and failures.
 
-### 7a. Vercel AI Gateway — Usage overview and spend by key
-![](usage/vercel-ai-gateway-graphs.webp) · by key: ![](usage/vercel-ai-gateway-apikeys.webp) · by project: ![](usage/vercel-ai-gateway-projects.webp)
-Source: https://vercel.com/docs/ai-gateway/observability · Kind: docs
+### 7a. Vercel — AI Gateway usage charts and project request log
+![](usage/vercel-ai-gateway-graphs.webp) · request log: ![](usage/vercel-runtime-logs-desktop.webp)
+Source: https://vercel.com/docs/ai-gateway/observability · https://vercel.com/docs/logs/runtime · Kind: docs
 Why: the closest same-job product (an AI gateway), with Geist craft.
 Traits:
 1. Each chart card has a title, then one headline number ($232.36, 1.15s, 4.5K, 266M), then the chart. [observed]
-2. The page has two controls: environment and time window. [observed]
+2. The usage page has two controls: environment and time window. [observed]
 3. The incomplete current interval is drawn dotted. [observed]
-4. The by-key table has Requests, Tokens/s, P75 duration, P75 TTFT and Cost. Numbers are right-aligned and tabular, and Cost is the last column, sortable. [observed]
-5. Each row ends in a chevron that drills down. [observed]
+4. Log: a left filter rail leads with time window ("Past 30 minutes") and level counts ("Warning 0", "Error 0"), so "any failures?" is answered before reading rows. [observed]
+5. Log: the search field states the count ("17 total logs found…") and sits next to "Live" and refresh. A small histogram of requests over time sits above the table. [observed]
+6. Log rows: monospace time to 1/100 s, method, coloured status code (200 green, 304 blue), host, path and a message, all on one ~40 px line. [observed]
 
 ### 7b. Stripe Workbench — request log and errors
 ![](usage/stripe-workbench-logs.webp) · errors: ![](usage/stripe-workbench-errors.webp)
@@ -296,7 +261,7 @@ Traits:
 3. Activity: a row of 5 KPI tiles, each with a label, a number and a sparkline. [observed]
 4. Top keys and top apps are ranked lists with right-aligned counts. [observed]
 
-**Gap:** no public receipt shows **cost per request** next to status. Azizam should add it.
+**Gap:** no real-app receipt shows **cost per request** next to status, and no unredacted Vercel per-key spend table exists (the by-key and by-project images were retired for redaction bars). Failures are shown only by Stripe Workbench (7b).
 
 ---
 
@@ -314,15 +279,17 @@ Traits:
 4. Local backends get one row each with a right-aligned "N models" count. [observed: custom providers]
 5. The default model per use is a right-aligned select on the row ("AI Chat → Last Used Model"). [observed]
 
-### 8b. OpenRouter — providers for one model (health table)
-![](engines/openrouter-model-providers-desktop.webp) · phone: ![](engines/openrouter-model-providers-phone.webp)
-Source: https://openrouter.ai/anthropic/claude-sonnet-4.5/providers · Kind: live
+### 8b. Hugging Face — Inference Providers (account settings)
+![](engines/huggingface-provider-list-desktop.webp) · health columns: ![](engines/openrouter-model-providers-desktop.webp)
+Source: https://huggingface.co/docs/inference-providers/hub-integration (app screenshot) · https://openrouter.ai/anthropic/claude-sonnet-4.5/providers (live, desktop only) · Kind: docs + live
+Job: the owner sees every backend, which are on, how each is paid for, which need attention, and when each was last used.
 Traits:
-1. One row per backend: price in and out, latency, throughput and uptime %, on one line. [observed]
-2. Uptime is a % plus a small bar, not colour alone. [observed]
-3. Numeric columns are right-aligned and sortable. [observed]
-4. Backends not used by the current routing are below a labelled divider. [observed]
-5. One sentence above the table explains how a backend is chosen. [observed]
+1. One row per provider: drag handle, logo and name, an on/off toggle, a routing-mode control, "Last Used" and a "⋮" menu. [observed]
+2. A provider that needs attention carries a word chip beside its name ("⚠ BILLING DISABLED"), not colour alone; 5 of 10 rows show it while staying in the list. [observed]
+3. Routing mode is a 2-segment icon control per row (route through the platform vs use your own key). For Azizam: gateway key vs owner's provider key. [observed]
+4. "Last Used" is relative ("about 6 hours ago", "24 days ago"). [observed]
+5. Order is user-set by drag, which sets fallback priority. [inferred from handle]
+6. OpenRouter (secondary): one row per backend with price, latency, throughput and uptime % plus a small bar; numeric columns right-aligned. [observed]
 
 ### 8c. Vercel — Spend Management (cap)
 ![](engines/vercel-spend-management.webp)
@@ -333,22 +300,25 @@ Traits:
 3. Over the cap, the gauge turns red. [observed]
 4. Save is disabled until something changes. [observed]
 
-**Gap:** we found no owner console that shows **health per backend with an error state and a fix**. Tailscale's Machines page would be the reference, but its KB has no public screenshots. **Anti-benchmark:** Vercel shows 100% of the cap in red but offers no next action beyond "Manage".
+**Gap:** Hugging Face shows a warning state but no fix action and no health or latency; no owner console shows **health per backend with an error state and a fix** in one view. **Anti-benchmark:** Vercel shows 100% of the cap in red but offers no next action beyond "Manage".
 
 ---
 
 ## 9. People, invites & access plans
 Azizam job: the owner invites household members, chooses what they can use and spend, and sees who has joined and who is pending.
 
-### 9a. Clerk — OrganizationProfile, Members
-![](people/clerk-members-crop.webp) (crop of `people/clerk-organization-profile-desktop.webp`)
-Source: https://clerk.com/components/organization-profile · Kind: live (Clerk's real component rendered on its page)
+### 9a. Apple Family Sharing — Family (iPhone)
+![](people/apple-family-sharing-phone.webp)
+Source: https://support.apple.com/guide/iphone/set-up-family-sharing-iph33a7f1b0f/ios · Kind: docs (Apple Support screenshot; device frame cropped away)
+Job: one household, its members and their roles, on a phone.
+Why: the same audience and model as Azizam (an organiser, adults and children in one household).
 Traits:
-1. Tabs show counts: "Members 36 / Invitations 3 / Requests 3". Pending invites are one click away. [observed]
-2. A row shows avatar, name, email, joined date, role and an action menu, with no hover. [observed]
-3. The current user is tagged "You". [observed]
-4. Role is changed inline with a select on the row. [observed]
-5. One dark primary "Invite" button sits next to the search field. [observed]
+1. A row of member avatars over a one-word title ("Family"). [observed]
+2. One rounded card lists all members. Each row: avatar, name, one grey role line (Age 10, Adult, Organizer) and a chevron. [observed]
+3. The current user is tagged in the name ("Danny (You)"). [observed]
+4. Add-member is one icon button at top right; back is at top left. There is no other chrome. [observed]
+5. One grey footnote under the card says what the screen controls and a known limit of invites. [observed]
+6. Anti-trait: pending invitations are not visible in the list. Azizam should show pending members. [observed absence]
 
 ### 9b. Vercel — invite and role picker
 ![](people/vercel-team-members.webp)
@@ -358,6 +328,7 @@ Traits:
 2. Email and role are in one row, and "Add more" allows a batch invite. [observed]
 3. One primary "Invite" button, with "Invite Link" as the secondary route. [observed]
 4. The optional narrowing step ("Assign Project Roles") stays disabled until it applies. [observed]
+5. Contrast: Tailscale's invite dialog (`people/tailscale-invite-roles-desktop.webp`, https://tailscale.com/kb/1064/invite-team-members) says what the invitee receives in the dialog body, but lists 6 bare role names with no consequence line. Azizam should follow Vercel. [observed]
 
 ### 9c. Linear — team permissions
 ![](people/linear-members-roles.webp)
@@ -372,17 +343,26 @@ Traits:
 ## 10. Settings
 Azizam job: owner and member find a setting fast and change it, with the current value always visible.
 
-### 10a. Linear — settings index and detail
-![](settings/linear-administration.webp) · detail: ![](settings/linear-account-prefs.webp)
-Source: https://linear.app/docs/workspaces · https://linear.app/docs/account-preferences · Kind: docs
+### 10a. Linear — settings detail
+![](settings/linear-account-prefs.webp)
+Source: https://linear.app/docs/account-preferences · Kind: docs
 Traits:
-1. The sidebar has groups (Account, Features, Administration), each with a muted label. Item names are 2 words or fewer, with icons. [observed]
-2. "Back to app" is the first element, so settings is a separate place with one exit. [observed]
-3. A row is a label, one grey helper line, and a control on the right that shows its current value. [observed]
-4. Rows sit in titled cards. "Danger zone" comes last and uses red text. [observed]
-5. There is no Save button; changes apply in place. [inferred]
+1. A row is a label, one grey helper line, and a control on the right that shows its current value. [observed]
+2. Rows sit in titled cards. [observed]
+3. There is no Save button; changes apply in place. [inferred]
 
-### 10b. Raycast — settings window
+### 10b. Tailscale — admin console, Tailnet Settings > Device management
+![](settings/tailscale-device-management-desktop.webp)
+Source: https://tailscale.com/kb/1099/device-approval · Kind: docs (admin console screenshot)
+Job: find an owner setting in a grouped index and change it with its current value visible.
+Traits:
+1. The sidebar has two groups with an icon and a muted group label ("Tailnet Settings", "Personal Settings"). Items are 1–2 words; the selected item is blue text, with no fill. An unavailable item (Billing) is greyed, not hidden. [observed]
+2. The page has a large title and one grey helper line ("Manage your tailnet device settings."). [observed]
+3. Each setting is a titled section with one plain sentence of consequence and a "Learn more →" link. [observed]
+4. Controls show their current value: a toggle with its label ("Manually approve new devices"), a stepper with a unit ("180 days") and its valid range under it. [observed]
+5. Save and Reset stay disabled until something changes. [observed]
+
+### 10c. Raycast — settings window
 ![](settings/raycast-settings-account.webp) · also 8a
 Source: https://manual.raycast.com/settings · Kind: docs
 Traits:
@@ -390,8 +370,6 @@ Traits:
 2. Subscription state is a word in green ("Active"). [observed]
 3. A "Search settings…" field sits above the sidebar. [observed: 8a]
 4. "Sign Out" is red text at the bottom. [observed]
-
-**Gap:** we found no official iOS Settings imagery (Apple's pages show only hero art).
 
 ---
 
@@ -500,8 +478,8 @@ Traits:
 3. The primary action is a full-width filled button at the bottom ("Copy link"), with "…" next to it. [observed]
 4. Detail rows put the label on the left and the value on the right. [observed]
 
-### 13c. Live phone captures elsewhere on this board
-Apple System Status (2d), Midjourney (3a), Suno detail (3b), Replicate run (4b), OpenRouter model detail (5b), Tailscale download (6d), Linear login (11a). Common traits to check:
-1. The verdict or primary action is inside the first 844 px. [observed in 2d, 3b, 5b, 6d, 11a]
-2. No horizontal scroll, except deliberate table scroll (5a). [observed]
-3. Persistent controls (player, composer, bottom bar) are within the bottom 100 px. [observed in 3a, 3b, 4c, 5b]
+### 13c. Other phone screens on this board
+Apple Photos library (3b), Apple Family Sharing (9a), Apple System Status (2d), Midjourney (3a), OpenRouter models (5b), Linear login (11a). Common traits to check:
+1. The verdict or primary action is inside the first 844 px. [observed in 2d, 9a, 11a]
+2. No horizontal scroll, except deliberate table scroll. [observed]
+3. Persistent controls (bottom pill, composer, bottom bar) are within the bottom 100 px. [observed in 3a, 3b, 4b]
