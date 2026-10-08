@@ -1,6 +1,6 @@
 # D1 contact sheet: Home, Status, Library
 
-Captures: `~/.tmp/azizam-redesign/d1-3/` (made by `scripts/ui/d1-states-capture`, branch `design/full-surface`). One folder per household scenario. File names are `<scenario>_<role>_<surface>_<state>_<theme>_<width>.png`, with the page text beside each PNG and a `manifest.json` per folder (console errors and forced states are recorded there). Every state exists for owner (Sam) and member (Robin), at 390 and 1440 px, in light and dark. Loading, error, empty and expired are forced by request interception and labelled so in the manifest.
+Captures: `~/.tmp/azizam-redesign/d1-4/` (made by `scripts/ui/d1-states-capture`, branch `design/full-surface`). One folder per household scenario. File names are `<scenario>_<role>_<surface>_<state>_<theme>_<width>.png`, with the page text beside each PNG and a `manifest.json` per folder (console errors and forced states are recorded there). Every state exists for owner (Sam) and member (Robin), at 390 and 1440 px, in light and dark. Loading, error, empty and expired are forced by request interception and labelled so in the manifest.
 
 Benchmark ids refer to `benchmarks/BOARD.md`.
 
@@ -29,7 +29,8 @@ Benchmark ids refer to `benchmarks/BOARD.md`.
 | empty | "No engines yet." with "Add an engine". |
 | signed-out | Sign-in prompt. |
 | budget-exhausted | Owner: two cards, the engine and an "Access plan" card ("Paid requests are being refused.", who was refused, how often, "Open access plans"); only the first card's action is primary. |
-| provider-down | Owner: a provider card "The last connection check failed." with the layer "Provider · Remote backup". |
+| provider-down | Owner: a provider card "The last connection check failed." with the layer "Provider · Remote backup" and its failed requests, separate from the Video studio card. |
+| production copy (lint only) | On Tim's real registry, local engines appear as engines, idle standby engines are not problems, and twelve down engines read as one card ("12 engines are unavailable.") under "7 capabilities are unavailable." |
 | stale-health | Hours without a check stay empty in the uptime bar instead of shifting the history. |
 | running | Member: requests in progress read "In progress". |
 
@@ -46,6 +47,7 @@ Benchmark ids refer to `benchmarks/BOARD.md`.
 | empty | "No creations yet" with "Make an image"; filtered empty says "No matching creations" with "Clear filters" (OpenRouter 12d.3 anti-trait fixed). |
 | expired | Files the gateway no longer stores fold into one line with "Show them" and "Refresh library"; owners are told the retention period. |
 | signed-out, restricted | Sign-in prompt; the restricted member sees only their own creations. |
+| new-member | Noor has made nothing yet, so Library shows "No creations yet"; the viewer, video and audio states are recorded as skipped in that folder's manifest for this reason. |
 
 ## Gate results for this capture set
 
