@@ -500,3 +500,83 @@ def test_health_timings_are_varied_and_repeatable(repeated_household_seeds):
         assert any(a != b for a, b in zip(values, values[14:]))
     down = [value for _, backend, value in first if backend == "household-embedding"]
     assert len({value for value in down if value > 100}) > 20
+
+
+def test_capture_isolation_restarts_before_each_try_and_checks_state_identity():
+    repo = Path(__file__).resolve().parents[1]
+    source = (repo / "web/e2e/household-capture.mjs").read_text()
+    body = source.split("async function captureTryResult(", 1)[1].split(
+        "async function capturePeopleViews(", 1
+    )[0]
+    steps = [
+        "await stopServer();",
+        "await rm(manifestPath, { force: true });",
+        "server = startServer();",
+        "const seed = await readySeed();",
+        "await newContext(seed,",
+        "await run.click();",
+    ]
+    positions = [body.index(step) for step in steps]
+    assert positions == sorted(positions)
+    assert "seenFixtureStates.has(seed.fixture_state)" in source
+    assert "seenFixtureStates.add(seed.fixture_state)" in source
+    assert 'throw new Error("Try capture requires a fresh disposable fixture state")' in source
+    serve = (repo / "scripts/ui/serve.py").read_text()
+    assert "manifest['fixture_state'] = state.name" in serve
+
+
+def test_capture_isolation_clock_covers_late_imports_and_existing_aliases(tmp_path):
+    # Run the real clock installer alone in a subprocess: never freeze pytest's clock.
+    probe = """import time as clock
+from time import time as wall_now, time_ns as wall_ns
+import datetime as dates
+from datetime import datetime as stamp, date as day
+def readings():
+    return (clock.time(), wall_now(), wall_ns(),
+            dates.datetime.now(dates.timezone.utc).timestamp(),
+            stamp.now(dates.timezone.utc).timestamp(),
+            stamp.utcnow(), day.today(), clock.gmtime(), clock.localtime(),
+            clock.ctime(), clock.strftime('%Y-%m-%d'))
+"""
+    for name in ("capture_clock_before", "capture_clock_after"):
+        (tmp_path / (name + ".py")).write_text(probe)
+    repo = Path(__file__).resolve().parents[1]
+    script = """
+import ast
+import importlib
+import sys
+import time
+from pathlib import Path
+from datetime import datetime, timezone
+sys.path.insert(0, sys.argv[2])
+before = importlib.import_module('capture_clock_before')
+assert 'capture_clock_after' not in sys.modules
+fixed = int(sys.argv[3])
+expected = (float(fixed), float(fixed), fixed * 1_000_000_000,
+            float(fixed), float(fixed),
+            datetime.fromtimestamp(fixed, timezone.utc).replace(tzinfo=None),
+            datetime.fromtimestamp(fixed).date(), time.gmtime(fixed),
+            time.localtime(fixed), time.ctime(fixed),
+            time.strftime('%Y-%m-%d', time.localtime(fixed)))
+monotonic = time.monotonic
+perf_counter = time.perf_counter
+source = ast.parse(Path(sys.argv[1]).read_text())
+install = next(node for node in source.body
+               if isinstance(node, ast.FunctionDef) and node.name == '_freeze_household_clock')
+namespace = {'sys': sys}
+exec(compile(ast.Module(body=[install], type_ignores=[]), sys.argv[1], 'exec'), namespace)
+namespace['_freeze_household_clock'](fixed)
+after = importlib.import_module('capture_clock_after')
+assert before.readings() == expected
+assert after.readings() == expected
+assert time.monotonic is monotonic
+assert time.perf_counter is perf_counter
+assert time.gmtime(0).tm_year == 1970
+assert time.time() == fixed
+assert time.time_ns() == fixed * 1_000_000_000
+"""
+    subprocess.run(
+        [sys.executable, "-c", script, str(repo / "scripts/ui/fixture_gateway.py"),
+         str(tmp_path), str(FIXED_NOW)],
+        check=True, capture_output=True, timeout=30,
+    )

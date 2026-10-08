@@ -47,11 +47,13 @@ await rm(manifestPath, { force: true });
 await mkdir(output, { recursive: true });
 if ((await readdir(output)).length)
   throw new Error(`Output directory must be empty before capture: ${output}`);
-const server = spawn(python, ["../scripts/ui/serve.py"], {
+const startServer = () => spawn(python, ["../scripts/ui/serve.py"], {
   cwd: web,
   env: { ...process.env, UI_E2E_PORT: String(port), UI_SEED_PROFILE: "household", UI_HOUSEHOLD_MANIFEST_PATH: manifestPath, UI_HOUSEHOLD_SCENARIO: scenario },
   stdio: "inherit",
 });
+let server = startServer();
+const seenFixtureStates = new Set();
 let browser;
 let stopping = false;
 const stop = () => {
@@ -61,6 +63,46 @@ const stop = () => {
 };
 process.once("SIGINT", stop);
 process.once("SIGTERM", stop);
+
+async function readySeed() {
+  const readyUntil = Date.now() + 120_000;
+  let ready = false;
+  while (Date.now() < readyUntil) {
+    if (server.exitCode !== null) throw new Error("Isolated household supervisor exited early");
+    try {
+      const health = await fetch(`${baseURL}/health`, { signal: AbortSignal.timeout(1_500) });
+      if (health.ok && existsSync(manifestPath)) { ready = true; break; }
+    } catch {}
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+  if (!ready) throw new Error("Household supervisor readiness timed out");
+  const seed = JSON.parse(await readFile(manifestPath, "utf8"));
+  if (seed.scenario !== scenario) throw new Error(`Seeded scenario ${seed.scenario} does not match ${scenario}`);
+  if (!seed.owner_email || !seed.member_email || !seed.password || !seed.base_url)
+    throw new Error("Household manifest is missing owner/member credentials or base_url");
+  if (!seed.fixture_state || seenFixtureStates.has(seed.fixture_state))
+    throw new Error("Try capture requires a fresh disposable fixture state");
+  seenFixtureStates.add(seed.fixture_state);
+  return seed;
+}
+
+async function stopServer() {
+  const child = server;
+  if (child.exitCode !== null || child.signalCode !== null)
+    throw new Error("Household supervisor stopped unexpectedly");
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error("Household supervisor did not cleanly stop; refusing to reuse state"));
+    }, 20_000);
+    child.once("exit", (code, signal) => {
+      clearTimeout(timer);
+      if (code === 0 && signal === null) resolve();
+      else reject(new Error("Household supervisor did not cleanly stop; refusing to reuse state"));
+    });
+    child.kill("SIGTERM");
+  });
+}
 
 async function settled(page) {
   await page.waitForLoadState("networkidle", { timeout: 30_000 });
@@ -157,21 +199,7 @@ async function capture(page, entry) {
 
 try {
   await mkdir(output, { recursive: true });
-  const readyUntil = Date.now() + 120_000;
-  let ready = false;
-  while (Date.now() < readyUntil) {
-    if (server.exitCode !== null) throw new Error("Isolated household supervisor exited early");
-    try {
-      const health = await fetch(`${baseURL}/health`, { signal: AbortSignal.timeout(1_500) });
-      if (health.ok && existsSync(manifestPath)) { ready = true; break; }
-    } catch {}
-    await new Promise(resolve => setTimeout(resolve, 200));
-  }
-  if (!ready) throw new Error("Household supervisor readiness timed out");
-  const seed = JSON.parse(await readFile(manifestPath, "utf8"));
-  if (seed.scenario !== scenario) throw new Error(`Seeded scenario ${seed.scenario} does not match ${scenario}`);
-  if (!seed.owner_email || !seed.member_email || !seed.password || !seed.base_url)
-    throw new Error("Household manifest is missing owner/member credentials or base_url");
+  const seed = await readySeed();
   const base = seed.base_url;
   browser = await chromium.launch({ headless: true });
   for (const [view, email] of [["owner", seed.owner_email], ["member", seed.member_email]]) {
@@ -207,7 +235,7 @@ try {
     }
   }
   for (const theme of ["light", "dark"]) {
-    for (const width of [1440, 390]) await captureTryResult(seed, { theme, width });
+    for (const width of [1440, 390]) await captureTryResult({ theme, width });
   }
   const report = { scenario, generated_at: new Date(seed.now * 1000).toISOString(), timezone: browserTimezone, locale: browserLocale, base_url: base, captures, skipped_states: skipped, media_checks: mediaChecks };
   await writeFile(path.join(output, "manifest.json"), `${JSON.stringify(report, null, 2)}\n`);
@@ -280,7 +308,12 @@ async function newContext(seed, { width, theme }) {
 }
 
 // Running a request changes later pages (Activity, Usage, Home), so Try runs after every other capture.
-async function captureTryResult(seed, { theme, width }) {
+async function captureTryResult({ theme, width }) {
+  await stopServer();
+  if (stopping) throw new Error("Household capture was interrupted");
+  await rm(manifestPath, { force: true });
+  server = startServer();
+  const seed = await readySeed();
   const context = await newContext(seed, { width, theme });
   await login(context, { email: seed.owner_email, password: seed.password }, seed.base_url);
   const page = await context.newPage();

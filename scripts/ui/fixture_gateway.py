@@ -4,6 +4,55 @@ import os
 import sys
 from scripts.ui.fixture_guard import install, parse_allowed_ports
 
+def _freeze_household_clock(now):
+    """Freeze Python wall clocks process-wide; leave monotonic timers running."""
+    import datetime
+    import time
+
+    real_datetime, real_date = datetime.datetime, datetime.date
+    real_gmtime, real_localtime = time.gmtime, time.localtime
+    real_ctime, real_strftime = time.ctime, time.strftime
+
+    class FrozenDatetime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls.fromtimestamp(now, tz)
+
+        @classmethod
+        def utcnow(cls):
+            return cls.fromtimestamp(now, datetime.timezone.utc).replace(tzinfo=None)
+
+        @classmethod
+        def today(cls):
+            return cls.now()
+
+    class FrozenDate(real_date):
+        @classmethod
+        def today(cls):
+            return cls.fromtimestamp(now)
+
+    replacements = [
+        (time, "time", lambda: float(now)),
+        (time, "time_ns", lambda: int(now * 1_000_000_000)),
+        (time, "gmtime", lambda seconds=None: real_gmtime(now if seconds is None else seconds)),
+        (time, "localtime", lambda seconds=None: real_localtime(now if seconds is None else seconds)),
+        (time, "ctime", lambda seconds=None: real_ctime(now if seconds is None else seconds)),
+        (time, "strftime", lambda fmt, value=None: real_strftime(fmt, real_localtime(now) if value is None else value)),
+        (datetime, "datetime", FrozenDatetime),
+        (datetime, "date", FrozenDate),
+    ]
+    aliases = {id(getattr(module, name)): replacement for module, name, replacement in replacements}
+    # Rewrite existing module-level aliases regardless of their spelling or origin.
+    for module in list(sys.modules.values()):
+        for name, value in list(vars(module).items()) if module is not None else ():
+            replacement = aliases.get(id(value))
+            if replacement is not None:
+                setattr(module, name, replacement)
+    # Updating the canonical modules also covers every subsequent Python import.
+    for module, name, replacement in replacements:
+        setattr(module, name, replacement)
+
+
 port, engine_port = map(int, sys.argv[1:])
 install(
     {
@@ -17,39 +66,10 @@ install(
 )
 
 if os.environ.get("UI_SEED_PROFILE") == "household":
-    # Serve the seeded instant, not the wall clock, so age and window logic matches
-    # the fixed data. Only repo modules are frozen; the event loop keeps real time.
-    import time as _time
-
     from scripts.ui.household_seed import FIXED_NOW
 
-    class _FrozenTime:
-        def __getattr__(self, name):
-            return getattr(_time, name)
-
-        @staticmethod
-        def time():
-            return int(os.environ.get("UI_HOUSEHOLD_NOW") or FIXED_NOW) + 0.0
-
-    import datetime as _datetime
-
-    class _FrozenDatetime(_datetime.datetime):
-        @classmethod
-        def now(cls, tz=None):
-            return cls.fromtimestamp(_FrozenTime.time(), tz)
-
-        @classmethod
-        def utcnow(cls):
-            return cls.fromtimestamp(_FrozenTime.time(), _datetime.timezone.utc).replace(tzinfo=None)
-
-    import proxy  # noqa: F401  (load repo modules before freezing them)
-
-    for _module in list(sys.modules.values()):
-        _file = getattr(_module, "__file__", None) or ""
-        if getattr(_module, "time", None) is _time and "/venv/" not in _file and "scripts/ui" not in _file and _file.startswith(os.environ["PYTHONPATH"]):
-            _module.time = _FrozenTime()
-        if getattr(_module, "datetime", None) is _datetime.datetime and _file.startswith(os.environ["PYTHONPATH"]) and "/venv/" not in _file and "scripts/ui" not in _file:
-            _module.datetime = _FrozenDatetime
+    _freeze_household_clock(int(os.environ.get("UI_HOUSEHOLD_NOW") or FIXED_NOW))
+    import proxy  # noqa: F401
     # Keep the profile's thirty-day operational history across startup pruning.
     from gateway import receipt_store, media_jobs, media_delivery
     from pathlib import Path

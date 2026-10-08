@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 
+import json
 import os
 from pathlib import Path
 import signal
@@ -69,6 +70,10 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
             env['UI_HOUSEHOLD_MANIFEST_PATH'] = os.environ['UI_HOUSEHOLD_MANIFEST_PATH']
         subprocess.run([sys.executable, '-m', 'scripts.ui.household_seed', str(state), str(PORT), SEED_SCENARIO],
                        cwd=state, env=env, check=True)
+        manifest_path = Path(env.get('UI_HOUSEHOLD_MANIFEST_PATH', state / 'household-manifest.json'))
+        manifest = json.loads(manifest_path.read_text())
+        manifest['fixture_state'] = state.name
+        manifest_path.write_text(json.dumps(manifest))
     try:
         for module, port in [('scripts.ui.fake_engine:app', ENGINE_PORT), ('proxy:app', PORT)]:
             log = (state / f'{port}.log').open('w')
