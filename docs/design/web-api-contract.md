@@ -1134,12 +1134,32 @@ A receipt for a request that a spending limit refused carries:
   are refused until an owner settles it). It is never reported as `0` in
   these cases. A ledger file that does not exist yet means no paid request has
   reserved spend, which the barrier also counts as `0`.
+- Like the barrier, a `reserved` charge that has expired, has no owning
+  process generation, or belongs to another process generation counts as an
+  unreconciled charge, so the spend is unknown (`needs_reconciliation`).
 - `resets_at` (epoch seconds): for `monthly`, the start of the next UTC month.
   For `daily`, the rolling window has no single reset; this is when the oldest
-  counted charge leaves the window and the spend first drops. `null` when no
-  charge is counted or the spend is unknown.
+  counted charge leaves the window and the spend first drops. Always `null`
+  when the spend is unknown; for `daily` also `null` when no charge is counted.
 - On `/me/api/home` this is the member's own plan (the plan their keys
   inherit). The spend is the plan's total across everyone on it, because the
   caps are shared; it names no person and no request.
 - Provider and global caps (owner settings) also refuse requests; they are not
   part of `plan_spend`. A refused receipt names the limit (see `refusal`).
+
+### Accepted limits of these member facts
+
+- **Shared plan totals.** `plan_spend` on `/me/api/home` shows the plan's
+  total spend and the daily `resets_at` (the time of the plan's oldest charge
+  in the last 24 hours, plus 24 hours). On a plan with very few members this
+  hints at when and how much others on the same plan spent. This is accepted:
+  the caps are shared, and a member cannot understand a refusal without the
+  shared total. No person, request or provider is named.
+- **`/v1/decisions` (TypeSafe) refusals.** Those receipts are a separate type
+  and carry `error_code: "budget_exceeded"` without `refusal.limit`.
+- **Health endpoints that answer 404/405** project `status: "unknown"` with
+  `evidence.kind: "no_response"` (unchanged earlier behavior): the gateway
+  cannot tell a missing health route from a down service.
+- **Same-second evidence.** When two sources observed a service in the same
+  second, a check that saw it ready wins over a busy/degraded row; otherwise
+  the source merged last wins.
