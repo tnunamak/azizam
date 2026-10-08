@@ -306,3 +306,39 @@ export function homeVerdict(tiles: HomeCapability[]): {
   return { tone, text: `Ready, except ${joinCapabilityNames(names)}.` };
 }
 
+
+export interface SpendingNotice {
+  message: string;
+  at: number;
+  requestId: string;
+  model: string | null;
+}
+
+/**
+ * The gateway refuses paid requests once an access plan's allowance is used,
+ * and says so in the receipt's warnings. Show that sentence, never a guess.
+ */
+export function spendingNotice(
+  receipts: Array<
+    HomeReceipt & { warnings?: string[] | null; accepted_at_ms?: number | null }
+  >,
+  nowSeconds = Date.now() / 1000,
+): SpendingNotice | null {
+  for (const receipt of receipts) {
+    if (String(receipt.status ?? "").toLowerCase() !== "rejected") continue;
+    const warning = (receipt.warnings ?? []).find((text) =>
+      /allowance|spending|cap\b/i.test(text),
+    );
+    const at = receipt.accepted_at_ms
+      ? receipt.accepted_at_ms / 1000
+      : (receipt._stored_at ?? null);
+    if (!warning || at == null || nowSeconds - at > 86_400) continue;
+    return {
+      message: warning,
+      at,
+      requestId: receipt.request_id,
+      model: receipt.requested_model ?? null,
+    };
+  }
+  return null;
+}

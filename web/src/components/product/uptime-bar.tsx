@@ -19,34 +19,55 @@ export function UptimeBar({
   series,
   enabled = true,
   label,
+  now,
   className,
 }: {
   series: SeriesPoint[] | undefined;
   enabled?: boolean;
   label: string;
+  /** End of the window in epoch seconds; hours with no sample stay empty. */
+  now?: number | null;
   className?: string;
 }) {
-  const points = (series ?? []).slice(-24);
+  const points = series ?? [];
   if (!points.length) return null;
-  const down = points.filter(([, value]) => value < 1).length;
+  const end = Math.max(now ?? 0, ...points.map(([timestamp]) => timestamp));
+  const slots = Array.from({ length: 24 }, (_, index) => {
+    const start = end - (24 - index) * 3600;
+    const inSlot = points.filter(
+      ([timestamp]) => timestamp > start && timestamp <= start + 3600,
+    );
+    return inSlot.length
+      ? Math.min(...inSlot.map(([, value]) => value))
+      : null;
+  });
+  const known = slots.filter((value): value is number => value !== null);
+  const down = known.filter((value) => value < 1).length;
+  const missing = slots.length - known.length;
   const summary = !enabled
     ? `${label}: turned off`
-    : down
-      ? `${label}: ${down} of the last ${points.length} hours had problems`
-      : `${label}: no problems in the last ${points.length} hours`;
+    : [
+        down
+          ? `${down} of the last 24 hours had problems`
+          : "no problems in the hours checked",
+        missing ? `${missing} hours have no check` : null,
+      ]
+        .filter(Boolean)
+        .join("; ")
+        .replace(/^/, `${label}: `);
   return (
     <span
       role="img"
       aria-label={summary}
       className={cn("flex h-5 min-w-0 items-stretch gap-px", className)}
     >
-      {Array.from({ length: Math.max(0, 24 - points.length) }, (_, index) => (
-        <span key={`empty-${index}`} className="bg-muted flex-1 rounded-xs" />
-      ))}
-      {points.map(([timestamp, value]) => (
+      {slots.map((value, index) => (
         <span
-          key={timestamp}
-          className={cn("flex-1 rounded-xs", segmentClass(value, enabled))}
+          key={index}
+          className={cn(
+            "flex-1 rounded-xs",
+            value === null ? "bg-muted" : segmentClass(value, enabled),
+          )}
         />
       ))}
     </span>

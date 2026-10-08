@@ -68,7 +68,13 @@ import {
   hasHomeCreationContent,
 } from "./home-api";
 import { chatAlias, recipeFor, type Client } from "./recipes";
-import { capabilityTiles, homeVerdict, oldestCheck } from "./presentation";
+import {
+  capabilityTiles,
+  homeVerdict,
+  oldestCheck,
+  spendingNotice,
+} from "./presentation";
+import { Notice } from "@/components/product/notice";
 
 const homeKey = ["account", "home"];
 const setupKey = ["gateway", "setup-progress"];
@@ -1118,6 +1124,8 @@ export default function HomePage() {
       ? capabilityTiles(home.capabilities, home.aliases)
       : [];
   const verdict = homeVerdict(tiles);
+  const notice =
+    home && home.authenticated ? spendingNotice(home.receipts ?? []) : null;
   const check = oldestCheck(tiles);
   const hintFor = useOwnerEngineHints(isOwner && viewer.admin);
   const hints = [
@@ -1184,6 +1192,25 @@ export default function HomePage() {
             >
               {verdict.text}
             </Verdict>
+            {notice ? (
+              <Notice
+                title="Your paid requests are being refused."
+                action={
+                  <a
+                    href={`/r/${encodeURIComponent(notice.requestId)}`}
+                    className="text-link inline-flex min-h-11 items-center font-medium underline-offset-4 hover:underline sm:min-h-0"
+                  >
+                    Open receipt
+                  </a>
+                }
+              >
+                {notice.message} Last refused{" "}
+                <RelativeTime ts={notice.at} fallback="" />.{" "}
+                {isOwner
+                  ? "Raise the cap in the access plan to resume them."
+                  : "Ask the gateway owner to raise the cap."}
+              </Notice>
+            ) : null}
             <Capabilities
               tiles={tiles}
               verdictCheck={check}

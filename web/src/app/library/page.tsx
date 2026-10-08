@@ -424,6 +424,96 @@ function MiniAudioPlayer({
   );
 }
 
+/** The viewer's player: one large play control, a seek bar and both times. */
+function LargeAudioPlayer({
+  src,
+  title,
+  duration,
+  onFailed,
+}: {
+  src: string;
+  title: string;
+  duration?: number | null;
+  onFailed: () => void;
+}) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [time, setTime] = useState(0);
+  const [length, setLength] = useState<number | null>(duration ?? null);
+  const [blocked, setBlocked] = useState(false);
+  return (
+    <div className="flex w-full flex-col items-center gap-5">
+      <audio
+        ref={audioRef}
+        src={src}
+        preload="metadata"
+        aria-label="Generated audio"
+        onError={onFailed}
+        onPlay={(event) => {
+          pauseOtherAudio(event.currentTarget);
+          setBlocked(false);
+          setPlaying(true);
+        }}
+        onPause={() => setPlaying(false)}
+        onEnded={() => setPlaying(false)}
+        onTimeUpdate={(event) => setTime(event.currentTarget.currentTime)}
+        onLoadedMetadata={(event) => {
+          if (Number.isFinite(event.currentTarget.duration))
+            setLength(event.currentTarget.duration);
+        }}
+        className="sr-only"
+      />
+      <Button
+        type="button"
+        size="icon"
+        className="size-16 rounded-full [&_svg:not([class*='size-'])]:size-6"
+        aria-label={`${playing ? "Pause" : "Play"} ${title}`}
+        onClick={async () => {
+          const audio = audioRef.current;
+          if (!audio) return;
+          if (playing) return audio.pause();
+          try {
+            await audio.play();
+          } catch {
+            setBlocked(true);
+          }
+        }}
+      >
+        {playing ? <Pause aria-hidden /> : <Play aria-hidden />}
+      </Button>
+      <div className="flex w-full items-center gap-3">
+        <span className="figures text-muted-foreground w-10 text-right text-xs">
+          {formatDuration(time)}
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={length ?? 0}
+          step={0.1}
+          value={Math.min(time, length ?? 0)}
+          disabled={!length}
+          aria-label="Position"
+          onChange={(event) => {
+            const audio = audioRef.current;
+            if (!audio) return;
+            audio.currentTime = Number(event.target.value);
+            setTime(audio.currentTime);
+          }}
+          className="accent-primary h-11 min-w-0 flex-1 cursor-pointer"
+        />
+        <span className="figures text-muted-foreground w-10 text-xs">
+          {length != null ? formatDuration(length) : "–:––"}
+        </span>
+      </div>
+      {blocked ? (
+        <p role="status" className="text-sm">
+          Playback didn&apos;t start. Try again.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function Preview({
   asset,
   large = false,
@@ -554,7 +644,7 @@ function Preview({
         key={`video-${asset.asset_id}-${retryKey}`}
         src={large || visible ? currentSrc : undefined}
         poster={effectivePosterUrl}
-        preload={large ? "metadata" : "none"}
+        preload={large ? "auto" : "none"}
         autoPlay={!large && visible}
         muted={!large}
         playsInline
@@ -590,14 +680,11 @@ function Preview({
     );
   if (asset.kind === "audio")
     return large && currentSrc ? (
-      <audio
-        controls
+      <LargeAudioPlayer
         src={currentSrc}
-        preload="metadata"
-        onError={() => setMediaFailed(true)}
-        aria-label="Generated audio"
-        onPlay={(event) => pauseOtherAudio(event.currentTarget)}
-        className="w-full max-w-md"
+        title={assetTitle(asset)}
+        duration={asset.duration_s}
+        onFailed={() => setMediaFailed(true)}
       />
     ) : (
       <div className="text-muted-foreground flex h-full flex-col justify-between p-3 pb-16">
@@ -991,7 +1078,7 @@ function CreationViewer({
                 className={cn(
                   "relative flex max-h-full w-full items-center justify-center overflow-hidden",
                   asset.kind === "audio"
-                    ? "bg-card max-w-lg flex-col gap-5 rounded-panel p-6"
+                    ? "bg-card max-w-md flex-col gap-6 rounded-panel px-8 py-10"
                     : "h-full",
                 )}
               >
@@ -1047,12 +1134,23 @@ function CreationViewer({
                 <DialogPrimitive.Title className="min-w-0 text-xl leading-snug font-semibold text-balance break-words">
                   {title}
                 </DialogPrimitive.Title>
-                <DialogPrimitive.Close
-                  className="text-muted-foreground hover:bg-muted hover:text-foreground -mt-1.5 -mr-1.5 hidden size-9 shrink-0 items-center justify-center rounded-control md:flex"
-                  aria-label="Close"
-                >
-                  <X aria-hidden="true" className="size-4" />
-                </DialogPrimitive.Close>
+                <div className="-mt-1.5 -mr-1.5 flex shrink-0 items-center gap-1">
+                  {onDelete ? (
+                    <OverflowMenu label={`Actions for ${title}`}>
+                      <OverflowMenuSeparator />
+                      <OverflowMenuItem danger onSelect={() => onDelete(asset)}>
+                        <Trash2 className="size-4" aria-hidden />
+                        Delete
+                      </OverflowMenuItem>
+                    </OverflowMenu>
+                  ) : null}
+                  <DialogPrimitive.Close
+                    className="text-muted-foreground hover:bg-muted hover:text-foreground hidden size-9 items-center justify-center rounded-control md:flex"
+                    aria-label="Close"
+                  >
+                    <X aria-hidden="true" className="size-4" />
+                  </DialogPrimitive.Close>
+                </div>
               </div>
               <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
                 {person ? (
@@ -1115,15 +1213,6 @@ function CreationViewer({
                       Receipt
                     </a>
                   </Button>
-                ) : null}
-                {onDelete ? (
-                  <OverflowMenu label={`Actions for ${title}`}>
-                    <OverflowMenuSeparator />
-                    <OverflowMenuItem danger onSelect={() => onDelete(asset)}>
-                      <Trash2 className="size-4" aria-hidden />
-                      Delete
-                    </OverflowMenuItem>
-                  </OverflowMenu>
                 ) : null}
               </div>
               {asset.available === false ? (

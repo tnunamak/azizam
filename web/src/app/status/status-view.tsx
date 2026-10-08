@@ -26,7 +26,8 @@ import {
 } from "@/lib/product-api";
 import { availabilityReason } from "@/lib/status-copy";
 import { cn } from "@/lib/cn";
-import { homeVerdict } from "@/app/home/presentation";
+import { homeVerdict, spendingNotice } from "@/app/home/presentation";
+import { Notice } from "@/components/product/notice";
 import type { HomeCapability } from "@/app/home/home-api";
 import { StatusClient } from "./status-client";
 
@@ -73,7 +74,10 @@ function MemberCapability({
   const state = availabilityState(capability.status, capability.reason_code);
   const reason = capability.available
     ? null
-    : availabilityReason(capability.status, capability.reason_code);
+    : (availabilityReason(capability.status, capability.reason_code)?.replace(
+        /^(Busy|Starting|Unavailable)\.\s*/,
+        "",
+      ) ?? null);
   return (
     <li className="flex min-w-0 items-start gap-3 py-3">
       <span
@@ -81,7 +85,7 @@ function MemberCapability({
         aria-label={capability.capability_title ?? "Capability"}
         data-icon-key={capability.icon_key}
         className={cn(
-          "mt-0.5 inline-flex size-8 shrink-0 items-center justify-center rounded-control",
+          "inline-flex size-8 shrink-0 items-center justify-center rounded-control",
           capability.available
             ? cn(meta.tint, meta.tone)
             : "bg-muted text-muted-foreground",
@@ -90,27 +94,26 @@ function MemberCapability({
         <Icon aria-hidden="true" className="size-4" />
       </span>
       <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-          <h3 className="font-semibold">
+        <div className="flex min-w-0 items-baseline justify-between gap-x-3">
+          <h3 className="truncate font-semibold">
             {capability.capability_title ?? "Capability"}
           </h3>
-          <StateLabel state={state} />
+          <StateLabel state={state} className="shrink-0" />
         </div>
-        <p className="text-muted-foreground text-sm">
-          {capability.recommended_model ??
-            capability.title ??
-            "Model details unavailable"}
+        <div className="text-muted-foreground flex min-w-0 flex-wrap items-center gap-x-2 text-sm">
+          <span className="truncate">
+            {capability.recommended_model ??
+              capability.title ??
+              "Model details unavailable"}
+          </span>
           {stamp && stamp.kind === "used" ? (
-            <>
-              {" · "}
-              <EvidenceTime stamp={stamp} />
-            </>
+            <EvidenceTime stamp={stamp} />
           ) : null}
-        </p>
+        </div>
         {reason ? <p className="mt-1 text-sm">{reason}</p> : null}
         {(usableNames.length > 0 || capability.summary) && (
           <details className="text-sm">
-            <summary className="text-muted-foreground hover:text-foreground flex min-h-11 w-fit cursor-pointer items-center lg:min-h-8">
+            <summary className="text-muted-foreground hover:text-foreground flex min-h-11 w-fit cursor-pointer items-center sm:min-h-7">
               Details
             </summary>
             <div className="text-muted-foreground space-y-1 pb-2">
@@ -160,6 +163,7 @@ export function MemberStatus() {
     ? checks.reduce((a, b) => (b.at < a.at ? b : a))
     : null;
   const expired = error instanceof ApiError && error.status === 401;
+  const notice = home ? spendingNotice(home.receipts ?? []) : null;
   const verdict = data
     ? homeVerdict(data.capabilities as unknown as HomeCapability[])
     : null;
@@ -190,7 +194,7 @@ export function MemberStatus() {
             onClick={() => void refetch()}
           >
             <RefreshCcw aria-hidden="true" />
-            {isFetching ? "Checking…" : "Refresh status"}
+            <span className="max-sm:sr-only">{isFetching ? "Checking…" : "Refresh status"}</span>
           </Button>
         </div>
         {verdict ? (
@@ -236,6 +240,23 @@ export function MemberStatus() {
       ) : data ? (
         <div className="grid items-start gap-x-12 gap-y-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,20rem)]">
           <div className="min-w-0 space-y-10">
+            {notice ? (
+              <Notice
+                title="Your paid requests are being refused."
+                action={
+                  <a
+                    href={`/r/${encodeURIComponent(notice.requestId)}`}
+                    className="text-link inline-flex min-h-11 items-center font-medium underline-offset-4 hover:underline sm:min-h-0"
+                  >
+                    Open receipt
+                  </a>
+                }
+              >
+                {notice.message} Last refused{" "}
+                <RelativeTime ts={notice.at} fallback="" />. Ask the gateway
+                owner to raise the cap.
+              </Notice>
+            ) : null}
             {recentFailure && failureCapability ? (
               <section
                 aria-labelledby="your-failure-heading"
@@ -279,7 +300,7 @@ export function MemberStatus() {
                 title="Your capabilities"
               />
               {data.capabilities.length ? (
-                <ul className="divide-y">
+                <ul className="grid gap-x-10 sm:grid-cols-2 [&>li]:border-b">
                   {data.capabilities.map((capability) => (
                     <MemberCapability
                       key={capability.capability}
@@ -308,6 +329,13 @@ export function MemberStatus() {
                   const meta = capabilityMeta(capability);
                   const Icon = meta.icon;
                   const bad = failed(receipt);
+                  const running = [
+                    "running",
+                    "accepted",
+                    "queued",
+                    "in_progress",
+                    "pending",
+                  ].includes(String(receipt.status ?? "").toLowerCase());
                   return (
                     <li key={receipt.request_id}>
                       {/* The gateway sends an absolute /ui path; next/link would prefix /ui again. */}
@@ -326,10 +354,14 @@ export function MemberStatus() {
                         <span
                           className={cn(
                             "text-sm",
-                            bad ? "text-danger" : "text-muted-foreground",
+                            bad
+                              ? "text-danger"
+                              : running
+                                ? "text-info"
+                                : "text-muted-foreground",
                           )}
                         >
-                          {bad ? "Failed" : ""}
+                          {bad ? "Failed" : running ? "In progress" : ""}
                         </span>
                         <span className="text-muted-foreground shrink-0 text-xs">
                           <RelativeTime ts={receipt.created_at} fallback="" />

@@ -309,10 +309,14 @@ describe("Home and Library polish", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "Open Ocean sounds" }),
     );
-    expect(await screen.findByRole("dialog")).toBeVisible();
-    expect(screen.getByLabelText("Generated audio")).toHaveAttribute(
-      "controls",
-    );
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toBeVisible();
+    // The viewer draws its own player around the labelled audio element.
+    expect(screen.getByLabelText("Generated audio")).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", { name: "Play Ocean sounds" }),
+    ).toBeVisible();
+    expect(within(dialog).getByRole("slider", { name: "Position" })).toBeVisible();
   });
   it("resolves a supplied poster through the scoped signed-download API", async () => {
     const requests: string[] = [];

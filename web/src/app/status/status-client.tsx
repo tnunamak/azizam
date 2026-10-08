@@ -74,6 +74,8 @@ type EngineView = {
   models: string[];
   queue: string;
   lastError: string | null;
+  /** When the status payload behind this row was generated (epoch seconds). */
+  checkedAt: number | null;
 };
 
 function titleize(value: string): string {
@@ -178,6 +180,7 @@ function enginesFrom(
         models: serviceModels(service),
         queue: valueText(backendExtras?.queue ?? backendExtras?.queue_depth),
         lastError: h?.last_error ?? backend?.last_error ?? null,
+        checkedAt: presentationStatus?.generated_at ?? null,
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -245,7 +248,7 @@ function capabilityHeadline(engines: EngineView[]): string {
 
 type Problem = {
   key: string;
-  layer: "Gateway" | "Engine" | "Provider" | "Hardware";
+  layer: "Gateway" | "Engine" | "Provider" | "Hardware" | "Access plan";
   title: string;
   headline: string;
   tone: Tone;
@@ -256,6 +259,7 @@ type Problem = {
   action?: string;
   disk?: boolean;
   provider?: string;
+  refusals?: RequestRecord[];
 };
 
 function engineProblems(engines: EngineView[]): Problem[] {
@@ -301,10 +305,44 @@ interface RequestRecord {
     status?: string;
     backend?: string;
     intent?: string;
+    warnings?: string[];
   };
   created_at?: number;
   person_label?: string;
   app_label?: string;
+}
+
+
+/** Spending caps the gateway enforced, read from the warnings on refused receipts. */
+function capProblemsFrom(records: RequestRecord[]): Problem[] {
+  const now = Date.now() / 1000;
+  const refusals = records.filter((record) => {
+    if (String(record.receipt?.status ?? "").toLowerCase() !== "rejected")
+      return false;
+    if (record.created_at && now - record.created_at > 86_400) return false;
+    return (record.receipt?.warnings ?? []).some((text) =>
+      /allowance|spending|cap\b/i.test(text),
+    );
+  });
+  if (!refusals.length) return [];
+  // The newest refusal's own sentence explains all of them.
+  const warning =
+    (refusals[0].receipt?.warnings ?? []).find((text) =>
+      /allowance|spending|cap\b/i.test(text),
+    ) ?? "";
+  return [
+    {
+      key: "cap",
+      layer: "Access plan",
+      title: "Paid requests are being refused.",
+      headline: "A spending cap was reached.",
+      tone: "warn",
+      detail: warning,
+      href: "/people?tab=plans",
+      action: "Open access plans",
+      refusals,
+    },
+  ];
 }
 
 function useRecentFailures(enabled: boolean) {
@@ -336,10 +374,12 @@ function ProblemCard({
   problem,
   failures,
   onDiskHelp,
+  primary,
 }: {
   problem: Problem;
   failures: RequestRecord[];
   onDiskHelp: () => void;
+  primary: boolean;
 }) {
   const engine = problem.engines?.length === 1 ? problem.engines[0] : null;
   const engineIds = new Set(
@@ -358,7 +398,10 @@ function ProblemCard({
   ] as string[];
   const latest = failed[0];
   const series = engine?.backend?.history?.status_series;
-  const percent = uptimePercent(series);
+  const percent =
+    engine?.backend?.history?.uptime_pct_24h != null
+      ? Math.round(engine.backend.history.uptime_pct_24h * 10) / 10
+      : uptimePercent(series);
   const trailing = hoursUnhealthy(series);
   const capabilities = capabilityNames(problem.engines ?? []);
   return (
@@ -398,6 +441,7 @@ function ProblemCard({
               <span className="flex items-center gap-3">
                 <UptimeBar
                   series={series}
+                  now={engine?.checkedAt}
                   label={engine?.shortName ?? "Engine"}
                   className="max-w-72 flex-1"
                 />
@@ -408,6 +452,39 @@ function ProblemCard({
                   Not fully up for the last {trailing} hours.
                 </span>
               ) : null}
+            </FactRow>
+          ) : null}
+          {problem.refusals?.length ? (
+            <FactRow label="Refused">
+              <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                {[
+                  ...new Set(
+                    problem.refusals
+                      .map((record) => record.person_label)
+                      .filter(Boolean),
+                  ),
+                ]
+                  .slice(0, 4)
+                  .map((name) => (
+                    <PersonMark key={name} name={name!} size="xs" />
+                  ))}
+                <span>
+                  {problem.refusals.length} request
+                  {problem.refusals.length === 1 ? "" : "s"}, latest{" "}
+                  <RelativeTime
+                    ts={problem.refusals[0].created_at ?? null}
+                    fallback=""
+                  />
+                </span>
+                {problem.refusals[0].receipt?.request_id ? (
+                  <a
+                    href={`/r/${encodeURIComponent(problem.refusals[0].receipt.request_id)}`}
+                    className="text-link font-medium underline-offset-4 hover:underline"
+                  >
+                    Open receipt
+                  </a>
+                ) : null}
+              </span>
             </FactRow>
           ) : null}
           {latest ? (
@@ -438,7 +515,7 @@ function ProblemCard({
         ) : null}
         <div className="flex flex-wrap gap-2">
           {problem.href ? (
-            <Button asChild>
+            <Button asChild variant={primary ? "default" : "outline"}>
               <Link href={problem.href}>
                 {problem.action ?? "Open"}
                 <ChevronRight aria-hidden="true" />
@@ -537,7 +614,10 @@ function EngineRow({
 }) {
   const [open, setOpen] = useState(selected);
   const series = engine.backend?.history?.status_series;
-  const percent = uptimePercent(series);
+  const percent =
+    engine.backend?.history?.uptime_pct_24h != null
+      ? Math.round(engine.backend.history.uptime_pct_24h * 10) / 10
+      : uptimePercent(series);
   const state = engineStateView(engine);
   return (
     <tr
@@ -561,6 +641,7 @@ function EngineRow({
       <td className="hidden w-48 py-2 pr-3 align-middle sm:table-cell">
         <UptimeBar
           series={series}
+          now={engine.checkedAt}
           enabled={engine.service.enabled}
           label={engine.shortName}
         />
@@ -826,17 +907,17 @@ export function StatusClient() {
         ]
       : []),
   ];
+  const failures = useRecentFailures(true);
+  const capProblems = capProblemsFrom(failures.data ?? []);
   const problems = [
     ...loadProblems,
     ...engineProblems(engines),
     ...providerProblems,
+    ...capProblems,
     ...signalProblems,
   ].filter(
     (row, index, rows) =>
       rows.findIndex((candidate) => candidate.key === row.key) === index,
-  );
-  const failures = useRecentFailures(
-    problems.some((problem) => problem.layer === "Engine"),
   );
   const health = observedStatus?.current_health;
   const incomplete = Object.values(health?.incomplete ?? {}).some(
@@ -933,7 +1014,7 @@ export function StatusClient() {
               disabled={statusIsFetching || registryIsFetching}
             >
               <RefreshCcw aria-hidden="true" />
-              {statusIsFetching ? "Refreshing…" : "Refresh"}
+              <span className="max-sm:sr-only">{statusIsFetching ? "Refreshing…" : "Refresh"}</span>
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -978,9 +1059,10 @@ export function StatusClient() {
           {problems.length ? (
             <section aria-labelledby="attention-heading" className="space-y-3">
               <SectionHeading id="attention-heading" title="Needs attention" />
-              {problems.map((problem) => (
+              {problems.map((problem, index) => (
                 <ProblemCard
                   key={problem.key}
+                  primary={index === 0}
                   problem={problem}
                   failures={failures.data ?? []}
                   onDiskHelp={() => setDiskHelpOpen(true)}

@@ -10,11 +10,11 @@ const hues = [
   "bg-person-7",
 ] as const;
 
-/** A person keeps one hue everywhere: the hash of their display name. */
+/** A person keeps one hue everywhere: the djb2 hash of their display name. */
 export function personHue(name: string): (typeof hues)[number] {
   const key = name.trim().toLowerCase();
-  let hash = 0;
-  for (const char of key) hash = (hash * 31 + char.codePointAt(0)!) >>> 0;
+  let hash = 5381;
+  for (const char of key) hash = ((hash << 5) + hash + char.codePointAt(0)!) >>> 0;
   return hues[hash % hues.length];
 }
 
