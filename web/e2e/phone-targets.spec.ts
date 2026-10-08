@@ -325,7 +325,7 @@ test.describe("phone target primitives", () => {
         44,
         44,
       );
-      await expectMinBox(page.getByRole("button", { name: "Go to" }), 44, 44);
+      await expectMinBox(page.getByRole("button", { name: "Search" }), 44, 44);
       await expectMinBox(
         page.getByRole("switch", { name: "Enable access" }),
         44,

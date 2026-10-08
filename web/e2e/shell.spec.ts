@@ -6,7 +6,9 @@ test.afterEach(async ({ page }) => {
 
 const ownerPages = ["Engines", "Providers", "People", "Activity", "Settings"];
 
-test("You navigation keeps Workflows between Models and Try", async ({
+// DESIGN.md "Shell": You is ordered by how often a household member needs
+// each place (Home, Library, Try first); Workflows stays right after Models.
+test("You navigation keeps Workflows right after Models", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -14,11 +16,11 @@ test("You navigation keeps Workflows between Models and Try", async ({
   const navigation = page.getByRole("navigation", { name: "Main navigation" });
   await expect(navigation.getByRole("link")).toHaveText([
     "Home",
+    "Library",
+    "Try",
     "Apps & keys",
     "Models",
     "Workflows",
-    "Try",
-    "Library",
     "Usage",
     "Status",
     ...ownerPages,
@@ -403,11 +405,16 @@ test("phone header navigation has 44px touch targets", async ({ page }) => {
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   const header = page.locator("header").first();
   const navigation = page.getByRole("navigation", { name: "Phone navigation" });
+  // DESIGN.md "Shell": four labelled tabs, the fourth (More) a button that
+  // opens every destination.
   await expect(navigation.getByRole("link")).toHaveText([
     "Home",
-    "Apps & keys",
-    "Status",
+    "Library",
+    "Apps",
   ]);
+  const more = navigation.getByRole("button", { name: "More" });
+  await expect(more).toBeVisible();
+  expect((await more.boundingBox())?.height).toBeGreaterThanOrEqual(44);
   for (const target of [
     header.getByRole("link", { name: /Azizam.*Home/ }),
     header.getByRole("button", { name: /Gateway status:/ }),
