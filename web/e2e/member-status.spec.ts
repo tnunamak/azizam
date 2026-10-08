@@ -1,6 +1,11 @@
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
+// The Home pass-through route can still be fetching when a test ends.
+test.afterEach(async ({ page }) => {
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+});
+
 test("member Status offers sign-in when its account snapshot expires", async ({
   page,
 }) => {
