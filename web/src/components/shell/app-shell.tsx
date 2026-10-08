@@ -459,12 +459,10 @@ function AlertSlot() {
     if (!viewer.admin || canonicalDestinationPath(pathname) !== "/status")
       return;
     const focusSection = () => {
-      const section =
-        window.location.hash === "#engines"
-          ? "Engines"
-          : window.location.hash === "#providers"
-            ? "Providers"
-            : null;
+      // Engines and providers share one layer table on Status.
+      const section = ["#engines", "#providers"].includes(window.location.hash)
+        ? "Engines and providers"
+        : null;
       if (!section) return false;
       const heading = Array.from(
         document.querySelectorAll<HTMLElement>("main h2"),

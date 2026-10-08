@@ -106,8 +106,13 @@ test("provider alerts use explicit enabled and reachability data", async ({
   await action.focus();
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/ui\/status\/?#providers$/);
+  // D1: engines and providers share one section on Status.
   await expect(
-    page.getByRole("heading", { name: "Providers", exact: true, level: 2 }),
+    page.getByRole("heading", {
+      name: "Engines and providers",
+      exact: true,
+      level: 2,
+    }),
   ).toBeFocused();
   await expect(banner).toHaveCount(0);
 });

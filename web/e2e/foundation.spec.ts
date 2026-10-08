@@ -90,13 +90,17 @@ for (const theme of ["light", "dark"] as const) {
           "Page must fit the viewport",
         ).toBe(true);
         if (name === "status") {
-          await page.getByRole("button", { name: "Status actions" }).click();
-          const refresh = page.getByRole("menuitem", {
+          // D1: Refresh is a header action; the menu keeps Technical details.
+          const refresh = page.getByRole("button", {
             name: "Refresh",
             exact: true,
           });
           await expect(refresh).toBeVisible();
           await expect(refresh).toBeEnabled();
+          await page.getByRole("button", { name: "Status actions" }).click();
+          await expect(
+            page.getByRole("menuitem", { name: /Technical details/ }),
+          ).toBeVisible();
           await page.keyboard.press("Escape");
         }
         await page.screenshot({

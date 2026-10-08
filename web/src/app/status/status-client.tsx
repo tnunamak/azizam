@@ -1183,6 +1183,21 @@ export function StatusClient() {
   ]
     .filter(Boolean)
     .join(", ");
+  // A provider-status failure and its retry stay visible even while the
+  // table is folded: an error is not healthy detail (principle 7).
+  const providerError =
+    providers.state === "error" ? (
+      <div role="alert" className="text-destructive text-sm">
+        Provider status couldn’t load: {providers.message}{" "}
+        <button
+          type="button"
+          onClick={providers.refetch}
+          className="text-link font-medium underline underline-offset-4"
+        >
+          Retry providers
+        </button>
+      </div>
+    ) : null;
   const refreshAll = () => {
     void refetchStatus();
     void refetchRegistry();
@@ -1341,7 +1356,7 @@ export function StatusClient() {
               />
               {registryIsPending ? (
                 <Skeleton className="rounded-panel h-48 w-full" />
-              ) : !tableEngines.length && providers.state !== "ready" ? (
+              ) : !tableEngines.length && !providerList.length ? (
                 <Callout
                   severity="info"
                   title="No engines yet"
@@ -1355,6 +1370,7 @@ export function StatusClient() {
                     Connect an engine on this computer, or a provider you pay
                     for.
                   </p>
+                  {providerError}
                 </Callout>
               ) : tableOpen ? (
                 <div className="bg-card rounded-panel border px-4 sm:px-5">
@@ -1402,34 +1418,38 @@ export function StatusClient() {
                       ))}
                     </tbody>
                   </table>
-                  {providers.state === "error" ? (
-                    <div
-                      role="alert"
-                      className="text-destructive border-t py-3 text-sm"
-                    >
-                      Provider status couldn’t load: {providers.message}{" "}
-                      <button
-                        type="button"
-                        onClick={providers.refetch}
-                        className="text-link font-medium underline underline-offset-4"
+                  {providerError ? (
+                    <div className="border-t py-3">{providerError}</div>
+                  ) : providers.state === "ready" && !providerList.length ? (
+                    // The provider layer's empty state, with its next action.
+                    <p className="text-muted-foreground flex flex-wrap items-center gap-x-3 border-t py-3 text-sm">
+                      <span>No remote providers are configured.</span>
+                      <Link
+                        href="/engines"
+                        className="text-link font-medium underline-offset-4 hover:underline max-sm:inline-block max-sm:py-3"
                       >
-                        Retry providers
-                      </button>
-                    </div>
+                        Review connections
+                      </Link>
+                    </p>
                   ) : null}
                 </div>
               ) : (
-                <button
-                  type="button"
-                  onClick={() => setShowAll(true)}
-                  className="bg-card hover:border-input rounded-panel flex min-h-11 w-full flex-wrap items-center justify-between gap-x-3 gap-y-1 border px-5 py-3 text-left text-sm"
-                >
-                  <span>{foldedSummary || "Engines and providers"}</span>
-                  <span className="text-link inline-flex shrink-0 items-center gap-1 font-medium whitespace-nowrap">
-                    Show all
-                    <ChevronRight aria-hidden="true" className="size-4" />
-                  </span>
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setShowAll(true)}
+                    className="bg-card hover:border-input rounded-panel flex min-h-11 w-full flex-wrap items-center justify-between gap-x-3 gap-y-1 border px-5 py-3 text-left text-sm"
+                  >
+                    <span>{foldedSummary || "Engines and providers"}</span>
+                    <span className="text-link inline-flex shrink-0 items-center gap-1 font-medium whitespace-nowrap">
+                      Show all
+                      <ChevronRight aria-hidden="true" className="size-4" />
+                    </span>
+                  </button>
+                  {providerError ? (
+                    <div className="mt-3">{providerError}</div>
+                  ) : null}
+                </>
               )}
             </section>
           </>

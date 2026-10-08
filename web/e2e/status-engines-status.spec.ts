@@ -243,42 +243,55 @@ for (const theme of ["light", "dark"] as const) {
           await expect(
             main.getByText(/Media disk .*above the warning threshold/),
           ).toBeVisible();
-          await page
-            .getByText("2 engines · Show", { exact: true })
+          // D1: while a card is open, the layer table folds to one line of
+          // counts; the disabled engine is counted and listed as Off.
+          await main
+            .getByRole("button", {
+              name: "2 engines ready, 1 off, 1 provider Show all",
+              exact: true,
+            })
             .click();
           await expect(
             main.getByRole("row", { name: /Image-only engine/ }),
           ).toBeVisible();
+          const disabled = main.getByRole("row", {
+            name: /Local image engine/,
+          });
+          await expect(disabled).toContainText("Off");
+          await expect(disabled).not.toContainText("Ready");
           await expect(
-            main.getByRole("row", { name: /Local image engine/ }),
-          ).toHaveCount(0);
-          await page.getByText("Show disabled", { exact: true }).click();
-          await expect(
-            main.getByRole("row", { name: /Local image engine/ }),
-          ).toBeVisible();
-          await expect(
-            main.getByRole("heading", { name: "OpenRouter", exact: true }),
+            main.getByRole("rowheader", { name: "OpenRouter", exact: true }),
           ).toBeVisible();
           await page.getByRole("button", { name: "Status actions" }).click();
-          await expect(
-            page.getByRole("menuitem", { name: /Technical details/ }),
-          ).toHaveAttribute("href", "/status/raw");
+          const details = page.getByRole("menuitem", {
+            name: /Technical details/,
+          });
+          await expect(details).toHaveAttribute("href", "/status/raw");
           await page.keyboard.press("Escape");
-          await expect(
-            page.getByRole("menuitem", { name: "Refresh", exact: true }),
-          ).toHaveCount(0);
+          await expect(details).toHaveCount(0);
         } else if (state === "empty") {
+          // D1 copy: the verdict and the layer's empty state, with its action.
+          await expect(main.getByRole("status")).toContainText(
+            "No engines yet",
+          );
           await expect(
-            main.getByText("No engines configured", { exact: true }),
+            main.getByRole("heading", { name: "No engines yet", level: 2 }),
           ).toBeVisible();
           await expect(
-            main.getByText(/add an engine from Engines/),
-          ).toBeVisible();
+            main.getByRole("link", { name: "Add an engine", exact: true }),
+          ).toHaveAttribute("href", "/ui/engines/");
         } else {
+          // D1 copy: the verdict and a card for the failed status check.
+          await expect(main.getByRole("status")).toContainText(
+            "Couldn’t check status",
+          );
           await expect(
-            main.getByText("Could not check engine status", { exact: true }),
+            main.getByRole("heading", {
+              name: "The gateway did not return engine health",
+            }),
           ).toBeVisible();
-          await expect(main.getByText("Ready", { exact: true })).toHaveCount(0);
+          await expect(main.getByText("Refresh to try again.")).toBeVisible();
+          await expect(main.getByText(/\bready\b/i)).toHaveCount(0);
         }
         await page.screenshot({
           path: `test-results/screens/status-${state}-${theme}-${width}.png`,
@@ -300,13 +313,20 @@ for (const theme of ["light", "dark"] as const) {
           await page.route("**/admin/api/status", (route) =>
             route.fulfill({ json: { status: currentStatus } }),
           );
-          await page.getByRole("button", { name: "Status actions" }).click();
-          await page.getByRole("menuitem", { name: "Refresh", exact: true }).click();
+          // D1: Refresh is a header action, no longer in the menu.
+          await page
+            .getByRole("button", { name: "Refresh", exact: true })
+            .click();
           await expect(
-            main.getByText("Could not check engine status", { exact: true }),
+            main.getByRole("heading", {
+              name: "The gateway did not return engine health",
+            }),
           ).toHaveCount(0);
           await expect(
-            main.getByText("2 engines · Show", { exact: true }),
+            main.getByRole("button", {
+              name: "2 engines ready, 1 off Show all",
+              exact: true,
+            }),
           ).toBeVisible();
         }
       });
@@ -314,19 +334,22 @@ for (const theme of ["light", "dark"] as const) {
   }
 }
 
-test("provider failures are visible and retryable", async ({
-  page,
-}) => {
+test("provider failures are visible and retryable", async ({ page }) => {
   await mockStatusApis(page, { providers: 503 });
   await page.goto("/ui/status/");
+  const main = page.locator("main");
+  // D1: engines and providers share one layer section, folded while a card
+  // is open; the provider failure stays visible outside the fold.
   await expect(
-    page.locator("main").getByRole("heading", { name: "Engines", exact: true }),
+    main.getByRole("heading", { name: "Engines and providers", exact: true }),
   ).toBeVisible();
   await expect(
-    page.locator("main").getByRole("heading", { name: "Providers", exact: true }),
+    main.getByText("Provider status did not load.", { exact: true }),
   ).toBeVisible();
   await expect(
-    page.locator("main").getByText(/Provider status API exists but failed/),
+    main
+      .getByRole("alert")
+      .filter({ hasText: "Provider status couldn’t load" }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Retry providers", exact: true }),
@@ -338,21 +361,32 @@ test("failed refresh removes stale green engine observations", async ({
 }) => {
   await mockStatusApis(page);
   await page.goto("/ui/status/");
-  await expect(
-    page.locator("main").getByText("2 engines · Show", { exact: true }),
-  ).toBeVisible();
+  const main = page.locator("main");
+  // Open the folded layer table so the engines' green states are on screen.
+  await main
+    .getByRole("button", {
+      name: "2 engines ready, 1 off Show all",
+      exact: true,
+    })
+    .click();
+  const engineRows = main
+    .getByRole("row")
+    .filter({ hasText: /engine/i })
+    .filter({ hasNot: page.getByRole("columnheader") });
+  await expect(engineRows.filter({ hasText: "Ready" })).toHaveCount(2);
   await page.route("**/admin/api/status", (route) =>
     route.fulfill({
       status: 503,
       json: { error: { code: "unavailable", message: "Refresh failed" } },
     }),
   );
-  await page.getByRole("button", { name: "Status actions" }).click();
-  await page.getByRole("menuitem", { name: "Refresh", exact: true }).click();
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(
-    page.locator("main").getByText("Could not check engine status", { exact: true }),
+    main.getByRole("heading", {
+      name: "The gateway did not return engine health",
+    }),
   ).toBeVisible();
-  await expect(
-    page.locator("main").getByText("Ready", { exact: true }),
-  ).toHaveCount(0);
+  await expect(engineRows).toHaveCount(3);
+  await expect(engineRows.filter({ hasText: "Ready" })).toHaveCount(0);
+  await expect(main.getByText(/engines? ready/i)).toHaveCount(0);
 });
