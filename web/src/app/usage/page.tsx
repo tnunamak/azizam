@@ -716,7 +716,7 @@ function ReceiptsList({
                 </div>
                 <StatusBadge status={receipt.status} />
                 <span className="hidden text-sm sm:block">
-                  <SummaryCost amount={receipt.costUsd} />
+                  <ReceiptCost receipt={receipt} summary />
                 </span>
                 <ChevronRight
                   aria-hidden="true"
@@ -800,7 +800,7 @@ function ReceiptSheet({
                 />
                 <Detail
                   label="Cost"
-                  value={receipt.costUsd == null ? null : <Money amount={receipt.costUsd} />}
+                  value={<ReceiptCost receipt={receipt} />}
                 />
                 <Detail
                   label="When"
@@ -1337,6 +1337,20 @@ function spendCoverageDetail(summary: UsageSummary) {
   if (summary.paidRequests === null || unknownPaid === null)
     return "Paid request count is unknown.";
   return "";
+}
+
+// A missing cost is unknown unless the receipt says the request stayed local.
+function ReceiptCost({
+  receipt,
+  summary = false,
+}: {
+  receipt: UsageReceipt;
+  summary?: boolean;
+}) {
+  if (receipt.costUsd != null)
+    return <Money amount={receipt.costUsd} summary={summary} />;
+  if (object(receipt.raw).remote === false) return <>No provider charge</>;
+  return <>Cost unknown</>;
 }
 
 function SummaryCost({ amount }: { amount: number | null }) {

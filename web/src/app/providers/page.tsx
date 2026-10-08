@@ -609,9 +609,11 @@ function SpendBar({
   cap?: number | null;
 }) {
   const pct =
-    spent != null && cap != null && cap > 0
-      ? Math.min(100, Math.round((spent / cap) * 100))
-      : 0;
+    spent == null || cap == null
+      ? null
+      : cap > 0
+        ? Math.min(100, Math.round((spent / cap) * 100))
+        : spent > 0 ? 100 : 0;
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-3 text-sm">
@@ -621,7 +623,16 @@ function SpendBar({
           {cap != null ? ` of ${money(cap)}` : ""}
         </span>
       </div>
-      <Progress value={pct} aria-label={`${label} spend`} />
+      {pct == null ? (
+        <p className="text-muted-foreground text-xs">
+          {/* A blank cap means no cap (SE-22), so only spend can be unknown. */}
+          {[spent == null ? "Spend unknown" : null, cap == null ? "No cap set" : null]
+            .filter(Boolean)
+            .join(" · ")}
+        </p>
+      ) : (
+        <Progress value={pct} aria-label={`${label} spend`} />
+      )}
     </div>
   );
 }

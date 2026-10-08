@@ -194,3 +194,29 @@ test.each([
     expect(await screen.findByRole("combobox", { name: "Person" })).toHaveTextContent(label);
   }
 });
+
+test.each([undefined, null])("UA-01 labels an unrecorded receipt cost in summary and details: %s", async (cost) => {
+  renderUsage({
+    receipts: [
+      { request_id: "unknown", capability: "chat", cost_usd: cost },
+      { request_id: "zero", capability: "image", cost_usd: 0 },
+      { request_id: "local", capability: "video", cost_usd: cost, remote: false },
+    ],
+    by_model: [{ model: "unmeasured-model", capability: "chat", requests: 1 }],
+  });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "View recent requests" }));
+  const unknown = screen.getByRole("button", { name: "Receipt details for Chat request" });
+  expect(within(unknown).getByText("Cost unknown")).toBeInTheDocument();
+  const zero = screen.getByRole("button", { name: "Receipt details for Images request" });
+  expect(within(zero).queryByText("Cost unknown")).not.toBeInTheDocument();
+  expect(within(zero).getByText("$0.00")).toBeInTheDocument();
+  const local = screen.getByRole("button", { name: "Receipt details for Video request" });
+  expect(within(local).getByText("No provider charge")).toBeInTheDocument();
+  // Model rows carry no locality, so an unmeasured one stays blank.
+  expect(screen.getAllByText("Cost unknown")).toHaveLength(1);
+  await user.click(unknown);
+  const sheet = screen.getByRole("dialog");
+  expect(within(sheet).getByText("Cost")).toBeVisible();
+  expect(within(sheet).getByText("Cost unknown")).toBeVisible();
+});

@@ -30,3 +30,19 @@ it("retains a measured remote charge", () => {
     ),
   ).toBe("$0.12");
 });
+
+it.each([
+  { cost: 0.12 },
+  { remote_cost: 0.12 },
+  { measured_cost: { amount_usd: 0.12 } },
+  { cost: "0.12" },
+])("TM-08 retains a positive payload charge for a Local result: %j", (payload) => {
+  const expected = typeof payload.cost === "string" ? "0.12" : "$0.12";
+  expect(costFrom(payload, undefined, "Local")).toBe(expected);
+  expect(costFrom(payload, new Response(null, {
+    headers: { "x-litellm-response-cost": "0" },
+  }), "Local")).toBe(expected);
+  expect(costFrom(payload, new Response(null, {
+    headers: { "x-litellm-response-cost": "0.25" },
+  }), "Local")).toBe("$0.25");
+});

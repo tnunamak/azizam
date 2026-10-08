@@ -58,3 +58,43 @@ it("shows exact provider model ids and discloses provider identity", () => {
   ).toBeVisible();
   expect(screen.queryByText("Gateway check")).not.toBeInTheDocument();
 });
+
+it.each([
+  { spent: null, cap: 10, label: "Spend unknown" },
+  { spent: 0, cap: null, label: "No cap set" },
+  { spent: null, cap: null, label: "Spend unknown · No cap set" },
+])("SE-25 omits the percentage bar for $label", ({ spent, cap, label }) => {
+  const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
+  client.setQueryData(["providers"], {
+    providers: [{
+      id: "cost-provider", name: "Cost provider", models: [], allowed_plans: [],
+      spend: { daily_usd: spent, monthly_usd: spent },
+      caps: { daily_usd: cap, monthly_usd: cap },
+    }],
+  });
+  client.setQueryData(["providers", "catalog"], []);
+  client.setQueryData(["providers", "plans"], []);
+  render(<QueryClientProvider client={client}><ProvidersPage /></QueryClientProvider>);
+  const provider = screen.getByText("Provider ID: cost-provider").closest("article")!;
+  expect(provider.querySelector('[role="progressbar"]')).toBeNull();
+  expect(provider.textContent).toContain(label);
+});
+
+it("SE-25 distinguishes positive spend over a zero cap from recorded zero spend", () => {
+  const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity } } });
+  client.setQueryData(["providers"], {
+    providers: [{
+      id: "cost-provider", name: "Cost provider", models: [], allowed_plans: [],
+      spend: { daily_usd: 0, monthly_usd: 1 },
+      caps: { daily_usd: 0, monthly_usd: 0 },
+    }],
+  });
+  client.setQueryData(["providers", "catalog"], []);
+  client.setQueryData(["providers", "plans"], []);
+  render(<QueryClientProvider client={client}><ProvidersPage /></QueryClientProvider>);
+  const provider = screen.getByText("Provider ID: cost-provider").closest("article")!;
+  expect(provider.querySelector('[aria-label="Today spend"]')).toHaveAttribute("aria-valuenow", "0");
+  const monthly = provider.querySelectorAll('[aria-label="This month spend"]');
+  expect(monthly).toHaveLength(2);
+  for (const bar of monthly) expect(bar).toHaveAttribute("aria-valuenow", "100");
+});
