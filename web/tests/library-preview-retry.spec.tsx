@@ -14,7 +14,10 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock("@/lib/product-api", () => ({
-  productApi: { models: async () => ({ models: [], aliases: [] }) },
+  productApi: {
+    home: async () => ({ receipts: [] }),
+    models: async () => ({ models: [], aliases: [] }),
+  },
 }));
 
 afterEach(() => {
@@ -74,7 +77,7 @@ it.each(["rejected", "missing URL", "JSON null", "invalid JSON"])(
   },
 );
 
-it("shows the recorded model ID on the card and in Details when the catalog lacks it", async () => {
+it("names an uncatalogued model readably and keeps the raw id only in Details", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({
     assets: [{
       asset_id: "retired-model",
@@ -101,12 +104,18 @@ it("shows the recorded model ID on the card and in Details when the catalog lack
   const modelFact = Array.from(dialog.querySelectorAll("dt")).find(
     (term) => term.textContent === "Model",
   );
-  expect(modelFact?.nextElementSibling).toHaveTextContent("vendor/retired-model:v1");
+  // Facts show a display name, never the raw id.
+  expect(modelFact?.nextElementSibling).toHaveTextContent(
+    /^Vendor Retired Model V1$/,
+  );
   fireEvent.click(screen.getByText("Details", { selector: "summary" }));
   const modelDetail = Array.from(dialog.querySelectorAll("dl")).find(
     (detail) => detail.querySelector("dt")?.textContent === "Model name",
   );
   expect(modelDetail?.querySelector("dd")).toHaveTextContent("vendor/retired-model:v1");
+  expect(
+    within(modelDetail as HTMLElement).getByText("vendor/retired-model:v1"),
+  ).toHaveClass("font-mono");
   client.clear();
 });
 
@@ -203,10 +212,12 @@ it("pauses every other audio player when a card or drawer starts playing", async
 });
 
 it.each([
-  ["source_unavailable", "source unavailable"],
-  [null, "Preview unavailable"],
-  [undefined, "Preview unavailable"],
-  ["   ", "Preview unavailable"],
+  // Only a confirmed missing or expired file is "no longer stored".
+  ["missing_or_expired", "File no longer stored"],
+  ["source_unavailable", "This file is unavailable."],
+  [null, "This file is unavailable."],
+  [undefined, "This file is unavailable."],
+  ["   ", "This file is unavailable."],
 ])("shows unavailable reason %s with a working retry", async (reason, message) => {
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
     if (String(input).includes("/unavailable/download")) {

@@ -274,7 +274,7 @@ describe("Library media recovery", () => {
     );
     mount();
     await screen.findByRole("button", { name: "Open Saved image" });
-    fireEvent.change(screen.getByPlaceholderText("Search prompts"), {
+    fireEvent.change(screen.getByPlaceholderText("Search your creations"), {
       target: { value: "unavailable search" },
     });
     expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -307,7 +307,6 @@ describe("Library media recovery", () => {
     const { container } = mount();
     await screen.findByRole("button", { name: "Open Saved video" });
     expect(container.querySelector("video[src]")).toBeNull();
-    expect(container.querySelector("video")).not.toHaveAttribute("autoplay");
     act(() =>
       enter(
         [
@@ -319,17 +318,22 @@ describe("Library media recovery", () => {
         {} as IntersectionObserver,
       ),
     );
+    // A posterless tile loads metadata only and shows the frame at 0.1 s on
+    // the media stage; it never plays.
     await waitFor(() =>
-      expect(container.querySelector("video")).toHaveAttribute(
-        "preload",
-        "none",
-      ),
+      expect(container.querySelector("video")).toHaveAttribute("src", "/video.mp4"),
     );
     const preview = container.querySelector("video")!;
-    expect(preview).toHaveAttribute("src", "/video.mp4");
-    expect(preview).toHaveAttribute("autoplay");
-    fireEvent.loadedData(preview);
-    expect(pause).toHaveBeenCalledOnce();
+    expect(preview).toHaveAttribute("preload", "metadata");
+    expect(preview).not.toHaveAttribute("autoplay");
+    expect(preview).toHaveClass("bg-media-stage");
+    Object.defineProperty(preview, "duration", {
+      configurable: true,
+      value: 6,
+    });
+    fireEvent.loadedMetadata(preview);
+    expect(preview.currentTime).toBeCloseTo(0.1);
+    expect(pause).not.toHaveBeenCalled();
   });
   it("HL-06 uses no preload for mounted audio", async () => {
     mockAssets([{ ...image, kind: "audio", duration_s: 12 }]);
@@ -402,7 +406,7 @@ describe("Library media recovery", () => {
     );
     mount();
     await screen.findByRole("button", { name: "Open Saved image" });
-    const input = screen.getByPlaceholderText("Search prompts");
+    const input = screen.getByPlaceholderText("Search your creations");
     for (const value of ["a", "ab", "abc"])
       fireEvent.change(input, { target: { value } });
     expect(requests.filter((row) => row.path.includes("q="))).toHaveLength(0);

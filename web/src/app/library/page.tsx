@@ -31,6 +31,8 @@ import {
   Search,
   Trash2,
   Video,
+  Volume2,
+  VolumeX,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -64,10 +66,18 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useViewer } from "@/components/shell/session";
-import { productApi } from "@/lib/product-api";
+import { productApi, type MemberStatus } from "@/lib/product-api";
 import { api } from "@/lib/api";
+import {
+  MAKING_COPY,
+  inProgressMedia,
+  modelDisplayName,
+  weekLabel,
+  type CapabilityNameRow,
+  type InProgressItem,
+} from "./library-format";
 
-type ModelCatalog = Awaited<ReturnType<typeof productApi.models>>;
+type NameModel = (model: string) => string;
 
 type MediaKind = "image" | "video" | "audio";
 type DateFilter = "all" | "7d" | "30d" | "90d";
@@ -235,20 +245,29 @@ function usePreviewVisible() {
   return { ref, visible };
 }
 
-/** Map the gateway's file reason to plain words; the raw text stays in Details. */
-function unavailableCopy(reason?: string | null): string {
-  const text = reason?.trim().replace(/[_-]+/g, " ") ?? "";
-  if (/missing or expired/i.test(text)) return "File no longer stored";
-  return text || "Preview unavailable";
+/** Only a confirmed missing or expired file is "no longer stored". */
+function confirmedGone(reason?: string | null): boolean {
+  return /missing or expired/i.test(reason?.replace(/[_-]+/g, " ") ?? "");
+}
+
+/**
+ * Plain words for a tile that shows no media; the raw reason stays in Details.
+ * A file the gateway reports unavailable is "unavailable"; a preview that only
+ * failed to load says no more than that.
+ */
+function unavailableCopy(asset: MediaAsset): string {
+  if (confirmedGone(asset.unavailable_reason)) return "File no longer stored";
+  if (asset.available === false) return "This file is unavailable.";
+  return "Preview unavailable";
 }
 
 function UnavailablePreview({
   kind,
-  reason,
+  copy,
   onRetry,
 }: {
   kind: MediaKind;
-  reason?: string | null;
+  copy: string;
   onRetry?: (event: MouseEvent<HTMLButtonElement>) => void;
 }) {
   const Icon = kindIcon(kind);
@@ -257,7 +276,7 @@ function UnavailablePreview({
       <div role="img" aria-label={`${kindLabel(kind)} preview unavailable`}>
         <Icon aria-hidden="true" className="mx-auto size-5" />
       </div>
-      <p className="text-xs">{unavailableCopy(reason)}</p>
+      <p className="text-xs">{copy}</p>
       {onRetry ? (
         <Button
           type="button"
@@ -293,29 +312,49 @@ function absolute(ts: MediaAsset["created_at"]) {
   return ts ? formatAbsoluteUTC(ts) : undefined;
 }
 
-function modelDisplayName(model: string, catalog?: ModelCatalog) {
-  const row = [...(catalog?.aliases ?? []), ...(catalog?.models ?? [])].find(
-    (item) => item.id === model,
-  );
-  return row?.title || row?.display_name || model;
-}
-
 function pauseOtherAudio(current: HTMLAudioElement) {
   current.ownerDocument.querySelectorAll("audio").forEach((audio) => {
     if (audio !== current) audio.pause();
   });
 }
 
-function MiniAudioPlayer({
+/** The one duration chip, shared by video and audio tiles. */
+function DurationChip({
+  icon: Icon,
+  children,
+  className,
+}: {
+  icon: typeof Play;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <span
+      className={cn(
+        "bg-chrome/80 text-chrome-foreground pointer-events-none flex h-6 shrink-0 items-center gap-1 rounded-full px-2 text-xs font-medium",
+        className,
+      )}
+    >
+      <Icon aria-hidden="true" className="size-3" />
+      {children}
+    </span>
+  );
+}
+
+/**
+ * An audio creation has no picture, so its tile is the media stage itself: the
+ * prompt's first words, a duration chip and one play control.
+ */
+function AudioTile({
   src,
   title,
+  text,
   duration,
-  caption,
 }: {
   src: string;
   title: string;
+  text: string;
   duration?: number | null;
-  caption?: string | null;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -338,22 +377,21 @@ function MiniAudioPlayer({
   }, [duration, src]);
 
   const label = isPlaying ? `Pause ${title}` : `Play ${title}`;
-  const durationLabel =
+  const errorText =
     error === "media"
       ? "Audio unavailable"
       : error === "playback"
         ? "Playback didn't start. Try again."
-        : measuredDuration != null &&
-            Number.isFinite(measuredDuration) &&
-            measuredDuration >= 0
-          ? formatDuration(measuredDuration)
-          : null;
+        : null;
+  const durationText =
+    measuredDuration != null &&
+    Number.isFinite(measuredDuration) &&
+    measuredDuration >= 0
+      ? formatDuration(measuredDuration)
+      : null;
 
   return (
-    <div
-      className="absolute right-2 bottom-2 left-2 z-20 flex items-center gap-2.5"
-      onClick={(event) => event.stopPropagation()}
-    >
+    <div className="bg-media-stage relative size-full rounded-media">
       <audio
         ref={audioRef}
         preload="none"
@@ -376,9 +414,10 @@ function MiniAudioPlayer({
       <Button
         type="button"
         size="icon"
-        className="size-11 rounded-full"
+        className="absolute top-1/2 left-1/2 z-20 size-11 -translate-x-1/2 -translate-y-1/2 rounded-full"
         aria-label={label}
-        onClick={async () => {
+        onClick={async (event) => {
+          event.stopPropagation();
           const audio = audioRef.current;
           if (!audio) return;
           if (isPlaying) {
@@ -404,20 +443,22 @@ function MiniAudioPlayer({
       >
         {isPlaying ? <Pause aria-hidden /> : <Play aria-hidden />}
       </Button>
-      <div className="min-w-0 flex-1">
-        {durationLabel ? (
-          <p
-            role={error ? "status" : undefined}
-            className={cn(
-              "figures text-xs font-medium",
-              error === "media" && "text-destructive",
-            )}
-          >
-            {durationLabel}
+      <div className="pointer-events-none absolute inset-x-2 bottom-2 z-20 flex items-end gap-2">
+        <div className="min-w-0 flex-1">
+          {errorText ? (
+            <p
+              role="status"
+              className="text-chrome-foreground text-xs font-medium"
+            >
+              {errorText}
+            </p>
+          ) : null}
+          <p className="text-chrome-foreground line-clamp-2 min-w-0 text-sm font-medium break-words">
+            {text}
           </p>
-        ) : null}
-        {caption ? (
-          <p className="text-muted-foreground truncate text-xs">{caption}</p>
+        </div>
+        {durationText && !errorText ? (
+          <DurationChip icon={AudioLines}>{durationText}</DurationChip>
         ) : null}
       </div>
     </div>
@@ -442,7 +483,7 @@ function LargeAudioPlayer({
   const [length, setLength] = useState<number | null>(duration ?? null);
   const [blocked, setBlocked] = useState(false);
   return (
-    <div className="flex w-full flex-col items-center gap-5">
+    <div data-media-controls className="flex w-full flex-col items-center gap-5">
       <audio
         ref={audioRef}
         src={src}
@@ -507,6 +548,141 @@ function LargeAudioPlayer({
       </div>
       {blocked ? (
         <p role="status" className="text-sm">
+          Playback didn&apos;t start. Try again.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The viewer's video player, built like LargeAudioPlayer: one play control, a
+ * seek bar with both times, and a mute toggle. The video itself is the
+ * focusable stage: Space plays or pauses, the arrow keys seek.
+ */
+function LargeVideoPlayer({
+  src,
+  poster,
+  title,
+  onFailed,
+}: {
+  src: string;
+  poster?: string;
+  title: string;
+  onFailed: () => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [time, setTime] = useState(0);
+  const [length, setLength] = useState<number | null>(null);
+  const [muted, setMuted] = useState(false);
+  const [blocked, setBlocked] = useState(false);
+  async function toggle() {
+    const video = videoRef.current;
+    if (!video) return;
+    if (!video.paused) return video.pause();
+    try {
+      await video.play();
+    } catch {
+      setBlocked(true);
+    }
+  }
+  return (
+    <div className="flex size-full min-h-0 flex-col">
+      <video
+        ref={videoRef}
+        src={src}
+        poster={poster}
+        preload="auto"
+        playsInline
+        tabIndex={0}
+        aria-label={title}
+        onClick={() => void toggle()}
+        onKeyDown={(event) => {
+          const video = event.currentTarget;
+          if (event.key === " ") {
+            event.preventDefault();
+            void toggle();
+          } else if (
+            (event.key === "ArrowLeft" || event.key === "ArrowRight") &&
+            Number.isFinite(video.duration)
+          ) {
+            event.preventDefault();
+            video.currentTime = Math.min(
+              video.duration,
+              Math.max(0, video.currentTime + (event.key === "ArrowLeft" ? -5 : 5)),
+            );
+          }
+        }}
+        onError={onFailed}
+        onPlay={(event) => {
+          pauseOtherAudio(event.currentTarget);
+          setBlocked(false);
+          setPlaying(true);
+        }}
+        onPause={() => setPlaying(false)}
+        onEnded={() => setPlaying(false)}
+        onVolumeChange={(event) => setMuted(event.currentTarget.muted)}
+        onTimeUpdate={(event) => setTime(event.currentTarget.currentTime)}
+        onLoadedMetadata={(event) => {
+          if (Number.isFinite(event.currentTarget.duration))
+            setLength(event.currentTarget.duration);
+        }}
+        className="min-h-0 w-full flex-1 cursor-pointer object-contain"
+      />
+      <div
+        data-media-controls
+        className="text-chrome-foreground flex items-center gap-3 px-3 py-2"
+      >
+        <Button
+          type="button"
+          size="icon"
+          className="size-11 rounded-full"
+          aria-label={`${playing ? "Pause" : "Play"} ${title}`}
+          onClick={() => void toggle()}
+        >
+          {playing ? <Pause aria-hidden /> : <Play aria-hidden />}
+        </Button>
+        <span className="figures w-10 text-right text-xs">
+          {formatDuration(time)}
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={length ?? 0}
+          step={0.1}
+          value={Math.min(time, length ?? 0)}
+          disabled={!length}
+          aria-label="Position"
+          onChange={(event) => {
+            const video = videoRef.current;
+            if (!video) return;
+            video.currentTime = Number(event.target.value);
+            setTime(video.currentTime);
+          }}
+          className="accent-primary h-11 min-w-0 flex-1 cursor-pointer"
+        />
+        <span className="figures w-10 text-xs">
+          {length != null ? formatDuration(length) : "–:––"}
+        </span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label={muted ? "Unmute" : "Mute"}
+          onClick={() => {
+            const video = videoRef.current;
+            if (!video) return;
+            video.muted = !video.muted;
+            setMuted(video.muted);
+          }}
+          className="bg-chrome/70 text-chrome-foreground hover:bg-chrome rounded-full"
+        >
+          {muted ? <VolumeX aria-hidden /> : <Volume2 aria-hidden />}
+        </Button>
+      </div>
+      {blocked ? (
+        <p role="status" className="text-chrome-foreground px-3 pb-2 text-sm">
           Playback didn&apos;t start. Try again.
         </p>
       ) : null}
@@ -587,7 +763,7 @@ function Preview({
     return (
       <UnavailablePreview
         kind={asset.kind}
-        reason={asset.unavailable_reason}
+        copy={unavailableCopy(asset)}
         onRetry={(event) => {
           event.stopPropagation();
           setMediaFailed(false);
@@ -639,30 +815,31 @@ function Preview({
     (!asset.poster_asset_id || !waitingForPoster) &&
     (large || posterUnavailable)
   )
-    return (
+    return large ? (
+      <LargeVideoPlayer
+        key={`video-${asset.asset_id}-${retryKey}`}
+        src={currentSrc}
+        poster={effectivePosterUrl}
+        title={assetTitle(asset)}
+        onFailed={() => setMediaFailed(true)}
+      />
+    ) : (
+      // No poster: load metadata only and show the frame at 0.1 s; the stage
+      // colour keeps a blank frame reading as media, not as a missing file.
       <video
         key={`video-${asset.asset_id}-${retryKey}`}
-        src={large || visible ? currentSrc : undefined}
-        poster={effectivePosterUrl}
-        preload={large ? "auto" : "none"}
-        autoPlay={!large && visible}
-        muted={!large}
+        src={visible ? currentSrc : undefined}
+        preload="metadata"
+        muted
         playsInline
-        onLoadedData={(event) => {
-          if (!large) event.currentTarget.pause();
-        }}
         onLoadedMetadata={(event) => {
           const video = event.currentTarget;
-          if (!large && Number.isFinite(video.duration) && video.duration > 0) {
+          if (Number.isFinite(video.duration) && video.duration > 0) {
             video.currentTime = Math.min(0.1, video.duration / 2);
           }
         }}
         onError={() => setMediaFailed(true)}
-        className={cn(
-          "h-full w-full",
-          large ? "object-contain" : "object-cover",
-        )}
-        controls={large}
+        className="bg-media-stage h-full w-full object-cover"
         aria-label={assetTitle(asset)}
       />
     );
@@ -687,9 +864,8 @@ function Preview({
         onFailed={() => setMediaFailed(true)}
       />
     ) : (
-      <div className="text-muted-foreground flex h-full flex-col justify-between p-3 pb-16">
-        <AudioLines className="text-capability-voice size-5" aria-hidden />
-        {!src && <p className="text-sm">Audio preview unavailable</p>}
+      <div className="bg-media-stage text-chrome-foreground flex h-full items-center justify-center">
+        <AudioLines className="size-8" aria-hidden />
       </div>
     );
   return (
@@ -747,10 +923,6 @@ function usePeople(enabled: boolean, sources: MediaSource[]) {
 /* Grid                                                                */
 /* ------------------------------------------------------------------ */
 
-function startOfDay(date: Date): number {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-}
-
 function toDateValue(ts: MediaAsset["created_at"]): Date | null {
   if (ts == null || ts === "") return null;
   const date =
@@ -758,32 +930,11 @@ function toDateValue(ts: MediaAsset["created_at"]): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function startOfWeek(date: Date): number {
-  const day = (date.getDay() + 6) % 7; // Monday starts the week
-  return startOfDay(date) - day * 86_400_000;
-}
-
-/**
- * Buckets dense enough to fill rows for a household that makes a few things a
- * day: this week, last week, then whole months (Apple Photos' months view).
- */
-function bucketLabel(date: Date | null, now: Date): string {
-  if (!date) return "Undated";
-  const week = startOfWeek(now);
-  const time = date.getTime();
-  if (time >= week) return "This week";
-  if (time >= week - 7 * 86_400_000) return "Last week";
-  return date.toLocaleDateString(undefined, {
-    month: "long",
-    ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
-  });
-}
-
-function groupByDay(assets: MediaAsset[]) {
-  const now = new Date();
+/** Calendar weeks (Monday start) everywhere, newest first as listed. */
+function groupByWeek(assets: MediaAsset[], now: Date) {
   const groups: { label: string; items: MediaAsset[] }[] = [];
   for (const asset of assets) {
-    const label = bucketLabel(toDateValue(asset.created_at), now);
+    const label = weekLabel(toDateValue(asset.created_at), now);
     const last = groups.at(-1);
     if (last?.label === label) last.items.push(asset);
     else groups.push({ label, items: [asset] });
@@ -791,20 +942,20 @@ function groupByDay(assets: MediaAsset[]) {
   return groups;
 }
 
-function AudioTile({ asset, person }: { asset: MediaAsset; person: boolean }) {
-  const title = assetTitle(asset);
+/** Work the gateway accepted and is still making: calm, not clickable. */
+function InProgressTile({ item }: { item: InProgressItem }) {
+  const Icon = kindIcon(item.kind);
   return (
-    <div className="bg-card flex h-full flex-col gap-2 border p-3 pb-16 rounded-media">
-      <AudioLines
-        aria-hidden="true"
-        className={cn(
-          "text-capability-voice size-5 shrink-0",
-          person && "ml-auto",
-        )}
-      />
-      <p className="line-clamp-3 min-w-0 text-sm font-medium break-words">
-        {asset.prompt?.trim() || title}
+    <div className="bg-muted text-muted-foreground flex aspect-square min-w-0 flex-col items-center justify-center gap-2 rounded-media p-3 text-center">
+      <Icon aria-hidden="true" className="size-5" />
+      <p className="text-foreground text-sm font-medium">
+        {MAKING_COPY[item.kind]}
       </p>
+      {item.startedAt != null ? (
+        <p className="text-xs">
+          Started <RelativeTime ts={item.startedAt} fallback="" />
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -813,14 +964,12 @@ function AssetTile({
   asset,
   onOpen,
   everyone,
-  modelCatalog,
   person,
   selected,
 }: {
   asset: MediaAsset;
   onOpen: (asset: MediaAsset) => void;
   everyone: boolean;
-  modelCatalog?: ModelCatalog;
   person: string | null;
   selected: boolean;
 }) {
@@ -836,13 +985,20 @@ function AssetTile({
     >
       <button
         type="button"
+        data-asset-open={asset.asset_id}
         onClick={() => onOpen(asset)}
         className="absolute inset-0 z-10 rounded-media focus-visible:-outline-offset-2"
         aria-label={`Open ${assetTitle(asset)}`}
       />
       <div ref={visibilityRef} className="relative size-full">
         {playableAudio ? (
-          <AudioTile asset={asset} person={Boolean(person && everyone)} />
+          <AudioTile
+            key={asset.download_url}
+            src={asset.download_url!}
+            title={assetTitle(asset)}
+            text={asset.prompt?.trim() || kindLabel(asset.kind)}
+            duration={asset.duration_s}
+          />
         ) : (
           <Preview
             key={`preview-${asset.asset_id}-${asset.download_url}`}
@@ -852,23 +1008,11 @@ function AssetTile({
           />
         )}
         {asset.kind === "video" && asset.available !== false ? (
-          <span className="bg-chrome/80 text-chrome-foreground pointer-events-none absolute right-2 bottom-2 z-20 flex h-6 items-center gap-1 rounded-full px-2 text-xs font-medium">
-            <Play aria-hidden="true" className="size-3" />
+          <DurationChip icon={Play} className="absolute right-2 bottom-2 z-20">
             {asset.duration_s != null && Number.isFinite(asset.duration_s)
               ? formatDuration(asset.duration_s)
               : "Video"}
-          </span>
-        ) : null}
-        {playableAudio ? (
-          <MiniAudioPlayer
-            key={asset.download_url}
-            src={asset.download_url!}
-            title={assetTitle(asset)}
-            duration={asset.duration_s}
-            caption={
-              asset.model ? modelDisplayName(asset.model, modelCatalog) : null
-            }
-          />
+          </DurationChip>
         ) : null}
         {person && everyone ? (
           <PersonMark
@@ -897,7 +1041,7 @@ function MoreFilters({
   setSource,
   sources,
   instanceView,
-  modelCatalog,
+  nameModel,
 }: {
   model: string;
   setModel: (value: string) => void;
@@ -908,7 +1052,7 @@ function MoreFilters({
   setSource: (value: string) => void;
   sources: MediaSource[];
   instanceView: boolean;
-  modelCatalog?: ModelCatalog;
+  nameModel: NameModel;
 }) {
   const active =
     (model !== "all" ? 1 : 0) +
@@ -917,12 +1061,13 @@ function MoreFilters({
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button variant="outline" aria-label="More filters">
+        <Button variant="outline">
           <ListFilter aria-hidden="true" />
-          <span className="max-sm:sr-only">Filters</span>
+          Filters
           {active ? (
             <span className="bg-primary text-primary-foreground figures flex size-5 items-center justify-center rounded-full text-xs">
               {active}
+              <span className="sr-only"> active</span>
             </span>
           ) : null}
         </Button>
@@ -938,7 +1083,7 @@ function MoreFilters({
               <SelectItem value="all">All models</SelectItem>
               {models.map((m) => (
                 <SelectItem key={m} value={m}>
-                  {modelDisplayName(m, modelCatalog)}
+                  {nameModel(m)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -993,8 +1138,7 @@ interface ReceiptCost {
   cost?: { cost_class?: string; usd?: string | number | null } | null;
 }
 
-function costText(receipt: ReceiptCost | undefined): string {
-  if (!receipt) return "Cost not recorded";
+function costText(receipt: ReceiptCost): string {
   const usd = Number(receipt.cost?.usd);
   if (receipt.cost && Number.isFinite(usd) && usd > 0)
     return usd < 0.01 ? "Less than USD 0.01" : `USD ${usd.toFixed(2)}`;
@@ -1021,27 +1165,34 @@ function CreationViewer({
   onSelect,
   onClose,
   everyone,
-  modelCatalog,
+  nameModel,
   person,
   downloading,
   onDownload,
   onDelete,
+  onReturnFocus,
 }: {
   asset: MediaAsset;
   assets: MediaAsset[];
   onSelect: (asset: MediaAsset) => void;
   onClose: () => void;
   everyone: boolean;
-  modelCatalog?: ModelCatalog;
+  nameModel: NameModel;
   person: string | null;
   downloading: boolean;
   onDownload: (asset: MediaAsset) => void;
   onDelete: ((asset: MediaAsset) => void) | null;
+  /** Called with the creation shown last when the viewer closes. */
+  onReturnFocus: (assetId: string) => void;
 }) {
   const index = assets.findIndex((item) => item.asset_id === asset.asset_id);
   const previous = index > 0 ? assets[index - 1] : null;
   const next = index >= 0 && index < assets.length - 1 ? assets[index + 1] : null;
-  const { data: receipt } = useQuery({
+  const {
+    data: receipt,
+    isPending: receiptPending,
+    isError: receiptFailed,
+  } = useQuery({
     queryKey: ["library", "receipt", asset.request_id, everyone],
     enabled: Boolean(asset.request_id),
     queryFn: () =>
@@ -1051,17 +1202,45 @@ function CreationViewer({
     retry: false,
   });
   const created = toDateValue(asset.created_at);
-  const model = asset.model ? modelDisplayName(asset.model, modelCatalog) : "";
+  const model = asset.model ? nameModel(asset.model) : "";
   const title = shortTitle(asset);
   const prompt = asset.prompt?.trim() ?? "";
+  const charge = !asset.request_id
+    ? null
+    : receiptPending
+      ? "Checking…"
+      : receiptFailed || !receipt
+        ? "Couldn’t load the receipt"
+        : costText(receipt);
+  // The note names only what this creation still has.
+  const remains =
+    prompt && asset.request_id
+      ? "The prompt and receipt are below."
+      : prompt
+        ? "The prompt is below."
+        : asset.request_id
+          ? "The receipt is below."
+          : "";
   return (
     <DialogPrimitive.Root open onOpenChange={(open) => !open && onClose()}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="bg-overlay data-[state=open]:animate-in data-[state=open]:fade-in-0 fixed inset-0 z-50" />
         <DialogPrimitive.Content
           aria-describedby={undefined}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            onReturnFocus(asset.asset_id);
+          }}
           onKeyDown={(event) => {
-            if (event.target instanceof HTMLMediaElement) return;
+            const target = event.target;
+            if (target instanceof HTMLMediaElement) return;
+            if (
+              target instanceof Element &&
+              target.closest(
+                "input, textarea, select, [role='slider'], [data-media-controls]",
+              )
+            )
+              return;
             if (event.key === "ArrowLeft" && previous) onSelect(previous);
             if (event.key === "ArrowRight" && next) onSelect(next);
           }}
@@ -1167,23 +1346,25 @@ function CreationViewer({
                   </span>
                 ) : null}
               </p>
+              {asset.available === false ? (
+                <p className="bg-muted rounded-control p-3 text-sm">
+                  {confirmedGone(asset.unavailable_reason)
+                    ? "The gateway no longer stores this file."
+                    : "This file is unavailable."}
+                  {remains ? ` ${remains}` : ""}
+                </p>
+              ) : null}
               <div className="flex flex-wrap gap-2">
                 {asset.available !== false ? (
-                  <Button asChild size="sm" disabled={downloading}>
-                    <a
-                      href={
-                        asset.download_url ??
-                        `/me/api/media/${encodeURIComponent(asset.asset_id)}/download`
-                      }
-                      download
-                      onClick={(event) => {
-                        event.preventDefault();
-                        onDownload(asset);
-                      }}
-                    >
-                      <Download aria-hidden="true" />
-                      {downloading ? "Preparing…" : "Download"}
-                    </a>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={downloading}
+                    aria-busy={downloading || undefined}
+                    onClick={() => onDownload(asset)}
+                  >
+                    <Download aria-hidden="true" />
+                    {downloading ? "Preparing…" : "Download"}
                   </Button>
                 ) : null}
                 <Button
@@ -1215,12 +1396,6 @@ function CreationViewer({
                   </Button>
                 ) : null}
               </div>
-              {asset.available === false ? (
-                <p className="bg-muted rounded-control p-3 text-sm">
-                  The gateway no longer stores this file. The prompt and
-                  receipt are still here.
-                </p>
-              ) : null}
               <dl className="divide-y border-y">
                 <Fact label="Model">{model}</Fact>
                 <Fact label="Created">
@@ -1246,7 +1421,7 @@ function CreationViewer({
                     ? ""
                     : `${(asset.generation_ms / 1000).toFixed(1)} s`}
                 </Fact>
-                <Fact label="Charge">{asset.request_id ? costText(receipt) : "Cost not recorded"}</Fact>
+                {charge ? <Fact label="Charge">{charge}</Fact> : null}
               </dl>
               {prompt && prompt.replace(/[.!?]$/, "") !== title ? (
                 <section>
@@ -1278,7 +1453,17 @@ function CreationViewer({
                     }
                     title={asset.request_id ?? undefined}
                   />
-                  <Detail label="Model name" value={asset.model ?? ""} />
+                  <Detail
+                    label="Model name"
+                    value={
+                      asset.model ? (
+                        <span className="font-mono text-xs">{asset.model}</span>
+                      ) : (
+                        ""
+                      )
+                    }
+                    title={asset.model || undefined}
+                  />
                   <Detail label="Seed" value={asset.seed ?? ""} />
                   {asset.source ? (
                     <Detail label="App" value={asset.source.label} />
@@ -1359,6 +1544,33 @@ function Detail({
 /* Page                                                                */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Return focus to the tile of the creation shown last; if that tile is gone,
+ * to the grid's first tile; else to the page heading.
+ */
+function focusTile(
+  assetId: string,
+  removed: Set<string>,
+  heading: HTMLElement | null,
+) {
+  const tiles = Array.from(
+    document.querySelectorAll<HTMLElement>("[data-asset-open]"),
+  ).filter((tile) => !removed.has(tile.dataset.assetOpen ?? ""));
+  (
+    tiles.find((tile) => tile.dataset.assetOpen === assetId) ??
+    tiles[0] ??
+    heading
+  )?.focus();
+}
+
+const DAY_S = 86_400;
+
+function retentionText(seconds: number) {
+  return seconds % DAY_S === 0
+    ? `${seconds / DAY_S} day${seconds === DAY_S ? "" : "s"}`
+    : `${Math.round(seconds / 3600)} hours`;
+}
+
 export default function LibraryPage() {
   const viewer = useViewer();
   const searchParams = useSearchParams();
@@ -1367,6 +1579,17 @@ export default function LibraryPage() {
     queryKey: ["models", "catalog"],
     queryFn: productApi.models,
   });
+  // The viewer's own payload: in-progress work, their id and their apps.
+  const { data: home } = useQuery({
+    queryKey: ["account", "home"],
+    queryFn: productApi.home,
+    retry: false,
+    refetchInterval: (query) =>
+      inProgressMedia(query.state.data?.receipts).length > 0 ? 15_000 : false,
+  });
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const removedAssetIds = useRef(new Set<string>());
+  const deletingAssetId = useRef<string | null>(null);
   const canChooseOwner = ["owner", "superadmin"].includes(viewer.role);
   const [kind, setKind] = useState("all");
   const [model, setModel] = useState("all");
@@ -1427,7 +1650,13 @@ export default function LibraryPage() {
   } = useInfiniteQuery({
     queryKey: ["library", filters],
     initialPageParam: "",
-    placeholderData: (previous) => previous,
+    // Results stay bound to the person filter that produced them: keep the old
+    // grid while other filters change, but never across a change of person.
+    placeholderData: (previous, previousQuery) =>
+      (previousQuery?.queryKey[1] as { owner?: string } | undefined)?.owner ===
+      owner
+        ? previous
+        : undefined,
     queryFn: ({ pageParam, signal }) =>
       mediaRequest<MediaResponse>(
         mediaPath +
@@ -1437,21 +1666,32 @@ export default function LibraryPage() {
     getNextPageParam: (last: MediaResponse) => last.next_cursor ?? undefined,
     retry: false,
   });
-  const lastLoadedPages = useRef<MediaResponse[]>([]);
+  const lastLoadedPages = useRef<{ owner: string; pages: MediaResponse[] }>({
+    owner,
+    pages: [],
+  });
   useEffect(() => {
-    if (data && !isPlaceholderData) lastLoadedPages.current = data.pages;
-  }, [data, isPlaceholderData]);
+    if (data && !isPlaceholderData)
+      lastLoadedPages.current = { owner, pages: data.pages };
+  }, [data, isPlaceholderData, owner]);
   const mediaPages = useMemo(
-    () => data?.pages ?? (isError ? lastLoadedPages.current : []),
-    [data?.pages, isError],
-  );
-  const assets = useMemo(
     () =>
-      mediaPages
-        .flatMap((page) => page.assets)
-        .filter((item) => isMediaKind(item.kind)),
-    [mediaPages],
+      data?.pages ??
+      (isError && lastLoadedPages.current.owner === owner
+        ? lastLoadedPages.current.pages
+        : []),
+    [data?.pages, isError, owner],
   );
+  const assets = useMemo(() => {
+    const listed = mediaPages
+      .flatMap((page) => page.assets)
+      .filter((item) => isMediaKind(item.kind));
+    // A video's poster is listed as its own image; it is part of the video.
+    const posters = new Set(
+      listed.map((item) => item.poster_asset_id).filter(Boolean),
+    );
+    return listed.filter((item) => !posters.has(item.asset_id));
+  }, [mediaPages]);
   const sources = useMemo(() => mediaPages[0]?.sources ?? [], [mediaPages]);
   const { people, lookup: personFor } = usePeople(canChooseOwner, sources);
   const viewerPerson = viewer.name && viewer.name !== "Your account" ? viewer.name : null;
@@ -1520,17 +1760,109 @@ export default function LibraryPage() {
     () => assets.filter((asset) => asset.available === false),
     [assets],
   );
-  const groups = useMemo(() => groupByDay(storedAssets), [storedAssets]);
-  // Owners can see how long the gateway keeps files (images.cache_ttl).
+  const groups = useMemo(
+    () => groupByWeek(storedAssets, new Date()),
+    [storedAssets],
+  );
+  // The viewer's own media requests still running. They show only where the
+  // viewer's own work belongs and when no filter they cannot answer is set.
+  const runningMedia = useMemo(
+    () => inProgressMedia(home?.receipts),
+    [home?.receipts],
+  );
+  const inProgress = useMemo(
+    () =>
+      ["default", "everyone", "mine"].includes(owner) &&
+      model === "all" &&
+      source === "all" &&
+      !debouncedSearch.trim()
+        ? runningMedia.filter((item) => kind === "all" || item.kind === kind)
+        : [],
+    [debouncedSearch, kind, model, owner, runningMedia, source],
+  );
+  // When running work finishes, its creation is now in the list.
+  const runningCount = useRef(runningMedia.length);
+  useEffect(() => {
+    if (runningMedia.length < runningCount.current) void refetch();
+    runningCount.current = runningMedia.length;
+  }, [refetch, runningMedia.length]);
+  // Owners can see how long the gateway keeps pictures (images.cache_ttl).
   const { data: gatewayStatus } = useQuery({
     queryKey: ["foundation", "health"],
     queryFn: api.status,
-    enabled: canChooseOwner && goneAssets.length > 0,
+    enabled: canChooseOwner,
     retry: false,
   });
   const retention = (
     gatewayStatus as { budgets?: { images?: { cache_ttl?: number | null } } } | undefined
   )?.budgets?.images?.cache_ttl;
+  const imageTtl =
+    typeof retention === "number" && retention > 0 ? retention : null;
+  const expiringImages = useMemo(() => {
+    if (!imageTtl) return 0;
+    const now = Date.now();
+    return storedAssets.filter((asset) => {
+      const created = asset.kind === "image" && toDateValue(asset.created_at);
+      if (!created) return false;
+      const expires = created.getTime() + imageTtl * 1000;
+      return expires > now && expires <= now + 3 * DAY_S * 1000;
+    }).length;
+  }, [imageTtl, storedAssets]);
+  const goneConfirmed = goneAssets.every((asset) =>
+    confirmedGone(asset.unavailable_reason),
+  );
+  const goneImages = goneAssets.some((asset) => asset.kind === "image");
+  // Display names: the catalog, else a capability's recommended name (from
+  // home, or the status payload if another page already loaded it).
+  const cachedStatus = queryClient.getQueryData<MemberStatus>([
+    "account",
+    "status",
+  ]);
+  const nameCapabilities: CapabilityNameRow[] = [
+    ...(Array.isArray(home?.capabilities) ? home.capabilities : []),
+    ...(Array.isArray(cachedStatus?.capabilities)
+      ? cachedStatus.capabilities
+      : []),
+  ];
+  const nameModel: NameModel = (id) =>
+    modelDisplayName(id, modelCatalog, nameCapabilities);
+  // Delete only what the viewer made. In a person or "Everyone" view that must
+  // be shown by the creation's app; if it cannot be, Delete is not offered.
+  const viewerUserId = home?.user?.id ?? null;
+  const viewerAppIds = new Set(
+    (Array.isArray(home?.apps) ? home.apps : []).map((app) => app.id),
+  );
+  function madeByViewer(asset: MediaAsset) {
+    if (!instanceView) return true;
+    const appId =
+      asset.source?.app_id ??
+      (asset.source?.id?.startsWith("app:")
+        ? asset.source.id.slice(4)
+        : undefined);
+    if (appId && viewerAppIds.has(appId)) return true;
+    const ownerId = sources.find(
+      (item) =>
+        (appId && item.app_id === appId) ||
+        (asset.source?.id && item.id === asset.source.id),
+    )?.owner_user_id;
+    return Boolean(viewerUserId && ownerId && ownerId === viewerUserId);
+  }
+  function returnFocus(assetId: string) {
+    // After a delete, the confirmation still holds focus; the page returns
+    // focus once it closes (below).
+    if (deletingAssetId.current) return;
+    focusTile(assetId, removedAssetIds.current, headingRef.current);
+  }
+  useEffect(() => {
+    if (confirming || !deletingAssetId.current) return;
+    const assetId = deletingAssetId.current;
+    deletingAssetId.current = null;
+    const timer = window.setTimeout(
+      () => focusTile(assetId, removedAssetIds.current, headingRef.current),
+      0,
+    );
+    return () => window.clearTimeout(timer);
+  }, [confirming]);
   const retryRetainedError = () => {
     if (isFetchNextPageError) {
       void fetchNextPage();
@@ -1554,7 +1886,8 @@ export default function LibraryPage() {
         },
       );
     },
-    onSuccess: () => {
+    onSuccess: (_result, asset) => {
+      removedAssetIds.current.add(asset.asset_id);
       toast.success("Deleted from your library.");
       closeAsset();
       void queryClient.invalidateQueries({ queryKey: ["library"] });
@@ -1581,17 +1914,23 @@ export default function LibraryPage() {
     : null;
   return (
     <div>
-      <header className="mb-5 flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
-        <h1 className="text-3xl font-semibold tracking-tight">
+      {/* PageHeader's title and count, with search in the actions slot; the
+          heading keeps a ref so the viewer can return focus to it. */}
+      <header className="mb-5 flex min-h-10 flex-wrap items-center justify-between gap-x-6 gap-y-3">
+        <h1
+          ref={headingRef}
+          tabIndex={-1}
+          className="text-2xl font-semibold tracking-tight"
+        >
           Library
           {hasLoadedAssets && !hasNextPage && !activeFilters ? (
-            <span className="text-muted-foreground figures ml-3 text-xl font-normal">
+            <span className="text-subtle-foreground figures ml-2.5 text-lg font-normal">
               {assets.length}
             </span>
           ) : null}
         </h1>
         <label className="relative block w-full sm:w-72">
-          <span className="sr-only">Search prompts</span>
+          <span className="sr-only">Search your creations</span>
           <Search
             className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
             aria-hidden
@@ -1599,7 +1938,7 @@ export default function LibraryPage() {
           <Input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search prompts"
+            placeholder="Search your creations"
             className="pl-9"
           />
         </label>
@@ -1649,7 +1988,7 @@ export default function LibraryPage() {
           setSource={setSource}
           sources={sources}
           instanceView={instanceView}
-          modelCatalog={modelCatalog}
+          nameModel={nameModel}
         />
         {activeFilters ? (
           <Button variant="ghost" onClick={clearFilters}>
@@ -1685,18 +2024,21 @@ export default function LibraryPage() {
       {showInitialError ? (
         <ErrorState
           heading="Couldn’t load your library"
-          message="Your library could not be loaded. Try again."
+          message={null}
           onRetry={() => void refetch()}
           retrying={isFetching}
         />
       ) : null}
-      {!isLoading && !showInitialError && assets.length === 0 ? (
+      {!isLoading &&
+      !showInitialError &&
+      assets.length === 0 &&
+      inProgress.length === 0 ? (
         <EmptyState
           icon={activeFilters ? Search : ImageIcon}
           title={activeFilters ? "No matching creations" : "No creations yet"}
           description={
             activeFilters
-              ? "Nothing matches these filters."
+              ? "Clear filters to see more."
               : "Images, video and audio made through the gateway appear here."
           }
           action={
@@ -1712,21 +2054,37 @@ export default function LibraryPage() {
           }
         />
       ) : null}
-      {!isLoading && !showInitialError && storedAssets.length > 0 ? (
+      {!isLoading && !showInitialError && expiringImages > 0 ? (
+        <p className="mb-4 text-sm">
+          {expiringImages === 1
+            ? "1 picture will be removed within 3 days. Download it to keep it."
+            : `${expiringImages} pictures will be removed within 3 days. Download the ones to keep.`}
+        </p>
+      ) : null}
+      {!isLoading &&
+      !showInitialError &&
+      (storedAssets.length > 0 || inProgress.length > 0) ? (
         <div aria-busy={updating} className="space-y-7">
-          {groups.map((group) => (
+          {(inProgress.length > 0 && groups[0]?.label !== "This week"
+            ? [{ label: "This week", items: [] as MediaAsset[] }, ...groups]
+            : groups
+          ).map((group, index) => (
             <section key={group.label} aria-label={group.label}>
               <h2 className="text-muted-foreground mb-2 text-sm font-semibold">
                 {group.label}
               </h2>
               <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+                {index === 0
+                  ? inProgress.map((item) => (
+                      <InProgressTile key={item.id} item={item} />
+                    ))
+                  : null}
                 {group.items.map((asset) => (
                   <AssetTile
                     key={asset.asset_id}
                     asset={asset}
                     onOpen={openAsset}
                     everyone={instanceView}
-                    modelCatalog={modelCatalog}
                     person={instanceView ? personFor(asset) : null}
                     selected={selected?.asset_id === asset.asset_id}
                   />
@@ -1738,21 +2096,23 @@ export default function LibraryPage() {
       ) : null}
       {!isLoading && !showInitialError && goneAssets.length > 0 ? (
         <section
-          aria-label="Files no longer stored"
+          aria-label={
+            goneConfirmed ? "Files no longer stored" : "Unavailable files"
+          }
           className={cn(storedAssets.length > 0 && "mt-10 border-t pt-6")}
         >
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
             <p className="text-sm" role="status">
               {goneAssets.length === 1
-                ? "1 file is no longer stored."
-                : `${goneAssets.length} files are no longer stored.`}{" "}
-              {typeof retention === "number" && retention > 0 ? (
+                ? goneConfirmed
+                  ? "1 file is no longer stored."
+                  : "1 file is unavailable."
+                : goneConfirmed
+                  ? `${goneAssets.length} files are no longer stored.`
+                  : `${goneAssets.length} files are unavailable.`}{" "}
+              {imageTtl && goneImages ? (
                 <span className="text-muted-foreground">
-                  The gateway keeps files for{" "}
-                  {retention % 86_400 === 0
-                    ? `${retention / 86_400} day${retention === 86_400 ? "" : "s"}`
-                    : `${Math.round(retention / 3600)} hours`}
-                  .
+                  The gateway keeps pictures for {retentionText(imageTtl)}.
                 </span>
               ) : (
                 <span className="text-muted-foreground">
@@ -1779,7 +2139,6 @@ export default function LibraryPage() {
                   asset={asset}
                   onOpen={openAsset}
                   everyone={instanceView}
-                  modelCatalog={modelCatalog}
                   person={instanceView ? personFor(asset) : null}
                   selected={selected?.asset_id === asset.asset_id}
                 />
@@ -1834,7 +2193,7 @@ export default function LibraryPage() {
           onSelect={openAsset}
           onClose={closeAsset}
           everyone={instanceView}
-          modelCatalog={modelCatalog}
+          nameModel={nameModel}
           person={selectedPerson}
           downloading={downloadingAssetId === selected.asset_id}
           onDownload={(asset) => {
@@ -1854,7 +2213,10 @@ export default function LibraryPage() {
               },
             );
           }}
-          onDelete={!instanceView ? (asset) => setConfirming(asset) : null}
+          onDelete={
+            madeByViewer(selected) ? (asset) => setConfirming(asset) : null
+          }
+          onReturnFocus={returnFocus}
         />
       ) : null}
       <ConfirmDialog
@@ -1864,7 +2226,14 @@ export default function LibraryPage() {
         description="This removes the creation from your library. Copies you downloaded are not affected."
         confirmLabel="Delete"
         onConfirm={async () => {
-          if (confirming) await deleteMutation.mutateAsync(confirming);
+          if (!confirming) return;
+          deletingAssetId.current = confirming.asset_id;
+          try {
+            await deleteMutation.mutateAsync(confirming);
+          } catch (error) {
+            deletingAssetId.current = null;
+            throw error;
+          }
         }}
       />
     </div>
