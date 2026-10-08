@@ -34,6 +34,18 @@ An opaque JSON response without such a declaration remains unknown. These
 fields are operator-authored registry data and apply after a registry edit;
 changing bootstrap seeds does not overwrite an existing service record.
 
+GPU memory and RSS are attributed to services from the same records. A service
+owns the processes in its `lifecycle.driver_config.unit` cgroup; a service with
+no unit and a local `host`/`port` owns the process listening on that port.
+Other processes are reported as `desktop`, and `__unattributed` is device-used
+memory minus the sum of the per-process rows. A service can declare
+`vram_budget_key` (a variable in the `AZIZAM_GPU_BUDGET_PATH` script, e.g.
+`GPU1_LLM`) to be compared with that budget on the status page. The sampler
+writes the same rows to `metrics.db` as `service_vram_mb` (tags `gpu`,
+`service`; slow tier, once a minute). Each 10 s tick it also writes
+`vram_free_mb` and `gpu_desktop_alloc_failures` (count of new kernel
+"Failed to allocate NVKMS memory" lines; no row when the journal is unreadable).
+
 | Env var | What it controls | Default |
 |---|---|---|
 | `AZIZAM_GPU_BUDGET_PATH` | Path to a shell script that exports GPU VRAM budget variables (e.g. `GPU0_TOTAL`, `GPU0_DESKTOP`). When unset, budget data is omitted from `/v1/status`. | unset (feature off) |

@@ -9,8 +9,10 @@ Reuses probe helpers from ``status_endpoint`` to avoid duplicating logic.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
-from typing import Optional
+from collections import Counter
+from typing import Any, Callable, Mapping, Optional
 
 import metrics_store
 import status_endpoint  # reuse existing probes
@@ -29,7 +31,56 @@ _state = {
     "last_hour_rolled": 0,
     "last_prune_day": 0,
     "request_writes": 0,
+    # NVKMS failure lines seen in the last journal window; None until the first tick.
+    "nvkms_seen": None,
 }
+
+# The NVIDIA driver logs "Failed to allocate NVKMS memory for GEM object" when the
+# desktop compositor cannot get GPU memory. Each tick re-reads this much journal and
+# counts lines not seen on the previous tick, so late-arriving entries are not lost.
+_NVKMS_WINDOW_S = 60
+_NVKMS_GPU_ID_RE = re.compile(r"\[GPU ID (0x[0-9a-fA-F]+)\]")
+
+
+def _nvkms_failure_lines() -> Optional[Counter]:
+    """Kernel-journal NVKMS error lines of the last window; None if unreadable."""
+    rc, out, _ = status_endpoint._run(
+        ["journalctl", "-k", "--no-pager", "-o", "short-unix", "--since", f"@{int(time.time()) - _NVKMS_WINDOW_S}"],
+        timeout=2.0,
+    )
+    if rc != 0:
+        return None
+    return Counter(
+        line for line in out.splitlines()
+        if "nvkms" in line.lower() and ("error" in line.lower() or "fail" in line.lower())
+    )
+
+
+def _new_nvkms_failures() -> Optional[Counter]:
+    """NVKMS failure lines not seen on the previous call; None if the journal is unreadable.
+
+    The first successful call only sets the baseline, so history is not counted.
+    """
+    current = _nvkms_failure_lines()
+    if current is None:
+        return None
+    seen, _state["nvkms_seen"] = _state["nvkms_seen"], current
+    return Counter() if seen is None else current - seen
+
+
+def _gpu_index_by_drm_id() -> dict[int, int]:
+    """nvidia-drm "GPU ID" (PCI bus << 8 | slot, domain 0 only) -> nvidia-smi index.
+
+    Checked on this host: GPU ID 0x00000100 is the card at 01:00.0 (index 0).
+    """
+    rc, out, _ = status_endpoint._run(["nvidia-smi", "--query-gpu=index,pci.bus_id", "--format=csv,noheader"])
+    ids: dict[int, int] = {}
+    for line in out.splitlines() if rc == 0 else []:
+        idx, _, bus_id = (p.strip() for p in line.partition(","))
+        m = re.fullmatch(r"0*:([0-9a-fA-F]{2}):([0-9a-fA-F]{2})\.\d", bus_id)
+        if idx.isdigit() and m:
+            ids[(int(m.group(1), 16) << 8) | int(m.group(2), 16)] = int(idx)
+    return ids
 
 
 def _emit_fast(writer, now: int) -> None:
@@ -37,6 +88,7 @@ def _emit_fast(writer, now: int) -> None:
     samples: list[tuple] = []
 
     # GPUs.
+    gpus: list[dict] = []
     try:
         gpus = status_endpoint._gpus_raw() or []
         for g in gpus:
@@ -50,6 +102,8 @@ def _emit_fast(writer, now: int) -> None:
                 samples.append((now, "vram_used_mb", tags_json, float(mem_used)))
             if isinstance(mem_total, (int, float)) and isinstance(mem_used, (int, float)) and mem_total:
                 samples.append((now, "vram_pct", tags_json, float(mem_used) / float(mem_total) * 100.0))
+            if isinstance(mem_total, (int, float)) and isinstance(mem_used, (int, float)):
+                samples.append((now, "vram_free_mb", tags_json, float(mem_total) - float(mem_used)))
             for metric_key, gpu_key in (
                 ("gpu_util_pct", "instantaneous_util_pct"),
                 ("gpu_temp_c", "temp_c"),
@@ -63,6 +117,22 @@ def _emit_fast(writer, now: int) -> None:
                     samples.append((now, metric_key, tags_json, float(v)))
     except Exception as e:  # noqa: BLE001
         print(f"[metrics_sampler] gpu probe failed: {e}", flush=True)
+
+    # Desktop (NVKMS) allocation failures this tick, per GPU. Absent when the journal
+    # is unreadable: a missing row means "not measured", a 0 means "none happened".
+    try:
+        new = _new_nvkms_failures()
+        if new is not None:
+            gpu_for_id = _gpu_index_by_drm_id() if new else {}
+            per_gpu: Counter = Counter({g["index"]: 0 for g in gpus if g.get("index") is not None})
+            for line, n in new.items():
+                m = _NVKMS_GPU_ID_RE.search(line)
+                per_gpu[gpu_for_id.get(int(m.group(1), 16)) if m else None] += n
+            for idx, n in per_gpu.items():
+                tags = "" if idx is None else f'{{"gpu":{int(idx)}}}'
+                samples.append((now, "gpu_desktop_alloc_failures", tags, float(n)))
+    except Exception as e:  # noqa: BLE001
+        print(f"[metrics_sampler] nvkms probe failed: {e}", flush=True)
 
     # CPU thermal + load.
     try:
@@ -129,8 +199,11 @@ async def _emit_fast_async(writer, now: int) -> None:
         print(f"[metrics_sampler] llama slots probe failed: {e}", flush=True)
 
 
-def _emit_slow(writer, now: int) -> None:
-    """Disk avail per partition + per-service RSS + per-GPU per-service VRAM."""
+def _emit_slow(writer, now: int, config: Optional[Mapping[str, Any]] = None) -> None:
+    """Disk avail per partition + per-service RSS + per-GPU per-service VRAM.
+
+    `config` supplies the backends that services are attributed to.
+    """
     samples: list[tuple] = []
 
     # Disk per partition.
@@ -150,7 +223,7 @@ def _emit_slow(writer, now: int) -> None:
 
     # Per-service RSS.
     try:
-        ram = status_endpoint._ram_attribution() or {}
+        ram = status_endpoint._ram_attribution(config) or {}
         for row in ram.get("rows") or []:
             svc = row.get("service")
             kb = row.get("rss_kb")
@@ -163,12 +236,12 @@ def _emit_slow(writer, now: int) -> None:
     # Per-GPU per-service VRAM.
     try:
         gpus = status_endpoint._gpus_raw()
-        vram_attr = status_endpoint._vram_attribution(gpus) or {}
+        vram_attr = status_endpoint._vram_attribution(gpus, config) or {}
         for entry in vram_attr.get("per_gpu") or []:
             idx = entry.get("index")
             if idx is None:
                 continue
-            for row in entry.get("rows") or []:
+            for row in entry.get("services") or []:
                 svc = row.get("service")
                 used_mb = row.get("used_mb")
                 if svc and isinstance(used_mb, (int, float)) and not str(svc).startswith("__"):
@@ -203,8 +276,12 @@ def _json_str(s: str) -> str:
     return _json.dumps(str(s))
 
 
-async def sampler_loop():
-    """Main loop. Aligns to wall-clock 10s boundaries so charts look clean."""
+async def sampler_loop(get_config: Optional[Callable[[], Mapping[str, Any]]] = None):
+    """Main loop. Aligns to wall-clock 10s boundaries so charts look clean.
+
+    `get_config` returns the live gateway config each cycle (it is hot-reloaded),
+    so per-service attribution follows the current backends.
+    """
     print("[metrics_sampler] starting", flush=True)
     try:
         # First sleep to align with the next 10s boundary.
@@ -242,7 +319,7 @@ async def sampler_loop():
 
                     # Slow tier piggybacked at the top of each minute.
                     if (now_int % 60) < 10:
-                        await asyncio.to_thread(_emit_slow, writer, now_int)
+                        await asyncio.to_thread(_emit_slow, writer, now_int, get_config() if get_config else None)
 
                     # Per-minute rollup at the start of each new minute.
                     cur_min = now_int // 60
