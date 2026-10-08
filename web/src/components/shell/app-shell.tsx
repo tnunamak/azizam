@@ -323,7 +323,7 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
           type="button"
           className={
             compact
-              ? "text-chrome-foreground hover:bg-chrome-raised flex min-h-11 items-center gap-2 rounded-control px-2.5 text-sm"
+              ? "text-chrome-foreground hover:bg-chrome-raised flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-control px-2.5 text-sm"
               : "shell-nav-footer"
           }
           aria-label={`Gateway status: ${visibleLabel}`}

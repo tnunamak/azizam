@@ -44,7 +44,7 @@ export function CopyField({
   return (
     <div className="flex min-w-0 flex-col gap-2">
       <Label htmlFor={id}>{label}</Label>
-      <div className="border-input bg-card focus-within:border-ring flex min-w-0 items-center rounded-control border has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-(--ring)">
+      <div className="border-input bg-card focus-within:border-ring flex min-w-0 items-center rounded-control border">
         <Input
           id={id}
           value={loading ? "" : value}
@@ -52,7 +52,7 @@ export function CopyField({
           disabled={disabled || loading}
           aria-invalid={!!error}
           aria-describedby={error || copyError ? `${id}-error` : undefined}
-          className="min-w-0 truncate border-0 bg-transparent font-mono text-sm focus-visible:outline-none sm:text-sm"
+          className="min-w-0 truncate border-0 bg-transparent font-mono text-sm focus-visible:-outline-offset-2 sm:text-sm"
         />
         <Button
           type="button"

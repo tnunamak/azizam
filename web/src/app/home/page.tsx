@@ -1047,8 +1047,10 @@ function Recent() {
     queryKey: ["library", "home-recent-creations"],
     queryFn: homeApi.creations,
   });
+  // A creation whose file the gateway no longer stores belongs in Library, not Recent.
   const recentCreations = (creations?.assets ?? [])
     .filter(hasHomeCreationContent)
+    .filter((creation) => creation.available !== false)
     .slice(0, 4);
   if (!creationsPending && !creationsError && recentCreations.length === 0) {
     return null;
@@ -1126,6 +1128,13 @@ export default function HomePage() {
   const verdict = homeVerdict(tiles);
   const notice =
     home && home.authenticated ? spendingNotice(home.receipts ?? []) : null;
+  // Someone with no app that has ever made a request starts by connecting one.
+  const newcomer = Boolean(
+    home?.authenticated &&
+      !home.apps.some((app) =>
+        app.credentials.some((key) => typeof key.last_used_at === "number"),
+      ),
+  );
   const check = oldestCheck(tiles);
   const hintFor = useOwnerEngineHints(isOwner && viewer.admin);
   const hints = [
@@ -1167,7 +1176,7 @@ export default function HomePage() {
         />
       ) : (
         <div className="grid items-start gap-x-12 gap-y-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
-          <div className="min-w-0 space-y-10">
+          <div className="min-w-0 space-y-6 lg:col-start-1 lg:row-start-1">
             <Verdict
               tone={verdict.tone}
               detail={
@@ -1176,7 +1185,16 @@ export default function HomePage() {
                     {check ? (
                       <EvidenceTime stamp={check} className="text-base" />
                     ) : null}
-                    {hints.map((hint) => (
+                    {hints.length > 2 ? (
+                      <Link
+                        href="/status/"
+                        className="text-link inline-flex min-h-11 items-center gap-0.5 font-medium underline-offset-4 hover:underline sm:min-h-0"
+                      >
+                        {hints.length} engines need you
+                        <ChevronRight aria-hidden="true" className="size-4" />
+                      </Link>
+                    ) : null}
+                    {(hints.length > 2 ? [] : hints).map((hint) => (
                       <Link
                         key={hint.serviceId}
                         href={`/engines/?service=${encodeURIComponent(hint.serviceId)}`}
@@ -1211,16 +1229,28 @@ export default function HomePage() {
                   : "Ask the gateway owner to raise the cap."}
               </Notice>
             ) : null}
+          </div>
+          <div
+            className={cn(
+              "min-w-0 lg:col-start-1 lg:row-start-2",
+              newcomer ? "order-2 lg:order-none" : "order-1 lg:order-none",
+            )}
+          >
             <Capabilities
               tiles={tiles}
               verdictCheck={check}
               owner={isOwner && viewer.admin}
             />
           </div>
-          <div className="min-w-0 lg:col-start-2 lg:row-span-2 lg:row-start-1">
+          <div
+            className={cn(
+              "min-w-0 lg:col-start-2 lg:row-span-3 lg:row-start-1",
+              newcomer ? "order-1 lg:order-none" : "order-2 lg:order-none",
+            )}
+          >
             <Connect home={home} />
           </div>
-          <div className="min-w-0 lg:col-start-1">
+          <div className="order-3 min-w-0 lg:order-none lg:col-start-1 lg:row-start-3">
             <Recent />
           </div>
         </div>

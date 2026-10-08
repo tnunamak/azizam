@@ -47,6 +47,7 @@ export interface HomeCreation {
   download_url?: string | null;
   media_type?: string | null;
   poster_asset_id?: string | null;
+  available?: boolean;
 }
 export interface HomeCreationsResponse {
   assets: HomeCreation[];

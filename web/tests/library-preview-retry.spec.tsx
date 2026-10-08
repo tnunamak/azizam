@@ -232,6 +232,8 @@ it.each([
       <LibraryPage />
     </QueryClientProvider>,
   );
+  // Files the gateway no longer stores fold under one summary; open it first.
+  fireEvent.click(await screen.findByText("Show them"));
   expect(await screen.findByText(message!)).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Retry" }));
   expect(

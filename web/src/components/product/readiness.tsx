@@ -189,6 +189,16 @@ export function StateLabel({
   iconOnly?: boolean;
 }) {
   const { icon: Icon, text } = toneStyles[state.tone];
+  if (iconOnly)
+    return (
+      <span
+        role="img"
+        aria-label={state.label}
+        className={cn("inline-flex items-center", text, className)}
+      >
+        <Icon aria-hidden="true" className="size-4 shrink-0" />
+      </span>
+    );
   return (
     <span
       className={cn(
@@ -198,7 +208,7 @@ export function StateLabel({
       )}
     >
       <Icon aria-hidden="true" className="size-4 shrink-0" />
-      <span className={iconOnly ? "sr-only" : "truncate"}>{state.label}</span>
+      <span className="truncate">{state.label}</span>
     </span>
   );
 }

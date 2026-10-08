@@ -209,7 +209,7 @@ function engineFix(engine: EngineView): string {
     return "Check the engine address, or start the engine.";
   if (raw.includes("timeout") || raw.includes("timed out"))
     return "Check whether the engine is busy or unreachable.";
-  return "Open the engine to see its log and restart it if needed.";
+  return "Check the engine’s log and restart it.";
 }
 
 function capabilityNames(engines: EngineView[]): string[] {
@@ -230,6 +230,10 @@ function joinNames(names: string[]): string {
 /** Short headline for the verdict, e.g. "Video is degraded." */
 function capabilityHeadline(engines: EngineView[]): string {
   const names = capabilityNames(engines);
+  if (names.length > 3) {
+    const degradedAll = engines.every((engine) => engine.state === "Degraded");
+    return `${names.length} capabilities are ${degradedAll ? "degraded" : "unavailable"}.`;
+  }
   const subject = names.length
     ? joinNames([names[0], ...names.slice(1).map(lowerFirst)])
     : engines.length === 1
@@ -375,11 +379,14 @@ function ProblemCard({
   failures,
   onDiskHelp,
   primary,
+  alone,
 }: {
   problem: Problem;
   failures: RequestRecord[];
   onDiskHelp: () => void;
   primary: boolean;
+  /** The only problem: the verdict already names what it affects. */
+  alone: boolean;
 }) {
   const engine = problem.engines?.length === 1 ? problem.engines[0] : null;
   const engineIds = new Set(
@@ -419,14 +426,23 @@ function ProblemCard({
               ? "The gateway’s computer"
               : problem.layer}
             {problem.engines?.length
-              ? ` · ${problem.engines.map((item) => item.shortName).join(", ")}`
+              ? ` · ${
+                  problem.engines.length > 4
+                    ? `${problem.engines
+                        .slice(0, 3)
+                        .map((item) => item.shortName)
+                        .join(", ")} and ${problem.engines.length - 3} more`
+                    : problem.engines.map((item) => item.shortName).join(", ")
+                }`
               : problem.provider
                 ? ` · ${problem.provider}`
                 : ""}
           </FactRow>
           {capabilities.length ? (
             <FactRow label="Affects">
-              {`${joinNames(capabilities)}, for everyone who uses ${capabilities.length > 1 ? "them" : "it"}`}
+              {alone
+                ? `Everyone who uses ${capabilities.length > 1 ? "them" : "it"}`
+                : `${capabilities.length > 3 ? `${capabilities.length} capabilities` : joinNames(capabilities)}, for everyone who uses ${capabilities.length > 1 ? "them" : "it"}`}
             </FactRow>
           ) : null}
           {engine?.lastError ? (
@@ -479,7 +495,7 @@ function ProblemCard({
                 {problem.refusals[0].receipt?.request_id ? (
                   <a
                     href={`/r/${encodeURIComponent(problem.refusals[0].receipt.request_id)}`}
-                    className="text-link font-medium underline-offset-4 hover:underline"
+                    className="text-link inline-flex min-h-11 items-center font-medium underline-offset-4 hover:underline sm:min-h-0"
                   >
                     Open receipt
                   </a>
@@ -501,7 +517,7 @@ function ProblemCard({
                 {latest.receipt?.request_id ? (
                   <a
                     href={`/r/${encodeURIComponent(latest.receipt.request_id)}`}
-                    className="text-link font-medium underline-offset-4 hover:underline"
+                    className="text-link inline-flex min-h-11 items-center font-medium underline-offset-4 hover:underline sm:min-h-0"
                   >
                     Open receipt
                   </a>
@@ -764,11 +780,9 @@ function CapabilityStrip() {
               <span className="min-w-0 truncate text-sm font-medium">
                 {capability.capability_title ?? meta.label}
               </span>
-              <StateLabel
-                state={state}
-                iconOnly={state.tone === "ok"}
-                className="shrink-0 text-xs"
-              />
+              <span title={state.label} className="shrink-0">
+                <StateLabel state={state} iconOnly className="text-xs" />
+              </span>
             </li>
           );
         })}
@@ -1063,6 +1077,7 @@ export function StatusClient() {
                 <ProblemCard
                   key={problem.key}
                   primary={index === 0}
+                  alone={problems.length === 1}
                   problem={problem}
                   failures={failures.data ?? []}
                   onDiskHelp={() => setDiskHelpOpen(true)}
@@ -1074,18 +1089,7 @@ export function StatusClient() {
           <CapabilityStrip />
 
           <section aria-labelledby="layers-heading">
-            <SectionHeading
-              id="layers-heading"
-              title="Engines and providers"
-              action={
-                <Button variant="ghost" size="sm" asChild>
-                  <Link href="/engines">
-                    Engines
-                    <ChevronRight aria-hidden="true" />
-                  </Link>
-                </Button>
-              }
-            />
+            <SectionHeading id="layers-heading" title="Engines and providers" />
             {registryIsPending ? (
               <Skeleton className="h-48 w-full rounded-panel" />
             ) : !tableEngines.length && providers.state !== "ready" ? (

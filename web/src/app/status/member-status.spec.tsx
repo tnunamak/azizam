@@ -76,7 +76,7 @@ describe("member Status diagnosis", () => {
     expect(
       await screen.findByRole("heading", { name: "Images" }),
     ).toBeVisible();
-    expect(screen.getByText("Flux", { exact: true })).toBeVisible();
+    // The recommended model sits with the names, one tap away (word budget).
     expect(
       screen.queryByText("image-model", { exact: true }),
     ).not.toBeInTheDocument();
@@ -87,10 +87,9 @@ describe("member Status diagnosis", () => {
     expect(
       screen.getByRole("link", { name: "View receipt my-failed-request" }),
     ).toHaveAttribute("href", snapshot.receipts[0].href);
-    await user.click(screen.getByText("Details", { exact: true }));
-    expect(
-      screen.getByText("Names you can use", { exact: true }),
-    ).toBeVisible();
+    await user.click(screen.getByText("Model names", { exact: true }));
+    expect(screen.getByText("Flux", { exact: true })).toBeVisible();
+    expect(screen.getByText(/Names you can use/)).toBeInTheDocument();
     expect(screen.getByText("image, flux-dev", { exact: true })).toBeVisible();
     expect(screen.queryByText("image, flux-dev, image")).toBeNull();
     expect(screen.queryByText("Not measured yet")).not.toBeInTheDocument();
@@ -167,7 +166,7 @@ describe("member Status diagnosis", () => {
     expect(
       await screen.findByText("No models are available to your account yet"),
     ).toBeVisible();
-    expect(screen.getByText(/No receipts for your account yet/)).toBeVisible();
+    expect(screen.getByText("No receipts yet.")).toBeVisible();
   });
   it("shows neutral presentation when an older snapshot has no presentation fields", async () => {
     vi.spyOn(productApi, "status").mockResolvedValue({
@@ -189,6 +188,7 @@ describe("member Status diagnosis", () => {
     expect(
       await screen.findByRole("heading", { name: "Capability" }),
     ).toBeVisible();
+    await userEvent.click(screen.getByText("Model names", { exact: true }));
     expect(screen.getByText("Model details unavailable")).toBeVisible();
     expect(
       screen.queryByText("raw-workflow", { exact: true }),

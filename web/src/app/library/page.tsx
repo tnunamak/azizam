@@ -1460,9 +1460,6 @@ export default function LibraryPage() {
   const showInitialError = isError && !hasLoadedAssets && !isFetchNextPageError;
   const showRetainedError =
     (isError || isFetchNextPageError) && hasLoadedAssets;
-  const unavailableAssets = assets.filter(
-    (asset) => asset.available === false,
-  ).length;
   const listedDeepLinkedAsset = useMemo(
     () =>
       deepLinkedAssetId
@@ -1515,7 +1512,25 @@ export default function LibraryPage() {
       ).sort(),
     [assets, mediaPages],
   );
-  const groups = useMemo(() => groupByDay(assets), [assets]);
+  const storedAssets = useMemo(
+    () => assets.filter((asset) => asset.available !== false),
+    [assets],
+  );
+  const goneAssets = useMemo(
+    () => assets.filter((asset) => asset.available === false),
+    [assets],
+  );
+  const groups = useMemo(() => groupByDay(storedAssets), [storedAssets]);
+  // Owners can see how long the gateway keeps files (images.cache_ttl).
+  const { data: gatewayStatus } = useQuery({
+    queryKey: ["foundation", "health"],
+    queryFn: api.status,
+    enabled: canChooseOwner && goneAssets.length > 0,
+    retry: false,
+  });
+  const retention = (
+    gatewayStatus as { budgets?: { images?: { cache_ttl?: number | null } } } | undefined
+  )?.budgets?.images?.cache_ttl;
   const retryRetainedError = () => {
     if (isFetchNextPageError) {
       void fetchNextPage();
@@ -1641,19 +1656,6 @@ export default function LibraryPage() {
             Clear filters
           </Button>
         ) : null}
-        {unavailableAssets > 0 ? (
-          <p
-            className="text-muted-foreground flex items-center gap-2 text-sm sm:ml-auto"
-            role="status"
-          >
-            {unavailableAssets === 1
-              ? "1 file is no longer stored."
-              : `${unavailableAssets} files are no longer stored.`}
-            <Button variant="link" className="h-auto px-0" onClick={() => void refetch()}>
-              Refresh library
-            </Button>
-          </p>
-        ) : null}
       </section>
       {deepLinkedAssetError ? (
         <div className="mb-4">
@@ -1710,7 +1712,7 @@ export default function LibraryPage() {
           }
         />
       ) : null}
-      {!isLoading && !showInitialError && assets.length > 0 ? (
+      {!isLoading && !showInitialError && storedAssets.length > 0 ? (
         <div aria-busy={updating} className="space-y-7">
           {groups.map((group) => (
             <section key={group.label} aria-label={group.label}>
@@ -1733,6 +1735,58 @@ export default function LibraryPage() {
             </section>
           ))}
         </div>
+      ) : null}
+      {!isLoading && !showInitialError && goneAssets.length > 0 ? (
+        <section
+          aria-label="Files no longer stored"
+          className={cn(storedAssets.length > 0 && "mt-10 border-t pt-6")}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+            <p className="text-sm" role="status">
+              {goneAssets.length === 1
+                ? "1 file is no longer stored."
+                : `${goneAssets.length} files are no longer stored.`}{" "}
+              {typeof retention === "number" && retention > 0 ? (
+                <span className="text-muted-foreground">
+                  The gateway keeps files for{" "}
+                  {retention % 86_400 === 0
+                    ? `${retention / 86_400} day${retention === 86_400 ? "" : "s"}`
+                    : `${Math.round(retention / 3600)} hours`}
+                  .
+                </span>
+              ) : (
+                <span className="text-muted-foreground">
+                  Their prompts and receipts remain.
+                </span>
+              )}
+            </p>
+            <Button
+              variant="link"
+              className="h-auto px-0"
+              onClick={() => void refetch()}
+            >
+              Refresh library
+            </Button>
+          </div>
+          <details className="group mt-2">
+            <summary className="text-link flex min-h-11 w-fit cursor-pointer items-center text-sm font-medium sm:min-h-8">
+              Show them
+            </summary>
+            <div className="mt-3 grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
+              {goneAssets.map((asset) => (
+                <AssetTile
+                  key={asset.asset_id}
+                  asset={asset}
+                  onOpen={openAsset}
+                  everyone={instanceView}
+                  modelCatalog={modelCatalog}
+                  person={instanceView ? personFor(asset) : null}
+                  selected={selected?.asset_id === asset.asset_id}
+                />
+              ))}
+            </div>
+          </details>
+        </section>
       ) : null}
       {updating ? (
         <p role="status" className="text-muted-foreground mt-3 text-sm">

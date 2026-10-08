@@ -55,6 +55,16 @@ function failed(receipt: MemberStatusReceipt): boolean {
   );
 }
 
+function usableNames(capability: MemberStatusCapability): string[] {
+  return Array.from(
+    new Set(
+      [...(capability.use_names ?? []), capability.use_name].filter(
+        (name): name is string => Boolean(name),
+      ),
+    ),
+  );
+}
+
 function MemberCapability({
   capability,
   stamp,
@@ -62,13 +72,6 @@ function MemberCapability({
   capability: MemberStatusCapability;
   stamp: EvidenceStamp | null;
 }) {
-  const usableNames = Array.from(
-    new Set(
-      [...(capability.use_names ?? []), capability.use_name].filter(
-        (name): name is string => Boolean(name),
-      ),
-    ),
-  );
   const meta = capabilityMeta(capability.icon_key);
   const Icon = meta.icon;
   const state = availabilityState(capability.status, capability.reason_code);
@@ -100,37 +103,10 @@ function MemberCapability({
           </h3>
           <StateLabel state={state} className="shrink-0" />
         </div>
-        <div className="text-muted-foreground flex min-w-0 flex-wrap items-center gap-x-2 text-sm">
-          <span className="truncate">
-            {capability.recommended_model ??
-              capability.title ??
-              "Model details unavailable"}
-          </span>
-          {stamp && stamp.kind === "used" ? (
-            <EvidenceTime stamp={stamp} />
-          ) : null}
-        </div>
+        {stamp && stamp.kind === "used" ? (
+          <EvidenceTime stamp={stamp} className="block" />
+        ) : null}
         {reason ? <p className="mt-1 text-sm">{reason}</p> : null}
-        {(usableNames.length > 0 || capability.summary) && (
-          <details className="text-sm">
-            <summary className="text-muted-foreground hover:text-foreground flex min-h-11 w-fit cursor-pointer items-center sm:min-h-7">
-              Details
-            </summary>
-            <div className="text-muted-foreground space-y-1 pb-2">
-              {usableNames.length > 0 && (
-                <>
-                  <h4 className="text-foreground text-sm font-medium">
-                    Names you can use
-                  </h4>
-                  <p className="font-mono text-xs break-all">
-                    {usableNames.join(", ")}
-                  </p>
-                </>
-              )}
-              {capability.summary && <p>{capability.summary}</p>}
-            </div>
-          </details>
-        )}
       </div>
     </li>
   );
@@ -309,7 +285,41 @@ export function MemberStatus() {
                     />
                   ))}
                 </ul>
-              ) : (
+              ) : null}
+              {data.capabilities.length ? (
+                <details className="mt-4 text-sm">
+                  <summary className="text-muted-foreground hover:text-foreground flex min-h-11 w-fit cursor-pointer items-center font-medium sm:min-h-8">
+                    Model names
+                  </summary>
+                  <dl className="text-muted-foreground mt-2 space-y-2">
+                    {data.capabilities.map((capability) => (
+                      <div key={capability.capability}>
+                        <dt className="text-foreground">
+                          {capability.capability_title ?? "Capability"}
+                          {" · "}
+                          <span>
+                            {capability.recommended_model ??
+                              capability.title ??
+                              "Model details unavailable"}
+                          </span>
+                        </dt>
+                        {usableNames(capability).length ? (
+                          <dd>
+                            <span className="sr-only">Names you can use: </span>
+                            <span className="font-mono text-xs break-all">
+                              {usableNames(capability).join(", ")}
+                            </span>
+                          </dd>
+                        ) : null}
+                        {capability.summary ? (
+                          <dd>{capability.summary}</dd>
+                        ) : null}
+                      </div>
+                    ))}
+                  </dl>
+                </details>
+              ) : null}
+              {data.capabilities.length ? null : (
                 <EmptyState
                   title="No models are available to your account yet"
                   description="Ask the gateway owner to connect a model and grant your account access."
@@ -373,8 +383,7 @@ export function MemberStatus() {
               </ul>
             ) : (
               <p className="text-muted-foreground text-sm">
-                No receipts for your account yet. Try a request to record its
-                result here.
+                No receipts yet.
               </p>
             )}
             <p className="text-muted-foreground mt-4 text-sm">

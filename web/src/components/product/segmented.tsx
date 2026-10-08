@@ -41,7 +41,7 @@ export function Segmented<T extends string>({
           type="button"
           aria-pressed={value === option.value}
           onClick={() => onChange(option.value)}
-          className="text-muted-foreground hover:text-foreground aria-pressed:bg-card aria-pressed:text-foreground aria-pressed:border-border flex min-h-9 shrink-0 items-center gap-1.5 rounded-sm border border-transparent px-3 text-sm font-medium whitespace-nowrap transition-colors max-sm:min-h-11"
+          className="text-muted-foreground hover:text-foreground aria-pressed:bg-card aria-pressed:text-foreground aria-pressed:border-border flex min-h-9 shrink-0 items-center gap-1.5 rounded-sm border border-transparent px-3 text-sm font-medium whitespace-nowrap transition-colors max-sm:min-h-11 max-sm:min-w-11 max-sm:justify-center"
         >
           {option.label}
           {typeof option.count === "number" ? (
