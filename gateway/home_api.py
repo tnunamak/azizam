@@ -347,7 +347,8 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
         summary = product_status_summary(rows)
         base = (public_base_url(request) or "").rstrip("/")
         activity = build_user_activity_snapshot(session, limit=5, path=store.path, receipts_path=receipts_path())
-        return _json({**account, "csrf_token": csrf_token(session), "public_base_url": base,
+        gateway = {"owner_name": admin_store.owner_display_name(path=store.path)}
+        return _json({**account, "gateway": gateway, "csrf_token": csrf_token(session), "public_base_url": base,
                       "api_base_url": f"{base}/v1" if base else "/v1", "capabilities": rows,
                       "aliases": alias_rows, "credential_aliases": credential_aliases,
                       "new_app_aliases": new_app_aliases, "status": summary,
@@ -377,7 +378,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                      "created_at": row.get("created_at", row.get("_stored_at")),
                      "href": f"/ui/usage/?receipt={quote(str(row['request_id']), safe='')}"}
                     for row in snapshot["receipts"]]
-        return _json({"scope": "member", "status": snapshot["status"], "capabilities": rows,
+        return _json({"scope": "member", "gateway": snapshot["gateway"], "status": snapshot["status"], "capabilities": rows,
                       "receipts": receipts,
                       "help": ""})
 

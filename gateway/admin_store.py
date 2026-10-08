@@ -1638,6 +1638,24 @@ def list_admin_roles(
     return [_row_to_dict(r) for r in rows]  # type: ignore[misc]
 
 
+def owner_display_name(*, path: Path = DB_PATH) -> str | None:
+    """Display name of the earliest active gateway owner that has one.
+
+    Returns ``None`` when no owner has a display name. Email addresses are
+    sign-in identities, not a published contact, so they are never used.
+    """
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT TRIM(u.display_name) AS name FROM admin_role_assignments r "
+            "JOIN users u ON u.id = r.subject_id "
+            "WHERE r.role = 'owner' AND r.subject_kind = 'user' "
+            "AND r.revoked_at IS NULL AND r.scope_app_id IS NULL "
+            "AND TRIM(COALESCE(u.display_name, '')) != '' "
+            "ORDER BY r.granted_at ASC, r.id ASC LIMIT 1"
+        ).fetchone()
+    return str(row["name"]) if row is not None else None
+
+
 # ---------------------------------------------------------------------------
 # runtime profile mappings
 # ---------------------------------------------------------------------------
@@ -2391,6 +2409,7 @@ __all__ = [
     "reconcile_oidc_admin_roles",
     "revoke_admin_role",
     "list_admin_roles",
+    "owner_display_name",
     "create_runtime_profile_mapping",
     "disable_runtime_profile_mapping",
     "list_runtime_profile_mappings",

@@ -1069,3 +1069,15 @@ the recent-evidence window (15 minutes) and no later request succeeded, the
 capability projects `status: "unavailable"`, `available: false`, with
 `evidence.source: "request"`, even if a newer check says busy or degraded.
 This projection is for presentation only; routing and fallback do not read it.
+
+### Gateway owner (`gateway` on /me/api/home and /me/api/status)
+
+```json
+{ "gateway": { "owner_name": "Sam" | null } }
+```
+
+`owner_name` is the display name of the earliest active owner (role `owner`,
+not revoked) that has one. It is `null` when no owner has a display name; the
+client supplies its own wording ("the gateway owner"). No `owner_contact` is
+published: the store has no contact field, and the owner's sign-in email is an
+identity, not a contact the owner chose to share.

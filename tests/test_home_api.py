@@ -926,3 +926,25 @@ def test_home_projects_recent_5xx_failures_as_unavailable_not_busy(home_case):
     assert all(row["availability"]["evidence"]["source"] == "request" for row in rows)
     member = c.http.get("/me/api/status").json()["capabilities"]
     assert member and all(row["status"] == "unavailable" and row["available"] is False for row in member)
+
+
+def test_home_and_member_status_name_the_gateway_owner(home_case):
+    c = home_case
+    c.owner = False
+    # No owner role yet, and no owner display name: null, never a placeholder.
+    assert c.http.get("/me/api/home").json()["gateway"] == {"owner_name": None}
+    nameless = admin_store.upsert_oidc_user("https://example.test", "nameless", email="nameless@example.test", path=c.db)
+    owner = admin_store.upsert_oidc_user("https://example.test", "owner", email="sam@example.test", display_name=" Sam ", path=c.db)
+    admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=nameless["id"], now=10, path=c.db)
+    assert c.http.get("/me/api/home").json()["gateway"] == {"owner_name": None}
+    granted = admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=owner["id"], now=20, path=c.db)
+    home = c.http.get("/me/api/home").json()
+    status = c.http.get("/me/api/status").json()
+    assert home["gateway"] == {"owner_name": "Sam"}
+    assert status["gateway"] == {"owner_name": "Sam"}
+    TypeAdapter(HomeProjection).validate_python(home)
+    TypeAdapter(MemberStatus).validate_python(status)
+    # Sign-in emails are identities, not a published contact.
+    assert "sam@example.test" not in str(home) and "sam@example.test" not in str(status)
+    admin_store.revoke_admin_role(granted["id"], path=c.db)
+    assert c.http.get("/me/api/home").json()["gateway"] == {"owner_name": None}

@@ -136,7 +136,13 @@ class HomeReceipt(TypedDict):
     source: NotRequired[HomeReceiptSource]
 
 
+class GatewayFacts(TypedDict):
+    # Display name of the gateway owner; null when the owner has none.
+    owner_name: str | None
+
+
 class HomeProjection(TypedDict):
+    gateway: GatewayFacts
     csrf_token: str
     public_base_url: str
     api_base_url: str
@@ -226,6 +232,7 @@ class MemberStatusReceipt(TypedDict):
 
 class MemberStatus(TypedDict):
     scope: Literal["member"]
+    gateway: GatewayFacts
     status: StatusSummary
     capabilities: list[MemberStatusCapability]
     receipts: list[MemberStatusReceipt]

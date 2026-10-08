@@ -161,7 +161,12 @@ export interface HomeReceipt {
   source?: HomeReceiptSource;
 }
 
+export interface GatewayFacts {
+  owner_name: string | null;
+}
+
 export interface HomeProjection {
+  gateway: GatewayFacts;
   csrf_token: string;
   public_base_url: string;
   api_base_url: string;
@@ -251,6 +256,7 @@ export interface MemberStatusReceipt {
 
 export interface MemberStatus {
   scope: "member";
+  gateway: GatewayFacts;
   status: StatusSummary;
   capabilities: Array<MemberStatusCapability>;
   receipts: Array<MemberStatusReceipt>;
