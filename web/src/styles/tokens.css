@@ -39,7 +39,7 @@
   --chrome-foreground: #e3eef0;
   --chrome-muted: #93b0b7;
   --chrome-border: #1d4049;
-  --chrome-accent: #6fd3dc;
+  --chrome-accent: #f2a65a; /* the goldfish: the brand mark only */
   --media-stage: #0a2229;
 
   /* States: always paired with an icon and a word */
@@ -109,10 +109,10 @@
   --accent-foreground: #8fe0e7;
   --border: #213e46;
   --input: #58777f;
-  --ring: #67cbd5;
-  --primary: #67cbd5;
+  --ring: #8cc8cb;
+  --primary: #8cc8cb;
   --primary-foreground: #06222a;
-  --link: #67cbd5;
+  --link: #8cc8cb;
   --destructive: #ff8f85;
   --destructive-foreground: #3a0f0c;
   --chrome: #071a1f;
@@ -120,7 +120,7 @@
   --chrome-foreground: #e3eef0;
   --chrome-muted: #93b0b7;
   --chrome-border: #17343c;
-  --chrome-accent: #6fd3dc;
+  --chrome-accent: #f2a65a;
   --media-stage: #050f12;
   --success: #6fd39b;
   --success-tint: #12352a;
@@ -130,7 +130,7 @@
   --info: #8db8f2;
   --info-tint: #182e4a;
   --neutral: #8aa1a7;
-  --capability-chat: #7fd6de;
+  --capability-chat: #8cc8cb;
   --capability-image: #c2a8f0;
   --capability-video: #f0a3bf;
   --capability-voice: #e8b65a;
