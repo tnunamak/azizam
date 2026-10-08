@@ -30,11 +30,11 @@ it("keeps the disk remedy on the disk signal rather than an API signal", async (
   ]);
   const reason = await screen.findByText("Gateway request failures are elevated.");
   const row = reason.closest("article")!;
-  // The card names its layer; the reason is the card's title.
-  expect(within(row).getByText("Gateway")).toBeVisible();
+  // The card's title names its layer; the reason is the gateway's sentence.
+  expect(within(row).getByRole("heading", { name: "The gateway needs attention" })).toBeVisible();
   expect(within(row).queryByRole("button", { name: "Free disk space" })).toBeNull();
   const disk = screen.getByText("Disk is almost full.").closest("article")!;
-  expect(within(disk).getByText("The gateway’s computer")).toBeVisible();
+  expect(within(disk).getByRole("heading", { name: "The gateway’s computer is low on disk space" })).toBeVisible();
   expect(within(disk).getByRole("button", { name: "Free disk space" })).toBeVisible();
 });
 it("does not attach a disk remedy to a temperature warning", async () => {
@@ -58,13 +58,14 @@ it("counts every provider failure and signal, deduplicating identical source/rea
     { source: "thermal", tone: "warn", reasons: ["Temperature high."] },
     { source: "custom-check", tone: "bad", reasons: ["Check failed."] },
   ]);
-  // One card per provider: a missing key is reported before reachability.
-  expect(await screen.findByText("7 problems need you.")).toBeVisible();
+  // One card per provider (a missing key is reported before reachability)
+  // and one per layer: gateway, computer, computer disk.
+  expect(await screen.findByText("5 problems need you")).toBeVisible();
   expect(screen.getAllByText("Request failures.")).toHaveLength(1);
   expect(screen.getAllByText("Disk full.")).toHaveLength(1);
-  const first = screen.getByText("Provider · First provider").closest("article")!;
+  const first = screen.getByRole("heading", { name: "First provider is down" }).closest("article")!;
   expect(within(first).getByText("No provider key is set.")).toBeVisible();
-  const second = screen.getByText("Provider · Second provider").closest("article")!;
+  const second = screen.getByRole("heading", { name: "Second provider is down" }).closest("article")!;
   expect(within(second).getByText("The last connection check failed.")).toBeVisible();
   expect(screen.getByText("Check failed.")).toBeVisible();
   for (const reason of ["Disk full.", "Other disk full."]) {
@@ -102,7 +103,10 @@ it.each([403, 500, 503])("reports member status HTTP %s errors by status, blamin
   vi.spyOn(productApi, "status").mockRejectedValue(statusResponseError(status));
   mountHealthErrorPage(<MemberStatus />);
   expect(await screen.findByText("Couldn’t check your status")).toBeVisible();
-  expect(screen.getByText(`The gateway answered with an error (HTTP ${status}). The owner can see details. Try again.`)).toBeVisible();
+  expect(screen.getByText("The gateway returned an error. Try again.")).toBeVisible();
+  // The status code is kept for whoever needs it, out of the main sentence.
+  expect(screen.getByText("Technical details")).toBeInTheDocument();
+  expect(screen.getByText(new RegExp(`HTTP ${status}`))).toBeInTheDocument();
   expect(screen.queryByText(/server side/)).toBeNull();
   expect(screen.queryByText(/Check your connection/)).toBeNull();
 });

@@ -33,14 +33,17 @@
   --destructive: #b3261e;
   --destructive-foreground: #ffffff;
 
-  /* Deep-water chrome (same family in both themes) */
-  --chrome: #0c2830;
-  --chrome-raised: #143841;
-  --chrome-foreground: #e3eef0;
-  --chrome-muted: #93b0b7;
-  --chrome-border: #1d4049;
-  --chrome-accent: #f2a65a; /* the goldfish: the brand mark only */
-  --media-stage: #0a2229;
+  /* Chrome: a quiet sidebar in the canvas family; the goldfish marks the brand
+     and the current place. */
+  --chrome: #eef2f3;
+  --chrome-raised: #e1e8ea;
+  --chrome-foreground: #10232a;
+  --chrome-muted: #4f6268;
+  --chrome-border: #d7e0e2;
+  --chrome-accent: #d2702a;
+  --media-stage: #e6ecee;
+  --media-stage-foreground: #10232a;
+  --subtle-foreground: #5e7076;
 
   /* States: always paired with an icon and a word */
   --success: #17703f;
@@ -110,18 +113,20 @@
   --border: #213e46;
   --input: #58777f;
   --ring: #8cc8cb;
-  --primary: #8cc8cb;
-  --primary-foreground: #06222a;
+  --primary: #1f6f79;
+  --primary-foreground: #ffffff;
   --link: #8cc8cb;
   --destructive: #ff8f85;
   --destructive-foreground: #3a0f0c;
-  --chrome: #071a1f;
-  --chrome-raised: #0f2a31;
+  --chrome: #08171c;
+  --chrome-raised: #13292f;
   --chrome-foreground: #e3eef0;
   --chrome-muted: #93b0b7;
-  --chrome-border: #17343c;
+  --chrome-border: #1a333a;
   --chrome-accent: #f2a65a;
   --media-stage: #050f12;
+  --media-stage-foreground: #e3eef0;
+  --subtle-foreground: #8197a0;
   --success: #6fd39b;
   --success-tint: #12352a;
   --warning: #e8b65a;
@@ -154,17 +159,17 @@
   --font-display: var(--font-sans);
   --font-mono: "Geist Mono", ui-monospace, monospace;
 
-  /* Type scale (px): 12 · 14 · 15 · 17 · 20 · 24 · 30 · 40.
+  /* Type scale (px): 12 · 13 · 14 · 16 · 20 · 24 · 30 · 40.
      2xs (10) is only for initials inside a 20 px person mark. */
   --text-2xs: 0.625rem;
   --text-2xs--line-height: 0.75rem;
   --text-xs: 0.75rem;
   --text-xs--line-height: 1rem;
-  --text-sm: 0.875rem;
+  --text-sm: 0.8125rem;
   --text-sm--line-height: 1.25rem;
-  --text-base: 0.9375rem;
+  --text-base: 0.875rem;
   --text-base--line-height: 1.375rem;
-  --text-lg: 1.0625rem;
+  --text-lg: 1rem;
   --text-lg--line-height: 1.5rem;
   --text-xl: 1.25rem;
   --text-xl--line-height: 1.75rem;
@@ -204,6 +209,8 @@
   --color-chrome-border: var(--chrome-border);
   --color-chrome-accent: var(--chrome-accent);
   --color-media-stage: var(--media-stage);
+  --color-media-stage-foreground: var(--media-stage-foreground);
+  --color-subtle-foreground: var(--subtle-foreground);
   --color-sidebar: var(--chrome);
   --color-sidebar-foreground: var(--chrome-foreground);
   --color-success: var(--success);

@@ -3,92 +3,130 @@ import { cn } from "@/lib/cn";
 /** [timestamp_s, value] where 1 = up, 0.5 = degraded, 0 = down. */
 export type SeriesPoint = number[];
 
-function segmentClass(value: number, enabled: boolean): string {
-  if (!enabled) return "bg-border";
-  if (value >= 1) return "bg-success";
-  if (value <= 0) return "bg-danger";
-  return "bg-warning";
-}
-
-/**
- * Hourly health over the last day, oldest left (Linear status, BOARD 2a.3).
- * Colour is never the only signal: the percentage sits beside the bar and the
- * bar carries an accessible summary.
- */
-export function UptimeBar({
-  series,
-  enabled = true,
-  label,
-  now,
-  className,
-}: {
-  series: SeriesPoint[] | undefined;
-  enabled?: boolean;
-  label: string;
-  /** End of the window in epoch seconds; hours with no sample stay empty. */
-  now?: number | null;
-  className?: string;
-}) {
+/** Hourly slots for the 24 hours ending at `end`: worst sample per hour, or null. */
+export function hourSlots(
+  series: SeriesPoint[] | undefined,
+  end: number,
+): Array<{ start: number; value: number | null }> {
   const points = series ?? [];
-  if (!points.length) return null;
-  const end = Math.max(now ?? 0, ...points.map(([timestamp]) => timestamp));
-  const slots = Array.from({ length: 24 }, (_, index) => {
+  return Array.from({ length: 24 }, (_, index) => {
     const start = end - (24 - index) * 3600;
     const inSlot = points.filter(
       ([timestamp]) => timestamp > start && timestamp <= start + 3600,
     );
-    return inSlot.length
-      ? Math.min(...inSlot.map(([, value]) => value))
-      : null;
+    return {
+      start,
+      value: inSlot.length ? Math.min(...inSlot.map(([, value]) => value)) : null,
+    };
   });
-  const known = slots.filter((value): value is number => value !== null);
-  const down = known.filter((value) => value < 1).length;
-  const missing = slots.length - known.length;
+}
+
+/**
+ * The one uptime figure (DESIGN.md): hours whose health checks were all up,
+ * out of hours that had a check, in the 24 hours ending at the status time.
+ */
+export function hoursUp(slots: Array<{ value: number | null }>) {
+  const checked = slots.filter((slot) => slot.value !== null);
+  return {
+    up: checked.filter((slot) => (slot.value ?? 0) >= 1).length,
+    checked: checked.length,
+  };
+}
+
+/** Start of the unbroken run of failing hours that reaches the latest hour. */
+export function failingSince(
+  slots: Array<{ start: number; value: number | null }>,
+): number | null {
+  let since: number | null = null;
+  for (let index = slots.length - 1; index >= 0; index -= 1) {
+    const value = slots[index].value;
+    if (value === null || value >= 1) break;
+    since = slots[index].start;
+  }
+  return since;
+}
+
+function slotClass(value: number | null, enabled: boolean): string {
+  if (value === null || !enabled) return "bg-muted";
+  if (value >= 1) return "bg-success/70";
+  if (value <= 0) return "bg-danger";
+  return "bg-warning";
+}
+
+function slotWord(value: number | null): string {
+  if (value === null) return "no check";
+  if (value >= 1) return "up";
+  if (value <= 0) return "down";
+  return "degraded";
+}
+
+function clock(ts: number): string {
+  return new Date(ts * 1000).toLocaleTimeString(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+/**
+ * Hourly health checks over the last day, oldest left (Linear 2a.3), with
+ * start and end labels. Down hours are taller as well as red, so colour is
+ * not the only signal; the full hour-by-hour text is in a details list.
+ */
+export function UptimeBar({
+  series,
+  end,
+  enabled = true,
+  label,
+  className,
+  showAxis = true,
+}: {
+  series: SeriesPoint[] | undefined;
+  /** End of the window, epoch seconds: the status payload's time. */
+  end: number;
+  enabled?: boolean;
+  label: string;
+  className?: string;
+  showAxis?: boolean;
+}) {
+  if (!series?.length) return null;
+  const slots = hourSlots(series, end);
+  const { up, checked } = hoursUp(slots);
   const summary = !enabled
     ? `${label}: turned off`
-    : [
-        down
-          ? `${down} of the last 24 hours had problems`
-          : "no problems in the hours checked",
-        missing ? `${missing} hours have no check` : null,
-      ]
-        .filter(Boolean)
-        .join("; ")
-        .replace(/^/, `${label}: `);
+    : `${label}: ${up} of ${checked} checked hours up in the last 24 hours${checked < 24 ? `; ${24 - checked} hours had no check` : ""}`;
   return (
-    <span
-      role="img"
-      aria-label={summary}
-      className={cn("flex h-5 min-w-0 items-stretch gap-px", className)}
-    >
-      {slots.map((value, index) => (
-        <span
-          key={index}
-          className={cn(
-            "flex-1 rounded-xs",
-            value === null ? "bg-muted" : segmentClass(value, enabled),
-          )}
-        />
-      ))}
-    </span>
+    <div className={cn("min-w-0", className)}>
+      <div role="img" aria-label={summary} className="flex h-4 min-w-0 items-end gap-0.5">
+        {slots.map((slot) => (
+          <span
+            key={slot.start}
+            title={`${clock(slot.start)}: ${slotWord(slot.value)}`}
+            className={cn(
+              "flex-1 rounded-xs",
+              slotClass(slot.value, enabled),
+              slot.value !== null && slot.value < 1 && enabled ? "h-4" : "h-2.5",
+            )}
+          />
+        ))}
+      </div>
+      {showAxis ? (
+        <div aria-hidden="true" className="text-subtle-foreground mt-1 flex justify-between text-xs">
+          <span>24 h ago</span>
+          <span>Now</span>
+        </div>
+      ) : null}
+      {enabled && slots.some((slot) => slot.value !== null && slot.value < 1) ? (
+        <details className="text-muted-foreground mt-1 text-xs">
+          <summary className="w-fit cursor-pointer max-sm:min-h-11 max-sm:py-3">Hour by hour</summary>
+          <ul className="mt-1 grid grid-cols-2 gap-x-4 sm:grid-cols-3">
+            {slots.map((slot) => (
+              <li key={slot.start}>
+                {clock(slot.start)}: {slotWord(slot.value)}
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+    </div>
   );
-}
-
-/** Percentage of hours fully up, from the same series the bar draws. */
-export function uptimePercent(series: SeriesPoint[] | undefined): number | null {
-  const points = (series ?? []).slice(-24);
-  if (!points.length) return null;
-  const total = points.reduce((sum, [, value]) => sum + Math.max(0, Math.min(1, value)), 0);
-  return Math.round((total / points.length) * 1000) / 10;
-}
-
-/** Consecutive trailing hours that were not fully up. */
-export function hoursUnhealthy(series: SeriesPoint[] | undefined): number {
-  const points = series ?? [];
-  let count = 0;
-  for (let index = points.length - 1; index >= 0; index -= 1) {
-    if (points[index][1] >= 1) break;
-    count += 1;
-  }
-  return count;
 }

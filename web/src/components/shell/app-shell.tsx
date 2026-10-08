@@ -39,7 +39,7 @@ import {
   destinations,
   PRODUCT_NAME,
 } from "@/lib/product";
-import { gatewayHealthLabel, gatewayHealthReason } from "@/lib/gateway-health";
+import { useCapabilityViews } from "@/lib/use-capability-views";
 import { useOwnerAlertTarget } from "./use-owner-alert";
 import { Button } from "@/components/ui/button";
 import { BrandMark } from "@/components/product/brand-mark";
@@ -259,12 +259,6 @@ function AccountMenu({ compact = false }: { compact?: boolean }) {
 
 function HealthLink({ compact = false }: { compact?: boolean }) {
   const viewer = useViewer();
-  const { data: statusData, isError: statusError } = useQuery({
-    queryKey: ["foundation", "health"],
-    queryFn: api.status,
-    enabled: viewer.admin,
-    refetchInterval: 60000,
-  });
   const {
     data: gatewayData,
     isError: gatewayError,
@@ -278,35 +272,27 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
     },
     refetchInterval: 60000,
   });
-  const health = statusData?.current_health;
-  const { data: memberHome } = useQuery({
-    queryKey: ["foundation", "member-health"],
-    queryFn: async () => {
-      const response = await fetch("/me/api/home");
-      if (!response.ok) throw new Error("Model availability is unavailable");
-      return response.json() as Promise<{
-        status?: { state: string; reason: string };
-      }>;
-    },
-    enabled: viewer.authenticated && !viewer.admin,
-    refetchInterval: 60000,
-  });
-  // /health reports gateway reachability only; it does not prove engine health.
-  const { label, tone } = gatewayHealthLabel({
-    admin: false,
-    health,
-    statusError: statusError,
-    reachable: Boolean(gatewayData),
-    reachabilityError: gatewayError,
-  });
-  const reason = gatewayHealthReason({
-    admin: viewer.admin,
-    health,
-    statusError,
-    reachable: Boolean(gatewayData),
-    reachabilityError: gatewayError,
-    memberStatus: memberHome?.status,
-  });
+  // The same capability model as Home and Status: the dot cannot say
+  // "fine" while something the viewer depends on is failing.
+  const model = useCapabilityViews(viewer.admin && viewer.authenticated);
+  const signedIn = viewer.authenticated && !viewer.serviceAdmin;
+  const problems = model.verdict.problems.length;
+  const { label, tone } = gatewayError
+    ? { label: "Gateway unreachable", tone: "bad" as const }
+    : !gatewayData
+      ? { label: "Checking", tone: "unknown" as const }
+      : !signedIn || model.isError
+        ? { label: "Gateway reachable", tone: "ok" as const }
+        : model.isPending
+          ? { label: "Checking", tone: "unknown" as const }
+          : problems
+            ? {
+                label: `${problems} issue${problems === 1 ? "" : "s"}`,
+                tone: model.verdict.tone,
+              }
+            : model.verdict.tone === "off"
+              ? { label: "Nothing set up", tone: "off" as const }
+              : { label: "All working", tone: "ok" as const };
   const visibleLabel = label;
   const dot =
     tone === "ok"
@@ -315,7 +301,9 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
         ? "bg-warning"
         : tone === "bad"
           ? "bg-danger"
-          : "bg-neutral";
+          : tone === "busy"
+            ? "bg-info"
+            : "bg-neutral";
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -327,13 +315,12 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
               : "shell-nav-footer"
           }
           aria-label={`Gateway status: ${visibleLabel}`}
-          title={reason}
         >
           <span
             aria-hidden="true"
             className={`size-2 shrink-0 rounded-full ${dot}`}
           />
-          <span className={compact ? "sr-only" : "shell-nav-label"}>
+          <span className={compact ? "text-xs" : "shell-nav-label"}>
             {visibleLabel}
           </span>
         </button>
@@ -344,12 +331,7 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
         className="w-80 max-w-[calc(100vw-2rem)] space-y-3"
         aria-label="Gateway health"
       >
-        <p className="flex items-center gap-2 font-medium">
-          <span aria-hidden="true" className={`size-2 rounded-full ${dot}`} />
-          {visibleLabel}
-        </p>
-        <p className="text-muted-foreground text-sm">{reason}</p>
-        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
           <dt className="text-muted-foreground">Gateway</dt>
           <dd>
             {gatewayError ? (
@@ -363,18 +345,12 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
               "Checking"
             )}
           </dd>
-          {viewer.admin && (
+          {signedIn && !model.isPending && !model.isError ? (
             <>
-              <dt className="text-muted-foreground">Engines</dt>
-              <dd>
-                {statusError
-                  ? "Couldn’t refresh"
-                  : health?.observation_available
-                    ? health.label || "Not checked yet"
-                    : "Not checked yet"}
-              </dd>
+              <dt className="text-muted-foreground">Your AI</dt>
+              <dd>{model.verdict.text}</dd>
             </>
-          )}
+          ) : null}
         </dl>
         <Button variant="outline" size="sm" asChild>
           <Link href="/status">
@@ -522,9 +498,12 @@ function AlertSlot() {
 function CommandPalette({
   open,
   setOpen,
+  fallbackFocus,
 }: {
   open: boolean;
   setOpen: (open: boolean) => void;
+  /** Where focus goes when the opener is gone, e.g. a closed navigation sheet. */
+  fallbackFocus?: React.RefObject<HTMLElement | null>;
 }) {
   const viewer = useViewer();
   const router = useRouter();
@@ -637,7 +616,13 @@ function CommandPalette({
         }}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
-          commandInvoker.current?.focus();
+          // Search opened from the navigation sheet: that button has left the
+          // page, so focus returns to the control that opened the sheet.
+          const opener = commandInvoker.current;
+          (opener?.isConnected && opener !== document.body
+            ? opener
+            : fallbackFocus?.current
+          )?.focus();
         }}
       >
         <DialogHeader className="sr-only">
@@ -993,7 +978,7 @@ function Shell({ children }: { children: React.ReactNode }) {
                 type="button"
                 onClick={() => setCommandOpen(true)}
                 aria-label="Search"
-                className="border-chrome-border text-chrome-muted hover:text-chrome-foreground hover:border-chrome-muted mb-5 flex min-h-11 items-center justify-center gap-2.5 rounded-control border px-3 text-sm transition-colors lg:min-h-9 lg:justify-start"
+                className="border-chrome-border bg-background text-chrome-muted hover:text-chrome-foreground hover:border-input mb-5 flex min-h-11 items-center justify-center gap-2.5 rounded-control border px-2.5 text-sm transition-colors lg:min-h-8 lg:justify-start"
               >
                 <Search className="size-4 shrink-0" aria-hidden="true" />
                 <span className="shell-nav-label flex-1 text-left">Search</span>
@@ -1029,7 +1014,7 @@ function Shell({ children }: { children: React.ReactNode }) {
               </div>
             </aside>
             <div className="sm:ml-(--rail-width) lg:ml-(--sidebar-width)">
-              <header className="bg-chrome text-chrome-foreground sticky top-0 z-30 flex h-14 items-center justify-between pr-2 pl-4 sm:hidden">
+              <header className="bg-chrome text-chrome-foreground border-chrome-border sticky top-0 z-30 flex h-14 items-center justify-between border-b pr-2 pl-4 sm:hidden">
                 <Link
                   href="/"
                   aria-label={`${PRODUCT_NAME}${instanceSubtitle ? ` ${instanceSubtitle}` : ""} Home`}
@@ -1152,7 +1137,11 @@ function Shell({ children }: { children: React.ReactNode }) {
             </div>
           </SheetContent>
         </Sheet>
-        <CommandPalette open={commandOpen} setOpen={setCommandOpen} />
+        <CommandPalette
+          open={commandOpen}
+          setOpen={setCommandOpen}
+          fallbackFocus={navigationInvoker}
+        />
       </TooltipProvider>
     </ViewerContext.Provider>
   );

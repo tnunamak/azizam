@@ -18,11 +18,9 @@ import {
   Video,
 } from "lucide-react";
 import { formatAppName } from "@/lib/format";
-import { availabilityReason } from "@/lib/status-copy";
 import { useViewer } from "@/components/shell/session";
 import { accountApi, type AccountApp } from "@/lib/account-api";
-import { api, ApiError, queryKeys } from "@/lib/api";
-import { engineShortName } from "@/lib/health-presentation";
+import { ApiError } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,20 +36,21 @@ import {
 import {
   CodeBlock,
   CopyField,
-  EmptyState,
   ErrorState,
   SecretReveal,
 } from "@/components/product";
+import { capabilityMeta, SectionHeading } from "@/components/product/readiness";
+import { StateWord, StatusLine } from "@/components/product/status-ui";
+import { AppMark } from "@/components/product/app-mark";
+import { CapNotice } from "@/components/product/cap-notice";
+import { PageHeader } from "@/components/product/page-header";
 import {
-  availabilityState,
-  capabilityMeta,
-  evidenceStamp,
-  EvidenceTime,
-  SectionHeading,
-  StateLabel,
-  Verdict,
-  type EvidenceStamp,
-} from "@/components/product/readiness";
+  activeCapRefusal,
+  CAP_WARNING,
+  isInFlight,
+  type CapabilityView,
+} from "@/lib/capability-state";
+import { useCapabilityViews } from "@/lib/use-capability-views";
 import {
   Sheet,
   SheetContent,
@@ -62,19 +61,12 @@ import {
 import {
   homeApi,
   type ConnectionResult,
-  type HomeCapability,
   type HomeCreation,
   type HomeSnapshot,
+  type HomeReceipt,
   hasHomeCreationContent,
 } from "./home-api";
 import { chatAlias, recipeFor, type Client } from "./recipes";
-import {
-  capabilityTiles,
-  homeVerdict,
-  oldestCheck,
-  spendingNotice,
-} from "./presentation";
-import { Notice } from "@/components/product/notice";
 
 const homeKey = ["account", "home"];
 const setupKey = ["gateway", "setup-progress"];
@@ -121,19 +113,6 @@ function useHomePreviewVisible() {
   return { ref, visible };
 }
 
-/** Tiles open Try on the capability, with its recommended model selected. */
-function capabilityHref(row: HomeCapability): string {
-  const tab = ["music", "sfx"].includes(row.capability)
-    ? "audio"
-    : row.capability === "voice"
-      ? "speech"
-      : row.capability;
-  const params = new URLSearchParams({ capability: tab });
-  const model = row.use_name ?? row.model;
-  if (model) params.set("model", model);
-  return `/try/?${params.toString()}`;
-}
-
 function firstWords(value?: string | null): string | null {
   const words = value?.trim().split(/\s+/).filter(Boolean) ?? [];
   if (!words.length) return null;
@@ -162,154 +141,139 @@ function HomeLoading() {
 }
 
 /* ------------------------------------------------------------------ */
-/* Capabilities                                                        */
+/* Things to do: the member's own tasks come first                     */
 /* ------------------------------------------------------------------ */
 
-type EngineHint = { name: string; serviceId: string } | null;
+interface Task {
+  key: string;
+  title: string;
+  hint: string;
+  tab: string;
+}
+const PRIMARY_TASKS: Task[] = [
+  { key: "image", title: "Make a picture", hint: "Describe it and get an image.", tab: "image" },
+  { key: "speech", title: "Read text aloud", hint: "Paste text and hear it spoken.", tab: "speech" },
+  { key: "chat", title: "Chat", hint: "Ask a question or get help writing.", tab: "chat" },
+];
+const MORE_TASKS: Task[] = [
+  { key: "music", title: "Make music", hint: "", tab: "audio" },
+  { key: "sfx", title: "Make a sound effect", hint: "", tab: "audio" },
+  { key: "video", title: "Make a video", hint: "", tab: "video" },
+  { key: "transcribe", title: "Turn a recording into text", hint: "", tab: "transcribe" },
+];
+const USABLE = new Set(["ready", "busy", "degraded", "unknown"]);
 
-function useOwnerEngineHints(enabled: boolean) {
-  const { data: status } = useQuery({
-    queryKey: ["foundation", "health"],
-    queryFn: api.status,
-    enabled,
-    refetchInterval: 60_000,
-  });
-  const { data: registry } = useQuery({
-    queryKey: queryKeys.serviceRegistry,
-    queryFn: api.services.registry,
-    enabled,
-  });
-  return (label: string): EngineHint => {
-    if (!enabled) return null;
-    const service = status?.current_health?.services.find(
-      (item) =>
-        item.enabled &&
-        item.tone !== "ok" &&
-        (item.capability_labels ?? [item.capability_title]).some(
-          (value) => value?.toLowerCase() === label.toLowerCase(),
-        ),
-    );
-    if (!service) return null;
-    return {
-      name: engineShortName(registry?.services[service.service_id], service),
-      serviceId: service.service_id,
-    };
-  };
+function taskHref(task: Task, models: Record<string, string | undefined>) {
+  const params = new URLSearchParams({ capability: task.tab });
+  const model = models[task.key];
+  if (model) params.set("model", model);
+  return `/try/?${params.toString()}`;
 }
 
-function CapabilityTile({
-  row,
-  verdictCheck,
+function TaskCard({
+  task,
+  view,
+  href,
+  primary,
 }: {
-  row: HomeCapability;
-  verdictCheck: EvidenceStamp | null;
+  task: Task;
+  view: CapabilityView;
+  href: string;
+  primary: boolean;
 }) {
-  const meta = capabilityMeta(row.icon_key ?? row.capability);
-  const label = row.capability_title ?? meta.label;
-  const state = availabilityState(row.status, row.reason_code);
-  const stamp = evidenceStamp(row.availability?.evidence);
-  // A tile repeats a time only when it differs from the verdict's check.
-  const ownStamp =
-    stamp &&
-    !(
-      verdictCheck &&
-      stamp.kind === "checked" &&
-      Math.abs(stamp.at - verdictCheck.at) < 300
-    )
-      ? stamp
-      : null;
+  const meta = capabilityMeta(task.key);
   const Icon = meta.icon;
-  const reason = row.available
-    ? undefined
-    : availabilityReason(row.status, row.reason_code);
+  const usable = USABLE.has(view.state);
+  const showState = view.state !== "ready";
   const body = (
-    <span className="flex min-w-0 items-center gap-3 md:flex-col md:items-start md:gap-3">
-      <span
-        role="img"
-        aria-label={label}
-        className={cn(
-          "flex size-9 shrink-0 items-center justify-center rounded-control",
-          row.available
-            ? cn(meta.tint, meta.tone)
-            : "bg-muted text-muted-foreground",
-        )}
-      >
+    <>
+      <span className="bg-muted text-foreground flex size-9 shrink-0 items-center justify-center rounded-control">
         <Icon aria-hidden="true" className="size-4.5" />
       </span>
-      <span className="block min-w-0">
-        <span className="block truncate font-semibold">{label}</span>
-        <StateLabel state={state} className="mt-0.5" />
-        {ownStamp ? (
-          <EvidenceTime stamp={ownStamp} className="mt-0.5 block text-xs" />
+      <span className="min-w-0 flex-1">
+        <span className="block font-medium">{task.title}</span>
+        {primary && task.hint ? (
+          <span className="text-muted-foreground block text-sm">{task.hint}</span>
+        ) : null}
+        {showState ? (
+          <span className="mt-1 flex flex-wrap items-center gap-x-2">
+            <StateWord tone={view.tone} word={view.word} />
+            {!usable && view.detail ? (
+              <span className="text-muted-foreground text-sm">{view.detail}</span>
+            ) : null}
+          </span>
         ) : null}
       </span>
-    </span>
+      {usable ? (
+        <ChevronRight aria-hidden="true" className="text-subtle-foreground size-4 shrink-0" />
+      ) : null}
+    </>
   );
-  if (!row.available)
+  const shell = cn(
+    "flex min-h-11 min-w-0 items-center gap-3 rounded-panel border px-3.5",
+    primary ? "py-3.5" : "py-2.5",
+  );
+  if (!usable)
     return (
-      <li
-        className="bg-muted/50 flex min-w-0 flex-col rounded-panel border border-dashed p-3 md:p-3.5"
-        title={reason}
-      >
+      <li className={cn(shell, "bg-muted/40 text-muted-foreground")} title={view.detail ?? undefined}>
         {body}
-        {reason ? <span className="sr-only">{reason}</span> : null}
       </li>
     );
   return (
     <li className="min-w-0">
-      <Link
-        href={capabilityHref(row)}
-        aria-label={label}
-        className="bg-card hover:border-input flex h-full min-w-0 flex-col rounded-panel border p-3 transition-colors md:p-3.5"
-      >
+      <Link href={href} className={cn(shell, "bg-card hover:border-input h-full transition-colors")}>
         {body}
       </Link>
     </li>
   );
 }
 
-function Capabilities({
-  tiles,
-  verdictCheck,
-  owner,
+function Tasks({
+  views,
+  models,
 }: {
-  tiles: HomeCapability[];
-  verdictCheck: EvidenceStamp | null;
-  owner: boolean;
+  views: CapabilityView[];
+  models: Record<string, string | undefined>;
 }) {
+  const byKey = new Map(views.map((view) => [view.key, view]));
+  const primary = PRIMARY_TASKS.filter((task) => byKey.has(task.key));
+  const more = MORE_TASKS.filter((task) => byKey.has(task.key));
+  if (!primary.length && !more.length) return null;
   return (
-    <section aria-labelledby="capabilities-heading">
-      <SectionHeading id="capabilities-heading" title="What you can use" />
-      {!tiles.length ? (
-        <div className="bg-card flex flex-wrap items-center justify-between gap-3 rounded-panel border border-dashed p-5">
-          <p className="text-muted-foreground text-sm">
-            {owner
-              ? "Connect an engine or a provider to turn on chat, images and more."
-              : "Ask the gateway owner to connect a model and give you access."}
-          </p>
-          {owner ? (
-            <Button asChild size="sm">
-              <Link href="/engines/">Add an engine</Link>
-            </Button>
-          ) : null}
-        </div>
-      ) : (
-        <ul className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          {tiles.map((row) => (
-            <CapabilityTile
-              key={row.capability}
-              row={row}
-              verdictCheck={verdictCheck}
+    <section aria-labelledby="tasks-heading" className="space-y-3">
+      <SectionHeading id="tasks-heading" title="Make something" />
+      {primary.length ? (
+        <ul className="grid gap-2 md:grid-cols-3">
+          {primary.map((task) => (
+            <TaskCard
+              key={task.key}
+              task={task}
+              view={byKey.get(task.key)!}
+              href={taskHref(task, models)}
+              primary
             />
           ))}
         </ul>
-      )}
+      ) : null}
+      {more.length ? (
+        <ul className="grid gap-2 sm:grid-cols-2">
+          {more.map((task) => (
+            <TaskCard
+              key={task.key}
+              task={task}
+              view={byKey.get(task.key)!}
+              href={taskHref(task, models)}
+              primary={false}
+            />
+          ))}
+        </ul>
+      ) : null}
     </section>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* Connect an app                                                      */
+/* Notices                                                             */
 /* ------------------------------------------------------------------ */
 
 function lastUsed(app: HomeSnapshot["apps"][number]): number | null {
@@ -367,8 +331,15 @@ function YourApps({ home }: { home: HomeSnapshot }) {
   );
 }
 
-function Connect({ home }: { home: HomeSnapshot }) {
+function Connect({
+  home,
+  startOpen,
+}: {
+  home: HomeSnapshot;
+  startOpen: boolean;
+}) {
   const queryClient = useQueryClient();
+  const [chooserOpen, setChooserOpen] = useState(startOpen);
   const [appChoice, setAppChoice] = useState<AppChoice | null>(null);
   const [client, setClient] = useState<Client>("Open WebUI");
   const [selectedCredentialId, setSelectedCredentialId] = useState("new");
@@ -463,7 +434,7 @@ function Connect({ home }: { home: HomeSnapshot }) {
           ? error.status === 401 || error.status === 403
             ? "The gateway check could not finish. Check your key and try again."
             : `The gateway check failed (HTTP ${error.status}). Try again.`
-          : "The server could not be reached. Try again.",
+          : "Check failed. Try again.",
       );
     } finally {
       setTesting(false);
@@ -476,43 +447,55 @@ function Connect({ home }: { home: HomeSnapshot }) {
       className="bg-card rounded-panel border"
     >
       <div className="space-y-5 p-5">
-        <h2 id="connect-heading" className="text-lg font-semibold">
-          Connect an app
-        </h2>
-        <CopyField label="Gateway address" value={home.api_base_url} />
-        <YourApps home={home} />
         <div>
-          <h3 className="text-muted-foreground mb-2 text-sm font-medium">
-            Add an app
-          </h3>
-          <div className="grid grid-cols-2 gap-2">
-            {([...primaryAppChoices, "Other"] as AppChoice[]).map((name) => (
-              <button
-                key={name}
-                type="button"
-                className={cn(
-                  "flex min-h-11 items-center gap-2 rounded-control border px-3 text-left text-sm font-medium transition-colors disabled:opacity-50",
-                  appChoice === name
-                    ? "border-ring bg-accent text-accent-foreground"
-                    : "bg-card hover:border-input",
-                )}
-                aria-pressed={appChoice === name}
-                disabled={choiceLocked}
-                onClick={() => {
-                  setAppChoice(name);
-                  setClient(name === "Other" ? "Python" : name);
-                  setTestResult(null);
-                  setTestError(null);
-                }}
-              >
-                {name === "Other" ? (
-                  <Plus aria-hidden="true" className="size-4 shrink-0" />
-                ) : null}
-                <span className="truncate">{name}</span>
-              </button>
-            ))}
-          </div>
+          <h2 id="connect-heading" className="text-base font-semibold">
+            Connect an app
+          </h2>
+          <p className="text-muted-foreground text-sm">
+            For chat apps, phone apps and coding tools. Each app gets its own
+            key.
+          </p>
         </div>
+        <YourApps home={home} />
+        {chooserOpen || appChoice ? (
+          <div>
+            <h3 className="text-muted-foreground mb-2 text-sm font-medium">
+              Add an app
+            </h3>
+            <div className="grid grid-cols-2 gap-1.5">
+              {([...primaryAppChoices, "Other"] as AppChoice[]).map((name) => (
+                <button
+                  key={name}
+                  type="button"
+                  className={cn(
+                    "flex min-h-11 items-center gap-2.5 rounded-control border px-2 text-left text-sm transition-colors disabled:opacity-50",
+                    appChoice === name
+                      ? "border-ring bg-accent text-accent-foreground"
+                      : "bg-card hover:border-input border-transparent",
+                  )}
+                  aria-pressed={appChoice === name}
+                  disabled={choiceLocked}
+                  onClick={() => {
+                    setAppChoice(name);
+                    setClient(name === "Other" ? "Python" : name);
+                    setTestResult(null);
+                    setTestError(null);
+                  }}
+                >
+                  <AppMark app={name} />
+                  <span className="truncate">
+                    {name === "Other" ? "Another app" : name}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <Button variant="outline" onClick={() => setChooserOpen(true)}>
+            <Plus aria-hidden="true" />
+            Add an app
+          </Button>
+        )}
         {appChoice && (
           <div className="space-y-4 border-t pt-5">
             {appChoice === "Other" && (
@@ -548,7 +531,9 @@ function Connect({ home }: { home: HomeSnapshot }) {
                 label="Base URL"
                 value={selectedRecipe.fields[0]?.value ?? home.api_base_url}
               />
-            ) : null}
+            ) : (
+              <CopyField label="Gateway address" value={home.api_base_url} />
+            )}
             {model && <CopyField label="Model" value={model} />}
             <div className="space-y-2">
               <label htmlFor="app-key" className="text-sm font-medium">
@@ -1036,7 +1021,19 @@ function CreationPreview({ creation }: { creation: HomeCreation }) {
   );
 }
 
-function Recent() {
+function inFlightKind(receipt: HomeReceipt): "image" | "video" | "audio" | null {
+  const intent = String(receipt.intent ?? "").toLowerCase();
+  const path = String(receipt.path ?? "").toLowerCase();
+  if (intent.startsWith("image") || path.includes("/images/")) return "image";
+  if (intent.startsWith("video") || path.includes("/videos")) return "video";
+  if (intent.startsWith("audio") || intent.startsWith("speech") || path.includes("/audio/")) return "audio";
+  return null;
+}
+
+function Recent({ receipts }: { receipts: HomeReceipt[] }) {
+  const making = receipts.filter(
+    (receipt) => isInFlight(receipt.status) && inFlightKind(receipt),
+  );
   const {
     data: creations,
     isPending: creationsPending,
@@ -1052,7 +1049,12 @@ function Recent() {
     .filter(hasHomeCreationContent)
     .filter((creation) => creation.available !== false)
     .slice(0, 4);
-  if (!creationsPending && !creationsError && recentCreations.length === 0) {
+  if (
+    !creationsPending &&
+    !creationsError &&
+    recentCreations.length === 0 &&
+    !making.length
+  ) {
     return null;
   }
   return (
@@ -1095,7 +1097,28 @@ function Recent() {
             </p>
           ) : null}
           <ul className="grid grid-cols-2 gap-2 md:grid-cols-4">
-            {recentCreations.map((creation) => (
+            {making.slice(0, 2).map((receipt) => {
+              const kind = inFlightKind(receipt);
+              const Icon = kind === "video" ? Video : kind === "audio" ? AudioLines : ImageIcon;
+              const at = receipt.accepted_at_ms ? receipt.accepted_at_ms / 1000 : receipt._stored_at;
+              return (
+                <li
+                  key={receipt.request_id}
+                  className="bg-muted text-muted-foreground flex aspect-square flex-col justify-end gap-1 rounded-media p-3"
+                >
+                  <Icon aria-hidden="true" className="size-5" />
+                  <span className="text-foreground text-sm font-medium">
+                    {kind === "video" ? "Making your video" : kind === "audio" ? "Making your audio" : "Making your picture"}
+                  </span>
+                  {at ? (
+                    <span className="text-xs">
+                      Started <RelativeTime ts={at} fallback="" />
+                    </span>
+                  ) : null}
+                </li>
+              );
+            })}
+            {recentCreations.slice(0, 4 - Math.min(making.length, 2)).map((creation) => (
               <CreationPreview key={creation.asset_id} creation={creation} />
             ))}
           </ul>
@@ -1119,15 +1142,14 @@ export default function HomePage() {
     isFetching: homeFetching,
   } = useQuery({ queryKey: homeKey, queryFn: homeApi.home });
   const isOwner = Boolean(
-    home?.authenticated && ["owner", "superadmin", "admin"].includes(home.user.role),
+    home?.authenticated &&
+      ["owner", "superadmin", "admin"].includes(home.user.role) &&
+      viewer.admin,
   );
-  const tiles =
-    home && home.authenticated
-      ? capabilityTiles(home.capabilities, home.aliases)
-      : [];
-  const verdict = homeVerdict(tiles);
-  const notice =
-    home && home.authenticated ? spendingNotice(home.receipts ?? []) : null;
+  const model = useCapabilityViews(isOwner);
+  const views = model.views;
+  const verdict = model.verdict;
+  const refusal = activeCapRefusal(model.requests);
   // Someone with no app that has ever made a request starts by connecting one.
   const newcomer = Boolean(
     home?.authenticated &&
@@ -1135,125 +1157,80 @@ export default function HomePage() {
         app.credentials.some((key) => typeof key.last_used_at === "number"),
       ),
   );
-  const check = oldestCheck(tiles);
-  const hintFor = useOwnerEngineHints(isOwner && viewer.admin);
-  const hints = [
-    ...new Map(
-      tiles
-        .filter((row) => !row.available)
-        .map((row) =>
-          hintFor(row.capability_title ?? capabilityMeta(row.capability).label),
-        )
-        .filter((hint): hint is NonNullable<EngineHint> => Boolean(hint))
-        .map((hint) => [hint.serviceId, hint]),
-    ).values(),
-  ];
+  const models: Record<string, string | undefined> = {};
+  if (home && home.authenticated)
+    for (const row of home.capabilities)
+      models[row.icon_key ?? row.capability] ??= row.use_name ?? row.model ?? undefined;
   return (
     <div className="min-w-0">
-      <h1 className="sr-only">Home</h1>
       {homePending ? (
-        <HomeLoading />
+        <>
+          <h1 className="sr-only">Home</h1>
+          <HomeLoading />
+        </>
       ) : homeError ? (
-        <ErrorState
-          heading="Couldn’t load Home"
-          message="Your connection settings could not be loaded. Try again."
-          onRetry={() => void refetchHome()}
-          retrying={homeFetching}
-        />
+        <>
+          <PageHeader title="Home" />
+          <ErrorState
+            heading="Couldn’t load Home"
+            message={
+              isOwner || viewer.admin
+                ? "The gateway did not return your Home. Status may show why."
+                : "The gateway did not return your Home. Try again."
+            }
+            onRetry={() => void refetchHome()}
+            retrying={homeFetching}
+          />
+        </>
       ) : !home.authenticated ? (
-        <EmptyState
-          title="Sign in to use your AI"
-          description="Get your connection settings and connect the apps you already use."
-          action={
-            <Button asChild>
-              <a
-                href={`/ui/sign-in/?return_to=${encodeURIComponent(typeof window === "undefined" ? "/ui/home/" : window.location.pathname + window.location.search)}`}
-              >
-                Sign in
-              </a>
-            </Button>
-          }
-        />
+        <>
+          <PageHeader title="Home" />
+          <ErrorState
+            severity="info"
+            heading="Sign in to use your AI"
+            message="Make pictures, chat and more with the apps you already use."
+            action={{
+              label: "Sign in",
+              href: `/ui/sign-in/?return_to=${encodeURIComponent(typeof window === "undefined" ? "/ui/home/" : window.location.pathname + window.location.search)}`,
+            }}
+          />
+        </>
       ) : (
-        <div className="grid items-start gap-x-12 gap-y-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
-          <div className="min-w-0 space-y-6 lg:col-start-1 lg:row-start-1">
-            <Verdict
+        <>
+          <PageHeader title="Home">
+            <StatusLine
               tone={verdict.tone}
-              detail={
-                check || hints.length ? (
-                  <>
-                    {check ? (
-                      <EvidenceTime stamp={check} className="text-base" />
-                    ) : null}
-                    {hints.length > 2 ? (
-                      <Link
-                        href="/status/"
-                        className="text-link inline-flex min-h-11 items-center gap-0.5 font-medium underline-offset-4 hover:underline sm:min-h-0"
-                      >
-                        {hints.length} engines need you
-                        <ChevronRight aria-hidden="true" className="size-4" />
-                      </Link>
-                    ) : null}
-                    {(hints.length > 2 ? [] : hints).map((hint) => (
-                      <Link
-                        key={hint.serviceId}
-                        href={`/engines/?service=${encodeURIComponent(hint.serviceId)}`}
-                        className="text-link inline-flex min-h-11 items-center gap-0.5 font-medium underline-offset-4 hover:underline sm:min-h-0"
-                      >
-                        Inspect {hint.name}
-                        <ChevronRight aria-hidden="true" className="size-4" />
-                      </Link>
-                    ))}
-                  </>
-                ) : null
-              }
+              text={verdict.text}
+              checkedAt={verdict.checkedAt}
             >
-              {verdict.text}
-            </Verdict>
-            {notice ? (
-              <Notice
-                title="Your paid requests are being refused."
-                action={
-                  <a
-                    href={`/r/${encodeURIComponent(notice.requestId)}`}
-                    className="text-link inline-flex min-h-11 items-center font-medium underline-offset-4 hover:underline sm:min-h-0"
-                  >
-                    Open receipt
-                  </a>
-                }
-              >
-                {notice.message} Last refused{" "}
-                <RelativeTime ts={notice.at} fallback="" />.{" "}
-                {isOwner
-                  ? "Raise the cap in the access plan to resume them."
-                  : "Ask the gateway owner to raise the cap."}
-              </Notice>
-            ) : null}
+              {verdict.problems.length && isOwner ? (
+                <Link
+                  href="/status/"
+                  className="text-link inline-flex min-h-11 items-center gap-0.5 font-medium underline-offset-4 hover:underline sm:min-h-0"
+                >
+                  Open Status
+                  <ChevronRight aria-hidden="true" className="size-4" />
+                </Link>
+              ) : null}
+            </StatusLine>
+          </PageHeader>
+          <div className="grid items-start gap-x-12 gap-y-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,21rem)]">
+            <div className="min-w-0 space-y-10 lg:col-start-1 lg:row-start-1">
+              {refusal ? (
+                <CapNotice
+                  warning={(refusal.warnings ?? []).find((text) => CAP_WARNING.test(text)) ?? ""}
+                  at={refusal.at}
+                  owner={isOwner}
+                />
+              ) : null}
+              <Tasks views={views} models={models} />
+              <Recent receipts={home.receipts ?? []} />
+            </div>
+            <div className="min-w-0 lg:col-start-2 lg:row-start-1">
+              <Connect home={home} startOpen={newcomer} />
+            </div>
           </div>
-          <div
-            className={cn(
-              "min-w-0 lg:col-start-1 lg:row-start-2",
-              newcomer ? "order-2 lg:order-none" : "order-1 lg:order-none",
-            )}
-          >
-            <Capabilities
-              tiles={tiles}
-              verdictCheck={check}
-              owner={isOwner && viewer.admin}
-            />
-          </div>
-          <div
-            className={cn(
-              "min-w-0 lg:col-start-2 lg:row-span-3 lg:row-start-1",
-              newcomer ? "order-1 lg:order-none" : "order-2 lg:order-none",
-            )}
-          >
-            <Connect home={home} />
-          </div>
-          <div className="order-3 min-w-0 lg:order-none lg:col-start-1 lg:row-start-3">
-            <Recent />
-          </div>
-        </div>
+        </>
       )}
     </div>
   );

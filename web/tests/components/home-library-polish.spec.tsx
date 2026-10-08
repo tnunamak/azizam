@@ -107,21 +107,23 @@ describe("Home and Library polish", () => {
       await screen.findByRole("heading", { name: "Connect an app" }),
     ).toBeVisible();
     expect(screen.queryByText(/^(Welcome to|Hello,)/)).toBeNull();
-    // The page outline keeps an h1, but no visible title repeats the navigation.
-    expect(screen.getByRole("heading", { level: 1, name: "Home" })).toHaveClass(
-      "sr-only",
-    );
+    // Every page has the same header: a visible title and the verdict line.
+    expect(screen.getByRole("heading", { level: 1, name: "Home" })).toBeVisible();
+    // This snapshot carries no check time, so nothing may claim Ready.
+    const header = screen.getByRole("heading", { level: 1, name: "Home" }).closest("header")!;
+    expect(within(header).getByRole("status")).toHaveTextContent("Images unknown");
     const connect = screen.getByRole("region", { name: "Connect an app" });
-    expect(within(connect).getByLabelText("Gateway address")).toHaveValue(
-      home.api_base_url,
-    );
+    // The address belongs to an app's recipe, so it waits for the choice.
+    expect(within(connect).queryByLabelText("Gateway address")).toBeNull();
     expect(
       within(connect).queryByRole("button", { name: "Check connection" }),
     ).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Open WebUI" }));
     // The recipe's base URL is the gateway address, so it is not repeated.
     expect(within(connect).queryByLabelText("Base URL")).toBeNull();
-    expect(within(connect).getByLabelText("Gateway address")).toBeVisible();
+    expect(within(connect).getByLabelText("Gateway address")).toHaveValue(
+      home.api_base_url,
+    );
     expect(within(connect).getByText("API key", { exact: true })).toBeVisible();
     expect(
       within(connect).getByRole("button", {
@@ -144,15 +146,14 @@ describe("Home and Library polish", () => {
     expect(
       container.querySelector('img[src="/signed/image1"]'),
     ).toHaveAttribute("alt", "An ocean");
-    const images = screen.getByRole("link", { name: "Images" });
-    expect(images).toHaveAttribute(
+    // Tasks come first, in the member's words, and open Try.
+    const picture = screen.getByRole("link", { name: /Make a picture/ });
+    expect(picture).toHaveAttribute(
       "href",
-      expect.stringMatching(/^\/try\/?\?capability=image$/),
+      expect.stringMatching(/^\/try\/?\?capability=image(&|$)/),
     );
-    expect(within(images).getByText("Ready")).toBeVisible();
-    expect(within(images).getByRole("img", { name: "Images" })).toHaveClass(
-      "bg-capability-image/12",
-    );
+    // Ready stays quiet: only exceptions carry a state word.
+    expect(within(picture).queryByText("Ready")).toBeNull();
   });
   it("keeps setup notes and key checks inside the selected app flow", async () => {
     vi.stubGlobal(
@@ -249,27 +250,16 @@ describe("Home and Library polish", () => {
       }),
     );
     renderPage(<HomePage />);
-    await screen.findByRole("heading", { name: "What you can use" });
-    // An unusable tile is not a link; it names its state and gives the reason.
-    expect(screen.queryByRole("link", { name: /Images/ })).toBeNull();
-    const images = screen
-      .getByRole("img", { name: "Images" })
-      .closest("li")!;
-    expect(images).toHaveAttribute(
-      "title",
-      "Unavailable. Ask the owner to finish setup.",
-    );
-    expect(within(images).getByText("Not set up")).toBeVisible();
-    expect(
-      within(images).getByText("Unavailable. Ask the owner to finish setup."),
-    ).toBeInTheDocument();
-    expect(within(images).queryByText("Ready")).toBeNull();
-    const decisions = screen.getByRole("link", { name: "Decisions" });
-    expect(decisions).toBeVisible();
-    expect(within(decisions).getByText("Ready to start")).toBeVisible();
+    await screen.findByRole("heading", { name: "Make something" });
+    // An unusable task is not a link; it names its state and gives the reason.
+    expect(screen.queryByRole("link", { name: /Make a picture/ })).toBeNull();
+    const picture = screen.getByText("Make a picture").closest("li")!;
+    expect(picture).toHaveAttribute("title", "Not set up yet.");
+    expect(within(picture).getByText("Off")).toBeVisible();
+    expect(within(picture).getByText("Not set up yet.")).toBeVisible();
+    expect(within(picture).queryByText("Ready")).toBeNull();
     expect(screen.queryByText("Unknown")).toBeNull();
     expect(screen.queryByRole("button", { name: "Details" })).toBeNull();
-    expect(screen.queryByText("Unavailable right now")).toBeNull();
   });
   it("keeps audio controls outside the open action and uses a duration fallback for video", async () => {
     vi.stubGlobal(
@@ -333,7 +323,7 @@ describe("Home and Library polish", () => {
         });
       }),
     );
-    const { container } = renderPage(<LibraryPage />, true);
+    renderPage(<LibraryPage />, true);
     await screen.findByRole("button", { name: "Open Swimming fish" });
     expect(requests).toContain("/me/api/media/poster1/download?scope=everyone");
     screen.getByRole("combobox", { name: "Person" }).focus();

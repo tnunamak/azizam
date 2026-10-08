@@ -49,7 +49,10 @@ const banned: RegExp[] = [
   /^raw$/i,
   /^json$/i,
   /\bdebug\b/i,
-  /^(?:voice|transcribe|decide|embed|rerank)$/i,
+  // Raw capability keys. "Voice" is the glossary name (VOICE.md), so only
+  // the lowercase key is banned for it.
+  /^(?:voice|transcribe|decide|embed|rerank)$/,
+  /^(?:Transcribe|Decide|Embed|Rerank)$/,
   /^(?:voice|rerank) request$/i,
 ];
 
@@ -307,9 +310,10 @@ function copyViolations(text: string, relative: string): string[] {
 }
 
 describe("product vocabulary", () => {
+  // "Voice" is the glossary's capability name (VOICE.md); the raw key "voice" is not.
   it("rejects new banned labels in maps, config fields, and nested JSX expressions", () => {
     const source = `
-      const labels = { voice: { label: "Voice" }, summary: { description: "Rerank" } };
+      const labels = { voice: { label: "voice" }, summary: { description: "Rerank" } };
       const action = { title: condition ? "Decide" : "Chat", description: \`Rerank\` };
       export function Example() { return <p>{condition ? "Embed" : labels.voice.label}</p>; }
     `;

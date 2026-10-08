@@ -393,7 +393,8 @@ describe("Home connection check errors", () => {
     },
     {
       failure: "network",
-      message: "The server could not be reached. Try again.",
+      // No HTTP answer: the cause is unknown, so no layer is named.
+      message: "Check failed. Try again.",
     },
   ])("HA-05 classifies $failure connection failures", async ({ failure, message }) => {
     const connectionTest = vi.fn(() => {

@@ -7,6 +7,29 @@ import { productApi, type MemberStatus as Snapshot } from "@/lib/product-api";
 import { ApiError } from "@/lib/api";
 
 vi.mock("./status-client", () => ({ StatusClient: () => <p>Owner status</p> }));
+// Capability states come from the shared model, which reads the Home snapshot.
+const home = vi.hoisted(() => ({ rows: [] as Array<Record<string, unknown>> }));
+vi.mock("@/app/home/home-api", () => ({
+  homeApi: {
+    home: async () => ({
+      authenticated: true,
+      capabilities: home.rows,
+      aliases: [],
+      receipts: [],
+      apps: [],
+    }),
+  },
+}));
+/** Serve one snapshot from both member endpoints, as a real gateway does. */
+function serve(value: Snapshot) {
+  home.rows = value.capabilities.map((row) => ({
+    ...row,
+    availability: row.measured
+      ? { evidence: { source: "status", observed_at_s: Date.now() / 1000 } }
+      : null,
+  }));
+  return vi.spyOn(productApi, "status").mockResolvedValue(value);
+}
 vi.mock("next/link", () => ({
   default: ({ href, children, ...props }: React.ComponentProps<"a">) => (
     <a href={href} {...props}>
@@ -70,12 +93,10 @@ afterEach(() => {
 
 describe("member Status diagnosis", () => {
   it("shows server presentation and keeps raw names and unknown metrics in details", async () => {
-    vi.spyOn(productApi, "status").mockResolvedValue(snapshot);
+    serve(snapshot);
     const user = userEvent.setup();
     mount();
-    expect(
-      await screen.findByText("Images", { selector: "p" }),
-    ).toBeVisible();
+    expect(await screen.findByText("Images", { selector: "p" })).toBeVisible();
     // The recommended model sits with the names, one tap away (word budget).
     expect(
       screen.queryByText("image-model", { exact: true }),
@@ -84,9 +105,11 @@ describe("member Status diagnosis", () => {
       screen.queryByText("Ask the owner", { exact: true }),
     ).not.toBeInTheDocument();
     expect(screen.queryByText("Not measured yet")).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("link", { name: "View receipt my-failed-request" }),
-    ).toHaveAttribute("href", snapshot.receipts[0].href);
+    const receipt = screen.getByRole("link", { name: "View request receipt" });
+    expect(receipt).toHaveAttribute("href", snapshot.receipts[0].href);
+    // The visible capability and state describe the link; the id stays out.
+    expect(receipt).toHaveAccessibleDescription(/Images.*Failed/);
+    expect(receipt).not.toHaveAccessibleDescription(/my-failed-request/);
     await user.click(screen.getByText("Model names", { exact: true }));
     expect(screen.getByText("Flux", { exact: true })).toBeVisible();
     expect(screen.getByText(/Names you can use/)).toBeInTheDocument();
@@ -98,7 +121,7 @@ describe("member Status diagnosis", () => {
     ).not.toBeInTheDocument();
   });
   it("uses the music and sound effects icons from the contract and the honest aggregate state", async () => {
-    vi.spyOn(productApi, "status").mockResolvedValue({
+    serve({
       ...snapshot,
       status: {
         state: "unavailable",
@@ -136,28 +159,20 @@ describe("member Status diagnosis", () => {
       ],
     });
     mount();
-    expect(await screen.findByRole("img", { name: "Music" })).toHaveAttribute(
-      "data-icon-key",
-      "music",
-    );
-    expect(screen.getByRole("img", { name: "Sound effects" })).toHaveAttribute(
-      "data-icon-key",
-      "sfx",
-    );
-    expect(
-      screen.getByRole("img", { name: "Music" }).querySelector("svg"),
-    ).toHaveClass("lucide-music-2");
-    expect(
-      screen.getByRole("img", { name: "Sound effects" }).querySelector("svg"),
-    ).toHaveClass("lucide-waves");
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Ready, except images.",
-    );
-    expect(screen.queryByText("Everything is ready.")).toBeNull();
-    expect(screen.getByText("Unavailable", { exact: true })).toBeVisible();
+    const music = (await screen.findByText("Music", { selector: "p" })).closest(
+      "li",
+    )!;
+    expect(music.querySelector("svg")).toHaveClass("lucide-music-2");
+    const sfx = screen
+      .getByText("Sound effects", { selector: "p" })
+      .closest("li")!;
+    expect(sfx.querySelector("svg")).toHaveClass("lucide-waves");
+    expect(await screen.findByRole("status")).toHaveTextContent("Images down");
+    expect(screen.queryByText("Everything works")).toBeNull();
+    expect(screen.getByText("Down", { exact: true })).toBeVisible();
   });
   it("teaches an account with no capabilities or receipts how to get access", async () => {
-    vi.spyOn(productApi, "status").mockResolvedValue({
+    serve({
       ...snapshot,
       capabilities: [],
       receipts: [],
@@ -166,10 +181,10 @@ describe("member Status diagnosis", () => {
     expect(
       await screen.findByText("No models are available to your account yet"),
     ).toBeVisible();
-    expect(screen.getByText("No receipts yet.")).toBeVisible();
+    expect(screen.getByText("No requests yet.")).toBeVisible();
   });
   it("shows neutral presentation when an older snapshot has no presentation fields", async () => {
-    vi.spyOn(productApi, "status").mockResolvedValue({
+    serve({
       ...snapshot,
       capabilities: [
         {
@@ -185,20 +200,20 @@ describe("member Status diagnosis", () => {
       ],
     });
     mount();
-    expect(
-      await screen.findByText("Capability", { selector: "p" }),
-    ).toBeVisible();
+    // No presentation fields: the state stays Unknown, never Ready.
+    const row = (await screen.findByText("Music", { selector: "p" })).closest(
+      "li",
+    )!;
+    expect(row).toHaveTextContent("Unknown");
+    expect(row).not.toHaveTextContent("Ready");
     await userEvent.click(screen.getByText("Model names", { exact: true }));
     expect(screen.getByText("Model details unavailable")).toBeVisible();
     expect(
       screen.queryByText("raw-workflow", { exact: true }),
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("img", { name: "Capability" }).querySelector("svg"),
-    ).toHaveClass("lucide-circle-question-mark");
   });
   it("hides the names heading when the contract has no names", async () => {
-    vi.spyOn(productApi, "status").mockResolvedValue({
+    serve({
       ...snapshot,
       capabilities: [
         {
@@ -210,9 +225,7 @@ describe("member Status diagnosis", () => {
       ],
     });
     mount();
-    expect(
-      await screen.findByText("Images", { selector: "p" }),
-    ).toBeVisible();
+    expect(await screen.findByText("Images", { selector: "p" })).toBeVisible();
     expect(
       screen.queryByText("Names you can use", { exact: true }),
     ).not.toBeInTheDocument();

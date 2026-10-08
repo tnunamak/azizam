@@ -22,6 +22,34 @@ vi.mock("@/lib/provider-status", () => ({
     refetch: vi.fn(),
   }),
 }));
+// The capability model reads the household Home snapshot.
+const homeCapabilities = vi.hoisted(() => ({
+  rows: [] as Array<Record<string, unknown>>,
+}));
+vi.mock("@/app/home/home-api", () => ({
+  homeApi: {
+    home: async () => ({
+      authenticated: true,
+      capabilities: homeCapabilities.rows,
+      aliases: [],
+      receipts: [],
+      apps: [],
+    }),
+  },
+}));
+function freshChat() {
+  const row = (capability: string, title: string) => ({
+    capability,
+    capability_title: title,
+    icon_key: capability,
+    status: "ready",
+    available: true,
+    availability: {
+      evidence: { source: "status", observed_at_s: Date.now() / 1000 },
+    },
+  });
+  return [row("chat", "Chat"), row("image", "Images")];
+}
 vi.mock("next/link", () => ({
   default: ({ children, href }: React.ComponentProps<"a">) => (
     <a href={href}>{children}</a>
@@ -31,7 +59,9 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   providerState.state = "hidden";
+  homeCapabilities.rows = freshChat();
 });
+homeCapabilities.rows = freshChat();
 
 const registry: ServiceRegistry = {
   schema_version: 1,
@@ -162,7 +192,7 @@ it("lists disabled engines as turned off, never as ready", async () => {
   const disabled = screen.getByRole("button", { name: "Image engine" });
   expect(disabled).toBeVisible();
   const row = disabled.closest("tr")!;
-  expect(within(row).getByText("Turned off")).toBeVisible();
+  expect(within(row).getByText("Off")).toBeVisible();
   expect(within(row).queryByText("Ready")).not.toBeInTheDocument();
 });
 
@@ -174,7 +204,12 @@ it("uses the registry display name and excludes providers from the engine table"
   expect(screen.queryByRole("button", { name: "Speech To Speech" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Remote provider" })).toBeNull();
   expect(screen.queryByText("Capabilities unavailable")).toBeNull();
-  expect(screen.queryByText("Unknown")).toBeNull();
+  // Realtime voice has no health record: it says Unknown, never Ready.
+  const realtime = screen
+    .getByRole("button", { name: "Realtime voice" })
+    .closest("tr")!;
+  expect(within(realtime).getByText("Unknown")).toBeVisible();
+  expect(within(realtime).queryByText("Ready")).toBeNull();
 });
 it("uses server engine names and transcription taxonomy and preserves an exact disk warning sentence", async () => {
   const user = userEvent.setup();
@@ -220,7 +255,7 @@ it("uses server engine names and transcription taxonomy and preserves an exact d
   });
   await waitFor(() =>
     expect(screen.getByRole("status")).toHaveTextContent(
-      "The gateway’s computer needs attention.",
+      "The gateway’s computer is low on disk space",
     ),
   );
   expect(
@@ -238,7 +273,7 @@ it("uses server engine names and transcription taxonomy and preserves an exact d
       screen
         .getByRole("heading", { name: "Status", level: 1 })
         .closest("header")!,
-    ).getByText("The gateway’s computer needs attention.", { exact: true }),
+    ).getByText("The gateway’s computer is low on disk space", { exact: true }),
   ).toBeVisible();
   expect(
     screen.getAllByText(
@@ -283,10 +318,8 @@ it("retains server labels when live observation is unavailable without showing r
   expect(engine).toBeVisible();
   expect(engine).toHaveAttribute("title", "Canary (transcription)");
   expect(screen.queryByText("Ready", { exact: true })).not.toBeInTheDocument();
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Engine health is unknown.",
-  );
-  expect(screen.queryByText("Everything is working.")).toBeNull();
+  expect(screen.getByRole("status")).toHaveTextContent("Engine health unknown");
+  expect(screen.queryByText("Everything works")).toBeNull();
 });
 
 it("summarizes connection failures without putting raw transport text in the answer", async () => {
@@ -317,9 +350,7 @@ it("summarizes connection failures without putting raw transport text in the ans
     },
   });
   await waitFor(() =>
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Chat is unavailable.",
-    ),
+    expect(screen.getByRole("status")).toHaveTextContent("Chat down"),
   );
   expect(
     screen.getAllByText("Local chat is not accepting connections.", {
@@ -397,9 +428,7 @@ it("groups engines with the same problem into one action row", async () => {
     serviceRegistry,
   );
   await waitFor(() =>
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Chat is unavailable.",
-    ),
+    expect(screen.getByRole("status")).toHaveTextContent("Chat down"),
   );
   expect(screen.queryByText(/problems need you/)).toBeNull();
   const attention = screen
@@ -424,18 +453,16 @@ it.each(["loading", "error"])(
     mount();
     await screen.findByRole("button", { name: "Local chat" });
     expect(screen.getByRole("status")).toHaveTextContent(
-      state === "loading" ? "Checking…" : "Engines work; providers unknown.",
+      state === "loading" ? "Checking" : "Provider status unavailable",
     );
-    expect(screen.queryByText("Everything is working.")).toBeNull();
-    expect(screen.queryByText("Engines are working.")).toBeNull();
+    expect(screen.queryByText("Everything works")).toBeNull();
   },
 );
 it("does not claim all-clear when current health is absent", async () => {
   mount({});
   await screen.findByRole("button", { name: "Local chat" });
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Engine health is unknown.",
-  );
+  expect(screen.getByRole("status")).toHaveTextContent("Engine health unknown");
+  expect(screen.queryByText("Everything works")).toBeNull();
 });
 it("does not trust stale health after a status error", async () => {
   mount(
@@ -452,10 +479,9 @@ it("does not trust stale health after a status error", async () => {
     chatRegistry,
     true,
   );
-  await screen.findByText("The gateway did not return engine health.");
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "Couldn’t check status.",
-  );
+  await screen.findByText("The gateway did not return engine health");
+  expect(screen.getByRole("status")).toHaveTextContent("Couldn’t check status");
+  expect(screen.queryByText("Everything works")).toBeNull();
 });
 it("announces the answer atomically as health changes", async () => {
   const { engineHealthPresentation } =
@@ -464,7 +490,7 @@ it("announces the answer atomically as health changes", async () => {
     engineHealthPresentation(true, true, undefined, "degraded").label,
   ).toBe("Degraded");
   mount();
-  await screen.findByText("Everything is working.");
+  await screen.findByText("Everything works");
   const live = screen.getByRole("status");
   expect(live).toHaveAttribute("aria-live", "polite");
   expect(live).toHaveAttribute("aria-atomic", "true");
@@ -483,22 +509,25 @@ it("announces the answer atomically as health changes", async () => {
     },
   });
   await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
-  await waitFor(() => expect(live).toHaveTextContent("Chat is degraded."));
+  await waitFor(() => expect(live).toHaveTextContent("Chat degraded"));
   expect(live.querySelector("table")).toBeNull();
   await userEvent.click(screen.getByRole("button", { name: /Show all/ }));
-  expect(screen.getByText("Degraded", { exact: true })).toBeVisible();
+  expect(
+    within(screen.getByRole("table", { name: "Engine status" })).getByText(
+      "Degraded",
+      { exact: true },
+    ),
+  ).toBeVisible();
 });
 it("moves from partial to healthy once provider status resolves", async () => {
   providerState.state = "error";
   mount();
-  await screen.findByText("Engines work; providers unknown.");
-  expect(screen.queryByText("Everything is working.")).toBeNull();
+  await screen.findByText("Provider status unavailable");
+  expect(screen.queryByText("Everything works")).toBeNull();
   providerState.state = "ready";
   await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
   await waitFor(() =>
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Everything is working.",
-    ),
+    expect(screen.getByRole("status")).toHaveTextContent("Everything works"),
   );
 });
 it.each(["empty", "partial"])(
@@ -521,9 +550,9 @@ it.each(["empty", "partial"])(
     );
     await waitFor(() =>
       expect(screen.getByRole("status")).toHaveTextContent(
-        state === "empty" ? "No engines yet." : "Some engines are unchecked.",
+        state === "empty" ? "No engines yet" : "Some engines are unchecked",
       ),
     );
-    expect(screen.queryByText("Everything is working.")).toBeNull();
+    expect(screen.queryByText("Everything works")).toBeNull();
   },
 );

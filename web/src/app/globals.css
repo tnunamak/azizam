@@ -54,31 +54,31 @@
 @layer components {
   /* Shell: the deep-water chrome. See docs/design/DESIGN.md, "Shell". */
   .shell-sidebar {
-    @apply bg-chrome text-chrome-foreground fixed inset-y-0 left-0 z-30 hidden w-(--rail-width) flex-col overflow-y-auto px-3 py-4 sm:flex lg:w-(--sidebar-width) lg:px-3;
+    @apply bg-chrome text-chrome-foreground border-chrome-border fixed inset-y-0 left-0 z-30 hidden w-(--rail-width) flex-col overflow-y-auto border-r px-3 py-4 sm:flex lg:w-(--sidebar-width) lg:px-3;
   }
   .shell-sidebar :focus-visible {
     outline-color: var(--chrome-accent);
   }
   .shell-nav-link {
-    @apply text-chrome-muted hover:bg-chrome-raised hover:text-chrome-foreground flex min-h-11 items-center gap-3 rounded-control px-3 text-sm font-medium transition-colors duration-(--motion-fast) lg:min-h-9;
+    @apply text-chrome-muted hover:bg-chrome-raised hover:text-chrome-foreground flex min-h-11 items-center gap-2.5 rounded-control px-2.5 text-sm transition-colors duration-(--motion-fast) lg:min-h-8;
   }
   .shell-nav-link[aria-current="page"] {
-    @apply bg-chrome-raised text-chrome-foreground;
+    @apply bg-chrome-raised text-chrome-foreground font-medium;
   }
   .shell-nav-link[aria-current="page"] svg {
     @apply text-chrome-accent;
   }
   .shell-nav-link svg {
-    @apply size-4.5 shrink-0;
+    @apply size-4 shrink-0;
   }
   .shell-nav-label {
     @apply hidden lg:inline;
   }
   .shell-group-label {
-    @apply text-chrome-muted mb-1 hidden px-3 text-xs font-medium lg:block;
+    @apply text-subtle-foreground mb-1 hidden px-2.5 text-xs lg:block;
   }
   .shell-nav-footer {
-    @apply text-chrome-muted hover:bg-chrome-raised hover:text-chrome-foreground flex min-h-11 min-w-11 items-center gap-2.5 rounded-control px-3 text-sm lg:min-h-9;
+    @apply text-chrome-muted hover:bg-chrome-raised hover:text-chrome-foreground flex min-h-11 min-w-11 items-center gap-2.5 rounded-control px-2.5 text-sm lg:min-h-8;
   }
   .shell-content {
     @apply mx-auto w-full max-w-(--content-max) px-5 pt-6 pb-10 sm:px-8 sm:pt-8 lg:px-12 lg:pt-10;
