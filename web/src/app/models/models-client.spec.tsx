@@ -1202,3 +1202,99 @@ describe("model cost and clipboard recovery", () => {
     expect(writeText).toHaveBeenCalledWith(id);
   });
 });
+
+describe("models query-string deep links", () => {
+  let previousUrl: string;
+
+  beforeEach(() => {
+    previousUrl = window.location.href;
+  });
+
+  afterEach(() => {
+    window.history.replaceState(null, "", previousUrl);
+  });
+
+  it("applies a capability on load and falls back for an unknown capability", async () => {
+    const snapshot = catalog([
+      row(),
+      row({
+        id: "image",
+        capabilities: [
+          { ...row().capabilities[0], capability: "image", label: "Images" },
+        ],
+      }),
+    ]);
+    window.history.replaceState(null, "", "?capability=image&model=unknown");
+    renderModels(snapshot);
+    expect(
+      await screen.findByRole("button", { name: "Images", pressed: true }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Copy model name image" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Copy model name chat" }),
+    ).toBeNull();
+    cleanup();
+    window.history.replaceState(null, "", "?capability=unknown");
+    renderModels(snapshot);
+    expect(
+      await screen.findByRole("button", { name: "All", pressed: true }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Copy model name chat" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Copy model name image" }),
+    ).toBeVisible();
+  });
+
+  it("applies an alias model on load and falls back for an unknown model", async () => {
+    const snapshot = catalog([row(), row({ id: "special" })]);
+    window.history.replaceState(null, "", "?model=special&capability=unknown");
+    renderModels(snapshot);
+    expect(
+      await screen.findByRole("button", { name: "Copy model name special" }),
+    ).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Search models" })).toHaveValue("special");
+    expect(
+      screen.queryByRole("button", { name: "Copy model name chat" }),
+    ).toBeNull();
+    fireEvent.change(screen.getByRole("textbox", { name: "Search models" }), {
+      target: { value: "" },
+    });
+    expect(
+      screen.getByRole("button", { name: "Copy model name chat" }),
+    ).toBeVisible();
+    cleanup();
+    window.history.replaceState(null, "", "?model=unknown");
+    renderModels(snapshot);
+    expect(
+      await screen.findByRole("button", { name: "Copy model name chat" }),
+    ).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Search models" })).toHaveValue("");
+    expect(screen.getByRole("button", { name: "All models" })).toHaveAttribute(
+      "aria-expanded", "false",
+    );
+  });
+
+  it("decodes an exact model deep link and opens its filtered table", async () => {
+    const id = "provider/model+v2";
+    window.history.replaceState(null, "", `?model=${encodeURIComponent(id)}`);
+    renderModels(catalog([row()], [
+      row({ id, alias: false, object: "model_catalog.model" }),
+      row({ id: "other-model", alias: false, object: "model_catalog.model" }),
+    ]));
+    const table = within(await screen.findByRole("table"));
+    expect(
+      table.getByRole("button", { name: `Copy model name ${id}` }),
+    ).toBeVisible();
+    expect(
+      table.queryByRole("button", { name: "Copy model name other-model" }),
+    ).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Search models" })).toHaveValue(id);
+    expect(screen.getByRole("button", { name: "All models" })).toHaveAttribute(
+      "aria-expanded", "true",
+    );
+  });
+});

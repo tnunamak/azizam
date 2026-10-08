@@ -4,6 +4,7 @@ export const PRODUCT_NAME = identity.name;
 
 export function canonicalDestinationPath(path: string): string {
   const normalized = path.replace(/^\/ui(?=\/|$)/, "").replace(/\/$/, "");
+  if (normalized === "/services") return "/engines";
   return normalized === "" || normalized === "/home" ? "/" : normalized;
 }
 

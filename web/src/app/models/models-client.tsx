@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Check,
@@ -855,6 +855,22 @@ export default function ModelsClient() {
     () => [...(catalogData?.aliases ?? []), ...(catalogData?.models ?? [])],
     [catalogData],
   );
+  const appliedDeepLink = useRef(false);
+  useEffect(() => {
+    if (!catalogData || appliedDeepLink.current) return;
+    appliedDeepLink.current = true;
+    const params = new URLSearchParams(window.location.search);
+    const requestedCapability = params.get("capability");
+    const initialCapability = productCapabilityOrder.find(
+      (cap) => cap === requestedCapability,
+    );
+    if (initialCapability) setCapability(initialCapability);
+    const model = allRows.find((row) => row.id === params.get("model"));
+    if (model) {
+      setQuery(model.id);
+      if (!model.alias) setTableOpen(true);
+    }
+  }, [catalogData, allRows]);
   const sectionRows = allRows.filter(
     (row) => row.alias || row.secondary_profile,
   );
