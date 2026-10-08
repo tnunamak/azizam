@@ -1081,3 +1081,27 @@ not revoked) that has one. It is `null` when no owner has a display name; the
 client supplies its own wording ("the gateway owner"). No `owner_contact` is
 published: the store has no contact field, and the owner's sign-in email is an
 identity, not a contact the owner chose to share.
+
+### Receipts — `refusal` (client, admin and internal audiences)
+
+A receipt for a request that a spending limit refused carries:
+
+```json
+{ "refusal": { "code": "budget_exceeded",
+               "limit": { "period": "daily" | "monthly" | "request",
+                          "scope": "plan" | "provider" | "global" } | null } }
+```
+
+- `code` is the error code the caller received: `budget_exceeded`, or
+  `provider_needs_reconciliation` when unsettled charges block paid requests.
+- `limit` names the limit that refused the request. `plan` is the caller's
+  access plan (profile) cap, `provider` a cap on the provider (registry or
+  owner setting), `global` the owner's gateway-wide cap. `request` is the
+  plan's per-request cap. `limit` is `null` when no single limit applies (for
+  example, the price is unknown while a cap is set).
+- The field holds codes only: no amounts, provider names or other people's
+  usage. It is absent on receipts that were not refused by a spending limit.
+  Clients must use it instead of matching warning or error text.
+- Written today by paid chat/embeddings execution and the paid OpenAI-style
+  `/v1/decisions` path. The TypeSafe `/v1/decisions` receipts (a separate
+  receipt type) carry `error_code: "budget_exceeded"` but no `limit`.

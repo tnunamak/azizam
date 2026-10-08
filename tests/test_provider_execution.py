@@ -5,6 +5,7 @@ import json
 import os
 import sqlite3
 import tempfile
+import time
 import unittest
 from contextlib import ExitStack
 from decimal import Decimal
@@ -14,7 +15,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 from starlette.requests import Request
 
-from gateway import provider_execution, receipt_store
+from gateway import provider_execution, providers, receipt_store
 from gateway.backends.llm_execution import LiteLlmRuntimeConfig, sanitize_litellm_execution_request
 from gateway.policy import AppProfile, RemoteProviderPolicy
 from gateway.providers import ProviderRef
@@ -395,6 +396,22 @@ class ProviderExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("paid_option_unsupported", (await _body(response)).decode())
         send.assert_not_called()
         self.assertFalse(self.ledger.exists())
+
+    async def test_spending_limit_refusal_is_on_the_client_receipt(self) -> None:
+        providers.ensure_ledger(self.ledger)
+        with sqlite3.connect(self.ledger) as conn:
+            conn.execute(
+                "INSERT INTO provider_spend (provider, profile_id, status, estimated_usd, actual_usd, cost_source, created_at) "
+                "VALUES ('openrouter', 'paid-app', 'settled', '5.00', '5.00', 'test', ?)",
+                (int(time.time()) - 60,),
+            )
+        send = AsyncMock()
+        response, _ = await self._execute(send=send)
+        self.assertEqual(response.status_code, 402)
+        send.assert_not_called()
+        client = self.receipts[-1].to_dict("client")
+        self.assertEqual(client["refusal"], {"code": "budget_exceeded", "limit": {"period": "daily", "scope": "plan"}})
+        self.assertNotIn("5.00", json.dumps(client["refusal"]))
 
     async def test_paid_invalid_output_limits_are_rejected_before_dispatch(self) -> None:
         for field in ("max_tokens", "max_completion_tokens"):

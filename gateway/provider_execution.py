@@ -580,6 +580,8 @@ async def execute_paid_litellm(
             )
         except providers.ProviderError as error:
             receipt.set_policy_decision("denied", reason=error.code, source="gateway:remote-provider")
+            if isinstance(error, providers.BudgetExceeded):
+                receipt.set_refusal(error.refusal())
             owner.report(status="failed", reason="failed")
             return error_response(error)
         providers.identify_provider_spend(reservation, request_id=receipt.request_id, path=ledger_path)

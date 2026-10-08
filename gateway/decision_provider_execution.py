@@ -458,6 +458,8 @@ async def openai(
             if reservation is not None and isinstance(exc, (providers.ProviderAuthFailed, providers.ProviderRateLimited)):
                 providers.release_provider_spend(reservation, path=ledger_path)
                 released = True
+            if isinstance(exc, providers.BudgetExceeded):
+                receipt.set_refusal(exc.refusal())
             owner.report(status="failed", reason="failed")
             return _map_provider_error(exc).response()
         finally:

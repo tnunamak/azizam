@@ -88,6 +88,26 @@ class BudgetExceeded(ProviderError):
     status_code = 402
     code = "budget_exceeded"
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        retry_after: str | None = None,
+        period: str | None = None,
+        scope: str | None = None,
+    ) -> None:
+        super().__init__(message, retry_after=retry_after)
+        # Which spending limit refused the request: period is daily, monthly
+        # or request; scope is plan, provider or global. Both are None when
+        # no single limit applies (for example, an unknown price).
+        self.period = period
+        self.scope = scope
+
+    def refusal(self) -> dict[str, Any]:
+        """Receipt-safe refusal facts: codes only, never amounts or names."""
+        limit = {"period": self.period, "scope": self.scope} if self.period and self.scope else None
+        return {"code": self.code, "limit": limit}
+
 
 class ProviderNeedsReconciliation(BudgetExceeded):
     code = "provider_needs_reconciliation"
@@ -378,7 +398,8 @@ def reserve_provider_spend(
     estimate = _quantize_usd(estimate)
     if profile.remote.max_usd_per_request is not None and estimate > profile.remote.max_usd_per_request:
         raise BudgetExceeded(
-            f"request estimate ${estimate} exceeds per-request cap ${profile.remote.max_usd_per_request}"
+            f"request estimate ${estimate} exceeds per-request cap ${profile.remote.max_usd_per_request}",
+            period="request", scope="plan",
         )
 
     ensure_ledger(path)
@@ -397,6 +418,8 @@ def reserve_provider_spend(
                 since=timestamp - 24 * 60 * 60,
                 estimate=estimate,
                 label="daily profile",
+                period="daily",
+                scope="plan",
             )
             _enforce_window_cap(
                 conn,
@@ -406,6 +429,8 @@ def reserve_provider_spend(
                 since=timestamp - 24 * 60 * 60,
                 estimate=estimate,
                 label="daily provider",
+                period="daily",
+                scope="provider",
                 provider_only=True,
             )
             _enforce_window_cap(
@@ -416,6 +441,8 @@ def reserve_provider_spend(
                 since=timestamp - 24 * 60 * 60,
                 estimate=estimate,
                 label="daily provider admin",
+                period="daily",
+                scope="provider",
                 provider_only=True,
             )
             _enforce_window_cap(
@@ -426,6 +453,8 @@ def reserve_provider_spend(
                 since=timestamp - 24 * 60 * 60,
                 estimate=estimate,
                 label="daily global admin",
+                period="daily",
+                scope="global",
             )
             month_start = _month_start_epoch(timestamp)
             _enforce_window_cap(
@@ -436,6 +465,8 @@ def reserve_provider_spend(
                 since=month_start,
                 estimate=estimate,
                 label="monthly profile",
+                period="monthly",
+                scope="plan",
             )
             _enforce_window_cap(
                 conn,
@@ -445,6 +476,8 @@ def reserve_provider_spend(
                 since=month_start,
                 estimate=estimate,
                 label="monthly provider",
+                period="monthly",
+                scope="provider",
                 provider_only=True,
             )
             _enforce_window_cap(
@@ -455,6 +488,8 @@ def reserve_provider_spend(
                 since=month_start,
                 estimate=estimate,
                 label="monthly provider admin",
+                period="monthly",
+                scope="provider",
                 provider_only=True,
             )
             _enforce_window_cap(
@@ -465,6 +500,8 @@ def reserve_provider_spend(
                 since=month_start,
                 estimate=estimate,
                 label="monthly global admin",
+                period="monthly",
+                scope="global",
             )
             _enforce_provider_concurrency(conn, provider_id, provider)
             cursor = conn.execute(
@@ -977,6 +1014,8 @@ def _enforce_window_cap(
     since: int,
     estimate: Decimal,
     label: str,
+    period: str,
+    scope: str,
     provider_only: bool = False,
 ) -> None:
     if cap is None:
@@ -993,7 +1032,8 @@ def _enforce_window_cap(
         params.append(canonical_provider_id(provider))
     if conn.execute(f"SELECT 1 FROM provider_spend WHERE {where} LIMIT 1", params).fetchone():
         raise ProviderNeedsReconciliation(
-            f"{label} spend needs reconciliation; an owner must reconcile unknown charges before more paid requests"
+            f"{label} spend needs reconciliation; an owner must reconcile unknown charges before more paid requests",
+            period=period, scope=scope,
         )
     provider_total = _window_total(
         conn,
@@ -1004,11 +1044,12 @@ def _enforce_window_cap(
     if provider_only:
         if provider_total >= cap or provider_total + estimate > cap:
             raise BudgetExceeded(
-                f"{label} provider cap for {provider!r} would exceed ${cap}"
+                f"{label} provider cap for {provider!r} would exceed ${cap}",
+                period=period, scope=scope,
             )
         return
     if provider_total >= cap or provider_total + estimate > cap:
-        raise BudgetExceeded(f"{label} global cap would exceed ${cap}")
+        raise BudgetExceeded(f"{label} global cap would exceed ${cap}", period=period, scope=scope)
 
 
 def _window_total(
