@@ -369,7 +369,10 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                          "reason_code": row["reason_code"],
                          "measured": bool(availability.get("measured")),
                          **({"use_name": row["use_name"]} if row.get("use_name") else {}),
-                         **({"observed_at_s": evidence["observed_at_s"]} if evidence.get("observed_at_s") is not None else {})})
+                         **({"observed_at_s": evidence["observed_at_s"]} if evidence.get("observed_at_s") is not None else {}),
+                         # Home's evidence is already an allowlist (no request
+                         # IDs, endpoints or error text); copy it unchanged.
+                         "availability": {"evidence": dict(evidence)}})
         receipts = [{**{key: row.get(key) for key in ("request_id", "status", "intent")},
                      "created_at": row.get("created_at", row.get("_stored_at")),
                      "href": f"/ui/usage/?receipt={quote(str(row['request_id']), safe='')}"}

@@ -191,6 +191,10 @@ class SetupEvidenceResponse(TypedDict):
     source: Literal["user_confirmation"]
 
 
+class MemberStatusAvailability(TypedDict):
+    evidence: AvailabilityEvidence
+
+
 class MemberStatusCapability(TypedDict):
     capability_title: NotRequired[str]
     icon_key: NotRequired[CapabilityIconKey]
@@ -209,6 +213,7 @@ class MemberStatusCapability(TypedDict):
     reason_code: str
     measured: bool
     observed_at_s: NotRequired[float | None]
+    availability: MemberStatusAvailability
 
 
 class MemberStatusReceipt(TypedDict):

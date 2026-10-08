@@ -216,6 +216,10 @@ export interface SetupEvidenceResponse {
   source: "user_confirmation";
 }
 
+export interface MemberStatusAvailability {
+  evidence: AvailabilityEvidence;
+}
+
 export interface MemberStatusCapability {
   capability_title?: string;
   icon_key?: "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank";
@@ -234,6 +238,7 @@ export interface MemberStatusCapability {
   reason_code: string;
   measured: boolean;
   observed_at_s?: number | null;
+  availability: MemberStatusAvailability;
 }
 
 export interface MemberStatusReceipt {

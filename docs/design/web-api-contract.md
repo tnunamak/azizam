@@ -1053,3 +1053,9 @@ absent when it is not known; the gateway never substitutes the current time.
 
 A placeholder for an unmeasured service (`status: "unknown"`, no time) never
 hides a timed observation from another source.
+
+### GET /me/api/status — capability evidence
+
+Each `capabilities[]` row carries `availability: { "evidence": { … } }`, the
+same allowlisted evidence object as the matching `/me/api/home` capability
+(fields above). The older top-level `observed_at_s` stays for compatibility.

@@ -379,7 +379,8 @@ def test_member_status_contains_only_allowed_capabilities_and_owned_receipts(hom
     assert data["receipts"][0]["href"] == "/ui/usage/?receipt=mine"
     assert isinstance(data["receipts"][0]["created_at"], int)
     for row in data["capabilities"]:
-        expected_fields = {"capability", "capability_title", "icon_key", "title", "recommended_model", "use_names", "summary", "use_name", "intent", "model", "workflow", "status", "available", "reason_code", "measured"}
+        expected_fields = {"capability", "capability_title", "icon_key", "title", "recommended_model", "use_names", "summary", "use_name", "intent", "model", "workflow", "status", "available", "reason_code", "measured", "availability"}
+        assert set(row["availability"]) == {"evidence"}
         if row.get("observed_at_s") is not None:
             expected_fields.add("observed_at_s")
         assert set(row) == expected_fields
@@ -892,3 +893,22 @@ def test_recipe_alias_local_provenance_excludes_remote_and_unknown(home_case):
     }
     response = c.http.get("/me/api/home")
     assert response.json()["credential_aliases"][c.cred["id"]][0]["local"] is False
+
+
+def test_member_status_capabilities_carry_home_evidence_source_and_check_time(home_case):
+    c = home_case
+    c.owner = False
+    c.health = {"generated_at": 1234, "backends": [
+        {"key": "service", "live_status": "down", "kind": "no_response", "endpoint": "http://private:1234", "last_error": "connect refused"}]}
+    home = {row["model"]: row["availability"]["evidence"] for row in c.http.get("/me/api/home").json()["capabilities"]}
+    payload = c.http.get("/me/api/status").json()
+    TypeAdapter(MemberStatus).validate_python(payload)
+    assert payload["capabilities"]
+    for row in payload["capabilities"]:
+        evidence = row["availability"]["evidence"]
+        assert evidence == home[row["model"]]
+        assert evidence["source"] == "status"
+        assert evidence["kind"] == "no_response"
+        assert evidence["observed_at_s"] == 1234
+        assert "last_success_at_s" not in evidence
+    assert "private" not in str(payload) and "connect refused" not in str(payload)
