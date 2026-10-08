@@ -1225,27 +1225,24 @@ function normalizeModel(raw: unknown): UsageModel {
   };
 }
 
+// Keys a day row carries besides its capability counts.
+const dayFields = new Set(["date", "day", "total", "requests"]);
+
 function normalizeCapabilityCounts(
   raw: unknown,
 ): Record<UsageCapability, number> {
-  const data = object(raw);
-  const embeddingCount = Object.entries(data).reduce(
-    (sum, [key, value]) =>
-      normalizeCapability(key) === "embeddings"
-        ? sum + (requestCount(value) ?? 0)
-        : sum,
-    0,
-  );
-  return capabilities.reduce(
-    (acc, capability) => ({
-      ...acc,
-      [capability]:
-        capability === "embeddings"
-          ? embeddingCount
-          : (requestCount(data[capability]) ?? 0),
-    }),
-    {} as Record<UsageCapability, number>,
-  );
+  const counts = Object.fromEntries(
+    capabilities.map((capability) => [capability, 0]),
+  ) as Record<UsageCapability, number>;
+  // Every recorded count lands somewhere: exact names, then aliases, then Other.
+  for (const [key, value] of Object.entries(object(raw))) {
+    if (dayFields.has(key)) continue;
+    const capability = (capabilities as string[]).includes(key)
+      ? (key as UsageCapability)
+      : normalizeCapability(key);
+    counts[capability] += requestCount(value) ?? 0;
+  }
+  return counts;
 }
 
 function normalizeCapability(value: unknown): UsageCapability {

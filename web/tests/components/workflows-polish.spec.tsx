@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import WorkflowsPage from "@/app/workflows/page";
@@ -192,4 +192,37 @@ it("keeps available workflow Run links unchanged on cards and in details", async
   await user.click(card.getByRole("button", { name: "Details" }));
   const sheet = within(screen.getByRole("dialog", { name: "Product render" }));
   expect(sheet.getByRole("link", { name: "Run in Try" })).toHaveAttribute("href", "/try?workflow=image.product-render");
+});
+
+it("updates an open details sheet when a refresh makes its workflow unavailable", async () => {
+  const user = userEvent.setup();
+  let available = true;
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) =>
+    Response.json(String(input).includes("/me/api/media") ? { assets: [] } : {
+      ...catalog,
+      workflows: catalog.workflows.map((workflow) => ({
+        ...workflow,
+        availability: available
+          ? workflow.availability
+          : { status: "unavailable", available: false, reason_code: "unavailable_disabled" },
+      })),
+    }),
+  ));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(<QueryClientProvider client={client}><WorkflowsPage /></QueryClientProvider>);
+  const card = within(await screen.findByRole("article", { name: "Product render" }));
+  await user.click(card.getByRole("button", { name: "Details" }));
+  const sheet = within(screen.getByRole("dialog", { name: "Product render" }));
+  expect(sheet.getByRole("link", { name: "Run in Try" })).toBeInTheDocument();
+  available = false;
+  await act(async () => {
+    await client.refetchQueries({ queryKey: ["workflows", "catalog"] });
+  });
+  const sheetRun = await within(screen.getByRole("dialog", { name: "Product render" }))
+    .findByRole("button", { name: "Run in Try" });
+  expect(sheetRun).toBeDisabled();
+  expect(sheetRun.nextElementSibling).toHaveTextContent(
+    "Unavailable. Ask the owner to enable this capability.",
+  );
+  client.clear();
 });

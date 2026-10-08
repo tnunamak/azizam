@@ -778,13 +778,15 @@ function RecentJobs({ workflow }: { workflow: WorkflowRow }) {
 export default function WorkflowsPage() {
   const [query, setQuery] = useState("");
   const [capability, setCapability] = useState<string>("all");
-  const [detail, setDetail] = useState<WorkflowRow | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(null);
   const { data, isPending, isError, isFetching, refetch } = useQuery({
     queryKey: ["workflows", "catalog"],
     queryFn: fetchWorkflows,
     retry: false,
   });
   const rows = data?.workflows ?? EMPTY_WORKFLOWS;
+  // Read the open workflow from the latest catalog so a refresh reaches it.
+  const detail = rows.find((row) => row.id === detailId) ?? null;
   const allCapabilities = [
     ...capabilityOrder,
     ...new Set(
@@ -932,7 +934,7 @@ export default function WorkflowsPage() {
                       <WorkflowCard
                         key={workflow.id}
                         workflow={workflow}
-                        onDetail={setDetail}
+                        onDetail={(row) => setDetailId(row.id)}
                       />
                     ))}
                   </div>
@@ -944,7 +946,7 @@ export default function WorkflowsPage() {
       )}
       <DetailSheet
         workflow={detail}
-        onOpenChange={(open) => !open && setDetail(null)}
+        onOpenChange={(open) => !open && setDetailId(null)}
       />
     </div>
   );

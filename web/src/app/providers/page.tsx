@@ -634,6 +634,20 @@ function capSummary(daily?: number | null, monthly?: number | null): string {
   return parts.length ? parts.join(" · ") : "No cap set";
 }
 
+function samePrice(a: string, b: string) {
+  if (a === b) return true;
+  if (!a.trim() || !b.trim()) return false;
+  return Number(a) === Number(b);
+}
+
+function sameModelSettings(a: ProviderModel, b: ProviderModel) {
+  return (
+    a.enabled === b.enabled &&
+    samePrice(a.priceInput, b.priceInput) &&
+    samePrice(a.priceOutput, b.priceOutput)
+  );
+}
+
 function DetailCard({
   provider,
   plans,
@@ -668,11 +682,13 @@ function DetailCard({
       provider.models.map((model) => {
         const draft = rows.find((row) => row.id === model.id);
         const baseline = previous.find((row) => row.id === model.id);
-        const pending = draft && baseline && (
-          draft.enabled !== baseline.enabled ||
-          draft.priceInput !== baseline.priceInput ||
-          draft.priceOutput !== baseline.priceOutput
-        );
+        // A draft is pending only while it differs from both the old and the
+        // new server row; a saved draft ("9.0" saved as 9) becomes clean.
+        const pending =
+          draft &&
+          baseline &&
+          !sameModelSettings(draft, baseline) &&
+          !sameModelSettings(draft, model);
         return pending ? draft : model;
       }),
     );

@@ -491,3 +491,63 @@ it("saves only the selected model row and refreshes clean drafts without losing 
     client.clear();
   }
 });
+
+it("treats a saved price typed as 9.0 as clean once the server stores 9", async () => {
+  let models = [{ id: "model-a", price_input: "1", price_output: "2", enabled: true }];
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    if (path.endsWith("/session")) {
+      return Response.json({ actor: { csrf_token: "test-csrf" } });
+    }
+    if (path.endsWith("/catalog")) return Response.json({ providers: [] });
+    if (path.endsWith("/profiles")) return Response.json({ plans: [] });
+    if (path.endsWith("/test/models") && init?.method === "PUT") {
+      const body = JSON.parse(String(init.body));
+      models = body.models.map((saved: {
+        id: string;
+        enabled: boolean;
+        price: { input_usd_per_million_tokens: number; output_usd_per_million_tokens: number };
+      }) => ({
+        id: saved.id,
+        enabled: saved.enabled,
+        price_input: String(saved.price.input_usd_per_million_tokens),
+        price_output: String(saved.price.output_usd_per_million_tokens),
+      }));
+      return Response.json({});
+    }
+    return Response.json({
+      providers: [{ id: "test", name: "Test provider", models }],
+    });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  try {
+    render(
+      <QueryClientProvider client={client}>
+        <ProvidersPage />
+      </QueryClientProvider>,
+    );
+    await screen.findByText("Test provider");
+    fireEvent.click(screen.getByText("Manage"));
+    fireEvent.click(screen.getByRole("button", { name: "Edit models" }));
+    fireEvent.change(screen.getByLabelText("model-a managed input price"), {
+      target: { value: "9.0" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save models" }));
+    await waitFor(() => expect(models[0].price_input).toBe("9"));
+    await waitFor(() =>
+      expect(screen.getByLabelText("model-a managed input price")).toHaveValue("9"),
+    );
+    models = [{ ...models[0], price_input: "10" }];
+    await act(async () => {
+      await client.refetchQueries({ queryKey: ["providers"], exact: true });
+    });
+    await waitFor(() =>
+      expect(screen.getByLabelText("model-a managed input price")).toHaveValue("10"),
+    );
+  } finally {
+    client.clear();
+  }
+});

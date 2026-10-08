@@ -350,6 +350,16 @@ test.each([
     cells: ["8", "5", "10 (capability counts add to 13)"],
   },
   {
+    name: "an unrecognised capability joins Other",
+    day: { total: 2, capabilities: { chat: 2, future: 3 } },
+    cells: ["2", "3", "2 (capability counts add to 5)"],
+  },
+  {
+    name: "aliases on a flat day row, without its date or total",
+    day: { total: 3, chat: 1, "image-edit": 2 },
+    cells: ["1", "2", "3"],
+  },
+  {
     name: "negative and absurd counts are ignored",
     day: { capabilities: { chat: -2, image: 1e308, video: 3 } },
     cells: ["3", "3"],
