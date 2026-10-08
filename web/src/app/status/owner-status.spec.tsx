@@ -407,10 +407,10 @@ it("groups engines with the same problem into one action row", async () => {
     .closest("section")!;
   expect(within(attention).getAllByRole("article")).toHaveLength(1);
   expect(
-    within(attention).getAllByText(/is not accepting connections\./),
+    within(attention).getAllByText(/(is|are) not accepting connections\./),
   ).toHaveLength(1);
   expect(
-    within(attention).getByText(/^2 engines:/),
+    within(attention).getByText(/^2 engines are not accepting connections\./),
   ).toBeVisible();
   expect(
     within(attention).getByRole("link", { name: "Inspect engines" }),
@@ -452,7 +452,7 @@ it("does not trust stale health after a status error", async () => {
     chatRegistry,
     true,
   );
-  await screen.findByText("Could not check engine status");
+  await screen.findByText("The gateway did not return engine health.");
   expect(screen.getByRole("status")).toHaveTextContent(
     "Couldn’t check status.",
   );

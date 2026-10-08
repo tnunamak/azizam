@@ -261,9 +261,9 @@ function UnavailablePreview({
       {onRetry ? (
         <Button
           type="button"
-          variant="outline"
+          variant="link"
           size="xs"
-          className="relative z-20"
+          className="relative z-20 max-sm:min-h-11"
           onClick={onRetry}
         >
           Retry

@@ -30,9 +30,11 @@ it("keeps the disk remedy on the disk signal rather than an API signal", async (
   ]);
   const reason = await screen.findByText("Gateway request failures are elevated.");
   const row = reason.closest("article")!;
-  expect(within(row).getByText("The gateway needs attention.")).toBeVisible();
+  // The card names its layer; the reason is the card's title.
+  expect(within(row).getByText("Gateway")).toBeVisible();
   expect(within(row).queryByRole("button", { name: "Free disk space" })).toBeNull();
   const disk = screen.getByText("Disk is almost full.").closest("article")!;
+  expect(within(disk).getByText("The gateway’s computer")).toBeVisible();
   expect(within(disk).getByRole("button", { name: "Free disk space" })).toBeVisible();
 });
 it("does not attach a disk remedy to a temperature warning", async () => {
@@ -60,8 +62,10 @@ it("counts every provider failure and signal, deduplicating identical source/rea
   expect(await screen.findByText("7 problems need you.")).toBeVisible();
   expect(screen.getAllByText("Request failures.")).toHaveLength(1);
   expect(screen.getAllByText("Disk full.")).toHaveLength(1);
-  expect(screen.getByText("First provider has no key.")).toBeVisible();
-  expect(screen.getByText("Second provider can’t be reached.")).toBeVisible();
+  const first = screen.getByText("Provider · First provider").closest("article")!;
+  expect(within(first).getByText("No provider key is set.")).toBeVisible();
+  const second = screen.getByText("Provider · Second provider").closest("article")!;
+  expect(within(second).getByText("The last connection check failed.")).toBeVisible();
   expect(screen.getByText("Check failed.")).toBeVisible();
   for (const reason of ["Disk full.", "Other disk full."]) {
     const row = screen.getByText(reason).closest("article")!;

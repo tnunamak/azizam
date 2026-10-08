@@ -265,12 +265,12 @@ export function MemberStatus() {
                     failureCapability.reason_code,
                   )?.replace(/^[^.]*\.\s*/, "") || "Try again later."}
                 </p>
-                <Link
+                <a
                   href={recentFailure.href}
                   className="text-link inline-flex min-h-11 items-center text-sm font-medium underline-offset-4 hover:underline"
                 >
                   Open receipt
-                </Link>
+                </a>
               </section>
             ) : null}
             <section aria-labelledby="capability-status-heading">
@@ -310,7 +310,8 @@ export function MemberStatus() {
                   const bad = failed(receipt);
                   return (
                     <li key={receipt.request_id}>
-                      <Link
+                      {/* The gateway sends an absolute /ui path; next/link would prefix /ui again. */}
+                      <a
                         href={receipt.href}
                         aria-label={`View receipt ${receipt.request_id}`}
                         className="group flex min-h-11 items-center gap-3 py-2.5"
@@ -333,7 +334,7 @@ export function MemberStatus() {
                         <span className="text-muted-foreground shrink-0 text-xs">
                           <RelativeTime ts={receipt.created_at} fallback="" />
                         </span>
-                      </Link>
+                      </a>
                     </li>
                   );
                 })}

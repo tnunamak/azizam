@@ -194,11 +194,9 @@ function useOwnerEngineHints(enabled: boolean) {
 function CapabilityTile({
   row,
   verdictCheck,
-  engineHint,
 }: {
   row: HomeCapability;
   verdictCheck: EvidenceStamp | null;
-  engineHint: EngineHint;
 }) {
   const meta = capabilityMeta(row.icon_key ?? row.capability);
   const label = row.capability_title ?? meta.label;
@@ -248,16 +246,7 @@ function CapabilityTile({
         title={reason}
       >
         {body}
-        {engineHint ? (
-          <Link
-            href={`/engines/?service=${encodeURIComponent(engineHint.serviceId)}`}
-            className="text-link mt-2 inline-flex min-h-11 items-center gap-1 text-sm font-medium underline-offset-4 hover:underline lg:min-h-0"
-          >
-            Inspect {engineHint.name}
-          </Link>
-        ) : reason ? (
-          <span className="sr-only">{reason}</span>
-        ) : null}
+        {reason ? <span className="sr-only">{reason}</span> : null}
       </li>
     );
   return (
@@ -282,15 +271,22 @@ function Capabilities({
   verdictCheck: EvidenceStamp | null;
   owner: boolean;
 }) {
-  const hintFor = useOwnerEngineHints(owner);
   return (
     <section aria-labelledby="capabilities-heading">
       <SectionHeading id="capabilities-heading" title="What you can use" />
       {!tiles.length ? (
-        <EmptyState
-          title="Nothing is available to you yet"
-          description="Ask the gateway owner to connect a model and give you access."
-        />
+        <div className="bg-card flex flex-wrap items-center justify-between gap-3 rounded-panel border border-dashed p-5">
+          <p className="text-muted-foreground text-sm">
+            {owner
+              ? "Connect an engine or a provider to turn on chat, images and more."
+              : "Ask the gateway owner to connect a model and give you access."}
+          </p>
+          {owner ? (
+            <Button asChild size="sm">
+              <Link href="/engines/">Add an engine</Link>
+            </Button>
+          ) : null}
+        </div>
       ) : (
         <ul className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {tiles.map((row) => (
@@ -298,11 +294,6 @@ function Capabilities({
               key={row.capability}
               row={row}
               verdictCheck={verdictCheck}
-              engineHint={
-                row.available
-                  ? null
-                  : hintFor(row.capability_title ?? capabilityMeta(row.capability).label)
-              }
             />
           ))}
         </ul>
@@ -1128,6 +1119,18 @@ export default function HomePage() {
       : [];
   const verdict = homeVerdict(tiles);
   const check = oldestCheck(tiles);
+  const hintFor = useOwnerEngineHints(isOwner && viewer.admin);
+  const hints = [
+    ...new Map(
+      tiles
+        .filter((row) => !row.available)
+        .map((row) =>
+          hintFor(row.capability_title ?? capabilityMeta(row.capability).label),
+        )
+        .filter((hint): hint is NonNullable<EngineHint> => Boolean(hint))
+        .map((hint) => [hint.serviceId, hint]),
+    ).values(),
+  ];
   return (
     <div className="min-w-0">
       <h1 className="sr-only">Home</h1>
@@ -1160,8 +1163,22 @@ export default function HomePage() {
             <Verdict
               tone={verdict.tone}
               detail={
-                check ? (
-                  <EvidenceTime stamp={check} className="text-base" />
+                check || hints.length ? (
+                  <>
+                    {check ? (
+                      <EvidenceTime stamp={check} className="text-base" />
+                    ) : null}
+                    {hints.map((hint) => (
+                      <Link
+                        key={hint.serviceId}
+                        href={`/engines/?service=${encodeURIComponent(hint.serviceId)}`}
+                        className="text-link inline-flex min-h-11 items-center gap-0.5 font-medium underline-offset-4 hover:underline sm:min-h-0"
+                      >
+                        Inspect {hint.name}
+                        <ChevronRight aria-hidden="true" className="size-4" />
+                      </Link>
+                    ))}
+                  </>
                 ) : null
               }
             >

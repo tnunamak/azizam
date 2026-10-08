@@ -255,6 +255,7 @@ type Problem = {
   href?: string | null;
   action?: string;
   disk?: boolean;
+  provider?: string;
 };
 
 function engineProblems(engines: EngineView[]): Problem[] {
@@ -275,7 +276,11 @@ function engineProblems(engines: EngineView[]): Problem[] {
       layer: "Engine",
       title: single
         ? engineSymptom(affected[0])
-        : `${affected.length} engines: ${engineSymptom(affected[0]).replace(affected[0].shortName, "").trim()}`,
+        : `${affected.length} engines ${engineSymptom(affected[0])
+            .replace(affected[0].shortName, "")
+            .trim()
+            .replace(/^is /, "are ")
+            .replace(/^did /, "did ")}`,
       headline: capabilityHeadline(affected),
       tone: affected.every((engine) => engine.state === "Degraded")
         ? "warn"
@@ -367,10 +372,14 @@ function ProblemCard({
         <h3 className="text-lg font-semibold">{problem.title}</h3>
         <dl className="space-y-3">
           <FactRow label="Where">
-            {problem.layer}
+            {problem.layer === "Hardware"
+              ? "The gateway’s computer"
+              : problem.layer}
             {problem.engines?.length
               ? ` · ${problem.engines.map((item) => item.shortName).join(", ")}`
-              : ""}
+              : problem.provider
+                ? ` · ${problem.provider}`
+                : ""}
           </FactRow>
           {capabilities.length ? (
             <FactRow label="Affects">
@@ -620,11 +629,14 @@ function ProviderRow({
             ) : null}
             <span className="figures">
               {spent}
-              {typeof cap === "number" ? ` of ${cap.toFixed(2)}` : ""} this month
+              {typeof cap === "number" ? ` of USD ${cap.toFixed(2)}` : ""} this
+              month
             </span>
           </span>
         ) : !/not measured|unknown/i.test(provider.spendText) ? (
-          <span className="figures text-sm">{provider.spendText}</span>
+          <span className="figures text-sm">
+            {provider.spendText.replace(/\$(\d)/g, "USD $1")}
+          </span>
         ) : (
           <span className="text-muted-foreground text-sm">Spend not recorded</span>
         )}
@@ -651,7 +663,7 @@ function CapabilityStrip() {
   return (
     <section aria-labelledby="capability-strip-heading">
       <SectionHeading id="capability-strip-heading" title="Capabilities" />
-      <ul className="grid grid-cols-2 gap-x-6 gap-y-1 sm:grid-cols-4">
+      <ul className="grid grid-cols-2 gap-x-8 gap-y-0.5 sm:grid-cols-3 lg:grid-cols-4">
         {data.capabilities.map((capability) => {
           const meta = capabilityMeta(capability.icon_key ?? capability.capability);
           const Icon = meta.icon;
@@ -659,7 +671,7 @@ function CapabilityStrip() {
           return (
             <li
               key={capability.capability}
-              className="flex min-h-11 min-w-0 items-center gap-2.5"
+              className="flex min-h-11 min-w-0 items-center gap-2"
             >
               <Icon
                 aria-hidden="true"
@@ -674,7 +686,7 @@ function CapabilityStrip() {
               <StateLabel
                 state={state}
                 iconOnly={state.tone === "ok"}
-                className="ml-auto shrink-0 text-xs"
+                className="shrink-0 text-xs"
               />
             </li>
           );
@@ -745,18 +757,13 @@ export function StatusClient() {
             : /host|disk|thermal|temperature/i.test(signal.source)
               ? ("Hardware" as const)
               : ("Gateway" as const),
-        title:
-          signal.source === "api"
-            ? "The gateway needs attention."
-            : /host|disk|thermal|temperature/i.test(signal.source)
-              ? "The gateway’s computer needs attention."
-              : "A health check needs attention.",
+        // The reason is the symptom; the verdict names the layer.
+        title: reason,
         headline:
           signal.source === "api"
             ? "The gateway needs attention."
             : "The gateway’s computer needs attention.",
         tone: (signal.tone === "bad" ? "bad" : "warn") as Tone,
-        detail: reason,
         href: null,
         disk: /disk/i.test(signal.source),
       })),
@@ -772,8 +779,8 @@ export function StatusClient() {
                   layer: "Provider" as const,
                   title:
                     provider.keyState === "missing"
-                      ? `${provider.name} has no key.`
-                      : `${provider.name} can’t be reached.`,
+                      ? "No provider key is set."
+                      : "The last connection check failed.",
                   headline:
                     provider.keyState === "missing"
                       ? `${provider.name} has no key.`
@@ -785,6 +792,7 @@ export function StatusClient() {
                       : "Requests that need this provider fail until it answers again.",
                   href: "/providers",
                   action: `Open ${provider.name}`,
+                  provider: provider.name,
                 },
               ]
             : [],
@@ -796,7 +804,7 @@ export function StatusClient() {
           {
             key: "status",
             layer: "Gateway" as const,
-            title: "Could not check engine status",
+            title: "The gateway did not return engine health.",
             headline: "Couldn’t check status.",
             tone: "bad" as Tone,
             detail: "Refresh to try again.",
@@ -809,7 +817,7 @@ export function StatusClient() {
           {
             key: "registry",
             layer: "Gateway" as const,
-            title: "Engine list could not load",
+            title: "The gateway did not return the engine list.",
             headline: "Couldn’t load your engines.",
             tone: "bad" as Tone,
             detail: errorMessage(registryError),
@@ -882,6 +890,30 @@ export function StatusClient() {
   }
   const checkedAt = statusIsError ? null : (statusData?.generated_at ?? null);
   const tableOpen = showAll || !problems.length;
+  const troubled = new Set(
+    problems.flatMap((problem) =>
+      (problem.engines ?? []).map((engine) => engine.service.id),
+    ),
+  );
+  const others = tableEngines.filter((engine) => !troubled.has(engine.service.id));
+  const readyCount = others.filter(
+    (engine) => engine.service.enabled && healthyStates.has(engine.state),
+  ).length;
+  const offCount = others.filter((engine) => !engine.service.enabled).length;
+  const restCount = others.length - readyCount - offCount;
+  const providerList = providers.state === "ready" ? providers.providers : [];
+  const foldedSummary = [
+    readyCount
+      ? `${readyCount} other engine${readyCount === 1 ? "" : "s"} ready`
+      : null,
+    offCount ? `${offCount} turned off` : null,
+    restCount ? `${restCount} not checked yet` : null,
+    providerList.length
+      ? `${providerList.length} provider${providerList.length === 1 ? "" : "s"}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
   const refreshAll = () => {
     void refetchStatus();
     void refetchRegistry();
@@ -975,9 +1007,15 @@ export function StatusClient() {
             {registryIsPending ? (
               <Skeleton className="h-48 w-full rounded-panel" />
             ) : !tableEngines.length && providers.state !== "ready" ? (
-              <p className="text-muted-foreground text-sm">
-                No engines yet. Add one from Engines.
-              </p>
+              <div className="bg-card flex flex-wrap items-center justify-between gap-3 rounded-panel border border-dashed p-5">
+                <p className="text-muted-foreground text-sm">
+                  Connect an engine on this computer, or a provider you pay
+                  for, to turn on chat, images and more.
+                </p>
+                <Button asChild size="sm">
+                  <Link href="/engines">Add an engine</Link>
+                </Button>
+              </div>
             ) : tableOpen ? (
               <div className="bg-card rounded-panel border px-4 sm:px-5">
                 <table className="w-full table-fixed">
@@ -1032,12 +1070,7 @@ export function StatusClient() {
                 onClick={() => setShowAll(true)}
                 className="bg-card hover:border-input flex min-h-11 w-full items-center justify-between gap-3 rounded-panel border px-5 py-3 text-left text-sm"
               >
-                <span>
-                  {enabledEngines.length - problems.filter((p) => p.layer === "Engine").reduce((sum, p) => sum + (p.engines?.length ?? 0), 0)} other engines
-                  {providers.state === "ready" && providers.providers.length
-                    ? ` and ${providers.providers.length} provider${providers.providers.length === 1 ? "" : "s"}`
-                    : ""}
-                </span>
+                <span>{foldedSummary}</span>
                 <span className="text-link inline-flex items-center gap-1 font-medium">
                   Show all
                   <ChevronRight aria-hidden="true" className="size-4" />
