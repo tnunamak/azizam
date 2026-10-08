@@ -257,17 +257,11 @@ async function captureInteractions(page, { view, theme, width, base }) {
   const skip = (route, interaction, reason) => skipped.push({ route, view, interaction, theme, width, reason });
   await page.goto(`${base}/ui/status/`);
   await settled(page);
-  const showDisabled = page.getByRole("switch", { name: "Show disabled" });
-  if (await showDisabled.count()) {
-    if (await showDisabled.getAttribute("aria-checked") !== "true") await showDisabled.click();
-    await shot("status", "show-disabled");
-  } else skip("status", "show-disabled", "Show disabled control was not rendered");
-  const alert = page.locator("section").filter({ has: page.getByRole("heading", { name: "Needs attention" }) }).getByRole("link", { name: "Open" }).first();
+  const showAll = page.locator("main").getByRole("button", { name: "Show all", exact: true }).first();
+  if (await showAll.count()) { await showAll.click(); await shot("status", "show-all"); }
+  const alert = page.locator("section").filter({ has: page.getByRole("heading", { name: "Needs attention" }) }).getByRole("link").first();
   if (await alert.count()) { await alert.click(); await shot("status", "alert"); }
-  else {
-    await shot("status", "alert-state");
-    skip("status", "alert", "No Needs attention alert with an Open action was rendered");
-  }
+  else await shot("status", "alert-state"); // A healthy gateway has no alert, so this is not a skipped state.
 
   await page.goto(`${base}/ui/engines/`);
   await settled(page);

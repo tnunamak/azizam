@@ -18,13 +18,23 @@ async function contextFor(role, width, theme) {
   await context.clock.setFixedTime(new Date(manifest.now * 1000));
   await context.addInitScript(value => localStorage.setItem("theme", value), theme);
   const email = role === "owner" ? manifest.owner_email : role === "restricted" ? manifest.restricted_email : manifest.member_email;
+  // Reuse one sign-in per role and fixture run; the gateway rate-limits logins.
+  const stateFile = `${process.env.HOME}/.tmp/azizam-redesign/d1-work/cookies-${role}-${manifest.fixture_state}.json`;
+  try {
+    const cookies = JSON.parse(await readFile(stateFile, "utf8"));
+    await context.addCookies(cookies);
+    contexts.set(key, context);
+    return context;
+  } catch {}
   const page = await context.newPage();
   await page.goto(`${base}/ui/sign-in/`);
   await page.getByLabel("Email", { exact: true }).fill(email);
   await page.getByLabel("Password", { exact: true }).fill(manifest.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await page.waitForURL(url => !url.pathname.includes("/sign-in"), { timeout: 15000 });
+  await page.waitForURL(url => !url.pathname.includes("/sign-in"), { timeout: 60000 });
   await page.close();
+  const { writeFile } = await import("node:fs/promises");
+  await writeFile(stateFile, JSON.stringify(await context.cookies()));
   contexts.set(key, context);
   return context;
 }
@@ -45,6 +55,7 @@ for (const spec of specs) {
       if (kind === "click") await page.getByRole("button", { name: new RegExp(arg) }).first().click();
       if (kind === "clicklink") await page.getByRole("link", { name: new RegExp(arg) }).first().click();
       if (kind === "wait") await page.waitForTimeout(Number(arg));
+      if (kind === "press") await page.keyboard.press(arg);
     }
     await page.waitForTimeout(600);
   }
