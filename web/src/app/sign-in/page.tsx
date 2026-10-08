@@ -57,7 +57,7 @@ export default function SignInPage() {
   return (
     <section className="mx-auto flex w-full max-w-md flex-col py-12 sm:py-20">
       <div className="bg-card rounded-xl border p-6 sm:p-8">
-        <Fish className="text-primary mb-6 size-8" aria-hidden="true" />
+        <Fish className="text-link mb-6 size-8" aria-hidden="true" />
         <h1 className="text-2xl font-semibold tracking-tight">
           {reset ? "Choose a new password" : "Sign in"}
         </h1>

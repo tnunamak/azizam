@@ -95,7 +95,7 @@ export default function InvitePage() {
   return (
     <section className="mx-auto w-full max-w-md py-12 sm:py-16">
       <div className="bg-card rounded-xl border p-6 sm:p-8">
-        <Fish className="text-primary mb-6 size-8" aria-hidden="true" />
+        <Fish className="text-link mb-6 size-8" aria-hidden="true" />
         <h1 className="text-2xl font-semibold tracking-tight">
           {accept.data ? "Your account is ready" : "Accept your invitation"}
         </h1>

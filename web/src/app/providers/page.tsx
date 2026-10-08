@@ -1520,7 +1520,7 @@ function AddProviderDialog({
                 }
                 className={cn(
                   "rounded-lg border px-3 py-2 text-left text-sm capitalize",
-                  step === item && "border-primary bg-primary/10 text-primary",
+                  step === item && "border-primary bg-primary/10 text-link",
                 )}
               >
                 {index + 1}. {item}
@@ -1591,7 +1591,7 @@ function AddProviderDialog({
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 font-medium">
                         <Fish
-                          className="text-primary size-4"
+                          className="text-link size-4"
                           aria-hidden="true"
                         />
                         {provider.name}
@@ -1628,7 +1628,7 @@ function AddProviderDialog({
               </label>
               {selected.keyUrl && (
                 <a
-                  className="text-primary mt-2 inline-flex items-center gap-1 text-sm"
+                  className="text-link mt-2 inline-flex items-center gap-1 text-sm"
                   href={selected.keyUrl}
                 >
                   Get key <ExternalLink className="size-3" />
@@ -1908,7 +1908,7 @@ function ProviderEmptyState({ onAdd }: { onAdd: () => void }) {
     <div className="border-border bg-card rounded-xl border p-5">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 gap-3">
-          <div className="bg-primary/10 text-primary relative flex size-12 shrink-0 items-center justify-center rounded-xl">
+          <div className="bg-primary/10 text-link relative flex size-12 shrink-0 items-center justify-center rounded-xl">
             <Fish className="size-9" aria-hidden="true" />
             <span className="bg-warning absolute top-3 -right-2 size-3 rounded-full" />
           </div>

@@ -31,7 +31,7 @@ export default function SetupPage() {
         <CardHeader>
           <ShieldCheck
             aria-hidden="true"
-            className="text-primary mb-2 size-8"
+            className="text-link mb-2 size-8"
           />
           <h1 className="text-title font-semibold">
             {returning ? "Sign in to your gateway" : "Set up your gateway"}

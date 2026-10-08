@@ -754,7 +754,7 @@ function OidcForm({
       <p className="text-muted-foreground text-xs">
         Changes apply to future sign-ins. Keep this session open until you test
         the provider.{" "}
-        <a className="text-primary underline" href="/setup">
+        <a className="text-link underline" href="/setup">
           Owner recovery
         </a>
       </p>
