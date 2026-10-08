@@ -6,27 +6,28 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUpRight,
   AudioLines,
-  Circle,
+  ChevronRight,
+  CircleX,
   ImageIcon,
   KeyRound,
   Loader2,
-  PlugZap,
-  ShieldCheck,
-  Video,
-  Music2,
-  Waves,
-  ListFilter,
   Pause,
   Play,
+  Plus,
+  ShieldCheck,
+  Video,
 } from "lucide-react";
 import { formatAppName } from "@/lib/format";
-import { availabilityReason, statusSummaryCopy } from "@/lib/status-copy";
-import { useOwnerAlertTarget } from "@/components/shell/use-owner-alert";
+import { availabilityReason } from "@/lib/status-copy";
+import { useViewer } from "@/components/shell/session";
 import { accountApi, type AccountApp } from "@/lib/account-api";
-import { ApiError } from "@/lib/api";
+import { api, ApiError, queryKeys } from "@/lib/api";
+import { engineShortName } from "@/lib/health-presentation";
+import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { RelativeTime } from "@/components/ui/relative-time";
 import {
   Select,
   SelectContent,
@@ -35,14 +36,22 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  CapabilityIcon,
   CodeBlock,
   CopyField,
   EmptyState,
   ErrorState,
   SecretReveal,
 } from "@/components/product";
-import type { Capability } from "@/components/product/capability-icon";
+import {
+  availabilityState,
+  capabilityMeta,
+  evidenceStamp,
+  EvidenceTime,
+  SectionHeading,
+  StateLabel,
+  Verdict,
+  type EvidenceStamp,
+} from "@/components/product/readiness";
 import {
   Sheet,
   SheetContent,
@@ -59,8 +68,7 @@ import {
   hasHomeCreationContent,
 } from "./home-api";
 import { chatAlias, recipeFor, type Client } from "./recipes";
-import { capabilityLabels } from "@/lib/terms";
-import { capabilityTiles } from "./presentation";
+import { capabilityTiles, homeVerdict, oldestCheck } from "./presentation";
 
 const homeKey = ["account", "home"];
 const setupKey = ["gateway", "setup-progress"];
@@ -72,82 +80,13 @@ const primaryAppChoices = [
   "Codex",
   "Claude Code",
 ] as const satisfies readonly Client[];
-const otherClientChoices = ["Python", "JavaScript", "curl", "Phone"] as const satisfies readonly Client[];
+const otherClientChoices = [
+  "Python",
+  "JavaScript",
+  "curl",
+  "Phone",
+] as const satisfies readonly Client[];
 type AppChoice = Client | "Other";
-const capabilityCopy: Record<
-  string,
-  { label: string; description: string; icon: Capability }
-> = {
-  chat: {
-    label: "Chat",
-    description: "Ask questions and work with text.",
-    icon: "chat",
-  },
-  image: {
-    label: "Images",
-    description: "Make an image from your idea.",
-    icon: "image",
-  },
-  video: {
-    label: "Video",
-    description: "Turn an idea into a short video.",
-    icon: "video",
-  },
-  voice: {
-    label: capabilityLabels.speech,
-    description: "Read your text aloud.",
-    icon: "voice",
-  },
-  speech: {
-    label: "Speech",
-    description: "Read your text aloud.",
-    icon: "voice",
-  },
-  music: {
-    label: "Music",
-    description: "Create music from a prompt.",
-    icon: "voice",
-  },
-  sfx: {
-    label: "Sound effects",
-    description: "Create sounds for your projects.",
-    icon: "voice",
-  },
-  transcribe: {
-    label: capabilityLabels.transcribe,
-    description: "Turn a recording into text.",
-    icon: "transcribe",
-  },
-  decide: {
-    label: capabilityLabels.decisions,
-    description: "Choose between options.",
-    icon: "decide",
-  },
-  embed: {
-    label: capabilityLabels.embeddings,
-    description: "Turn text into numbers for search.",
-    icon: "embed",
-  },
-  rerank: {
-    label: capabilityLabels.reranking,
-    description: "Sort search results by relevance.",
-    icon: "embed",
-  },
-  audio: {
-    label: "Audio",
-    description: "Create sound from a prompt.",
-    icon: "voice",
-  },
-};
-const capabilityTint: Record<Capability, string> = {
-  chat: "bg-capability-chat/5 border-capability-chat/20",
-  image: "bg-capability-image/5 border-capability-image/20",
-  video: "bg-capability-video/5 border-capability-video/20",
-  voice: "bg-capability-voice/5 border-capability-voice/20",
-  transcribe: "bg-capability-transcribe/5 border-capability-transcribe/20",
-  decide: "bg-capability-decide/5 border-capability-decide/20",
-  embed: "bg-capability-embed/5 border-capability-embed/20",
-};
 
 function formatMilliseconds(ms: number): string {
   return ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`;
@@ -176,9 +115,17 @@ function useHomePreviewVisible() {
   return { ref, visible };
 }
 
-function capabilityHref(capability: string): string {
-  const filter = ["music", "sfx"].includes(capability) ? "audio" : capability;
-  return `/models/?capability=${encodeURIComponent(filter)}`;
+/** Tiles open Try on the capability, with its recommended model selected. */
+function capabilityHref(row: HomeCapability): string {
+  const tab = ["music", "sfx"].includes(row.capability)
+    ? "audio"
+    : row.capability === "voice"
+      ? "speech"
+      : row.capability;
+  const params = new URLSearchParams({ capability: tab });
+  const model = row.use_name ?? row.model;
+  if (model) params.set("model", model);
+  return `/try/?${params.toString()}`;
 }
 
 function firstWords(value?: string | null): string | null {
@@ -187,50 +134,238 @@ function firstWords(value?: string | null): string | null {
   return words.slice(0, 12).join(" ");
 }
 
-function HomeCapabilityIcon({ row }: { row: HomeCapability }) {
-  const key = row.icon_key ?? row.capability;
-  const special = { music: Music2, sfx: Waves, rerank: ListFilter };
-  const Icon = special[key as keyof typeof special];
-  if (Icon)
-    return (
-      <span
-        role="img"
-        aria-label={row.capability_title ?? key}
-        className={`inline-flex size-8 shrink-0 items-center justify-center rounded-md [&>svg]:size-4 ${row.available ? "text-capability-voice bg-capability-voice/10" : "bg-muted text-muted-foreground"}`}
-      >
-        <Icon aria-hidden="true" />
-      </span>
-    );
-  return (
-    <CapabilityIcon
-      capability={
-        key === "speech" ? "voice" : (capabilityCopy[key]?.icon ?? "chat")
-      }
-      className={row.available ? undefined : "bg-muted text-muted-foreground"}
-    />
-  );
-}
-
 function HomeLoading() {
   return (
     <div
       role="status"
       aria-label="Loading Home"
       aria-busy="true"
-      className="space-y-8"
+      className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]"
     >
-      <Skeleton className="h-8 w-56" />
-      <div className="space-y-4">
-        <Skeleton className="h-5 w-40" />
-        <Skeleton className="h-12 w-full" />
-        <Skeleton className="h-12 w-full" />
-        <Skeleton className="h-52 w-full" />
+      <div className="space-y-8">
+        <Skeleton className="h-9 w-3/4" />
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
+            <Skeleton className="h-28 w-full rounded-panel" key={i} />
+          ))}
+        </div>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {[0, 1, 2].map((i) => (
-          <Skeleton className="h-32 w-full" key={i} />
-        ))}
-      </div>
+      <Skeleton className="h-96 w-full rounded-panel" />
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Capabilities                                                        */
+/* ------------------------------------------------------------------ */
+
+type EngineHint = { name: string; serviceId: string } | null;
+
+function useOwnerEngineHints(enabled: boolean) {
+  const { data: status } = useQuery({
+    queryKey: ["foundation", "health"],
+    queryFn: api.status,
+    enabled,
+    refetchInterval: 60_000,
+  });
+  const { data: registry } = useQuery({
+    queryKey: queryKeys.serviceRegistry,
+    queryFn: api.services.registry,
+    enabled,
+  });
+  return (label: string): EngineHint => {
+    if (!enabled) return null;
+    const service = status?.current_health?.services.find(
+      (item) =>
+        item.enabled &&
+        item.tone !== "ok" &&
+        (item.capability_labels ?? [item.capability_title]).some(
+          (value) => value?.toLowerCase() === label.toLowerCase(),
+        ),
+    );
+    if (!service) return null;
+    return {
+      name: engineShortName(registry?.services[service.service_id], service),
+      serviceId: service.service_id,
+    };
+  };
+}
+
+function CapabilityTile({
+  row,
+  verdictCheck,
+  engineHint,
+}: {
+  row: HomeCapability;
+  verdictCheck: EvidenceStamp | null;
+  engineHint: EngineHint;
+}) {
+  const meta = capabilityMeta(row.icon_key ?? row.capability);
+  const label = row.capability_title ?? meta.label;
+  const state = availabilityState(row.status, row.reason_code);
+  const stamp = evidenceStamp(row.availability?.evidence);
+  // A tile repeats a time only when it differs from the verdict's check.
+  const ownStamp =
+    stamp &&
+    !(
+      verdictCheck &&
+      stamp.kind === "checked" &&
+      Math.abs(stamp.at - verdictCheck.at) < 300
+    )
+      ? stamp
+      : null;
+  const Icon = meta.icon;
+  const reason = row.available
+    ? undefined
+    : availabilityReason(row.status, row.reason_code);
+  const body = (
+    <span className="flex min-w-0 items-center gap-3 md:flex-col md:items-start md:gap-3">
+      <span
+        role="img"
+        aria-label={label}
+        className={cn(
+          "flex size-9 shrink-0 items-center justify-center rounded-control",
+          row.available
+            ? cn(meta.tint, meta.tone)
+            : "bg-muted text-muted-foreground",
+        )}
+      >
+        <Icon aria-hidden="true" className="size-4.5" />
+      </span>
+      <span className="block min-w-0">
+        <span className="block truncate font-semibold">{label}</span>
+        <StateLabel state={state} className="mt-0.5" />
+        {ownStamp ? (
+          <EvidenceTime stamp={ownStamp} className="mt-0.5 block text-xs" />
+        ) : null}
+      </span>
+    </span>
+  );
+  if (!row.available)
+    return (
+      <li
+        className="bg-muted/50 flex min-w-0 flex-col rounded-panel border border-dashed p-3 md:p-3.5"
+        title={reason}
+      >
+        {body}
+        {engineHint ? (
+          <Link
+            href={`/engines/?service=${encodeURIComponent(engineHint.serviceId)}`}
+            className="text-link mt-2 inline-flex min-h-11 items-center gap-1 text-sm font-medium underline-offset-4 hover:underline lg:min-h-0"
+          >
+            Inspect {engineHint.name}
+          </Link>
+        ) : reason ? (
+          <span className="sr-only">{reason}</span>
+        ) : null}
+      </li>
+    );
+  return (
+    <li className="min-w-0">
+      <Link
+        href={capabilityHref(row)}
+        aria-label={label}
+        className="bg-card hover:border-input flex h-full min-w-0 flex-col rounded-panel border p-3 transition-colors md:p-3.5"
+      >
+        {body}
+      </Link>
+    </li>
+  );
+}
+
+function Capabilities({
+  tiles,
+  verdictCheck,
+  owner,
+}: {
+  tiles: HomeCapability[];
+  verdictCheck: EvidenceStamp | null;
+  owner: boolean;
+}) {
+  const hintFor = useOwnerEngineHints(owner);
+  return (
+    <section aria-labelledby="capabilities-heading">
+      <SectionHeading id="capabilities-heading" title="What you can use" />
+      {!tiles.length ? (
+        <EmptyState
+          title="Nothing is available to you yet"
+          description="Ask the gateway owner to connect a model and give you access."
+        />
+      ) : (
+        <ul className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          {tiles.map((row) => (
+            <CapabilityTile
+              key={row.capability}
+              row={row}
+              verdictCheck={verdictCheck}
+              engineHint={
+                row.available
+                  ? null
+                  : hintFor(row.capability_title ?? capabilityMeta(row.capability).label)
+              }
+            />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Connect an app                                                      */
+/* ------------------------------------------------------------------ */
+
+function lastUsed(app: HomeSnapshot["apps"][number]): number | null {
+  const times = app.credentials
+    .map((key) => key.last_used_at)
+    .filter((value): value is number => typeof value === "number");
+  return times.length ? Math.max(...times) : null;
+}
+
+function YourApps({ home }: { home: HomeSnapshot }) {
+  const apps = home.apps
+    .filter((app) => !app.disabled_at)
+    .toSorted((a, b) => (lastUsed(b) ?? 0) - (lastUsed(a) ?? 0));
+  if (!apps.length) return null;
+  return (
+    <div>
+      <h3 className="text-muted-foreground mb-1 text-sm font-medium">
+        Your apps
+      </h3>
+      <ul className="divide-y">
+        {apps.slice(0, 4).map((app) => {
+          const used = lastUsed(app);
+          return (
+            <li key={app.id}>
+              <Link
+                href={`/apps/?app=${encodeURIComponent(app.id)}`}
+                className="group flex min-h-11 items-center gap-3 py-2"
+              >
+                <span className="min-w-0 flex-1 truncate text-sm font-medium group-hover:underline">
+                  {formatAppName(app.name, home.user.email)}
+                </span>
+                <span className="text-muted-foreground shrink-0 text-xs">
+                  {used ? (
+                    <>
+                      Used <RelativeTime ts={used} fallback="" />
+                    </>
+                  ) : (
+                    "No requests yet"
+                  )}
+                </span>
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+      {apps.length > 4 ? (
+        <Link
+          href="/apps/"
+          className="text-link inline-flex min-h-11 items-center text-sm font-medium underline-offset-4 hover:underline"
+        >
+          All {apps.length} apps
+        </Link>
+      ) : null}
     </div>
   );
 }
@@ -341,29 +476,29 @@ function Connect({ home }: { home: HomeSnapshot }) {
     <section
       id="connect"
       aria-labelledby="connect-heading"
-      className="border-primary/20 bg-card overflow-hidden rounded-xl border"
+      className="bg-card rounded-panel border"
     >
-      <div className="p-4 sm:p-6">
-        <div className="mb-4 flex items-start gap-3">
-          <span className="bg-primary/10 text-primary flex size-11 shrink-0 items-center justify-center rounded-lg">
-            <PlugZap aria-hidden="true" className="size-5" />
-          </span>
-          <div>
-            <h2 id="connect-heading" className="text-xl font-semibold">
-              Connect an app
-            </h2>
-            <p className="text-muted-foreground mt-1 text-sm">
-              One address. A key for each app.
-            </p>
-          </div>
-        </div>
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+      <div className="space-y-5 p-5">
+        <h2 id="connect-heading" className="text-lg font-semibold">
+          Connect an app
+        </h2>
+        <CopyField label="Gateway address" value={home.api_base_url} />
+        <YourApps home={home} />
+        <div>
+          <h3 className="text-muted-foreground mb-2 text-sm font-medium">
+            Add an app
+          </h3>
+          <div className="grid grid-cols-2 gap-2">
             {([...primaryAppChoices, "Other"] as AppChoice[]).map((name) => (
               <button
                 key={name}
                 type="button"
-                className={`border-border hover:border-primary/50 focus-visible:ring-ring min-h-11 rounded-lg border px-3 py-2 text-left text-sm font-medium focus-visible:ring-2 ${appChoice === name ? "border-primary bg-primary/5 text-primary" : "bg-background"}`}
+                className={cn(
+                  "flex min-h-11 items-center gap-2 rounded-control border px-3 text-left text-sm font-medium transition-colors disabled:opacity-50",
+                  appChoice === name
+                    ? "border-ring bg-accent text-accent-foreground"
+                    : "bg-card hover:border-input",
+                )}
                 aria-pressed={appChoice === name}
                 disabled={choiceLocked}
                 onClick={() => {
@@ -373,15 +508,18 @@ function Connect({ home }: { home: HomeSnapshot }) {
                   setTestError(null);
                 }}
               >
-                {name}
+                {name === "Other" ? (
+                  <Plus aria-hidden="true" className="size-4 shrink-0" />
+                ) : null}
+                <span className="truncate">{name}</span>
               </button>
             ))}
           </div>
         </div>
         {appChoice && (
-          <div className="mt-5 space-y-4">
+          <div className="space-y-4 border-t pt-5">
             {appChoice === "Other" && (
-              <div className="space-y-3">
+              <div className="space-y-2">
                 <label htmlFor="other-client" className="text-sm font-medium">
                   Recipe
                 </label>
@@ -407,152 +545,146 @@ function Connect({ home }: { home: HomeSnapshot }) {
                 </Select>
               </div>
             )}
-            <div className="grid min-w-0 gap-3 lg:grid-cols-3">
+            {(selectedRecipe.fields[0]?.value ?? home.api_base_url) !==
+            home.api_base_url ? (
               <CopyField
                 label="Base URL"
                 value={selectedRecipe.fields[0]?.value ?? home.api_base_url}
               />
-              {model && <CopyField label="Model" value={model} />}
-            </div>
-            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
-              <div className="min-w-0 space-y-3">
-                <label htmlFor="app-key" className="text-sm font-medium">
-                  API key
-                </label>
-                <Select
-                  value={selectedCredentialId}
-                  disabled={creating || !!reveal || testing}
-                  onValueChange={(value) => {
-                    setSelectedCredentialId(value);
-                    setTestResult(null);
-                    setTestError(null);
-                    setPastedKey("");
-                    setSaved(false);
-                  }}
-                >
-                  <SelectTrigger id="app-key" className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="new">
-                      New app · default access
-                    </SelectItem>
-                    {selectedCredentialId !== "new" &&
-                      !keys.some((key) => key.id === selectedCredentialId) && (
-                        <SelectItem value={selectedCredentialId}>
-                          New key · loading access
-                        </SelectItem>
-                      )}
-                    {keys.map((key) => (
-                      <SelectItem key={key.id} value={key.id}>
-                        {key.appName} · {key.display_name || "Key"}
+            ) : null}
+            {model && <CopyField label="Model" value={model} />}
+            <div className="space-y-2">
+              <label htmlFor="app-key" className="text-sm font-medium">
+                API key
+              </label>
+              <Select
+                value={selectedCredentialId}
+                disabled={creating || !!reveal || testing}
+                onValueChange={(value) => {
+                  setSelectedCredentialId(value);
+                  setTestResult(null);
+                  setTestError(null);
+                  setPastedKey("");
+                  setSaved(false);
+                }}
+              >
+                <SelectTrigger id="app-key" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="new">New key for {chosenAppName}</SelectItem>
+                  {selectedCredentialId !== "new" &&
+                    !keys.some((key) => key.id === selectedCredentialId) && (
+                      <SelectItem value={selectedCredentialId}>
+                        New key · loading access
                       </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {reveal ? (
-                  <SecretReveal
-                    key={reveal.id}
-                    secret={reveal.secret}
-                    onSaved={() => {
-                      setReveal(null);
-                      setSaved(true);
-                    }}
-                  />
-                ) : selectedCredentialId !== "new" ? (
-                  <div className="space-y-2">
-                    <label
-                      htmlFor="pasted-app-key"
-                      className="text-sm font-medium"
-                    >
-                      Paste your {selectedRecipe.keyLabel}
-                    </label>
-                    <Input
-                      id="pasted-app-key"
-                      type="password"
-                      value={pastedKey}
-                      autoComplete="off"
-                      spellCheck={false}
-                      onChange={(event) => {
-                        setPastedKey(event.target.value);
-                        setTestResult(null);
-                        setTestError(null);
-                      }}
-                      placeholder="Paste the selected app key"
-                      disabled={testing}
-                    />
-                    <p className="text-muted-foreground text-xs">
-                      {saved
-                        ? "Key saved. Paste it here to check the connection. "
-                        : ""}
-                      Kept only while this page is open.
-                    </p>
-                  </div>
-                ) : (
-                  <p className="text-muted-foreground text-sm">
-                    Create a key, then copy it to your app. It appears only
-                    once.
-                  </p>
-                )}
-                {!canCreate && (
-                  <p className="text-muted-foreground text-sm">
-                    Your access plan does not let you create keys. Ask the
-                    gateway owner for access.
-                  </p>
-                )}
-                {keyError && (
-                  <p role="alert" className="text-destructive text-sm">
-                    {keyError}
-                  </p>
-                )}
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {!reveal && (
-                  <Button
-                    variant={
-                      selectedCredentialId === "new" ? "default" : "outline"
-                    }
-                    disabled={creating || !canCreate || testing}
-                    onClick={() => void createKey()}
-                  >
-                    {creating ? (
-                      <Loader2 className="animate-spin" aria-hidden="true" />
-                    ) : (
-                      <KeyRound aria-hidden="true" />
                     )}
-                    {creating
-                      ? "Creating key…"
-                      : pendingApp
-                        ? "Retry key creation"
-                        : `Create key for ${chosenAppName}`}
-                  </Button>
-                )}
+                  {keys.map((key) => (
+                    <SelectItem key={key.id} value={key.id}>
+                      {key.appName} · {key.display_name || "Key"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {reveal ? (
+                <SecretReveal
+                  key={reveal.id}
+                  secret={reveal.secret}
+                  onSaved={() => {
+                    setReveal(null);
+                    setSaved(true);
+                  }}
+                />
+              ) : selectedCredentialId !== "new" ? (
+                <div className="space-y-2">
+                  <label
+                    htmlFor="pasted-app-key"
+                    className="text-sm font-medium"
+                  >
+                    Paste your {selectedRecipe.keyLabel}
+                  </label>
+                  <Input
+                    id="pasted-app-key"
+                    type="password"
+                    value={pastedKey}
+                    autoComplete="off"
+                    spellCheck={false}
+                    onChange={(event) => {
+                      setPastedKey(event.target.value);
+                      setTestResult(null);
+                      setTestError(null);
+                    }}
+                    placeholder="Paste the selected app key"
+                    disabled={testing}
+                  />
+                  <p className="text-muted-foreground text-xs">
+                    {saved
+                      ? "Key saved. Paste it here to check the connection. "
+                      : ""}
+                    Kept only while this page is open.
+                  </p>
+                </div>
+              ) : (
+                <p className="text-muted-foreground text-sm">
+                  The key appears once. Copy it into {chosenAppName}.
+                </p>
+              )}
+              {!canCreate && (
+                <p className="text-muted-foreground text-sm">
+                  Your access plan does not let you create keys. Ask the
+                  gateway owner for access.
+                </p>
+              )}
+              {keyError && (
+                <p role="alert" className="text-destructive text-sm">
+                  {keyError}
+                </p>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {!reveal && (
                 <Button
                   variant={
-                    selectedCredentialId !== "new" &&
-                    !reveal &&
-                    pastedKey.trim()
-                      ? "default"
-                      : "outline"
+                    selectedCredentialId === "new" ? "default" : "outline"
                   }
-                  disabled={
-                    testing ||
-                    selectedCredentialId === "new" ||
-                    !(reveal?.secret || pastedKey.trim())
-                  }
-                  onClick={() => void testConnection()}
+                  disabled={creating || !canCreate || testing}
+                  onClick={() => void createKey()}
                 >
-                  {testing ? (
-                    <Loader2 aria-hidden="true" className="animate-spin" />
+                  {creating ? (
+                    <Loader2 className="animate-spin" aria-hidden="true" />
                   ) : (
-                    <PlugZap aria-hidden="true" />
+                    <KeyRound aria-hidden="true" />
                   )}
-                  {testing ? "Checking…" : "Check connection"}
+                  {creating
+                    ? "Creating key…"
+                    : pendingApp
+                      ? "Retry key creation"
+                      : `Create key for ${chosenAppName}`}
                 </Button>
-                <Button variant="ghost" onClick={() => setNotesOpen(true)}>
-                  Setup notes
-                </Button>
-              </div>
+              )}
+              <Button
+                variant={
+                  selectedCredentialId !== "new" && !reveal && pastedKey.trim()
+                    ? "default"
+                    : "outline"
+                }
+                disabled={
+                  testing ||
+                  selectedCredentialId === "new" ||
+                  !(reveal?.secret || pastedKey.trim())
+                }
+                onClick={() => void testConnection()}
+              >
+                {testing ? (
+                  <Loader2 aria-hidden="true" className="animate-spin" />
+                ) : (
+                  <ShieldCheck aria-hidden="true" />
+                )}
+                {testing ? "Checking…" : "Check connection"}
+              </Button>
+              <Button variant="ghost" onClick={() => setNotesOpen(true)}>
+                Setup notes
+              </Button>
             </div>
             {loadingKeyAccess ? (
               <div
@@ -563,25 +695,34 @@ function Connect({ home }: { home: HomeSnapshot }) {
                 <Skeleton className="h-16 w-full" />
               </div>
             ) : !model ? (
-              <div className="bg-muted rounded-lg p-5 text-sm">
+              <div className="bg-muted rounded-control p-4 text-sm">
                 <p className="font-medium">
                   This key does not include the default model
                 </p>
-                <p className="text-muted-foreground mt-2">
+                <p className="text-muted-foreground mt-1">
                   Choose another key, or ask the owner to update this app’s
                   access.
                 </p>
               </div>
             ) : null}
             {testResult && (
-              <div role="status" className="space-y-2">
+              <div
+                role="status"
+                className={cn(
+                  "space-y-1 rounded-control p-3 text-sm",
+                  testResult.ok ? "bg-success-tint" : "bg-danger-tint",
+                )}
+              >
                 <p
-                  className={`flex items-center gap-2 text-sm ${testResult.ok ? "text-success" : "text-destructive"}`}
+                  className={cn(
+                    "flex items-center gap-2 font-medium",
+                    testResult.ok ? "text-success" : "text-destructive",
+                  )}
                 >
                   {testResult.ok ? (
                     <ShieldCheck aria-hidden="true" className="size-4" />
                   ) : (
-                    <Circle aria-hidden="true" className="size-4" />
+                    <CircleX aria-hidden="true" className="size-4" />
                   )}
                   {testResult.ok
                     ? "Gateway responded with this key"
@@ -590,12 +731,10 @@ function Connect({ home }: { home: HomeSnapshot }) {
                     ? ` · ${formatMilliseconds(testResult.latency_ms)}`
                     : ""}
                 </p>
-                <p className="text-muted-foreground text-sm">
-                  {testResult.reason}
-                </p>
+                <p className="text-foreground">{testResult.reason}</p>
                 {testResult.request_id && (
                   <a
-                    className="text-primary inline-flex min-h-11 items-center text-sm underline underline-offset-4"
+                    className="text-link inline-flex min-h-11 items-center underline underline-offset-4"
                     href={`/r/${encodeURIComponent(testResult.request_id)}`}
                   >
                     View request receipt
@@ -637,7 +776,7 @@ function Connect({ home }: { home: HomeSnapshot }) {
               />
             ) : null}
             <a
-              className="text-primary inline-flex min-h-11 items-center gap-1 text-sm underline underline-offset-4"
+              className="text-link inline-flex min-h-11 items-center gap-1 text-sm underline underline-offset-4"
               href={selectedRecipe.docs}
               target="_blank"
               rel="noreferrer"
@@ -652,63 +791,9 @@ function Connect({ home }: { home: HomeSnapshot }) {
   );
 }
 
-function Capabilities({
-  capabilities,
-  aliases,
-}: {
-  capabilities: HomeCapability[];
-  aliases: HomeSnapshot["aliases"];
-}) {
-  const tiles = capabilityTiles(capabilities, aliases);
-  return (
-    <section aria-labelledby="capabilities-heading">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 id="capabilities-heading" className="text-lg font-semibold">
-          What you can use
-        </h2>
-      </div>
-      {!tiles.length ? (
-        <EmptyState
-          title="No tasks are available yet"
-          description="Ask the owner to connect a model and update your access."
-          action={
-            <Button asChild variant="outline">
-              <Link href="/models/">View models and access</Link>
-            </Button>
-          }
-        />
-      ) : (
-        <div className="mt-4 flex flex-wrap gap-2">
-          {tiles.map((capability) => {
-            const copy = capabilityCopy[capability.capability];
-            if (!copy) return null;
-            const label = capability.capability_title ?? copy.label;
-            const reason = availabilityReason(
-              capability.status,
-              capability.reason_code,
-            );
-            return (
-              <Link
-                key={capability.capability}
-                href={capabilityHref(capability.capability)}
-                title={capability.available ? undefined : reason}
-                aria-label={
-                  reason && !capability.available
-                    ? `${label}: ${reason}`
-                    : label
-                }
-                className={`hover:border-primary/50 focus-visible:ring-ring inline-flex min-h-11 max-w-full min-w-0 items-center gap-2 rounded-full border px-3 py-1.5 transition-colors focus-visible:ring-2 ${capability.available ? capabilityTint[copy.icon] : "border-border bg-muted/30 text-muted-foreground"}`}
-              >
-                <HomeCapabilityIcon row={capability} />
-                <span className="truncate text-sm font-medium">{label}</span>
-              </Link>
-            );
-          })}
-        </div>
-      )}
-    </section>
-  );
-}
+/* ------------------------------------------------------------------ */
+/* Recent creations                                                    */
+/* ------------------------------------------------------------------ */
 
 function CreationMedia({
   creation,
@@ -758,14 +843,13 @@ function CreationMedia({
 
   if (creation.kind === "image" && creation.download_url && !imageFailed) {
     return (
-      // Recent uses the Library API's signed thumbnail-capable download URL.
       // eslint-disable-next-line @next/next/no-img-element
       <img
         src={creation.download_url}
-        alt=""
+        alt={title}
         loading="lazy"
         onError={() => setImageFailed(true)}
-        className="size-full object-cover transition-transform group-hover:scale-[1.02] motion-reduce:transform-none"
+        className="size-full object-cover"
       />
     );
   }
@@ -777,7 +861,7 @@ function CreationMedia({
         aria-label="Loading video poster"
         className="bg-muted text-muted-foreground flex size-full items-center justify-center"
       >
-        <Loader2 aria-hidden="true" className="size-6 animate-spin" />
+        <Loader2 aria-hidden="true" className="size-5 animate-spin" />
       </div>
     );
   }
@@ -787,10 +871,10 @@ function CreationMedia({
       // eslint-disable-next-line @next/next/no-img-element
       <img
         src={posterUrl}
-        alt=""
+        alt={title}
         loading="lazy"
         onError={() => setPosterFailed(true)}
-        className="size-full object-cover transition-transform group-hover:scale-[1.02] motion-reduce:transform-none"
+        className="size-full object-cover"
       />
     );
   }
@@ -824,8 +908,8 @@ function CreationMedia({
 
   if (creation.kind === "audio" && creation.download_url) {
     return (
-      <div className="flex size-full flex-col items-center justify-center gap-3 p-4 text-center">
-        <AudioLines aria-hidden="true" className="size-12" />
+      <div className="bg-capability-voice/12 flex size-full flex-col justify-between p-3">
+        <p className="line-clamp-3 text-sm font-medium">{title}</p>
         <audio
           ref={audioRef}
           preload="none"
@@ -842,52 +926,53 @@ function CreationMedia({
           }}
           className="sr-only"
         />
-        <Button
-          type="button"
-          variant="secondary"
-          size="icon"
-          className="relative z-10 size-11"
-          aria-label={`${isPlaying ? "Pause" : "Play"} ${title}`}
-          onClick={async () => {
-            const audio = audioRef.current;
-            if (!audio) return;
-            if (isPlaying) audio.pause();
-            else {
-              try {
-                if (audioError === "media") {
-                  const renewed = await homeApi.mediaDownload(
-                    creation.asset_id,
-                  );
-                  if (renewed.download_url) {
-                    setAudioSrc(renewed.download_url);
-                    audio.src = renewed.download_url;
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            size="icon"
+            className="relative z-10 size-11 rounded-full"
+            aria-label={`${isPlaying ? "Pause" : "Play"} ${title}`}
+            onClick={async () => {
+              const audio = audioRef.current;
+              if (!audio) return;
+              if (isPlaying) audio.pause();
+              else {
+                try {
+                  if (audioError === "media") {
+                    const renewed = await homeApi.mediaDownload(
+                      creation.asset_id,
+                    );
+                    if (renewed.download_url) {
+                      setAudioSrc(renewed.download_url);
+                      audio.src = renewed.download_url;
+                    }
+                    audio.load();
                   }
-                  audio.load();
+                  await audio.play();
+                  setAudioError(null);
+                } catch {
+                  setIsPlaying(false);
+                  setAudioError(
+                    audioError === "media" || audio.error ? "media" : "playback",
+                  );
                 }
-                await audio.play();
-                setAudioError(null);
-              } catch {
-                setIsPlaying(false);
-                setAudioError(
-                  audioError === "media" || audio.error ? "media" : "playback",
-                );
               }
-            }
-          }}
-        >
-          {isPlaying ? (
-            <Pause aria-hidden="true" />
-          ) : (
-            <Play aria-hidden="true" />
-          )}
-        </Button>
-        {audioError ? (
-          <p role="status" className="text-destructive text-xs">
-            {audioError === "media"
-              ? "Audio preview unavailable. Play to retry."
-              : "Playback didn't start. Try again."}
-          </p>
-        ) : null}
+            }}
+          >
+            {isPlaying ? (
+              <Pause aria-hidden="true" />
+            ) : (
+              <Play aria-hidden="true" />
+            )}
+          </Button>
+          {audioError ? (
+            <p role="status" className="text-destructive text-xs">
+              {audioError === "media"
+                ? "Audio preview unavailable. Play to retry."
+                : "Playback didn't start. Try again."}
+            </p>
+          ) : null}
+        </div>
       </div>
     );
   }
@@ -896,10 +981,10 @@ function CreationMedia({
     <div
       role="img"
       aria-label={`${creation.kind[0].toUpperCase()}${creation.kind.slice(1)} preview unavailable`}
-      className="bg-muted text-muted-foreground flex size-full flex-col items-center justify-center gap-2 p-4 text-center"
+      className="bg-muted text-muted-foreground flex size-full flex-col items-center justify-center gap-2 p-3 text-center"
     >
-      <Icon aria-hidden="true" className="size-8" />
-      <p className="text-sm">Preview unavailable</p>
+      <Icon aria-hidden="true" className="size-6" />
+      <p className="text-xs">Preview unavailable</p>
     </div>
   );
 }
@@ -917,41 +1002,40 @@ function CreationPreview({ creation }: { creation: HomeCreation }) {
   const linkLabel = prompt
     ? `Open ${label} in Library: ${prompt}`
     : `Open ${label} in Library`;
-  const cardClass =
-    "border-border bg-card hover:border-primary/40 focus-visible:ring-ring group flex min-w-0 flex-col overflow-hidden rounded-xl border focus-visible:ring-2";
+  const tile =
+    "bg-muted group relative block aspect-square min-w-0 overflow-hidden rounded-media";
   const body = (
-    <>
-      <div
-        ref={visibilityRef}
-        className={`flex aspect-[4/3] w-full items-center justify-center overflow-hidden ${creation.kind === "video" || (creation.kind === "audio" && !creation.download_url) ? "bg-muted text-muted-foreground" : creation.kind === "audio" ? "bg-capability-voice/10 text-capability-voice" : "bg-capability-image/10 text-capability-image"}`}
-      >
-        <CreationMedia creation={creation} title={title} visible={visible} />
-      </div>
-      <div className="min-w-0 p-3">
-        {prompt && <p className="text-sm font-medium break-words">{prompt}</p>}
-      </div>
-    </>
+    <div ref={visibilityRef} className="size-full">
+      <CreationMedia creation={creation} title={title} visible={visible} />
+    </div>
   );
   if (creation.kind === "audio") {
     return (
-      <article className={`relative ${cardClass}`}>
+      <li className={tile}>
         {body}
         <Link
           href={`/library/?asset=${encodeURIComponent(creation.asset_id)}`}
           aria-label={linkLabel}
-          className="focus-visible:ring-ring absolute inset-0 rounded-xl focus-visible:ring-2"
+          className="absolute inset-0 rounded-media"
         />
-      </article>
+      </li>
     );
   }
   return (
-    <Link
-      href={`/library/?asset=${encodeURIComponent(creation.asset_id)}`}
-      aria-label={linkLabel}
-      className={cardClass}
-    >
-      {body}
-    </Link>
+    <li className="min-w-0">
+      <Link
+        href={`/library/?asset=${encodeURIComponent(creation.asset_id)}`}
+        aria-label={linkLabel}
+        className={tile}
+      >
+        {body}
+        {creation.kind === "video" ? (
+          <span className="bg-chrome/80 text-chrome-foreground absolute bottom-2 left-2 flex size-7 items-center justify-center rounded-full">
+            <Play aria-hidden="true" className="size-3.5" />
+          </span>
+        ) : null}
+      </Link>
+    </li>
   );
 }
 
@@ -973,27 +1057,29 @@ function Recent() {
     return null;
   }
   return (
-    <section aria-labelledby="recent-heading" className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 id="recent-heading" className="text-lg font-semibold">
-          Recent
-        </h2>
-        <Link
-          className="text-primary inline-flex min-h-11 items-center text-sm underline underline-offset-4"
-          href="/library/"
-        >
-          View library
-        </Link>
-      </div>
+    <section aria-labelledby="recent-heading">
+      <SectionHeading
+        id="recent-heading"
+        title="Recent"
+        action={
+          <Link
+            className="text-link inline-flex min-h-11 items-center gap-0.5 text-sm font-medium underline-offset-4 hover:underline"
+            href="/library/"
+          >
+            Library
+            <ChevronRight aria-hidden="true" className="size-4" />
+          </Link>
+        }
+      />
       {creationsPending ? (
         <div
           role="status"
           aria-label="Loading recent creations"
           aria-busy="true"
-          className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
+          className="grid grid-cols-2 gap-2 md:grid-cols-4"
         >
           {[0, 1, 2, 3].map((item) => (
-            <Skeleton key={item} className="h-48 w-full rounded-xl" />
+            <Skeleton key={item} className="aspect-square w-full rounded-media" />
           ))}
         </div>
       ) : creationsError ? (
@@ -1005,22 +1091,27 @@ function Recent() {
       ) : (
         <>
           {creations?.partial ? (
-            <p role="status" className="text-muted-foreground text-sm">
+            <p role="status" className="text-muted-foreground mb-2 text-sm">
               Recent results may be incomplete.
             </p>
           ) : null}
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <ul className="grid grid-cols-2 gap-2 md:grid-cols-4">
             {recentCreations.map((creation) => (
               <CreationPreview key={creation.asset_id} creation={creation} />
             ))}
-          </div>
+          </ul>
         </>
       )}
     </section>
   );
 }
 
+/* ------------------------------------------------------------------ */
+/* Page                                                                */
+/* ------------------------------------------------------------------ */
+
 export default function HomePage() {
+  const viewer = useViewer();
   const {
     data: home,
     isPending: homePending,
@@ -1028,20 +1119,23 @@ export default function HomePage() {
     refetch: refetchHome,
     isFetching: homeFetching,
   } = useQuery({ queryKey: homeKey, queryFn: homeApi.home });
-  const isOwner = home?.authenticated && home.user.role === "owner";
-  const ownerAlert = useOwnerAlertTarget(Boolean(isOwner));
-  const statusCopy =
-    home && "status" in home && home.status.state === "unavailable"
-      ? statusSummaryCopy(home.status)
-      : undefined;
+  const isOwner = Boolean(
+    home?.authenticated && ["owner", "superadmin", "admin"].includes(home.user.role),
+  );
+  const tiles =
+    home && home.authenticated
+      ? capabilityTiles(home.capabilities, home.aliases)
+      : [];
+  const verdict = homeVerdict(tiles);
+  const check = oldestCheck(tiles);
   return (
-    <div className="min-w-0 space-y-4 sm:space-y-6">
-      {/* The visible page starts with "Connect an app"; the h1 keeps the page outline for assistive technology. */}
+    <div className="min-w-0">
       <h1 className="sr-only">Home</h1>
       {homePending ? (
         <HomeLoading />
       ) : homeError ? (
         <ErrorState
+          heading="Couldn’t load Home"
           message="Your connection settings could not be loaded. Try again."
           onRetry={() => void refetchHome()}
           retrying={homeFetching}
@@ -1061,28 +1155,31 @@ export default function HomePage() {
           }
         />
       ) : (
-        <>
-          {isOwner && statusCopy && !ownerAlert && (
-            <div
-              role="status"
-              className="text-muted-foreground flex flex-wrap items-center gap-2 text-sm"
+        <div className="grid items-start gap-x-12 gap-y-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
+          <div className="min-w-0 space-y-10">
+            <Verdict
+              tone={verdict.tone}
+              detail={
+                check ? (
+                  <EvidenceTime stamp={check} className="text-base" />
+                ) : null
+              }
             >
-              <span>{statusCopy}</span>
-              <Link
-                className="text-primary underline underline-offset-4"
-                href="/status/"
-              >
-                Fix in Status
-              </Link>
-            </div>
-          )}
-          <Connect home={home} />
-          <Capabilities
-            capabilities={home.capabilities}
-            aliases={home.aliases}
-          />
-          <Recent />
-        </>
+              {verdict.text}
+            </Verdict>
+            <Capabilities
+              tiles={tiles}
+              verdictCheck={check}
+              owner={isOwner && viewer.admin}
+            />
+          </div>
+          <div className="min-w-0 lg:col-start-2 lg:row-span-2 lg:row-start-1">
+            <Connect home={home} />
+          </div>
+          <div className="min-w-0 lg:col-start-1">
+            <Recent />
+          </div>
+        </div>
       )}
     </div>
   );

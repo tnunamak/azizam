@@ -5,6 +5,13 @@ import type {
   HomeSnapshot,
   SetupProgress,
 } from "./home-api";
+import {
+  availabilityState,
+  capabilityMeta,
+  evidenceStamp,
+  type EvidenceStamp,
+  type Tone,
+} from "@/components/product/readiness";
 
 const operations: Record<string, string[]> = {
   chat: ["chat", "chat.generate", "chat.completions"],
@@ -255,3 +262,47 @@ export function shouldShowSetup(
 ): boolean {
   return needsSetup(progress) && !hasEstablishedTraffic(home);
 }
+
+function joinCapabilityNames(names: string[]): string {
+  if (names.length < 3) return names.join(" and ");
+  return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+}
+
+/** The oldest status check behind the tiles: the honest age of the verdict. */
+export function oldestCheck(tiles: HomeCapability[]): EvidenceStamp | null {
+  const checks = tiles
+    .map((tile) => evidenceStamp(tile.availability?.evidence))
+    .filter((stamp): stamp is EvidenceStamp => stamp?.kind === "checked");
+  if (!checks.length) return null;
+  return checks.reduce((oldest, stamp) =>
+    stamp.at < oldest.at ? stamp : oldest,
+  );
+}
+
+export function homeVerdict(tiles: HomeCapability[]): {
+  tone: Tone;
+  text: string;
+} {
+  if (!tiles.length) return { tone: "off", text: "Nothing is ready yet." };
+  const down = tiles.filter((tile) => !tile.available);
+  if (!down.length) return { tone: "ok", text: "Everything is ready." };
+  if (down.length === tiles.length)
+    return { tone: "bad", text: "Nothing is ready right now." };
+  const tone = down.some((tile) =>
+    ["warn", "bad", "busy"].includes(
+      availabilityState(tile.status, tile.reason_code).tone,
+    ),
+  )
+    ? "warn"
+    : "ok";
+  if (down.length > 2)
+    return {
+      tone,
+      text: `${tiles.length - down.length} of ${tiles.length} are ready.`,
+    };
+  const names = down.map((tile) =>
+    (tile.capability_title ?? capabilityMeta(tile.capability).label).toLowerCase(),
+  );
+  return { tone, text: `Ready, except ${joinCapabilityNames(names)}.` };
+}
+
