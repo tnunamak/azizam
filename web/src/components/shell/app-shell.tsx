@@ -150,7 +150,12 @@ function ThemeToggle({ chrome = false }: { chrome?: boolean }) {
       {icons}
     </button>
   ) : (
-    <Button variant="ghost" size="icon" aria-label="Toggle theme" onClick={toggle}>
+    <Button
+      variant="ghost"
+      size="icon"
+      aria-label="Toggle theme"
+      onClick={toggle}
+    >
       {icons}
     </Button>
   );
@@ -191,7 +196,7 @@ function AccountMenu({ compact = false }: { compact?: boolean }) {
           type="button"
           className={
             compact
-              ? "flex size-11 items-center justify-center rounded-control"
+              ? "rounded-control flex size-11 items-center justify-center"
               : "shell-nav-footer w-full justify-center px-2 lg:justify-start lg:px-3"
           }
           aria-label={`Account menu: ${viewer.name}`}
@@ -276,23 +281,30 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
   // "fine" while something the viewer depends on is failing.
   const model = useCapabilityViews(viewer.admin && viewer.authenticated);
   const signedIn = viewer.authenticated && !viewer.serviceAdmin;
-  const problems = model.verdict.problems.length;
+  // Busy is not a fault, so it is not counted as an issue.
+  const issues = model.verdict.problems.filter((view) => view.state !== "busy");
+  const busy = model.verdict.problems.length - issues.length;
   const { label, tone } = gatewayError
     ? { label: "Gateway unreachable", tone: "bad" as const }
     : !gatewayData
       ? { label: "Checking", tone: "unknown" as const }
-      : !signedIn || model.isError
+      : !signedIn
         ? { label: "Gateway reachable", tone: "ok" as const }
-        : model.isPending
-          ? { label: "Checking", tone: "unknown" as const }
-          : problems
-            ? {
-                label: `${problems} issue${problems === 1 ? "" : "s"}`,
-                tone: model.verdict.tone,
-              }
-            : model.verdict.tone === "off"
-              ? { label: "Nothing set up", tone: "off" as const }
-              : { label: "All working", tone: "ok" as const };
+        : model.isError
+          ? // Reachable, but the capability states did not load: no all-clear.
+            { label: "Status unknown", tone: "unknown" as const }
+          : model.isPending
+            ? { label: "Checking", tone: "unknown" as const }
+            : issues.length
+              ? {
+                  label: `${issues.length} issue${issues.length === 1 ? "" : "s"}`,
+                  tone: issues[0].tone,
+                }
+              : busy
+                ? { label: "Busy", tone: "busy" as const }
+                : model.verdict.tone === "off"
+                  ? { label: "Nothing set up", tone: "off" as const }
+                  : { label: "All working", tone: "ok" as const };
   const visibleLabel = label;
   const dot =
     tone === "ok"
@@ -311,7 +323,7 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
           type="button"
           className={
             compact
-              ? "text-chrome-foreground hover:bg-chrome-raised flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-control px-2.5 text-sm"
+              ? "text-chrome-foreground hover:bg-chrome-raised rounded-control flex min-h-11 min-w-11 items-center justify-center gap-2 px-2.5 text-sm"
               : "shell-nav-footer"
           }
           aria-label={`Gateway status: ${visibleLabel}`}
@@ -475,7 +487,10 @@ function AlertSlot() {
       role="status"
     >
       <span className="flex min-w-0 items-center gap-2">
-        <span aria-hidden="true" className="bg-warning size-2 shrink-0 rounded-full" />
+        <span
+          aria-hidden="true"
+          className="bg-warning size-2 shrink-0 rounded-full"
+        />
         {alert.message}
       </span>
       <Button variant="ghost" size="sm" asChild>
@@ -943,7 +958,7 @@ function Shell({ children }: { children: React.ReactNode }) {
                 href="/"
                 className="flex min-h-11 items-center gap-2.5 text-lg font-semibold tracking-tight"
               >
-                <span className="bg-chrome flex size-8 items-center justify-center rounded-control">
+                <span className="bg-chrome rounded-control flex size-8 items-center justify-center">
                   <BrandMark className="size-5" />
                 </span>
                 {PRODUCT_NAME}
@@ -959,7 +974,7 @@ function Shell({ children }: { children: React.ReactNode }) {
             <aside className="shell-sidebar">
               <Link
                 href="/"
-                className="mb-5 flex min-h-11 items-center gap-2.5 rounded-control px-2.5"
+                className="rounded-control mb-5 flex min-h-11 items-center gap-2.5 px-2.5"
                 aria-label={`${PRODUCT_NAME}${instanceSubtitle ? ` ${instanceSubtitle}` : ""} Home`}
               >
                 <BrandMark />
@@ -978,7 +993,7 @@ function Shell({ children }: { children: React.ReactNode }) {
                 type="button"
                 onClick={() => setCommandOpen(true)}
                 aria-label="Search"
-                className="border-chrome-border bg-background text-chrome-muted hover:text-chrome-foreground hover:border-input mb-5 flex min-h-11 items-center justify-center gap-2.5 rounded-control border px-2.5 text-sm transition-colors lg:min-h-8 lg:justify-start"
+                className="border-chrome-border bg-background text-chrome-muted hover:text-chrome-foreground hover:border-input rounded-control mb-5 flex min-h-11 items-center justify-center gap-2.5 border px-2.5 text-sm transition-colors lg:min-h-8 lg:justify-start"
               >
                 <Search className="size-4 shrink-0" aria-hidden="true" />
                 <span className="shell-nav-label flex-1 text-left">Search</span>
