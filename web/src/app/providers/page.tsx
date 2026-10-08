@@ -660,6 +660,23 @@ function DetailCard({
   const [modelDraft, setModelDraft] = useState<ProviderModel[]>(
     provider.models,
   );
+  const modelBaseline = useRef(provider.models);
+  useEffect(() => {
+    const previous = modelBaseline.current;
+    modelBaseline.current = provider.models;
+    setModelDraft((rows) =>
+      provider.models.map((model) => {
+        const draft = rows.find((row) => row.id === model.id);
+        const baseline = previous.find((row) => row.id === model.id);
+        const pending = draft && baseline && (
+          draft.enabled !== baseline.enabled ||
+          draft.priceInput !== baseline.priceInput ||
+          draft.priceOutput !== baseline.priceOutput
+        );
+        return pending ? draft : model;
+      }),
+    );
+  }, [provider.models]);
   const [capsDraft, setCapsDraft] = useState({
     daily: provider.capDaily == null ? "" : String(provider.capDaily),
     monthly: provider.capMonthly == null ? "" : String(provider.capMonthly),
@@ -982,7 +999,16 @@ function DetailCard({
                   />
                   <Button
                     size="sm"
-                    onClick={() => onSaveModels(provider, modelDraft)}
+                    onClick={() =>
+                      onSaveModels(
+                        provider,
+                        // The server replaces the whole list: send saved rows
+                        // with only this row's draft.
+                        provider.models.map((saved) =>
+                          saved.id === model.id ? model : saved,
+                        ),
+                      )
+                    }
                     disabled={busy}
                   >
                     Save models
@@ -1461,8 +1487,9 @@ function AddProviderDialog({
                 onClick={() => setStep(item)}
                 disabled={
                   metadataUnavailable ||
+                  (item !== "catalog" && !selected) ||
                   ((item === "models" || item === "limits") &&
-                    (testConnection.isPending || testResult?.ok === false))
+                    testResult?.ok !== true)
                 }
                 className={cn(
                   "rounded-lg border px-3 py-2 text-left text-sm capitalize",

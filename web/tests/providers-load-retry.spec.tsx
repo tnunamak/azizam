@@ -154,7 +154,12 @@ it.each([
       failing = false;
       fireEvent.click(dialog.getByRole("button", { name: "Retry providers" }));
       await waitFor(() => expect(dialog.queryByRole("alert")).toBeNull());
-      expect(dialog.getByRole("button", { name: "4. limits" })).toBeEnabled();
+      // Retry restores the steps whose prerequisites were met before the
+      // failure; with no provider chosen yet, later steps stay gated (SE-27).
+      expect(dialog.getByRole("button", { name: "4. limits" })).toHaveProperty(
+        "disabled",
+        !alreadyOpen,
+      );
       if (alreadyOpen) {
         expect(dialog.getByLabelText("Allow Test plan")).toBeInTheDocument();
         expect(
@@ -340,6 +345,149 @@ it("shows a new cap validation error even after an older action failed", async (
     );
   } finally {
     prompt.mockRestore();
+    client.clear();
+  }
+});
+
+it("gates wizard headers by every preceding Next prerequisite", async () => {
+  const { client } = await renderProviderRegression({
+    ok: true,
+    models: [{ id: "test-model", price_input: "1", price_output: "2" }],
+  });
+  try {
+    fireEvent.click(screen.getAllByRole("button", { name: "Add provider" })[0]);
+    const dialog = within(screen.getByRole("dialog"));
+    for (const name of ["Next", "2. credentials", "3. models", "4. limits"]) {
+      expect(dialog.getByRole("button", { name })).toBeDisabled();
+      fireEvent.click(dialog.getByRole("button", { name }));
+    }
+    expect(dialog.getByLabelText("Search providers")).toBeInTheDocument();
+    fireEvent.click(dialog.getByRole("button", { name: /Test provider/ }));
+    for (const name of ["Next", "3. models", "4. limits"]) {
+      expect(dialog.getByRole("button", { name })).toBeDisabled();
+    }
+    expect(dialog.getByRole("button", { name: "2. credentials" })).toBeEnabled();
+    fireEvent.change(dialog.getByLabelText("Provider API key"), {
+      target: { value: "test-key" },
+    });
+    fireEvent.click(dialog.getByRole("button", { name: "Check provider connection" }));
+    await dialog.findByText("Connection worked.");
+    for (const name of ["Next", "3. models", "4. limits"]) {
+      expect(dialog.getByRole("button", { name })).toBeEnabled();
+    }
+    fireEvent.click(dialog.getByRole("button", { name: "3. models" }));
+    expect(dialog.getByLabelText("test-model input price")).toBeInTheDocument();
+    fireEvent.click(dialog.getByRole("button", { name: "4. limits" }));
+    expect(dialog.getByLabelText("Daily cap (USD)")).toBeInTheDocument();
+    fireEvent.click(dialog.getByRole("button", { name: "2. credentials" }));
+    fireEvent.change(dialog.getByLabelText("Provider API key"), {
+      target: { value: "changed-key" },
+    });
+    for (const name of ["Next", "3. models", "4. limits"]) {
+      expect(dialog.getByRole("button", { name })).toBeDisabled();
+    }
+  } finally {
+    client.clear();
+  }
+});
+
+it("saves only the selected model row and refreshes clean drafts without losing pending edits", async () => {
+  let models = [
+    { id: "model-a", price_input: "1", price_output: "2", enabled: true },
+    { id: "model-b", price_input: "3", price_output: "4", enabled: true },
+  ];
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    if (path.endsWith("/session")) {
+      return Response.json({ actor: { csrf_token: "test-csrf" } });
+    }
+    if (path.endsWith("/catalog")) return Response.json({ providers: [] });
+    if (path.endsWith("/profiles")) return Response.json({ plans: [] });
+    if (path.endsWith("/test/models") && init?.method === "PUT") {
+      // Like the real endpoint, the body replaces the whole model list.
+      const body = JSON.parse(String(init.body));
+      models = body.models.map((saved: {
+        id: string;
+        enabled: boolean;
+        price: { input_usd_per_million_tokens: number; output_usd_per_million_tokens: number };
+      }) => ({
+        id: saved.id,
+        enabled: saved.enabled,
+        price_input: String(saved.price.input_usd_per_million_tokens),
+        price_output: String(saved.price.output_usd_per_million_tokens),
+      }));
+      return Response.json({});
+    }
+    return Response.json({
+      providers: [{ id: "test", name: "Test provider", models }],
+    });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  try {
+    render(
+      <QueryClientProvider client={client}>
+        <ProvidersPage />
+      </QueryClientProvider>,
+    );
+    await screen.findByText("Test provider");
+    fireEvent.click(screen.getByText("Manage"));
+    fireEvent.click(screen.getByRole("button", { name: "Edit models" }));
+    fireEvent.change(screen.getByLabelText("model-a managed input price"), {
+      target: { value: "9" },
+    });
+    fireEvent.change(screen.getByLabelText("model-b managed input price"), {
+      target: { value: "8" },
+    });
+    fireEvent.click(screen.getAllByRole("button", { name: "Save models" })[0]);
+    const saves = () => fetchMock.mock.calls.filter(
+      ([input, init]) => String(input) === "/admin/api/providers/test/models" &&
+        init?.method === "PUT",
+    );
+    await waitFor(() => expect(saves()).toHaveLength(1));
+    expect(JSON.parse(String(saves()[0][1]?.body))).toEqual({
+      models: [
+        {
+          id: "model-a", name: "model-a", upstream_model: "model-a", enabled: true,
+          price: { input_usd_per_million_tokens: 9, output_usd_per_million_tokens: 2 },
+        },
+        {
+          id: "model-b", name: "model-b", upstream_model: "model-b", enabled: true,
+          price: { input_usd_per_million_tokens: 3, output_usd_per_million_tokens: 4 },
+        },
+      ],
+      expected_generation: null,
+    });
+    await waitFor(() =>
+      expect(screen.getAllByRole("button", { name: "Save models" })[0]).toBeEnabled(),
+    );
+    expect(screen.getByLabelText("model-b managed input price")).toHaveValue("8");
+    models = models.map((model) => ({
+      ...model,
+      price_input: model.id === "model-a" ? "10" : "6",
+    }));
+    await act(async () => {
+      await client.refetchQueries({ queryKey: ["providers"], exact: true });
+    });
+    await waitFor(() =>
+      expect(screen.getByLabelText("model-a managed input price")).toHaveValue("10"),
+    );
+    expect(screen.getByLabelText("model-b managed input price")).toHaveValue("8");
+    fireEvent.change(screen.getByLabelText("model-b managed input price"), {
+      target: { value: "6" },
+    });
+    models = models.map((model) =>
+      model.id === "model-b" ? { ...model, price_input: "7" } : model,
+    );
+    await act(async () => {
+      await client.refetchQueries({ queryKey: ["providers"], exact: true });
+    });
+    await waitFor(() =>
+      expect(screen.getByLabelText("model-b managed input price")).toHaveValue("7"),
+    );
+  } finally {
     client.clear();
   }
 });
