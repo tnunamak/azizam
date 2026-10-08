@@ -937,3 +937,92 @@ def test_request_evidence_carries_last_success_separately_from_latest_failure():
     assert evidence["observed_at_s"] == now - 10
     assert evidence["last_attempt_at_s"] == now - 10
     assert evidence["last_success_at_s"] == now - 100
+
+
+# Busy versus failing (design ask 4). A service whose recent requests fail
+# with server errors is not "busy", even when its status probe says busy or
+# degraded and that probe is newer than the failed request.
+
+@pytest.mark.parametrize("raw_status", ["busy", "degraded"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_recent_5xx_request_failure_is_not_projected_as_busy(raw_status, reverse):
+    now = int(time.time())
+    request = evidence_from_receipts([
+        {"request_id": "bad", "backend": "svc", "status": "failed", "status_code": 503, "_stored_at": now - 120},
+    ], now_s=now)
+    status = evidence_from_status_rows([{"service_id": "svc", "live_status": raw_status}], observed_at_s=now)
+    sources = [status, request]
+    if reverse:
+        sources.reverse()
+    projection = project_service("svc", service_records={"services": {"svc": {"enabled": True}}},
+                                 evidence=merge_evidence(*sources))
+    assert projection.status == "unavailable"
+    assert projection.available is False
+    assert projection.evidence["source"] == "request"
+
+
+def test_later_request_success_clears_the_failure_and_busy_stays_busy():
+    now = int(time.time())
+    request = evidence_from_receipts([
+        {"request_id": "bad", "backend": "svc", "status": "failed", "status_code": 503, "_stored_at": now - 120},
+        {"request_id": "ok", "backend": "svc", "status": "succeeded", "_stored_at": now - 60},
+    ], now_s=now)
+    status = evidence_from_status_rows([{"service_id": "svc", "live_status": "busy"}], observed_at_s=now)
+    projection = project_service("svc", service_records={"services": {"svc": {"enabled": True}}},
+                                 evidence=merge_evidence(status, request))
+    assert projection.status == "busy"
+
+
+def test_busy_without_request_failure_stays_busy():
+    now = int(time.time())
+    status = evidence_from_status_rows([{"service_id": "svc", "live_status": "busy"}], observed_at_s=now)
+    # A client-side failure (4xx) proves nothing about the backend.
+    request = evidence_from_receipts([
+        {"request_id": "bad", "backend": "svc", "status": "failed", "status_code": 400, "_stored_at": now - 10},
+    ], now_s=now)
+    projection = project_service("svc", service_records={"services": {"svc": {"enabled": True}}},
+                                 evidence=merge_evidence(status, request))
+    assert projection.status == "busy"
+
+
+def test_availability_projection_is_presentation_only_not_a_routing_input():
+    """Routing and fallback must not read gateway.availability.
+
+    The projection changes for design ask 4 are safe only while this holds.
+    """
+    import ast
+    root = Path(__file__).resolve().parents[1]
+    importers = set()
+    for path in sorted((root / "gateway").rglob("*.py")):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == "gateway.availability":
+                importers.add(path.relative_to(root).as_posix())
+            elif isinstance(node, ast.ImportFrom) and node.module == "gateway" and any(a.name == "availability" for a in node.names):
+                importers.add(path.relative_to(root).as_posix())
+            elif isinstance(node, ast.Import) and any(a.name == "gateway.availability" for a in node.names):
+                importers.add(path.relative_to(root).as_posix())
+    # Discovery, Home/Status, admin Status, and catalog presentation only.
+    assert importers <= {"gateway/home_api.py", "gateway/admin_api.py", "gateway/models_catalog.py",
+                         "gateway/capabilities.py"}
+
+    tree = ast.parse((root / "proxy.py").read_text())
+    names = {"availability_evidence_snapshot", "project_capabilities", "_runtime_availability_evidence",
+             "_capabilities_availability_evidence", "_status_payload_with_availability", "_gateway_capabilities_provider"}
+    users: dict[str, set[str]] = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            used = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)} & names
+            if used:
+                users[node.name] = used
+    assert set(users) <= {
+        "_gateway_capabilities_provider", "_capabilities_availability_evidence", "_runtime_availability_evidence",
+        "_status_payload_with_availability", "_user_models_catalog_payload", "_user_workflows_catalog_payload",
+    }
+    # The two provider callables are only handed to discovery and Home/Status routers.
+    module_refs = [n for n in ast.walk(tree) if isinstance(n, ast.keyword)
+                   and isinstance(n.value, ast.Name) and n.value.id in {"_gateway_capabilities_provider", "_status_payload_with_availability"}]
+    assert {(k.arg, k.value.id) for k in module_refs} <= {
+        ("capabilities_provider", "_gateway_capabilities_provider"),
+        ("status_provider", "_status_payload_with_availability"),
+    }

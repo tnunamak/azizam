@@ -1059,3 +1059,13 @@ hides a timed observation from another source.
 Each `capabilities[]` row carries `availability: { "evidence": { … } }`, the
 same allowlisted evidence object as the matching `/me/api/home` capability
 (fields above). The older top-level `observed_at_s` stays for compatibility.
+
+### Busy versus failing
+
+`status: "busy"` means a status or health check reported the service busy or
+degraded and no recent request proves it is failing. When a request to the
+service failed with a server error (HTTP 5xx, a timeout, or a disconnect) in
+the recent-evidence window (15 minutes) and no later request succeeded, the
+capability projects `status: "unavailable"`, `available: false`, with
+`evidence.source: "request"`, even if a newer check says busy or degraded.
+This projection is for presentation only; routing and fallback do not read it.

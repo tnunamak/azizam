@@ -454,6 +454,14 @@ def _observed_stopped(evidence: Mapping[str, Any]) -> bool:
 
 
 def _evidence_newer(incoming: Mapping[str, Any], current: Mapping[str, Any]) -> bool:
+    # A recent request that failed with a server error is a more specific fact
+    # than a "busy"/"degraded" status: the service answered a probe, but it is
+    # failing real work. Only a later request outcome replaces that failure
+    # (``evidence_from_receipts`` keeps the latest request per service).
+    if _request_failure(current) and _busy_like(incoming):
+        return False
+    if _request_failure(incoming) and _busy_like(current):
+        return True
     if incoming.get("kind") == "no_response" and current.get("source") == "lifecycle" and _observed_stopped(current):
         return False
     if current.get("kind") == "no_response" and incoming.get("source") == "lifecycle" and _observed_stopped(incoming):
@@ -479,6 +487,15 @@ def _evidence_newer(incoming: Mapping[str, Any], current: Mapping[str, Any]) -> 
     if incoming.get("source") == "request" and current.get("source") in {None, ""}:
         return True
     return False
+
+
+def _request_failure(evidence: Mapping[str, Any]) -> bool:
+    return evidence.get("source") == "request" and evidence.get("available") is False
+
+
+def _busy_like(evidence: Mapping[str, Any]) -> bool:
+    status = str(evidence.get("status") or "").strip().lower()
+    return status in BUSY_STATUSES and evidence.get("available") is not True
 
 
 def _is_epoch(value: Any) -> bool:

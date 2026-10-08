@@ -912,3 +912,17 @@ def test_member_status_capabilities_carry_home_evidence_source_and_check_time(ho
         assert evidence["observed_at_s"] == 1234
         assert "last_success_at_s" not in evidence
     assert "private" not in str(payload) and "connect refused" not in str(payload)
+
+
+def test_home_projects_recent_5xx_failures_as_unavailable_not_busy(home_case):
+    import time as _time
+    c = home_case
+    now = int(_time.time())
+    c.health = {"generated_at": now, "backends": [{"key": "service", "live_status": "degraded"}]}
+    receipt_store.record({"request_id": "fail-503", "app_id": c.client_app["id"], "backend": "service",
+                          "status": "failed", "status_code": 503}, created_at=now - 120, path=c.receipts)
+    rows = c.http.get("/me/api/home").json()["capabilities"]
+    assert rows and all(row["status"] == "unavailable" for row in rows)
+    assert all(row["availability"]["evidence"]["source"] == "request" for row in rows)
+    member = c.http.get("/me/api/status").json()["capabilities"]
+    assert member and all(row["status"] == "unavailable" and row["available"] is False for row in member)
