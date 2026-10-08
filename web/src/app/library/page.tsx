@@ -308,7 +308,7 @@ function MiniAudioPlayer({
     error === "media"
       ? "Audio unavailable"
       : error === "playback"
-        ? "Playback blocked. Try again."
+        ? "Playback didn't start. Try again."
         : measuredDuration != null &&
             Number.isFinite(measuredDuration) &&
             measuredDuration >= 0

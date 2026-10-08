@@ -347,7 +347,7 @@ describe("LibraryPage batch J provenance", () => {
 
     await waitFor(() => expect(play).toHaveBeenCalled());
     expect(
-      await screen.findByText("Playback blocked. Try again."),
+      await screen.findByText("Playback didn't start. Try again."),
     ).toBeVisible();
     expect(playButton).toBeEnabled();
   });

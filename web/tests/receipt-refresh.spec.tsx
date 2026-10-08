@@ -342,3 +342,25 @@ test("Usage keeps recorded counts on an overfull day and says the counts disagre
   ).toBeVisible();
   client.clear();
 });
+
+test.each([
+  {
+    name: "explicit Other over the total",
+    day: { total: 10, capabilities: { chat: 8, other: 5 } },
+    cells: ["8", "5", "10 (capability counts add to 13)"],
+  },
+  {
+    name: "negative and absurd counts are ignored",
+    day: { capabilities: { chat: -2, image: 1e308, video: 3 } },
+    cells: ["3", "3"],
+  },
+])("Usage never reduces or invents daily counts: $name", async ({ day, cells }) => {
+  const client = renderUsageSummary({
+    requests: 10,
+    by_day: [{ date: "2026-10-07", ...day }],
+  });
+  const table = await screen.findByRole("table", { name: "Requests by day and capability" });
+  const row = within(table).getByRole("rowheader", { name: "2026-10-07" }).closest("tr") as HTMLTableRowElement;
+  expect(within(row).getAllByRole("cell").map((cell) => cell.textContent)).toEqual(cells);
+  client.clear();
+});

@@ -176,7 +176,7 @@ describe("Home recent media recovery", () => {
       await screen.findByRole("button", { name: "Play spoken result" }),
     );
     expect(await screen.findByRole("status")).toHaveTextContent(
-      "Playback blocked. Try again.",
+      "Playback didn't start. Try again.",
     );
     expect(
       screen.getByRole("button", { name: "Play spoken result" }),

@@ -1189,16 +1189,24 @@ function normalizeDay(raw: unknown): UsageDay {
   const byCapability = normalizeCapabilityCounts(
     data.capabilities ?? data.by_capability ?? data,
   );
-  const total = number(data.total ?? data.requests, sumCounts(byCapability));
-  const knownTotal = sumCounts(byCapability) - byCapability.other;
-  byCapability.other = Math.max(0, total - knownTotal);
-  // Never cap or rescale recorded counts; flag the day instead.
+  const recordedSum = sumCounts(byCapability);
+  const named = recordedSum - byCapability.other;
+  const total = requestCount(data.total ?? data.requests) ?? recordedSum;
+  // Never cap, reduce or rescale a recorded count. Unexplained remainder joins
+  // Other; when recorded counts add to more than the total, flag the day.
+  byCapability.other = Math.max(byCapability.other, total - named);
   return {
     date: string(data.date ?? data.day, ""),
     total,
     byCapability,
-    countsExceedTotal: knownTotal > total ? knownTotal : null,
+    countsExceedTotal: recordedSum > total ? recordedSum : null,
   };
+}
+
+/** A usable request count, or null for missing, negative or absurd values. */
+function requestCount(value: unknown): number | null {
+  const count = number(value, Number.NaN);
+  return Number.isSafeInteger(count) && count >= 0 ? count : null;
 }
 
 function normalizeModel(raw: unknown): UsageModel {
@@ -1219,13 +1227,18 @@ function normalizeCapabilityCounts(
   const data = object(raw);
   const embeddingCount = Object.entries(data).reduce(
     (sum, [key, value]) =>
-      normalizeCapability(key) === "embeddings" ? sum + number(value, 0) : sum,
+      normalizeCapability(key) === "embeddings"
+        ? sum + (requestCount(value) ?? 0)
+        : sum,
     0,
   );
   return capabilities.reduce(
     (acc, capability) => ({
       ...acc,
-      [capability]: capability === "embeddings" ? embeddingCount : number(data[capability], 0),
+      [capability]:
+        capability === "embeddings"
+          ? embeddingCount
+          : (requestCount(data[capability]) ?? 0),
     }),
     {} as Record<UsageCapability, number>,
   );
@@ -1307,20 +1320,21 @@ function formatDuration(value: number | null) {
 }
 
 function spendCoverageDetail(summary: UsageSummary) {
-  if (summary.paidRequests === null || summary.unknownPaidRequests === null)
-    return "Paid request count is unknown.";
-  if (summary.paidRequests > 0 || summary.unknownPaidRequests > 0) {
+  const unknownPaid = summary.unknownPaidRequests;
+  // A positive counter proves paid requests exist even if the other is missing.
+  if ((summary.paidRequests ?? 0) > 0 || (unknownPaid ?? 0) > 0) {
     const coverage =
       summary.spendMeasuredRequests !== null && summary.spendTotalRequests !== null
         ? `Cost measured for ${formatNumber(summary.spendMeasuredRequests)} of ${formatNumber(summary.spendTotalRequests)} requests.`
         : "Measurement coverage is unavailable.";
     const unknown =
-      summary.unknownPaidRequests > 0
-        ? ` ${formatNumber(summary.unknownPaidRequests)} paid ${summary.unknownPaidRequests === 1 ? "request has" : "requests have"} unknown cost.`
+      unknownPaid !== null && unknownPaid > 0
+        ? ` ${formatNumber(unknownPaid)} paid ${unknownPaid === 1 ? "request has" : "requests have"} unknown cost.`
         : "";
     return `${coverage}${unknown}`;
   }
-  if (summary.requests > 0) return "";
+  if (summary.paidRequests === null || unknownPaid === null)
+    return "Paid request count is unknown.";
   return "";
 }
 

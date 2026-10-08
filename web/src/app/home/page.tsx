@@ -857,7 +857,7 @@ function CreationMedia({
           <p role="status" className="text-destructive text-xs">
             {audioError === "media"
               ? "Audio preview unavailable. Play to retry."
-              : "Playback blocked. Try again."}
+              : "Playback didn't start. Try again."}
           </p>
         ) : null}
       </div>
