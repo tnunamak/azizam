@@ -977,13 +977,21 @@ def _scenario_budget_exhausted(ctx):
         amount = min(Decimal("0.06"), remaining)
         charge(ts, amount)
         remaining -= amount
-    remaining = max(Decimal(0), Decimal("1.000002") - total(day_start))
-    for ts in range(day_start + 3600, now - 5400, 300):
-        if remaining <= 0:
-            break
-        amount = min(Decimal("0.06"), remaining)
-        charge(ts, amount)
-        remaining -= amount
+    # The day's charges end at last_ts. Window sums at that time still include
+    # the older tail, so the crossing charge must be the one that lifts the last
+    # 24 h to the cap; earlier windows stay below it. Base rows after last_ts
+    # are rejected by the replay, so only earlier ones count here.
+    last_ts = now - 5400
+    remaining = max(Decimal(0), Decimal("1.000002") - total(day_start, last_ts - 1))
+    amounts = []
+    while remaining > Decimal("0.06"):
+        amounts.append(Decimal("0.06"))
+        remaining -= Decimal("0.06")
+    if remaining > 0:
+        amounts.append(remaining)
+    first_ts = day_start + 3600
+    for number, amount in enumerate(amounts):
+        charge(first_ts + (last_ts - first_ts) * number // max(1, len(amounts) - 1), amount)
 
     # Replay every paid request. The crossing charge settles; later requests
     # in an exhausted rolling-day/calendar-month scope are rejected.
