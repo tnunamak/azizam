@@ -471,7 +471,7 @@ function Connect({
     >
       <div className="space-y-5 p-5">
         <div>
-          <h2 id="connect-heading" className="text-base font-semibold">
+          <h2 id="connect-heading" className="text-lg font-semibold">
             Connect an app
           </h2>
           <p className="text-muted-foreground text-sm">

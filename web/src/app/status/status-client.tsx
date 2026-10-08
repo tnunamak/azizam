@@ -302,23 +302,36 @@ function failedRequestsFact(records: ActivityRecord[]): ReactNode {
   ] as string[];
   const latest = records[0];
   return (
-    <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-      {people.slice(0, 4).map((name) => (
-        <PersonMark key={name} name={name} size="xs" label={name} />
-      ))}
-      <span>
+    <span className="flex items-start gap-2">
+      {people.length ? (
+        <span className="flex shrink-0 -space-x-1 pt-px">
+          {people.slice(0, 4).map((name) => (
+            <PersonMark
+              key={name}
+              name={name}
+              size="xs"
+              label={name}
+              className="ring-card ring-2"
+            />
+          ))}
+        </span>
+      ) : null}
+      <span className="min-w-0">
         {records.length} of the latest {ACTIVITY_SAMPLE} requests
         {people.length ? `, from ${joinNames(people)}` : ""}; latest{" "}
         <RelativeTime ts={latest.created_at ?? null} fallback="" />
+        {latest.receipt?.request_id ? (
+          <>
+            {" · "}
+            <a
+              href={`/r/${encodeURIComponent(latest.receipt.request_id)}`}
+              className="text-link font-medium underline-offset-4 hover:underline max-sm:inline-block max-sm:py-3"
+            >
+              Open receipt
+            </a>
+          </>
+        ) : null}
       </span>
-      {latest.receipt?.request_id ? (
-        <a
-          href={`/r/${encodeURIComponent(latest.receipt.request_id)}`}
-          className="text-link inline-flex min-h-11 items-center font-medium underline-offset-4 hover:underline sm:min-h-0"
-        >
-          Open receipt
-        </a>
-      ) : null}
     </span>
   );
 }

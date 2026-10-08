@@ -42,8 +42,13 @@ import { formatAbsoluteUTC } from "@/lib/format";
 import { RelativeTime } from "@/components/product/relative-time";
 import { ErrorState } from "@/components/product/error-state";
 import { EmptyState } from "@/components/product/empty-state";
-import { PersonMark } from "@/components/product/person-mark";
-import { AudioCover } from "@/components/product/audio-cover";
+import { PersonMark, personTint } from "@/components/product/person-mark";
+import {
+  AudioCover,
+  audioKind,
+  Waveform,
+} from "@/components/product/audio-cover";
+import { useAudioPeaks } from "@/lib/audio-peaks";
 import { Segmented } from "@/components/product/segmented";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -475,11 +480,13 @@ function LargeAudioPlayer({
   src,
   title,
   duration,
+  peaksKey,
   onFailed,
 }: {
   src: string;
   title: string;
   duration?: number | null;
+  peaksKey: string;
   onFailed: () => void;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -487,6 +494,7 @@ function LargeAudioPlayer({
   const [time, setTime] = useState(0);
   const [length, setLength] = useState<number | null>(duration ?? null);
   const [blocked, setBlocked] = useState(false);
+  const peaks = useAudioPeaks(peaksKey, src, true, 64);
   return (
     <div
       data-media-controls
@@ -530,6 +538,13 @@ function LargeAudioPlayer({
       >
         {playing ? <Pause aria-hidden /> : <Play aria-hidden />}
       </Button>
+      {peaks ? (
+        <Waveform
+          peaks={peaks}
+          progress={length ? Math.min(1, time / length) : 0}
+          className="text-foreground h-14 w-full flex-none"
+        />
+      ) : null}
       <div className="flex w-full items-center gap-3">
         <span className="figures text-muted-foreground w-10 text-right text-xs">
           {formatDuration(time)}
@@ -872,6 +887,7 @@ function Preview({
         src={currentSrc}
         title={assetTitle(asset)}
         duration={asset.duration_s}
+        peaksKey={asset.asset_id}
         onFailed={() => setMediaFailed(true)}
       />
     ) : (
@@ -1276,15 +1292,29 @@ function CreationViewer({
                 className={cn(
                   "relative flex max-h-full w-full items-center justify-center overflow-hidden",
                   asset.kind === "audio"
-                    ? "bg-card rounded-panel max-w-md flex-col gap-6 px-8 py-10"
+                    ? "bg-card rounded-panel max-w-lg flex-col gap-6 border px-8 py-8"
                     : "h-full",
                 )}
               >
                 {asset.kind === "audio" ? (
                   <>
-                    <span className="bg-capability-voice/12 text-capability-voice flex size-14 items-center justify-center rounded-full">
-                      <AudioLines aria-hidden="true" className="size-6" />
-                    </span>
+                    {/* The clip's own cover: maker's tint, kind, its words. */}
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        "pointer-events-none absolute inset-0",
+                        person ? personTint(person) : "bg-capability-voice/12",
+                      )}
+                    />
+                    <div className="relative w-full space-y-3">
+                      <p className="text-muted-foreground flex items-center gap-1.5 text-xs font-medium">
+                        <AudioLines aria-hidden="true" className="size-3.5" />
+                        {audioKind(asset.model).label}
+                      </p>
+                      <p className="line-clamp-5 text-lg leading-snug font-medium break-words">
+                        {asset.prompt?.trim() || assetTitle(asset)}
+                      </p>
+                    </div>
                   </>
                 ) : null}
                 <Preview

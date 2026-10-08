@@ -21,18 +21,39 @@ export function audioKind(model?: string | null): {
   return { label: "Audio", icon: AudioLines };
 }
 
-function Waveform({ peaks }: { peaks: number[] | null }) {
+/**
+ * Bars from measured peaks. With `progress` (0–1) the played part is solid
+ * and the rest faint, so the waveform doubles as the position.
+ */
+export function Waveform({
+  peaks,
+  progress,
+  className,
+}: {
+  peaks: number[] | null;
+  progress?: number;
+  className?: string;
+}) {
   if (!peaks)
-    return <span aria-hidden="true" className="bg-current/25 h-px flex-1" />;
+    return (
+      <span
+        aria-hidden="true"
+        className={cn("h-px flex-1 bg-current/25", className)}
+      />
+    );
   return (
     <svg
       aria-hidden="true"
       viewBox={`0 0 ${peaks.length * 3} 24`}
       preserveAspectRatio="none"
-      className="h-6 min-w-0 flex-1"
+      className={cn("h-6 min-w-0 flex-1", className)}
     >
       {peaks.map((peak, index) => {
         const height = Math.max(2, peak * 24);
+        const played =
+          progress === undefined
+            ? true
+            : (index + 0.5) / peaks.length <= progress;
         return (
           <rect
             key={index}
@@ -41,7 +62,14 @@ function Waveform({ peaks }: { peaks: number[] | null }) {
             width={2}
             height={height}
             rx={1}
-            className="fill-current opacity-60"
+            className={cn(
+              "fill-current",
+              progress === undefined
+                ? "opacity-60"
+                : played
+                  ? "opacity-90"
+                  : "opacity-25",
+            )}
           />
         );
       })}
@@ -86,14 +114,14 @@ export function AudioCover({
   return (
     <div
       className={cn(
-        "bg-card text-foreground relative flex size-full flex-col gap-2 rounded-media border p-3",
+        "bg-card text-foreground rounded-media relative flex size-full flex-col gap-2 border p-3",
         className,
       )}
     >
       <span
         aria-hidden="true"
         className={cn(
-          "pointer-events-none absolute inset-0 rounded-media",
+          "rounded-media pointer-events-none absolute inset-0",
           maker ? personTint(maker) : "bg-capability-voice/12",
         )}
       />
