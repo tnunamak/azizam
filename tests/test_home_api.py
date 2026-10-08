@@ -976,3 +976,34 @@ def test_home_reports_the_members_own_plan_spend(home_case):
     monthly = next(entry for entry in data["plan_spend"] if entry["period"] == "monthly")
     assert monthly["cap_usd"] == "8" and monthly["window"] == "calendar_month_utc"
     assert "5.00" not in str(data["plan_spend"])
+
+
+def test_owner_name_never_publishes_an_email(home_case):
+    """Setup stores the local owner's email as its display name; OIDC falls
+    back to the email when there is no name claim. Neither may leak."""
+    c = home_case
+    c.owner = False
+    local = admin_store.claim_first_local_owner(
+        issuer="local", subject="sam@example.test", email="sam@example.test", display_name="sam@example.test",
+        verifier="fixture-verifier", granted_by="setup-local-owner", path=c.db)
+    assert local is not None
+    home = c.http.get("/me/api/home").json()
+    assert home["gateway"] == {"owner_name": None}
+    assert "sam@example.test" not in str(home["gateway"])
+    # OIDC without a name claim: proxy stores name-or-email, i.e. the email.
+    claims = {"sub": "oidc-owner", "email": "Robin@Example.test"}
+    oidc = admin_store.upsert_oidc_user("https://idp.example.test", claims["sub"], email=claims["email"],
+                                        display_name=str(claims.get("name") or claims.get("email") or ""), path=c.db)
+    admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=oidc["id"], now=10**10, path=c.db)
+    status = c.http.get("/me/api/status").json()
+    assert status["gateway"] == {"owner_name": None}
+    # Case and whitespace do not disguise an email; anything with '@' is skipped.
+    admin_store.upsert_oidc_user("https://idp.example.test", "oidc-owner", email="Robin@Example.test",
+                                 display_name="  robin@example.TEST ", path=c.db)
+    assert c.http.get("/me/api/home").json()["gateway"] == {"owner_name": None}
+    admin_store.upsert_oidc_user("https://idp.example.test", "oidc-owner", email="Robin@Example.test",
+                                 display_name="robin at home @family", path=c.db)
+    assert c.http.get("/me/api/home").json()["gateway"] == {"owner_name": None}
+    admin_store.upsert_oidc_user("https://idp.example.test", "oidc-owner", email="Robin@Example.test",
+                                 display_name="Robin", path=c.db)
+    assert c.http.get("/me/api/home").json()["gateway"] == {"owner_name": "Robin"}
