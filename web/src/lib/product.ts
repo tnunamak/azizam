@@ -9,11 +9,24 @@ export function canonicalDestinationPath(path: string): string {
 }
 
 // Next adds /ui automatically to Link hrefs. These are application paths.
+// "You" is ordered by how often a household member needs each place.
 export const destinations = [
   {
     title: "Home",
     href: "/",
     answer: "Here's how to use your AI.",
+    group: "You",
+  },
+  {
+    title: "Library",
+    href: "/library",
+    answer: "Everything I've made.",
+    group: "You",
+  },
+  {
+    title: "Try",
+    href: "/try",
+    answer: "Does it work, and what does the request look like?",
     group: "You",
   },
   {
@@ -32,18 +45,6 @@ export const destinations = [
     title: "Workflows",
     href: "/workflows",
     answer: "What can I create with a named workflow?",
-    group: "You",
-  },
-  {
-    title: "Try",
-    href: "/try",
-    answer: "Does it work, and what does the request look like?",
-    group: "You",
-  },
-  {
-    title: "Library",
-    href: "/library",
-    answer: "Everything I've made.",
     group: "You",
   },
   {

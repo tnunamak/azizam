@@ -9,10 +9,18 @@
   * {
     @apply border-border;
   }
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
   body {
-    @apply bg-background text-foreground font-sans antialiased;
-    font-size: 14px;
-    line-height: 1.5;
+    @apply bg-background text-foreground font-sans text-base antialiased;
+    font-feature-settings: "kern";
+    text-rendering: optimizeLegibility;
+  }
+  h1,
+  h2,
+  h3 {
+    @apply tracking-tight text-balance;
   }
   button,
   a,
@@ -23,62 +31,91 @@
   button,
   input,
   textarea {
-    caret-color: var(--primary);
+    caret-color: var(--ring);
   }
   ::selection {
     background: var(--accent);
     color: var(--accent-foreground);
   }
+  /* One focus style everywhere: a 2 px ring with a 2 px gap. */
   :focus-visible {
     outline: 2px solid var(--ring);
-    outline-offset: 3px;
+    outline-offset: 2px;
   }
   a {
     text-underline-offset: 4px;
-  }
-  table {
-    font-variant-numeric: tabular-nums;
   }
   * {
     scrollbar-width: thin;
     scrollbar-color: var(--input) transparent;
   }
 }
+
 @layer components {
+  /* Shell: the deep-water chrome. See docs/design/DESIGN.md, "Shell". */
+  .shell-sidebar {
+    @apply bg-chrome text-chrome-foreground fixed inset-y-0 left-0 z-30 hidden w-(--rail-width) flex-col overflow-y-auto px-3 py-4 sm:flex lg:w-(--sidebar-width) lg:px-3;
+  }
+  .shell-sidebar :focus-visible {
+    outline-color: var(--chrome-accent);
+  }
   .shell-nav-link {
-    @apply text-sidebar-foreground hover:bg-muted hover:text-foreground flex min-h-11 items-center gap-3 rounded-md px-3 text-sm transition-colors;
+    @apply text-chrome-muted hover:bg-chrome-raised hover:text-chrome-foreground flex min-h-11 items-center gap-3 rounded-control px-3 text-sm font-medium transition-colors duration-(--motion-fast) lg:min-h-9;
   }
   .shell-nav-link[aria-current="page"] {
-    @apply bg-accent text-accent-foreground font-medium;
+    @apply bg-chrome-raised text-chrome-foreground;
+  }
+  .shell-nav-link[aria-current="page"] svg {
+    @apply text-chrome-accent;
   }
   .shell-nav-link svg {
-    @apply size-5 shrink-0;
+    @apply size-4.5 shrink-0;
   }
   .shell-nav-label {
     @apply hidden lg:inline;
   }
   .shell-group-label {
-    @apply text-muted-foreground mb-2 hidden px-3 text-xs font-medium lg:block;
+    @apply text-chrome-muted mb-1 hidden px-3 text-xs font-medium lg:block;
   }
   .shell-nav-footer {
-    @apply text-muted-foreground hover:bg-muted flex min-h-11 min-w-11 items-center gap-2 rounded-md px-3 py-2 text-xs;
+    @apply text-chrome-muted hover:bg-chrome-raised hover:text-chrome-foreground flex min-h-11 min-w-11 items-center gap-2.5 rounded-control px-3 text-sm lg:min-h-9;
   }
   .shell-content {
-    @apply mx-auto w-full max-w-6xl px-5 py-8 sm:px-8 lg:px-12 lg:py-12;
+    @apply mx-auto w-full max-w-(--content-max) px-5 pt-6 pb-10 sm:px-8 sm:pt-8 lg:px-12 lg:pt-10;
+  }
+  .sheet-nav .shell-nav-link {
+    @apply text-muted-foreground hover:bg-muted hover:text-foreground min-h-11;
+  }
+  .sheet-nav .shell-nav-link[aria-current="page"] {
+    @apply bg-accent text-accent-foreground;
+  }
+  .sheet-nav .shell-nav-link[aria-current="page"] svg {
+    @apply text-accent-foreground;
+  }
+  .sheet-nav .shell-group-label {
+    @apply text-muted-foreground block;
+  }
+  .mobile-tab {
+    @apply text-muted-foreground flex min-h-14 flex-col items-center justify-center gap-1 text-xs font-medium;
+  }
+  .mobile-tab[aria-current="page"] {
+    @apply text-foreground;
+  }
+  .mobile-tab[aria-current="page"] svg {
+    @apply text-link;
+  }
+  .mobile-tab svg {
+    @apply size-5.5;
   }
   .placeholder-content {
     @apply border-border mt-12 flex min-h-80 items-center justify-center border-t;
   }
-  .mobile-tab {
-    @apply text-muted-foreground flex min-h-14 flex-col items-center justify-center gap-1 text-xs;
-  }
-  .mobile-tab[aria-current="page"] {
-    @apply text-primary;
-  }
-  .mobile-tab svg {
-    @apply size-5;
+  /* Tabular figures for any number a person compares. */
+  .figures {
+    font-variant-numeric: tabular-nums;
   }
 }
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

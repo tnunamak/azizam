@@ -70,7 +70,7 @@ describe("gateway health honesty", () => {
     expect(gatewayHealthReason({ ...base, statusError: true })).toContain(
       "could not be loaded",
     );
-    expect(gatewayHealthReason({ ...base })).toContain("not been measured");
+    expect(gatewayHealthReason({ ...base })).toContain("not been checked");
     expect(gatewayHealthReason({ ...base, reachabilityError: true })).toContain(
       "could not be reached",
     );
@@ -90,7 +90,7 @@ describe("gateway health honesty", () => {
   it("never treats an unmeasured or stale projection as healthy", () => {
     expect(
       gatewayHealthLabel({ ...base, health: health("ok", false) }).label,
-    ).toBe("Not measured yet");
+    ).toBe("Not checked yet");
     expect(
       gatewayHealthLabel({ ...base, health: health("ok"), statusError: true })
         .label,

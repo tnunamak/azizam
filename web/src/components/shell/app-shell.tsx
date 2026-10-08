@@ -11,21 +11,23 @@ import {
   ArrowUpRight,
   BookOpen,
   Box,
+  ChartColumn,
   ChevronDown,
   ChevronRight,
   CircleHelp,
-  Fish,
+  Cloud,
+  Cpu,
   GitBranch,
-  Home,
+  House,
+  Images,
   KeyRound,
-  Layers,
   LogOut,
+  Menu,
   Moon,
-  MoreHorizontal,
   Play,
+  ReceiptText,
   Search,
   Settings,
-  ShieldCheck,
   Sun,
   Users,
   Zap,
@@ -40,7 +42,8 @@ import {
 import { gatewayHealthLabel, gatewayHealthReason } from "@/lib/gateway-health";
 import { useOwnerAlertTarget } from "./use-owner-alert";
 import { Button } from "@/components/ui/button";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { BrandMark } from "@/components/product/brand-mark";
+import { PersonMark } from "@/components/product/person-mark";
 import {
   Command,
   CommandEmpty,
@@ -93,19 +96,20 @@ import {
 import { ViewerContext, useViewer, useViewerQuery } from "./session";
 import { formatAppName, formatPersonName } from "@/lib/format";
 
+// One icon per destination; no two destinations share a glyph (ban-list 19).
 const icons: Record<string, LucideIcon> = {
-  Home,
+  Home: House,
+  Library: Images,
+  Try: Play,
+  "Apps & keys": KeyRound,
   Models: Box,
   Workflows: GitBranch,
-  Try: Play,
-  Library: Layers,
-  Usage: Activity,
-  "Apps & keys": KeyRound,
-  Status: ShieldCheck,
-  Engines: Zap,
-  Providers: Box,
+  Usage: ChartColumn,
+  Status: Activity,
+  Engines: Cpu,
+  Providers: Cloud,
   People: Users,
-  Activity,
+  Activity: ReceiptText,
   Settings,
 };
 const queryClient = createQueryClient();
@@ -127,22 +131,38 @@ function signInHref(returnPath: string): string {
   return `/ui/sign-in/?return_to=${encodeURIComponent(returnPath)}`;
 }
 
-function ThemeToggle() {
+function ThemeToggle({ chrome = false }: { chrome?: boolean }) {
   const { resolvedTheme, setTheme } = useTheme();
-  return (
-    <Button
-      variant="ghost"
-      size="icon"
+  const toggle = () => setTheme(resolvedTheme === "dark" ? "light" : "dark");
+  const icons = (
+    <>
+      <Sun className="size-4 dark:hidden" aria-hidden="true" />
+      <Moon className="hidden size-4 dark:block" aria-hidden="true" />
+    </>
+  );
+  return chrome ? (
+    <button
+      type="button"
       aria-label="Toggle theme"
-      onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
+      className="shell-nav-footer size-11 shrink-0 justify-center px-0 lg:size-9"
+      onClick={toggle}
     >
-      <Sun className="dark:hidden" />
-      <Moon className="hidden dark:block" />
+      {icons}
+    </button>
+  ) : (
+    <Button variant="ghost" size="icon" aria-label="Toggle theme" onClick={toggle}>
+      {icons}
     </Button>
   );
 }
 
-function AccountMenu() {
+const roleLabels: Record<string, string> = {
+  owner: "Owner",
+  superadmin: "Owner",
+  admin: "Admin",
+};
+
+function AccountMenu({ compact = false }: { compact?: boolean }) {
   const viewer = useViewer();
   async function signOut() {
     try {
@@ -167,24 +187,33 @@ function AccountMenu() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button
-          variant="ghost"
-          className="max-w-full sm:w-full sm:justify-start"
+        <button
+          type="button"
+          className={
+            compact
+              ? "flex size-11 items-center justify-center rounded-control"
+              : "shell-nav-footer w-full justify-center px-2 lg:justify-start lg:px-3"
+          }
           aria-label={`Account menu: ${viewer.name}`}
         >
-          <Avatar className="size-7" aria-hidden="true">
-            <AvatarFallback>
-              {viewer.name.slice(0, 1).toUpperCase()}
-            </AvatarFallback>
-          </Avatar>
-          <span className="shell-nav-label min-w-0 flex-1 truncate text-left">
-            {viewer.name}
-          </span>
-          <ChevronDown className="shell-nav-label" />
-        </Button>
+          <PersonMark name={viewer.name} size={compact ? "md" : "sm"} />
+          {!compact && (
+            <span className="shell-nav-label text-chrome-foreground min-w-0 flex-1 truncate text-left font-medium">
+              {viewer.name}
+            </span>
+          )}
+          {!compact && <ChevronDown className="shell-nav-label size-4" />}
+        </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuLabel>{viewer.name}</DropdownMenuLabel>
+        <DropdownMenuLabel className="font-normal">
+          <span className="block font-medium">{viewer.name}</span>
+          <span className="text-muted-foreground block text-xs">
+            {viewer.serviceAdmin
+              ? "Service key"
+              : (roleLabels[viewer.role] ?? "Member")}
+          </span>
+        </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
           {!viewer.serviceAdmin && (
@@ -228,7 +257,7 @@ function AccountMenu() {
   );
 }
 
-function HealthLink() {
+function HealthLink({ compact = false }: { compact?: boolean }) {
   const viewer = useViewer();
   const { data: statusData, isError: statusError } = useQuery({
     queryKey: ["foundation", "health"],
@@ -279,57 +308,72 @@ function HealthLink() {
     memberStatus: memberHome?.status,
   });
   const visibleLabel = label;
+  const dot =
+    tone === "ok"
+      ? "bg-success"
+      : tone === "warn"
+        ? "bg-warning"
+        : tone === "bad"
+          ? "bg-danger"
+          : "bg-neutral";
   return (
     <Popover>
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="shell-nav-footer"
+          className={
+            compact
+              ? "text-chrome-foreground hover:bg-chrome-raised flex min-h-11 items-center gap-2 rounded-control px-2.5 text-sm"
+              : "shell-nav-footer"
+          }
           aria-label={`Gateway status: ${visibleLabel}`}
           title={reason}
         >
           <span
             aria-hidden="true"
-            className={`size-2 shrink-0 rounded-full ${tone === "ok" ? "bg-success" : tone === "warn" ? "bg-warning" : tone === "bad" ? "bg-danger" : "bg-muted-foreground"}`}
+            className={`size-2 shrink-0 rounded-full ${dot}`}
           />
-          <span className="shell-nav-label">{visibleLabel}</span>
+          <span className={compact ? "sr-only" : "shell-nav-label"}>
+            {visibleLabel}
+          </span>
         </button>
       </PopoverTrigger>
       <PopoverContent
-        align="start"
-        side="top"
-        className="max-w-[calc(100vw-2rem)] space-y-3"
+        align={compact ? "end" : "start"}
+        side={compact ? "bottom" : "top"}
+        className="w-80 max-w-[calc(100vw-2rem)] space-y-3"
         aria-label="Gateway health"
       >
-        <p className="font-medium">{visibleLabel}</p>
-        {gatewayData && !gatewayError && (
-          <p className="text-muted-foreground text-sm">
-            The gateway is reachable.
-          </p>
-        )}
+        <p className="flex items-center gap-2 font-medium">
+          <span aria-hidden="true" className={`size-2 rounded-full ${dot}`} />
+          {visibleLabel}
+        </p>
         <p className="text-muted-foreground text-sm">{reason}</p>
-        <dl className="text-muted-foreground space-y-2 text-sm">
-          <div>
-            <dt>Last successful gateway check</dt>
-            <dd>
-              <RelativeTime
-                ts={gatewayCheckedAt || null}
-                fallback="Not measured yet"
-              />
-            </dd>
-          </div>
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+          <dt className="text-muted-foreground">Gateway</dt>
+          <dd>
+            {gatewayError ? (
+              "Not reachable"
+            ) : gatewayData ? (
+              <>
+                Reachable, checked{" "}
+                <RelativeTime ts={gatewayCheckedAt || null} fallback="now" />
+              </>
+            ) : (
+              "Checking"
+            )}
+          </dd>
           {viewer.admin && (
-            <div>
-              <dt>Engine observation</dt>
+            <>
+              <dt className="text-muted-foreground">Engines</dt>
               <dd>
                 {statusError
-                  ? "Couldn’t refresh status"
+                  ? "Couldn’t refresh"
                   : health?.observation_available
-                    ? health.label || "Status unknown"
-                    : "Status unknown"}
+                    ? health.label || "Not checked yet"
+                    : "Not checked yet"}
               </dd>
-              <dd>Observation time is not provided by the gateway.</dd>
-            </div>
+            </>
           )}
         </dl>
         <Button variant="outline" size="sm" asChild>
@@ -353,19 +397,16 @@ function Nav({
   const viewer = useViewer();
   const pathname = usePathname();
   return (
-    <nav aria-label="Main navigation" className="flex flex-col gap-6">
+    <nav
+      aria-label="Main navigation"
+      className={`flex flex-col gap-5 ${expanded ? "sheet-nav" : ""}`}
+    >
       {["You", ...(viewer.admin ? ["Gateway"] : [])].map((group) => (
         <div key={group}>
-          <p
-            className={
-              expanded
-                ? "text-muted-foreground mb-2 px-3 text-xs font-medium"
-                : "shell-group-label"
-            }
-          >
-            {group}
+          <p className="shell-group-label">
+            {group === "Gateway" ? "Gateway" : "You"}
           </p>
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-0.5">
             {destinations
               .filter(
                 (d) =>
@@ -454,10 +495,13 @@ function AlertSlot() {
   if (!alert || onStatus) return null;
   return (
     <div
-      className="bg-warning-tint text-warning flex flex-wrap items-center justify-between gap-3 border-b px-5 py-3 text-sm sm:px-8"
+      className="bg-warning-tint text-foreground border-warning/30 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b px-5 py-2.5 text-sm sm:px-8 lg:px-12"
       role="status"
     >
-      <span>{alert.message}</span>
+      <span className="flex min-w-0 items-center gap-2">
+        <span aria-hidden="true" className="bg-warning size-2 shrink-0 rounded-full" />
+        {alert.message}
+      </span>
       <Button variant="ghost" size="sm" asChild>
         <Link
           href={`/status#${alert.section.toLowerCase()}`}
@@ -775,6 +819,10 @@ function Shell({ children }: { children: React.ReactNode }) {
     }
   }, [instanceData?.presentation?.theme_default, setTheme]);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [shortcut, setShortcut] = useState("Ctrl K");
+  useEffect(() => {
+    if (/Mac|iPhone|iPad/.test(navigator.userAgent)) setShortcut("⌘K");
+  }, []);
   const [commandOpen, setCommandOpen] = useState(false);
   const [railOpen, setRailOpen] = useState(false);
   const navigationInvoker = useRef<HTMLButtonElement | null>(null);
@@ -905,12 +953,14 @@ function Shell({ children }: { children: React.ReactNode }) {
         </a>
         {publicPage ? (
           <div className="min-h-dvh">
-            <header className="flex items-center justify-between px-5 py-4">
+            <header className="flex items-center justify-between px-5 py-4 sm:px-8">
               <Link
                 href="/"
-                className="flex min-h-11 items-center gap-2 font-semibold"
+                className="flex min-h-11 items-center gap-2.5 text-lg font-semibold tracking-tight"
               >
-                <Fish className="text-primary size-5" />
+                <span className="bg-chrome flex size-8 items-center justify-center rounded-control">
+                  <BrandMark className="size-5" />
+                </span>
                 {PRODUCT_NAME}
               </Link>
               <ThemeToggle />
@@ -921,22 +971,39 @@ function Shell({ children }: { children: React.ReactNode }) {
           </div>
         ) : (
           <div className="min-h-dvh">
-            <aside className="bg-sidebar fixed inset-y-0 left-0 hidden w-20 flex-col overflow-y-auto border-r p-3 sm:flex lg:w-60 lg:p-4">
+            <aside className="shell-sidebar">
               <Link
                 href="/"
-                className="mb-8 flex min-h-11 items-center gap-3 px-3 font-semibold"
+                className="mb-5 flex min-h-11 items-center gap-2.5 rounded-control px-2.5"
                 aria-label={`${PRODUCT_NAME}${instanceSubtitle ? ` ${instanceSubtitle}` : ""} Home`}
               >
-                <Fish className="text-primary size-5 shrink-0" />
+                <BrandMark />
                 <span className="shell-nav-label min-w-0">
-                  <span className="block">{PRODUCT_NAME} </span>
+                  <span className="block text-base leading-tight font-semibold tracking-tight">
+                    {PRODUCT_NAME}{" "}
+                  </span>
                   {instanceSubtitle && (
-                    <span className="text-muted-foreground block truncate text-xs font-normal">
+                    <span className="text-chrome-muted block truncate text-xs">
                       {instanceSubtitle}
                     </span>
                   )}
                 </span>
               </Link>
+              <button
+                type="button"
+                onClick={() => setCommandOpen(true)}
+                aria-label="Search"
+                className="border-chrome-border text-chrome-muted hover:text-chrome-foreground hover:border-chrome-muted mb-5 flex min-h-11 items-center justify-center gap-2.5 rounded-control border px-3 text-sm transition-colors lg:min-h-9 lg:justify-start"
+              >
+                <Search className="size-4 shrink-0" aria-hidden="true" />
+                <span className="shell-nav-label flex-1 text-left">Search</span>
+                <kbd
+                  aria-hidden="true"
+                  className="shell-nav-label font-sans text-xs"
+                >
+                  {shortcut}
+                </kbd>
+              </button>
               <Button
                 variant="ghost"
                 onClick={(event) => {
@@ -946,59 +1013,43 @@ function Shell({ children }: { children: React.ReactNode }) {
                 aria-label="Expand navigation"
                 aria-haspopup="dialog"
                 aria-expanded={railOpen}
-                className="mb-4 lg:hidden"
+                className="text-chrome-muted hover:bg-chrome-raised hover:text-chrome-foreground mb-3 lg:hidden"
               >
-                <MoreHorizontal />
+                <Menu />
               </Button>
               <Nav />
-              <div className="mt-auto flex flex-col gap-2 pt-6">
-                <Button
-                  variant="ghost"
-                  className="justify-start"
-                  onClick={() => setCommandOpen(true)}
-                  aria-label="Search"
-                >
-                  <Search />
-                  <span className="shell-nav-label">
-                    Search
-                    <span
-                      aria-hidden="true"
-                      className="text-muted-foreground ml-12 text-xs"
-                    >
-                      ⌘K
-                    </span>
-                  </span>
-                </Button>
-                <div className="flex items-center gap-2 lg:px-1">
-                  <ThemeToggle />
-                  <span className="shell-nav-label text-muted-foreground text-xs">
-                    Appearance
-                  </span>
-                </div>
-                <AccountMenu />
+              <div className="border-chrome-border mt-auto flex flex-col gap-1 border-t pt-3">
                 <HealthLink />
+                <div className="flex items-center gap-1 max-lg:flex-col">
+                  <div className="min-w-0 flex-1 max-lg:w-full">
+                    <AccountMenu />
+                  </div>
+                  <ThemeToggle chrome />
+                </div>
               </div>
             </aside>
-            <div className="sm:ml-20 lg:ml-60">
-              <header className="flex h-16 items-center justify-between border-b px-5 sm:hidden">
+            <div className="sm:ml-(--rail-width) lg:ml-(--sidebar-width)">
+              <header className="bg-chrome text-chrome-foreground sticky top-0 z-30 flex h-14 items-center justify-between pr-2 pl-4 sm:hidden">
                 <Link
                   href="/"
                   aria-label={`${PRODUCT_NAME}${instanceSubtitle ? ` ${instanceSubtitle}` : ""} Home`}
-                  className="flex min-h-11 items-center gap-2 font-semibold"
+                  className="flex min-h-11 min-w-0 items-center gap-2.5"
                 >
-                  <Fish className="text-primary size-5" />
+                  <BrandMark />
                   <span className="min-w-0">
-                    <span className="block">{PRODUCT_NAME}</span>
+                    <span className="block text-base leading-tight font-semibold tracking-tight">
+                      {PRODUCT_NAME}
+                    </span>
                     {instanceSubtitle && (
-                      <span className="text-muted-foreground block max-w-44 truncate text-xs font-normal">
+                      <span className="text-chrome-muted block max-w-44 truncate text-xs">
                         {instanceSubtitle}
                       </span>
                     )}
                   </span>
                 </Link>
                 <div className="flex items-center">
-                  <HealthLink />
-                  <AccountMenu />
+                  <HealthLink compact />
+                  <AccountMenu compact />
                 </div>
               </header>
               <AlertSlot />
@@ -1008,13 +1059,13 @@ function Shell({ children }: { children: React.ReactNode }) {
             </div>
             <nav
               aria-label="Phone navigation"
-              className={`bg-background fixed inset-x-0 bottom-0 grid ${viewer?.serviceAdmin ? "grid-cols-3" : "grid-cols-4"} border-t pb-[env(safe-area-inset-bottom)] sm:hidden`}
+              className={`bg-background/95 fixed inset-x-0 bottom-0 z-30 grid backdrop-blur ${viewer?.serviceAdmin ? "grid-cols-3" : "grid-cols-4"} border-t pb-[env(safe-area-inset-bottom)] sm:hidden`}
             >
               {destinations
-                .filter(
-                  (d) =>
-                    ["Home", "Apps & keys", "Status"].includes(d.title) &&
-                    (!viewer?.serviceAdmin || d.title !== "Apps & keys"),
+                .filter((d) =>
+                  viewer?.serviceAdmin
+                    ? ["Home", "Status"].includes(d.title)
+                    : ["Home", "Library", "Apps & keys"].includes(d.title),
                 )
                 .map((d) => {
                   const Icon = icons[d.title];
@@ -1030,8 +1081,8 @@ function Shell({ children }: { children: React.ReactNode }) {
                           : undefined
                       }
                     >
-                      <Icon />
-                      {d.title}
+                      <Icon aria-hidden="true" />
+                      {d.title === "Apps & keys" ? "Apps" : d.title}
                     </Link>
                   );
                 })}
@@ -1045,7 +1096,7 @@ function Shell({ children }: { children: React.ReactNode }) {
                   setMoreOpen(true);
                 }}
               >
-                <MoreHorizontal />
+                <Menu aria-hidden="true" />
                 More
               </button>
             </nav>
@@ -1071,8 +1122,8 @@ function Shell({ children }: { children: React.ReactNode }) {
           >
             <SheetHeader>
               <SheetTitle>Explore your gateway</SheetTitle>
-              <SheetDescription>
-                Pages and account actions in one place.
+              <SheetDescription className="sr-only">
+                Every page, search and appearance.
               </SheetDescription>
             </SheetHeader>
             <div className="px-4 pb-6">
@@ -1083,10 +1134,10 @@ function Shell({ children }: { children: React.ReactNode }) {
                   setRailOpen(false);
                 }}
               />
-              <div className="mt-6 flex items-center justify-between">
-                <ThemeToggle />
+              <div className="mt-6 flex items-center justify-between gap-3 border-t pt-4">
                 <Button
                   variant="outline"
+                  className="flex-1"
                   onClick={() => {
                     setMoreOpen(false);
                     setRailOpen(false);
@@ -1096,8 +1147,8 @@ function Shell({ children }: { children: React.ReactNode }) {
                   <Search />
                   Search
                 </Button>
+                <ThemeToggle />
               </div>
-              <AccountMenu />
             </div>
           </SheetContent>
         </Sheet>

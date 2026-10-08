@@ -44,7 +44,7 @@ export function CopyField({
   return (
     <div className="flex min-w-0 flex-col gap-2">
       <Label htmlFor={id}>{label}</Label>
-      <div className="flex min-w-0 gap-2">
+      <div className="border-input bg-card focus-within:border-ring flex min-w-0 items-center rounded-control border has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-(--ring)">
         <Input
           id={id}
           value={loading ? "" : value}
@@ -52,12 +52,13 @@ export function CopyField({
           disabled={disabled || loading}
           aria-invalid={!!error}
           aria-describedby={error || copyError ? `${id}-error` : undefined}
-          className="min-w-0 font-mono"
+          className="min-w-0 truncate border-0 bg-transparent font-mono text-sm focus-visible:outline-none sm:text-sm"
         />
         <Button
           type="button"
-          variant="outline"
+          variant="ghost"
           size="icon"
+          className="text-muted-foreground hover:text-foreground mr-0.5 size-9 max-sm:size-11"
           disabled={disabled || loading || !value}
           onClick={copy}
           aria-label={`Copy ${label.toLowerCase()}`}

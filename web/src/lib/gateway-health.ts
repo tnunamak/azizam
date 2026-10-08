@@ -43,8 +43,8 @@ export function gatewayHealthReason({
   if (health?.tone === "bad" || health?.tone === "warn")
     return "Some gateway checks need attention. Open Status for the details.";
   if (health?.observation_available && health.tone === "ok")
-    return "The gateway and its measured services are ready.";
-  return "Current service health has not been measured yet.";
+    return "The gateway and its checked engines are ready.";
+  return "Engine health has not been checked yet.";
 }
 
 /** Reachability and engine health prove different things; do not conflate them. */
@@ -71,5 +71,5 @@ export function gatewayHealthLabel({
     return { label: "Degraded", tone: "warn" };
   if (health?.observation_available && health.tone === "ok")
     return { label: "Healthy", tone: "ok" };
-  return { label: "Not measured yet", tone: "neutral" };
+  return { label: "Not checked yet", tone: "neutral" };
 }

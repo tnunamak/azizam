@@ -1,0 +1,63 @@
+import { cn } from "@/lib/cn";
+
+const hues = [
+  "bg-person-1",
+  "bg-person-2",
+  "bg-person-3",
+  "bg-person-4",
+  "bg-person-5",
+  "bg-person-6",
+  "bg-person-7",
+] as const;
+
+/** A person keeps one hue everywhere: the hash of their display name. */
+export function personHue(name: string): (typeof hues)[number] {
+  const key = name.trim().toLowerCase();
+  let hash = 0;
+  for (const char of key) hash = (hash * 31 + char.codePointAt(0)!) >>> 0;
+  return hues[hash % hues.length];
+}
+
+export function personInitial(name: string): string {
+  const first = name.trim().match(/\p{L}|\p{N}/u)?.[0];
+  return first ? first.toLocaleUpperCase() : "?";
+}
+
+const sizes = {
+  xs: "size-5 text-2xs",
+  sm: "size-6 text-xs",
+  md: "size-8 text-sm",
+  lg: "size-10 text-base",
+} as const;
+
+/**
+ * The household's visual unit: a disc with the person's initial in their hue.
+ * Decorative by default; pass `label` when the mark is the only name shown.
+ */
+export function PersonMark({
+  name,
+  size = "sm",
+  label,
+  className,
+}: {
+  name: string;
+  size?: keyof typeof sizes;
+  label?: string;
+  className?: string;
+}) {
+  return (
+    <span
+      className={cn(
+        "text-person-ink inline-flex shrink-0 items-center justify-center rounded-full font-semibold select-none",
+        personHue(name),
+        sizes[size],
+        className,
+      )}
+      {...(label
+        ? { role: "img", "aria-label": label }
+        : { "aria-hidden": true })}
+    >
+      {personInitial(name)}
+    </span>
+  );
+}

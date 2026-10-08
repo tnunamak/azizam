@@ -1,97 +1,182 @@
-/* UI0: edit this file to change the complete light and dark palette. */
+/*
+ * Azizam design tokens. The only place raw colour, type, radius, elevation
+ * and motion values live. Rationale and usage rules: docs/design/DESIGN.md.
+ *
+ * Two layers of surface:
+ *   chrome  = the deep-water shell (sidebar, phone header). Dark in BOTH themes.
+ *   content = the daylight page in light theme, the night page in dark theme.
+ */
 :root {
   color-scheme: light;
-  --background: #f6f4ec;
-  --foreground: #202d29;
+
+  /* Content surfaces */
+  --background: #f3f6f6;
+  --foreground: #10232a;
   --card: #ffffff;
-  --card-foreground: #202d29;
+  --card-foreground: #10232a;
   --popover: #ffffff;
-  --popover-foreground: #202d29;
-  --primary: #155b50;
+  --popover-foreground: #10232a;
+  --muted: #e9eeef;
+  --muted-foreground: #4f6268;
+  --secondary: #e9eeef;
+  --secondary-foreground: #10232a;
+  --accent: #dcf0f2;
+  --accent-foreground: #0b4a57;
+  --border: #d7e0e2;
+  --input: #7b8e93;
+  --ring: #1a8c9c;
+
+  /* Action and link */
+  --primary: #0d4552;
   --primary-foreground: #ffffff;
-  --secondary: #e9e9de;
-  --secondary-foreground: #202d29;
-  --muted: #eeeee5;
-  --muted-foreground: #58635d;
-  --accent: #e1eee5;
-  --accent-foreground: #155b50;
-  --destructive: #b42335;
+  --link: #0a6676;
+  --destructive: #b3261e;
   --destructive-foreground: #ffffff;
-  --border: #d8ddd3;
-  --input: #c0c9be;
-  --ring: #155b50;
-  --sidebar: #eeeee5;
-  --sidebar-foreground: #58635d;
-  --sidebar-primary: var(--primary);
-  --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: var(--accent);
-  --sidebar-accent-foreground: var(--accent-foreground);
-  --sidebar-border: var(--border);
-  --sidebar-ring: var(--ring);
-  --success: #197143;
-  --success-tint: #eaf5ed;
-  --warning: #925500;
-  --warning-tint: #fff5dc;
+
+  /* Deep-water chrome (same family in both themes) */
+  --chrome: #0c2830;
+  --chrome-raised: #143841;
+  --chrome-foreground: #e3eef0;
+  --chrome-muted: #93b0b7;
+  --chrome-border: #1d4049;
+  --chrome-accent: #6fd3dc;
+  --media-stage: #0a2229;
+
+  /* States: always paired with an icon and a word */
+  --success: #17703f;
+  --success-tint: #e3f3ea;
+  --warning: #8f5300;
+  --warning-tint: #fdf1dc;
   --danger: var(--destructive);
-  --danger-tint: #fcecef;
-  --info: #285ca2;
-  --info-tint: #edf3fc;
-  --capability-chat: #09685f;
-  --capability-image: #7855a8;
-  --capability-video: #995671;
-  --capability-voice: #9b631c;
-  --capability-transcribe: #3463a1;
-  --capability-decide: #6c619c;
-  --capability-embed: #51713c;
-  --radius: 0.5rem;
-  --radius-card: 0.75rem;
-  --shadow-overlay: 0 12px 40px rgb(24 24 27 / 14%);
-  --motion-duration: 180ms;
-  --motion-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --danger-tint: #fce9e7;
+  --info: #1f5fa6;
+  --info-tint: #e6effa;
+  --neutral: #6a7c81;
+
+  /* Household people: a stable hue per person, ink text on top */
+  --person-ink: #10232a;
+  --person-1: #e58b6e;
+  --person-2: #6eaee0;
+  --person-3: #7db98a;
+  --person-4: #ae91e3;
+  --person-5: #e2b04a;
+  --person-6: #e07faa;
+  --person-7: #5fc2b9;
+
+  /* Capability marks */
+  --capability-chat: #0a6676;
+  --capability-image: #6d4fa8;
+  --capability-video: #a14466;
+  --capability-voice: #8a5a12;
+  --capability-transcribe: #2a5e9e;
+  --capability-decide: #5d55a0;
+  --capability-embed: #4a6b35;
+
+  /* Shape */
+  --radius: 6px; /* controls: buttons, inputs, menus */
+  --radius-card: 10px; /* panels and dialogs */
+  --radius-media: 6px; /* creation tiles */
+
+  /* Elevation: borders build structure; shadows only lift overlays */
+  --shadow-overlay: 0 16px 48px rgb(8 28 34 / 18%), 0 2px 6px rgb(8 28 34 / 8%);
+  --shadow-float: 0 6px 20px rgb(8 28 34 / 14%);
+
+  /* Motion */
+  --motion-duration: 200ms;
+  --motion-fast: 120ms;
+  --motion-ease: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Layout */
+  --sidebar-width: 232px;
+  --rail-width: 72px;
+  --content-max: 1200px;
+  --overlay: rgb(6 22 27 / 45%);
 }
+
 .dark {
   color-scheme: dark;
-  --background: #14221e;
-  --foreground: #ecede2;
-  --card: #1c2c26;
-  --card-foreground: #ecede2;
-  --popover: #20332a;
-  --popover-foreground: #ecede2;
-  --primary: #69d8c7;
-  --primary-foreground: #103b35;
-  --secondary: #20332a;
-  --secondary-foreground: #ecede2;
-  --muted: #20332a;
-  --muted-foreground: #afbcb2;
-  --accent: #243c37;
-  --accent-foreground: #8ae3d4;
-  --destructive: #ff91a1;
-  --destructive-foreground: #38131a;
-  --border: #394b42;
-  --input: #586f62;
-  --ring: #69d8c7;
-  --sidebar: #172720;
-  --sidebar-foreground: #afbcb2;
-  --success: #82d6a0;
-  --success-tint: #21382a;
-  --warning: #eac77a;
-  --warning-tint: #3d3320;
-  --danger-tint: #40272e;
-  --info: #91bbf4;
-  --info-tint: #27344a;
-  --capability-chat: #8ae3d4;
-  --capability-image: #c0a1e8;
-  --capability-video: #e7a5bd;
-  --capability-voice: #eac77a;
-  --capability-transcribe: #91bbf4;
+  --background: #0c1f25;
+  --foreground: #e3ecee;
+  --card: #112930;
+  --card-foreground: #e3ecee;
+  --popover: #153039;
+  --popover-foreground: #e3ecee;
+  --muted: #16313a;
+  --muted-foreground: #9ab0b6;
+  --secondary: #16313a;
+  --secondary-foreground: #e3ecee;
+  --accent: #163c45;
+  --accent-foreground: #8fe0e7;
+  --border: #213e46;
+  --input: #58777f;
+  --ring: #67cbd5;
+  --primary: #67cbd5;
+  --primary-foreground: #06222a;
+  --link: #67cbd5;
+  --destructive: #ff8f85;
+  --destructive-foreground: #3a0f0c;
+  --chrome: #071a1f;
+  --chrome-raised: #0f2a31;
+  --chrome-foreground: #e3eef0;
+  --chrome-muted: #93b0b7;
+  --chrome-border: #17343c;
+  --chrome-accent: #6fd3dc;
+  --media-stage: #050f12;
+  --success: #6fd39b;
+  --success-tint: #12352a;
+  --warning: #e8b65a;
+  --warning-tint: #3a2e15;
+  --danger-tint: #3f1f1e;
+  --info: #8db8f2;
+  --info-tint: #182e4a;
+  --neutral: #8aa1a7;
+  --capability-chat: #7fd6de;
+  --capability-image: #c2a8f0;
+  --capability-video: #f0a3bf;
+  --capability-voice: #e8b65a;
+  --capability-transcribe: #8db8f2;
   --capability-decide: #bdb4ec;
-  --capability-embed: #bddb9c;
-  --shadow-overlay: 0 12px 40px rgb(0 0 0 / 35%);
+  --capability-embed: #b7d99a;
+  --shadow-overlay: 0 16px 48px rgb(0 0 0 / 45%), 0 2px 6px rgb(0 0 0 / 30%);
+  --shadow-float: 0 6px 20px rgb(0 0 0 / 40%);
+  --overlay: rgb(2 10 12 / 65%);
 }
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-duration: 0ms;
+    --motion-fast: 0ms;
+  }
+}
+
 @theme inline {
-  --font-display: "Newsreader", Georgia, serif;
-  --font-sans: "Geist", sans-serif;
-  --font-mono: "Geist Mono", monospace;
+  --font-sans: "Hanken Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-sans);
+  --font-mono: "Geist Mono", ui-monospace, monospace;
+
+  /* Type scale (px): 12 · 14 · 15 · 17 · 20 · 24 · 30 · 40.
+     2xs (10) is only for initials inside a 20 px person mark. */
+  --text-2xs: 0.625rem;
+  --text-2xs--line-height: 0.75rem;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1rem;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.9375rem;
+  --text-base--line-height: 1.375rem;
+  --text-lg: 1.0625rem;
+  --text-lg--line-height: 1.5rem;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.75rem;
+  --text-2xl: 1.5rem;
+  --text-2xl--line-height: 1.875rem;
+  --text-3xl: 1.875rem;
+  --text-3xl--line-height: 2.25rem;
+  --text-4xl: 2.5rem;
+  --text-4xl--line-height: 2.75rem;
+  --tracking-tight: -0.015em;
+  --tracking-display: -0.025em;
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -111,8 +196,16 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --color-sidebar: var(--sidebar);
-  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-link: var(--link);
+  --color-chrome: var(--chrome);
+  --color-chrome-raised: var(--chrome-raised);
+  --color-chrome-foreground: var(--chrome-foreground);
+  --color-chrome-muted: var(--chrome-muted);
+  --color-chrome-border: var(--chrome-border);
+  --color-chrome-accent: var(--chrome-accent);
+  --color-media-stage: var(--media-stage);
+  --color-sidebar: var(--chrome);
+  --color-sidebar-foreground: var(--chrome-foreground);
   --color-success: var(--success);
   --color-success-tint: var(--success-tint);
   --color-warning: var(--warning);
@@ -121,6 +214,15 @@
   --color-danger-tint: var(--danger-tint);
   --color-info: var(--info);
   --color-info-tint: var(--info-tint);
+  --color-neutral: var(--neutral);
+  --color-person-ink: var(--person-ink);
+  --color-person-1: var(--person-1);
+  --color-person-2: var(--person-2);
+  --color-person-3: var(--person-3);
+  --color-person-4: var(--person-4);
+  --color-person-5: var(--person-5);
+  --color-person-6: var(--person-6);
+  --color-person-7: var(--person-7);
   --color-capability-chat: var(--capability-chat);
   --color-capability-image: var(--capability-image);
   --color-capability-video: var(--capability-video);
@@ -128,20 +230,24 @@
   --color-capability-transcribe: var(--capability-transcribe);
   --color-capability-decide: var(--capability-decide);
   --color-capability-embed: var(--capability-embed);
+  --color-overlay: var(--overlay);
+
+  --radius-xs: 2px; /* uptime bar segments only */
   --radius-sm: calc(var(--radius) - 2px);
   --radius-md: var(--radius);
   --radius-lg: var(--radius-card);
   --radius-xl: var(--radius-card);
+  --radius-control: var(--radius);
+  --radius-panel: var(--radius-card);
+  --radius-media: var(--radius-media);
   --shadow-lg: var(--shadow-overlay);
   --shadow-xl: var(--shadow-overlay);
   --shadow-overlay: var(--shadow-overlay);
-  --text-xs: 0.75rem;
-  --text-sm: 0.875rem;
-  --text-base: 1rem;
-  --text-lg: 1.25rem;
-  --text-xl: 1.5rem;
-  --text-2xl: 2rem;
-  /* Temporary compatibility with retained operator routes. No external brand. */
+  --shadow-float: var(--shadow-float);
+  --ease-standard: var(--motion-ease);
+
+  /* Compatibility aliases for routes not yet redesigned. Deprecated: new
+     code uses the names above. Each one resolves to a token, never a value. */
   --color-vf-bg: var(--background);
   --color-vf-surface: var(--card);
   --color-vf-surface-2: var(--muted);
@@ -156,31 +262,18 @@
   --color-vf-warn: var(--warning);
   --color-vf-bad: var(--danger);
   --color-vf-info: var(--info);
-  --text-vf-micro: 0.75rem;
-  --text-vf-small: 0.8125rem;
-  --text-vf-body: 0.875rem;
-  --text-vf-heading: 1rem;
-  --text-vf-title: 1.25rem;
-  --text-vf-display: 2rem;
+  --text-vf-micro: var(--text-xs);
+  --text-vf-small: var(--text-sm);
+  --text-vf-body: var(--text-base);
+  --text-vf-heading: var(--text-lg);
+  --text-vf-title: var(--text-xl);
+  --text-vf-display: var(--text-3xl);
   --radius-vf-sm: var(--radius);
   --radius-vf-md: var(--radius);
   --radius-vf-lg: var(--radius-card);
 }
-@media (prefers-reduced-motion: reduce) {
-  :root {
-    --motion-duration: 0ms;
-  }
-}
-:root {
-  --overlay: rgb(24 24 27 / 35%);
-}
-.dark {
-  --overlay: rgb(0 0 0 / 60%);
-}
-@theme inline {
-  --color-overlay: var(--overlay);
-}
-/* Legacy layout compatibility; values remain tied to the new theme. */
+
+/* Legacy variable names read by legacy-components.css; all resolve to tokens. */
 :root {
   --vf-bg: var(--background);
   --vf-text: var(--foreground);
@@ -194,8 +287,8 @@
   --vf-info: var(--info);
   --vf-border: var(--border);
   --vf-border-strong: var(--input);
-  --vf-shell: var(--sidebar);
-  --vf-topbar: var(--sidebar);
+  --vf-shell: var(--chrome);
+  --vf-topbar: var(--chrome);
   --vf-panel: var(--card);
   --vf-panel-raised: var(--popover);
   --vf-field: var(--background);
@@ -206,19 +299,19 @@
   --vf-row-hover: var(--muted);
   --vf-link-hover: var(--accent);
   --vf-health-band: var(--muted);
-  --vf-font-sans: "Geist", sans-serif;
-  --vf-font-mono: "Geist Mono", monospace;
-  --vf-font-serif: var(--vf-font-sans);
+  --vf-font-sans: var(--font-sans);
+  --vf-font-mono: var(--font-mono);
+  --vf-font-serif: var(--font-sans);
   --vf-radius-sm: var(--radius);
   --vf-radius-md: var(--radius);
   --vf-radius-lg: var(--radius-card);
   --vf-radius-pill: 999px;
-  --vf-text-xs: 12px;
-  --vf-text-sm: 13px;
-  --vf-text-base: 14px;
-  --vf-text-md: 16px;
-  --vf-text-lg: 20px;
-  --vf-type-title: 20px;
+  --vf-text-xs: 0.75rem;
+  --vf-text-sm: 0.875rem;
+  --vf-text-base: 0.9375rem;
+  --vf-text-md: 1.0625rem;
+  --vf-text-lg: 1.25rem;
+  --vf-type-title: 1.25rem;
   --vf-type-title-leading: 1.3;
   --vf-hit-target: 44px;
   --vf-context-width: 300px;
@@ -227,6 +320,6 @@
   --vf-shadow-caustic-2: none;
   --vf-elevation-base: none;
   --vf-elevation-raised: var(--shadow-overlay);
-  --vf-transition-fast: var(--motion-duration) var(--motion-ease);
-  --vf-transition-base: var(--vf-transition-fast);
+  --vf-transition-fast: var(--motion-fast) var(--motion-ease);
+  --vf-transition-base: var(--motion-duration) var(--motion-ease);
 }
