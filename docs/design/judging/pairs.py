@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build blind A/B pairs for TARGET.md T-1 and score the judges' verdicts.
 
-  pairs.py build <capture-dir> <out-dir> [--seed N] [--theme light]
+  pairs.py build <capture-dir> <out-dir> [--seed N] [--theme light] [--surfaces a,b] [--viewport]
   pairs.py score <out-dir> <verdict.json>...
 
 `build` pairs each Azizam screen (populated state, owner view unless the
@@ -49,7 +49,7 @@ SURFACES = {
 
 PHONE = re.compile(r"(phone|iphone|ios)", re.I)
 CAPTURE = re.compile(
-    r"^(?P<role>owner|member)_(?P<surface>[a-z]+)_.*_(?P<state>[a-z0-9-]+)_(?P<theme>light|dark)_(?P<width>\d+)_settled\.png$"
+    r"^(?P<role>owner|member)_(?P<surface>[a-z]+)_.*_(?P<state>[a-z0-9-]+)_(?P<theme>light|dark)_(?P<width>\d+)_settled(?P<viewport>_viewport)?\.png$"
 )
 
 
@@ -64,12 +64,18 @@ def to_png(src: Path, dest: Path) -> None:
         subprocess.run(["convert", str(src), str(dest)], check=True)
 
 
-def build(capture_dir: Path, out: Path, seed: int, theme: str) -> None:
+def build(capture_dir: Path, out: Path, seed: int, theme: str, only: set[str] | None = None,
+          viewport: bool = False) -> None:
     rng = random.Random(seed)
     screens: dict[tuple[str, str], Path] = {}
     for png in sorted(capture_dir.glob("*.png")):
         m = CAPTURE.match(png.name)
         if not m or m["theme"] != theme or m["state"] != "page" or m["surface"] not in SURFACES:
+            continue
+        if only and m["surface"] not in only:
+            continue
+        # Benchmarks are viewport shots; full-page shots show fixed bars mid-page.
+        if bool(m["viewport"]) != viewport:
             continue
         key = (m["surface"], m["width"])
         # Prefer the owner view; a member-only surface falls back to member.
@@ -98,7 +104,7 @@ def build(capture_dir: Path, out: Path, seed: int, theme: str) -> None:
     KEYS.mkdir(parents=True, exist_ok=True)
     key = KEYS / f"{out.name}.key.json"
     key.write_text(json.dumps({"seed": seed, "theme": theme, "pairs": key_rows}, indent=1))
-    missing = sorted({s for s in SURFACES} - {s for s, _ in screens})
+    missing = sorted((only or set(SURFACES)) - {s for s, _ in screens})
     print(f"{len(key_rows)} pairs in {out}; key {key}")
     if missing:
         print("no populated capture for: " + ", ".join(missing))
@@ -143,7 +149,8 @@ def main(argv: list[str]) -> int:
     if len(argv) >= 3 and argv[0] == "build":
         seed = int(argv[argv.index("--seed") + 1]) if "--seed" in argv else 1
         theme = argv[argv.index("--theme") + 1] if "--theme" in argv else "light"
-        build(Path(argv[1]), Path(argv[2]), seed, theme)
+        only = set(argv[argv.index("--surfaces") + 1].split(",")) if "--surfaces" in argv else None
+        build(Path(argv[1]), Path(argv[2]), seed, theme, only, "--viewport" in argv)
         return 0
     if len(argv) >= 3 and argv[0] == "score":
         score(Path(argv[1]), [Path(p) for p in argv[2:]])
