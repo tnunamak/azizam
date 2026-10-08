@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import HomePage from "../page";
@@ -213,11 +219,21 @@ describe("Home audit component behavior", () => {
         name: "Play gentle rain over a quiet porch",
       }),
     ).toBeVisible();
-    expect(await screen.findByText("a fox walking through snow")).toBeVisible();
-    const poster = document.querySelector(
-      'img[src="https://media.example/poster.jpg"]',
-    );
-    expect(poster).not.toBeNull();
+    // Video tiles carry the prompt in their accessible name, not as text.
+    expect(
+      await screen.findByRole("link", {
+        name: "Open Video in Library: a fox walking through snow",
+      }),
+    ).toBeVisible();
+    expect(screen.queryByText("a fox walking through snow")).toBeNull();
+    const poster = await waitFor(() => {
+      const element = document.querySelector(
+        'img[src="https://media.example/poster.jpg"]',
+      );
+      expect(element).not.toBeNull();
+      return element;
+    });
+    expect(poster).toHaveAttribute("alt", "a fox walking through snow");
     const video = document.querySelector(
       'video[src="https://media.example/video-no-poster.mp4"]',
     );
@@ -326,14 +342,23 @@ describe("Home audit component behavior", () => {
       }),
     );
     renderHome();
-    await screen.findByRole("link", { name: "Music" });
-    expect(screen.queryByText("Ready")).toBeNull();
+    const music = await screen.findByRole("link", { name: "Music" });
+    const sfx = screen.getByRole("link", { name: "Sound effects" });
+    // Each tile shows its state word; the verdict summarises them.
+    expect(within(music).getByText("Ready")).toBeVisible();
+    expect(within(sfx).getByText("Ready")).toBeVisible();
+    expect(screen.getAllByText("Ready")).toHaveLength(2);
+    expect(screen.getByText("Everything is ready.")).toBeVisible();
     expect(screen.queryByText("Details")).toBeNull();
     expect(screen.getByRole("img", { name: "Music" })).toBeVisible();
     expect(screen.getByRole("img", { name: "Sound effects" })).toBeVisible();
-    expect(screen.getByRole("link", { name: "Music" })).toHaveAttribute(
+    expect(music).toHaveAttribute(
       "href",
-      "/models?capability=audio",
+      expect.stringMatching(/^\/try\/?\?capability=audio&model=song$/),
+    );
+    expect(sfx).toHaveAttribute(
+      "href",
+      expect.stringMatching(/^\/try\/?\?capability=audio&model=sfx$/),
     );
     expect(screen.queryByText("ACE-Step XL Turbo")).toBeNull();
     expect(screen.queryByText("song")).toBeNull();

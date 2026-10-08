@@ -274,7 +274,7 @@ describe("Library media recovery", () => {
     );
     mount();
     await screen.findByRole("button", { name: "Open Saved image" });
-    fireEvent.change(screen.getAllByPlaceholderText("Search prompts")[1], {
+    fireEvent.change(screen.getByPlaceholderText("Search prompts"), {
       target: { value: "unavailable search" },
     });
     expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -402,7 +402,7 @@ describe("Library media recovery", () => {
     );
     mount();
     await screen.findByRole("button", { name: "Open Saved image" });
-    const input = screen.getAllByPlaceholderText("Search prompts")[1];
+    const input = screen.getByPlaceholderText("Search prompts");
     for (const value of ["a", "ab", "abc"])
       fireEvent.change(input, { target: { value } });
     expect(requests.filter((row) => row.path.includes("q="))).toHaveLength(0);
@@ -418,9 +418,19 @@ describe("Library media recovery", () => {
   });
   it("HL-09 wraps long prompts in tiles and details", async () => {
     const prompt = "x".repeat(500);
-    mockAssets([{ ...image, prompt }]);
+    const audioPrompt = "y".repeat(500);
+    mockAssets([
+      { ...image, prompt },
+      { ...image, asset_id: "audio", kind: "audio", prompt: audioPrompt },
+    ]);
     mount();
-    expect(await screen.findByText(prompt)).toHaveClass("break-words");
+    // Image tiles carry the prompt only in their accessible name; audio tiles
+    // show it as text, which must wrap.
+    expect(
+      await screen.findByRole("button", { name: `Open ${prompt}` }),
+    ).toBeVisible();
+    expect(screen.queryByText(prompt)).toBeNull();
+    expect(screen.getByText(audioPrompt)).toHaveClass("break-words");
     await userEvent.click(
       screen.getByRole("button", { name: `Open ${prompt}` }),
     );

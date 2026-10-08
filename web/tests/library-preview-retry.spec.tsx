@@ -5,6 +5,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import LibraryPage from "@/app/library/page";
@@ -93,12 +94,17 @@ it("shows the recorded model ID on the card and in Details when the catalog lack
     </QueryClientProvider>,
   );
   await screen.findByRole("button", { name: "Open Retired model image" });
-  expect(container.querySelector("article")).toHaveTextContent("vendor/retired-model:v1");
+  // Image tiles show no per-tile text; the viewer's facts carry the model.
+  expect(container.querySelector("article")).not.toHaveTextContent(/\S/);
   fireEvent.click(screen.getByRole("button", { name: "Open Retired model image" }));
   const dialog = await screen.findByRole("dialog");
+  const modelFact = Array.from(dialog.querySelectorAll("dt")).find(
+    (term) => term.textContent === "Model",
+  );
+  expect(modelFact?.nextElementSibling).toHaveTextContent("vendor/retired-model:v1");
   fireEvent.click(screen.getByText("Details", { selector: "summary" }));
   const modelDetail = Array.from(dialog.querySelectorAll("dl")).find(
-    (detail) => detail.querySelector("dt")?.textContent === "Model",
+    (detail) => detail.querySelector("dt")?.textContent === "Model name",
   );
   expect(modelDetail?.querySelector("dd")).toHaveTextContent("vendor/retired-model:v1");
   client.clear();
@@ -269,17 +275,17 @@ it("marks retained results as updating until changed filter results arrive", asy
   );
   await screen.findByRole("button", { name: "Open Old result" });
   expect(screen.queryByText("Updating")).toBeNull();
-  expect(container.querySelector("article")?.parentElement).toHaveAttribute("aria-busy", "false");
-  fireEvent.click(screen.getByRole("button", { name: "Images" }));
+  expect(container.querySelector("article")?.closest("[aria-busy]")).toHaveAttribute("aria-busy", "false");
+  fireEvent.click(within(screen.getByRole("group", { name: "Kind" })).getByRole("button", { name: "Images" }));
   await waitFor(() => expect(finish).toBeTypeOf("function"));
   expect(screen.getByRole("button", { name: "Open Old result" })).toBeVisible();
-  expect(container.querySelector("article")?.parentElement).toHaveAttribute("aria-busy", "true");
+  expect(container.querySelector("article")?.closest("[aria-busy]")).toHaveAttribute("aria-busy", "true");
   expect(screen.getByText("Updating")).toBeVisible();
   expect(screen.getByText("Updating")).toHaveAttribute("role", "status");
   finish();
   await screen.findByRole("button", { name: "Open New result" });
   expect(screen.queryByRole("button", { name: "Open Old result" })).toBeNull();
-  expect(container.querySelector("article")?.parentElement).toHaveAttribute("aria-busy", "false");
+  expect(container.querySelector("article")?.closest("[aria-busy]")).toHaveAttribute("aria-busy", "false");
   expect(screen.queryByText("Updating")).toBeNull();
   client.clear();
 });

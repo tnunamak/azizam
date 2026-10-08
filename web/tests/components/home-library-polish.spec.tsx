@@ -112,14 +112,16 @@ describe("Home and Library polish", () => {
       "sr-only",
     );
     const connect = screen.getByRole("region", { name: "Connect an app" });
-    expect(
-      within(connect).getByText("One address. A key for each app."),
-    ).toBeVisible();
+    expect(within(connect).getByLabelText("Gateway address")).toHaveValue(
+      home.api_base_url,
+    );
     expect(
       within(connect).queryByRole("button", { name: "Check connection" }),
     ).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Open WebUI" }));
-    expect(within(connect).getByLabelText("Base URL")).toBeVisible();
+    // The recipe's base URL is the gateway address, so it is not repeated.
+    expect(within(connect).queryByLabelText("Base URL")).toBeNull();
+    expect(within(connect).getByLabelText("Gateway address")).toBeVisible();
     expect(within(connect).getByText("API key", { exact: true })).toBeVisible();
     expect(
       within(connect).getByRole("button", {
@@ -132,12 +134,24 @@ describe("Home and Library polish", () => {
     expect(
       within(connect).getByRole("button", { name: "Setup notes" }),
     ).toBeVisible();
-    expect(await screen.findByText("An ocean")).toBeVisible();
+    // Recent tiles carry the prompt in their accessible name, not as text.
+    expect(
+      await screen.findByRole("link", {
+        name: "Open Image in Library: An ocean",
+      }),
+    ).toBeVisible();
+    expect(screen.queryByText("An ocean")).toBeNull();
     expect(
       container.querySelector('img[src="/signed/image1"]'),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Images" })).toHaveClass(
-      "bg-capability-image/5",
+    ).toHaveAttribute("alt", "An ocean");
+    const images = screen.getByRole("link", { name: "Images" });
+    expect(images).toHaveAttribute(
+      "href",
+      expect.stringMatching(/^\/try\/?\?capability=image$/),
+    );
+    expect(within(images).getByText("Ready")).toBeVisible();
+    expect(within(images).getByRole("img", { name: "Images" })).toHaveClass(
+      "bg-capability-image/12",
     );
   });
   it("keeps setup notes and key checks inside the selected app flow", async () => {
@@ -184,7 +198,11 @@ describe("Home and Library polish", () => {
     ).toBeVisible();
     expect(screen.queryByText(/App setup:/)).toBeNull();
     expect(screen.queryByText(/Confirm only what you did/)).toBeNull();
-    expect(await screen.findByText("An ocean")).toBeVisible();
+    expect(
+      await screen.findByRole("link", {
+        name: "Open Image in Library: An ocean",
+      }),
+    ).toBeVisible();
     await userEvent.click(
       within(connect).getByRole("button", { name: "Setup notes" }),
     );
@@ -196,7 +214,7 @@ describe("Home and Library polish", () => {
     ).toBeNull();
     expect(screen.queryByText("real-request")).toBeNull();
   });
-  it("shows capability chips without readiness labels and gives unusable chips a reason", async () => {
+  it("shows capability tiles with their state and gives unusable tiles a reason", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -232,14 +250,24 @@ describe("Home and Library polish", () => {
     );
     renderPage(<HomePage />);
     await screen.findByRole("heading", { name: "What you can use" });
+    // An unusable tile is not a link; it names its state and gives the reason.
+    expect(screen.queryByRole("link", { name: /Images/ })).toBeNull();
+    const images = screen
+      .getByRole("img", { name: "Images" })
+      .closest("li")!;
+    expect(images).toHaveAttribute(
+      "title",
+      "Unavailable. Ask the owner to finish setup.",
+    );
+    expect(within(images).getByText("Not set up")).toBeVisible();
     expect(
-      screen.getByRole("link", {
-        name: "Images: Unavailable. Ask the owner to finish setup.",
-      }),
-    ).toHaveAttribute("title", "Unavailable. Ask the owner to finish setup.");
-    expect(screen.getByRole("link", { name: "Decisions" })).toBeVisible();
+      within(images).getByText("Unavailable. Ask the owner to finish setup."),
+    ).toBeInTheDocument();
+    expect(within(images).queryByText("Ready")).toBeNull();
+    const decisions = screen.getByRole("link", { name: "Decisions" });
+    expect(decisions).toBeVisible();
+    expect(within(decisions).getByText("Ready to start")).toBeVisible();
     expect(screen.queryByText("Unknown")).toBeNull();
-    expect(screen.queryByText("Ready to start")).toBeNull();
     expect(screen.queryByRole("button", { name: "Details" })).toBeNull();
     expect(screen.queryByText("Unavailable right now")).toBeNull();
   });
@@ -304,13 +332,15 @@ describe("Home and Library polish", () => {
     const { container } = renderPage(<LibraryPage />, true);
     await screen.findByRole("button", { name: "Open Swimming fish" });
     expect(requests).toContain("/me/api/media/poster1/download?scope=everyone");
-    screen.getByRole("combobox", { name: "Owner" }).focus();
+    screen.getByRole("combobox", { name: "Person" }).focus();
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
       configurable: true,
       value: () => {},
     });
     await userEvent.keyboard("{Enter}");
-    await userEvent.click(await screen.findByRole("option", { name: "Mine" }));
+    await userEvent.click(
+      await screen.findByRole("option", { name: "Alex (you)" }),
+    );
     await waitFor(() =>
       expect(requests).toContain("/me/api/media/poster1/download?scope=me"),
     );

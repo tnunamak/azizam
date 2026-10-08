@@ -138,15 +138,11 @@ function mount(
 it("shows compact grouped engine rows and moves configuration and unknown metrics into a sheet", async () => {
   const user = userEvent.setup();
   mount();
-  await user.click(await screen.findByText("1 engine · Show"));
   const engine = await screen.findByRole("button", { name: "Local chat" });
   expect(screen.getByRole("table", { name: "Engine status" })).toBeVisible();
   expect(screen.queryByRole("columnheader", { name: "Last error" })).toBeNull();
   expect(screen.queryByText("Not measured yet")).not.toBeInTheDocument();
   expect(screen.queryByText("Loaded:")).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("button", { name: "Image engine" }),
-  ).not.toBeInTheDocument();
   expect(screen.queryByText("fast")).not.toBeInTheDocument();
   await user.click(engine);
   const sheet = screen.getByRole("dialog", { name: "Local chat" });
@@ -159,14 +155,15 @@ it("shows compact grouped engine rows and moves configuration and unknown metric
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(engine).toHaveFocus();
 });
-it("reveals disabled engines only on request", async () => {
-  const user = userEvent.setup();
+it("lists disabled engines as turned off, never as ready", async () => {
   mount();
-  await user.click(await screen.findByText("1 engine · Show"));
   await screen.findByRole("button", { name: "Local chat" });
-  await user.click(screen.getByRole("switch"));
-  expect(screen.getByRole("button", { name: "Image engine" })).toBeVisible();
-  expect(screen.getByText("Disabled")).toBeVisible();
+  expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+  const disabled = screen.getByRole("button", { name: "Image engine" });
+  expect(disabled).toBeVisible();
+  const row = disabled.closest("tr")!;
+  expect(within(row).getByText("Turned off")).toBeVisible();
+  expect(within(row).queryByText("Ready")).not.toBeInTheDocument();
 });
 
 it("uses the registry display name and excludes providers from the engine table", async () => {
@@ -221,11 +218,19 @@ it("uses server engine names and transcription taxonomy and preserves an exact d
       ],
     },
   });
-  expect(await screen.findByText("1 problem needs you")).toBeVisible();
-  await user.click(await screen.findByText("1 engine · Show"));
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "The gateway’s computer needs attention.",
+    ),
+  );
   expect(
-    await screen.findByRole("button", { name: "Canary (transcription)" }),
+    screen.getByRole("heading", { name: "Needs attention" }),
   ).toBeVisible();
+  await user.click(screen.getByRole("button", { name: /Show all/ }));
+  const engine = await screen.findByRole("button", { name: "Canary" });
+  expect(engine).toBeVisible();
+  expect(engine).toHaveAttribute("title", "Canary (transcription)");
+  expect(screen.queryByRole("button", { name: "Local chat" })).toBeNull();
   expect(screen.getByRole("table", { name: "Engine status" })).toBeVisible();
   expect(screen.getByRole("cell", { name: "Transcription" })).toBeVisible();
   expect(
@@ -233,7 +238,7 @@ it("uses server engine names and transcription taxonomy and preserves an exact d
       screen
         .getByRole("heading", { name: "Status", level: 1 })
         .closest("header")!,
-    ).getByText("1 problem needs you", { exact: true }),
+    ).getByText("The gateway’s computer needs attention.", { exact: true }),
   ).toBeVisible();
   expect(
     screen.getAllByText(
@@ -274,12 +279,14 @@ it("retains server labels when live observation is unavailable without showing r
       ],
     },
   });
-  expect(
-    await screen.findByRole("button", { name: "Canary (transcription)" }),
-  ).toBeVisible();
+  const engine = await screen.findByRole("button", { name: "Canary" });
+  expect(engine).toBeVisible();
+  expect(engine).toHaveAttribute("title", "Canary (transcription)");
   expect(screen.queryByText("Ready", { exact: true })).not.toBeInTheDocument();
-  expect(screen.getByRole("status")).toHaveTextContent("System status unknown");
-  expect(screen.queryByText("All systems normal")).toBeNull();
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Engine health is unknown.",
+  );
+  expect(screen.queryByText("Everything is working.")).toBeNull();
 });
 
 it("summarizes connection failures without putting raw transport text in the answer", async () => {
@@ -309,13 +316,20 @@ it("summarizes connection failures without putting raw transport text in the ans
       ],
     },
   });
-  expect(
-    await screen.findByText("1 problem needs you", { exact: true }),
-  ).toBeVisible();
-  expect(
-    screen.getAllByText(
-      "Chat is not accepting connections. Check the engine address or start the engine.",
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Chat is unavailable.",
     ),
+  );
+  expect(
+    screen.getAllByText("Local chat is not accepting connections.", {
+      exact: true,
+    }),
+  ).toHaveLength(1);
+  expect(
+    screen.getAllByText("Check the engine address, or start the engine.", {
+      exact: true,
+    }),
   ).toHaveLength(1);
   const header = screen
     .getByRole("heading", { name: "Status", level: 1 })
@@ -324,11 +338,14 @@ it("summarizes connection failures without putting raw transport text in the ans
     within(header).queryByText("Connection refused", { exact: true }),
   ).not.toBeInTheDocument();
   expect(
-    within(header).queryByText(
-      "Chat is not accepting connections. Check the engine address or start the engine.",
-      { exact: true },
-    ),
+    within(header).queryByText("Local chat is not accepting connections.", {
+      exact: true,
+    }),
   ).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("link", { name: "Inspect Local chat" }),
+  ).toHaveAttribute("href", "/engines/?service=chat");
+  await userEvent.click(screen.getByRole("button", { name: /Show all/ }));
   await userEvent.click(screen.getByRole("button", { name: "Local chat" }));
   expect(
     within(screen.getByRole("dialog", { name: "Local chat" })).getByText(
@@ -379,51 +396,46 @@ it("groups engines with the same problem into one action row", async () => {
     },
     serviceRegistry,
   );
-  expect(
-    await screen.findByText("1 problem needs you", { exact: true }),
-  ).toBeVisible();
-  expect(
-    screen.getAllByText(
-      "Chat is not accepting connections. Check the engine address or start the engine.",
-      { exact: true },
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Chat is unavailable.",
     ),
+  );
+  expect(screen.queryByText(/problems need you/)).toBeNull();
+  const attention = screen
+    .getByRole("heading", { name: "Needs attention" })
+    .closest("section")!;
+  expect(within(attention).getAllByRole("article")).toHaveLength(1);
+  expect(
+    within(attention).getAllByText(/is not accepting connections\./),
   ).toHaveLength(1);
   expect(
-    screen.getByText("2 engines affected.", { exact: true }),
+    within(attention).getByText(/^2 engines:/),
   ).toBeVisible();
-  expect(screen.getByRole("link", { name: "Open" })).toHaveAttribute(
-    "href",
-    "/engines",
-  );
+  expect(
+    within(attention).getByRole("link", { name: "Inspect engines" }),
+  ).toHaveAttribute("href", "/engines/");
 });
 
 it.each(["loading", "error"])(
   "does not claim all-clear while providers are %s",
   async (state) => {
     providerState.state = state;
-    const user = userEvent.setup();
     mount();
-    // Healthy engines stay inside a closed disclosure in a real browser; open it
-    // before querying, as the other tests do, instead of relying on jsdom exposing it.
-    await user.click(await screen.findByText("1 engine · Show"));
     await screen.findByRole("button", { name: "Local chat" });
     expect(screen.getByRole("status")).toHaveTextContent(
-      state === "loading"
-        ? "Checking system status..."
-        : "System status partially checked",
+      state === "loading" ? "Checking…" : "Engines work; providers unknown.",
     );
-    expect(screen.queryByText("All systems normal")).toBeNull();
-    expect(
-      screen.queryByText(
-        "No owner action is needed from the latest observation.",
-      ),
-    ).toBeNull();
+    expect(screen.queryByText("Everything is working.")).toBeNull();
+    expect(screen.queryByText("Engines are working.")).toBeNull();
   },
 );
 it("does not claim all-clear when current health is absent", async () => {
   mount({});
   await screen.findByRole("button", { name: "Local chat" });
-  expect(screen.getByRole("status")).toHaveTextContent("System status unknown");
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Engine health is unknown.",
+  );
 });
 it("does not trust stale health after a status error", async () => {
   mount(
@@ -442,7 +454,7 @@ it("does not trust stale health after a status error", async () => {
   );
   await screen.findByText("Could not check engine status");
   expect(screen.getByRole("status")).toHaveTextContent(
-    "System status unavailable",
+    "Couldn’t check status.",
   );
 });
 it("announces the answer atomically as health changes", async () => {
@@ -452,7 +464,7 @@ it("announces the answer atomically as health changes", async () => {
     engineHealthPresentation(true, true, undefined, "degraded").label,
   ).toBe("Degraded");
   mount();
-  await screen.findByText("All systems normal");
+  await screen.findByText("Everything is working.");
   const live = screen.getByRole("status");
   expect(live).toHaveAttribute("aria-live", "polite");
   expect(live).toHaveAttribute("aria-atomic", "true");
@@ -470,18 +482,24 @@ it("announces the answer atomically as health changes", async () => {
       })),
     },
   });
-  await userEvent.click(screen.getByRole("button", { name: "Status actions" }));
-  await userEvent.click(screen.getByText("Refresh", { exact: true }));
-  await waitFor(() => expect(live).toHaveTextContent("1 problem needs you"));
+  await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() => expect(live).toHaveTextContent("Chat is degraded."));
+  expect(live.querySelector("table")).toBeNull();
+  await userEvent.click(screen.getByRole("button", { name: /Show all/ }));
   expect(screen.getByText("Degraded", { exact: true })).toBeVisible();
 });
 it("moves from partial to healthy once provider status resolves", async () => {
   providerState.state = "error";
   mount();
-  await screen.findByText("System status partially checked");
+  await screen.findByText("Engines work; providers unknown.");
+  expect(screen.queryByText("Everything is working.")).toBeNull();
   providerState.state = "ready";
-  await userEvent.click(screen.getByRole("switch"));
-  expect(screen.getByRole("status")).toHaveTextContent("All systems normal");
+  await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Everything is working.",
+    ),
+  );
 });
 it.each(["empty", "partial"])(
   "presents %s observation explicitly",
@@ -501,15 +519,11 @@ it.each(["empty", "partial"])(
       },
       state === "empty" ? { schema_version: 1, services: {} } : chatRegistry,
     );
-    await screen.findByText(
-      state === "empty"
-        ? "No engines configured"
-        : "System status partially checked",
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        state === "empty" ? "No engines yet." : "Some engines are unchecked.",
+      ),
     );
-    expect(screen.getByRole("status")).toHaveTextContent(
-      state === "empty"
-        ? "No engines configured"
-        : "System status partially checked",
-    );
+    expect(screen.queryByText("Everything is working.")).toBeNull();
   },
 );

@@ -29,9 +29,11 @@ it("keeps the disk remedy on the disk signal rather than an API signal", async (
     { source: "disk", tone: "warn", reasons: ["Disk is almost full."] },
   ]);
   const reason = await screen.findByText("Gateway request failures are elevated.");
-  const row = reason.parentElement!.parentElement!;
-  expect(within(row).getByText("Gateway needs attention")).toBeVisible();
+  const row = reason.closest("article")!;
+  expect(within(row).getByText("The gateway needs attention.")).toBeVisible();
   expect(within(row).queryByRole("button", { name: "Free disk space" })).toBeNull();
+  const disk = screen.getByText("Disk is almost full.").closest("article")!;
+  expect(within(disk).getByRole("button", { name: "Free disk space" })).toBeVisible();
 });
 it("does not attach a disk remedy to a temperature warning", async () => {
   mount([
@@ -39,7 +41,7 @@ it("does not attach a disk remedy to a temperature warning", async () => {
     { source: "disk", tone: "warn", reasons: ["Disk is almost full."] },
   ]);
   const reason = await screen.findByText("Temperature is high.");
-  expect(within(reason.parentElement!.parentElement!).queryByRole("button", { name: "Free disk space" })).toBeNull();
+  expect(within(reason.closest("article")!).queryByRole("button", { name: "Free disk space" })).toBeNull();
 });
 it("counts every provider failure and signal, deduplicating identical source/reason pairs", async () => {
   const provider = { enabled: true, reachable: false, keyState: "set" as const, keySuffix: null, spendText: "", tone: "bad" as const };
@@ -54,14 +56,15 @@ it("counts every provider failure and signal, deduplicating identical source/rea
     { source: "thermal", tone: "warn", reasons: ["Temperature high."] },
     { source: "custom-check", tone: "bad", reasons: ["Check failed."] },
   ]);
-  expect(await screen.findByText("8 problems need you")).toBeVisible();
+  // One card per provider: a missing key is reported before reachability.
+  expect(await screen.findByText("7 problems need you.")).toBeVisible();
   expect(screen.getAllByText("Request failures.")).toHaveLength(1);
   expect(screen.getAllByText("Disk full.")).toHaveLength(1);
-  expect(screen.getByText("First provider needs owner action: provider key is missing.")).toBeVisible();
-  expect(screen.getByText("Second provider needs owner action: provider is unreachable.")).toBeVisible();
+  expect(screen.getByText("First provider has no key.")).toBeVisible();
+  expect(screen.getByText("Second provider can’t be reached.")).toBeVisible();
   expect(screen.getByText("Check failed.")).toBeVisible();
   for (const reason of ["Disk full.", "Other disk full."]) {
-    const row = screen.getByText(reason).parentElement!.parentElement!;
+    const row = screen.getByText(reason).closest("article")!;
     expect(within(row).getByRole("button", { name: "Free disk space" })).toBeVisible();
   }
 });
@@ -94,7 +97,8 @@ it("reports an engine list load failure with unknown engine states and working R
 it.each([403, 500, 503])("reports member status HTTP %s errors by status, blaming no layer", async (status) => {
   vi.spyOn(productApi, "status").mockRejectedValue(statusResponseError(status));
   mountHealthErrorPage(<MemberStatus />);
-  expect(await screen.findByText(`Your model status check failed (HTTP ${status}). The gateway owner can see details. Try again.`)).toBeVisible();
+  expect(await screen.findByText("Couldn’t check your status")).toBeVisible();
+  expect(screen.getByText(`The gateway answered with an error (HTTP ${status}). The owner can see details. Try again.`)).toBeVisible();
   expect(screen.queryByText(/server side/)).toBeNull();
   expect(screen.queryByText(/Check your connection/)).toBeNull();
 });
@@ -102,7 +106,9 @@ it.each([403, 500, 503])("reports member status HTTP %s errors by status, blamin
 it.each([new TypeError("Failed to fetch"), new Error("Unexpected failure")])("keeps unclassified member status errors neutral: %s", async (error) => {
   vi.spyOn(productApi, "status").mockRejectedValue(error);
   mountHealthErrorPage(<MemberStatus />);
-  expect(await screen.findByText("Your model status could not be loaded. Try again.")).toBeVisible();
+  expect(await screen.findByText("Couldn’t check your status")).toBeVisible();
+  expect(screen.getByText("We couldn’t tell where this stopped. Try again.")).toBeVisible();
+  expect(screen.queryByText(/could not be reached/)).toBeNull();
   expect(screen.queryByText(/Check your connection/)).toBeNull();
   expect(screen.queryByText(/check failed \(HTTP/)).toBeNull();
 });

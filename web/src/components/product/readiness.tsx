@@ -273,6 +273,7 @@ export function Verdict({
       <p
         role="status"
         aria-live="polite"
+        aria-atomic="true"
         className="flex items-start gap-3 text-2xl font-semibold tracking-tight text-balance sm:text-3xl"
       >
         <Icon

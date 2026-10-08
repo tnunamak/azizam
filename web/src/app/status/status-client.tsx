@@ -31,6 +31,7 @@ import {
   SheetHeader,
   SheetTitle,
   SheetDescription,
+  SheetTrigger,
 } from "@/components/ui/sheet";
 import {
   useOptionalProviderStatus,
@@ -450,13 +451,17 @@ function EngineSheet({
   engine,
   open,
   onOpenChange,
+  children,
 }: {
   engine: EngineView;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** The control that opens the sheet; focus returns to it on close. */
+  children: React.ReactNode;
 }) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetTrigger asChild>{children}</SheetTrigger>
       <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
         <SheetHeader>
           <SheetTitle>{engine.name}</SheetTitle>
@@ -531,15 +536,15 @@ function EngineRow({
       aria-current={selected ? "true" : undefined}
     >
       <th scope="row" className="py-2 pr-4 text-left align-middle font-normal">
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className="block max-w-full min-w-0 truncate py-2 text-left font-medium hover:underline max-sm:min-h-11"
-          title={engine.name}
-        >
-          {engine.shortName}
-        </button>
-        <EngineSheet engine={engine} open={open} onOpenChange={setOpen} />
+        <EngineSheet engine={engine} open={open} onOpenChange={setOpen}>
+          <button
+            type="button"
+            className="block max-w-full min-w-0 truncate py-2 text-left font-medium hover:underline max-sm:min-h-11"
+            title={engine.name}
+          >
+            {engine.shortName}
+          </button>
+        </EngineSheet>
       </th>
       <td className="text-muted-foreground hidden py-2 pr-4 align-middle text-sm md:table-cell">
         {engine.label || null}
@@ -618,6 +623,8 @@ function ProviderRow({
               {typeof cap === "number" ? ` of ${cap.toFixed(2)}` : ""} this month
             </span>
           </span>
+        ) : !/not measured|unknown/i.test(provider.spendText) ? (
+          <span className="figures text-sm">{provider.spendText}</span>
         ) : (
           <span className="text-muted-foreground text-sm">Spend not recorded</span>
         )}
@@ -830,8 +837,9 @@ export function StatusClient() {
   const unchecked = providers.state === "ready"
     ? providers.providers.filter(
         (provider) =>
-          provider.enabled === true &&
-          (provider.reachable === null || provider.keyState === "unknown"),
+          provider.enabled === null ||
+          (provider.enabled === true &&
+            (provider.reachable === null || provider.keyState === "unknown")),
       )
     : [];
   let verdict: { tone: Tone; text: string };
@@ -864,7 +872,7 @@ export function StatusClient() {
   } else if (health.state === "warn" || health.state === "bad") {
     verdict = { tone: "warn", text: "Something needs attention." };
     note = health.detail || null;
-  } else if (incomplete || !allEnginesHealthy) {
+  } else if (health.state !== "ok" || incomplete || !allEnginesHealthy) {
     verdict = { tone: "unknown", text: "Some engines are unchecked." };
   } else if (unchecked.length) {
     verdict = { tone: "ok", text: "Engines are working." };

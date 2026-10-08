@@ -1157,7 +1157,7 @@ function CreationViewer({
                     ? ""
                     : `${(asset.generation_ms / 1000).toFixed(1)} s`}
                 </Fact>
-                <Fact label="Cost">{asset.request_id ? costText(receipt) : "Cost not recorded"}</Fact>
+                <Fact label="Charge">{asset.request_id ? costText(receipt) : "Cost not recorded"}</Fact>
               </dl>
               {prompt && prompt.replace(/[.!?]$/, "") !== title ? (
                 <section>

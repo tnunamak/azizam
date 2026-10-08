@@ -49,16 +49,13 @@ export function engineHealthPresentation(
 }
 
 /** The engine's own name for actions ("Inspect Video studio"), without the
- * capability suffix that status rows append ("Video studio (video)"). */
+ * capability suffix that status rows append ("Video studio (video)"). Uses the
+ * same precedence as engineDisplayName: a registry name is internal and can
+ * carry deployment notes, so the server's engine label wins over it. */
 export function engineShortName(
   service?: Pick<Service, "display_name" | "name">,
   health?: Pick<CurrentHealthService, "engine_label" | "name">,
 ): string {
-  const name =
-    service?.display_name ||
-    service?.name ||
-    health?.engine_label ||
-    health?.name ||
-    "engine";
+  const name = engineDisplayName(service, health);
   return name.replace(/\s*\([^)]*\)\s*$/, "") || name;
 }

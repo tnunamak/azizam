@@ -6,6 +6,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
@@ -224,17 +225,19 @@ describe("LibraryPage batch J provenance", () => {
   });
 
   test("prepares downloads through the media download endpoint", async () => {
-    vi.mocked(fetch)
-      .mockResolvedValueOnce(
-        Response.json({
-          assets: [assetWithReceipt],
-          models: ["image"],
-          next_cursor: null,
-        }),
-      )
-      .mockResolvedValueOnce(
-        Response.json({ download_url: "https://signed.example/media.png" }),
-      );
+    // The viewer also loads the creation's receipt, so answer by URL rather
+    // than by call order.
+    vi.mocked(fetch).mockImplementation(async (input) =>
+      String(input).includes("/download?")
+        ? Response.json({ download_url: "https://signed.example/media.png" })
+        : String(input).startsWith("/me/api/receipts/")
+          ? Response.json({ request_id: "req_image_123" })
+          : Response.json({
+              assets: [assetWithReceipt],
+              models: ["image"],
+              next_cursor: null,
+            }),
+    );
     const click = vi
       .spyOn(HTMLAnchorElement.prototype, "click")
       .mockImplementation(() => undefined);
@@ -253,7 +256,7 @@ describe("LibraryPage batch J provenance", () => {
         { credentials: "same-origin" },
       ),
     );
-    expect(click).toHaveBeenCalled();
+    await waitFor(() => expect(click).toHaveBeenCalled());
     click.mockRestore();
   });
 
@@ -391,11 +394,17 @@ describe("LibraryPage batch J provenance", () => {
       );
     renderLibrary();
 
-    expect(await screen.findByText("No media yet")).toBeVisible();
+    expect(await screen.findByText("No creations yet")).toBeVisible();
+    expect(screen.queryByText("No matching creations")).toBeNull();
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Images" })[0]);
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "Kind" })).getByRole("button", {
+        name: "Images",
+      }),
+    );
 
-    expect(await screen.findByText("No matching media")).toBeVisible();
+    expect(await screen.findByText("No matching creations")).toBeVisible();
+    expect(screen.queryByText("No creations yet")).toBeNull();
     expect(
       screen.getAllByRole("button", { name: "Clear filters" }).length,
     ).toBeGreaterThan(0);

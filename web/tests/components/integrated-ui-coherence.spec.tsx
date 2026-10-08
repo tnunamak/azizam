@@ -278,7 +278,9 @@ describe("integrated UI coherence", () => {
     expect(
       await screen.findByRole("heading", { name: "Recent" }),
     ).toBeVisible();
-    expect(await screen.findByText("A quiet gateway")).toBeVisible();
+    expect(
+      await screen.findByRole("img", { name: "A quiet gateway" }),
+    ).toBeVisible();
     expect(
       screen.getByRole("link", { name: /A quiet gateway/ }),
     ).toHaveAttribute("href", "/library?asset=img_recent");

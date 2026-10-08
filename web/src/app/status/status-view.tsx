@@ -228,7 +228,7 @@ export function MemberStatus() {
           message={
             error instanceof ApiError && error.status >= 400
               ? `The gateway answered with an error (HTTP ${error.status}). The owner can see details. Try again.`
-              : "The gateway could not be reached. Check your connection and try again."
+              : "We couldn’t tell where this stopped. Try again."
           }
           onRetry={() => void refetch()}
           retrying={isFetching}

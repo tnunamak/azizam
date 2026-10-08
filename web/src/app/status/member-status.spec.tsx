@@ -105,9 +105,15 @@ describe("member Status diagnosis", () => {
         state: "unavailable",
         reason_code: "unavailable",
         affected_capability_ids: ["image"],
-        counts: { total: 1, available: 0, affected: 1 },
+        counts: { total: 3, available: 2, affected: 1 },
       },
       capabilities: [
+        {
+          ...snapshot.capabilities[0],
+          status: "unavailable",
+          reason_code: "unavailable",
+          measured: true,
+        },
         {
           ...snapshot.capabilities[0],
           capability: "music",
@@ -145,9 +151,10 @@ describe("member Status diagnosis", () => {
     expect(
       screen.getByRole("img", { name: "Sound effects" }).querySelector("svg"),
     ).toHaveClass("lucide-waves");
-    expect(
-      screen.getByText("Images are unavailable."),
-    ).toBeVisible();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Ready, except images.",
+    );
+    expect(screen.queryByText("Everything is ready.")).toBeNull();
     expect(screen.getByText("Unavailable", { exact: true })).toBeVisible();
   });
   it("teaches an account with no capabilities or receipts how to get access", async () => {

@@ -82,6 +82,9 @@ describe("provider status contract", () => {
         keySuffix: null,
         spendText: "$1.25 of $10.00",
         tone: "ok",
+        monthlySpend: null,
+        monthlyCap: null,
+        checkedAt: null,
       },
     ]);
     expect(JSON.stringify(views)).not.toContain("sk-secret-value");
@@ -112,6 +115,9 @@ describe("provider status contract", () => {
         keySuffix: "2c66",
         spendText: "$4.25 of $10.00 this month",
         tone: "neutral",
+        monthlySpend: 4.25,
+        monthlyCap: 10,
+        checkedAt: null,
       },
     ]);
   });
@@ -147,6 +153,7 @@ describe("provider status contract", () => {
     expect(provider.spendText).toBe("Not measured yet");
     expect(provider.spendText).not.toContain("99");
     expect(provider.spendText).not.toContain("88");
+    expect(provider.monthlySpend).toBeNull();
   });
 
   it("uses a generic display name when the provider name is missing or only its ID", () => {

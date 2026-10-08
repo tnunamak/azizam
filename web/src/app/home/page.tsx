@@ -909,7 +909,7 @@ function CreationMedia({
   if (creation.kind === "audio" && creation.download_url) {
     return (
       <div className="bg-capability-voice/12 flex size-full flex-col justify-between p-3">
-        <p className="line-clamp-3 text-sm font-medium">{title}</p>
+        <p className="line-clamp-3 text-sm font-medium break-words">{title}</p>
         <audio
           ref={audioRef}
           preload="none"

@@ -175,9 +175,9 @@ describe("Home recent media recovery", () => {
     await userEvent.click(
       await screen.findByRole("button", { name: "Play spoken result" }),
     );
-    expect(await screen.findByRole("status")).toHaveTextContent(
-      "Playback didn't start. Try again.",
-    );
+    expect(
+      await screen.findByText("Playback didn't start. Try again."),
+    ).toHaveAttribute("role", "status");
     expect(
       screen.getByRole("button", { name: "Play spoken result" }),
     ).toBeVisible();
@@ -265,6 +265,7 @@ describe("Home recent media recovery", () => {
   });
   it("HL-09 wraps long prompts and shows partial Recent status", async () => {
     const prompt = "x".repeat(500);
+    const audioPrompt = "y".repeat(500);
     vi.stubGlobal(
       "fetch",
       vi
@@ -279,6 +280,12 @@ describe("Home recent media recovery", () => {
                 prompt,
                 download_url: "/image.png",
               },
+              {
+                asset_id: "audio",
+                kind: "audio",
+                prompt: audioPrompt,
+                download_url: "/audio.wav",
+              },
             ],
             has_more: true,
             next_cursor: "older",
@@ -291,7 +298,15 @@ describe("Home recent media recovery", () => {
 
     renderHome();
 
-    expect(await screen.findByText(prompt)).toHaveClass("break-words");
+    // Image tiles carry the prompt only in their accessible name; audio tiles
+    // show it as text, which must wrap.
+    expect(
+      await screen.findByRole("link", {
+        name: `Open Image in Library: ${prompt}`,
+      }),
+    ).toBeVisible();
+    expect(screen.queryByText(prompt)).toBeNull();
+    expect(screen.getByText(audioPrompt)).toHaveClass("break-words");
     expect(
       await screen.findByText("Recent results may be incomplete."),
     ).toBeVisible();
