@@ -67,7 +67,7 @@ function outcome(status?: string) {
         ok: "Completed",
         failed: "Failed",
         error: "Failed",
-        backend_failed: "Engine or provider failed",
+        backend_failed: "Failed",
         rejected: "Rejected",
         cancelled: "Cancelled",
         disconnected: "Disconnected",
@@ -114,9 +114,7 @@ function outcomeSummary(receipt: Receipt) {
   const label = outcome(receipt.status);
   if (label === "Completed") return "The gateway completed this request.";
   if (label === "Rejected") return "The gateway rejected this request.";
-  if (label === "Engine or provider failed")
-    return "The selected model or provider failed before returning a result.";
-  if (label === "Failed") return "The gateway could not complete this request.";
+  if (label === "Failed") return "The request failed.";
   if (label === "Timed out")
     return "The request timed out before a result was recorded.";
   if (label === "In progress")
@@ -132,12 +130,18 @@ function outcomeSummary(receipt: Receipt) {
 function outcomeCause(receipt: Receipt) {
   const statusLabel = outcome(receipt.status);
   if (
-    !["Failed", "Rejected", "Engine or provider failed", "Timed out"].includes(
+    !["Failed", "Rejected", "Timed out"].includes(
       statusLabel,
     )
   )
     return null;
   const metadata = object(receipt.metadata);
+  if (statusLabel === "Failed") {
+    const stage = receiptString(receipt.stage ?? metadata.stage);
+    const code = receiptString(receipt.error_code ?? metadata.error_code);
+    return [stage ? `Stage: ${stage}` : null, code ? `Error code: ${code}` : null]
+      .filter(Boolean).join(" · ") || null;
+  }
   const status = number(metadata.status_code ?? receipt.status_code);
   if (status && status >= 400) return errorCopy({ status }).message;
   const warning = receipt.warnings?.find((item) => item.trim());

@@ -928,7 +928,7 @@ function receiptOutcome(status: string | null) {
         ok: "Completed",
         failed: "Failed",
         error: "Failed",
-        backend_failed: "Engine or provider failed",
+        backend_failed: "Failed",
         rejected: "Rejected",
         cancelled: "Cancelled",
         disconnected: "Disconnected",
@@ -947,9 +947,7 @@ function receiptOutcomeSummary(receipt: UsageReceipt) {
   const label = receiptOutcome(receipt.status);
   if (label === "Completed") return "The gateway completed this request.";
   if (label === "Rejected") return "The gateway rejected this request.";
-  if (label === "Engine or provider failed")
-    return "The selected model or provider failed before returning a result.";
-  if (label === "Failed") return "The gateway could not complete this request.";
+  if (label === "Failed") return "The request failed.";
   if (label === "Timed out")
     return "The request timed out before a result was recorded.";
   if (label === "Accepted")
@@ -966,13 +964,19 @@ function receiptOutcomeSummary(receipt: UsageReceipt) {
 function receiptOutcomeCause(receipt: UsageReceipt) {
   const label = receiptOutcome(receipt.status);
   if (
-    !["Failed", "Rejected", "Engine or provider failed", "Timed out"].includes(
+    !["Failed", "Rejected", "Timed out"].includes(
       label,
     )
   )
     return null;
   const raw = object(receipt.raw);
   const metadata = object(raw.metadata);
+  if (label === "Failed") {
+    const stage = nullableString(raw.stage ?? metadata.stage);
+    const code = nullableString(raw.error_code ?? metadata.error_code);
+    return [stage ? `Stage: ${stage}` : null, code ? `Error code: ${code}` : null]
+      .filter(Boolean).join(" · ") || null;
+  }
   const status = nullableNumber(metadata.status_code ?? raw.status_code);
   if (status != null && status >= 400) return errorCopy({ status }).message;
   return null;
@@ -981,7 +985,7 @@ function receiptOutcomeCause(receipt: UsageReceipt) {
 function receiptNextAction(receipt: UsageReceipt) {
   const label = receiptOutcome(receipt.status);
   if (
-    ["Failed", "Rejected", "Engine or provider failed", "Timed out"].includes(
+    ["Failed", "Rejected", "Timed out"].includes(
       label,
     )
   )

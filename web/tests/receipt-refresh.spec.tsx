@@ -364,3 +364,79 @@ test.each([
   expect(within(row).getAllByRole("cell").map((cell) => cell.textContent)).toEqual(cells);
   client.clear();
 });
+
+for (const page of ["Activity", "Usage"] as const) {
+  for (const status of ["backend_failed", "failed", "error"]) {
+    test.each([
+      { name: "no recorded layer", fields: { status_code: 502 }, detail: null },
+      { name: "recorded stage", fields: { stage: "Route_Select.v2" }, detail: "Stage: Route_Select.v2" },
+      { name: "recorded error code", fields: { error_code: "UPSTREAM_reset-v2" }, detail: "Error code: UPSTREAM_reset-v2" },
+      {
+        name: "recorded metadata",
+        fields: { metadata: { stage: "Provider_Call", error_code: "E_TIMEOUT.v2", status_code: 502 } },
+        detail: "Stage: Provider_Call · Error code: E_TIMEOUT.v2",
+      },
+    ])(`${page} reports ${status} without inferred attribution: $name`, async ({ fields, detail }) => {
+      const receipt = {
+        request_id: "req-failure",
+        intent: "chat",
+        capability: "chat",
+        status,
+        ...fields,
+      };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => Response.json(
+          page === "Activity"
+            ? {
+                records: [{ receipt, person_label: "Owner", app_label: "Try" }],
+                next_cursor: null,
+                people: [],
+              }
+            : { requests: 1, receipts: [receipt] },
+        )),
+      );
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      render(
+        <ViewerContext.Provider
+          value={{
+            authenticated: true,
+            name: "Owner",
+            email: null,
+            role: "owner",
+            admin: true,
+          }}
+        >
+          <QueryClientProvider client={client}>
+            {page === "Activity" ? <Requests /> : <UsagePage />}
+          </QueryClientProvider>
+        </ViewerContext.Provider>,
+      );
+      if (page === "Usage")
+        fireEvent.click(await screen.findByRole("button", { name: "View recent requests" }));
+      const row = await screen.findByRole("button", {
+        name: page === "Activity" ? /Request details:/ : /Receipt details for/,
+      });
+      expect(within(row).getByText("Failed", { exact: true })).toBeTruthy();
+      expect(within(row).queryByText(/Engine or provider failed/)).toBeNull();
+      fireEvent.click(row);
+      const dialog = await screen.findByRole("dialog");
+      const summary = within(dialog).getByText("The request failed.", { exact: true });
+      const paragraphs = Array.from(
+        summary.parentElement!.querySelectorAll("p"),
+        (node) => node.textContent,
+      );
+      expect(paragraphs).toEqual([
+        "Failed",
+        "The request failed.",
+        ...(detail === null ? [] : [detail]),
+        "Open Technical details for the recorded status and warnings.",
+      ]);
+      expect(within(dialog).queryByText("The selected model or provider failed before returning a result.")).toBeNull();
+      expect(within(dialog).queryByText("The gateway could not complete this request.")).toBeNull();
+      client.clear();
+    });
+  }
+}

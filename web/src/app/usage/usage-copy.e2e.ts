@@ -199,8 +199,8 @@ for (const [status, expected, summary, extra] of [
   ],
   [
     "backend_failed",
-    "Engine or provider failed",
-    "The selected model or provider failed before returning a result.",
+    "Failed",
+    "The request failed.",
     { metadata: { status_code: 502 } },
   ],
   [
