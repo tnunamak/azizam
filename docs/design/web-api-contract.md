@@ -625,6 +625,8 @@ Notes:
   not prepend or infer a static default selection.
 - **"Apps using it" count is client-side**: count `GET /admin/api/apps` rows
   where `default_profile_id === profile.id`.
+- Each row carries `plan_spend`: spend against that plan's daily and monthly
+  caps, as the cap barrier counts it. See "Plan spend" under Member surfaces.
 
 ### GET /admin/api/profiles/{profile_id}
 
