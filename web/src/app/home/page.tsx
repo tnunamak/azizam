@@ -1296,6 +1296,15 @@ export default function HomePage() {
                   Open Status
                   <ChevronRight aria-hidden="true" className="size-4" />
                 </Link>
+              ) : verdict.tone === "off" && isOwner ? (
+                // Nothing set up: the owner's next step is an engine.
+                <Link
+                  href="/engines/"
+                  className="text-link inline-flex min-h-11 items-center gap-0.5 font-medium underline-offset-4 hover:underline sm:min-h-0"
+                >
+                  Add an engine
+                  <ChevronRight aria-hidden="true" className="size-4" />
+                </Link>
               ) : null}
             </StatusLine>
           </PageHeader>
