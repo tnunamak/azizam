@@ -180,3 +180,31 @@ it.each([
     clock.mockRestore();
   }
 });
+
+it.each([false, true, undefined])("honors workflow availability %s in the picker and Run action", async (available) => {
+  const reason = "Unavailable. Ask the owner to enable this capability.";
+  fetchMock.mockImplementation(async (url: string) => json(url.includes("workflows") ? {
+    workflows: [{
+      ...workflows.workflows[0],
+      ...(available === undefined ? {} : { availability: { available, status: available ? "ready" : "unavailable", reason_code: available ? "ready" : "unavailable_disabled" } }),
+    }],
+  } : models));
+  const user = userEvent.setup();
+  render(<TryPage />);
+  await user.click(screen.getByRole("tab", { name: "Workflow" }));
+  await waitFor(() => expect(screen.getByRole("combobox")).toHaveTextContent("Working workflow"));
+  const run = screen.getByRole("button", { name: "Run" });
+  if (available === false) {
+    expect(screen.getByRole("combobox")).toHaveTextContent("Working workflow · Unavailable");
+    expect(run).toBeDisabled();
+    expect(run.nextElementSibling).toHaveTextContent(reason);
+    expect(screen.getByText(reason)).toBeVisible();
+    await user.click(run);
+    expect(account.mintKey).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+  } else {
+    expect(screen.getByRole("combobox")).not.toHaveTextContent("Unavailable");
+    expect(run).toBeEnabled();
+    expect(screen.queryByText(reason)).toBeNull();
+  }
+});

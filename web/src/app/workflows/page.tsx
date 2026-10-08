@@ -331,11 +331,25 @@ function WorkflowCard({
         />
       )}
       <div className="mt-auto flex flex-wrap gap-2">
-        <Button asChild size="sm">
-          <Link href={`/try/?workflow=${encodeURIComponent(workflow.id)}`}>
-            Run in Try
-          </Link>
-        </Button>
+        {workflow.availability.available === false ? (
+          <>
+            <Button size="sm" disabled>
+              Run in Try
+            </Button>
+            <p className="text-muted-foreground text-sm">
+              {availabilityReason(
+                workflow.availability.status,
+                workflow.availability.reason_code,
+              ) ?? "Unavailable."}
+            </p>
+          </>
+        ) : (
+          <Button asChild size="sm">
+            <Link href={`/try/?workflow=${encodeURIComponent(workflow.id)}`}>
+              Run in Try
+            </Link>
+          </Button>
+        )}
         <Button variant="outline" size="sm" onClick={() => onDetail(workflow)}>
           Details
         </Button>
@@ -614,13 +628,25 @@ function DetailSheet({
               </div>
               <RecentJobs key={workflow.id} workflow={workflow} />
               <div className="flex flex-wrap gap-2">
-                <Button asChild>
-                  <Link
-                    href={`/try/?workflow=${encodeURIComponent(workflow.id)}`}
-                  >
-                    Run in Try
-                  </Link>
-                </Button>
+                {workflow.availability.available === false ? (
+                  <>
+                    <Button disabled>Run in Try</Button>
+                    <p className="text-muted-foreground text-sm">
+                      {availabilityReason(
+                workflow.availability.status,
+                workflow.availability.reason_code,
+              ) ?? "Unavailable."}
+                    </p>
+                  </>
+                ) : (
+                  <Button asChild>
+                    <Link
+                      href={`/try/?workflow=${encodeURIComponent(workflow.id)}`}
+                    >
+                      Run in Try
+                    </Link>
+                  </Button>
+                )}
                 <Button asChild variant="outline">
                   <a href={"/me/api/workflows"}>
                     Discovery list

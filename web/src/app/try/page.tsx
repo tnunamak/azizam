@@ -38,6 +38,7 @@ import { costFrom } from "./result-cost";
 import { ReceiptLink } from "./receipt-link";
 import { accountApi, type AccountApp } from "@/lib/account-api";
 import { ApiError } from "@/lib/api";
+import { availabilityReason } from "@/lib/status-copy";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -97,6 +98,7 @@ type WorkflowOption = {
   short_id?: string;
   title: string;
   description?: string;
+  availability?: { available?: boolean; status?: string; reason_code?: string };
   inputs: WorkflowInput[];
   inputMapping?: WorkflowInputMapping;
   jobRoutes?: { poll?: { path?: string }; content?: { path?: string } };
@@ -588,6 +590,7 @@ function groupWorkflows(payload: unknown): CatalogOption[] {
         stringValue(record.display_name) ??
         String(record.id ?? ""),
       description: stringValue(record.description) ?? undefined,
+      availability: record.availability as WorkflowOption["availability"],
       outputs: Array.isArray(record.outputs)
         ? (record.outputs as WorkflowOption["outputs"])
         : [],
@@ -605,7 +608,7 @@ function groupWorkflows(payload: unknown): CatalogOption[] {
     if (!workflow.id) continue;
     options.push({
       id: workflow.id,
-      label: workflow.title || workflow.id,
+      label: `${workflow.title || workflow.id}${workflow.availability?.available === false ? " · Unavailable" : ""}`,
       capability: "workflow" as const,
       price: "",
       locality: "Workflow manifest",
@@ -1261,6 +1264,8 @@ export default function TryPage() {
 
   async function run(tab: TryTab, event: FormEvent) {
     event.preventDefault();
+    if (tab === "workflow" && selectedWorkflow?.availability?.available === false)
+      return;
     let runKey = key;
     let preparedCatalog: CatalogGroups | null = null;
     if (!runKey?.secret) {
@@ -1836,7 +1841,9 @@ export default function TryPage() {
                       running !== null ||
                       keyBusy ||
                       checkingJob ||
-                      (tab.value === "workflow" && !selectedWorkflow)
+                      (tab.value === "workflow" &&
+                        (!selectedWorkflow ||
+                          selectedWorkflow.availability?.available === false))
                     }
                   >
                     {running === tab.value ? (
@@ -1846,6 +1853,15 @@ export default function TryPage() {
                     )}
                     Run
                   </Button>
+                  {tab.value === "workflow" &&
+                    selectedWorkflow?.availability?.available === false && (
+                      <p className="text-muted-foreground text-sm">
+                        {availabilityReason(
+                          selectedWorkflow.availability.status ?? "unavailable",
+                          selectedWorkflow.availability.reason_code,
+                        ) ?? "Unavailable."}
+                      </p>
+                    )}
                 </form>
                 <section
                   className="bg-card min-w-0 rounded-xl border p-5"
