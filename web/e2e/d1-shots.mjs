@@ -14,7 +14,7 @@ const contexts = new Map();
 async function contextFor(role, width, theme) {
   const key = `${role}-${width}-${theme}`;
   if (contexts.has(key)) return contexts.get(key);
-  const context = await browser.newContext({ viewport: { width: Number(width), height: Number(width) === 390 ? 844 : 1000 }, colorScheme: theme, reducedMotion: "reduce", locale: "en-US", timezoneId: "America/Chicago" });
+  const context = await browser.newContext({ viewport: { width: Number(width), height: Number(width) === 390 ? 844 : Number(width) === 768 ? 1024 : 1000 }, colorScheme: theme, reducedMotion: "reduce", locale: "en-US", timezoneId: "America/Chicago" });
   await context.clock.setFixedTime(new Date(manifest.now * 1000));
   await context.addInitScript(value => localStorage.setItem("theme", value), theme);
   const email = role === "owner" ? manifest.owner_email : role === "restricted" ? manifest.restricted_email : manifest.member_email;

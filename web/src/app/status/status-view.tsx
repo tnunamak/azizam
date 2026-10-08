@@ -322,7 +322,7 @@ export function MemberStatus() {
               {data.capabilities.length ? null : (
                 <EmptyState
                   title="No models are available to your account yet"
-                  description="Ask the gateway owner to connect a model and grant your account access."
+                  description="Ask the gateway owner to connect a model and give you access."
                 />
               )}
             </section>
