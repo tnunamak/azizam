@@ -1,6 +1,7 @@
 "use client";
 
 import { AlertCircle } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import {
@@ -260,7 +261,8 @@ function controlFor(
         disabled={disabled}
         onValueChange={(next) => {
           // Radix can emit an empty value when its hidden form input resets.
-          if (next) onChange(enumValue(input, next));
+          if (next === UNSET) onChange(undefined);
+          else if (next) onChange(enumValue(input, next));
         }}
       >
         <SelectTrigger
@@ -272,6 +274,7 @@ function controlFor(
           <SelectValue placeholder="Choose a value" />
         </SelectTrigger>
         <SelectContent>
+          {!input.required && <SelectItem value={UNSET}>Not set</SelectItem>}
           {input.enum.map((option) => (
             <SelectItem key={String(option)} value={String(option)}>
               {String(option)}
@@ -293,8 +296,20 @@ function controlFor(
           onCheckedChange={(checked) => onChange(checked === true)}
         />
         <span className="text-muted-foreground text-xs">
-          {value === true ? "Enabled" : "Disabled"}
+          {value === true ? "Enabled" : value === false ? "Disabled" : "Not set"}
         </span>
+        {!input.required && typeof value === "boolean" && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={disabled}
+            aria-label={`Clear ${label}`}
+            onClick={() => onChange(undefined)}
+          >
+            Clear
+          </Button>
+        )}
       </span>
     );
   }
@@ -707,6 +722,9 @@ function isUnsupportedValue(value: unknown) {
 function enumValue(input: WorkflowInput, value: string) {
   return input.enum?.find((option) => String(option) === value) ?? value;
 }
+
+// Select item for "omit this optional field"; never a real enum value.
+const UNSET = "__unset__";
 
 function selectValue(value: unknown) {
   return value === undefined || value === null ? "" : String(value);

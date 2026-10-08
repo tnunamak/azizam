@@ -533,3 +533,56 @@ it("allows required unsupported compound fields through Advanced JSON", () => {
     extra: true,
   });
 });
+
+describe("TM-12 optional inputs can return to unset", () => {
+  const optional: WorkflowInput[] = [
+    { name: "transparent_background", type: "boolean" },
+    { name: "size", type: "string", enum: ["512x512", "1024x1024"] },
+    { name: "mode", type: "string", enum: ["fast", "best"], required: true },
+  ];
+
+  function Harness({ onChange }: { onChange: (json: string) => void }) {
+    const [json, setJson] = useState(
+      JSON.stringify({ transparent_background: false, size: "1024x1024", mode: "fast" }),
+    );
+    return (
+      <WorkflowInputs
+        inputs={optional}
+        json={json}
+        onChange={(next) => {
+          setJson(next);
+          onChange(next);
+        }}
+      />
+    );
+  }
+
+  it("omits a cleared optional boolean and says it is not set", async () => {
+    const onChange = vi.fn();
+    render(<Harness onChange={onChange} />);
+    expect(screen.getByText("Disabled")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Clear transparent_background" }));
+    const last = JSON.parse(onChange.mock.calls.at(-1)?.[0] ?? "{}");
+    expect(last).not.toHaveProperty("transparent_background");
+    expect(screen.getByText("Not set")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Clear transparent_background" })).toBeNull();
+  });
+
+  it("omits an optional enum set to Not set; a required enum has no Not set", async () => {
+    Element.prototype.scrollIntoView ??= () => undefined;
+    const onChange = vi.fn();
+    render(<Harness onChange={onChange} />);
+    const size = screen.getByRole("combobox", { name: "size" });
+    size.focus();
+    fireEvent.keyDown(size, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("option", { name: "Not set" }));
+    const last = JSON.parse(onChange.mock.calls.at(-1)?.[0] ?? "{}");
+    expect(last).not.toHaveProperty("size");
+    expect(last.mode).toBe("fast");
+    const mode = screen.getByRole("combobox", { name: /mode Required/ });
+    mode.focus();
+    fireEvent.keyDown(mode, { key: "Enter" });
+    expect(await screen.findByRole("option", { name: "best" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Not set" })).toBeNull();
+  });
+});
