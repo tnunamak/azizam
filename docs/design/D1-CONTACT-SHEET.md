@@ -81,10 +81,10 @@ Each pair was read at the same size: Azizam viewport shots (1440 × 900, 390 × 
 
 ## Gate results for this set
 
-Run on the final D1.1 build (default household, port 18447):
+Run on the final D1.2 build (default household, port 18480):
 
 - axe WCAG 2 AA: 0 violations over 32 page checks (owner and member; Home, Status, Library, viewer; light and dark; 1440 and 390). Horizontal overflow, clipped text, targets under 44 px at 390, tab stops without visible focus and console errors: 0.
-- Impeccable detector: only Sonner's toast height transition (the recorded exception) on all 16 snapshots at 1280 and six at 390.
+- Impeccable detector: only Sonner's toast height transition (the recorded exception) on all 16 snapshots at 1280 and six at 390. Its first run found task names truncating at 1280 px and hidden hour-list layout under the failed-request marks; both are fixed.
 - Token drift: 0.
-- lint.py on a copy of the production data (every engine blocked): Home, Library and member Status pass. Owner Status reads 69 words against a budget of 60, because a twelve-engine outage keeps its evidence (affects, engines, failed requests). Workflows, Activity and Usage are over budget and out of scope.
-- Unit tests: every vitest config passes. Playwright: the 17 e2e tests D1.1 broke pass again; 37 tests in the same five files were already failing at e196d79 (D1) and still fail.
+- lint.py on a copy of the production data (every engine blocked): Home, Library and member Status pass. Owner Status reads 83 words against a budget of 60 (D1.1: 69): the capability chips and the health-bar legend add words to a twelve-engine outage. Workflows, Activity and Usage are over budget and out of scope.
+- Unit tests: every vitest config passes.
