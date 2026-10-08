@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Status · Azizam (comp C: Gallery wall)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600&family=IBM+Plex+Mono:wght@400&display=swap" rel="stylesheet">
+<style>
+:root{
+  color-scheme: dark light;
+  --bg:#121214; --panel:#1A1A1E; --line:#2A2A2F; --text:#F2F2F3; --muted:#A1A1AA;
+  --ok:#58C98D; --attention:#F0B24A; --failed:#FF7A70; --unknown:#A1A1AA;
+  --ink:#F2F2F3; --on-ink:#121214;
+  --sans:"Hanken Grotesk", system-ui, sans-serif; --mono:"IBM Plex Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: light){
+  :root{
+    --bg:#FFFFFF; --panel:#F4F4F5; --line:#E4E4E7; --text:#111113; --muted:#5B5B66;
+    --ok:#13795B; --attention:#9A5B00; --failed:#C2362F; --unknown:#5B5B66;
+    --ink:#111113; --on-ink:#FFFFFF;
+  }
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--text)}
+body{font:400 15px/22px var(--sans);-webkit-font-smoothing:antialiased}
+a{color:inherit}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+.display{font-size:36px;line-height:40px;font-weight:500;letter-spacing:-0.015em}
+.h1{font-size:24px;line-height:30px;font-weight:500}
+.small{font-size:13px;line-height:18px;color:var(--muted)}
+.muted{color:var(--muted)}
+.mono{font-family:var(--mono);font-size:13px}
+.label-title{font-size:15px;line-height:22px}
+.label-meta{font-size:13px;line-height:18px;color:var(--muted)}
+.clamp2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.btn{display:inline-flex;align-items:center;gap:8px;height:40px;padding:0 16px;border-radius:6px;
+  border:1px solid var(--line);font-weight:500;text-decoration:none;white-space:nowrap}
+.btn-primary{background:var(--ink);color:var(--on-ink);border-color:var(--ink)}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;flex:none}
+.ok{color:var(--ok)} .failed{color:var(--failed)} .attention{color:var(--attention)}
+.dot.ok{background:var(--ok)} .dot.failed{background:var(--failed)}
+svg.i{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.25;stroke-linecap:round;stroke-linejoin:round;flex:none}
+:focus-visible{outline:2px solid var(--text);outline-offset:2px}
+
+.shell{display:grid;grid-template-columns:240px 1fr;min-height:100vh}
+.side{border-right:1px solid var(--line);padding:16px 16px 16px;display:flex;flex-direction:column;gap:16px;
+  position:sticky;top:0;height:100vh}
+.brand{font-weight:600;font-size:17px;padding:8px 8px 0}
+.search{display:flex;align-items:center;gap:8px;height:36px;padding:0 8px;border:1px solid var(--line);border-radius:6px;color:var(--muted)}
+.search kbd{margin-left:auto;font:inherit;font-size:13px}
+.navgroup{display:flex;flex-direction:column;gap:2px}
+.navgroup .small{padding:0 8px 4px}
+.navgroup a{display:block;padding:5px 8px;border-radius:6px;text-decoration:none}
+.navgroup a[aria-current]{background:var(--panel);font-weight:500}
+.me{margin-top:auto;display:flex;align-items:center;gap:8px;padding:8px;border-top:1px solid var(--line);padding-top:16px}
+.avatar{width:28px;height:28px;border-radius:50%;background:var(--panel);border:1px solid var(--line);
+  display:grid;place-items:center;font-size:13px;font-weight:500}
+.reach{display:flex;align-items:center;gap:6px}
+main{min-width:0}
+
+.wrap{max-width:1120px;padding:40px 48px 64px}
+.verdict{margin-top:16px;display:flex;align-items:baseline;gap:16px}
+.verdict .dot{width:12px;height:12px;transform:translateY(-4px)}
+.lede{margin-top:8px;font-size:17px;line-height:24px;color:var(--muted)}
+.problem{margin-top:32px;background:var(--panel);border-radius:6px;padding:24px;display:grid;grid-template-columns:1fr auto;gap:24px;align-items:start}
+.problem dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 24px;margin-top:16px}
+.problem dt{color:var(--muted)}
+.actions{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+.actions a.link{font-size:15px}
+.cols{margin-top:48px;display:grid;grid-template-columns:1.25fr 1fr;gap:64px}
+h2.sec{font-size:17px;line-height:24px;font-weight:500;padding-bottom:8px;border-bottom:1px solid var(--line)}
+.layer{padding:24px 0 8px}
+.layer + .layer{border-top:1px solid var(--line)}
+.layer-head{display:flex;justify-content:space-between;align-items:baseline}
+.rows{list-style:none;margin-top:8px}
+.rows li{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:12px 0}
+.rows li + li{border-top:1px solid var(--line)}
+.state{display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
+.meter{height:6px;background:var(--line);border-radius:3px;margin-top:12px;overflow:hidden}
+.meter span{display:block;height:100%;background:var(--text)}
+.req li{padding:10px 0}
+.req .right{text-align:right;white-space:nowrap}
+</style></head>
+<body><div class="shell">
+<nav class="side" aria-label="Main">
+  <div class="brand">Azizam</div>
+  <div class="search"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span>Search</span><kbd>⌘K</kbd></div>
+  <div class="navgroup"><div class="small">You</div><a href="#">Home</a><a href="#">Apps &amp; keys</a><a href="#">Models</a><a href="#">Workflows</a><a href="#">Try</a><a href="#">Library</a><a href="#">Usage</a></div>
+  <div class="navgroup"><div class="small">Gateway</div><a href="#" aria-current=page>Status</a><a href="#">Engines</a><a href="#">Providers</a><a href="#">People</a><a href="#">Activity</a><a href="#">Settings</a></div>
+  <div class="me"><span class="avatar">S</span><div><div>Sam</div>
+    </div></div>
+</nav>
+<main><div class="wrap">
+<h1 class="h1">Status</h1>
+<p class="verdict display"><span class="dot failed" aria-hidden="true"></span>Video is unavailable.</p>
+<p class="lede">1 problem needs you. 1 engine affected.</p>
+<section class="problem" aria-label="Problem">
+  <div>
+    <div class="label-meta">Engine</div>
+    <div class="label-title" style="font-weight:500">Video studio (video)</div>
+    <dl>
+      <dt>What to know</dt><dd>Video studio is recovering after a queue timeout.</dd>
+      <dt>Affects</dt><dd>Video</dd>
+      <dt>Last request</dt><dd>Video generate from Open WebUI failed 21h ago · <span class="mono">req_household_00_27</span></dd>
+    </dl>
+  </div>
+  <div class="actions"><a class="btn btn-primary" href="#">Open engines</a><a class="link" href="#">View receipt</a></div>
+</section>
+<div class="cols">
+  <section aria-labelledby="layers">
+    <h2 class="sec" id="layers">Layers</h2>
+    <div class="layer"><div class="layer-head"><div><div class="label-title" style="font-weight:500">Gateway</div><div class="label-meta">This Azizam instance</div></div>
+      <span class="state ok"><span class="dot ok"></span>Reachable</span></div></div>
+    <div class="layer"><div class="layer-head"><div class="label-title" style="font-weight:500">Engines</div><span class="label-meta">4 of 5 ready</span></div>
+      <ul class="rows"><li><div><div class="label-title">Execution gateway (chat)</div><div class="label-meta">Serves Chat</div></div><span class="state ok"><span class="dot ok"></span>Ready</span></li><li><div><div class="label-title">Home Assistant voice (music &amp; sound effects)</div><div class="label-meta">Serves Music, Sound effects</div></div><span class="state ok"><span class="dot ok"></span>Ready</span></li><li><div><div class="label-title">Image studio (images)</div><div class="label-meta">Serves Images</div></div><span class="state ok"><span class="dot ok"></span>Ready</span></li><li><div><div class="label-title">Study and coding (chat)</div><div class="label-meta">Serves Chat</div></div><span class="state ok"><span class="dot ok"></span>Ready</span></li><li><div><div class="label-title">Video studio (video)</div><div class="label-meta">Serves Video</div></div><span class="state failed"><span class="dot failed"></span>Unavailable</span></li></ul></div>
+    <div class="layer"><div class="layer-head"><div class="label-title" style="font-weight:500">Providers</div><span class="label-meta">1 configured</span></div>
+      <ul class="rows"><li><div><div class="label-title">Remote backup</div><div class="label-meta">Enabled · Key set · Daily cap: $1.00</div></div>
+        <span class="state ok"><span class="dot ok"></span>Configured</span></li></ul>
+      <div style="margin-top:8px">Spend: $0.45 of $8.00 this month</div>
+      <div class="meter" role="img" aria-label="$0.45 of $8.00 spent"><span style="width:5.6%"></span></div>
+    </div>
+  </section>
+  <section aria-labelledby="recent">
+    <h2 class="sec" id="recent">Recent requests</h2>
+    <ul class="rows req"><li><div><div class="label-title">Images request</div><div class="label-meta">Sam&#x27;s personal app · <span class="mono">krea2-turbo</span> · just now</div></div><div class="right"><div class="">Completed</div><div class="label-meta">4.2 s</div></div></li><li><div><div class="label-title">Images request</div><div class="label-meta">Robin&#x27;s personal app · <span class="mono">krea2-turbo</span> · 11h ago</div></div><div class="right"><div class="">Completed</div><div class="label-meta">4.2 s</div></div></li><li><div><div class="label-title">Speech request</div><div class="label-meta">Sam&#x27;s personal app · <span class="mono">voice</span> · 20h ago</div></div><div class="right"><div class="">Completed</div><div class="label-meta">3.3 s</div></div></li><li><div><div class="label-title">Audio transcribe</div><div class="label-meta">Home Assistant voice · <span class="mono">whisper-large</span> · 20h ago</div></div><div class="right"><div class="">Completed</div><div class="label-meta">2.6 s</div></div></li><li><div><div class="label-title">Chat completions</div><div class="label-meta">Alex&#x27;s personal app · <span class="mono">default</span> · 20h ago</div></div><div class="right"><div class="">Completed</div><div class="label-meta">1.9 s</div></div></li><li><div><div class="label-title">Audio transcribe</div><div class="label-meta">Robin&#x27;s personal app · <span class="mono">whisper-large</span> · 20h ago</div></div><div class="right"><div class="">Completed</div><div class="label-meta">3.4 s</div></div></li><li><div><div class="label-title">Chat completions</div><div class="label-meta">Codex · <span class="mono">coder</span> · 20h ago</div></div><div class="right"><div class="">Completed</div><div class="label-meta">2.7 s</div></div></li><li><div><div class="label-title">Chat completions</div><div class="label-meta">Open WebUI · <span class="mono">default</span> · 20h ago</div></div><div class="right"><div class="">Completed</div><div class="label-meta">2.0 s</div></div></li><li><div><div class="label-title">Chat completions</div><div class="label-meta">Robin&#x27;s personal app · <span class="mono">default</span> · 20h ago</div></div><div class="right"><div class="">Completed</div><div class="label-meta">1.3 s</div></div></li><li><div><div class="label-title">Audio transcribe</div><div class="label-meta">Alex&#x27;s personal app · <span class="mono">whisper-large</span> · 21h ago</div></div><div class="right"><div class="">Completed</div><div class="label-meta">3.5 s</div></div></li><li><div><div class="label-title">Images request</div><div class="label-meta">Sam&#x27;s personal app · <span class="mono">qwen-image-edit</span> · 21h ago</div></div><div class="right"><div class="">Completed</div><div class="label-meta">2.8 s</div></div></li><li><div><div class="label-title">Speech request</div><div class="label-meta">Home Assistant voice · <span class="mono">voice</span> · 21h ago</div></div><div class="right"><div class="">Completed</div><div class="label-meta">2.1 s</div></div></li><li><div><div class="label-title">Chat completions</div><div class="label-meta">Alex&#x27;s personal app · <span class="mono">default</span> · 21h ago</div></div><div class="right"><div class="">Completed</div><div class="label-meta">1.4 s</div></div></li><li><div><div class="label-title">Video generate</div><div class="label-meta">Open WebUI · <span class="mono">ltx-2.5</span> · 21h ago</div></div><div class="right"><div class="failed">Failed</div><div class="label-meta">3.5 s</div></div></li></ul>
+    <a href="#" style="display:inline-block;margin-top:16px">All activity</a>
+  </section>
+</div></div></main></div></body></html>

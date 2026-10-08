@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Home · Azizam (comp C: Gallery wall)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600&family=IBM+Plex+Mono:wght@400&display=swap" rel="stylesheet">
+<style>
+:root{
+  color-scheme: dark light;
+  --bg:#121214; --panel:#1A1A1E; --line:#2A2A2F; --text:#F2F2F3; --muted:#A1A1AA;
+  --ok:#58C98D; --attention:#F0B24A; --failed:#FF7A70; --unknown:#A1A1AA;
+  --ink:#F2F2F3; --on-ink:#121214;
+  --sans:"Hanken Grotesk", system-ui, sans-serif; --mono:"IBM Plex Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: light){
+  :root{
+    --bg:#FFFFFF; --panel:#F4F4F5; --line:#E4E4E7; --text:#111113; --muted:#5B5B66;
+    --ok:#13795B; --attention:#9A5B00; --failed:#C2362F; --unknown:#5B5B66;
+    --ink:#111113; --on-ink:#FFFFFF;
+  }
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--text)}
+body{font:400 15px/22px var(--sans);-webkit-font-smoothing:antialiased}
+a{color:inherit}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+.display{font-size:36px;line-height:40px;font-weight:500;letter-spacing:-0.015em}
+.h1{font-size:24px;line-height:30px;font-weight:500}
+.small{font-size:13px;line-height:18px;color:var(--muted)}
+.muted{color:var(--muted)}
+.mono{font-family:var(--mono);font-size:13px}
+.label-title{font-size:15px;line-height:22px}
+.label-meta{font-size:13px;line-height:18px;color:var(--muted)}
+.clamp2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.btn{display:inline-flex;align-items:center;gap:8px;height:40px;padding:0 16px;border-radius:6px;
+  border:1px solid var(--line);font-weight:500;text-decoration:none;white-space:nowrap}
+.btn-primary{background:var(--ink);color:var(--on-ink);border-color:var(--ink)}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;flex:none}
+.ok{color:var(--ok)} .failed{color:var(--failed)} .attention{color:var(--attention)}
+.dot.ok{background:var(--ok)} .dot.failed{background:var(--failed)}
+svg.i{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.25;stroke-linecap:round;stroke-linejoin:round;flex:none}
+:focus-visible{outline:2px solid var(--text);outline-offset:2px}
+
+body{max-width:390px;margin:0 auto}
+header{height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid var(--line)}
+.brand{font-weight:600;font-size:17px}
+.avatar{width:32px;height:32px;border-radius:50%;background:var(--panel);border:1px solid var(--line);display:grid;place-items:center;font-size:13px;font-weight:500}
+.ready{padding:24px 16px 24px}
+.ready p{margin-top:8px}
+.card{margin:0 16px;background:var(--panel);border-radius:6px;padding:16px}
+.card p{margin-top:4px}
+.apps{list-style:none;display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px}
+.apps a{display:flex;align-items:center;justify-content:space-between;height:48px;padding:0 8px 0 16px;border:1px solid var(--line);
+  border-radius:6px;background:var(--bg);text-decoration:none;font-weight:500}
+.apps a svg{color:var(--muted)}
+figure.work{margin-top:32px}
+figure.work img{display:block;width:100%;aspect-ratio:1;object-fit:cover}
+figcaption{padding:16px 16px 0}
+figcaption .label-meta{margin-top:4px}
+.yours{padding:32px 16px 24px}
+.yours-head{display:flex;justify-content:space-between;align-items:baseline}
+.yours-head a{font-size:15px}
+.thumbs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:16px}
+.thumbs img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px;display:block}
+.spacer{height:72px}
+.tabbar{position:fixed;left:0;right:0;bottom:0;height:64px;background:var(--bg);border-top:1px solid var(--line);
+  display:grid;grid-template-columns:repeat(4,1fr);max-width:390px;margin:0 auto}
+.tabbar a{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:13px;line-height:18px;text-decoration:none;color:var(--muted)}
+.tabbar a[aria-current]{color:var(--text);font-weight:500}
+html.capture .tabbar{position:static}
+html.capture .spacer{display:none}
+</style></head>
+<body>
+<header><span class="brand">Azizam</span><span class="avatar" aria-label="Robin">R</span></header>
+<section class="ready" aria-label="Readiness">
+  <h1 class="display">Your AI is ready.</h1>
+  <p class="muted">Video and embeddings are unavailable. Ask Sam if you need them.</p>
+</section>
+<section class="card" aria-labelledby="connect">
+  <h2 class="h1" id="connect">Connect an app</h2>
+  <p class="muted">One address. A key for each app.</p>
+  <ul class="apps"><li><a href="#">Open WebUI<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></a></li><li><a href="#">LibreChat<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></a></li><li><a href="#">SillyTavern<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></a></li><li><a href="#">Cursor<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></a></li><li><a href="#">Codex<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></a></li><li><a href="#">Claude Code<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></a></li><li><a href="#">Other<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg></a></li></ul>
+</section>
+<figure class="work">
+  <img src="assets/garden-plan.webp" alt="An overhead photograph of a backyard raised vegetable bed with tomatoes, lettuce and marigolds, gardening gloves on the cedar edge, late afternoon sunlight, warm documentary style.">
+  <figcaption><div class="label-title clamp2">An overhead photograph of a backyard raised vegetable bed with tomatoes, lettuce and marigolds, gardening gloves on the cedar edge, late afternoon sunlight, warm documentary style.</div>
+  <div class="label-meta">You · Krea2 Turbo · 11h ago</div></figcaption>
+</figure>
+<section class="yours" aria-labelledby="yours">
+  <div class="yours-head"><h2 class="label-title" id="yours" style="font-weight:500">More of yours</h2><a href="#">View library</a></div>
+  <div class="thumbs"><img src="assets/dog-window.webp" alt="A golden retriever asleep beside a sunlit living room window, knitted cream blanket and houseplants, quiet ordinary family afternoon, candid photography."><img src="assets/reading-nook.webp" alt="A cozy reading corner with a green armchair, well-loved paperback, tea and a patchwork quilt, rain on the window, warm lamp light, tasteful interior photography."><img src="assets/cat-bookshelf.webp" alt="A ginger cat peeking from a bookshelf between paperbacks and a ceramic vase, lived-in family living room, soft afternoon light, candid photograph."></div>
+</section>
+<div class="spacer"></div>
+<nav class="tabbar" aria-label="Main">
+  <a href="#" aria-current="page"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg>Home</a>
+  <a href="#"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9m-4 4 3 3m-5-1 2 2"/></svg>Apps &amp; keys</a>
+  <a href="#"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg>Status</a>
+  <a href="#"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>More</a>
+</nav>
+</body></html>

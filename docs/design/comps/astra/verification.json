@@ -1,0 +1,5224 @@
+[
+  {
+    "surface": "home",
+    "theme": "light",
+    "width": 390,
+    "height": 1095,
+    "text": [
+      {
+        "text": "Azizam",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 26,
+        "ratio": 10.33,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "Robin",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 15,
+        "ratio": 10.33,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Dark",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 13,
+        "ratio": 10.33,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Chat is ready.",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 33,
+        "ratio": 10.71,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "Open chat",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 23,
+        "ratio": 10.33,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "Open WebUI",
+        "color": "rgb(196, 219, 220)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 14,
+        "ratio": 7.91,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Make an image",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 18,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Ready",
+        "color": "rgb(33, 99, 83)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 6.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Read aloud",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 18,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Ready",
+        "color": "rgb(33, 99, 83)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 6.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Transcribe audio",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 18,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Ready",
+        "color": "rgb(33, 99, 83)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 6.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Make music",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 18,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Ready",
+        "color": "rgb(33, 99, 83)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 6.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Make a sound",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 18,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Ready",
+        "color": "rgb(33, 99, 83)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 6.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Video is unavailable.",
+        "color": "rgb(161, 57, 47)",
+        "background": [
+          245,
+          229,
+          223
+        ],
+        "fontSize": 17,
+        "ratio": 5.46,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Ask Sam if you need it.",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          245,
+          229,
+          223
+        ],
+        "fontSize": 14,
+        "ratio": 9.81,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Connect an app",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 18,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "One address. A key for each app.",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Recent",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 22,
+        "ratio": 10.71,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "View library",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "An overhead photograph of a backyard raised vegetable bed…",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 15,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "11h ago",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Home",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "fontSize": 14,
+        "ratio": 12.01,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Apps & keys",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "fontSize": 14,
+        "ratio": 12.01,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Library",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "fontSize": 14,
+        "ratio": 12.01,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "More",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "fontSize": 14,
+        "ratio": 12.01,
+        "required": 4.5,
+        "pass": true
+      }
+    ],
+    "focus": {
+      "color": "#bf7567",
+      "masthead": 3.245,
+      "page": 3.142,
+      "surface": 3.526,
+      "soft": 5.332
+    },
+    "overflow": false,
+    "images": true,
+    "squareImages": true,
+    "errors": [],
+    "interactions": {
+      "keyboardFocus": true,
+      "readyTasks": true,
+      "theme": true
+    }
+  },
+  {
+    "surface": "home",
+    "theme": "dark",
+    "width": 390,
+    "height": 1095,
+    "text": [
+      {
+        "text": "Azizam",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 26,
+        "ratio": 10.33,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "Robin",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 15,
+        "ratio": 10.33,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Light",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 13,
+        "ratio": 10.33,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Chat is ready.",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 33,
+        "ratio": 12.51,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "Open chat",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 23,
+        "ratio": 10.33,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "Open WebUI",
+        "color": "rgb(196, 219, 220)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 14,
+        "ratio": 7.91,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Make an image",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 18,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Ready",
+        "color": "rgb(179, 223, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 9.64,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Read aloud",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 18,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Ready",
+        "color": "rgb(179, 223, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 9.64,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Transcribe audio",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 18,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Ready",
+        "color": "rgb(179, 223, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 9.64,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Make music",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 18,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Ready",
+        "color": "rgb(179, 223, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 9.64,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Make a sound",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 18,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Ready",
+        "color": "rgb(179, 223, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 9.64,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Video is unavailable.",
+        "color": "rgb(255, 184, 167)",
+        "background": [
+          75,
+          53,
+          55
+        ],
+        "fontSize": 17,
+        "ratio": 6.8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Ask Sam if you need it.",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          75,
+          53,
+          55
+        ],
+        "fontSize": 14,
+        "ratio": 9.97,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Connect an app",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 18,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "One address. A key for each app.",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Recent",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 22,
+        "ratio": 12.51,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "View library",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "An overhead photograph of a backyard raised vegetable bed…",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 15,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "11h ago",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Home",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          25,
+          62,
+          72
+        ],
+        "fontSize": 14,
+        "ratio": 10.19,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Apps & keys",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          25,
+          62,
+          72
+        ],
+        "fontSize": 14,
+        "ratio": 10.19,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Library",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          25,
+          62,
+          72
+        ],
+        "fontSize": 14,
+        "ratio": 10.19,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "More",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          25,
+          62,
+          72
+        ],
+        "fontSize": 14,
+        "ratio": 10.19,
+        "required": 4.5,
+        "pass": true
+      }
+    ],
+    "focus": {
+      "color": "#ffb8a7",
+      "masthead": 6.9,
+      "page": 8.525,
+      "surface": 6.944,
+      "soft": 5.645
+    },
+    "overflow": false,
+    "images": true,
+    "squareImages": true,
+    "errors": [],
+    "interactions": {
+      "keyboardFocus": true,
+      "readyTasks": true,
+      "theme": true
+    }
+  },
+  {
+    "surface": "status",
+    "theme": "light",
+    "width": 1440,
+    "height": 1160,
+    "text": [
+      {
+        "text": "Azizam",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 30,
+        "ratio": 10.33,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "Home",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 16,
+        "ratio": 10.33,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Library",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 16,
+        "ratio": 10.33,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Apps & keys",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 16,
+        "ratio": 10.33,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Sam",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 16,
+        "ratio": 10.33,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Owner",
+        "color": "rgb(196, 219, 220)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 14,
+        "ratio": 7.91,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Dark",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 14,
+        "ratio": 10.33,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Manage",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 14,
+        "ratio": 4.95,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Status",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 14,
+        "ratio": 9.58,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Engines",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 14,
+        "ratio": 9.58,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Providers",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 14,
+        "ratio": 9.58,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "People",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 14,
+        "ratio": 9.58,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Activity",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 14,
+        "ratio": 9.58,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Usage",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 14,
+        "ratio": 9.58,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Settings",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 14,
+        "ratio": 9.58,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Status",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 22,
+        "ratio": 10.71,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "Gateway reachable",
+        "color": "rgb(33, 99, 83)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 6.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Video is unavailable.",
+        "color": "rgb(161, 57, 47)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 52,
+        "ratio": 5.96,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "The Video studio engine is unavailable.",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 18,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Open engines",
+        "color": "rgb(242, 247, 245)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 16,
+        "ratio": 10.57,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "1 engine affected",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Robin’s video request",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "fontSize": 22,
+        "ratio": 12.01,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "21h ago",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "fontSize": 14,
+        "ratio": 6.21,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Open WebUI",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "fontSize": 19,
+        "ratio": 12.01,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "App",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "fontSize": 14,
+        "ratio": 6.21,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Gateway",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "fontSize": 19,
+        "ratio": 12.01,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "Request received",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "fontSize": 14,
+        "ratio": 6.21,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Video studio",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "fontSize": 19,
+        "ratio": 12.01,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "Engine",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "fontSize": 14,
+        "ratio": 6.21,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Failed",
+        "color": "rgb(161, 57, 47)",
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "fontSize": 14,
+        "ratio": 6.68,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "3.5 s",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "fontSize": 14,
+        "ratio": 6.21,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "ltx-2.5",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "fontSize": 14,
+        "ratio": 6.21,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "req_household_00_27",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "fontSize": 14,
+        "ratio": 6.21,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Recorded context",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "fontSize": 16,
+        "ratio": 12.01,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Video studio is recovering after a queue timeout.",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          255,
+          255,
+          255
+        ],
+        "fontSize": 14,
+        "ratio": 12.01,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Recent requests",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 22,
+        "ratio": 10.71,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "View activity",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Sam’s personal app",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 16,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Images request",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Completed",
+        "color": "rgb(33, 99, 83)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 6.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "just now",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "4.2 s",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Robin’s personal app",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 16,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Images request",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Completed",
+        "color": "rgb(33, 99, 83)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 6.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "11h ago",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "4.2 s",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Open WebUI",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 16,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Chat completions",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Completed",
+        "color": "rgb(33, 99, 83)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 6.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "20h ago",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "2.0 s",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Other engines",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 24,
+        "ratio": 10.71,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "Execution gateway",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 18,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Chat",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Ready",
+        "color": "rgb(33, 99, 83)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 6.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image studio",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 18,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Images",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Ready",
+        "color": "rgb(33, 99, 83)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 6.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Study and coding",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 18,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Chat",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Ready",
+        "color": "rgb(33, 99, 83)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 6.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Home Assistant voice",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 18,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Music, Sound effects",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Ready",
+        "color": "rgb(33, 99, 83)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 6.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Remote backup",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 20,
+        "ratio": 9.58,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "Provider configured. Key set.",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 14,
+        "ratio": 4.95,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "USD 0.45",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 23,
+        "ratio": 9.58,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "of USD 8.00",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 14,
+        "ratio": 4.95,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Remote spend · partial",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 14,
+        "ratio": 4.95,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Cost measured for 249 of 265 requests.",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 14,
+        "ratio": 4.95,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "This month",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 14,
+        "ratio": 4.95,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "View usage",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 14,
+        "ratio": 9.58,
+        "required": 4.5,
+        "pass": true
+      }
+    ],
+    "focus": {
+      "color": "#bf7567",
+      "masthead": 3.245,
+      "page": 3.142,
+      "surface": 3.526,
+      "soft": 5.332
+    },
+    "overflow": false,
+    "images": true,
+    "squareImages": true,
+    "errors": [],
+    "interactions": {
+      "keyboardFocus": true,
+      "spendQualification": true,
+      "theme": true
+    }
+  },
+  {
+    "surface": "status",
+    "theme": "dark",
+    "width": 1440,
+    "height": 1160,
+    "text": [
+      {
+        "text": "Azizam",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 30,
+        "ratio": 10.33,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "Home",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 16,
+        "ratio": 10.33,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Library",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 16,
+        "ratio": 10.33,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Apps & keys",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 16,
+        "ratio": 10.33,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Sam",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 16,
+        "ratio": 10.33,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Owner",
+        "color": "rgb(196, 219, 220)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 14,
+        "ratio": 7.91,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Light",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 14,
+        "ratio": 10.33,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Manage",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 14,
+        "ratio": 5.3,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Status",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 14,
+        "ratio": 8.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Engines",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 14,
+        "ratio": 8.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Providers",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 14,
+        "ratio": 8.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "People",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 14,
+        "ratio": 8.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Activity",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 14,
+        "ratio": 8.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Usage",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 14,
+        "ratio": 8.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Settings",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 14,
+        "ratio": 8.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Status",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 22,
+        "ratio": 12.51,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "Gateway reachable",
+        "color": "rgb(179, 223, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 9.64,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Video is unavailable.",
+        "color": "rgb(255, 184, 167)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 52,
+        "ratio": 8.53,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "The Video studio engine is unavailable.",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 18,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Open engines",
+        "color": "rgb(20, 59, 69)",
+        "background": [
+          187,
+          217,
+          212
+        ],
+        "fontSize": 16,
+        "ratio": 8.03,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "1 engine affected",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Robin’s video request",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          25,
+          62,
+          72
+        ],
+        "fontSize": 22,
+        "ratio": 10.19,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "21h ago",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          25,
+          62,
+          72
+        ],
+        "fontSize": 14,
+        "ratio": 6.52,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Open WebUI",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          25,
+          62,
+          72
+        ],
+        "fontSize": 19,
+        "ratio": 10.19,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "App",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          25,
+          62,
+          72
+        ],
+        "fontSize": 14,
+        "ratio": 6.52,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Gateway",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          25,
+          62,
+          72
+        ],
+        "fontSize": 19,
+        "ratio": 10.19,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "Request received",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          25,
+          62,
+          72
+        ],
+        "fontSize": 14,
+        "ratio": 6.52,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Video studio",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          25,
+          62,
+          72
+        ],
+        "fontSize": 19,
+        "ratio": 10.19,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "Engine",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          25,
+          62,
+          72
+        ],
+        "fontSize": 14,
+        "ratio": 6.52,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Failed",
+        "color": "rgb(255, 184, 167)",
+        "background": [
+          25,
+          62,
+          72
+        ],
+        "fontSize": 14,
+        "ratio": 6.94,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "3.5 s",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          25,
+          62,
+          72
+        ],
+        "fontSize": 14,
+        "ratio": 6.52,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "ltx-2.5",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          25,
+          62,
+          72
+        ],
+        "fontSize": 14,
+        "ratio": 6.52,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "req_household_00_27",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          25,
+          62,
+          72
+        ],
+        "fontSize": 14,
+        "ratio": 6.52,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Recorded context",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          25,
+          62,
+          72
+        ],
+        "fontSize": 16,
+        "ratio": 10.19,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Video studio is recovering after a queue timeout.",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          25,
+          62,
+          72
+        ],
+        "fontSize": 14,
+        "ratio": 10.19,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Recent requests",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 22,
+        "ratio": 12.51,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "View activity",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Sam’s personal app",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 16,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Images request",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Completed",
+        "color": "rgb(179, 223, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 9.64,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "just now",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "4.2 s",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Robin’s personal app",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 16,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Images request",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Completed",
+        "color": "rgb(179, 223, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 9.64,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "11h ago",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "4.2 s",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Open WebUI",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 16,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Chat completions",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Completed",
+        "color": "rgb(179, 223, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 9.64,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "20h ago",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "2.0 s",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Other engines",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 24,
+        "ratio": 12.51,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "Execution gateway",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 18,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Chat",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Ready",
+        "color": "rgb(179, 223, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 9.64,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image studio",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 18,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Images",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Ready",
+        "color": "rgb(179, 223, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 9.64,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Study and coding",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 18,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Chat",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Ready",
+        "color": "rgb(179, 223, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 9.64,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Home Assistant voice",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 18,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Music, Sound effects",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Ready",
+        "color": "rgb(179, 223, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 9.64,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Remote backup",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 20,
+        "ratio": 8.29,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "Provider configured. Key set.",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 14,
+        "ratio": 5.3,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "USD 0.45",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 23,
+        "ratio": 8.29,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "of USD 8.00",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 14,
+        "ratio": 5.3,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Remote spend · partial",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 14,
+        "ratio": 5.3,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Cost measured for 249 of 265 requests.",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 14,
+        "ratio": 5.3,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "This month",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 14,
+        "ratio": 5.3,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "View usage",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 14,
+        "ratio": 8.29,
+        "required": 4.5,
+        "pass": true
+      }
+    ],
+    "focus": {
+      "color": "#ffb8a7",
+      "masthead": 6.9,
+      "page": 8.525,
+      "surface": 6.944,
+      "soft": 5.645
+    },
+    "overflow": false,
+    "images": true,
+    "squareImages": true,
+    "errors": [],
+    "interactions": {
+      "keyboardFocus": true,
+      "spendQualification": true,
+      "theme": true
+    }
+  },
+  {
+    "surface": "library",
+    "theme": "light",
+    "width": 1440,
+    "height": 1897,
+    "text": [
+      {
+        "text": "Azizam",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 30,
+        "ratio": 10.33,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "Home",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 16,
+        "ratio": 10.33,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Library",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 16,
+        "ratio": 10.33,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Apps & keys",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 16,
+        "ratio": 10.33,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Sam",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 16,
+        "ratio": 10.33,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Owner",
+        "color": "rgb(196, 219, 220)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 14,
+        "ratio": 7.91,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Dark",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 14,
+        "ratio": 10.33,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Library",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 48,
+        "ratio": 10.71,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "Everything made through your gateway.",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 16,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Search prompts",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Kind",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Sam",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 32,
+        "ratio": 10.71,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "You",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "See all",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 16,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A lived-in family kitchen in warm morning light, sourdough bread on a wooden board, y",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "just now",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A coastal walking trail with wildflowers, two bicycles leaned against a wooden fence,",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "2d ago",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A homemade apple tart cooling on a wooden kitchen table, flour-dusted rolling pin, fo",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "3d ago",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A small wood cabin beside a mountain lake at sunrise, mist above still water, canoe p",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "4d ago",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A simple backyard birthday table with a homemade lemon cake, linen tablecloth, flower",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "6d ago",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A family picnic blanket beside a quiet lake, wicker basket, strawberries and sandwich",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "7d ago",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Audio",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 14,
+        "ratio": 4.95,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "9d ago",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 14,
+        "ratio": 4.95,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "On Saturday we will take the train to the coast, walk by the harbor, and have a picni",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 16,
+        "ratio": 9.58,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Audio",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 14,
+        "ratio": 4.95,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "10d ago",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 14,
+        "ratio": 4.95,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Hi June. Welcome to our household gateway. You can try a voice message or make a pict",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 16,
+        "ratio": 9.58,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Robin",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 32,
+        "ratio": 10.71,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "See all",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 16,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "An overhead photograph of a backyard raised vegetable bed with tomatoes, lettuce and ",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "11h ago",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A golden retriever asleep beside a sunlit living room window, knitted cream blanket a",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "1d ago",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A cozy reading corner with a green armchair, well-loved paperback, tea and a patchwor",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "2d ago",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A ginger cat peeking from a bookshelf between paperbacks and a ceramic vase, lived-in",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "4d ago",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Basil rosemary and thyme growing in terracotta pots on a kitchen windowsill, old bras",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "5d ago",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "View from a train window over rolling countryside in autumn, a travel journal and two",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "6d ago",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Rain drops on a small covered patio with terracotta planters, a folded green umbrella",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "7d ago",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A backyard vegetable garden at dusk with a stone path, climbing beans and warm porch ",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "8d ago",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Audio",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 14,
+        "ratio": 4.95,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "8d ago",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 14,
+        "ratio": 4.95,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "The tomatoes are ready to pick. Please water the herb pots before dinner.",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 16,
+        "ratio": 9.58,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Audio",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 14,
+        "ratio": 4.95,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "10d ago",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 14,
+        "ratio": 4.95,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "For the apple tart, slice the apples thinly and bake until the pastry is golden. Let ",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 16,
+        "ratio": 9.58,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Play video",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 16,
+        "ratio": 9.58,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "0:03",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 16,
+        "ratio": 9.58,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A gentle breeze moves the leaves in a sunlit backyard vegetable garden, a watering ca",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Video",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "11d ago",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Alex",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 32,
+        "ratio": 10.71,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "See all",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 16,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A beautifully crafted school science project showing a miniature pond ecosystem in a ",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "22h ago",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A tiny handmade solar-powered model house made of balsa wood with a small solar panel",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "3d ago",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A hand-painted watercolor study of local wildflowers on a sketchbook page, paint pale",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "5d ago",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A handmade wooden birdhouse freshly painted soft blue hanging from an apple tree in a",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 10.71,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "6d ago",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 13,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Audio",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 14,
+        "ratio": 4.95,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "9d ago",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 14,
+        "ratio": 4.95,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Our solar house uses sunlight to power a tiny fan. We tested it on a cloudy day too.",
+        "color": "rgb(23, 59, 69)",
+        "background": [
+          220,
+          232,
+          232
+        ],
+        "fontSize": 16,
+        "ratio": 9.58,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Everyone’s creations",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Manage gateway",
+        "color": "rgb(75, 101, 109)",
+        "background": [
+          237,
+          243,
+          243
+        ],
+        "fontSize": 14,
+        "ratio": 5.53,
+        "required": 4.5,
+        "pass": true
+      }
+    ],
+    "focus": {
+      "color": "#bf7567",
+      "masthead": 3.245,
+      "page": 3.142,
+      "surface": 3.526,
+      "soft": 5.332
+    },
+    "overflow": false,
+    "images": true,
+    "squareImages": true,
+    "errors": [],
+    "interactions": {
+      "keyboardFocus": true,
+      "theme": true,
+      "seeAll": true,
+      "sixPeople": true,
+      "search": true,
+      "audioFilter": true,
+      "viewer": true
+    }
+  },
+  {
+    "surface": "library",
+    "theme": "dark",
+    "width": 1440,
+    "height": 1897,
+    "text": [
+      {
+        "text": "Azizam",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 30,
+        "ratio": 10.33,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "Home",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 16,
+        "ratio": 10.33,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Library",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 16,
+        "ratio": 10.33,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Apps & keys",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 16,
+        "ratio": 10.33,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Sam",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 16,
+        "ratio": 10.33,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Owner",
+        "color": "rgb(196, 219, 220)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 14,
+        "ratio": 7.91,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Light",
+        "color": "rgb(237, 245, 243)",
+        "background": [
+          18,
+          63,
+          74
+        ],
+        "fontSize": 14,
+        "ratio": 10.33,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Library",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 48,
+        "ratio": 12.51,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "Everything made through your gateway.",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 16,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Search prompts",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Kind",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Sam",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 32,
+        "ratio": 12.51,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "You",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "See all",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 16,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A lived-in family kitchen in warm morning light, sourdough bread on a wooden board, y",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "just now",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A coastal walking trail with wildflowers, two bicycles leaned against a wooden fence,",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "2d ago",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A homemade apple tart cooling on a wooden kitchen table, flour-dusted rolling pin, fo",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "3d ago",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A small wood cabin beside a mountain lake at sunrise, mist above still water, canoe p",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "4d ago",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A simple backyard birthday table with a homemade lemon cake, linen tablecloth, flower",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "6d ago",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A family picnic blanket beside a quiet lake, wicker basket, strawberries and sandwich",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "7d ago",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Audio",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 14,
+        "ratio": 5.3,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "9d ago",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 14,
+        "ratio": 5.3,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "On Saturday we will take the train to the coast, walk by the harbor, and have a picni",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 16,
+        "ratio": 8.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Audio",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 14,
+        "ratio": 5.3,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "10d ago",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 14,
+        "ratio": 5.3,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Hi June. Welcome to our household gateway. You can try a voice message or make a pict",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 16,
+        "ratio": 8.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Robin",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 32,
+        "ratio": 12.51,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "See all",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 16,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "An overhead photograph of a backyard raised vegetable bed with tomatoes, lettuce and ",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "11h ago",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A golden retriever asleep beside a sunlit living room window, knitted cream blanket a",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "1d ago",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A cozy reading corner with a green armchair, well-loved paperback, tea and a patchwor",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "2d ago",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A ginger cat peeking from a bookshelf between paperbacks and a ceramic vase, lived-in",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "4d ago",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Basil rosemary and thyme growing in terracotta pots on a kitchen windowsill, old bras",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "5d ago",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "View from a train window over rolling countryside in autumn, a travel journal and two",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "6d ago",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Rain drops on a small covered patio with terracotta planters, a folded green umbrella",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "7d ago",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A backyard vegetable garden at dusk with a stone path, climbing beans and warm porch ",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "8d ago",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Audio",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 14,
+        "ratio": 5.3,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "8d ago",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 14,
+        "ratio": 5.3,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "The tomatoes are ready to pick. Please water the herb pots before dinner.",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 16,
+        "ratio": 8.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Audio",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 14,
+        "ratio": 5.3,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "10d ago",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 14,
+        "ratio": 5.3,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "For the apple tart, slice the apples thinly and bake until the pastry is golden. Let ",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 16,
+        "ratio": 8.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Play video",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 16,
+        "ratio": 8.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "0:03",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 16,
+        "ratio": 8.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A gentle breeze moves the leaves in a sunlit backyard vegetable garden, a watering ca",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Video",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "11d ago",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Alex",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 32,
+        "ratio": 12.51,
+        "required": 3,
+        "pass": true
+      },
+      {
+        "text": "See all",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 16,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A beautifully crafted school science project showing a miniature pond ecosystem in a ",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "22h ago",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A tiny handmade solar-powered model house made of balsa wood with a small solar panel",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "3d ago",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A hand-painted watercolor study of local wildflowers on a sketchbook page, paint pale",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "5d ago",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "A handmade wooden birdhouse freshly painted soft blue hanging from an apple tree in a",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 12.51,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Image",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "6d ago",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 13,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Audio",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 14,
+        "ratio": 5.3,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "9d ago",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 14,
+        "ratio": 5.3,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Our solar house uses sunlight to power a tiny fan. We tested it on a cloudy day too.",
+        "color": "rgb(234, 243, 241)",
+        "background": [
+          37,
+          76,
+          85
+        ],
+        "fontSize": 16,
+        "ratio": 8.29,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Everyone’s creations",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      },
+      {
+        "text": "Manage gateway",
+        "color": "rgb(177, 199, 202)",
+        "background": [
+          16,
+          47,
+          56
+        ],
+        "fontSize": 14,
+        "ratio": 8,
+        "required": 4.5,
+        "pass": true
+      }
+    ],
+    "focus": {
+      "color": "#ffb8a7",
+      "masthead": 6.9,
+      "page": 8.525,
+      "surface": 6.944,
+      "soft": 5.645
+    },
+    "overflow": false,
+    "images": true,
+    "squareImages": true,
+    "errors": [],
+    "interactions": {
+      "keyboardFocus": true,
+      "theme": true,
+      "seeAll": true,
+      "sixPeople": true,
+      "search": true,
+      "audioFilter": true,
+      "viewer": true
+    }
+  }
+]

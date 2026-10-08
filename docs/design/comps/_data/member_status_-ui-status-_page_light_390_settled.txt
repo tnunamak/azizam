@@ -1,0 +1,107 @@
+Skip to content
+Azizam
+R
+Status
+
+Check the capabilities available to your account.
+
+Refresh status
+Unavailable
+Video and embeddings are unavailable.
+Need help with your app?
+Check your connection settings
+Try a request
+View recent requests
+Your capabilities
+Chat
+
+Qwen 27b
+
+Ready
+Ready to use.
+Details
+Images
+
+Krea2 Turbo
+
+Ready
+Ready to use.
+Details
+Video
+
+Ltx 2.5
+
+Unavailable
+Details
+Speech
+
+TTS 1
+
+Ready
+Ready to use.
+Details
+Transcription
+
+Whisper Large
+
+Ready
+Ready to use.
+Details
+Music
+
+Musicgen
+
+Ready
+Ready to use.
+Details
+Sound effects
+
+Audio Sfx
+
+Ready
+Ready to use.
+Details
+Embeddings
+
+Bge M3
+
+Unavailable
+Unavailable. Ask the owner to enable this capability.
+Details
+Your recent requests
+
+Open a receipt to see what happened to a request. A past result does not measure availability now.
+
+image.generate · succeeded
+
+11h ago
+
+View receipt
+
+audio.transcribe · succeeded
+
+20h ago
+
+View receipt
+
+chat.completions · succeeded
+
+20h ago
+
+View receipt
+
+chat.completions · succeeded
+
+20h ago
+
+View receipt
+
+video.generate · failed
+
+21h ago
+
+View receipt
+Home
+Apps & keys
+Status
+More

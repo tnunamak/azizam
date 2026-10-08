@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Home - Azizam</title>
+<!-- Web fonts named by the Workspace spec, loaded from Google Fonts. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@100..900&family=Source+Code+Pro:wght@400&family=Source+Sans+3:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #FFFFFF; --text: #172536; --accent: #2855B6;
+    --ok: #206246; --attn: #895316; --fail: #AD3545;
+    --line: rgb(23 37 54 / 0.28);
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #182130; --text: #EDF2FA; --accent: #A7BBF5;
+      --ok: #8ECEB1; --attn: #E9BD78; --fail: #F19AA8;
+      --line: rgb(237 242 250 / 0.28);
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body {
+    font: 400 16px/24px "Source Sans 3", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  h1, h2, p { margin: 0; }
+  a { color: inherit; }
+  .ico { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+  .ico-24 { width: 24px; height: 24px; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* Header: one 56 px phone header */
+  .top {
+    height: 56px; padding: 0 16px; display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid var(--line);
+  }
+  .wordmark { font: 600 20px/26px Archivo, sans-serif; letter-spacing: -0.015em; }
+  .account {
+    width: 44px; height: 44px; border: 1px solid var(--text); border-radius: 6px; background: none; color: var(--text);
+    font: 600 16px/24px "Source Sans 3", sans-serif;
+  }
+
+  main { padding: 16px 16px calc(64px + 32px + env(safe-area-inset-bottom)); }
+
+  /* The single task enclosure */
+  .task { border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  .task h1 { font: 600 28px/34px Archivo, sans-serif; letter-spacing: -0.015em; }
+  .verdict { display: flex; align-items: center; gap: 8px; margin-top: 12px; font: 650 30px/36px Archivo, sans-serif; letter-spacing: -0.02em; }
+  .verdict .ico { width: 28px; height: 28px; color: var(--ok); stroke-width: 2.2; }
+  .evidence { margin-top: 4px; font-size: 16px; line-height: 24px; }
+  .act-stack { display: grid; gap: 8px; margin-top: 16px; }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    min-height: 44px; padding: 0 16px; border-radius: 6px; border: 1px solid var(--text);
+    background: none; color: var(--text); font: 600 16px/24px "Source Sans 3", sans-serif; text-decoration: none; white-space: nowrap;
+  }
+  .btn-lg { min-height: 48px; width: 100%; }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+
+  section { margin-top: 32px; }
+  .sec-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+  h2 { font: 600 20px/26px "Source Sans 3", sans-serif; }
+  .link-btn { min-height: 44px; display: inline-flex; align-items: center; color: var(--accent); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+
+  .rows { list-style: none; margin: 0; padding: 0; }
+  .row { min-height: 56px; display: flex; align-items: center; gap: 12px; padding: 6px 0; }
+  .row + .row { margin-top: 2px; }
+  .row-main { flex: 1; min-width: 0; }
+  .row-name { font-weight: 600; }
+  .state { display: flex; align-items: flex-start; gap: 6px; font-size: 14px; line-height: 20px; }
+  .state .ico { width: 16px; height: 16px; margin-top: 2px; stroke-width: 2.4; }
+  .ok { color: var(--ok); }
+  .fail { color: var(--fail); }
+  .row-act { min-height: 44px; display: inline-flex; align-items: center; padding: 0 4px; color: var(--accent); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
+  .sub { font-size: 14px; line-height: 20px; }
+  .restricted-note { font-size: 14px; line-height: 20px; }
+
+  .thumbs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 8px; }
+  .thumbs img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 2px; display: block; }
+
+  /* Bottom navigation: labelled, 64 px + safe area */
+  .tabbar {
+    position: fixed; left: 0; right: 0; bottom: 0; background: var(--bg); border-top: 1px solid var(--line);
+    height: calc(64px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom);
+    display: grid; grid-template-columns: repeat(4, 1fr);
+  }
+  .static-capture .tabbar { position: static; }
+  .static-capture main { padding-bottom: 32px; }
+  .tab { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; text-decoration: none; font-size: 14px; line-height: 20px; min-height: 48px; }
+  .tab[aria-current="page"] { color: var(--accent); font-weight: 600; }
+  .tab[aria-current="page"] .ico { fill: currentColor; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-home" viewBox="0 0 24 24"><path class="fillable" d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3 20 3M16 7l3 3M14 9l2 2"/></symbol>
+  <symbol id="i-library" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></symbol>
+  <symbol id="i-ok" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
+  <symbol id="i-fail" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/></symbol>
+  </svg>
+
+<header class="top">
+  <span class="wordmark">Azizam</span>
+  <button class="account" type="button" aria-label="Account: Robin">R</button>
+</header>
+
+<main>
+  <div class="task">
+    <h1>Home</h1>
+    <p class="verdict"><svg class="ico" aria-hidden="true"><use href="#i-ok"/></svg>Chat is ready.</p>
+    <p class="evidence">Last used 20h ago</p>
+    <div class="act-stack">
+      <a class="btn btn-lg btn-primary" href="#">Open chat</a>
+      <a class="btn btn-lg" href="#">Connect an app</a>
+    </div>
+  </div>
+
+  <section aria-labelledby="h-other">
+    <div class="sec-head"><h2 id="h-other">Other things you can do</h2></div>
+    <ul class="rows">
+      <li class="row"><div class="row-main"><div class="row-name">Images</div><div class="state ok"><svg class="ico" aria-hidden="true"><use href="#i-ok"/></svg>Ready</div><div class="sub">Last used 11h ago</div></div><a class="row-act" href="#">Make an image</a></li>
+      <li class="row"><div class="row-main"><div class="row-name">Speech</div><div class="state ok"><svg class="ico" aria-hidden="true"><use href="#i-ok"/></svg>Ready</div><div class="sub">Last used 21h ago</div></div><a class="row-act" href="#">Read aloud</a></li>
+      <li class="row"><div class="row-main"><div class="row-name">Transcription</div><div class="state ok"><svg class="ico" aria-hidden="true"><use href="#i-ok"/></svg>Ready</div><div class="sub">Last used 20h ago</div></div><a class="row-act" href="#">Transcribe audio</a></li>
+      <li class="row"><div class="row-main"><div class="row-name">Music</div><div class="state ok"><svg class="ico" aria-hidden="true"><use href="#i-ok"/></svg>Ready</div></div><a class="row-act" href="#">Make music</a></li>
+      <li class="row"><div class="row-main"><div class="row-name">Sound effects</div><div class="state ok"><svg class="ico" aria-hidden="true"><use href="#i-ok"/></svg>Ready</div></div><a class="row-act" href="#">Make a sound</a></li>
+      <li class="row"><div class="row-main"><div class="row-name">Video</div><div class="state fail"><svg class="ico" aria-hidden="true"><use href="#i-fail"/></svg>Unavailable</div><p class="restricted-note">Its engine is recovering after a queue timeout. Ask Sam if you need it.</p></div></li>
+      <li class="row"><div class="row-main"><div class="row-name">Embeddings</div><div class="state fail"><svg class="ico" aria-hidden="true"><use href="#i-fail"/></svg>Unavailable</div><p class="restricted-note">Ask Sam to turn it on for your account.</p></div></li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="h-apps">
+    <div class="sec-head"><h2 id="h-apps">Your apps</h2></div>
+    <ul class="rows">
+      <li class="row"><div class="row-main"><div class="row-name">Robin's personal app</div><div class="state">Last used 1h ago</div></div></li>
+      <li class="row"><div class="row-main"><div class="row-name">Open WebUI</div><div class="state">Last used 4h ago</div></div></li>
+      <li class="row"><div class="row-main"><div class="row-name">Telegram helper</div></div><a class="row-act" href="#">Set up</a></li>
+    </ul>
+    <a class="link-btn" href="#">Manage apps and keys</a>
+  </section>
+
+  <section aria-labelledby="h-recent">
+    <div class="sec-head"><h2 id="h-recent">Recent work</h2><a class="link-btn" href="#">View library</a></div>
+    <div class="thumbs">
+      <img src="assets/garden-plan.webp" alt="An overhead photograph of a backyard raised vegetable bed with tomatoes, lettuce and marigolds">
+      <img src="assets/dog-window.webp" alt="A golden retriever asleep beside a sunlit living room window">
+      <img src="assets/reading-nook.webp" alt="A cozy reading corner with a green armchair, well-loved paperback, tea and a patchwork quilt">
+      <img src="assets/cat-bookshelf.webp" alt="A ginger cat peeking from a bookshelf between paperbacks and a ceramic vase">
+    </div>
+  </section>
+</main>
+
+<nav class="tabbar" aria-label="Main">
+  <a class="tab" href="#" aria-current="page"><svg class="ico ico-24" aria-hidden="true"><use href="#i-home"/></svg>Home</a>
+  <a class="tab" href="#"><svg class="ico ico-24" aria-hidden="true"><use href="#i-key"/></svg>Apps &amp; keys</a>
+  <a class="tab" href="#"><svg class="ico ico-24" aria-hidden="true"><use href="#i-library"/></svg>Library</a>
+  <a class="tab" href="#"><svg class="ico ico-24" aria-hidden="true"><use href="#i-more"/></svg>More</a>
+</nav>
+</body>
+</html>

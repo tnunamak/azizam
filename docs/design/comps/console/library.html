@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Library · Azizam (Console comp)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400&family=IBM+Plex+Sans+Condensed:wght@600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#102A2B;--text:#F2F7F6;--accent:#99BFD5;--ok:#8ECBB0;--warn:#E1B975;--fail:#F09B93;
+  --line:rgba(242,247,246,.24);--sep:rgba(242,247,246,.16);
+  color-scheme:dark;
+}
+@media (prefers-color-scheme: light){
+  :root{
+    --bg:#F3F7F6;--text:#173332;--accent:#315E80;--ok:#246447;--warn:#815115;--fail:#A03932;
+    --line:rgba(23,51,50,.24);--sep:rgba(23,51,50,.16);
+    color-scheme:light;
+  }
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--text)}
+body{font-family:"IBM Plex Sans",sans-serif;font-size:16px;line-height:24px;font-weight:400;
+  -webkit-font-smoothing:antialiased}
+a{color:inherit}
+img{display:block}
+ul{list-style:none}
+.display{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:600;letter-spacing:-.015em}
+h1{font-size:28px;line-height:34px;font-weight:600;letter-spacing:-.01em}
+h2{font-size:20px;line-height:26px;font-weight:600}
+.small{font-size:14px;line-height:20px}
+.label{font-size:14px;line-height:20px;font-weight:500}
+.num{font-variant-numeric:tabular-nums;font-weight:500}
+.mono{font-family:"IBM Plex Mono",monospace;font-size:14px;line-height:20px}
+.ic{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;
+  stroke-linecap:square;stroke-linejoin:miter}
+.ic *{vector-effect:non-scaling-stroke}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.fail{color:var(--fail)}.unknown{color:var(--accent)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;
+  padding:0 16px;border-radius:4px;font:500 16px/24px "IBM Plex Sans",sans-serif;
+  text-decoration:none;cursor:pointer;white-space:nowrap}
+.btn-primary{background:var(--accent);color:var(--bg);border:1px solid var(--accent)}
+.btn-secondary{background:transparent;color:var(--text);border:1px solid var(--accent)}
+.btn:focus-visible,a:focus-visible,button:focus-visible,select:focus-visible,input:focus-visible{
+  outline:2px solid var(--accent);outline-offset:2px}
+.state{display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+.shell{display:grid;grid-template-columns:208px 1fr;min-height:100vh}
+.side{border-right:1px solid var(--line);padding:0 12px 24px}
+.brand{height:56px;display:flex;align-items:center;padding:0 12px;font-size:20px;line-height:26px;font-weight:600}
+.nav a,.nav button{display:flex;align-items:center;gap:12px;width:100%;min-height:44px;padding:0 12px;
+  border-radius:4px;text-decoration:none;color:var(--text);font:400 16px/24px "IBM Plex Sans",sans-serif;
+  background:none;border:1px solid transparent;cursor:pointer;text-align:left}
+.nav a[aria-current="page"]{border-color:var(--accent);font-weight:600}
+.nav .group{margin-top:16px;padding-top:16px;border-top:1px solid var(--line)}
+.nav .group button .ic:last-child{margin-left:auto}
+.main{min-width:0}
+.rail{height:56px;border-bottom:1px solid var(--line);display:flex;align-items:center;
+  justify-content:space-between;padding:0 24px}
+.search{display:flex;align-items:center;gap:8px;width:320px;height:44px;padding:0 12px;
+  border:1px solid var(--accent);border-radius:4px}
+.search input{all:unset;flex:1;font-size:16px;line-height:24px;color:var(--text)}
+.search:focus-within{outline:2px solid var(--accent);outline-offset:2px}
+.search input:focus-visible{outline:none}
+.search input::placeholder{color:var(--text);opacity:1}
+.account{display:flex;align-items:center;gap:12px;min-height:44px;padding:0 8px;border:1px solid transparent;
+  background:none;color:var(--text);font:500 16px/24px "IBM Plex Sans",sans-serif;cursor:pointer}
+.avatar{width:32px;height:32px;display:grid;place-items:center;border:1px solid var(--text);border-radius:4px;
+  font-size:14px;line-height:20px;font-weight:600}
+.content{padding:24px}
+
+.lib-head{display:flex;align-items:center;justify-content:space-between;gap:24px}
+.toolbar{display:flex;align-items:center;gap:16px}
+.toolbar .search{width:280px}
+.field{display:flex;align-items:center;gap:8px}
+.selwrap{position:relative;display:inline-flex}
+.selwrap select{appearance:none;-webkit-appearance:none;height:44px;min-width:150px;padding:0 40px 0 12px;
+  border:1px solid var(--accent);border-radius:4px;background:var(--bg);color:var(--text);
+  font:400 16px/24px "IBM Plex Sans",sans-serif;cursor:pointer}
+.selwrap .ic{position:absolute;right:10px;top:12px;pointer-events:none}
+.cols{display:grid;grid-template-columns:minmax(0,1fr) 384px;gap:24px;margin-top:24px;align-items:start}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.grid a{display:block;padding:6px;border:2px solid transparent;border-radius:4px;text-decoration:none}
+.grid a[aria-current="true"]{border-color:var(--accent)}
+.frame{aspect-ratio:1/1;width:100%;overflow:hidden;border-radius:0}
+.frame img{width:100%;height:100%;object-fit:cover}
+.frame.audio{display:grid;place-items:center;border:1px solid var(--line)}
+.frame.audio .ic{width:40px;height:40px}
+.ctitle{margin-top:8px;font-size:14px;line-height:20px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.grid a[aria-current="true"] .ctitle{font-weight:500}
+.cmeta{display:block;font-size:14px;line-height:20px}
+.detail{border:1px solid var(--line);border-radius:8px;padding:16px}
+.detail img{width:350px;height:350px;object-fit:cover;border-radius:0}
+.detail h2{margin-top:16px}
+.detail .prompt{margin-top:8px}
+.detail dl{display:grid;grid-template-columns:auto 1fr;gap:4px 16px;margin-top:16px}
+.detail dt{font-size:14px;line-height:20px;font-weight:500;padding-top:2px}
+.detail .actions{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px}
+.detail .actions .btn:first-child{grid-column:1 / -1}
+.detail .cost{margin-top:16px;padding-top:16px;border-top:1px solid var(--line)}
+</style>
+</head>
+<body>
+<div class="shell">
+<aside class="side">
+  <div class="brand">Azizam</div>
+  <nav class="nav" aria-label="Main">
+    <ul><li><a href="#"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 9 10 3l7 6v8h-5v-5H8v5H3z"/></svg><span>Home</span></a></li><li><a href="#"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><circle cx="6.5" cy="13.5" r="3.5"/><path d="M9 11l7-7M13 7l2 2M15 5l2 2"/></svg><span>Apps & keys</span></a></li><li><a href="#"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 4h14v9H9l-4 3.5V13H3z"/></svg><span>Try</span></a></li><li><a href="#" aria-current="page"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4" width="14" height="12"/><path d="M3 13l5-4 4 4 2-2 3 3"/><circle cx="13" cy="7.5" r="1.2"/></svg><span>Library</span></a></li></ul>
+    <div class="group">
+      <button type="button" aria-expanded="false"><span>Admin</span><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 5l5 5-5 5"/></svg></button>
+      <ul></ul>
+    </div>
+  </nav>
+</aside>
+<div class="main">
+  <div class="rail">
+    <label class="search"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5"/><path d="M12.5 12.5 17 17"/></svg><span class="vh">Search</span><input placeholder="Search"></label>
+    <button class="account" type="button" aria-label="Account, Sam"><span class="avatar">S</span><span>Sam</span><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M5 7.5l5 5 5-5"/></svg></button>
+  </div>
+  <main class="content">
+
+<div class="lib-head">
+  <h1>Library</h1>
+  <div class="toolbar">
+    <label class="search"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5"/><path d="M12.5 12.5 17 17"/></svg><span class="vh">Search creations</span><input placeholder="Search creations"></label>
+    <div class="field"><label class="label" for="f-type">Type</label><span class="selwrap"><select id="f-type"><option>All kinds</option><option>Images</option><option>Video</option><option>Audio</option></select><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M5 7.5l5 5 5-5"/></svg></span></div>
+    <div class="field"><label class="label" for="f-person">Person</label><span class="selwrap"><select id="f-person"><option>Everyone</option><option>Sam</option><option>Robin</option><option>Alex</option></select><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M5 7.5l5 5 5-5"/></svg></span></div>
+  </div>
+</div>
+<div class="cols">
+  <nav aria-label="Creations, newest first"><ul class="grid"><li><a href="#" aria-current="true"><span class="frame"><img src="assets/kitchen-morning.webp" alt="" width="768" height="768"></span><span class="ctitle">A lived-in family kitchen in warm morning light, sourdough bread on a wooden board, yellow ceramic mug, herbs at the window. Candid editorial photograph, tasteful natural colors, no text.</span><span class="cmeta">just now</span></a></li><li><a href="#"><span class="frame"><img src="assets/garden-plan.webp" alt="" width="768" height="768"></span><span class="ctitle">An overhead photograph of a backyard raised vegetable bed with tomatoes, lettuce and marigolds, gardening gloves on the cedar edge, late afternoon sunlight, warm documentary style.</span><span class="cmeta">11h ago</span></a></li><li><a href="#"><span class="frame"><img src="assets/school-ecosystem.webp" alt="" width="768" height="768"></span><span class="ctitle">A beautifully crafted school science project showing a miniature pond ecosystem in a glass terrarium with moss, stones and tiny plants on a classroom desk. Editorial photograph, no text.</span><span class="cmeta">22h ago</span></a></li><li><a href="#"><span class="frame"><img src="assets/dog-window.webp" alt="" width="768" height="768"></span><span class="ctitle">A golden retriever asleep beside a sunlit living room window, knitted cream blanket and houseplants, quiet ordinary family afternoon, candid photography.</span><span class="cmeta">1d ago</span></a></li><li><a href="#"><span class="frame"><img src="assets/coastal-weekend.webp" alt="" width="768" height="768"></span><span class="ctitle">A coastal walking trail with wildflowers, two bicycles leaned against a wooden fence, blue sea and distant fishing boats, sunny family weekend mood, natural travel photography.</span><span class="cmeta">2d ago</span></a></li><li><a href="#"><span class="frame"><img src="assets/reading-nook.webp" alt="" width="768" height="768"></span><span class="ctitle">A cozy reading corner with a green armchair, well-loved paperback, tea and a patchwork quilt, rain on the window, warm lamp light, tasteful interior photography.</span><span class="cmeta">2d ago</span></a></li><li><a href="#"><span class="frame"><img src="assets/solar-project.webp" alt="" width="768" height="768"></span><span class="ctitle">A tiny handmade solar-powered model house made of balsa wood with a small solar panel on the roof on a teenager workbench, tools and colored pencils, detailed natural photography.</span><span class="cmeta">3d ago</span></a></li><li><a href="#"><span class="frame"><img src="assets/apple-tart.webp" alt="" width="768" height="768"></span><span class="ctitle">A homemade apple tart cooling on a wooden kitchen table, flour-dusted rolling pin, folded linen towel and a bowl of autumn apples, gentle window light, food photography.</span><span class="cmeta">3d ago</span></a></li><li><a href="#"><span class="frame"><img src="assets/cat-bookshelf.webp" alt="" width="768" height="768"></span><span class="ctitle">A ginger cat peeking from a bookshelf between paperbacks and a ceramic vase, lived-in family living room, soft afternoon light, candid photograph.</span><span class="cmeta">4d ago</span></a></li><li><a href="#"><span class="frame"><img src="assets/mountain-cabin.webp" alt="" width="768" height="768"></span><span class="ctitle">A small wood cabin beside a mountain lake at sunrise, mist above still water, canoe pulled onto a pebble shore, peaceful family holiday scene, travel photograph.</span><span class="cmeta">4d ago</span></a></li><li><a href="#"><span class="frame"><img src="assets/wildflower-study.webp" alt="" width="768" height="768"></span><span class="ctitle">A hand-painted watercolor study of local wildflowers on a sketchbook page, paint palette and brushes on a teenager desk, warm natural light, charming believable craft photograph, no lettering.</span><span class="cmeta">5d ago</span></a></li><li><a href="#"><span class="frame"><img src="assets/herb-window.webp" alt="" width="768" height="768"></span><span class="ctitle">Basil rosemary and thyme growing in terracotta pots on a kitchen windowsill, old brass watering can, morning sun and soft shadows, honest domestic photograph.</span><span class="cmeta">5d ago</span></a></li><li><a href="#"><span class="frame"><img src="assets/birthday-table.webp" alt="" width="768" height="768"></span><span class="ctitle">A simple backyard birthday table with a homemade lemon cake, linen tablecloth, flowers in jam jars and warm string lights, intimate family celebration, no people no text, editorial photograph.</span><span class="cmeta">6d ago</span></a></li><li><a href="#"><span class="frame"><img src="assets/train-journey.webp" alt="" width="768" height="768"></span><span class="ctitle">View from a train window over rolling countryside in autumn, a travel journal and two takeaway coffee cups on the small table, warm quiet family travel photograph.</span><span class="cmeta">6d ago</span></a></li><li><a href="#"><span class="frame"><img src="assets/birdhouse.webp" alt="" width="768" height="768"></span><span class="ctitle">A handmade wooden birdhouse freshly painted soft blue hanging from an apple tree in a backyard, a small bird nearby, spring sunlight, thoughtful school craft project photograph.</span><span class="cmeta">6d ago</span></a></li><li><a href="#"><span class="frame"><img src="assets/rainy-patio.webp" alt="" width="768" height="768"></span><span class="ctitle">Rain drops on a small covered patio with terracotta planters, a folded green umbrella and two wooden chairs, warm light through a kitchen door, cozy documentary photograph.</span><span class="cmeta">7d ago</span></a></li><li><a href="#"><span class="frame"><img src="assets/picnic-lake.webp" alt="" width="768" height="768"></span><span class="ctitle">A family picnic blanket beside a quiet lake, wicker basket, strawberries and sandwiches, shoes placed neatly on grass, golden afternoon light, candid travel photograph.</span><span class="cmeta">7d ago</span></a></li><li><a href="#"><span class="frame"><img src="assets/garden-evening.webp" alt="" width="768" height="768"></span><span class="ctitle">A backyard vegetable garden at dusk with a stone path, climbing beans and warm porch lights, the first stars above, peaceful lived-in home photography.</span><span class="cmeta">8d ago</span></a></li><li><a href="#"><span class="frame audio"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 9v2M7 6.5v7M10 4v12M13 6.5v7M16 9v2"/></svg></span><span class="ctitle">The tomatoes are ready to pick. Please water the herb pots before dinner.</span><span class="cmeta">Audio, 0:04, 8d ago</span></a></li><li><a href="#"><span class="frame audio"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 9v2M7 6.5v7M10 4v12M13 6.5v7M16 9v2"/></svg></span><span class="ctitle">Our solar house uses sunlight to power a tiny fan. We tested it on a cloudy day too.</span><span class="cmeta">Audio, 0:05, 9d ago</span></a></li><li><a href="#"><span class="frame audio"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 9v2M7 6.5v7M10 4v12M13 6.5v7M16 9v2"/></svg></span><span class="ctitle">On Saturday we will take the train to the coast, walk by the harbor, and have a picnic.</span><span class="cmeta">Audio, 0:05, 9d ago</span></a></li><li><a href="#"><span class="frame audio"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 9v2M7 6.5v7M10 4v12M13 6.5v7M16 9v2"/></svg></span><span class="ctitle">Hi June. Welcome to our household gateway. You can try a voice message or make a picture of your garden.</span><span class="cmeta">Audio, 0:06, 10d ago</span></a></li><li><a href="#"><span class="frame audio"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 9v2M7 6.5v7M10 4v12M13 6.5v7M16 9v2"/></svg></span><span class="ctitle">For the apple tart, slice the apples thinly and bake until the pastry is golden. Let it cool before serving.</span><span class="cmeta">Audio, 0:07, 10d ago</span></a></li><li><a href="#"><span class="frame"><img src="assets/garden-breeze-poster.webp" alt="" width="768" height="512"></span><span class="ctitle">A gentle breeze moves the leaves in a sunlit backyard vegetable garden, a watering can beside the raised bed, quiet warm family afternoon, slow steady camera. Audio: birds chirping softly.</span><span class="cmeta">Video, 0:03, 11d ago</span></a></li></ul></nav>
+  <aside class="detail" aria-label="Selected creation">
+    <img src="assets/kitchen-morning.webp" alt="A lived-in family kitchen in warm morning light, sourdough bread on a wooden board, yellow ceramic mug, herbs at the window. Candid editorial photograph, tasteful natural colors, no text." width="350" height="350">
+    <h2>Image</h2>
+    <p class="prompt">A lived-in family kitchen in warm morning light, sourdough bread on a wooden board, yellow ceramic mug, herbs at the window. Candid editorial photograph, tasteful natural colors, no text.</p>
+    <dl>
+      <dt>File</dt><dd>WebP, <span class="num">768 × 768</span></dd>
+      <dt>Made by</dt><dd>Sam, just now</dd>
+    </dl>
+    <div class="actions">
+      <a class="btn btn-primary" href="#"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v10M6 9l4 4 4-4M4 16.5h12"/></svg>Download</a>
+      <a class="btn btn-secondary" href="#"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="7" width="10" height="10"/><path d="M13 7V3H3v10h4"/></svg>Copy prompt</a>
+      <a class="btn btn-secondary" href="#"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M5 2.5h10v15L12.5 16 10 17.5 7.5 16 5 17.5z"/><path d="M8 7h4M8 10h4"/></svg>Open receipt</a>
+    </div>
+    <p class="cost">Cost not recorded</p>
+  </aside>
+</div>
+
+  </main>
+</div>
+</div>
+</body>
+</html>

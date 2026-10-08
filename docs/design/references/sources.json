@@ -1,0 +1,2297 @@
+[
+  {
+    "id": "home-assistant",
+    "url": "https://demo.home-assistant.io/",
+    "date": "2026-10-07",
+    "robots": {
+      "status": 404,
+      "text": "<!DOCTYPE html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\" />\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n    <title>Page not found</title>\n    <style>\n      :root {\n        --colorRgbFacetsTeal600: 2 128 125;\n        --colorTealAction: var(--colorRgbFacetsTeal600);\n        --colorRgbFacetsNeutralLight200: 233 235 237;\n        --colorHr: var(--colorRgbFacetsNeutralLight200);\n        --colorRgbFacetsNeutralLight700: 53 58 62;\n        --colorGrayDarkest: var(--colorRgbFacetsNeutralLight700);\n        --colorGrayLighter: var(--colorRgbFacetsNeutralLight200);\n        --colorText: var(--colorGrayDarkest);\n        --effectShadowLightShallow: 0 1px 10px 0 rgb(53 58 62 / 6%),\n          0 2px 4px 0 rgb(53 58 62 / 8%);\n        --colorRgbFacetsNeutralDark900: 6 11 16;\n      }\n      body {\n        font-family: system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\",\n          Roboto, Helvetica, Arial, sans-serif, \"Apple Color Emoji\",\n          \"Segoe UI Emoji\", \"Segoe UI Symbol\";\n        background: white;\n        overflow: hidden;\n        margin: 0;\n        padding: 0;\n        line-height: 1.5;\n        color: rgb(var(--colorText));\n      }\n\n      @media (prefers-color-scheme: dark) {\n        body {\n          background: rgb(var(--colorRgbFacetsNeutralDark900));\n        }\n      }\n\n      h1 {\n        margin: 0;\n        font-size: 1.375rem;\n        line-height: 1;\n      }\n\n      h1 + p {\n        margin-top: 8px;\n      }\n\n      .main {\n        position: relative;\n        display: flex;\n        flex-direction: column;\n        align-items: center;\n        justify-content: center;\n        height: 100vh;\n        width: 100vw;\n      }\n\n      .card {\n        position: relative;\n        width: 75%;\n        max-width: 364px;\n        padding: 24px;\n        background: white;\n        border-radius: 8px;\n        box-shadow: var(--effectShadowLightShallow);\n        border: 1px solid rgb(var(--colorGrayLighter));\n      }\n\n      a {\n        margin: 0;\n        font-weight: 600;\n        color: rgb(var(--colorTealAction));\n        text-decoration-skip-ink: all;\n        text-decoration-thickness: 1px;\n        text-underline-offset: 2px;\n        text-decoration-color: rgb(var(--colorTealAction) / 0.5);\n        transition: text-decoration-color 0.15s ease-in-out;\n      }\n\n      a:hover,\n      a:focus-visible {\n        text-decoration-color: rgb(var(--colorTealAction));\n      }\n\n      p:last-of-type {\n        margin-bottom: 0;\n      }\n\n      hr {\n        border: 0;\n        height: 1px;\n        background: rgb(var(--colorHr));\n        margin-top: 16px;\n        margin-bottom: 16px;\n      }\n\n      .your-site {\n        font-size: 0.875rem;\n      }\n    </style>\n  </head>\n  <body>\n    <div class=\"main\">\n      <div class=\"card\">\n        <h1>Page not found</h1>\n        <p>\n          Looks like you\u2019ve followed a broken link or entered a URL that doesn\u2019t\n          exist on this site.\n        </p>\n        <hr />\n        <p class=\"your-site\">\n          If this is your site, and you weren\u2019t expecting a 404 for this path,\n          please visit Netlify\u2019s\n          <a\n            href=\"https://answers.netlify.com/t/support-guide-i-ve-deployed-my-site-but-i-still-see-page-not-found/125?utm_source=404page&utm_campaign=community_tracking\"\n            >\u201cpage not found\u201d support guide</a\n          >\n          for troubleshooting tips.\n        </p>\n      </div>\n    </div>\n  </body>\n</html>\n"
+    },
+    "status": 200,
+    "finalUrl": "https://demo.home-assistant.io/#/lovelace/home",
+    "title": "Demo \u2013 Home Assistant",
+    "images": []
+  },
+  {
+    "id": "grafana",
+    "url": "https://play.grafana.org/",
+    "date": "2026-10-07",
+    "robots": {
+      "status": 200,
+      "text": "User-agent: *\nAllow: /\n\nsitemap: https://play.grafana.org/sitemap.txt\n"
+    },
+    "status": 200,
+    "finalUrl": "https://play.grafana.org/",
+    "title": "Grafana",
+    "images": []
+  },
+  {
+    "id": "github-status",
+    "url": "https://www.githubstatus.com/",
+    "date": "2026-10-07",
+    "robots": {
+      "status": 200,
+      "text": "User-agent: *\nDisallow: /api/\nDisallow: /embed/\n"
+    },
+    "status": 200,
+    "finalUrl": "https://www.githubstatus.com/",
+    "title": "GitHub Status",
+    "images": [
+      {
+        "alt": "GitHub header",
+        "src": "https://user-images.githubusercontent.com/19292210/60553863-044dd200-9cea-11e9-987e-7db84449f215.png",
+        "rect": {
+          "x": 0,
+          "y": 73,
+          "width": 1439.9375,
+          "height": 316.3125
+        }
+      }
+    ]
+  },
+  {
+    "id": "openai-status",
+    "url": "https://status.openai.com/",
+    "date": "2026-10-07",
+    "robots": {
+      "status": 404,
+      "text": "<!DOCTYPE html><html data-dpl-id=\"dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\" id=\"__next_error__\"><head><meta charSet=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/><link rel=\"preload\" as=\"script\" fetchPriority=\"low\" href=\"/_next/static/chunks/3l-p524nkx9ho.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\"/><script src=\"/_next/static/chunks/0u3qie8em7q0h.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\" async=\"\"></script><script src=\"/_next/static/chunks/13av84_bzhcar.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\" async=\"\"></script><script src=\"/_next/static/chunks/01c7f5s_u0yi5.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\" async=\"\"></script><script src=\"/_next/static/chunks/turbopack-0c-7ljtk1ve0i.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\" async=\"\"></script><script src=\"/_next/static/chunks/0qtd8cv8rtwp7.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\" async=\"\"></script><link rel=\"preload\" href=\"/_next/static/chunks/2mke21k52udgm.css?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\" as=\"style\"/><meta name=\"robots\" content=\"noindex\"/><meta name=\"theme-color\" content=\"#15171c\"/><meta name=\"color-scheme\" content=\"dark\"/><meta name=\"sentry-trace\" content=\"2cc1f7708bbf4bef9a4cc40fba96df05-80523a7f21751aa3-0\"/><meta name=\"baggage\" content=\"sentry-environment=production,sentry-release=9b09b49d203d953a307437c055a9558f19974d38,sentry-public_key=5d578c0eb4bd4811adf4f2176db9a1c8,sentry-trace_id=2cc1f7708bbf4bef9a4cc40fba96df05,sentry-org_id=494704,sentry-sampled=false,sentry-sample_rand=0.44941200123968517,sentry-sample_rate=0\"/><script src=\"/_next/static/chunks/0c0hxoamwjsbw.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\" noModule=\"\"></script></head><body><div hidden=\"\"><!--$?--><template id=\"B:0\"></template><!--/$--></div><script>requestAnimationFrame(function(){$RT=performance.now()});</script><script src=\"/_next/static/chunks/3l-p524nkx9ho.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\" id=\"_R_\" async=\"\"></script><script>(self.__next_f=self.__next_f||[]).push([0])</script><script>self.__next_f.push([1,\"1:\\\"$Sreact.fragment\\\"\\n6:I[10434,[\\\"/_next/static/chunks/0qtd8cv8rtwp7.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\"],\\\"OutletBoundary\\\"]\\n7:\\\"$Sreact.suspense\\\"\\n9:I[10434,[\\\"/_next/static/chunks/0qtd8cv8rtwp7.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\"],\\\"ViewportBoundary\\\"]\\nb:I[10434,[\\\"/_next/static/chunks/0qtd8cv8rtwp7.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\"],\\\"MetadataBoundary\\\"]\\nd:I[173358,[\\\"/_next/static/chunks/0qtd8cv8rtwp7.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\"],\\\"default\\\",1]\\n:HL[\\\"/_next/static/chunks/2mke21k52udgm.css?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"style\\\"]\\n:HL[\\\"/_next/static/chunks/32bdy2u5kd-iy.css?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"style\\\"]\\n:HL[\\\"/_next/static/chunks/3cjr0k-hxnhfg.css?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"style\\\"]\\n:HL[\\\"/_next/static/media/InterVariable-s.p.2u46q2_90i5lm.ttf?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"font\\\",{\\\"crossOrigin\\\":\\\"\\\",\\\"type\\\":\\\"font/ttf\\\"}]\\n0:{\\\"P\\\":null,\\\"c\\\":[\\\"\\\",\\\"robots.txt\\\"],\\\"q\\\":\\\"\\\",\\\"i\\\":false,\\\"f\\\":[[[\\\"\\\",{\\\"children\\\":[[\\\"slug\\\",\\\"status.openai.com%3A%3Asubpage%3A%3Arobots.txt\\\",\\\"d\\\",[\\\"%5Fintercom\\\",\\\"cause-error\\\",\\\"proxy\\\",\\\"revalidate\\\"]],{\\\"children\\\":[\\\"(default)\\\",{\\\"children\\\":[\\\"__PAGE__\\\",{},\\\"$undefined\\\",\\\"$undefined\\\",4096]},\\\"$undefined\\\",\\\"$undefined\\\",4096]},\\\"$undefined\\\",\\\"$undefined\\\",4096]},\\\"$undefined\\\",\\\"$undefined\\\",4112],[[\\\"$\\\",\\\"$1\\\",\\\"c\\\",{\\\"children\\\":[[[\\\"$\\\",\\\"link\\\",\\\"0\\\",{\\\"rel\\\":\\\"stylesheet\\\",\\\"href\\\":\\\"/_next/static/chunks/2mke21k52udgm.css?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"precedence\\\":\\\"next\\\",\\\"crossOrigin\\\":\\\"$undefined\\\",\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-0\\\",{\\\"src\\\":\\\"/_next/static/chunks/0qtd8cv8rtwp7.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}]],\\\"$L2\\\"]}],{\\\"children\\\":[[\\\"$\\\",\\\"$1\\\",\\\"c\\\",{\\\"children\\\":[[[\\\"$\\\",\\\"link\\\",\\\"0\\\",{\\\"rel\\\":\\\"stylesheet\\\",\\\"href\\\":\\\"/_next/static/chunks/32bdy2u5kd-iy.css?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"precedence\\\":\\\"next\\\",\\\"crossOrigin\\\":\\\"$undefined\\\",\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-0\\\",{\\\"src\\\":\\\"/_next/static/chunks/1nb0sq1bz_avo.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-1\\\",{\\\"src\\\":\\\"/_next/static/chunks/1h9dgdwyu2-2_.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-2\\\",{\\\"src\\\":\\\"/_next/static/chunks/0tmck9kc2egng.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-3\\\",{\\\"src\\\":\\\"/_next/static/chunks/2eqrdhf6s_g6u.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}]],\\\"$L3\\\"]}],{\\\"children\\\":[[\\\"$\\\",\\\"$1\\\",\\\"c\\\",{\\\"children\\\":[[[\\\"$\\\",\\\"link\\\",\\\"0\\\",{\\\"rel\\\":\\\"stylesheet\\\",\\\"href\\\":\\\"/_next/static/chunks/3cjr0k-hxnhfg.css?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"precedence\\\":\\\"next\\\",\\\"crossOrigin\\\":\\\"$undefined\\\",\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-0\\\",{\\\"src\\\":\\\"/_next/static/chunks/2rf1qn7f9c_yx.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-1\\\",{\\\"src\\\":\\\"/_next/static/chunks/279vjghv4m8i-.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-2\\\",{\\\"src\\\":\\\"/_next/static/chunks/1rrz56g66t3zv.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-3\\\",{\\\"src\\\":\\\"/_next/static/chunks/1qjb7nco8ujt_.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-4\\\",{\\\"src\\\":\\\"/_next/static/chunks/0v8e4te6rsthi.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}]],\\\"$L4\\\"]}],{\\\"children\\\":[[\\\"$\\\",\\\"$1\\\",\\\"c\\\",{\\\"children\\\":[\\\"$L5\\\",[[\\\"$\\\",\\\"script\\\",\\\"script-0\\\",{\\\"src\\\":\\\"/_next/static/chunks/3cvy7mh68unhz.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-1\\\",{\\\"src\\\":\\\"/_next/static/chunks/2jr7vunzkvxva.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-2\\\",{\\\"src\\\":\\\"/_next/static/chunks/1__4pvxoxzb2w.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}]],[\\\"$\\\",\\\"$L6\\\",null,{\\\"children\\\":[\\\"$\\\",\\\"$7\\\",null,{\\\"name\\\":\\\"Next.MetadataOutlet\\\",\\\"children\\\":\\\"$@8\\\"}]}]]}],{},null,false,null]},null,false,null]},null,false,null]},null,false,null],[\\\"$\\\",\\\"$1\\\",\\\"h\\\",{\\\"children\\\":[null,[\\\"$\\\",\\\"$L9\\\",null,{\\\"children\\\":\\\"$La\\\"}],[\\\"$\\\",\\\"div\\\",null,{\\\"hidden\\\":true,\\\"children\\\":[\\\"$\\\",\\\"$Lb\\\",null,{\\\"children\\\":[\\\"$\\\",\\\"$7\\\",null,{\\\"name\\\":\\\"Next.Metadata\\\",\\\"children\\\":\\\"$Lc\\\"}]}]}],[\\\"$\\\",\\\"meta\\\",null,{\\\"name\\\":\\\"next-size-adjust\\\",\\\"content\\\":\\\"\\\"}]]}],false]],\\\"m\\\":\\\"$undefined\\\",\\\"G\\\":[\\\"$d\\\",[[\\\"$\\\",\\\"link\\\",\\\"0\\\",{\\\"rel\\\":\\\"stylesheet\\\",\\\"href\\\":\\\"/_next/static/chunks/2mke21k52udgm.css?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"precedence\\\":\\\"next\\\",\\\"crossOrigin\\\":\\\"$undefined\\\",\\\"nonce\\\":\\\"$undefined\\\"}]]],\\\"S\\\":false,\\\"h\\\":null,\\\"r\\\":\\\"$undefined\\\",\\\"s\\\":\\\"$undefined\\\",\\\"a\\\":\\\"$undefined\\\",\\\"l\\\":\\\"$undefined\\\",\\\"p\\\":\\\"$undefined\\\",\\\"d\\\":\\\"$undefined\\\"}\\ne:I[467076,[\\\"/_next/static/chunks/0qtd8cv8rtwp7.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\"],\\\"default\\\"]\\nf:I[756306,[\\\"/_next/static/chunks/0qtd8cv8rtwp7.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/43ldp91fowqcc.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1h9dgdwyu2-2_.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/0v8e4te6rsthi.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/0tmck9kc2egng.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/2eqrdhf6s_g6u.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\"],\\\"default\\\"]\\n10:I[548294,[\\\"/_next/static/chunks/0qtd8cv8rtwp7.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\"],\\\"default\\\"]\\n2:[\\\"$\\\",\\\"$Le\\\",null,{\\\"parallelRouterKey\\\":\\\"children\\\",\\\"error\\\":\\\"$f\\\",\\\"errorStyles\\\":[[\\\"$\\\",\\\"link\\\",\\\"0\\\",{\\\"rel\\\":\\\"stylesheet\\\",\\\"href\\\":\\\"/_next/static/chunks/32bdy2u5kd-iy.css?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"precedence\\\":\\\"next\\\",\\\"crossOrigin\\\":\\\"$undefined\\\",\\\"nonce\\\":\\\"$undefined\\\"}]],\\\"errorScripts\\\":[[\\\"$\\\",\\\"script\\\",\\\"script-0\\\",{\\\"src\\\":\\\"/_next/static/chunks/43ldp91fowqcc.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-1\\\",{\\\"src\\\":\\\"/_next/static/chunks/1h9dgdwyu2-2_.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-2\\\",{\\\"src\\\":\\\"/_next/static/chunks/0v8e4te6rsthi.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-3\\\",{\\\"src\\\":\\\"/_next/static/chunks/0tmck9kc2egng.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-4\\\",{\\\"src\\\":\\\"/_next/static/chunks/2eqrdhf6s_g6u.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}]],\\\"template\\\":[\\\"$\\\",\\\"$L10\\\",null,{}],\\\"templateStyles\\\":\\\"$undefined\\\",\\\"templateScripts\\\":\\\"$undefined\\\",\\\"notFound\\\":[\\\"$L11\\\",[[\\\"$\\\",\\\"link\\\",\\\"0\\\",{\\\"rel\\\":\\\"stylesheet\\\",\\\"href\\\":\\\"/_next/static/chunks/32bdy2u5kd-iy.css?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"precedence\\\":\\\"next\\\",\\\"crossOrigin\\\":\\\"$undefined\\\",\\\"nonce\\\":\\\"$undefined\\\"}]]],\\\"forbidden\\\":\\\"$undefined\\\",\\\"unauthorized\\\":\\\"$undefined\\\"}]\\n12:I[321856,[\\\"/_next/static/chunks/0qtd8cv8rtwp7.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1nb0sq1bz_avo.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1h9dgdwyu2-2_.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/0tmck9kc2egng.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/2eqrdhf6s_g6u.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/2rf1qn7f9c_yx.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/279vjghv4m8i-.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1rrz56g66t3zv.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1qjb7nco8ujt_.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/0v8e4te6rsthi.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/3cvy7mh68unhz.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/2jr7vunzkvxva.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1__4pvxoxzb2w.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\"],\\\"NotFoundError\\\"]\\n13:I[285108,[\\\"/_next/static/chunks/0qtd8cv8rtwp7.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1nb0sq1bz_avo.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1h9dgdwyu2-2_.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/0tmck9kc2egng.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/2eqrdhf6s_g6u.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/2rf1qn7f9c_yx.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/279vjghv4m8i-.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1rrz56g66t3zv.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1qjb7nco8ujt_.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/0v8e4te6rsthi.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\"],\\\"Footer\\\"]\\n11:[[\\\"$\\\",\\\"div\\\",null,{\\\"className\\\":\\\"h-screen flex flex-col items-center justify-center\\\",\\\"children\\\":[\\\"$\\\",\\\"div\\\",null,{\\\"className\\\":\\\"container px-4 py-2 space-y-4 mx-auto md:px-2 md:max-w-[718px] md:py-4 md:space-y-6\\\",\\\"children\\\":[[\\\"$\\\",\\\"$L12\\\",null,{}],[\\\"$\\\",\\\"div\\\",null,{\\\"className\\\":\\\"flex justify-center items-center py-4\\\",\\\"children\\\":[\\\"$\\\",\\\"$L13\\\",null,{\\\"removePoweredBy\\\":true}]}]]}]}],\\\"$L14\\\"]\\n14:E{\\\"digest\\\":\\\"NEXT_REDIRECT;replace;https://incident.io/status-pages?utm_source=status-page;307;\\\"}\\na:[[\\\"$\\\",\\\"meta\\\",\\\"0\\\",{\\\"charSet\\\":\\\"utf-8\\\"}],[\\\"$\\\",\\\"meta\\\",\\\"1\\\",{\\\"name\\\":\\\"viewport\\\",\\\"content\\\":\\\"width=device-width, initial-scale=1\\\"}],[\\\"$\\\",\\\"meta\\\",\\\"2\\\",{\\\"name\\\":\\\"theme-color\\\",\\\"content\\\":\\\"#15171c\\\"}],[\\\"$\\\",\\\"meta\\\",\\\"3\\\",{\\\"name\\\":\\\"color-scheme\\\",\\\"content\\\":\\\"dark\\\"}]]\\n15:I[271601,[\\\"/_next/static/chunks/0qtd8cv8rtwp7.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\"],\\\"IconMark\\\"]\\n8:null\\nc:[[\\\"$\\\",\\\"title\\\",\\\"0\\\",{\\\"children\\\":\\\"incident.io - Status pages\\\"}],[\\\"$\\\",\\\"link\\\",\\\"1\\\",{\\\"rel\\\":\\\"icon\\\",\\\"href\\\":\\\"/favicon-96x96.png\\\",\\\"sizes\\\":\\\"96x96\\\",\\\"type\\\":\\\"image/png\\\"}],[\\\"$\\\",\\\"link\\\",\\\"2\\\",{\\\"rel\\\":\\\"icon\\\",\\\"href\\\":\\\"/favicon-32x32.png\\\",\\\"sizes\\\":\\\"32x32\\\",\\\"type\\\":\\\"image/png\\\"}],[\\\"$\\\",\\\"link\\\",\\\"3\\\",{\\\"rel\\\":\\\"icon\\\",\\\"href\\\":\\\"/favicon-16x16.png\\\",\\\"sizes\\\":\\\"16x16\\\",\\\"type\\\":\\\"image/png\\\"}],[\\\"$\\\",\\\"$L15\\\",\\\"4\\\",{}]]\\n16:I[359487,[\\\"/_next/static/chunks/0qtd8cv8rtwp7.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1nb0sq1bz_avo.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1h9dgdwyu2-2_.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/0tmck9kc2egng.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/2eqrdhf6s_g6u.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\"],\\\"App\\\"]\\n3:[\\\"$\\\",\\\"html\\\",null,{\\\"lang\\\":\\\"en-US\\\",\\\"className\\\":\\\"inter_48f560a7-module__FmDrPW__className h-full\\\",\\\"children\\\":[\\\"$\\\",\\\"body\\\",null,{\\\"className\\\":\\\"bg-white dark:bg-global h-full\\\",\\\"style\\\":{\\\"backgroundColor\\\":\\\"#ffffff\\\"},\\\"children\\\":[\\\"$\\\",\\\"$L16\\\",null,{\\\"slug\\\":\\\"status.openai.com\\\",\\\"initialNow\\\":{\\\"isoDate\\\":\\\"2026-10-07T20:39:34.924Z\\\",\\\"locale\\\":\\\"en-US\\\",\\\"zone\\\":\\\"UTC\\\"},\\\"summary\\\":{\\\"affected_components\\\":[],\\\"allow_search_engine_indexing\\\":true,\\\"components\\\":[{\\\"description\\\":\\\"$undefined\\\",\\\"id\\\":\\\"01JMXBRMFE6N2NNT7DG6XZQ6PW\\\",\\\"name\\\":\\\"Chat Completions\\\",\\\"status_page_id\\\":\\\"01JMDK9XYNY6RXSED6SDWW50WY\\\"},{\\\"description\\\":\\\"$undefined\\\",\\\"id\\\":\\\"01JP8CD9JR3HR6Y7G4Q75N4DVW\\\",\\\"name\\\":\\\"Responses\\\",\\\"status_page_id\\\":\\\"01JMDK9XYNY6RXSED6SDWW50WY\\\"},{\\\"description\\\":\\\"$undefined\\\",\\\"id\\\":\\\"01M3Q6W0264T1RJS1YEM47CAQJ\\\",\\\"name\\\":\\\"Agents\\\",\\\"status_page_id\\\":\\\"01JMDK9XYNY6RXSED6SDWW50WY\\\"},{\\\"description\\\":\\\"$undefined\\\",\\\"id\\\":\\\"01M3Q6W0262E8VW5DE1MJMMN0T\\\",\\\"name\\\":\\\"Decisions\\\",\\\"status_page_id\\\":\\\"01JMDK9XYNY6RXSED6SDWW50WY\\\"},{\\\"description\\\":\\\"$undefined\\\",\\\"id\\\":\\\"01JMXBRMFEMZK0HPK19RYET250\\\",\\\"name\\\":\\\"Fine-tuning\\\",\\\"status_page_id\\\":\\\"01JMDK9XYNY6RXSED6SDWW50WY\\\"},{\\\"description\\\":\\\"$undefined\\\",\\\"id\\\":\\\"01JMXBRMFEV0AJ0VVS68N9CD6R\\\",\\\"name\\\":\\\"Embeddings\\\",\\\"status_page_id\\\":\\\"01JMDK9XYNY6RXSED6SDWW50WY\\\"},{\\\"description\\\":\\\"$undefined\\\",\\\"id\\\":\\\"01JMXBRMFE4MAP2BHSJNZ787WX\\\",\\\"name\\\":\\\"Images\\\",\\\"status_page_id\\\":\\\"01JMDK9XYNY6RXSED6SDWW50WY\\\"},{\\\"description\\\":\\\"$undefined\\\",\\\"id\\\":\\\"01JMXBRMFE5ESNNV8JDHVCGSRD\\\",\\\"name\\\":\\\"Batch\\\",\\\"status_page_id\\\":\\\"01JMDK9XYNY6RXSED6SDWW50WY\\\"},{\\\"description\\\":\\\"$undefined\\\",\\\"id\\\":\\\"01JMXBRMFEKVBWKK82B44QFMCE\\\",\\\"name\\\":\\\"Audio\\\",\\\"status_page_id\\\":\\\"01JMDK9XYNY6RXSED6SDWW50WY\\\"},{\\\"description\\\":\\\"$undefined\\\",\\\"id\\\":\\\"01JMXBRMFEVZ7E0X9GD9FWR9WX\\\",\\\"name\\\":\\\"Moderations\\\",\\\"status_page_id\\\":\\\"01JMDK9XYNY6RXSED6SDWW50WY\\\"},{\\\"description\\\":\\\"$undefined\\\",\\\"id\\\":\\\"01JMXBRMFEQW613TFE89F45035\\\",\\\"name\\\":\\\"Realtime\\\",\\\"status_page_id\\\":\\\"01JMDK9XYNY6RXSED6SDWW50WY\\\"},{\\\"description\\\":\\\"$undefined\\\",\\\"id\\\":\\\"01JMXBRMFESJCBGJR10PDD3WCQ\\\",\\\"name\\\":\\\"Files\\\",\\\"status_page_id\\\":\\\"01JMDK9XYNY6RXSED6SDWW50WY\\\"},{\\\"description\\\":\\\"$undefined\\\",\\\"id\\\":\\\"01JSM5RTJWHRWDTS6Q604VEW3B\\\",\\\"name\\\":\\\"Login\\\",\\\"status_page_id\\\":\\\"01JMDK9XYNY6RXSED6SDWW50WY\\\"},{\\\"description\\\":\\\"$undefined\\\",\\\"id\\\":\\\"01JMXBNJXGV1T5GT2M9XA83XNG\\\",\\\"name\\\":\\\"Conversations\\\",\\\"status_page_id\\\":\\\"01JMDK9XYNY6RXSED6SDWW50WY\\\"},{\\\"description\\\":\\\"$undefined\\\",\\\"id\\\":\\\"01JMXBNJXG1S2D9V65P1ZZTD94\\\",\\\"name\\\":\\\"Login\\\",\\\"status_page_id\\\":\\\"01JMDK9XYNY6RXSED6SDWW50WY\\\"},{\\\"description\\\":\\\"$undefined\\\",\\\"id\\\":\\\"01KX45G1SH21AX5DT93D4HMF0P\\\",\\\"name\\\":\\\"ChatGPT Work\\\",\\\"status_page_id\\\":\\\"01JMDK9XYNY6RXSED6SDWW50WY\\\"},{"
+    },
+    "status": 200,
+    "finalUrl": "https://status.openai.com/",
+    "title": "OpenAI Status",
+    "images": []
+  },
+  {
+    "id": "vercel-status",
+    "url": "https://www.vercel-status.com/",
+    "date": "2026-10-07",
+    "robots": {
+      "status": 200,
+      "text": "User-agent: *\nDisallow: /api/\nDisallow: /embed/\n"
+    },
+    "status": 200,
+    "finalUrl": "https://www.vercel-status.com/",
+    "title": "Vercel Status",
+    "images": []
+  },
+  {
+    "id": "tailscale-status",
+    "url": "https://status.tailscale.com/",
+    "date": "2026-10-07",
+    "robots": {
+      "status": 404,
+      "text": "<!DOCTYPE html><html data-dpl-id=\"dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\" id=\"__next_error__\"><head><meta charSet=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/><link rel=\"preload\" as=\"script\" fetchPriority=\"low\" href=\"/_next/static/chunks/3l-p524nkx9ho.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\"/><script src=\"/_next/static/chunks/0u3qie8em7q0h.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\" async=\"\"></script><script src=\"/_next/static/chunks/13av84_bzhcar.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\" async=\"\"></script><script src=\"/_next/static/chunks/01c7f5s_u0yi5.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\" async=\"\"></script><script src=\"/_next/static/chunks/turbopack-0c-7ljtk1ve0i.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\" async=\"\"></script><meta name=\"robots\" content=\"noindex\"/><meta name=\"theme-color\" content=\"#15171c\"/><meta name=\"color-scheme\" content=\"dark\"/><title>incident.io - Status pages</title><link rel=\"icon\" href=\"/favicon-96x96.png\" sizes=\"96x96\" type=\"image/png\"/><link rel=\"icon\" href=\"/favicon-32x32.png\" sizes=\"32x32\" type=\"image/png\"/><link rel=\"icon\" href=\"/favicon-16x16.png\" sizes=\"16x16\" type=\"image/png\"/><meta name=\"sentry-trace\" content=\"9de600a528404a3ea3f9208bd9437ee4-80facc3e5e44bcc9-0\"/><meta name=\"baggage\" content=\"sentry-environment=production,sentry-release=9b09b49d203d953a307437c055a9558f19974d38,sentry-public_key=5d578c0eb4bd4811adf4f2176db9a1c8,sentry-trace_id=9de600a528404a3ea3f9208bd9437ee4,sentry-org_id=494704,sentry-sampled=false,sentry-sample_rand=0.7465549375203131,sentry-sample_rate=0\"/><script src=\"/_next/static/chunks/0c0hxoamwjsbw.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\" noModule=\"\"></script></head><body><div hidden=\"\"><!--$--><!--/$--></div><script src=\"/_next/static/chunks/3l-p524nkx9ho.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\" id=\"_R_\" async=\"\"></script><script>(self.__next_f=self.__next_f||[]).push([0])</script><script>self.__next_f.push([1,\"1:\\\"$Sreact.fragment\\\"\\n6:I[10434,[\\\"/_next/static/chunks/0qtd8cv8rtwp7.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\"],\\\"OutletBoundary\\\"]\\n7:\\\"$Sreact.suspense\\\"\\n9:I[10434,[\\\"/_next/static/chunks/0qtd8cv8rtwp7.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\"],\\\"ViewportBoundary\\\"]\\nb:I[10434,[\\\"/_next/static/chunks/0qtd8cv8rtwp7.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\"],\\\"MetadataBoundary\\\"]\\nd:I[173358,[\\\"/_next/static/chunks/0qtd8cv8rtwp7.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\"],\\\"default\\\",1]\\n:HL[\\\"/_next/static/chunks/2mke21k52udgm.css?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"style\\\"]\\n:HL[\\\"/_next/static/chunks/32bdy2u5kd-iy.css?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"style\\\"]\\n:HL[\\\"/_next/static/chunks/3cjr0k-hxnhfg.css?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"style\\\"]\\n:HL[\\\"/_next/static/media/InterVariable-s.p.2u46q2_90i5lm.ttf?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"font\\\",{\\\"crossOrigin\\\":\\\"\\\",\\\"type\\\":\\\"font/ttf\\\"}]\\n0:{\\\"P\\\":null,\\\"c\\\":[\\\"\\\",\\\"robots.txt\\\"],\\\"q\\\":\\\"\\\",\\\"i\\\":false,\\\"f\\\":[[[\\\"\\\",{\\\"children\\\":[[\\\"slug\\\",\\\"status.tailscale.com%3A%3Asubpage%3A%3Arobots.txt\\\",\\\"d\\\",[\\\"%5Fintercom\\\",\\\"cause-error\\\",\\\"proxy\\\",\\\"revalidate\\\"]],{\\\"children\\\":[\\\"(default)\\\",{\\\"children\\\":[\\\"__PAGE__\\\",{},\\\"$undefined\\\",\\\"$undefined\\\",4096]},\\\"$undefined\\\",\\\"$undefined\\\",4096]},\\\"$undefined\\\",\\\"$undefined\\\",4096]},\\\"$undefined\\\",\\\"$undefined\\\",4112],[[\\\"$\\\",\\\"$1\\\",\\\"c\\\",{\\\"children\\\":[[[\\\"$\\\",\\\"link\\\",\\\"0\\\",{\\\"rel\\\":\\\"stylesheet\\\",\\\"href\\\":\\\"/_next/static/chunks/2mke21k52udgm.css?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"precedence\\\":\\\"next\\\",\\\"crossOrigin\\\":\\\"$undefined\\\",\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-0\\\",{\\\"src\\\":\\\"/_next/static/chunks/0qtd8cv8rtwp7.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}]],\\\"$L2\\\"]}],{\\\"children\\\":[[\\\"$\\\",\\\"$1\\\",\\\"c\\\",{\\\"children\\\":[[[\\\"$\\\",\\\"link\\\",\\\"0\\\",{\\\"rel\\\":\\\"stylesheet\\\",\\\"href\\\":\\\"/_next/static/chunks/32bdy2u5kd-iy.css?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"precedence\\\":\\\"next\\\",\\\"crossOrigin\\\":\\\"$undefined\\\",\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-0\\\",{\\\"src\\\":\\\"/_next/static/chunks/1nb0sq1bz_avo.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-1\\\",{\\\"src\\\":\\\"/_next/static/chunks/1h9dgdwyu2-2_.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-2\\\",{\\\"src\\\":\\\"/_next/static/chunks/0tmck9kc2egng.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-3\\\",{\\\"src\\\":\\\"/_next/static/chunks/2eqrdhf6s_g6u.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}]],\\\"$L3\\\"]}],{\\\"children\\\":[[\\\"$\\\",\\\"$1\\\",\\\"c\\\",{\\\"children\\\":[[[\\\"$\\\",\\\"link\\\",\\\"0\\\",{\\\"rel\\\":\\\"stylesheet\\\",\\\"href\\\":\\\"/_next/static/chunks/3cjr0k-hxnhfg.css?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"precedence\\\":\\\"next\\\",\\\"crossOrigin\\\":\\\"$undefined\\\",\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-0\\\",{\\\"src\\\":\\\"/_next/static/chunks/2rf1qn7f9c_yx.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-1\\\",{\\\"src\\\":\\\"/_next/static/chunks/279vjghv4m8i-.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-2\\\",{\\\"src\\\":\\\"/_next/static/chunks/1rrz56g66t3zv.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-3\\\",{\\\"src\\\":\\\"/_next/static/chunks/1qjb7nco8ujt_.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-4\\\",{\\\"src\\\":\\\"/_next/static/chunks/0v8e4te6rsthi.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}]],\\\"$L4\\\"]}],{\\\"children\\\":[[\\\"$\\\",\\\"$1\\\",\\\"c\\\",{\\\"children\\\":[\\\"$L5\\\",[[\\\"$\\\",\\\"script\\\",\\\"script-0\\\",{\\\"src\\\":\\\"/_next/static/chunks/3cvy7mh68unhz.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-1\\\",{\\\"src\\\":\\\"/_next/static/chunks/2jr7vunzkvxva.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-2\\\",{\\\"src\\\":\\\"/_next/static/chunks/1__4pvxoxzb2w.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}]],[\\\"$\\\",\\\"$L6\\\",null,{\\\"children\\\":[\\\"$\\\",\\\"$7\\\",null,{\\\"name\\\":\\\"Next.MetadataOutlet\\\",\\\"children\\\":\\\"$@8\\\"}]}]]}],{},null,false,null]},null,false,null]},null,false,null]},null,false,null],[\\\"$\\\",\\\"$1\\\",\\\"h\\\",{\\\"children\\\":[null,[\\\"$\\\",\\\"$L9\\\",null,{\\\"children\\\":\\\"$La\\\"}],[\\\"$\\\",\\\"div\\\",null,{\\\"hidden\\\":true,\\\"children\\\":[\\\"$\\\",\\\"$Lb\\\",null,{\\\"children\\\":[\\\"$\\\",\\\"$7\\\",null,{\\\"name\\\":\\\"Next.Metadata\\\",\\\"children\\\":\\\"$Lc\\\"}]}]}],[\\\"$\\\",\\\"meta\\\",null,{\\\"name\\\":\\\"next-size-adjust\\\",\\\"content\\\":\\\"\\\"}]]}],false]],\\\"m\\\":\\\"$undefined\\\",\\\"G\\\":[\\\"$d\\\",[[\\\"$\\\",\\\"link\\\",\\\"0\\\",{\\\"rel\\\":\\\"stylesheet\\\",\\\"href\\\":\\\"/_next/static/chunks/2mke21k52udgm.css?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"precedence\\\":\\\"next\\\",\\\"crossOrigin\\\":\\\"$undefined\\\",\\\"nonce\\\":\\\"$undefined\\\"}]]],\\\"S\\\":false,\\\"h\\\":null,\\\"r\\\":\\\"$undefined\\\",\\\"s\\\":\\\"$undefined\\\",\\\"a\\\":\\\"$undefined\\\",\\\"l\\\":\\\"$undefined\\\",\\\"p\\\":\\\"$undefined\\\",\\\"d\\\":\\\"$undefined\\\"}\\ne:I[467076,[\\\"/_next/static/chunks/0qtd8cv8rtwp7.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\"],\\\"default\\\"]\\nf:I[756306,[\\\"/_next/static/chunks/0qtd8cv8rtwp7.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/43ldp91fowqcc.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1h9dgdwyu2-2_.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/0v8e4te6rsthi.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/0tmck9kc2egng.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/2eqrdhf6s_g6u.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\"],\\\"default\\\"]\\n10:I[548294,[\\\"/_next/static/chunks/0qtd8cv8rtwp7.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\"],\\\"default\\\"]\\n2:[\\\"$\\\",\\\"$Le\\\",null,{\\\"parallelRouterKey\\\":\\\"children\\\",\\\"error\\\":\\\"$f\\\",\\\"errorStyles\\\":[[\\\"$\\\",\\\"link\\\",\\\"0\\\",{\\\"rel\\\":\\\"stylesheet\\\",\\\"href\\\":\\\"/_next/static/chunks/32bdy2u5kd-iy.css?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"precedence\\\":\\\"next\\\",\\\"crossOrigin\\\":\\\"$undefined\\\",\\\"nonce\\\":\\\"$undefined\\\"}]],\\\"errorScripts\\\":[[\\\"$\\\",\\\"script\\\",\\\"script-0\\\",{\\\"src\\\":\\\"/_next/static/chunks/43ldp91fowqcc.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-1\\\",{\\\"src\\\":\\\"/_next/static/chunks/1h9dgdwyu2-2_.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-2\\\",{\\\"src\\\":\\\"/_next/static/chunks/0v8e4te6rsthi.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-3\\\",{\\\"src\\\":\\\"/_next/static/chunks/0tmck9kc2egng.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}],[\\\"$\\\",\\\"script\\\",\\\"script-4\\\",{\\\"src\\\":\\\"/_next/static/chunks/2eqrdhf6s_g6u.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"async\\\":true,\\\"nonce\\\":\\\"$undefined\\\"}]],\\\"template\\\":[\\\"$\\\",\\\"$L10\\\",null,{}],\\\"templateStyles\\\":\\\"$undefined\\\",\\\"templateScripts\\\":\\\"$undefined\\\",\\\"notFound\\\":[\\\"$L11\\\",[[\\\"$\\\",\\\"link\\\",\\\"0\\\",{\\\"rel\\\":\\\"stylesheet\\\",\\\"href\\\":\\\"/_next/static/chunks/32bdy2u5kd-iy.css?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"precedence\\\":\\\"next\\\",\\\"crossOrigin\\\":\\\"$undefined\\\",\\\"nonce\\\":\\\"$undefined\\\"}]]],\\\"forbidden\\\":\\\"$undefined\\\",\\\"unauthorized\\\":\\\"$undefined\\\"}]\\n12:I[321856,[\\\"/_next/static/chunks/0qtd8cv8rtwp7.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1nb0sq1bz_avo.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1h9dgdwyu2-2_.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/0tmck9kc2egng.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/2eqrdhf6s_g6u.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/2rf1qn7f9c_yx.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/279vjghv4m8i-.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1rrz56g66t3zv.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1qjb7nco8ujt_.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/0v8e4te6rsthi.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/3cvy7mh68unhz.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/2jr7vunzkvxva.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1__4pvxoxzb2w.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\"],\\\"NotFoundError\\\"]\\n13:I[285108,[\\\"/_next/static/chunks/0qtd8cv8rtwp7.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1nb0sq1bz_avo.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1h9dgdwyu2-2_.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/0tmck9kc2egng.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/2eqrdhf6s_g6u.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/2rf1qn7f9c_yx.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/279vjghv4m8i-.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1rrz56g66t3zv.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1qjb7nco8ujt_.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/0v8e4te6rsthi.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\"],\\\"Footer\\\"]\\n11:[[\\\"$\\\",\\\"div\\\",null,{\\\"className\\\":\\\"h-screen flex flex-col items-center justify-center\\\",\\\"children\\\":[\\\"$\\\",\\\"div\\\",null,{\\\"className\\\":\\\"container px-4 py-2 space-y-4 mx-auto md:px-2 md:max-w-[718px] md:py-4 md:space-y-6\\\",\\\"children\\\":[[\\\"$\\\",\\\"$L12\\\",null,{}],[\\\"$\\\",\\\"div\\\",null,{\\\"className\\\":\\\"flex justify-center items-center py-4\\\",\\\"children\\\":[\\\"$\\\",\\\"$L13\\\",null,{\\\"removePoweredBy\\\":true}]}]]}]}],\\\"$L14\\\"]\\n14:E{\\\"digest\\\":\\\"NEXT_REDIRECT;replace;https://incident.io/status-pages?utm_source=status-page;307;\\\"}\\na:[[\\\"$\\\",\\\"meta\\\",\\\"0\\\",{\\\"charSet\\\":\\\"utf-8\\\"}],[\\\"$\\\",\\\"meta\\\",\\\"1\\\",{\\\"name\\\":\\\"viewport\\\",\\\"content\\\":\\\"width=device-width, initial-scale=1\\\"}],[\\\"$\\\",\\\"meta\\\",\\\"2\\\",{\\\"name\\\":\\\"theme-color\\\",\\\"content\\\":\\\"#15171c\\\"}],[\\\"$\\\",\\\"meta\\\",\\\"3\\\",{\\\"name\\\":\\\"color-scheme\\\",\\\"content\\\":\\\"dark\\\"}]]\\n15:I[271601,[\\\"/_next/static/chunks/0qtd8cv8rtwp7.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\"],\\\"IconMark\\\"]\\n8:null\\nc:[[\\\"$\\\",\\\"title\\\",\\\"0\\\",{\\\"children\\\":\\\"incident.io - Status pages\\\"}],[\\\"$\\\",\\\"link\\\",\\\"1\\\",{\\\"rel\\\":\\\"icon\\\",\\\"href\\\":\\\"/favicon-96x96.png\\\",\\\"sizes\\\":\\\"96x96\\\",\\\"type\\\":\\\"image/png\\\"}],[\\\"$\\\",\\\"link\\\",\\\"2\\\",{\\\"rel\\\":\\\"icon\\\",\\\"href\\\":\\\"/favicon-32x32.png\\\",\\\"sizes\\\":\\\"32x32\\\",\\\"type\\\":\\\"image/png\\\"}],[\\\"$\\\",\\\"link\\\",\\\"3\\\",{\\\"rel\\\":\\\"icon\\\",\\\"href\\\":\\\"/favicon-16x16.png\\\",\\\"sizes\\\":\\\"16x16\\\",\\\"type\\\":\\\"image/png\\\"}],[\\\"$\\\",\\\"$L15\\\",\\\"4\\\",{}]]\\n16:I[321856,[\\\"/_next/static/chunks/0qtd8cv8rtwp7.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1nb0sq1bz_avo.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1h9dgdwyu2-2_.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/0tmck9kc2egng.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/2eqrdhf6s_g6u.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/2rf1qn7f9c_yx.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/279vjghv4m8i-.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1rrz56g66t3zv.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1qjb7nco8ujt_.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/0v8e4te6rsthi.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/3cvy7mh68unhz.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/2jr7vunzkvxva.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1__4pvxoxzb2w.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\"],\\\"AppWrapper\\\"]\\n17:I[1700,[\\\"/_next/static/chunks/0qtd8cv8rtwp7.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1nb0sq1bz_avo.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1h9dgdwyu2-2_.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/0tmck9kc2egng.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/2eqrdhf6s_g6u.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/2rf1qn7f9c_yx.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/279vjghv4m8i-.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1rrz56g66t3zv.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/1qjb7nco8ujt_.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\",\\\"/_next/static/chunks/0v8e4te6rsthi.js?dpl=dpl_Fu6niNcSahRJUbJXwC6RyStaLzyj\\\"],\\\"Header\\\"]\\n4:[\\\"$\\\",\\\"div\\\",null,{\\\"className\\\":\\\"min-h-screen flex flex-col\\\",\\\"children\\\":[\\\"$undefined\\\",[\\\"$\\\",\\\"$L16\\\",null,{\\\"className\\\":\\\"flex flex-col\\\",\\\"children\\\":[[\\\"$\\\",\\\"div\\\",null,{\\\"className\\\":\\\"flex-1 sm:px-4 py-2 space-y-6\\\",\\\"children\\\":[[\\\"$\\\",\\\"$L17\\\",null,{\\\"slug\\\":\\\"status.tailscale.com\\\",\\\"summary\\\":{\\\"affected_components\\\":[],\\\"allow_search_engine_indexing\\\":true,\\\"components\\\":[{\\\"description\\\":\\\"https://console.tailscale.com\\\",\\\"id\\\":\\\"01JVZBX28CQV3BX7N5031VY303\\\",\\\"name\\\":\\\"Admin console (console.tailscale.com)\\\",\\\"status_page_id\\\":\\\"01JVZBX1ZXHYQ4Z6ATG7AQDZ6N\\\"},{\\\"description\\\":\\\"$undefined\\\",\\\"id\\\":\\\"01JVZBX28CG8FMGHKFXHPKTC41\\\",\\\"name\\\":\\\"API (api.tailscale.com)\\\",\\\"status_page_id\\\":\\\"01JVZBX1ZXHYQ4Z6ATG7AQDZ6N\\\"},{\\\"description\\\":\\\"$undefined\\\",\\\"id\\\":\\\"01JWDQXXDD4EDC6X7WP1A282G3\\\",\\\"name\\\":\\\"Coordination service\\\",\\\"status_page_id\\\":\\\"01JVZBX1ZXHYQ4Z6ATG7AQDZ6N\\\"},{\\\"description\\\":\\\"$undefined\\\",\\\"id\\\":\\\"01JWDQXXDDZ4Z393WKG4Q0T9RC\\\",\\\"name\\\":\\\"DERP relay servers\\\",\\\"status_page_id\\\":\\\"01JVZBX1ZXHYQ4Z6ATG7AQDZ6N\\\"},{\\\"description\\\":\\\"$undefined\\\",\\\"id\\\":\\\"01JWDQXXDD35JRFFT38XSMT9NS\\\",\\\"name\\\":\\\"Certificates\\\",\\\"status_page_id\\\":\\\"01JVZBX1ZXHYQ4Z6ATG7AQDZ6N\\\"},{\\\"description\\\":\\\"$undefined\\\",\\\"id\\\":\\\"01JWDQXXDDDV8064KSKPN3K467\\\",\\\"name\\\":\\\"Mullvad exit nodes\\\",\\\"status_page_id\\\":\\\"01JVZBX1ZXHYQ4Z6ATG7AQDZ6N\\\"},{\\\"description\\\":\\\"$undefined\\\",\\\"id\\\":\\"
+    },
+    "status": 200,
+    "finalUrl": "https://status.tailscale.com/",
+    "title": "Tailscale Status",
+    "images": []
+  },
+  {
+    "id": "mcp",
+    "url": "https://modelcontextprotocol.io/docs/getting-started/intro",
+    "date": "2026-10-07",
+    "robots": {
+      "status": 200,
+      "text": "User-agent: *\nContent-Signal: ai-train=yes, search=yes, ai-input=yes\nDisallow: /cdn-cgi/\nAllow: /_next/image\nDisallow: /_next/\nSitemap: https://modelcontextprotocol.io/sitemap.xml"
+    },
+    "status": 200,
+    "finalUrl": "https://modelcontextprotocol.io/docs/2026-07-28/getting-started/intro",
+    "title": "What is the Model Context Protocol (MCP)? - Model Context Protocol",
+    "images": [
+      {
+        "alt": "",
+        "src": "https://mintcdn.com/mcp/bEUxYpZqie0DsluH/images/mcp-simple-diagram.png?w=1100&fit=max&auto=format&n=bEUxYpZqie0DsluH&q=85&s=341b88d6308188ab06bf05748c80a494",
+        "rect": {
+          "x": 371.1875,
+          "y": 588,
+          "width": 672.8125,
+          "height": 262.8125
+        }
+      }
+    ]
+  },
+  {
+    "id": "linear",
+    "url": "https://linear.app/",
+    "date": "2026-10-07",
+    "robots": {
+      "status": 200,
+      "text": "User-Agent: *\nDisallow: /api/\nDisallow: /cdn-cgi/\nAllow: /api/og/\n\nSitemap: https://linear.app/sitemap.xml\n"
+    },
+    "status": 200,
+    "finalUrl": "https://linear.app/",
+    "title": "Linear \u2013 The system for product development",
+    "images": [
+      {
+        "alt": "",
+        "src": "https://linear.app/cdn-cgi/imagedelivery/fO02fVwohEs9s9UHFwon6A/c7fa8f5f-d439-4329-6a65-de549b51e300/f=auto,fit=scale-down,metadata=none,width=2560",
+        "rect": {
+          "x": 0,
+          "y": 491.1875,
+          "width": 1440,
+          "height": 803.8125
+        }
+      }
+    ]
+  },
+  {
+    "id": "tailscale",
+    "url": "https://tailscale.com/",
+    "date": "2026-10-07",
+    "robots": {
+      "status": 200,
+      "text": "User-agent: *\nDisallow:\n\nUser-agent: atlassian-bot\nAllow: /docs/\n\nSitemap: https://tailscale.com/sitemap.xml\n"
+    },
+    "status": 200,
+    "finalUrl": "https://tailscale.com/",
+    "title": "Tailscale | Secure Connectivity for AI, IoT & Multi-Cloud",
+    "images": [
+      {
+        "alt": "aperture dashboard",
+        "src": "https://cdn.sanity.io/images/w77i7m8x/production-v2/a88cf9aad8777f4b0641202a5ed6c02bbb005d8c-266x342.svg?w=800&q=75&fit=clip&auto=format",
+        "rect": {
+          "x": 819.15625,
+          "y": 174,
+          "width": 266,
+          "height": 342
+        }
+      },
+      {
+        "alt": "Laptop screen with a tailscale status popup",
+        "src": "https://cdn.sanity.io/images/w77i7m8x/production-v2/af5c10c534518d99737ba515229b2da310feabd8-806x512.svg?w=806&q=75&fit=clip&auto=format",
+        "rect": {
+          "x": 491,
+          "y": 787.78125,
+          "width": 820,
+          "height": 520.890625
+        }
+      },
+      {
+        "alt": "An illustration showing how IT might use Tailscale",
+        "src": "",
+        "rect": {
+          "x": 161,
+          "y": 2760.625,
+          "width": 1118,
+          "height": 598.921875
+        }
+      }
+    ]
+  },
+  {
+    "id": "stripe",
+    "url": "https://stripe.com/payments",
+    "date": "2026-10-07",
+    "robots": {
+      "status": 200,
+      "text": "Sitemap: https://stripe.com/sitemap/sitemap.xml\n\nUser-agent: ia_archiver\nAllow: /docs/api\nAllow: /docs/api$\nDisallow: /docs\nDisallow: /docs$\nDisallow: /bitcoin/refund\nDisallow: /sources/refund\nDisallow: /sources/sepa_mandate\nDisallow: /sources/test_source\nDisallow: /sources/test_klarna\nDisallow: /handoff-healthcheck\nDisallow: /handoff\n\nUser-agent: *\nAllow: /docs\nAllow: /docs$\nDisallow: /bitcoin/refund\nDisallow: /sources/refund\nDisallow: /sources/sepa_mandate\nDisallow: /sources/test_source\nDisallow: /sources/test_klarna\nDisallow: /unsupported-browser\nDisallow: /handoff-healthcheck\nDisallow: /handoff\n\nUser-agent: rogerbot\nCrawl-delay: 2\n"
+    },
+    "status": 200,
+    "finalUrl": "https://stripe.com/payments",
+    "title": "Stripe Payments | Global Payment Processing Platform",
+    "images": [
+      {
+        "alt": "",
+        "src": "https://images.stripeassets.com/fzn2n1nzq965/4WjxT85Wi0tNWOJie0L7LW/233ec6bd0738bc0fb86ed1ea0a12515a/PowdurImg.png",
+        "rect": {
+          "x": 976.5090942382812,
+          "y": 2539.9765625,
+          "width": 266.03631591796875,
+          "height": 135.272705078125
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 1888.589111328125,
+          "y": 2426.375,
+          "width": 326.82177734375,
+          "height": 201.530029296875
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 1888.589111328125,
+          "y": 2639.43994140625,
+          "width": 326.82177734375,
+          "height": 201.530029296875
+        }
+      },
+      {
+        "alt": "A/B testing visual",
+        "src": "",
+        "rect": {
+          "x": 720,
+          "y": 3183.46875,
+          "width": 540,
+          "height": 510
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 960.2000122070312,
+          "y": 6819.10302734375,
+          "width": 289.35003662109375,
+          "height": 391.05029296875
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 437.8500061035156,
+          "y": 7155.3876953125,
+          "width": 834.300048828125,
+          "height": 432.599609375
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 437.8500061035156,
+          "y": 7155.3876953125,
+          "width": 834.300048828125,
+          "height": 432.599609375
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 437.8500061035156,
+          "y": 7155.3876953125,
+          "width": 834.300048828125,
+          "height": 432.599609375
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 437.8500061035156,
+          "y": 7155.3876953125,
+          "width": 834.300048828125,
+          "height": 432.599609375
+        }
+      },
+      {
+        "alt": "Stripe Dashboard report showing how to optimize cost ",
+        "src": "",
+        "rect": {
+          "x": 720,
+          "y": 9424.796875,
+          "width": 831.96875,
+          "height": 469.96875
+        }
+      }
+    ]
+  },
+  {
+    "id": "apple-photos",
+    "url": "https://www.apple.com/ios/photos/",
+    "date": "2026-10-07",
+    "robots": {
+      "status": 200,
+      "text": "# robots.txt for https://www.apple.com/\n\nUser-agent: *\nDisallow: /*shop/browse/overlay/*\nDisallow: /*shop/iphone/payments/overlay/*\nDisallow: /cn/*/aow/*\nDisallow: /tmall*\nAllow: /ac/globalnav/2.0/*/images/ac-globalnav/globalnav/search/* \t\n\nUser-agent: Baiduspider\nDisallow: /*\nAllow: /cn/*\nAllow: /cn-edu/*\nAllow: /cn-k12/*\n\nUser-agent: HaoSouSpider\nDisallow: /*\nAllow: /cn/*\nAllow: /cn-edu/*\nAllow: /cn-k12/*\n\nUser-agent: Sogou web spider\nDisallow: /*\nAllow: /cn/*\nAllow: /cn-k12/*\n\nUser-agent: Sogou inst spider\nDisallow: /*\nAllow: /cn/*\nAllow: /cn-k12/*\n\nUser-agent: Sogou spider2\nDisallow: /*\nAllow: /cn/*\nAllow: /cn-k12/*\n\n#DaumWebMasterTool:6ff40e0f09564a9d4e3bc80e7cbde7c196677a2f5f610eb9c029836774f9a8e9:D9a8IEFAzmC/NWsQ3tB0Wg==\n\nSitemap: https://www.apple.com/shop/sitemap.xml\nSitemap: https://www.apple.com/autopush/sitemap/sitemap-index.xml\nSitemap: https://www.apple.com/newsroom/sitemap.xml\nSitemap: https://www.apple.com/retail/sitemap/sitemap.xml\nSitemap: https://www.apple.com/today/sitemap-index.xml\n"
+    },
+    "status": 200,
+    "finalUrl": "https://support.apple.com/guide/iphone/view-photos-and-videos-iph3d267610/ios",
+    "title": "View photos and videos on iPhone - Apple Support",
+    "images": []
+  },
+  {
+    "id": "plex",
+    "url": "https://www.plex.tv/",
+    "date": "2026-10-07",
+    "robots": {
+      "status": 200,
+      "text": "User-agent: *\nDisallow: /wp-admin/\nDisallow: /plex-pass/purchase\nDisallow: /pt/plex-pass/purchase\nDisallow: /es/plex-pass/purchase\nDisallow: /de/plex-pass/purchase\nDisallow: /fr/plex-pass/purchase\nDisallow: /de/plex-pass/purchase\nDisallow: /zh/plex-pass/purchase\nDisallow: /nl/plex-pass/purchase\nDisallow: /hi/plex-pass/purchase\nDisallow: /ja/plex-pass/purchase\nDisallow: /ko/plex-pass/purchase\nDisallow: /ru/plex-pass/purchase\nDisallow: /sv/plex-pass/purchase\nDisallow: /en-au/plex-pass/purchase\nDisallow: /en-ca/plex-pass/purchase\nDisallow: /en-gb/plex-pass/purchase\nDisallow: /pt-br/plex-pass/purchase\nDisallow: /sign-in\nDisallow: /pt/sign-in\nDisallow: /es/sign-in\nDisallow: /de/sign-in\nDisallow: /fr/sign-in\nDisallow: /de/sign-in\nDisallow: /zh/sign-in\nDisallow: /nl/sign-in\nDisallow: /hi/sign-in\nDisallow: /ja/sign-in\nDisallow: /ko/sign-in\nDisallow: /ru/sign-in\nDisallow: /sv/sign-in\nDisallow: /en-au/sign-in\nDisallow: /en-ca/sign-in\nDisallow: /en-gb/sign-in\nDisallow: /pt-br/sign-in\nAllow: /wp-admin/admin-ajax.php\n\nUser-agent: Googlebot \nDisallow: /link-alt\nDisallow: /wp-admin/\nDisallow: /plex-pass/purchase\nDisallow: /pt/plex-pass/purchase\nDisallow: /es/plex-pass/purchase\nDisallow: /de/plex-pass/purchase\nDisallow: /fr/plex-pass/purchase\nDisallow: /de/plex-pass/purchase\nDisallow: /zh/plex-pass/purchase\nDisallow: /nl/plex-pass/purchase\nDisallow: /hi/plex-pass/purchase\nDisallow: /ja/plex-pass/purchase\nDisallow: /ko/plex-pass/purchase\nDisallow: /ru/plex-pass/purchase\nDisallow: /sv/plex-pass/purchase\nDisallow: /en-au/plex-pass/purchase\nDisallow: /en-ca/plex-pass/purchase\nDisallow: /en-gb/plex-pass/purchase\nDisallow: /pt-br/plex-pass/purchase\nDisallow: /sign-in\nDisallow: /pt/sign-in\nDisallow: /es/sign-in\nDisallow: /de/sign-in\nDisallow: /fr/sign-in\nDisallow: /de/sign-in\nDisallow: /zh/sign-in\nDisallow: /nl/sign-in\nDisallow: /hi/sign-in\nDisallow: /ja/sign-in\nDisallow: /ko/sign-in\nDisallow: /ru/sign-in\nDisallow: /sv/sign-in\nDisallow: /en-au/sign-in\nDisallow: /en-ca/sign-in\nDisallow: /en-gb/sign-in\nDisallow: /pt-br/sign-in\n\nSitemap: https://www.plex.tv/sitemap_index.xml\n"
+    },
+    "status": 200,
+    "finalUrl": "https://watch.plex.tv/",
+    "title": "Watch Movies and TV Shows Free Online - Plex",
+    "images": [
+      {
+        "alt": "",
+        "src": "https://images.plex.tv/photo?size=large-480&scale=2&url=https%3A%2F%2Fwatch.plex.tv%2F_next%2Fstatic%2Fmedia%2Fhome-hero-background.0v21lb-t8j5o6.png",
+        "rect": {
+          "x": 825,
+          "y": 64,
+          "width": 600,
+          "height": 212
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://images.plex.tv/photo?size=medium-360&scale=2&url=https%3A%2F%2Fassets.springserve.com%2Ftile_creatives%2F001%2F314%2F350%2Fg7Ccid5kuD7A8hXWlsQiNfwOxaD.jpg",
+        "rect": {
+          "x": 717.453125,
+          "y": 288,
+          "width": 643.546875,
+          "height": 362
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 717.453125,
+          "y": 2671.34375,
+          "width": 643.546875,
+          "height": 362
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 64,
+          "y": 5501.265625,
+          "width": 360,
+          "height": 202.5
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 440,
+          "y": 5501.265625,
+          "width": 360,
+          "height": 202.5
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 816,
+          "y": 5501.265625,
+          "width": 360,
+          "height": 202.5
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 1192,
+          "y": 5501.265625,
+          "width": 360,
+          "height": 202.5
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 1568,
+          "y": 5501.265625,
+          "width": 360,
+          "height": 202.5
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 1944,
+          "y": 5501.265625,
+          "width": 360,
+          "height": 202.5
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 2320,
+          "y": 5501.265625,
+          "width": 360,
+          "height": 202.5
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 2696,
+          "y": 5501.265625,
+          "width": 360,
+          "height": 202.5
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 3072,
+          "y": 5501.265625,
+          "width": 360,
+          "height": 202.5
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 3448,
+          "y": 5501.265625,
+          "width": 360,
+          "height": 202.5
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 3824,
+          "y": 5501.265625,
+          "width": 360,
+          "height": 202.5
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 4200,
+          "y": 5501.265625,
+          "width": 360,
+          "height": 202.5
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 4576,
+          "y": 5501.265625,
+          "width": 360,
+          "height": 202.5
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 4952,
+          "y": 5501.265625,
+          "width": 360,
+          "height": 202.5
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 5328,
+          "y": 5501.265625,
+          "width": 360,
+          "height": 202.5
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 5704,
+          "y": 5501.265625,
+          "width": 360,
+          "height": 202.5
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 6080,
+          "y": 5501.265625,
+          "width": 360,
+          "height": 202.5
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 6456,
+          "y": 5501.265625,
+          "width": 360,
+          "height": 202.5
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 6832,
+          "y": 5501.265625,
+          "width": 360,
+          "height": 202.5
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 7208,
+          "y": 5501.265625,
+          "width": 360,
+          "height": 202.5
+        }
+      }
+    ]
+  },
+  {
+    "id": "immich",
+    "url": "https://demo.immich.app/",
+    "date": "2026-10-07",
+    "robots": {
+      "status": 200,
+      "text": "# Allow social media access og Tags\nUser-agent: *\nAllow: /share/\nAllow: /s/\nAllow: /api/assets/\n\n# https://www.robotstxt.org/robotstxt.html\nUser-agent: *\nDisallow: /\n"
+    },
+    "skipped": "robots blanket disallow"
+  },
+  {
+    "id": "open-webui",
+    "url": "https://demo.openwebui.com/",
+    "date": "2026-10-07",
+    "error": "apiRequestContext.get: getaddrinfo ENOTFOUND demo.openwebui.com\nCall log:\n\u001b[2m  - \u2192 GET https://demo.openwebui.com/robots.txt\u001b[22m\n\u001b[2m    - user-agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36\u001b[22m\n\u001b[2m    - accept: */*\u001b[22m\n\u001b[2m    - accept-encoding: gzip,deflate,br\u001b[22m\n"
+  },
+  {
+    "id": "librechat",
+    "url": "https://demo.librechat.ai/",
+    "date": "2026-10-07",
+    "robots": {
+      "status": 200,
+      "text": "User-agent: *\nDisallow: /api/\nAllow: /"
+    },
+    "status": 200,
+    "finalUrl": "https://demo.librechat.ai/login",
+    "title": "LibreChat",
+    "images": []
+  },
+  {
+    "id": "raycast",
+    "url": "https://www.raycast.com/",
+    "date": "2026-10-07",
+    "robots": {
+      "status": 200,
+      "text": "User-Agent: *\nAllow: /\nDisallow: /upgrade\nDisallow: /settings/sessions\nDisallow: /handles/new\nDisallow: /users/confirmation\n\nSitemap: https://www.raycast.com/sitemap.xml\n"
+    },
+    "status": 200,
+    "finalUrl": "https://www.raycast.com/",
+    "title": "Raycast - Your shortcut to everything",
+    "images": [
+      {
+        "alt": "Frame Background Image",
+        "src": "https://www.raycast.com/_next/image?url=%2F_next%2Fstatic%2Fimmutable%2Fmedia%2FfeatureBackground.3bxd817ow3sdx.png&w=1920&q=100",
+        "rect": {
+          "x": 70,
+          "y": 1537.21875,
+          "width": 1300,
+          "height": 733.015625
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://www.raycast.com/_next/image?url=https%3A%2F%2Fmisc-assets.raycast.com%2Fextension-cards%2Flinear-web.png&w=384&q=70",
+        "rect": {
+          "x": 118,
+          "y": 3830.59375,
+          "width": 360,
+          "height": 360
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://www.raycast.com/_next/image?url=https%3A%2F%2Fmisc-assets.raycast.com%2Fextension-cards%2Fgoogle-translate-web.png&w=384&q=70",
+        "rect": {
+          "x": 534,
+          "y": 3830.59375,
+          "width": 360,
+          "height": 360
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://www.raycast.com/_next/image?url=https%3A%2F%2Fmisc-assets.raycast.com%2Fextension-cards%2Fspotify-web.png&w=384&q=70",
+        "rect": {
+          "x": 950,
+          "y": 3830.59375,
+          "width": 360,
+          "height": 360
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://www.raycast.com/_next/image?url=https%3A%2F%2Fmisc-assets.raycast.com%2Fextension-cards%2Farc-web.png&w=384&q=70",
+        "rect": {
+          "x": 1366,
+          "y": 3830.59375,
+          "width": 360,
+          "height": 360
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://www.raycast.com/_next/image?url=https%3A%2F%2Fmisc-assets.raycast.com%2Fextension-cards%2Ftiny-png-web.png&w=384&q=70",
+        "rect": {
+          "x": 1782,
+          "y": 3830.59375,
+          "width": 360,
+          "height": 360
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://www.raycast.com/_next/image?url=https%3A%2F%2Fmisc-assets.raycast.com%2Fextension-cards%2F1password-web.png&w=384&q=70",
+        "rect": {
+          "x": 2198,
+          "y": 3830.59375,
+          "width": 360,
+          "height": 360
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://www.raycast.com/_next/image?url=https%3A%2F%2Fmisc-assets.raycast.com%2Fextension-cards%2Fjira-web.png&w=384&q=70",
+        "rect": {
+          "x": 2614,
+          "y": 3830.59375,
+          "width": 360,
+          "height": 360
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://www.raycast.com/_next/image?url=https%3A%2F%2Fmisc-assets.raycast.com%2Fextension-cards%2Fslack-web.png&w=384&q=70",
+        "rect": {
+          "x": 3030,
+          "y": 3830.59375,
+          "width": 360,
+          "height": 360
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://www.raycast.com/_next/image?url=https%3A%2F%2Fmisc-assets.raycast.com%2Fextension-cards%2Fzoom-web.png&w=384&q=70",
+        "rect": {
+          "x": 3446,
+          "y": 3830.59375,
+          "width": 360,
+          "height": 360
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://www.raycast.com/_next/image?url=https%3A%2F%2Fmisc-assets.raycast.com%2Fextension-cards%2Ftimers-web.png&w=384&q=70",
+        "rect": {
+          "x": 3862,
+          "y": 3830.59375,
+          "width": 360,
+          "height": 360
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://www.raycast.com/_next/image?url=https%3A%2F%2Fmisc-assets.raycast.com%2Fextension-cards%2Fpomodoro-web.png&w=384&q=70",
+        "rect": {
+          "x": 4278,
+          "y": 3830.59375,
+          "width": 360,
+          "height": 360
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://www.raycast.com/_next/image?url=https%3A%2F%2Fmisc-assets.raycast.com%2Fextension-cards%2Fnotion-web.png&w=384&q=70",
+        "rect": {
+          "x": 4694,
+          "y": 3830.59375,
+          "width": 360,
+          "height": 360
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://www.raycast.com/_next/image?url=https%3A%2F%2Fmisc-assets.raycast.com%2Fextension-cards%2Ftodoist-web.png&w=384&q=70",
+        "rect": {
+          "x": 5110,
+          "y": 3830.59375,
+          "width": 360,
+          "height": 360
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://www.raycast.com/_next/image?url=https%3A%2F%2Fmisc-assets.raycast.com%2Fextension-cards%2Fgoogle-search-web.png&w=384&q=70",
+        "rect": {
+          "x": 5526,
+          "y": 3830.59375,
+          "width": 360,
+          "height": 360
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://www.raycast.com/_next/image?url=https%3A%2F%2Fmisc-assets.raycast.com%2Fextension-cards%2Fobsidian-web.png&w=384&q=70",
+        "rect": {
+          "x": 5942,
+          "y": 3830.59375,
+          "width": 360,
+          "height": 360
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://www.raycast.com/_next/image?url=https%3A%2F%2Fmisc-assets.raycast.com%2Fextension-cards%2Fgoogle-chrome-web.png&w=384&q=70",
+        "rect": {
+          "x": 6358,
+          "y": 3830.59375,
+          "width": 360,
+          "height": 360
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://www.raycast.com/_next/image?url=https%3A%2F%2Fmisc-assets.raycast.com%2Fextension-cards%2Fcleanshotx-web.png&w=384&q=70",
+        "rect": {
+          "x": 6774,
+          "y": 3830.59375,
+          "width": 360,
+          "height": 360
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://www.raycast.com/_next/image?url=%2F_next%2Fstatic%2Fimmutable%2Fmedia%2Fmore-extensions.3zzk4y--pp9zu.png&w=384&q=70",
+        "rect": {
+          "x": 7191,
+          "y": 3655.40625,
+          "width": 358,
+          "height": 411.140625
+        }
+      },
+      {
+        "alt": "Blue glass-effect visual backdrop",
+        "src": "",
+        "rect": {
+          "x": 581.09375,
+          "y": 7367.890625,
+          "width": 800,
+          "height": 643
+        }
+      },
+      {
+        "alt": "Screenshot of Raycast showcasing the Figma Scratchad Quick Link",
+        "src": "",
+        "rect": {
+          "x": 119,
+          "y": 7970.921875,
+          "width": 580,
+          "height": 207.28125
+        }
+      },
+      {
+        "alt": "Raycast Notes",
+        "src": "",
+        "rect": {
+          "x": 752,
+          "y": 8769.046875,
+          "width": 633,
+          "height": 633
+        }
+      },
+      {
+        "alt": "Flight Tracker",
+        "src": "",
+        "rect": {
+          "x": 752,
+          "y": 8769.046875,
+          "width": 633.5,
+          "height": 633
+        }
+      },
+      {
+        "alt": "Calculator",
+        "src": "",
+        "rect": {
+          "x": 752,
+          "y": 8769.046875,
+          "width": 633.5,
+          "height": 633
+        }
+      },
+      {
+        "alt": "File Search",
+        "src": "",
+        "rect": {
+          "x": 752,
+          "y": 8769.046875,
+          "width": 633.5,
+          "height": 633
+        }
+      },
+      {
+        "alt": "Script Commands",
+        "src": "",
+        "rect": {
+          "x": 752,
+          "y": 8769.046875,
+          "width": 633.5,
+          "height": 633
+        }
+      },
+      {
+        "alt": "Window Management",
+        "src": "",
+        "rect": {
+          "x": 752,
+          "y": 8769.046875,
+          "width": 633.5,
+          "height": 633
+        }
+      },
+      {
+        "alt": "My Schedule",
+        "src": "",
+        "rect": {
+          "x": 752,
+          "y": 8769.046875,
+          "width": 633.5,
+          "height": 633
+        }
+      },
+      {
+        "alt": "Apple Reminders",
+        "src": "",
+        "rect": {
+          "x": 752,
+          "y": 8769.046875,
+          "width": 633.5,
+          "height": 633
+        }
+      },
+      {
+        "alt": "Translation",
+        "src": "",
+        "rect": {
+          "x": 752,
+          "y": 8769.046875,
+          "width": 633,
+          "height": 633
+        }
+      },
+      {
+        "alt": "Raycast Focus",
+        "src": "",
+        "rect": {
+          "x": 752,
+          "y": 8769.046875,
+          "width": 633.5,
+          "height": 633
+        }
+      },
+      {
+        "alt": "Search Screenshots",
+        "src": "",
+        "rect": {
+          "x": 752,
+          "y": 8769.046875,
+          "width": 633.5,
+          "height": 633
+        }
+      },
+      {
+        "alt": "Search Emojis and Symbols",
+        "src": "",
+        "rect": {
+          "x": 752,
+          "y": 8769.046875,
+          "width": 633.5,
+          "height": 633
+        }
+      },
+      {
+        "alt": "Background image",
+        "src": "",
+        "rect": {
+          "x": 311,
+          "y": 9510.71875,
+          "width": 818,
+          "height": 818
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 286.6598205566406,
+          "y": 14670.42578125,
+          "width": 866.680419921875,
+          "height": 866.6796875
+        }
+      }
+    ]
+  },
+  {
+    "id": "1password",
+    "url": "https://1password.com/",
+    "date": "2026-10-07",
+    "robots": {
+      "status": 200,
+      "text": "User-agent: *\nDisallow: /en/site-monitoring-pages.xml\nDisallow: /files/1password-white-paper.pdf\n\nsitemap: https://1password.com/sitemap.xml\n"
+    },
+    "status": 200,
+    "finalUrl": "https://1password.com/",
+    "title": "Password Manager, Secrets, and Access Management | 1Password",
+    "images": [
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 96,
+          "y": 2689.578125,
+          "width": 300,
+          "height": 329
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 412,
+          "y": 2689.578125,
+          "width": 300,
+          "height": 329
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 728,
+          "y": 2689.578125,
+          "width": 300,
+          "height": 329
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 1044,
+          "y": 2689.578125,
+          "width": 300,
+          "height": 329
+        }
+      },
+      {
+        "alt": "Oracle Red Bull Racing vehicle",
+        "src": "",
+        "rect": {
+          "x": 24,
+          "y": 4108.1875,
+          "width": 696,
+          "height": 735
+        }
+      }
+    ]
+  },
+  {
+    "id": "plaid",
+    "url": "https://plaid.com/",
+    "date": "2026-10-07",
+    "robots": {
+      "status": 200,
+      "text": "User-agent: *\n\n# Allow Images\nAllow: *.png\nAllow: *.svg\n\n# PDFs\nDisallow: *.pdf\n\n# Folders / Pages / Parameters\nDisallow: /legacy-docs/\nDisallow: /api/*\nDisallow: /contact/sales/*\nDisallow: /docs-beta/*\nDisallow: /sandbox/*\nDisallow: /engineering\nDisallow: /link/*\nDisallow: /lending/\nDisallow: /mortgage/*\nDisallow: /new-plaid-docs/\nDisallow: /plaiderdays/\nDisallow: /unsubscribed/\nDisallow: /errors/*\nDisallow: /ai_day_docs/*\nDisallow: /data/*.schema.json\n\nSitemap: https://plaid.com/sitemap.xml\n"
+    },
+    "status": 200,
+    "finalUrl": "https://plaid.com/",
+    "title": "Plaid: Enabling all companies to build fintech solutions",
+    "images": [
+      {
+        "alt": "",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/3cwo45cB6RAF8SF2ISkU76/7e6c811c75dae8cc3a36def4bc4dd153/2d6fbbe4a73d62962570837e3a1961c8050ef2f5.png?fm=webp&q=70&w=275",
+        "rect": {
+          "x": 479.65625,
+          "y": 140,
+          "width": 274.5,
+          "height": 203.625
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/22VCpQwf4jvwXTXsQ4fjGj/8f032b2248eca23cbdfd3f17d286a3fc/82536257d5b15d133e81ae0d93714bf9da34e9c5.png?fm=webp&q=70&w=275",
+        "rect": {
+          "x": 780.15625,
+          "y": 140,
+          "width": 274.5,
+          "height": 203.625
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/12v1ZRQBMolDRjOtObvzKP/16cea9928bb6abf118570358c053bc94/link-demo.png?fm=webp&q=70",
+        "rect": {
+          "x": 528.65625,
+          "y": 140,
+          "width": 273,
+          "height": 202.515625
+        }
+      },
+      {
+        "alt": "benjamin franklin",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/2JblDwCyPDIbjPx20xxK5I/c2e338a2a7bc1010adc034d8eb3f8999/besk-desktop-open.png?fm=webp&q=50&w=944",
+        "rect": {
+          "x": 463.984375,
+          "y": 192,
+          "width": 944,
+          "height": 736
+        }
+      },
+      {
+        "alt": "rainbow gradient",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/3BWkpdMIGOnAtu1ev1erww/bfc7fe3d2fcdc364ace3dc3d4c062f39/Tail_Holo_Strip__1_.png?fm=webp&q=30&h=736",
+        "rect": {
+          "x": 1406.984375,
+          "y": 192,
+          "width": 944,
+          "height": 736
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/4EB5WsXthy4beE37T83K9R/328d3843044e1b8a87aefd97b8eb478f/homepage-solutions-border-image.png?fm=webp&q=70&w=400",
+        "rect": {
+          "x": -55.3359375,
+          "y": 1177.2578125,
+          "width": 915.984375,
+          "height": 915.984375
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/2VBqUYyDYezsT9oSBZbwgp/27e8e214d8c223854968bf291e8e23b8/homepage-solutions-pbb-background.png?fm=webp&q=70",
+        "rect": {
+          "x": 97.328125,
+          "y": 1343.25,
+          "width": 610.65625,
+          "height": 584
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/5oZSZrxjfKxQTD5HGUFvZa/e312269ddab490592839e9888c78a810/homepage-solutions-pbb-foreground.png?fm=webp&q=70",
+        "rect": {
+          "x": 97.328125,
+          "y": 1628.328125,
+          "width": 610.65625,
+          "height": 298.921875
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/4EB5WsXthy4beE37T83K9R/328d3843044e1b8a87aefd97b8eb478f/homepage-solutions-border-image.png?fm=webp&q=70&w=400",
+        "rect": {
+          "x": 579.3203125,
+          "y": 1177.2578125,
+          "width": 915.984375,
+          "height": 915.984375
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/7C3ybo9RojkPBEADstjOKR/ff8b7ea7e8f80e2be9d02e3e41f374ef/homepage-solutions-credit-scoring-background.png?fm=webp&q=70",
+        "rect": {
+          "x": 731.984375,
+          "y": 1343.25,
+          "width": 610.65625,
+          "height": 584
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/2yDmd8TCoEKET6jYh8LgJC/8cfb04d38ad94e9cacdaff77cd88f3b6/homepage-solutions-credit-scoring-foreground.png?fm=webp&q=70",
+        "rect": {
+          "x": 731.984375,
+          "y": 1584.453125,
+          "width": 610.65625,
+          "height": 342.796875
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/4EB5WsXthy4beE37T83K9R/328d3843044e1b8a87aefd97b8eb478f/homepage-solutions-border-image.png?fm=webp&q=70&w=400",
+        "rect": {
+          "x": -167.375,
+          "y": 1796.5,
+          "width": 928.5,
+          "height": 928.5
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/7924EVvCFUmnRoZ9Vc8icw/a16de77516597adbe3f25f2b5e19a8c6/homepage-solutions-fraud-protection-background-v2.png?fm=webp&q=70",
+        "rect": {
+          "x": 97.328125,
+          "y": 1951.25,
+          "width": 399.109375,
+          "height": 619
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/4EB5WsXthy4beE37T83K9R/328d3843044e1b8a87aefd97b8eb478f/homepage-solutions-border-image.png?fm=webp&q=70&w=400",
+        "rect": {
+          "x": 255.734375,
+          "y": 1796.5,
+          "width": 928.5,
+          "height": 928.5
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/4BkJrP7wZI3KjVNI3HfYDj/b86e20af00497c299872b7b2f9a0996f/homepage-solutions-onboarding-background-v2.png?fm=webp&q=70",
+        "rect": {
+          "x": 520.4375,
+          "y": 1951.25,
+          "width": 399.109375,
+          "height": 619
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/4EB5WsXthy4beE37T83K9R/328d3843044e1b8a87aefd97b8eb478f/homepage-solutions-border-image.png?fm=webp&q=70&w=400",
+        "rect": {
+          "x": 678.84375,
+          "y": 1796.5,
+          "width": 928.5,
+          "height": 928.5
+        }
+      },
+      {
+        "alt": "",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/3gt9kL5SspXTJX1eipqoh4/3375f55fbc26ed9ea87f98a1e04623cf/homepage-solutions-pfm-background-v2.png?fm=webp&q=70",
+        "rect": {
+          "x": 943.546875,
+          "y": 1951.25,
+          "width": 399.109375,
+          "height": 619
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 97.328125,
+          "y": 2758.25,
+          "width": 1245.328125,
+          "height": 707
+        }
+      },
+      {
+        "alt": "Gemini",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/Gii1E6zNmLlvBuRybg81K/728b252faf5330b934873f8c3a3d577b/homepage-customer-stories-gemini-tile.png?fm=webp&q=70",
+        "rect": {
+          "x": -9150,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250
+        }
+      },
+      {
+        "alt": "HealthEquity",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/2vNKGWwzLf7HRsJcaRzYzr/c14f430bbbfebbd2058ab7f064c6bd3c/homepage-customer-stories-health-equity-tile.png?fm=webp&q=70",
+        "rect": {
+          "x": -8690,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250
+        }
+      },
+      {
+        "alt": "GoFundMe",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/6ZKDZ2X9PA1tuClEtiCbPp/1dc0a42886e76759cc9549d085a53fcf/homepage-customer-stories-gfm-tile.png?fm=webp&q=70",
+        "rect": {
+          "x": -8230,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250
+        }
+      },
+      {
+        "alt": "H&R Block",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/mGbu3zWdnIjWZNV6CgISP/62a158b3d084493cb54709c85d116d9a/homepage-customer-stories-hrblock-tile.png?fm=webp&q=70",
+        "rect": {
+          "x": -7770,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250
+        }
+      },
+      {
+        "alt": "Zillow",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/3DDGgqXO0LLkiyZhR2M5Q5/5657937f8247c10d92bd8318bae3b39b/Frame_2049518600.png?fm=webp&q=70",
+        "rect": {
+          "x": -7310,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "Affirm",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/1AXNMQQ5wP82OOxq9OdSyt/8d11886698ccd2910c06a1c4fd426d72/2.png?fm=webp&q=70",
+        "rect": {
+          "x": -6850,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "Robinhood",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/1j94oTdWgvsLs7ifl5H8zR/b78604832190a63e0ff844b6dba7c271/5.png?fm=webp&q=70",
+        "rect": {
+          "x": -6390,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "Chime",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/7FBpwUvbL9aVeLgbt6CqKP/968c72bc294f07218da2658ddbfe677e/4.png?fm=webp&q=70",
+        "rect": {
+          "x": -5930,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "Flexport",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/73fAdotLMPzZtQOzjrmU0F/75b4694388a6518692f9ea892cec0884/3.png?fm=webp&q=70",
+        "rect": {
+          "x": -5470,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "Branch",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/6oWhF53UO6PJEnpZl6EcmR/55ce69baa5e2d60d0113d1aaeaabbea5/13.png?fm=webp&q=70",
+        "rect": {
+          "x": -5010,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "Ellevest",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/2ijVyFAEWxK897arnFgbW0/b1edecfe287ae026104b53bee510909c/16.png?fm=webp&q=70",
+        "rect": {
+          "x": -4550,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "Prosper",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/1Sg1t5HWlcvxXmrC5U06CI/2922227fb1578445f29d0ed6c044a5b5/14.png?fm=webp&q=70",
+        "rect": {
+          "x": -4090,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "Green Dot",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/3aaWmhkLFrb97GHUtci8Jd/798b935bfb70809e7426e116c75881a0/15.png?fm=webp&q=70",
+        "rect": {
+          "x": -3630,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "Uphold",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/5FHdArXF4iFgxA3o9Vrdlt/1fe5e8569920c5ecd6a993c04fe2a777/12.png?fm=webp&q=70",
+        "rect": {
+          "x": -3170,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "Adyen",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/2d8umLe4u8Gu6px3OnEQMU/660b07daf250c810794f59595b5fb244/6.png?fm=webp&q=70",
+        "rect": {
+          "x": -2710,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "SoFi",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/5gTKCwiU1EBdb0njTVKIpn/58a3aaa7f1889477c00095ba3b0c1f35/7.png?fm=webp&q=70",
+        "rect": {
+          "x": -2250,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "PadSplit",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/VV6YXvna6MS1eHj27ycuL/8c39d71311f261fb7cd144734d201c60/10.png?fm=webp&q=70",
+        "rect": {
+          "x": -1790,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "MSUFCU",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/3AOVyZHoiYQsr1u3dvreWH/6cd4a573692657e339e651b581ff23da/11.png?fm=webp&q=70",
+        "rect": {
+          "x": -1330,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "Copilot",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/PDLIwC4VUfxS5jiwtkQ4R/234ed355f1e06b8d15e5f881867b0047/9.png?fm=webp&q=70",
+        "rect": {
+          "x": -870,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "Varo",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/458T8KFzLo3PG5TCD5fUmz/43a90538e538a96db69359cd201b4d08/8.png?fm=webp&q=70",
+        "rect": {
+          "x": -410,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "Gemini",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/Gii1E6zNmLlvBuRybg81K/728b252faf5330b934873f8c3a3d577b/homepage-customer-stories-gemini-tile.png?fm=webp&q=70",
+        "rect": {
+          "x": 50,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250
+        }
+      },
+      {
+        "alt": "HealthEquity",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/2vNKGWwzLf7HRsJcaRzYzr/c14f430bbbfebbd2058ab7f064c6bd3c/homepage-customer-stories-health-equity-tile.png?fm=webp&q=70",
+        "rect": {
+          "x": 510,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250
+        }
+      },
+      {
+        "alt": "GoFundMe",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/6ZKDZ2X9PA1tuClEtiCbPp/1dc0a42886e76759cc9549d085a53fcf/homepage-customer-stories-gfm-tile.png?fm=webp&q=70",
+        "rect": {
+          "x": 970,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250
+        }
+      },
+      {
+        "alt": "H&R Block",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/mGbu3zWdnIjWZNV6CgISP/62a158b3d084493cb54709c85d116d9a/homepage-customer-stories-hrblock-tile.png?fm=webp&q=70",
+        "rect": {
+          "x": 1430,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250
+        }
+      },
+      {
+        "alt": "Zillow",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/3DDGgqXO0LLkiyZhR2M5Q5/5657937f8247c10d92bd8318bae3b39b/Frame_2049518600.png?fm=webp&q=70",
+        "rect": {
+          "x": 1890,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "Affirm",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/1AXNMQQ5wP82OOxq9OdSyt/8d11886698ccd2910c06a1c4fd426d72/2.png?fm=webp&q=70",
+        "rect": {
+          "x": 2350,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "Robinhood",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/1j94oTdWgvsLs7ifl5H8zR/b78604832190a63e0ff844b6dba7c271/5.png?fm=webp&q=70",
+        "rect": {
+          "x": 2810,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "Chime",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/7FBpwUvbL9aVeLgbt6CqKP/968c72bc294f07218da2658ddbfe677e/4.png?fm=webp&q=70",
+        "rect": {
+          "x": 3270,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "Flexport",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/73fAdotLMPzZtQOzjrmU0F/75b4694388a6518692f9ea892cec0884/3.png?fm=webp&q=70",
+        "rect": {
+          "x": 3730,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "Branch",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/6oWhF53UO6PJEnpZl6EcmR/55ce69baa5e2d60d0113d1aaeaabbea5/13.png?fm=webp&q=70",
+        "rect": {
+          "x": 4190,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "Ellevest",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/2ijVyFAEWxK897arnFgbW0/b1edecfe287ae026104b53bee510909c/16.png?fm=webp&q=70",
+        "rect": {
+          "x": 4650,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "Prosper",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/1Sg1t5HWlcvxXmrC5U06CI/2922227fb1578445f29d0ed6c044a5b5/14.png?fm=webp&q=70",
+        "rect": {
+          "x": 5110,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "Green Dot",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/3aaWmhkLFrb97GHUtci8Jd/798b935bfb70809e7426e116c75881a0/15.png?fm=webp&q=70",
+        "rect": {
+          "x": 5570,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "Uphold",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/5FHdArXF4iFgxA3o9Vrdlt/1fe5e8569920c5ecd6a993c04fe2a777/12.png?fm=webp&q=70",
+        "rect": {
+          "x": 6030,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "Adyen",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/2d8umLe4u8Gu6px3OnEQMU/660b07daf250c810794f59595b5fb244/6.png?fm=webp&q=70",
+        "rect": {
+          "x": 6490,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "SoFi",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/5gTKCwiU1EBdb0njTVKIpn/58a3aaa7f1889477c00095ba3b0c1f35/7.png?fm=webp&q=70",
+        "rect": {
+          "x": 6950,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "PadSplit",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/VV6YXvna6MS1eHj27ycuL/8c39d71311f261fb7cd144734d201c60/10.png?fm=webp&q=70",
+        "rect": {
+          "x": 7410,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "MSUFCU",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/3AOVyZHoiYQsr1u3dvreWH/6cd4a573692657e339e651b581ff23da/11.png?fm=webp&q=70",
+        "rect": {
+          "x": 7870,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "Copilot",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/PDLIwC4VUfxS5jiwtkQ4R/234ed355f1e06b8d15e5f881867b0047/9.png?fm=webp&q=70",
+        "rect": {
+          "x": 8330,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "Varo",
+        "src": "https://images.ctfassets.net/ss5kfr270og3/458T8KFzLo3PG5TCD5fUmz/43a90538e538a96db69359cd201b4d08/8.png?fm=webp&q=70",
+        "rect": {
+          "x": 8790,
+          "y": 6166.25,
+          "width": 420,
+          "height": 250.1875
+        }
+      },
+      {
+        "alt": "",
+        "src": "",
+        "rect": {
+          "x": 502.640625,
+          "y": 6827.25,
+          "width": 1008,
+          "height": 1008
+        }
+      }
+    ]
+  },
+  {
+    "id": "tailscale-users",
+    "url": "https://tailscale.com/kb/1134/users",
+    "date": "2026-10-07",
+    "robots": {
+      "status": 200,
+      "text": "User-agent: *\nDisallow:\n\nUser-agent: atlassian-bot\nAllow: /docs/\n\nSitemap: https://tailscale.com/sitemap.xml\n"
+    },
+    "finalUrl": "https://tailscale.com/docs/reference/faq/ipv6",
+    "images": [
+      {
+        "n": 0,
+        "alt": "aperture dashboard",
+        "src": "https://cdn.sanity.io/images/w77i7m8x/production-v2/a88cf9aad8777f4b0641202a5ed6c02bbb005d8c-266x342.svg",
+        "w": 266,
+        "h": 342
+      },
+      {
+        "n": 1,
+        "alt": "Check mark and x on a white and blue pill button",
+        "src": "",
+        "w": 30,
+        "h": 14
+      },
+      {
+        "n": 2,
+        "alt": "Project Logo",
+        "src": "https://cdn.brandfetch.io/tailscale.com/fallback/lettermark/theme/dark/h/256/w/256/icon?c=1bfwsmEH20zzEfSNTed",
+        "w": 32,
+        "h": 18
+      }
+    ]
+  },
+  {
+    "id": "kuma",
+    "url": "https://status.kuma.pet/",
+    "date": "2026-10-07",
+    "robots": {
+      "status": 200,
+      "text": "User-agent: *\nDisallow:"
+    },
+    "finalUrl": "https://status.kuma.pet/",
+    "images": [
+      {
+        "n": 0,
+        "alt": "",
+        "src": "https://status.kuma.pet/icon.svg",
+        "w": 60,
+        "h": 60
+      },
+      {
+        "n": 1,
+        "alt": "Badge Preview",
+        "src": "",
+        "w": 0,
+        "h": 0
+      }
+    ]
+  },
+  {
+    "id": "stripe-report",
+    "url": "https://stripe.com/payments",
+    "date": "2026-10-07",
+    "robots": {
+      "status": 200,
+      "text": "Sitemap: https://stripe.com/sitemap/sitemap.xml\n\nUser-agent: ia_archiver\nAllow: /docs/api\nAllow: /docs/api$\nDisallow: /docs\nDisallow: /docs$\nDisallow: /bitcoin/refund\nDisallow: /sources/refund\nDisallow: /sources/sepa_mandate\nDisallow: /sources/test_source\nDisallow: /sources/test_klarna\nDisallow: /handoff-healthcheck\nDisallow: /handoff\n\nUser-agent: *\nAllow: /docs\nAllow: /docs$\nDisallow: /bitcoin/refund\nDisallow: /sources/refund\nDisallow: /sources/sepa_mandate\nDisallow: /sources/test_source\nDisallow: /sources/test_klarna\nDisallow: /unsupported-browser\nDisallow: /handoff-healthcheck\nDisallow: /handoff\n\nUser-agent: rogerbot\nCrawl-delay: 2\n"
+    },
+    "finalUrl": "https://stripe.com/payments",
+    "images": [
+      {
+        "n": 0,
+        "alt": "Sessions Background",
+        "src": "",
+        "w": 760,
+        "h": 256
+      },
+      {
+        "n": 1,
+        "alt": "Sessions Background",
+        "src": "",
+        "w": 191,
+        "h": 80
+      },
+      {
+        "n": 2,
+        "alt": "",
+        "src": "https://images.stripeassets.com/fzn2n1nzq965/2GtZbtnHBBPRbJpTsjiP1d/f4f11ea8cf885f94937447d2d329010f/wooden-chair.jpg?q=80&fm=webp&w=114",
+        "w": 114,
+        "h": 114
+      },
+      {
+        "n": 3,
+        "alt": "",
+        "src": "https://images.stripeassets.com/fzn2n1nzq965/2VmDiAghqq1awyV7OY9s6O/7103d93abcfe5e9eb77993e9d03644d3/Vector.svg",
+        "w": 86,
+        "h": 32
+      },
+      {
+        "n": 4,
+        "alt": "",
+        "src": "https://images.stripeassets.com/fzn2n1nzq965/56JhmmcaWfoJkNCsGBXxl/d242670f28b9ff90c286d4e5552eada3/checkout-powdur-cart-photo.jpg?w=700&h=700&fm=webp",
+        "w": 230,
+        "h": 230
+      },
+      {
+        "n": 5,
+        "alt": "",
+        "src": "https://images.stripeassets.com/fzn2n1nzq965/4WjxT85Wi0tNWOJie0L7LW/233ec6bd0738bc0fb86ed1ea0a12515a/PowdurImg.png",
+        "w": 295,
+        "h": 150
+      },
+      {
+        "n": 6,
+        "alt": "",
+        "src": "https://images.stripeassets.com/fzn2n1nzq965/70NCApOLxhpRsB4kKXdWat/249a82b4951ace295c5554320b1d3aeb/ChatGPT_Image_Oct_7__2025__02_07_03_PM_1.png",
+        "w": 70,
+        "h": 75
+      },
+      {
+        "n": 7,
+        "alt": "",
+        "src": "",
+        "w": 340,
+        "h": 210
+      },
+      {
+        "n": 8,
+        "alt": "",
+        "src": "",
+        "w": 340,
+        "h": 210
+      },
+      {
+        "n": 9,
+        "alt": "A/B testing visual",
+        "src": "",
+        "w": 540,
+        "h": 510
+      },
+      {
+        "n": 10,
+        "alt": "",
+        "src": "",
+        "w": 230,
+        "h": 425
+      },
+      {
+        "n": 11,
+        "alt": "",
+        "src": "",
+        "w": 230,
+        "h": 457
+      },
+      {
+        "n": 12,
+        "alt": "",
+        "src": "",
+        "w": 322,
+        "h": 435
+      },
+      {
+        "n": 13,
+        "alt": "",
+        "src": "",
+        "w": 1064,
+        "h": 1274
+      },
+      {
+        "n": 14,
+        "alt": "",
+        "src": "",
+        "w": 810,
+        "h": 420
+      },
+      {
+        "n": 15,
+        "alt": "",
+        "src": "",
+        "w": 1064,
+        "h": 1274
+      },
+      {
+        "n": 16,
+        "alt": "",
+        "src": "",
+        "w": 810,
+        "h": 420
+      },
+      {
+        "n": 17,
+        "alt": "",
+        "src": "",
+        "w": 1064,
+        "h": 1274
+      },
+      {
+        "n": 18,
+        "alt": "",
+        "src": "",
+        "w": 810,
+        "h": 420
+      },
+      {
+        "n": 19,
+        "alt": "",
+        "src": "",
+        "w": 1064,
+        "h": 1274
+      },
+      {
+        "n": 20,
+        "alt": "",
+        "src": "",
+        "w": 810,
+        "h": 420
+      },
+      {
+        "n": 21,
+        "alt": "Stripe Dashboard report showing how to optimize cost ",
+        "src": "",
+        "w": 832,
+        "h": 470
+      },
+      {
+        "n": 22,
+        "alt": "AU",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 23,
+        "alt": "AT",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 24,
+        "alt": "BE",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 25,
+        "alt": "BR",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 26,
+        "alt": "BG",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 27,
+        "alt": "CA",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 28,
+        "alt": "HR",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 29,
+        "alt": "CY",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 30,
+        "alt": "CZ",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 31,
+        "alt": "DK",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 32,
+        "alt": "EE",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 33,
+        "alt": "FI",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 34,
+        "alt": "FR",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 35,
+        "alt": "DE",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 36,
+        "alt": "GI",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 37,
+        "alt": "GR",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 38,
+        "alt": "HK",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 39,
+        "alt": "HU",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 40,
+        "alt": "IN",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 41,
+        "alt": "IE",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 42,
+        "alt": "IT",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 43,
+        "alt": "JP",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 44,
+        "alt": "LV",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 45,
+        "alt": "LI",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 46,
+        "alt": "LT",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 47,
+        "alt": "LU",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 48,
+        "alt": "CN",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 49,
+        "alt": "MY",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 50,
+        "alt": "MT",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 51,
+        "alt": "MX",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 52,
+        "alt": "NL",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 53,
+        "alt": "NZ",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 54,
+        "alt": "NO",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 55,
+        "alt": "PL",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 56,
+        "alt": "PT",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 57,
+        "alt": "RO",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 58,
+        "alt": "SG",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 59,
+        "alt": "SK",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 60,
+        "alt": "SI",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 61,
+        "alt": "ES",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 62,
+        "alt": "SE",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 63,
+        "alt": "CH",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 64,
+        "alt": "TH",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 65,
+        "alt": "AE",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 66,
+        "alt": "GB",
+        "src": "",
+        "w": 16,
+        "h": 16
+      },
+      {
+        "n": 67,
+        "alt": "",
+        "src": "https://images.stripeassets.com/fzn2n1nzq965/4rIX1gCugor2cufbZloOTE/06d8bf41ace184754a4e9925e44c5ed6/head-8.png?h=250",
+        "w": 34,
+        "h": 34
+      },
+      {
+        "n": 68,
+        "alt": "",
+        "src": "https://images.stripeassets.com/fzn2n1nzq965/5tbCu9D0WVM6kLYZOwFY5P/e1856112ed51707d80a2dc2654bc3ecd/head-3.png?h=250",
+        "w": 34,
+        "h": 34
+      }
+    ]
+  },
+  {
+    "id": "photos",
+    "url": "https://support.apple.com/guide/iphone/view-photos-and-videos-iph3d267610/ios",
+    "date": "2026-10-07",
+    "finalUrl": "https://support.apple.com/guide/iphone/view-photos-and-videos-iph3d267610/ios",
+    "images": [
+      {
+        "n": 0,
+        "alt": "An open photo with thumbnails of other photos across the bottom of the screen. At the top left is a Back button to go back to browsing.",
+        "src": "https://ipcdn-web.apple.com/assets/v2/web/390a85c6-9d1a-49f9-bd10-06165e22de83",
+        "w": 245,
+        "h": 504
+      },
+      {
+        "n": 1,
+        "alt": "",
+        "src": "https://ipcdn-web.apple.com/assets/v2/web/1b78a362-8098-4c94-905c-241b4a4b1bbe",
+        "w": 17,
+        "h": 17
+      },
+      {
+        "n": 2,
+        "alt": "the Spatial Scene button",
+        "src": "https://ipcdn-web.apple.com/assets/v2/web/4a91c20f-0627-4bb8-a5bc-36404116af7e",
+        "w": 30,
+        "h": 17
+      },
+      {
+        "n": 3,
+        "alt": "the Back button",
+        "src": "https://ipcdn-web.apple.com/assets/v2/web/00da01f0-325e-4dad-9ef5-038d31ad881d",
+        "w": 11,
+        "h": 17
+      },
+      {
+        "n": 4,
+        "alt": "An open video with a Play/Pause button, a progress bar, and a Mute/Volume button along the bottom. At the top left is a Back button to go back to browsing.",
+        "src": "https://ipcdn-web.apple.com/assets/v2/web/df350523-7628-45dc-b45b-098557030842",
+        "w": 245,
+        "h": 504
+      },
+      {
+        "n": 5,
+        "alt": "",
+        "src": "https://ipcdn-web.apple.com/assets/v2/web/1b78a362-8098-4c94-905c-241b4a4b1bbe",
+        "w": 17,
+        "h": 17
+      },
+      {
+        "n": 6,
+        "alt": "the Back button",
+        "src": "https://ipcdn-web.apple.com/assets/v2/web/00da01f0-325e-4dad-9ef5-038d31ad881d",
+        "w": 11,
+        "h": 17
+      }
+    ]
+  },
+  {
+    "id": "tailscale-invites",
+    "url": "https://tailscale.com/kb/1064/invite-users",
+    "date": "2026-10-07",
+    "finalUrl": "https://tailscale.com/docs/features/sharing/how-to/invite-team-members",
+    "images": [
+      {
+        "n": 0,
+        "alt": "aperture dashboard",
+        "src": "https://cdn.sanity.io/images/w77i7m8x/production-v2/a88cf9aad8777f4b0641202a5ed6c02bbb005d8c-266x342.svg",
+        "w": 266,
+        "h": 342
+      },
+      {
+        "n": 1,
+        "alt": "Invite team popup window.",
+        "src": "https://tailscale.com/_next/image?url=%2F_next%2Fstatic%2Fmedia%2Finvite-team.cf7c3975.png&w=640&q=75",
+        "w": 500,
+        "h": 330
+      },
+      {
+        "n": 2,
+        "alt": "Invite team popup window with roles.",
+        "src": "https://tailscale.com/_next/image?url=%2F_next%2Fstatic%2Fmedia%2Finvite-team-roles.00503209.png&w=640&q=75",
+        "w": 500,
+        "h": 445
+      },
+      {
+        "n": 3,
+        "alt": "ellipsis icon",
+        "src": "",
+        "w": 12,
+        "h": 12
+      },
+      {
+        "n": 4,
+        "alt": "The user options for invited users.",
+        "src": "",
+        "w": 150,
+        "h": 140
+      },
+      {
+        "n": 5,
+        "alt": "ellipsis icon",
+        "src": "",
+        "w": 12,
+        "h": 12
+      },
+      {
+        "n": 6,
+        "alt": "The user options for invited users.",
+        "src": "",
+        "w": 150,
+        "h": 140
+      },
+      {
+        "n": 7,
+        "alt": "Check mark and x on a white and blue pill button",
+        "src": "",
+        "w": 30,
+        "h": 14
+      },
+      {
+        "n": 8,
+        "alt": "Project Logo",
+        "src": "https://cdn.brandfetch.io/tailscale.com/fallback/lettermark/theme/dark/h/256/w/256/icon?c=1bfwsmEH20zzEfSNTed",
+        "w": 32,
+        "h": 18
+      }
+    ]
+  }
+]

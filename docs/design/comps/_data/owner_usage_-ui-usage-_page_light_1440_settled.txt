@@ -1,0 +1,101 @@
+Skip to content
+Azizam
+
+You
+
+Home
+Apps & keys
+Models
+Workflows
+Try
+Library
+Usage
+
+Gateway
+
+Status
+Engines
+Providers
+People
+Activity
+Settings
+Search⌘K
+Appearance
+S
+Sam
+Gateway reachable
+Video studio (video) is unavailable. Check its connection on Status.
+View status
+Usage
+
+Current month usage
+
+Person
+Everyone
+Source
+All sources
+View recent requests
+Requests
+265
+This month
+Remote spend · partial
+$0.45
+Cost measured for 249 of 265 requests.
+Media made
+16
+Images, video and audio
+Receipt coverage
+Requests by day
+Stacked by capability
+Oct 1
+Oct 2
+Oct 3
+Oct 4
+Oct 5
+Oct 6
+Oct 7
+0
+15
+30
+45
+60
+Requests by day and capability
+Date	Chat	Images	Video	Audio	Transcription	Embeddings	Total
+2026-10-01	15	10	2	10	3	2	42
+2026-10-02	14	7	3	9	3	1	37
+2026-10-03	12	4	4	9	5	0	34
+2026-10-04	17	9	3	11	6	0	46
+2026-10-05	14	10	2	9	6	0	41
+2026-10-06	13	9	2	8	5	0	37
+2026-10-07	12	7	1	5	3	0	28
+Chat
+Images
+Video
+Audio
+Transcription
+Embeddings
+Models
+Top models by requests
+Capability and model	Requests	Cost
+
+Chat
+default
+	45	$0.00
+
+Chat
+coder
+	35	$0.00
+
+Audio
+voice
+	31	$0.00
+
+Transcription
+whisper-large
+	31	$0.00
+
+Images
+image
+	23	$0.00
+View all 13 models
+0

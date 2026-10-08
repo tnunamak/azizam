@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Status · Azizam (Console comp)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400&family=IBM+Plex+Sans+Condensed:wght@600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#102A2B;--text:#F2F7F6;--accent:#99BFD5;--ok:#8ECBB0;--warn:#E1B975;--fail:#F09B93;
+  --line:rgba(242,247,246,.24);--sep:rgba(242,247,246,.16);
+  color-scheme:dark;
+}
+@media (prefers-color-scheme: light){
+  :root{
+    --bg:#F3F7F6;--text:#173332;--accent:#315E80;--ok:#246447;--warn:#815115;--fail:#A03932;
+    --line:rgba(23,51,50,.24);--sep:rgba(23,51,50,.16);
+    color-scheme:light;
+  }
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--text)}
+body{font-family:"IBM Plex Sans",sans-serif;font-size:16px;line-height:24px;font-weight:400;
+  -webkit-font-smoothing:antialiased}
+a{color:inherit}
+img{display:block}
+ul{list-style:none}
+.display{font-family:"IBM Plex Sans Condensed",sans-serif;font-weight:600;letter-spacing:-.015em}
+h1{font-size:28px;line-height:34px;font-weight:600;letter-spacing:-.01em}
+h2{font-size:20px;line-height:26px;font-weight:600}
+.small{font-size:14px;line-height:20px}
+.label{font-size:14px;line-height:20px;font-weight:500}
+.num{font-variant-numeric:tabular-nums;font-weight:500}
+.mono{font-family:"IBM Plex Mono",monospace;font-size:14px;line-height:20px}
+.ic{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;
+  stroke-linecap:square;stroke-linejoin:miter}
+.ic *{vector-effect:non-scaling-stroke}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.fail{color:var(--fail)}.unknown{color:var(--accent)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;
+  padding:0 16px;border-radius:4px;font:500 16px/24px "IBM Plex Sans",sans-serif;
+  text-decoration:none;cursor:pointer;white-space:nowrap}
+.btn-primary{background:var(--accent);color:var(--bg);border:1px solid var(--accent)}
+.btn-secondary{background:transparent;color:var(--text);border:1px solid var(--accent)}
+.btn:focus-visible,a:focus-visible,button:focus-visible,select:focus-visible,input:focus-visible{
+  outline:2px solid var(--accent);outline-offset:2px}
+.state{display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
+.vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+.shell{display:grid;grid-template-columns:208px 1fr;min-height:100vh}
+.side{border-right:1px solid var(--line);padding:0 12px 24px}
+.brand{height:56px;display:flex;align-items:center;padding:0 12px;font-size:20px;line-height:26px;font-weight:600}
+.nav a,.nav button{display:flex;align-items:center;gap:12px;width:100%;min-height:44px;padding:0 12px;
+  border-radius:4px;text-decoration:none;color:var(--text);font:400 16px/24px "IBM Plex Sans",sans-serif;
+  background:none;border:1px solid transparent;cursor:pointer;text-align:left}
+.nav a[aria-current="page"]{border-color:var(--accent);font-weight:600}
+.nav .group{margin-top:16px;padding-top:16px;border-top:1px solid var(--line)}
+.nav .group button .ic:last-child{margin-left:auto}
+.main{min-width:0}
+.rail{height:56px;border-bottom:1px solid var(--line);display:flex;align-items:center;
+  justify-content:space-between;padding:0 24px}
+.search{display:flex;align-items:center;gap:8px;width:320px;height:44px;padding:0 12px;
+  border:1px solid var(--accent);border-radius:4px}
+.search input{all:unset;flex:1;font-size:16px;line-height:24px;color:var(--text)}
+.search:focus-within{outline:2px solid var(--accent);outline-offset:2px}
+.search input:focus-visible{outline:none}
+.search input::placeholder{color:var(--text);opacity:1}
+.account{display:flex;align-items:center;gap:12px;min-height:44px;padding:0 8px;border:1px solid transparent;
+  background:none;color:var(--text);font:500 16px/24px "IBM Plex Sans",sans-serif;cursor:pointer}
+.avatar{width:32px;height:32px;display:grid;place-items:center;border:1px solid var(--text);border-radius:4px;
+  font-size:14px;line-height:20px;font-weight:600}
+.content{padding:24px}
+
+.incident{border:1px solid var(--line);border-radius:8px;padding:24px;margin-top:16px}
+.verdict{display:flex;align-items:center;gap:12px;font-size:40px;line-height:44px}
+.verdict .ic{width:32px;height:32px}
+.facts{display:grid;grid-template-columns:168px 1fr;gap:8px 24px;max-width:760px;margin-top:16px}
+.facts dt{font-size:14px;line-height:20px;font-weight:500;align-self:center}
+.facts dd{align-self:center}
+.incident .act{margin-top:24px}
+.evidence-row{display:flex;align-items:center;gap:16px;margin-top:16px;padding-top:16px;border-top:1px solid var(--sep)}
+.lower{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:48px;margin-top:32px}
+.paths{width:100%;border-collapse:collapse;margin-top:12px}
+.paths th,.paths td{padding:12px 16px;text-align:left;height:48px}
+.paths td:first-child,.paths td:last-child{white-space:nowrap}
+.paths th:first-child,.paths td:first-child{padding-left:0}
+.paths thead th{font-size:14px;line-height:20px;font-weight:500;border-bottom:1px solid var(--sep)}
+.reading{display:flex;align-items:baseline;gap:12px;margin-top:24px;flex-wrap:wrap}
+.reading .big{font-size:24px;line-height:28px}
+.usage-link{display:flex;align-items:center;gap:16px;margin-top:16px}
+.history h2+p{margin-top:8px}
+.changes{margin-top:12px}
+.changes li{padding:12px 0}
+.changes li+li{border-top:1px solid var(--sep)}
+.history .btn{margin-top:8px}
+</style>
+</head>
+<body>
+<div class="shell">
+<aside class="side">
+  <div class="brand">Azizam</div>
+  <nav class="nav" aria-label="Main">
+    <ul><li><a href="#"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 9 10 3l7 6v8h-5v-5H8v5H3z"/></svg><span>Home</span></a></li><li><a href="#"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><circle cx="6.5" cy="13.5" r="3.5"/><path d="M9 11l7-7M13 7l2 2M15 5l2 2"/></svg><span>Apps & keys</span></a></li><li><a href="#"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 4h14v9H9l-4 3.5V13H3z"/></svg><span>Try</span></a></li><li><a href="#"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="4" width="14" height="12"/><path d="M3 13l5-4 4 4 2-2 3 3"/><circle cx="13" cy="7.5" r="1.2"/></svg><span>Library</span></a></li></ul>
+    <div class="group">
+      <button type="button" aria-expanded="true"><span>Admin</span><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M5 7.5l5 5 5-5"/></svg></button>
+      <ul><li><a href="#" aria-current="page"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5 16.5 5v5c0 4-3 6.5-6.5 7.5C6.5 16.5 3.5 14 3.5 10V5z"/></svg><span>Status</span></a></li><li><a href="#"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3.5" width="14" height="5"/><rect x="3" y="11.5" width="14" height="5"/><path d="M6 6h1M6 14h1"/></svg><span>Engines</span></a></li><li><a href="#"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M6 15h8.5a3 3 0 0 0 0-6 4.5 4.5 0 0 0-8.5-.5A3.25 3.25 0 0 0 6 15z"/></svg><span>Providers</span></a></li><li><a href="#"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><circle cx="7.5" cy="7" r="2.75"/><path d="M2.5 16.5c0-3.5 2.5-5 5-5s5 1.5 5 5"/><circle cx="13.75" cy="6.5" r="2.25"/><path d="M14 11.5c2 .1 3.5 1.5 3.5 5"/></svg><span>People</span></a></li><li><a href="#"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.25"/><path d="M12.5 7.25H8.75a1.375 1.375 0 0 0 0 2.75h2.5a1.375 1.375 0 0 1 0 2.75H7.5M10 5.5v1.75M10 12.75v1.75"/></svg><span>Usage</span></a></li><li><a href="#"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5.5h10M7 10h10M7 14.5h10M3 5.5h1M3 10h1M3 14.5h1"/></svg><span>Activity</span></a></li><li><a href="#"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6h14M3 14h14"/><rect x="5" y="4" width="4" height="4" fill="var(--bg)"/><rect x="11" y="12" width="4" height="4" fill="var(--bg)"/></svg><span>Settings</span></a></li></ul>
+    </div>
+  </nav>
+</aside>
+<div class="main">
+  <div class="rail">
+    <label class="search"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5"/><path d="M12.5 12.5 17 17"/></svg><span class="vh">Search</span><input placeholder="Search"></label>
+    <button class="account" type="button" aria-label="Account, Sam"><span class="avatar">S</span><span>Sam</span><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M5 7.5l5 5 5-5"/></svg></button>
+  </div>
+  <main class="content">
+
+<h1>Status</h1>
+<section class="incident" aria-labelledby="verdict">
+  <p class="verdict display" id="verdict"><svg class="ic fail" width="32" height="32" viewBox="0 0 20 20" role="img" aria-label="Failed"><path d="M5 5l10 10M15 5 5 15"/></svg>Video is unavailable</p>
+  <dl class="facts">
+    <dt>Where it stopped</dt><dd>Engine: Video studio (video)</dd>
+    <dt>Who is affected</dt><dd>Everyone who makes video. It is the only engine that serves Video.</dd>
+  </dl>
+  <a class="btn btn-primary act" href="#">Check engine</a>
+  <p class="evidence-row"><span><span class="label">Last failed request</span><br>Video, from Open WebUI, 21h ago</span><a class="btn btn-secondary" href="#"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M5 2.5h10v15L12.5 16 10 17.5 7.5 16 5 17.5z"/><path d="M8 7h4M8 10h4"/></svg>Open receipt</a></p>
+</section>
+
+<div class="lower">
+  <section aria-labelledby="paths">
+    <h2 id="paths">Other capabilities and paths</h2>
+    <table class="paths">
+      <thead><tr><th scope="col">Name</th><th scope="col">Layer</th><th scope="col">Serves</th><th scope="col">State now</th></tr></thead>
+      <tbody><tr><td>Gateway</td><td>Gateway</td><td>All requests</td><td><span class="state ok"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10.5l4 4 8-9"/></svg><span>Reachable</span></span></td></tr><tr><td>Execution gateway (chat)</td><td>Engine</td><td>Chat</td><td><span class="state ok"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10.5l4 4 8-9"/></svg><span>Ready</span></span></td></tr><tr><td>Study and coding (chat)</td><td>Engine</td><td>Chat</td><td><span class="state ok"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10.5l4 4 8-9"/></svg><span>Ready</span></span></td></tr><tr><td>Image studio (images)</td><td>Engine</td><td>Images</td><td><span class="state ok"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10.5l4 4 8-9"/></svg><span>Ready</span></span></td></tr><tr><td>Home Assistant voice (music &amp; sound effects)</td><td>Engine</td><td>Music, Sound effects</td><td><span class="state ok"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10.5l4 4 8-9"/></svg><span>Ready</span></span></td></tr><tr><td>Document search (embeddings)</td><td>Engine</td><td>Embeddings</td><td><span class="state "><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 5v10M12.5 5v10"/></svg><span>Paused</span></span></td></tr><tr><td>Remote backup</td><td>Provider</td><td>Chat</td><td><span class="state unknown"><svg class="ic " width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.25"/><path d="M7.75 8a2.25 2.25 0 1 1 3.1 2.1c-.6.3-.85.7-.85 1.4v.5M10 14v.5"/></svg><span>We haven't checked yet</span></span></td></tr></tbody>
+    </table>
+    <p class="reading"><span class="label">Provider spend this month</span><span class="num big">USD 0.45</span><span>of USD 8.00. Cost recorded for 249 of 267 requests.</span></p>
+    <p class="usage-link"><span>Request volume by day is on Usage.</span><a class="btn btn-secondary" href="#">Open usage</a></p>
+  </section>
+  <section class="history" aria-labelledby="resolved">
+    <h2 id="resolved">Resolved incidents</h2>
+    <p>No resolved incidents saved.</p>
+    <h2 style="margin-top:32px">Recent changes</h2>
+    <ul class="changes">
+      <li>Updated engine configuration<br><span class="small">System, 2m ago</span></li>
+      <li>Turned off an engine<br><span class="small">Sam, 4d ago</span></li>
+      <li>Updated provider settings<br><span class="small">Sam, 12d ago</span></li>
+    </ul>
+    <a class="btn btn-secondary" href="#">Open activity</a>
+  </section>
+</div>
+
+  </main>
+</div>
+</div>
+</body>
+</html>
