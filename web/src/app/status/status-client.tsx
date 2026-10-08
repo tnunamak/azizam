@@ -16,6 +16,7 @@ import {
   type StatusPayload,
 } from "@/lib/api";
 import { productApi } from "@/lib/product-api";
+import { PRODUCT_NAME } from "@/lib/product";
 import { Button } from "@/components/ui/button";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -276,6 +277,10 @@ function engineProblems(engines: EngineView[]): Problem[] {
       !["Unavailable", "Degraded"].includes(engine.state)
     )
       continue;
+    // A stopped standby engine nobody is using is not a problem: the gateway
+    // marks it neutral. Only its warn and bad judgements need the owner.
+    if (engine.health?.tone === "neutral" && engine.health.in_use === false)
+      continue;
     const symptom = engineSymptom(engine).replace(engine.shortName, "");
     grouped.set(symptom, [...(grouped.get(symptom) ?? []), engine]);
   }
@@ -296,7 +301,8 @@ function engineProblems(engines: EngineView[]): Problem[] {
         ? "warn"
         : "bad",
       engines: affected,
-      fix: engineFix(affected[0]),
+      // A group's action already opens Engines; one fix line fits one engine.
+      fix: single ? engineFix(affected[0]) : undefined,
       href: single
         ? `/engines/?service=${encodeURIComponent(affected[0].service.id)}`
         : "/engines/",
@@ -830,12 +836,24 @@ export function StatusClient() {
     () => enginesFrom(registryData, observedStatus, statusIsError ? undefined : statusData),
     [registryData, observedStatus, statusData, statusIsError],
   );
+  // Remote providers are the ones the provider API lists; registry "kind"
+  // marks local engines as providers on real installs, so it is a fallback.
+  const providerIds = new Set(
+    providers.state === "ready"
+      ? providers.providers.map((provider) => provider.id)
+      : [],
+  );
+  const isProviderService = (engine: EngineView) =>
+    providers.state === "ready"
+      ? providerIds.has(engine.service.id)
+      : ["provider"].includes(engine.service.kind.toLowerCase()) ||
+        (engine.service.role || "").toLowerCase() === "provider";
+  const isGatewaySelf = (engine: EngineView) =>
+    ["gateway"].includes(engine.service.kind.toLowerCase()) ||
+    (engine.service.role || "").toLowerCase() === "gateway" ||
+    engine.service.id.toLowerCase() === PRODUCT_NAME.toLowerCase();
   const tableEngines = engines.filter(
-    (engine) =>
-      !["provider", "gateway"].includes(engine.service.kind.toLowerCase()) &&
-      !["provider", "gateway"].includes(
-        (engine.service.role || "").toLowerCase(),
-      ),
+    (engine) => !isProviderService(engine) && !isGatewaySelf(engine),
   );
   const enabledEngines = tableEngines.filter((engine) => engine.service.enabled);
   const healthyStates = new Set(["Ready", "Ready to start", "Standby, stopped"]);
@@ -933,11 +951,8 @@ export function StatusClient() {
     ...engineProblems(
       engines.filter(
         (engine) =>
-          providers.state !== "ready" ||
-          !(
-            engine.service.kind.toLowerCase() === "provider" ||
-            (engine.service.role || "").toLowerCase() === "provider"
-          ),
+          !isGatewaySelf(engine) &&
+          (providers.state !== "ready" || !isProviderService(engine)),
       ),
     ),
     ...providerProblems,
@@ -988,7 +1003,7 @@ export function StatusClient() {
     verdict = { tone: "off", text: "No engines yet." };
   } else if (health.state === "warn" || health.state === "bad") {
     verdict = { tone: "warn", text: "Something needs attention." };
-    note = health.detail || null;
+    note = "The gateway flagged a problem it did not attribute to an engine.";
   } else if (health.state !== "ok" || incomplete || !allEnginesHealthy) {
     verdict = { tone: "unknown", text: "Some engines are unchecked." };
   } else if (unchecked.length) {
