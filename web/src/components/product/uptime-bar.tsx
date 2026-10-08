@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import { cn } from "@/lib/cn";
 
 /** [timestamp_s, value] where 1 = up, 0.5 = degraded, 0 = down. */
@@ -67,6 +70,34 @@ function clock(ts: number): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+/** The hour-by-hour text, built only when opened (no hidden layout). */
+function HourByHour({
+  slots,
+}: {
+  slots: Array<{ start: number; value: number | null }>;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details
+      className="text-muted-foreground mt-1 text-xs"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary className="w-fit cursor-pointer max-sm:min-h-11 max-sm:py-3">
+        Hour by hour
+      </summary>
+      {open ? (
+        <ul className="mt-1 grid grid-cols-2 gap-x-4 sm:grid-cols-3">
+          {slots.map((slot) => (
+            <li key={slot.start}>
+              {clock(slot.start)}: {slotWord(slot.value)}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </details>
+  );
 }
 
 /**
@@ -149,18 +180,7 @@ export function UptimeBar({
       ) : null}
       {enabled &&
       slots.some((slot) => slot.value !== null && slot.value < 1) ? (
-        <details className="text-muted-foreground mt-1 text-xs">
-          <summary className="w-fit cursor-pointer max-sm:min-h-11 max-sm:py-3">
-            Hour by hour
-          </summary>
-          <ul className="mt-1 grid grid-cols-2 gap-x-4 sm:grid-cols-3">
-            {slots.map((slot) => (
-              <li key={slot.start}>
-                {clock(slot.start)}: {slotWord(slot.value)}
-              </li>
-            ))}
-          </ul>
-        </details>
+        <HourByHour slots={slots} />
       ) : null}
     </div>
   );

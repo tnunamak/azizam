@@ -273,11 +273,13 @@ function Tasks({
   if (!tasks.length) return null;
   const used = lastUses(receipts);
   return (
-    <section aria-labelledby="tasks-heading">
+    // Two columns only when the list itself is wide enough (container
+    // query), so a task name never truncates beside its reason.
+    <section aria-labelledby="tasks-heading" className="@container">
       <SectionHeading id="tasks-heading" title="Make something" />
       {/* Hairlines are the 1 px gaps of the grid, so one and two columns
           share one row grammar. */}
-      <ul className="bg-border rounded-panel grid gap-px overflow-hidden border md:grid-cols-2">
+      <ul className="bg-border rounded-panel grid gap-px overflow-hidden border @2xl:grid-cols-2">
         {tasks.map((task) => (
           <TaskRow
             key={task.key}
@@ -288,7 +290,7 @@ function Tasks({
           />
         ))}
         {tasks.length % 2 ? (
-          <li aria-hidden="true" className="bg-card max-md:hidden" />
+          <li aria-hidden="true" className="bg-card hidden @2xl:block" />
         ) : null}
       </ul>
     </section>
