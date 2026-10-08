@@ -72,6 +72,7 @@ const primaryAppChoices = [
   "Codex",
   "Claude Code",
 ] as const satisfies readonly Client[];
+const otherClientChoices = ["Python", "JavaScript", "curl", "Phone"] as const satisfies readonly Client[];
 type AppChoice = Client | "Other";
 const capabilityCopy: Record<
   string,
@@ -379,6 +380,33 @@ function Connect({ home }: { home: HomeSnapshot }) {
         </div>
         {appChoice && (
           <div className="mt-5 space-y-4">
+            {appChoice === "Other" && (
+              <div className="space-y-3">
+                <label htmlFor="other-client" className="text-sm font-medium">
+                  Recipe
+                </label>
+                <Select
+                  value={client}
+                  disabled={choiceLocked}
+                  onValueChange={(value) => {
+                    setClient(value as Client);
+                    setTestResult(null);
+                    setTestError(null);
+                  }}
+                >
+                  <SelectTrigger id="other-client" className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {otherClientChoices.map((name) => (
+                      <SelectItem key={name} value={name}>
+                        {name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="grid min-w-0 gap-3 lg:grid-cols-3">
               <CopyField
                 label="Base URL"

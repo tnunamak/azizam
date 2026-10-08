@@ -268,4 +268,30 @@ describe("workflow media helpers", () => {
     expect(workflowJob({ id: "not-enough", status: "queued" })).toBeNull();
     expect(workflowJob({ object: "media.job", status: "queued" })).toBeNull();
   });
+
+  it.each([
+    ["audio", "audio/mpeg"],
+    ["video", "video/mp4"],
+  ])("preserves inline base64 %s across media payload shapes", (kind, mediaType) => {
+    const url = `data:${mediaType};base64,YWJj`;
+    const label = kind === "audio" ? "Audio" : "Video";
+    for (const payload of [
+      { data: [{ url }] },
+      { assets: [{ url, media_type: mediaType }] },
+      { [`${kind}_url`]: url },
+    ]) {
+      expect(mediaFrom(payload)).toMatchObject([{ kind, url, label }]);
+    }
+    expect(
+      mediaFrom({
+        data: [
+          { url: `data:${mediaType},abc` },
+          { url: "data:text/html;base64,YWJj" },
+          { url: "data:image/svg+xml;base64,YWJj" },
+          { url: "javascript:alert(1)" },
+          { url: "//evil.test/media" },
+        ],
+      }),
+    ).toEqual([]);
+  });
 });

@@ -473,4 +473,42 @@ describe("Home audit component behavior", () => {
       screen.queryByText("No chat model is available to this key yet"),
     ).toBeNull();
   });
+
+  it.each([
+    ["Python", "Install openai, set GATEWAY_API_KEY, then run this.", "https://github.com/openai/openai-python#usage"],
+    ["JavaScript", "Install openai, set GATEWAY_API_KEY, then run this server-side.", "https://github.com/openai/openai-node#usage"],
+    ["curl", "Set GATEWAY_API_KEY. This sends one chat request.", "https://platform.openai.com/docs/api-reference/chat/create"],
+    ["Phone", "Use your household Open WebUI connection.", "https://docs.openwebui.com/getting-started/quick-start/"],
+  ])("makes the %s recipe reachable under Other with Python as default", async (client, description, docs) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/.well-known/azizam")
+          return Response.json({ service: { name: "Family gateway" } });
+        if (path === "/me/api/home") return Response.json(home);
+        if (path === "/me/api/media?limit=50")
+          return Response.json({ assets: [] });
+        if (path === "/admin/api/setup-progress")
+          return Response.json({ ...progress(), complete: true });
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+    renderHome();
+    await userEvent.click(await screen.findByRole("button", { name: "Other" }));
+    expect(screen.getByRole("combobox", { name: "Recipe" })).toHaveTextContent("Python");
+    expect(screen.getByRole("button", { name: "Create key for Python" })).toBeVisible();
+    await userEvent.click(screen.getByRole("combobox", { name: "Recipe" }));
+    await userEvent.click(await screen.findByRole("option", { name: client }));
+    expect(screen.getByRole("combobox", { name: "Recipe" })).toHaveTextContent(client);
+    expect(screen.getByRole("button", { name: `Create key for ${client}` })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Setup notes" }));
+    expect(await screen.findByText(description)).toBeVisible();
+    expect(screen.getByRole("link", { name: `${client} docs` })).toHaveAttribute("href", docs);
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByRole("button", { name: "Open WebUI" }));
+    expect(screen.queryByRole("combobox", { name: "Recipe" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Other" }));
+    expect(screen.getByRole("combobox", { name: "Recipe" })).toHaveTextContent("Python");
+  });
 });

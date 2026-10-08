@@ -223,6 +223,8 @@ function mediaLabel(kind: WorkflowMediaKind, index: number) {
 function safeMediaUrl(url: string) {
   if (url.startsWith("/")) return !url.startsWith("//");
   if (url.startsWith(DATA_IMAGE_PNG_PREFIX)) return true;
+  if (/^data:(?:audio|video)\/[a-zA-Z0-9!#$&^_.+-]+;base64,/.test(url))
+    return true;
 
   try {
     const parsed = new URL(url);
