@@ -18,6 +18,8 @@ export type ModelTag = "tool-use" | "reasoning" | "vision" | "file-input";
 export interface AvailabilityEvidence {
   source?: string;
   observed_at_s?: number;
+  last_attempt_at_s?: number;
+  last_success_at_s?: number;
   receipt_status?: string;
   kind?: string;
 }

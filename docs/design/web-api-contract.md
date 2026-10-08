@@ -1028,3 +1028,28 @@ Setting `state: "available"` with no `reason` clears any existing override for
 that service (idempotent clear).
 
 `200` → `{ "service_availability": { "<service_id>": { "state": "…", "reason": null, "retry_after_seconds": null } } }`
+
+---
+
+## Member surfaces (`/me/api`)
+
+The member Home and Status pages read the signed-in person's own view. The
+fields below are additive; the payloads keep every earlier field.
+
+### Availability evidence (`availability.evidence`)
+
+Every capability `availability` object carries `evidence`, an allowlisted
+summary of the fact behind the state. All times are epoch seconds. A time is
+absent when it is not known; the gateway never substitutes the current time.
+
+| Field | Meaning |
+|---|---|
+| `source` | Where the fact came from: `health` (health probe), `status` (status grid), `lifecycle`, `request` (a recent request receipt), `registry`, `capability`. |
+| `kind` | Optional qualifier, for example `no_response` (the check got no usable answer), `disabled`, `unconfigured`. |
+| `receipt_status` | For `source: "request"`, the terminal status of that request. |
+| `observed_at_s` | When the check or request behind this evidence happened. A failed check is observed at its attempt time, so read it together with `kind` and `last_success_at_s`. Absent when nothing was checked (for example, a service without a health endpoint). |
+| `last_attempt_at_s` | The latest check or proven request from this source. Equal to `observed_at_s` today; kept separate so that clients do not have to infer it. |
+| `last_success_at_s` | The latest successful check or request from this source that the gateway knows of. Health checks remember it for the life of the gateway process; request evidence looks back over the recent-evidence window (15 minutes). Absent means no success is known, not that none happened. |
+
+A placeholder for an unmeasured service (`status: "unknown"`, no time) never
+hides a timed observation from another source.

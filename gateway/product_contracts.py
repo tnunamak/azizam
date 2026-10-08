@@ -18,7 +18,12 @@ ModelTag = Literal["tool-use", "reasoning", "vision", "file-input"]
 
 class AvailabilityEvidence(TypedDict, total=False):
     source: str
+    # When the check or request behind this evidence happened (a failed check
+    # is observed at its attempt time). Absent when nothing was checked.
     observed_at_s: float
+    last_attempt_at_s: float
+    # Latest known success of this source; absent when none is known.
+    last_success_at_s: float
     receipt_status: str
     kind: str
 

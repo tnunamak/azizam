@@ -27,6 +27,15 @@ FAILED_RECEIPT_STATUSES = frozenset(
 )
 RECENT_EVIDENCE_WINDOW_S = 15 * 60
 
+# Evidence time fields (epoch seconds; absent when not known, never invented):
+# - ``observed_at_s``: when the check or request that produced this evidence
+#   happened. A failed check is observed at its attempt time.
+# - ``last_attempt_at_s``: the latest check or proven request of this source.
+# - ``last_success_at_s``: the latest successful check or request of this
+#   source that this process has seen. Absent means no success is known; it
+#   does not mean that none happened.
+EVIDENCE_TIME_FIELDS = ("observed_at_s", "last_attempt_at_s", "last_success_at_s")
+
 
 @dataclass(frozen=True)
 class AvailabilityProjection:
@@ -154,6 +163,7 @@ def evidence_from_receipts(
 
     now_s = int(time.time() if now_s is None else now_s)
     out: dict[str, dict[str, Any]] = {}
+    last_success: dict[str, int] = {}
     for receipt in receipts:
         metadata = receipt.get("metadata") if isinstance(receipt.get("metadata"), Mapping) else {}
         backend = str(metadata.get("service_id") or metadata.get("service-id") or receipt.get("backend") or "").strip()
@@ -169,6 +179,8 @@ def evidence_from_receipts(
         success = status in SUCCESS_RECEIPT_STATUSES
         if not success and not _receipt_proves_backend_failure(receipt):
             continue
+        if success:
+            last_success[backend] = max(timestamp, last_success.get(backend, timestamp))
         current = out.get(backend)
         if current:
             current_ms = int(current.get("observed_at_ms") or 0)
@@ -185,10 +197,15 @@ def evidence_from_receipts(
             "status": "ready" if success else "unavailable",
             "reason": "Recent request succeeded" if success else "Most recent request failed",
             "observed_at_s": timestamp,
+            "last_attempt_at_s": timestamp,
             "observed_at_ms": observed_at_ms,
             "request_id": receipt.get("request_id"),
             "receipt_status": status,
         }
+    for backend, evidence in out.items():
+        # Bounded by the receipts considered (the recent evidence window).
+        if backend in last_success:
+            evidence["last_success_at_s"] = last_success[backend]
     return out
 
 
@@ -225,9 +242,13 @@ def evidence_from_status_rows(
     *,
     observed_at_s: int | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Convert live status rows into shared service evidence."""
+    """Convert live status rows into shared service evidence.
 
-    observed_at_s = int(time.time() if observed_at_s is None else observed_at_s)
+    ``observed_at_s`` is the check time of the whole snapshot (its
+    ``generated_at``). A row's own ``observed_at_s`` wins. Without either, the
+    evidence carries no time: the current time is not the check time.
+    """
+
     out: dict[str, dict[str, Any]] = {}
     for row in rows:
         service_id = str(row.get("service_id") or row.get("key") or row.get("name") or "").strip()
@@ -240,12 +261,17 @@ def evidence_from_status_rows(
             available = None
         else:
             available = False
-        evidence = {
+        evidence: dict[str, Any] = {
             "source": str(row.get("source") or "status"),
             "status": raw,
             "available": available,
-            "observed_at_s": row.get("observed_at_s", observed_at_s),
         }
+        checked_at = row.get("observed_at_s", observed_at_s)
+        if _is_epoch(checked_at):
+            evidence["observed_at_s"] = checked_at
+            evidence["last_attempt_at_s"] = checked_at
+            if available is True:
+                evidence["last_success_at_s"] = checked_at
         kind = row.get("kind")
         if isinstance(kind, str) and kind.strip():
             evidence["kind"] = kind.strip()
@@ -282,7 +308,8 @@ def availability_evidence_snapshot(
     raw_backends = payload.get("backends")
     status_rows = raw_backends if isinstance(raw_backends, list) else []
     generated_at = payload.get("generated_at")
-    observed_at = generated_at if isinstance(generated_at, int) and not isinstance(generated_at, bool) else now_s
+    # The snapshot's build time is its check time; ``now_s`` is not.
+    observed_at = generated_at if _is_epoch(generated_at) else None
     status_evidence = evidence_from_status_rows(
         [row for row in status_rows if isinstance(row, Mapping)],
         observed_at_s=observed_at,
@@ -437,6 +464,14 @@ def _evidence_newer(incoming: Mapping[str, Any], current: Mapping[str, Any]) -> 
         return False
     if _evidence_unknown(current) and incoming.get("source") == "request":
         return True
+    incoming_ts_known = _is_epoch(incoming.get("observed_at_s"))
+    current_ts_known = _is_epoch(current.get("observed_at_s"))
+    # A "not measured" placeholder has no observation time. It must not mask
+    # an actual observation, and an actual observation replaces it.
+    if _evidence_unknown(current) and not current_ts_known and incoming_ts_known:
+        return True
+    if _evidence_unknown(incoming) and not incoming_ts_known and current_ts_known:
+        return False
     incoming_ts = incoming.get("observed_at_s")
     current_ts = current.get("observed_at_s")
     if isinstance(incoming_ts, int) and isinstance(current_ts, int):
@@ -446,9 +481,13 @@ def _evidence_newer(incoming: Mapping[str, Any], current: Mapping[str, Any]) -> 
     return False
 
 
+def _is_epoch(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def _public_evidence(evidence: Mapping[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
-    for key in ("source", "kind", "receipt_status", "observed_at_s"):
+    for key in ("source", "kind", "receipt_status", *EVIDENCE_TIME_FIELDS):
         value = evidence.get(key)
         if value is not None:
             out[key] = value
