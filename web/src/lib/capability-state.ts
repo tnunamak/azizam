@@ -108,12 +108,19 @@ const SUCCESS = new Set(["succeeded", "success", "completed", "ok"]);
 export const CAP_WARNING = /spending allowance|\bcap\b[^.]*\bexceed/i;
 
 /** True while a refusal of this kind can still be in force. */
-export function capRefusalCurrent(request: RequestSignal, now: number): boolean {
-  const warning = (request.warnings ?? []).find((text) => CAP_WARNING.test(text)) ?? "";
+export function capRefusalCurrent(
+  request: RequestSignal,
+  now: number,
+): boolean {
+  const warning =
+    (request.warnings ?? []).find((text) => CAP_WARNING.test(text)) ?? "";
   if (/monthly/i.test(warning)) {
     // A monthly limit resets at the start of the calendar month (UTC).
     const date = new Date(now * 1000);
-    return request.at >= Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1) / 1000;
+    return (
+      request.at >=
+      Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1) / 1000
+    );
   }
   // A daily limit is a rolling 24 hours, so any refusal clears within a day.
   return now - request.at <= 86_400;
@@ -126,11 +133,17 @@ export function requestCapability(
 ): string | null {
   const value = String(intent ?? "").toLowerCase();
   const route = String(path ?? "").toLowerCase();
-  if (/^(chat|responses|text\.completions)/.test(value) || /chat\/completions|\/responses/.test(route)) return "chat";
+  if (
+    /^(chat|responses|text\.completions)/.test(value) ||
+    /chat\/completions|\/responses/.test(route)
+  )
+    return "chat";
   if (value.startsWith("image") || route.includes("/images/")) return "image";
   if (value.startsWith("video") || route.includes("/videos")) return "video";
-  if (/transcri/.test(value) || route.includes("/audio/transcriptions")) return "transcribe";
-  if (/^(speech|audio\.speech)/.test(value) || route.includes("/audio/speech")) return "speech";
+  if (/transcri/.test(value) || route.includes("/audio/transcriptions"))
+    return "transcribe";
+  if (/^(speech|audio\.speech)/.test(value) || route.includes("/audio/speech"))
+    return "speech";
   if (/sfx/.test(value) || route.includes("/audio/sfx")) return "sfx";
   if (/music/.test(value)) return "music";
   if (/embed/.test(value) || route.includes("/embeddings")) return "embed";
@@ -197,17 +210,22 @@ export function engineSymptom(engine: {
   const raw = String(engine.lastError ?? "").toLowerCase();
   if (/connection refused|connect refused|econnrefused/.test(raw))
     return `${engine.name} is not accepting connections.`;
-  if (/timeout|timed out/.test(raw)) return `${engine.name} did not answer in time.`;
-  if (/http\s*5\d\d|\b5\d\d\b/.test(raw)) return `${engine.name} is answering with errors.`;
-  if (engine.observation === "degraded") return `${engine.name} is answering, but not reliably.`;
+  if (/timeout|timed out/.test(raw))
+    return `${engine.name} did not answer in time.`;
+  if (/http\s*5\d\d|\b5\d\d\b/.test(raw))
+    return `${engine.name} is answering with errors.`;
+  if (engine.observation === "degraded")
+    return `${engine.name} is answering, but not reliably.`;
   return `${engine.name} is not answering.`;
 }
 
 /** The first thing for the owner to try, matched to the symptom. */
 export function engineRemedy(lastError?: string | null): string {
   const raw = String(lastError ?? "").toLowerCase();
-  if (raw.includes("refused")) return "Check the engine address, or start the engine.";
-  if (/timeout|timed out/.test(raw)) return "Check whether the engine is busy or unreachable.";
+  if (raw.includes("refused"))
+    return "Check the engine address, or start the engine.";
+  if (/timeout|timed out/.test(raw))
+    return "Check whether the engine is busy or unreachable.";
   return "Check the engine’s log and restart it.";
 }
 
@@ -218,7 +236,8 @@ function engineFailing(engine: EngineSignal): boolean {
   if (engine.tone === "bad") return true;
   // "unavailable" with a neutral judgement means the gateway could not
   // check it: that is Unknown, not Down.
-  if (engine.observation === "unavailable" && engine.tone === "neutral") return false;
+  if (engine.observation === "unavailable" && engine.tone === "neutral")
+    return false;
   return ["down", "degraded", "unavailable"].includes(engine.observation);
 }
 
@@ -248,16 +267,22 @@ export function capabilityView(
   });
   const code = String(input.reason_code || "").toLowerCase();
   const status = String(input.status || "").toLowerCase();
-  if (code === "unavailable_disabled") return make("off", "Turned off by the owner.");
-  if (code === "unavailable_unconfigured") return make("off", "Not set up yet.");
-  if (code === "policy_denied") return make("blocked", "Not included in your access plan.");
+  if (code === "unavailable_disabled")
+    return make("off", "Turned off by the owner.");
+  if (code === "unavailable_unconfigured")
+    return make("off", "Not set up yet.");
+  if (code === "policy_denied")
+    return make("blocked", "Not included in your access plan.");
 
   // Evidence time: a check is never shown as a use, or the reverse.
   const evidence = input.evidence ?? null;
   const source = String(evidence?.source ?? "");
-  const at = typeof evidence?.observed_at_s === "number" ? evidence.observed_at_s : null;
+  const at =
+    typeof evidence?.observed_at_s === "number" ? evidence.observed_at_s : null;
   const isRequest = source === "request";
-  const isCheck = Boolean(source) && !["registry", "capability", "configuration", "request"].includes(source);
+  const isCheck =
+    Boolean(source) &&
+    !["registry", "capability", "configuration", "request"].includes(source);
   const checkedAt = isCheck ? at : null;
   const usedAt = isRequest ? at : null;
   const stamp = { checkedAt, usedAt };
@@ -269,21 +294,29 @@ export function capabilityView(
   const lastSuccess = mine
     .filter((request) => isSuccess(request.status))
     .reduce((latest, request) => Math.max(latest, request.at), 0);
-  const unresolvedFailures = recentFailures.filter((request) => request.at > lastSuccess);
+  const unresolvedFailures = recentFailures.filter(
+    (request) => request.at > lastSuccess,
+  );
   const refusal = activeCapRefusal(requests, input.key, now);
 
   // Owner view: engine and provider checks for this capability.
   const names = new Set(
-    [input.label, ...(input.matchLabels ?? [])].map((name) => name.toLowerCase()),
+    [input.label, ...(input.matchLabels ?? [])].map((name) =>
+      name.toLowerCase(),
+    ),
   );
   const serving = (engines ?? []).filter(
-    (engine) => engine.enabled && engine.labels.some((label) => names.has(label.toLowerCase())),
+    (engine) =>
+      engine.enabled &&
+      engine.labels.some((label) => names.has(label.toLowerCase())),
   );
   const failing = serving.filter(engineFailing);
   if (serving.length && failing.length === serving.length) {
     const first = failing[0];
     // Every engine still answers, but badly: degraded, not down.
-    const degraded = failing.every((engine) => engine.observation === "degraded");
+    const degraded = failing.every(
+      (engine) => engine.observation === "degraded",
+    );
     return make(degraded ? "degraded" : "down", engineSymptom(first), {
       ...stamp,
       failing,
@@ -292,8 +325,7 @@ export function capabilityView(
 
   // The gateway's projection says unavailable even without a timed check:
   // that is a current fault, not missing knowledge.
-  if (status === "unavailable" && at === null)
-    return make("down", "Not available right now.", stamp);
+  if (status === "unavailable" && at === null) return make("down", null, stamp);
   if (!evidence || status === "unknown" || (!at && !source)) {
     const lastChecks = serving
       .map((engine) => engine.checkedAt)
@@ -306,7 +338,7 @@ export function capabilityView(
         ? `Last checked ${ageText(now - last)}; no answer since.`
         : noAnswer
           ? "No answer to the latest check."
-          : "The gateway has no current check.",
+          : null,
       { usedAt, checkedAt: null },
     );
   }
@@ -326,7 +358,7 @@ export function capabilityView(
       { ...stamp, failing },
     );
   }
-  if (status === "unavailable") return make("down", "Not available right now.", stamp);
+  if (status === "unavailable") return make("down", null, stamp);
   if (status === "busy" || status === "starting") {
     // Busy means busy. A busy report beside a failed request is a fault.
     const failedSinceSuccess = mine.some(
@@ -336,20 +368,35 @@ export function capabilityView(
         now - request.at <= 86_400,
     );
     if (failedSinceSuccess)
-      return make("degraded", "Reported busy, and requests have failed since the last success.", stamp);
-    return make("busy", status === "starting" ? "Starting up." : "Working on other requests.", stamp);
+      return make(
+        "degraded",
+        "Reported busy, and requests have failed since the last success.",
+        stamp,
+      );
+    return make(
+      "busy",
+      status === "starting" ? "Starting up." : "Working on other requests.",
+      stamp,
+    );
   }
   if (refusal)
-    return make("degraded", "Some models are paused: a spending limit was reached.", stamp);
+    return make(
+      "degraded",
+      "Some models are paused: a spending limit was reached.",
+      stamp,
+    );
   if (unresolvedFailures.length)
     return make(
       "degraded",
       `${unresolvedFailures.length} request${unresolvedFailures.length === 1 ? "" : "s"} failed in the last hour.`,
       stamp,
     );
-  if (["ready", "idle", "idle-startable", "standby_stopped"].includes(status) || input.available)
+  if (
+    ["ready", "idle", "idle-startable", "standby_stopped"].includes(status) ||
+    input.available
+  )
     return make("ready", null, stamp);
-  return make("unknown", "The gateway has no current check.", stamp);
+  return make("unknown", null, stamp);
 }
 
 export interface Verdict {
@@ -372,17 +419,35 @@ export function verdictFor(views: CapabilityView[]): Verdict {
   const checkedAt = checks.length ? Math.min(...checks) : null;
   const counted = views.filter((view) => view.state !== "off");
   if (!counted.length)
-    return { tone: "off", text: "Nothing is set up yet", problems: [], checkedAt };
+    return {
+      tone: "off",
+      text: "Nothing is set up yet",
+      problems: [],
+      checkedAt,
+    };
   const problems = counted
     .filter((view) => view.state !== "ready")
     .toSorted((a, b) => STATE_WORDS[b.state].rank - STATE_WORDS[a.state].rank);
-  if (!problems.length) return { tone: "ok", text: "Everything works", problems, checkedAt };
+  if (!problems.length)
+    return { tone: "ok", text: "Everything works", problems, checkedAt };
   const worst = problems[0];
-  if (problems.length === counted.length && worst.state === "down")
-    return { tone: "bad", text: "Nothing works right now", problems, checkedAt };
+  if (counted.every((view) => view.state === "down"))
+    return {
+      tone: "bad",
+      text: "Nothing works right now",
+      problems,
+      checkedAt,
+    };
   const text =
     problems.length <= 2
-      ? capitalise(problems.map((view) => `${view.label.toLowerCase()} ${view.word.toLowerCase()}`).join(", "))
+      ? capitalise(
+          problems
+            .map(
+              (view) =>
+                `${view.label.toLowerCase()} ${view.word.toLowerCase()}`,
+            )
+            .join(", "),
+        )
       : `${problems.length} of ${counted.length} capabilities need attention`;
   return { tone: worst.tone, text, problems, checkedAt };
 }

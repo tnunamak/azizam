@@ -184,9 +184,11 @@ function enginesFrom(
         backend,
         name: engineDisplayName(service, display),
         shortName: engineShortName(service, display),
+        // People's names for capabilities (VOICE glossary): Speech is Voice.
         label:
           display?.capability_labels
             ?.filter((label) => !/\((?:speech|transcription)\)/i.test(label))
+            .map((label) => (label === "Speech" ? "Voice" : label))
             .join(", ") || "",
         role: service.role || h?.role || titleize(service.kind || "engine"),
         state: healthPresentation.label,
@@ -195,7 +197,10 @@ function enginesFrom(
         models: serviceModels(service),
         queue: valueText(backendExtras?.queue ?? backendExtras?.queue_depth),
         lastError: h?.last_error ?? backend?.last_error ?? null,
-        checkedAt: presentationStatus?.generated_at ?? null,
+        // The poller's record time, never the payload's generation time.
+        checkedAt:
+          (backend as { observed_at_s?: number | null } | undefined)
+            ?.observed_at_s ?? null,
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -426,9 +431,12 @@ function engineProblems(
           </div>,
         ]);
     } else {
+      const names = affected.map((engine) => engine.shortName);
       facts.push([
         "Engines",
-        affected.map((engine) => engine.shortName).join(", "),
+        names.length > 3
+          ? `${names.slice(0, 3).join(", ")} and ${names.length - 3} more`
+          : names.join(", "),
       ]);
     }
     facts.push([
@@ -784,6 +792,7 @@ export function StatusClient() {
   const selectedServiceId = searchParams.get("service");
   const [diskHelpOpen, setDiskHelpOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const [showAllCaps, setShowAllCaps] = useState(false);
   const {
     data: statusData,
     isError: statusIsError,
@@ -1024,8 +1033,11 @@ export function StatusClient() {
         const observed = (
           engine.backend as { observed_at_s?: number | null } | undefined
         )?.observed_at_s;
-        const last = typeof observed === "number" ? observed : null;
-        if (last !== null && now - last <= FRESH_S) return [];
+        // Only a recorded check that has gone stale; an engine the gateway
+        // never checks is Unknown in the table, not "not answering".
+        if (typeof observed !== "number" || now - observed <= FRESH_S)
+          return [];
+        const last = observed;
         return [
           {
             key: `unchecked:${engine.service.id}`,
@@ -1113,6 +1125,17 @@ export function StatusClient() {
   }
   if (providers.state === "error") note = "Provider status did not load.";
   const tableOpen = showAll || !problems.length;
+  const capsOpen = showAllCaps || !problems.length;
+  const capabilitySummary = (
+    ["down", "blocked", "degraded", "unknown", "busy", "ready", "off"] as const
+  )
+    .map(
+      (key) =>
+        [key, model.views.filter((view) => view.state === key).length] as const,
+    )
+    .filter(([, n]) => n > 0)
+    .map(([key, n]) => `${n} ${STATE_WORDS[key].word.toLowerCase()}`)
+    .join(", ");
   // Engines that already have a card are not counted again in the summary.
   const troubled = new Set(
     problems.flatMap((problem) => {
@@ -1281,13 +1304,29 @@ export function StatusClient() {
                   id="capability-strip-heading"
                   title="Capabilities"
                 />
-                <CapabilityList
-                  // A failing engine already has a callout with its symptom.
-                  views={model.views.map((view) =>
-                    view.failing.length ? { ...view, detail: null } : view,
-                  )}
-                  columns={2}
-                />
+                {capsOpen ? (
+                  <CapabilityList
+                    // A failing engine already has a callout with its symptom.
+                    views={model.views.map((view) =>
+                      view.failing.length ? { ...view, detail: null } : view,
+                    )}
+                    columns={2}
+                  />
+                ) : (
+                  // While cards explain a problem, the list folds to its
+                  // counts, like the engines below (principle 7).
+                  <button
+                    type="button"
+                    onClick={() => setShowAllCaps(true)}
+                    className="bg-card hover:border-input rounded-panel flex min-h-11 w-full flex-wrap items-center justify-between gap-x-3 gap-y-1 border px-5 py-3 text-left text-sm"
+                  >
+                    <span>{capabilitySummary}</span>
+                    <span className="text-link inline-flex shrink-0 items-center gap-1 font-medium whitespace-nowrap">
+                      Show capabilities
+                      <ChevronRight aria-hidden="true" className="size-4" />
+                    </span>
+                  </button>
+                )}
               </section>
             ) : null}
 

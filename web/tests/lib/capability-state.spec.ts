@@ -171,6 +171,14 @@ describe("verdict line", () => {
       "Video unknown",
     );
   });
+  it("says nothing works only when every counted capability is Down", () => {
+    expect(verdictFor([view("chat", "down"), view("video", "down")]).text).toBe(
+      "Nothing works right now",
+    );
+    expect(
+      verdictFor([view("chat", "down"), view("video", "down"), view("image", "unknown")]).text,
+    ).toBe("3 of 3 capabilities need attention");
+  });
   it("names faults without a full stop", () => {
     const text = verdictFor([view("chat", "ready"), view("video", "down")]).text;
     expect(text).toBe("Video down");
