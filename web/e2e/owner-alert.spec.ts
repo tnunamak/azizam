@@ -52,6 +52,11 @@ for (const mode of [
       "Image engine is down. Check its connection on Status.",
       { exact: true },
     );
+    // Hardware signals never become an owner-wide banner. Checked on the
+    // page with the banner; Status itself rightly lists the disk signal.
+    await expect(page.getByText("Disk is full", { exact: true })).toHaveCount(
+      0,
+    );
     if (mode === "down") {
       await expect(alert).toBeVisible();
       await page
@@ -59,13 +64,14 @@ for (const mode of [
         .click();
       await expect(page).toHaveURL(/\/ui\/status\/?#engines$/);
       await expect(
-        page.getByRole("heading", { name: "Engines", exact: true, level: 2 }),
+        page.getByRole("heading", {
+          name: "Engines and providers",
+          exact: true,
+          level: 2,
+        }),
       ).toBeFocused();
       await expect(alert).toHaveCount(0);
     } else await expect(alert).toHaveCount(0);
-    await expect(page.getByText("Disk is full", { exact: true })).toHaveCount(
-      0,
-    );
   });
 }
 
