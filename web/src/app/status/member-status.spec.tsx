@@ -16,6 +16,7 @@ vi.mock("next/link", () => ({
 }));
 const snapshot: Snapshot = {
   scope: "member",
+  gateway: { owner_name: null },
   status: {
     state: "unknown",
     reason_code: "unknown",
@@ -40,6 +41,7 @@ const snapshot: Snapshot = {
       measured: false,
       observed_at_s: null,
       reason_code: "unknown",
+      availability: { evidence: {} },
     },
   ],
   receipts: [

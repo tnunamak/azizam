@@ -175,8 +175,8 @@ export interface GatewayFacts {
 }
 
 export interface HomeProjection {
-  gateway: GatewayFacts;
-  plan_spend: Array<PlanSpend> | null;
+  gateway?: GatewayFacts;
+  plan_spend?: Array<PlanSpend> | null;
   csrf_token: string;
   public_base_url: string;
   api_base_url: string;
@@ -253,7 +253,7 @@ export interface MemberStatusCapability {
   reason_code: string;
   measured: boolean;
   observed_at_s?: number | null;
-  availability: MemberStatusAvailability;
+  availability?: MemberStatusAvailability;
 }
 
 export interface MemberStatusReceipt {
@@ -266,7 +266,7 @@ export interface MemberStatusReceipt {
 
 export interface MemberStatus {
   scope: "member";
-  gateway: GatewayFacts;
+  gateway?: GatewayFacts;
   status: StatusSummary;
   capabilities: Array<MemberStatusCapability>;
   receipts: Array<MemberStatusReceipt>;

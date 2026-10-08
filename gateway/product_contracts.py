@@ -155,9 +155,10 @@ class GatewayFacts(TypedDict):
 
 
 class HomeProjection(TypedDict):
-    gateway: GatewayFacts
+    # NotRequired: older gateways omit these.
+    gateway: NotRequired[GatewayFacts]
     # The member's own plan; null when that plan cannot be loaded.
-    plan_spend: list[PlanSpend] | None
+    plan_spend: NotRequired[list[PlanSpend] | None]
     csrf_token: str
     public_base_url: str
     api_base_url: str
@@ -234,7 +235,8 @@ class MemberStatusCapability(TypedDict):
     reason_code: str
     measured: bool
     observed_at_s: NotRequired[float | None]
-    availability: MemberStatusAvailability
+    # NotRequired: older gateways omit it.
+    availability: NotRequired[MemberStatusAvailability]
 
 
 class MemberStatusReceipt(TypedDict):
@@ -247,7 +249,7 @@ class MemberStatusReceipt(TypedDict):
 
 class MemberStatus(TypedDict):
     scope: Literal["member"]
-    gateway: GatewayFacts
+    gateway: NotRequired[GatewayFacts]
     status: StatusSummary
     capabilities: list[MemberStatusCapability]
     receipts: list[MemberStatusReceipt]
