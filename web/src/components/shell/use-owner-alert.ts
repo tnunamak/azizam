@@ -1,6 +1,6 @@
 "use client";
 
-import { engineDisplayName } from "@/lib/health-presentation";
+import { engineShortName } from "@/lib/health-presentation";
 import { useQuery } from "@tanstack/react-query";
 import {
   api,
@@ -27,7 +27,7 @@ export function ownerEngineAlert(
       service.observation === "down",
   );
   return failed
-    ? `${engineDisplayName(registry?.services[failed.service_id], failed)} is unavailable. Check its connection on Status.`
+    ? `${engineShortName(registry?.services[failed.service_id], failed)} is down. Check its connection on Status.`
     : null;
 }
 
@@ -42,7 +42,7 @@ export function ownerProviderAlert(
   if (!failed) return null;
   return failed.keyState === "missing"
     ? `${failed.name} is missing its provider key. Check provider settings on Status.`
-    : `${failed.name} is unreachable. Check its connection on Status.`;
+    : `${failed.name} is down. Check its connection on Status.`;
 }
 
 export function useOwnerAlertTarget(

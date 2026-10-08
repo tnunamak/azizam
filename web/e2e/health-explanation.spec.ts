@@ -40,7 +40,7 @@ test("health popover explains a measured outage and links to Status", async ({
     .click();
   const explanation = page.getByLabel("Gateway health");
   await expect(explanation).toContainText(
-    "Image engine is unavailable. Check its connection on Status.",
+    "Image engine is down. Check its connection on Status.",
   );
   await expect(explanation).toContainText("The gateway is reachable.");
   expect(
@@ -55,7 +55,7 @@ test("health popover explains a measured outage and links to Status", async ({
   // Off-page owner alerts hand keyboard focus to the affected section. The
   // target page already shows those diagnostics and must not repeat the banner.
   const banner = page.getByRole("status").filter({
-    hasText: "Image engine is unavailable. Check its connection on Status.",
+    hasText: "Image engine is down. Check its connection on Status.",
   });
   await expect(banner).toBeVisible();
   const action = banner.getByRole("link", { name: "View status", exact: true });

@@ -31,7 +31,7 @@ describe("owner engine alerts", () => {
     expect(ownerEngineAlert(health(false))).toBeNull();
     expect(ownerEngineAlert(health(null))).toBeNull();
     expect(ownerEngineAlert(health(true, false))).toBeNull();
-    expect(ownerEngineAlert(health(true))).toMatch(/Engine is unavailable/);
+    expect(ownerEngineAlert(health(true))).toMatch(/Engine is down/);
   });
 });
 
@@ -41,7 +41,7 @@ it("uses the observed display label, including long labels", () => {
   observed.services[0].name = "internal-service";
   observed.services[0].engine_label = label;
   expect(ownerEngineAlert(observed)).toBe(
-    `${label} is unavailable. Check its connection on Status.`,
+    `${label} is down. Check its connection on Status.`,
   );
 });
 
@@ -65,5 +65,5 @@ it("prefers the registry display name over an observation label", () => {
         },
       },
     }),
-  ).toBe("Azizam chat is unavailable. Check its connection on Status.");
+  ).toBe("Azizam chat is down. Check its connection on Status.");
 });

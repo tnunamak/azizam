@@ -49,7 +49,7 @@ for (const mode of [
     await page.goto("/ui/models/");
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     const alert = page.getByText(
-      "Image engine is unavailable. Check its connection on Status.",
+      "Image engine is down. Check its connection on Status.",
       { exact: true },
     );
     if (mode === "down") {
@@ -92,7 +92,7 @@ test("provider alerts use explicit enabled and reachability data", async ({
   await page.goto("/ui/models/");
   await expect(
     page.getByText(
-      "Remote provider is unreachable. Check its connection on Status.",
+      "Remote provider is down. Check its connection on Status.",
       { exact: true },
     ),
   ).toBeVisible();
@@ -100,7 +100,7 @@ test("provider alerts use explicit enabled and reachability data", async ({
     .getByRole("status")
     .filter({
       hasText:
-        "Remote provider is unreachable. Check its connection on Status.",
+        "Remote provider is down. Check its connection on Status.",
     });
   const action = banner.getByRole("link", { name: "View status", exact: true });
   await action.focus();

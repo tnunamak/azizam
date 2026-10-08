@@ -36,7 +36,7 @@ describe("owner-wide alerts", () => {
         providers: [{ name: "Remote provider", enabled, reachable, key_set }],
       });
     expect(ownerProviderAlert(rows(true, false, true))).toContain(
-      "is unreachable",
+      "is down",
     );
     expect(ownerProviderAlert(rows(true, true, false))).toContain(
       "missing its provider key",
@@ -47,7 +47,7 @@ describe("owner-wide alerts", () => {
   });
   it("shows an explicit enabled engine outage", () => {
     expect(ownerEngineAlert(health)).toBe(
-      "Image engine is unavailable. Check its connection on Status.",
+      "Image engine is down. Check its connection on Status.",
     );
   });
   it("does not alert without a proven route dependency", () => {

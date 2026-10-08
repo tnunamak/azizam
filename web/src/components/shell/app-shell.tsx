@@ -280,6 +280,8 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
   // The same capability model as Home and Status: the dot cannot say
   // "fine" while something the viewer depends on is failing.
   const model = useCapabilityViews(viewer.admin && viewer.authenticated);
+  // Owners also see the engine or provider at fault, in the banner's words.
+  const ownerAlert = useOwnerAlertTarget(viewer.admin);
   const signedIn = viewer.authenticated && !viewer.serviceAdmin;
   // Busy is not a fault, so it is not counted as an issue.
   const issues = model.verdict.problems.filter((view) => view.state !== "busy");
@@ -361,6 +363,12 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
             <>
               <dt className="text-muted-foreground">Your AI</dt>
               <dd>{model.verdict.text}</dd>
+            </>
+          ) : null}
+          {ownerAlert ? (
+            <>
+              <dt className="text-muted-foreground">{ownerAlert.section}</dt>
+              <dd>{ownerAlert.message}</dd>
             </>
           ) : null}
         </dl>
