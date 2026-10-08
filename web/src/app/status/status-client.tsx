@@ -1191,7 +1191,9 @@ export function StatusClient() {
   };
 
   return (
-    <div className="min-w-0">
+    // A reading column, like Linear and incident.io status pages (about 670 to
+    // 900 px), so facts and actions stay within one eye span.
+    <div className="max-w-4xl min-w-0">
       <PageHeader
         title="Status"
         actions={
