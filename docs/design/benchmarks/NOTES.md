@@ -105,3 +105,37 @@ Evidence of best-in-class status is recorded where we checked it: Things 3's App
 7. A real first-run empty state in a flagship product, and an error that names the failing layer.
 
 For 2, 3 and 7, Azizam has to set the bar itself (playbook G4). If Mobbin is authorised, gaps 1, 6 and 7 are the first searches to run.
+
+## v2 retirements (2026-10-08)
+
+Two blind Opus judges flagged these as unusable for the bar. Files moved to `_retired/<surface>/`, not deleted.
+
+- `engines/openrouter-model-providers-phone`: public model page squeezed to phone; not an owner console.
+- `catalog/vercel-ai-gateway-models-{desktop,phone}`: public marketing page, not the dashboard.
+- `catalog/openrouter-model-detail-{desktop,phone}`: public marketing-style model page with promo clutter.
+- `try/replicate-flux-schnell-{desktop,phone}`: public model marketing page.
+- `try/replicate-prediction-{desktop,phone}`: public share page of a run, not the logged-in app.
+- `settings/linear-administration`: docs image with annotation overlay and redaction.
+- `people/clerk-members-crop`, `people/clerk-organization-profile-desktop`: marketing component demo on a marketing hero.
+- `keys/tailscale-download-{desktop,phone}`: a download page, a different job.
+- `keys/cloudflare-token-complete`: clipped curl command and orange docs frame.
+- `keys/vercel-aigw-key-and-recipe`: a docs page, not UI.
+- `usage/vercel-ai-gateway-projects`, `usage/vercel-ai-gateway-apikeys`: redaction bars over the main table.
+- `library/apple-photos-ios-viewer`: device frame.
+- `library/suno-explore-desktop`, `library/suno-song-detail-{desktop,phone}`: public discovery and share pages, not a member's library.
+
+### v2 replacements and method
+
+- Three parallel capture workers searched official docs and support pages for real app screenshots; the director viewed every kept image and recropped three (Apple Photos Info panel and viewer to drop annotation leader lines; Raycast Manage Models to drop a half-visible row). Crops are logged as `"mode":"recrop"` lines.
+- Added: `library/apple-photos-ios-library-phone`, `library/apple-photos-mac-viewer-desktop`, `library/apple-photos-mac-info-desktop` (Apple Support); `try/raycast-ai-chat-desktop`, `catalog/raycast-manage-models-desktop` (Raycast manual); `engines/huggingface-provider-list-desktop` (HF docs); `keys/tailscale-oauth-client-desktop`, `settings/tailscale-device-management-desktop`, `people/tailscale-invite-roles-desktop` (Tailscale KB); `people/apple-family-sharing-phone` (Apple Support); `usage/vercel-runtime-logs-desktop` (Vercel docs).
+- Rejected in v2: Resend team settings (page dimmed behind a menu spotlight), Hugging Face playground (empty, no run), Vercel O11y tab (faded and cut off), Linear team-access crop, Vercel project-role form (placeholder only), Apple iOS selection grid (device frame), Apple Mac library grid (818 px).
+- No screenshots served (v2): Vercel AI Gateway docs (overview, models, BYOK, auth, getting started), Vercel usage/pricing pages, Cloudflare AI Gateway and Workers AI docs, Anthropic platform docs, OpenAI playground docs (404), Replicate docs, Supabase API keys/logs, Stripe keys/teams/meters, GitHub token pages (720 px slivers), Clerk organization docs, 1Password support, Midjourney docs (Cloudflare challenge).
+
+### v2 open gaps
+
+- Keys: no real-app "connect a named client" screen; the shown-once dialog (Tailscale) is only 608 px wide.
+- Try: no logged-in run with time and cost; no phone playground.
+- Catalog: no in-app list with price and speed together.
+- Usage: no unredacted per-key spend table; no request log in a failing state other than Stripe Workbench.
+- Library: no logged-in generated-media library with prompt and model on the item.
+- People: no desktop members list showing pending invites.

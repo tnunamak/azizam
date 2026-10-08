@@ -29,29 +29,34 @@ A judge sees only renders, the benchmark images, the job each screen does, and t
 
 ## Tests
 
-### T-1 Blind pairwise against best-in-class (primary)
+### Calibration (2026-10-08)
 
-For each surface and width, pair the Azizam render with the benchmark screen for the same job (`benchmarks/BOARD.md`). Present each pair in random order, unlabelled, with product branding cropped where possible. The judge says which screen is better designed **for this job**, or that they tie, and gives the reason in one sentence per rubric criterion.
+Before judging any new design, three fresh Opus 5.5 judges compared today's UI blind against the benchmarks (73 pairs). What that showed:
+- The win/tie rate is confounded. Judges preferred whichever screen did more of Azizam's exact job, so a weak or off-job benchmark lost no matter how well it was designed. Today's UI reached 45% with one judge and 32% with another.
+- The rubric separated the two sides. Today's UI trailed the benchmarks on craft (6.8 vs 8.0 and 6.2 vs 7.8) and on coherence.
+- "AI made this?" separated them strongly. One judge flagged 41 of 73 screens of today's UI.
+- Judges disagree. A pooled score hides a lenient judge, so every test must pass for each judge on their own.
 
-- Panel: at least 3 independent Opus 5.5 judges, each with a fresh context.
-- **Pass:** across the product, Azizam is preferred or tied in at least 50% of pairs, and no surface is below 33%.
-- If a judge recognises the benchmark, that biases the result against Azizam. That makes the test conservative, which is acceptable.
+The tests below incorporate these lessons.
 
-### T-2 Rubric score, calibrated on the benchmarks
+### T-1 Blind pairwise on design quality (primary)
 
-The judges score the benchmark screens first, then Azizam, from 0 to 10 on each criterion:
+For each surface and width, pair the Azizam render with each benchmark screen for the same job (`benchmarks/BOARD.md`). Show each pair in random order and unlabelled. The judge answers: **"Assume both screens had the same job and equally good data. Which is the better-designed piece of software?"** The answer may be a tie.
 
-1. **Coherence:** one product, not a set of parts.
-2. **Specificity:** could an unrelated product use it unchanged? Is anything a template default?
-3. **Craft:** type hierarchy, spacing rhythm, alignment, colour, contrast and motion.
-4. **Clarity at a glance:** can the job be done in seconds? This includes the cost in attention of every element (`vision-from-logs.md`: user value = design value and delight − cognitive cost).
-5. **Honesty:** every claim on screen is supported by data. Unknown never looks like zero, and readiness never looks like a guess.
+- Judge the design, not the scope. A screen does not win because the other one shows a different job or less data.
+- Panel: at least 3 independent Opus 5.5 judges, each in a fresh context.
+- **Pass:** for **each** judge on their own, Azizam is preferred or tied in at least 50% of pairs, and no surface falls below 33%.
 
-- **Pass:** on every surface, Azizam's mean is at or above the benchmark median for that surface, on each criterion. Scoring relative to the benchmark removes most judge drift.
+### T-2 Rubric, relative to the benchmarks
+
+Each judge scores both screens in every pair from 0 to 10 on five criteria: coherence, specificity, craft, clarity at a glance, and honesty. The definitions are in `judging/JUDGE.md`; clarity includes the attention cost of every element.
+
+- **Pass:** for **each** judge, Azizam's mean is at or above the benchmarks' mean on **every** criterion, both across the product and on every surface.
+- For screens a judge says cannot be compared to a benchmark, the judge also answers: "Would this hold up next to Linear's or Stripe's logged-in app?" The answer must be yes.
 
 ### T-3 "AI made this?" and "Which one is ours?"
 
-- Each judge is asked whether a design-literate person would say "AI made this" at first sight. **Pass:** no judge says yes.
+- **Pass:** no judge flags any Azizam screen as "AI made this".
 - Each Azizam screen is shuffled among three benchmark screens. **Pass:** no judge picks Azizam out because it looks generic or templated. Being picked out for its household identity is fine.
 
 ### T-4 Hard gates (automated, pass or fail)
