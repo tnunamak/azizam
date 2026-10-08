@@ -46,7 +46,10 @@ with tempfile.TemporaryDirectory(prefix='run-', dir=state_base) as temp:
     config.write_text(f'proxy:\n  host: 127.0.0.1\n  port: {PORT}\nbackends:\n{disabled}\n  litellm: {{enabled: true, base_url: "http://127.0.0.1:{ENGINE_PORT}", host: 127.0.0.1, port: {ENGINE_PORT}}}\n'
                       'admin:\n  oidc:\n    cookie:\n      secure: false\n'
                       'model_aliases:\n  chat:\n    stable:\n      fast: demo-chat\n'
-                      f'images:\n  cache_dir: {state / "images"}\n  vram_estimates_file: {state / "vram.json"}\n')
+                      f'images:\n  cache_dir: {state / "images"}\n  vram_estimates_file: {state / "vram.json"}\n'
+                      # The lived-in household keeps creations for 30 days, an owner setting
+                      # (images.cache_ttl); the 24-hour default would expire most of its history.
+                      + ('  cache_ttl: 2592000\n' if SEED_PROFILE == 'household' else ''))
     env = {'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'HOME': str(home),
            'PYTHONPATH': str(REPO), 'PYTHONDONTWRITEBYTECODE': '1',
            'AZIZAM_CONFIG_PATH': str(config), 'AZIZAM_GRACEFUL_SHUTDOWN_S': '1',
