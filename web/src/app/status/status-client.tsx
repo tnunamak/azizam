@@ -1113,10 +1113,14 @@ export function StatusClient() {
   }
   if (providers.state === "error") note = "Provider status did not load.";
   const tableOpen = showAll || !problems.length;
+  // Engines that already have a card are not counted again in the summary.
   const troubled = new Set(
-    problems.flatMap((problem) =>
-      problem.key.startsWith("engine:") ? [problem.key.slice(7)] : [],
-    ),
+    problems.flatMap((problem) => {
+      const [kind, ids = ""] = problem.key.split(":");
+      return ["engine", "engines", "unchecked"].includes(kind)
+        ? ids.split(",")
+        : [];
+    }),
   );
   const others = tableEngines.filter(
     (engine) => !troubled.has(engine.service.id),
@@ -1129,10 +1133,13 @@ export function StatusClient() {
   ).length;
   const foldedSummary = [
     count("ready")
-      ? `${count("ready")} other engine${count("ready") === 1 ? "" : "s"} ready`
+      ? `${count("ready")} ${troubled.size ? "other " : ""}engine${count("ready") === 1 ? "" : "s"} ready`
       : null,
     count("off") ? `${count("off")} off` : null,
     count("unknown") ? `${count("unknown")} unknown` : null,
+    count("busy") ? `${count("busy")} busy` : null,
+    count("degraded") ? `${count("degraded")} degraded` : null,
+    count("down") ? `${count("down")} down` : null,
     providerList.length
       ? `${providerList.length} provider${providerList.length === 1 ? "" : "s"}${providersDown ? ` (${providersDown} down)` : ""}`
       : null,

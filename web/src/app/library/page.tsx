@@ -1966,7 +1966,11 @@ export default function LibraryPage() {
               setSource("all");
             }}
           >
-            <SelectTrigger aria-label="Person" className="w-auto min-w-40">
+            <SelectTrigger
+              aria-label="Person"
+              // Match the segmented control and Filters (40 px) above phone width.
+              className="w-auto min-w-40 sm:data-[size=default]:h-10"
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

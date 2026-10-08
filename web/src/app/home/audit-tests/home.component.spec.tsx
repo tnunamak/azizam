@@ -309,6 +309,9 @@ describe("Home audit component behavior", () => {
           available: true,
           status: "ready",
           reason_code: "ready",
+          availability: {
+            evidence: { source: "status", observed_at_s: Date.now() / 1000 },
+          },
         },
         {
           capability: "sfx",
@@ -322,6 +325,9 @@ describe("Home audit component behavior", () => {
           available: true,
           status: "ready",
           reason_code: "ready",
+          availability: {
+            evidence: { source: "status", observed_at_s: Date.now() / 1000 },
+          },
         },
       ],
     };
@@ -342,16 +348,20 @@ describe("Home audit component behavior", () => {
       }),
     );
     renderHome();
-    const music = await screen.findByRole("link", { name: "Music" });
-    const sfx = screen.getByRole("link", { name: "Sound effects" });
-    // Each tile shows its state word; the verdict summarises them.
-    expect(within(music).getByText("Ready")).toBeVisible();
-    expect(within(sfx).getByText("Ready")).toBeVisible();
-    expect(screen.getAllByText("Ready")).toHaveLength(2);
-    expect(screen.getByText("Everything is ready.")).toBeVisible();
+    // Tasks are named for what the person does; they open Try in the right
+    // mode with the server's recommended use name.
+    const music = await screen.findByRole("link", { name: /Make music/ });
+    const sfx = screen.getByRole("link", { name: /Make a sound effect/ });
+    // Ready stays quiet on tasks; the verdict carries it.
+    expect(within(music).queryByText("Ready")).toBeNull();
+    expect(within(sfx).queryByText("Ready")).toBeNull();
+    const header = screen
+      .getByRole("heading", { level: 1, name: "Home" })
+      .closest("header")!;
+    expect(within(header).getByRole("status")).toHaveTextContent(
+      "Everything works",
+    );
     expect(screen.queryByText("Details")).toBeNull();
-    expect(screen.getByRole("img", { name: "Music" })).toBeVisible();
-    expect(screen.getByRole("img", { name: "Sound effects" })).toBeVisible();
     expect(music).toHaveAttribute(
       "href",
       expect.stringMatching(/^\/try\/?\?capability=audio&model=song$/),
@@ -384,7 +394,7 @@ describe("Home audit component behavior", () => {
     );
     renderHome();
     expect(
-      await screen.findByRole("heading", { name: "What you can use" }),
+      await screen.findByRole("heading", { name: "Make something" }),
     ).toBeVisible();
     expect(screen.queryByRole("button", { name: "Dismiss setup" })).toBeNull();
     expect(
@@ -504,7 +514,7 @@ describe("Home audit component behavior", () => {
     ["JavaScript", "Install openai, set GATEWAY_API_KEY, then run this server-side.", "https://github.com/openai/openai-node#usage"],
     ["curl", "Set GATEWAY_API_KEY. This sends one chat request.", "https://platform.openai.com/docs/api-reference/chat/create"],
     ["Phone", "Use your household Open WebUI connection.", "https://docs.openwebui.com/getting-started/quick-start/"],
-  ])("makes the %s recipe reachable under Other with Python as default", async (client, description, docs) => {
+  ])("makes the %s recipe reachable under Another app with Python as default", async (client, description, docs) => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -520,7 +530,7 @@ describe("Home audit component behavior", () => {
       }),
     );
     renderHome();
-    await userEvent.click(await screen.findByRole("button", { name: "Other" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Another app" }));
     expect(screen.getByRole("combobox", { name: "Recipe" })).toHaveTextContent("Python");
     expect(screen.getByRole("button", { name: "Create key for Python" })).toBeVisible();
     await userEvent.click(screen.getByRole("combobox", { name: "Recipe" }));
@@ -533,7 +543,7 @@ describe("Home audit component behavior", () => {
     await userEvent.keyboard("{Escape}");
     await userEvent.click(screen.getByRole("button", { name: "Open WebUI" }));
     expect(screen.queryByRole("combobox", { name: "Recipe" })).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: "Other" }));
+    await userEvent.click(screen.getByRole("button", { name: "Another app" }));
     expect(screen.getByRole("combobox", { name: "Recipe" })).toHaveTextContent("Python");
   });
 });
