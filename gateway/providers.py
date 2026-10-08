@@ -337,6 +337,12 @@ def ensure_ledger(path: Path = DEFAULT_LEDGER_PATH) -> None:
             "CREATE INDEX IF NOT EXISTS idx_provider_spend_window "
             "ON provider_spend(provider, profile_id, created_at, status)"
         )
+        # Profile-only window reads (plan caps, plan_spend) cannot use the
+        # provider-led index above.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_provider_spend_profile_window "
+            "ON provider_spend(profile_id, created_at, status)"
+        )
 
 
 def current_process_generation() -> str:
@@ -1096,72 +1102,116 @@ def _next_month_start_epoch(timestamp: int) -> int:
 def plan_spend(
     profile: AppProfile, *, path: Path | None, now: int | None = None
 ) -> list[dict[str, Any]]:
-    """Read-only spend against a plan's daily and monthly caps.
+    """Spend against one plan's caps; see :func:`plan_spend_many`."""
+    return plan_spend_many([profile], path=path, now=now)[profile.id]
 
-    Uses the reservation barrier's own accounting (``_window_total``): the
+
+def plan_spend_many(
+    profiles: list[AppProfile], *, path: Path | None, now: int | None = None
+) -> dict[str, list[dict[str, Any]]]:
+    """Read-only spend against each plan's daily and monthly caps.
+
+    Mirrors the reservation barrier: before it counts, ``recover_provider_spend``
+    turns every ``reserved`` row that is expired, has no owner generation, or
+    belongs to another process generation into ``needs_reconciliation``; then
+    ``_window_total`` counts reserved, settled and unreconciled rows. The
     daily window is the rolling last 24 hours, the monthly window is the UTC
-    calendar month, and reserved, settled and unreconciled charges all count.
-    One entry per period that has a cap. ``spent_usd`` is ``None`` when the
-    spend is not known: no ledger was supplied, it cannot be read, or the plan
-    has unreconciled charges (whose actual cost is unknown, and which refuse
-    all paid requests until an owner settles them). A missing ledger file
-    means no paid request has reserved spend yet, which enforcement reads as 0.
+    calendar month. One entry per period that has a cap.
+
+    ``spent_usd`` is ``None`` (with ``unknown_reason``) when the spend is not
+    known: no ledger was supplied or it cannot be read
+    (``ledger_unavailable``), or the plan has a charge whose cost is unknown,
+    including stale reservations (``needs_reconciliation``; the barrier
+    refuses all paid requests until an owner settles it). ``resets_at`` is then
+    ``None`` too. A missing ledger file means no paid request has reserved
+    spend yet, which the barrier also reads as 0. One read-only connection
+    serves all plans.
     """
-    caps = [(period, cap) for period, cap in (
-        ("daily", profile.remote.budget_usd_per_day),
-        ("monthly", profile.remote.budget_usd_per_month),
-    ) if cap is not None]
-    if not caps:
-        return []
     timestamp = int(now if now is not None else time.time())
     since = {"daily": timestamp - 24 * 60 * 60, "monthly": _month_start_epoch(timestamp)}
-    totals: dict[str, Decimal] = {}
-    oldest_daily: int | None = None
-    unknown: str | None = None
-    if path is None:
-        unknown = "ledger_unavailable"
-    elif path.exists():
+    capped = {
+        profile.id: [(period, cap) for period, cap in (
+            ("daily", profile.remote.budget_usd_per_day),
+            ("monthly", profile.remote.budget_usd_per_month),
+        ) if cap is not None]
+        for profile in profiles
+    }
+    facts: dict[str, tuple[str | None, dict[str, Decimal], int | None]] = {
+        profile_id: (None, {}, None) for profile_id in capped
+    }
+    wanted = [profile_id for profile_id, caps in capped.items() if caps]
+    if wanted and path is None:
+        facts.update({profile_id: ("ledger_unavailable", {}, None) for profile_id in wanted})
+    elif wanted and path.exists():
         try:
             with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as conn:
-                has_table = conn.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'provider_spend'"
-                ).fetchone()
-                if has_table and conn.execute(
-                    "SELECT 1 FROM provider_spend WHERE status = 'needs_reconciliation' AND profile_id = ? LIMIT 1",
-                    (profile.id,),
-                ).fetchone():
-                    unknown = "needs_reconciliation"
-                elif has_table:
-                    for period, _cap in caps:
-                        totals[period] = _window_total(conn, provider=None, profile_id=profile.id, since=since[period])
-                    oldest_daily = conn.execute(
-                        "SELECT MIN(created_at) FROM provider_spend WHERE profile_id = ? AND created_at >= ? "
-                        "AND status IN ('reserved', 'settled', 'needs_reconciliation')",
-                        (profile.id, since["daily"]),
-                    ).fetchone()[0]
+                columns = {row[1] for row in conn.execute("PRAGMA table_info(provider_spend)")}
+                for profile_id in wanted if columns else ():
+                    facts[profile_id] = _plan_spend_facts(
+                        conn, profile_id, columns=columns, since=since, now=timestamp)
         except sqlite3.Error:
-            unknown = "ledger_unavailable"
-    out: list[dict[str, Any]] = []
-    for period, cap in caps:
-        if period == "daily":
-            # A rolling window has no single reset: this is when the oldest
-            # counted charge leaves the window and the spend first drops.
-            resets_at = int(oldest_daily) + 24 * 60 * 60 if oldest_daily is not None and unknown is None else None
-            window = "rolling_24h"
-        else:
-            resets_at = _next_month_start_epoch(timestamp)
-            window = "calendar_month_utc"
-        entry: dict[str, Any] = {
-            "period": period,
-            "window": window,
-            "spent_usd": None if unknown else format(_quantize_usd(totals.get(period, Decimal("0"))), "f"),
-            "cap_usd": str(cap),
-            "resets_at": resets_at,
-        }
-        if unknown:
-            entry["unknown_reason"] = unknown
-        out.append(entry)
+            facts.update({profile_id: ("ledger_unavailable", {}, None) for profile_id in wanted})
+    out: dict[str, list[dict[str, Any]]] = {}
+    for profile_id, caps in capped.items():
+        unknown, totals, oldest_daily = facts[profile_id]
+        entries: list[dict[str, Any]] = []
+        for period, cap in caps:
+            if unknown is not None:
+                resets_at = None
+            elif period == "daily":
+                # A rolling window has no single reset: this is when the oldest
+                # counted charge leaves the window and the spend first drops.
+                resets_at = int(oldest_daily) + 24 * 60 * 60 if oldest_daily is not None else None
+            else:
+                resets_at = _next_month_start_epoch(timestamp)
+            entry: dict[str, Any] = {
+                "period": period,
+                "window": "rolling_24h" if period == "daily" else "calendar_month_utc",
+                "spent_usd": None if unknown else format(_quantize_usd(totals.get(period, Decimal("0"))), "f"),
+                "cap_usd": str(cap),
+                "resets_at": resets_at,
+            }
+            if unknown:
+                entry["unknown_reason"] = unknown
+            entries.append(entry)
+        out[profile_id] = entries
     return out
+
+
+def _plan_spend_facts(
+    conn: sqlite3.Connection,
+    profile_id: str,
+    *,
+    columns: set[str],
+    since: Mapping[str, int],
+    now: int,
+) -> tuple[str | None, dict[str, Decimal], int | None]:
+    if {"process_generation", "expires_at"} <= columns:
+        # The rows recover_provider_spend would mark needs_reconciliation.
+        stale_reserved = (
+            "status = 'reserved' AND (process_generation IS NULL OR expires_at IS NULL "
+            "OR process_generation != ? OR expires_at <= ?)"
+        )
+        stale_params: list[Any] = [current_process_generation(), now]
+    else:
+        # ensure_ledger marks every reserved row of a pre-ownership ledger.
+        stale_reserved, stale_params = "status = 'reserved'", []
+    if conn.execute(
+        f"SELECT 1 FROM provider_spend WHERE profile_id = ? AND "
+        f"(status = 'needs_reconciliation' OR ({stale_reserved})) LIMIT 1",
+        [profile_id, *stale_params],
+    ).fetchone():
+        return "needs_reconciliation", {}, None
+    totals = {
+        period: _window_total(conn, provider=None, profile_id=profile_id, since=start)
+        for period, start in since.items()
+    }
+    oldest_daily = conn.execute(
+        "SELECT MIN(created_at) FROM provider_spend WHERE profile_id = ? AND created_at >= ? "
+        "AND status IN ('reserved', 'settled', 'needs_reconciliation')",
+        (profile_id, since["daily"]),
+    ).fetchone()[0]
+    return None, totals, oldest_daily
 
 
 def _enforce_provider_concurrency(

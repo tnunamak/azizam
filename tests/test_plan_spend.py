@@ -15,7 +15,8 @@ from gateway import admin_store
 from gateway.admin_api import AdminContext, create_admin_router
 from gateway.admin_runtime import AdminSQLiteStore
 from gateway.policy import AppProfile, RemoteProviderPolicy
-from gateway.providers import BudgetExceeded, Cost, ProviderRef, ensure_ledger, plan_spend, reserve_provider_spend
+from gateway.providers import (BudgetExceeded, Cost, ProviderNeedsReconciliation, ProviderRef, current_process_generation,
+                              ensure_ledger, plan_spend, plan_spend_many, recover_provider_spend, reserve_provider_spend)
 
 NOW = calendar.timegm((2027, 3, 10, 12, 0, 0))
 MONTH_START = calendar.timegm((2027, 3, 1, 0, 0, 0))
@@ -31,11 +32,13 @@ def _profile(profile_id="family", **remote) -> AppProfile:
     return AppProfile(id=profile_id, remote=RemoteProviderPolicy(providers=frozenset({"typesafe"}), **remote))
 
 
-def _charge(ledger: Path, usd: str | None, at: int, *, profile_id="family", status="settled", estimate="9.99") -> None:
+def _charge(ledger: Path, usd: str | None, at: int, *, profile_id="family", status="settled", estimate="9.99",
+            generation: str | None = None, expires_at: int | None = None) -> None:
     ensure_ledger(ledger)
     with sqlite3.connect(ledger) as conn:
-        conn.execute("INSERT INTO provider_spend (provider, profile_id, status, estimated_usd, actual_usd, cost_source, created_at) "
-                     "VALUES ('typesafe', ?, ?, ?, ?, 'test', ?)", (profile_id, status, estimate, usd, at))
+        conn.execute("INSERT INTO provider_spend (provider, profile_id, status, estimated_usd, actual_usd, cost_source, created_at, "
+                     "process_generation, expires_at) VALUES ('typesafe', ?, ?, ?, ?, 'test', ?, ?, ?)",
+                     (profile_id, status, estimate, usd, at, generation, expires_at))
 
 
 def _by_period(entries):
@@ -49,7 +52,8 @@ def test_daily_is_rolling_and_monthly_is_the_utc_calendar_month(tmp_path):
     _charge(ledger, "1.00", NOW - 3 * 86400)           # this month only
     _charge(ledger, "4.00", MONTH_START - 3600)        # last month
     _charge(ledger, "7.00", NOW - 60, profile_id="other-plan")
-    _charge(ledger, None, NOW - 60, status="reserved", estimate="0.10")  # in flight counts its estimate
+    _charge(ledger, None, NOW - 60, status="reserved", estimate="0.10",  # live, in flight: counts its estimate
+            generation=current_process_generation(), expires_at=NOW + 60)
     spend = _by_period(plan_spend(_profile(budget_usd_per_day=Decimal("2"), budget_usd_per_month=Decimal("10")),
                                   path=ledger, now=NOW))
     assert spend["daily"] == {"period": "daily", "window": "rolling_24h", "spent_usd": "0.850000000",
@@ -70,8 +74,9 @@ def test_missing_ledger_file_is_zero_like_enforcement_but_no_ledger_is_unknown(t
     assert entry["spent_usd"] == "0.000000000"
     assert entry["resets_at"] is None
     assert not (tmp_path / "absent.db").exists()  # reading never creates the ledger
-    unknown = plan_spend(profile, path=None, now=NOW)[0]
-    assert unknown["spent_usd"] is None and unknown["unknown_reason"] == "ledger_unavailable"
+    unknown = plan_spend(_profile(budget_usd_per_day=Decimal("1"), budget_usd_per_month=Decimal("5")), path=None, now=NOW)
+    assert [(e["spent_usd"], e["unknown_reason"], e["resets_at"]) for e in unknown] == [
+        (None, "ledger_unavailable", None), (None, "ledger_unavailable", None)]
 
 
 def test_unreconciled_charge_makes_spend_unknown_not_zero(tmp_path):
@@ -131,3 +136,66 @@ def test_admin_profiles_list_carries_each_plan_spend(tmp_path):
     app.include_router(create_admin_router(AdminSQLiteStore(db), auth=lambda request: actor))
     rows = {row["id"]: row for row in TestClient(app).get("/admin/api/profiles").json()["profiles"]}
     assert all(entry["spent_usd"] is None for entry in rows[capped["id"]]["plan_spend"])
+
+
+def _provider() -> ProviderRef:
+    return ProviderRef(id="typesafe", base_url="https://api.typesafe.test", protocols=("typesafe-systemone",),
+                       api_key_env="TYPESAFE_TEST_KEY", cost_class="paid-remote",
+                       price={"input_usd_per_million_tokens": "0.10"},
+                       config={"credential_origin": "https://api.typesafe.test:443"})
+
+
+@pytest.mark.parametrize("generation,expires_at", [
+    (None, NOW + 600),               # no owning process generation
+    ("1:other-process", NOW + 600),  # another (dead) process generation
+    ("current", NOW - 1),            # this generation, but expired
+    ("current", None),               # no expiry
+])
+def test_stale_reservation_is_unknown_spend_exactly_as_the_barrier_sees_it(tmp_path, generation, expires_at):
+    ledger = tmp_path / "ledger.db"
+    generation = current_process_generation() if generation == "current" else generation
+    _charge(ledger, None, NOW - 60, status="reserved", estimate="0.01", generation=generation, expires_at=expires_at)
+    profile = _profile(budget_usd_per_day=Decimal("1"), budget_usd_per_month=Decimal("5"))
+    spend = plan_spend(profile, path=ledger, now=NOW)
+    assert [(e["spent_usd"], e.get("unknown_reason"), e["resets_at"]) for e in spend] == [
+        (None, "needs_reconciliation", None), (None, "needs_reconciliation", None)]
+    # The barrier first recovers stale reservations, then refuses on them.
+    with pytest.raises(ProviderNeedsReconciliation):
+        reserve_provider_spend(profile, _provider(), Cost(Decimal("0.01"), "price-table", "typesafe"), path=ledger, now=NOW)
+
+
+def test_live_reservation_of_this_process_counts_as_spend(tmp_path):
+    ledger = tmp_path / "ledger.db"
+    _charge(ledger, None, NOW - 60, status="reserved", estimate="0.25",
+            generation=current_process_generation(), expires_at=NOW + 600)
+    assert recover_provider_spend(path=ledger, now=NOW) == 0  # the barrier would not touch it either
+    entry = plan_spend(_profile(budget_usd_per_day=Decimal("1")), path=ledger, now=NOW)[0]
+    assert entry["spent_usd"] == "0.250000000"
+    assert entry["resets_at"] == NOW - 60 + 86400
+
+
+def test_profile_window_reads_use_a_profile_led_index(tmp_path):
+    ledger = tmp_path / "ledger.db"
+    ensure_ledger(ledger)
+    with sqlite3.connect(ledger) as conn:
+        plan = " ".join(str(row[-1]) for row in conn.execute(
+            "EXPLAIN QUERY PLAN SELECT estimated_usd, actual_usd FROM provider_spend "
+            "WHERE created_at >= ? AND status IN ('reserved', 'settled', 'needs_reconciliation') AND profile_id = ?",
+            (NOW, "family")))
+    assert "idx_provider_spend_profile_window" in plan
+
+
+def test_many_plans_share_one_ledger_connection(tmp_path, monkeypatch):
+    ledger = tmp_path / "ledger.db"
+    _charge(ledger, "0.10", NOW - 60, profile_id="a")
+    _charge(ledger, "0.20", NOW - 60, profile_id="b")
+    import gateway.providers as providers_module
+    opened = []
+    real_connect = providers_module.sqlite3.connect
+    monkeypatch.setattr(providers_module.sqlite3, "connect", lambda *a, **k: opened.append(a) or real_connect(*a, **k))
+    spend = plan_spend_many([_profile("a", budget_usd_per_day=Decimal("1")), _profile("b", budget_usd_per_day=Decimal("1")),
+                             _profile("c")], path=ledger, now=NOW)
+    assert len(opened) == 1
+    assert spend["a"][0]["spent_usd"] == "0.100000000"
+    assert spend["b"][0]["spent_usd"] == "0.200000000"
+    assert spend["c"] == []

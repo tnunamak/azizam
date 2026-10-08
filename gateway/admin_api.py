@@ -1703,18 +1703,22 @@ def _decision_payload(decision: PolicyDecision) -> dict[str, Any]:
     }
 
 
-def _plan_spend(row: Mapping[str, Any], ledger: Path | None) -> list[dict[str, Any]] | None:
-    """Spend against one plan's caps, as cap enforcement counts it.
+def _plans_spend(rows: list[Mapping[str, Any]], ledger: Path | None) -> list[list[dict[str, Any]] | None]:
+    """Spend against each plan's caps, as cap enforcement counts it.
 
-    ``None`` when the stored plan cannot be loaded (its caps are unknown).
+    ``None`` for a stored plan that cannot be loaded (its caps are unknown).
+    One ledger connection serves every plan.
     """
     from gateway import providers
 
-    try:
-        profile = load_profile(row.get("profile"), default_id=row.get("id"))
-    except ProfileLoadError:
-        return None
-    return providers.plan_spend(profile, path=ledger)
+    loaded: list[Any] = []
+    for row in rows:
+        try:
+            loaded.append(load_profile(row.get("profile"), default_id=row.get("id")))
+        except ProfileLoadError:
+            loaded.append(None)
+    spend = providers.plan_spend_many([p for p in loaded if p is not None], path=ledger)
+    return [spend[p.id] if p is not None else None for p in loaded]
 
 
 def create_admin_router(
@@ -2025,11 +2029,11 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
-        ledger = spend_ledger_path()
+        rows = list(store.list_profiles())
+        spend = _plans_spend(rows, spend_ledger_path())
         return JSONResponse(
             status_code=status.HTTP_200_OK,
-            content={"profiles": [{**row, "plan_spend": _plan_spend(row, ledger)}
-                                  for row in store.list_profiles()]},
+            content={"profiles": [{**row, "plan_spend": plan} for row, plan in zip(rows, spend)]},
         )
 
     @router.get("/policy/editor")
