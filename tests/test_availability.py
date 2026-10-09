@@ -985,6 +985,24 @@ def test_busy_without_request_failure_stays_busy():
     assert projection.status == "busy"
 
 
+def test_degraded_health_check_keeps_member_projection_degraded():
+    evidence = evidence_from_status_rows(
+        [{"service_id": "svc", "live_status": "degraded"}], observed_at_s=500,
+    )
+    capabilities = project_capabilities(
+        [Capability(intent="chat.completions", backend="svc")],
+        service_records={"services": {"svc": {"enabled": True}}},
+        evidence=evidence,
+    )
+
+    availability = capabilities[0].availability
+    assert availability["status"] == "degraded"
+    assert availability["available"] is False
+    assert availability["up"] is True
+    assert availability["measured"] is True
+    assert capabilities[0].health == "degraded"
+
+
 def test_availability_projection_is_presentation_only_not_a_routing_input():
     """Routing and fallback must not read gateway.availability.
 
