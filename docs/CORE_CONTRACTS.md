@@ -571,6 +571,15 @@ Minimum fields:
 Receipts are not full request logs. They should avoid raw prompts, raw files,
 secrets, downstream credentials, and large payloads by default.
 
+Generated-media prompts have a separate maker-scoped store. A retained prompt
+is keyed by asset and person, with an optional expiry. Receipts and media-job
+metadata continue to reject raw prompt fields. Media cache bytes are stripped
+of embedded prompt/workflow metadata at store time. A full metadata download
+requires the authenticated maker and an unexpired prompt record; signed URLs
+default to `metadata=none`. `extensions.com.azizam.prompts.mode="forget"`, a
+member's off setting, or the owner kill switch prevents retention. Responses
+`store:false` is also a forget request. See `docs/design/PROMPT_MEMORY.md`.
+
 Receipts have audiences:
 
 - internal receipts can include backend, policy source, manifest hash, and
