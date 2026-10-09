@@ -383,6 +383,14 @@ async function fillGuidedImageInputs(page: Page) {
   await spinbutton(page, "height", true).fill("512");
 }
 
+// A workflow form starts empty (no prompt is made up for the person), so a
+// run needs a description first.
+async function fillRequiredPrompt(page: Page, text = "A teal fish.") {
+  await page
+    .getByRole("textbox", { name: /^(prompt|Describe the \w+) Required$/i })
+    .fill(text);
+}
+
 async function selectWorkflowModel(page: Page, name: string) {
   await page.getByRole("combobox").first().click();
   await page.getByRole("option", { name }).click();
@@ -396,7 +404,8 @@ test("workflow deep link edits guided JSON fields and preserves advanced extras"
   await expect(page.getByRole("combobox").first()).toContainText(
     "Poster image",
   );
-  await expect(textbox(page, "prompt", true)).toHaveValue("A teal poster.");
+  // The catalog's example prompt is an illustration, not the person's input.
+  await expect(textbox(page, "prompt", true)).toHaveValue("");
   await expect(combobox(page, "style", true)).toContainText("studio");
   await expect(spinbutton(page, "steps", true)).toHaveValue("8");
   await expect(spinbutton(page, "strength")).toHaveValue("0.35");
@@ -565,7 +574,8 @@ test("workflow guided validation blocks missing, range, enum, and invalid JSON i
 
   await textbox(page, "prompt", true).fill("");
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("prompt is required.")).toBeVisible();
+  await expect(page.getByText("Write a prompt first")).toBeVisible();
+  await expect(textbox(page, "prompt", true)).toBeFocused();
 
   await textbox(page, "prompt", true).fill("A valid poster.");
   await spinbutton(page, "steps", true).fill("13");
@@ -603,6 +613,7 @@ test("workflow results preview JSON images, image bytes, audio bytes, and video 
       },
     }),
   );
+  await fillRequiredPrompt(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByAltText("Generated result")).toBeVisible();
   await page.unroute("**/v1/images/generations");
@@ -622,6 +633,7 @@ test("workflow results preview JSON images, image bytes, audio bytes, and video 
       ),
     }),
   );
+  await fillRequiredPrompt(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByAltText("Generated result")).toBeVisible();
 
@@ -632,6 +644,7 @@ test("workflow results preview JSON images, image bytes, audio bytes, and video 
       body: Buffer.from("fake audio bytes"),
     }),
   );
+  await fillRequiredPrompt(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.locator("audio[controls]")).toBeVisible();
 
@@ -642,6 +655,7 @@ test("workflow results preview JSON images, image bytes, audio bytes, and video 
       body: Buffer.from("fake video bytes"),
     }),
   );
+  await fillRequiredPrompt(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.locator("video[controls]")).toBeVisible();
 });
@@ -680,6 +694,7 @@ test("workflow async video jobs can complete with byte outputs or fail from Chec
     route.fulfill({ json: { request_id: "receipt_async_try" } }),
   );
 
+  await fillRequiredPrompt(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Job status: queued")).toBeVisible();
   await expectTechnicalCollapsed(page);
@@ -710,6 +725,7 @@ test("workflow async video jobs can complete with byte outputs or fail from Chec
       },
     }),
   );
+  await fillRequiredPrompt(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Job status: queued")).toBeVisible();
   await page.route("**/v1/videos/job_async_try", (route) =>
@@ -825,6 +841,7 @@ test("workflow JSON media renders signed audio and video outputs", async ({
       },
     }),
   );
+  await fillRequiredPrompt(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.locator("audio[controls]")).toHaveAttribute(
     "src",
@@ -857,6 +874,7 @@ test("workflow media jobs use declared routes and load signed output after retry
       json: { error: { message: "Job temporarily unavailable." } },
     }),
   );
+  await fillRequiredPrompt(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Job status: queued")).toBeVisible();
   expect(body).toEqual({

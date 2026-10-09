@@ -40,6 +40,11 @@ import {
   PRODUCT_NAME,
 } from "@/lib/product";
 import { useCapabilityViews } from "@/lib/use-capability-views";
+import {
+  STATE_WORDS,
+  type CapabilityView,
+  type StateTone,
+} from "@/lib/capability-state";
 import { useOwnerAlertTarget } from "./use-owner-alert";
 import { Button } from "@/components/ui/button";
 import { BrandMark } from "@/components/product/brand-mark";
@@ -262,6 +267,55 @@ function AccountMenu({ compact = false }: { compact?: boolean }) {
   );
 }
 
+/**
+ * The count and colour for the capabilities that are not Ready (Status model
+ * rule 3). Busy is not a fault and is not counted. A fault (Down, Blocked,
+ * Degraded) is an "issue" in its own colour; the worst fault sets the colour.
+ * Capabilities with no fresh check are "unchecked", never an "issue", because
+ * Unknown is missing knowledge, not a known fault. Faults outrank Unknown, so
+ * a mix counts only the faults.
+ */
+export function problemPill(
+  problems: CapabilityView[],
+): { label: string; tone: StateTone } | null {
+  const counted = problems.filter((view) => view.state !== "busy");
+  const faults = counted.filter((view) => view.state !== "unknown");
+  if (faults.length) {
+    const worst = faults.reduce((a, b) =>
+      STATE_WORDS[b.state].rank > STATE_WORDS[a.state].rank ? b : a,
+    );
+    return {
+      label: `${faults.length} issue${faults.length === 1 ? "" : "s"}`,
+      tone: worst.tone,
+    };
+  }
+  if (counted.length) return { label: "Not checked yet", tone: "unknown" };
+  return null;
+}
+
+/**
+ * State fills, the same as strips and legends (D1.5). Unknown is a ring, the
+ * "grey dashed" of the state palette: at this size a dash is not legible.
+ */
+function dotClass(tone: StateTone): string {
+  switch (tone) {
+    case "ok":
+      return "bg-success-fill";
+    case "warn":
+      return "bg-warning-fill";
+    case "bad":
+      return "bg-danger-fill";
+    case "busy":
+      return "bg-info-fill";
+    case "blocked":
+      return "bg-blocked-fill";
+    case "unknown":
+      return "border-[1.5px] border-neutral bg-transparent";
+    default:
+      return "bg-neutral";
+  }
+}
+
 function HealthLink({ compact = false }: { compact?: boolean }) {
   const viewer = useViewer();
   const {
@@ -283,13 +337,13 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
   // Owners also see the engine or provider at fault, in the banner's words.
   const ownerAlert = useOwnerAlertTarget(viewer.admin);
   const signedIn = viewer.authenticated && !viewer.serviceAdmin;
-  // Missing evidence and busy work are not issues. Down, degraded and blocked are.
-  const issues = model.verdict.problems.filter(
-    (view) => !["busy", "unknown"].includes(view.state),
+  // Busy is not a fault, so it is not counted as an issue. Unknown (no fresh
+  // check) is listed in the popover, but it is not a fault either.
+  const listedProblems = model.verdict.problems.filter(
+    (view) => view.state !== "busy",
   );
-  const busy = model.verdict.problems.filter(
-    (view) => view.state === "busy",
-  ).length;
+  const busy = model.verdict.problems.length - listedProblems.length;
+  const pill = problemPill(model.verdict.problems);
   const { label, tone } = gatewayError
     ? { label: "Gateway unreachable", tone: "bad" as const }
     : !gatewayData
@@ -303,32 +357,19 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
             { label: "Status unknown", tone: "unknown" as const }
           : model.isPending
             ? { label: "Checking", tone: "unknown" as const }
-            : issues.length
-              ? {
-                  label: `${issues.length} issue${issues.length === 1 ? "" : "s"}`,
-                  tone: issues[0].tone,
-                }
-              : model.verdict.unconfirmed
-                ? { label: "Status unknown", tone: "unknown" as const }
-                : busy
-                  ? { label: "Busy", tone: "busy" as const }
-                  : model.verdict.tone === "off"
-                    ? { label: "Nothing turned on", tone: "off" as const }
-                    : { label: "All working", tone: "ok" as const };
+            : pill
+              ? pill
+              : busy
+                ? { label: "Busy", tone: "busy" as const }
+                : model.verdict.tone === "off"
+                  ? { label: "Nothing turned on", tone: "off" as const }
+                  : { label: "All working", tone: "ok" as const };
   const visibleLabel = label;
-  // State fills, the same as strips and legends (D1.5).
-  const dot =
-    tone === "ok"
-      ? "bg-success-fill"
-      : tone === "warn"
-        ? "bg-warning-fill"
-        : tone === "bad"
-          ? "bg-danger-fill"
-          : tone === "busy"
-            ? "bg-info-fill"
-            : tone === "blocked"
-              ? "bg-blocked-fill"
-              : "bg-neutral";
+  const dot = dotClass(tone);
+  // The capabilities behind the count: tapping the pill must explain it.
+  const listed =
+    signedIn && !gatewayError && !model.isPending && !model.isError;
+  const reasons = listed ? listedProblems : [];
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -374,7 +415,29 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
           {signedIn && !gatewayError && !model.isPending && !model.isError ? (
             <>
               <dt className="text-muted-foreground">Your AI</dt>
-              <dd>{model.verdict.text}</dd>
+              <dd>
+                {model.verdict.text}
+                {reasons.length ? (
+                  <ul className="mt-1.5 space-y-1.5">
+                    {reasons.map((view) => (
+                      <li key={view.key}>
+                        <span className="flex items-center gap-2 font-medium">
+                          <span
+                            aria-hidden="true"
+                            className={`size-2 shrink-0 rounded-full ${dotClass(view.tone)}`}
+                          />
+                          {view.label} · {view.word}
+                        </span>
+                        {view.detail ? (
+                          <span className="text-muted-foreground block pl-4 text-xs">
+                            {view.detail}
+                          </span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </dd>
             </>
           ) : null}
           {ownerAlert ? (
@@ -386,7 +449,7 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
         </dl>
         <Button variant="outline" size="sm" asChild>
           <Link href="/status">
-            View status
+            {reasons.length ? "See why" : "View status"}
             <ChevronRight aria-hidden="true" />
           </Link>
         </Button>

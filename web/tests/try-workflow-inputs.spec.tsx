@@ -101,7 +101,7 @@ const unsupportedCombineInputs: WorkflowInput[] = [
 afterEach(cleanup);
 
 describe("workflow input helpers", () => {
-  it("builds defaults without replacing example or extra fields", () => {
+  it("builds defaults without replacing a declared default or extra fields", () => {
     expect(
       workflowDefaults(inputs, {
         text: "kept prompt",
@@ -111,11 +111,17 @@ describe("workflow input helpers", () => {
     ).toEqual({
       text: "kept prompt",
       steps: 8,
-      guidance: 3.5,
       transparent_background: false,
       size: "1024x1024",
       extra_passthrough: "kept",
     });
+  });
+
+  it("drops example values the manifest does not declare as a default", () => {
+    // guidance has no default: 3.5 was the catalog's illustration, not a choice.
+    expect(
+      workflowDefaults(inputs, { guidance: 3.5, extra_passthrough: "kept" }),
+    ).not.toHaveProperty("guidance");
   });
 
   it("does not replace existing combined size defaults", () => {
@@ -423,16 +429,18 @@ describe("WorkflowInputs", () => {
       screen.getByRole("checkbox", { name: "transparent_background" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Choose this file in the upload control below."),
+      screen.getAllByText("Choose this file in the upload control below.")[0],
     ).toBeVisible();
-    expect(
-      screen.getByText(
-        "Known input, but this route ignores it for the selected workflow.",
-      ),
-    ).toBeVisible();
+    // An ignored input is not a control; it is explained under Input details.
+    expect(screen.queryByRole("textbox", { name: "seed" })).toBeNull();
+    expect(screen.queryByRole("spinbutton", { name: "seed" })).toBeNull();
+    const technical = document.querySelector('[data-technical-input="seed"]')!;
+    expect(technical).toHaveTextContent(
+      "Known input, but this route ignores it for the selected workflow.",
+    );
   });
 
-  it("renders mapped body asset inputs as text controls", () => {
+  it("renders mapped body asset inputs as a picker with the link under Advanced", () => {
     const onChange = vi.fn();
     render(
       <WorkflowInputs
@@ -442,21 +450,16 @@ describe("WorkflowInputs", () => {
       />,
     );
 
-    const asset = screen.getByRole("textbox", {
-      name: /reference_image Required/,
+    expect(screen.getByRole("button", { name: "Choose a file" })).toBeVisible();
+    const link = screen.getByRole("textbox", {
+      name: "Link, Library link or data URI",
     });
-    expect(asset).not.toBeDisabled();
-    fireEvent.change(asset, {
+    fireEvent.change(link, {
       target: { value: "https://example.test/reference.png" },
     });
     expect(JSON.parse(onChange.mock.calls.at(-1)?.[0] ?? "{}")).toEqual({
       reference_image: "https://example.test/reference.png",
     });
-    expect(
-      screen.getByText(
-        "Use a data URI, http(s) URL, gateway asset id, or signed asset URL.",
-      ),
-    ).toBeVisible();
   });
 
   it("disables guided controls while advanced JSON is malformed", () => {
@@ -572,7 +575,7 @@ describe("TM-12 optional inputs can return to unset", () => {
     Element.prototype.scrollIntoView ??= () => undefined;
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
-    const size = screen.getByRole("combobox", { name: "size" });
+    const size = screen.getByRole("combobox", { name: "Size" });
     size.focus();
     fireEvent.keyDown(size, { key: "Enter" });
     fireEvent.click(await screen.findByRole("option", { name: "Not set" }));

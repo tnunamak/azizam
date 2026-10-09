@@ -617,6 +617,9 @@ def _base_row(
            if presentation_metadata.get("technical_description")
            or raw_description and raw_description != presentation.get("summary") else {}),
         "name": presentation.get("title", display_name),
+        # A manifest's own name for a kind of output that is not plain
+        # text-to-picture (e.g. "texture-tile"), so a UI can keep it apart.
+        **({"task": manifest["task"]} if isinstance(manifest.get("task"), str) and manifest["task"] else {}),
         "capabilities": _capability_summaries(capabilities, manifest),
         "provider": _provider(service, model_mapping or model_entry, service_id),
         "engine_label": engine_label(service, service_id),

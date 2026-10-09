@@ -279,6 +279,10 @@ def _input_rows(record: WorkflowRecord, routes: Mapping[str, Any]) -> list[dict[
         for optional in ("default", "minimum", "maximum", "enum", "description"):
             if optional in spec:
                 row[optional] = spec[optional]
+        # The row's type is the JSON type ("string"); without this flag a UI
+        # cannot tell a picture input from a text input except by its prose.
+        if spec.get("x-azizam-asset"):
+            row["asset"] = True
         rows.append(row)
     for extra in route_inputs(record):
         row = {
@@ -447,7 +451,7 @@ def _example_value(item: Mapping[str, Any]) -> Any:
         return float(item["minimum"] if item.get("minimum") is not None else 1)
     if item.get("type") == "boolean":
         return False
-    if item.get("type") == "asset":
+    if item.get("type") == "asset" or item.get("asset"):
         return "data:image/png;base64,..."
     if item.get("name") == "prompt":
         return "A small teal fish mark on a clean white card."

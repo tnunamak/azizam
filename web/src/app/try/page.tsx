@@ -25,6 +25,7 @@ import {
   WorkflowInputs,
   parseWorkflowInputs,
   workflowDefaults,
+  workflowInputProblems,
   type WorkflowInput,
   type WorkflowInputMapping,
 } from "./workflow-inputs";
@@ -34,7 +35,10 @@ import {
   type WorkflowMedia,
   type WorkflowJob,
 } from "./workflow-media";
+import { outputKindOf } from "./workflow-input-meta";
 import { costFrom } from "./result-cost";
+import { runImageJob } from "./image-job";
+import { isNetworkFailure, networkFetch } from "@/lib/network-error";
 import { ReceiptLink } from "./receipt-link";
 import { accountApi, type AccountApp } from "@/lib/account-api";
 import { ApiError } from "@/lib/api";
@@ -65,6 +69,12 @@ type TryTab =
 type TryKey = { id: string; secret: string; appName: string };
 type TryError = {
   message: string;
+  /** Replaces "<tab> request failed" when the request did not fail. */
+  heading?: string;
+  /** The connection dropped; the gateway may still have finished. */
+  lost?: boolean;
+  /** Offer the Library, where a finished creation appears. */
+  library?: boolean;
   status?: number;
   receiptId?: string | null;
   elapsedMs?: number;
@@ -92,6 +102,8 @@ type CatalogOption = {
   locality: string;
   provider?: string;
   workflow?: WorkflowOption;
+  /** Other ids that name the same model (an alias and its target). */
+  alsoKnownAs?: string[];
 };
 type WorkflowOption = {
   id: string;
@@ -260,9 +272,97 @@ class PublicRequestError extends ApiError {
   }
 }
 
+/** The connection dropped and the gateway may still have finished the work. */
+class LostRequestError extends Error {
+  constructor(
+    public tab: TryTab,
+    public jobId?: string,
+  ) {
+    super("The connection dropped before the answer came back.");
+  }
+}
+
+const IMAGE_JOB_PATH = "/gateway/v1/media/jobs/image-generations";
+
+function lostCopy(tab: TryTab): Pick<TryError, "heading" | "message" | "library"> {
+  if (tab === "image")
+    return {
+      heading: "Your picture may still be finishing",
+      message:
+        "The connection dropped, but the gateway may still be making it. If it finishes, it will appear in your Library.",
+      library: true,
+    };
+  if (tab === "speech" || tab === "workflow")
+    return {
+      heading: `Your ${tab === "speech" ? "audio" : "result"} may still be finishing`,
+      message:
+        "The connection dropped, but the gateway may still be working. If it finishes, it will appear in your Library.",
+      library: true,
+    };
+  return {
+    heading: "The connection dropped",
+    message:
+      "The answer did not come back. Edit and run again when you are back online.",
+  };
+}
+
+function newIdempotencyKey() {
+  const random =
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `try-${random}`;
+}
+
+function createdAtSeconds(value: unknown) {
+  if (typeof value === "number") return value > 1e12 ? value / 1000 : value;
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? null : parsed / 1000;
+  }
+  return null;
+}
+
+/**
+ * After a lost connection, the picture may already be in the Library. Look
+ * for the newest picture made for this prompt since the run began.
+ */
+async function recentCreation(prompt: unknown, startedAtMs: number) {
+  if (typeof prompt !== "string" || !prompt) return null;
+  try {
+    const response = await fetch("/me/api/media?kind=image&limit=5&scope=me", {
+      credentials: "same-origin",
+    });
+    if (!response.ok) return null;
+    const payload = (await response.json()) as {
+      assets?: Array<{
+        asset_id?: string;
+        kind?: string;
+        prompt?: string | null;
+        created_at?: unknown;
+        available?: boolean;
+      }>;
+    };
+    const found = (payload.assets ?? []).find((asset) => {
+      const created = createdAtSeconds(asset.created_at);
+      return (
+        asset.asset_id &&
+        asset.available !== false &&
+        (asset.kind ?? "image") === "image" &&
+        asset.prompt === prompt &&
+        created !== null &&
+        created >= startedAtMs / 1000 - 5
+      );
+    });
+    return found?.asset_id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function publicRequest(path: string, key: string, init: RequestInit) {
   const started = performance.now();
-  const response = await fetch(publicPath(path), {
+  const response = await networkFetch(publicPath(path), {
     ...init,
     headers: { authorization: `Bearer ${key}`, ...(init.headers ?? {}) },
   });
@@ -299,7 +399,11 @@ function receiptFrom(response: Response, payload: unknown) {
   return null;
 }
 
-async function verifiedReceiptId(response: Response, payload: unknown) {
+async function verifiedReceiptId(
+  response: Response,
+  payload: unknown,
+  hint?: string | null,
+) {
   async function verify(requestId: string | null) {
     if (!requestId) return null;
     const receipt = await fetch(
@@ -309,7 +413,7 @@ async function verifiedReceiptId(response: Response, payload: unknown) {
     return receipt.ok ? requestId : null;
   }
   try {
-    const direct = await verify(receiptFrom(response, payload));
+    const direct = await verify(receiptFrom(response, payload) ?? hint ?? null);
     if (direct) return direct;
     // Media routes can return asset handles without a request-id header. The
     // account-scoped asset record carries the exact generation's provenance.
@@ -510,6 +614,9 @@ function groupCatalog(payload: unknown) {
     ...(payload as { models: unknown[] }).models,
   ];
   const grouped: Partial<Record<TryTab, CatalogOption[]>> = {};
+  // A stable alias ("image") and the model it points at ("krea2-turbo") are
+  // one choice, not two. The alias stays; the model's id still selects it.
+  const aliasTargets: Partial<Record<TryTab, Map<string, CatalogOption>>> = {};
   for (const value of records) {
     if (typeof value !== "object" || value === null) continue;
     const record = value as Record<string, unknown>;
@@ -532,8 +639,21 @@ function groupCatalog(payload: unknown) {
         locality: localityLabel(record),
         provider: stringValue(record.provider) ?? undefined,
       };
+      const targets = (aliasTargets[capability] ??= new Map());
+      const sameChoice = targets.get(id);
+      if (sameChoice) {
+        sameChoice.alsoKnownAs = [...(sameChoice.alsoKnownAs ?? []), id];
+        continue;
+      }
       if (!(grouped[capability] ?? []).some((existing) => existing.id === id)) {
         grouped[capability] = [...(grouped[capability] ?? []), option];
+        if (record.alias === true && Array.isArray(record.use_names)) {
+          for (const name of record.use_names) {
+            if (typeof name === "string" && name !== id) {
+              targets.set(name, option);
+            }
+          }
+        }
       }
     }
   }
@@ -739,7 +859,38 @@ function capabilitiesFor(record: Record<string, unknown>): TryTab[] {
     const tab = CAPABILITY_TABS[intent] ?? INTENT_TABS[intent];
     if (tab) tabs.add(tab);
   }
+  if (tabs.has("image") && !makesPicturesFromText(record)) tabs.delete("image");
   return [...tabs];
+}
+
+/**
+ * "Make a picture" sends a prompt and nothing else, so it lists only models
+ * that make a picture from a prompt. The catalog says what each model does:
+ * its capability intents ("image.generate" makes; "image.edit" and
+ * "image.analyze" start from a picture), its input modalities, and an
+ * optional `task` for models that make a different kind of picture (texture
+ * tiles). Rows without that detail keep the old behaviour.
+ */
+function makesPicturesFromText(record: Record<string, unknown>) {
+  const task = stringValue(record.task);
+  if (task && task !== "text-to-image") return false;
+  const summaries = Array.isArray(record.capabilities)
+    ? (record.capabilities as unknown[]).filter(
+        (item): item is Record<string, unknown> =>
+          typeof item === "object" && item !== null,
+      )
+    : [];
+  const imageIntents = summaries.filter(
+    (item) => String(item.intent ?? "").split(".")[0] === "image",
+  );
+  if (!imageIntents.length) return true;
+  return imageIntents.some((item) => {
+    if (item.intent !== "image.generate") return false;
+    const input = Array.isArray(item.input_modalities)
+      ? item.input_modalities
+      : [];
+    return !input.includes("image");
+  });
 }
 
 function costLabel(value: unknown) {
@@ -780,6 +931,11 @@ function selectedOrDefaultModel(
   explicit: boolean,
 ) {
   if (!options.length) return current;
+  // A model that an alias stands for is selected through the alias.
+  const standIn = options.find((option) =>
+    option.alsoKnownAs?.includes(current),
+  );
+  if (standIn) return standIn.id;
   if (explicit) return current;
   const recommended = options.find((option) => option.recommended);
   if (
@@ -828,6 +984,9 @@ export default function TryPage() {
   const [workflowFiles, setWorkflowFiles] = useState<
     Record<string, File | null>
   >({});
+  // Run was pressed with something missing: show each field's message.
+  const [workflowChecked, setWorkflowChecked] = useState(false);
+  const formRefs = useRef<Partial<Record<TryTab, HTMLFormElement | null>>>({});
   const [checkingJob, setCheckingJob] = useState(false);
   const [jobError, setJobError] = useState<string | null>(null);
   const [recordingError, setRecordingError] = useState<string | null>(null);
@@ -866,6 +1025,19 @@ export default function TryPage() {
       catalog.workflow?.find((option) => option.id === model.workflow)
         ?.workflow,
     [catalog.workflow, model.workflow],
+  );
+  const workflowOutputKind = outputKindOf(selectedWorkflow?.outputs);
+  const workflowProblems = useMemo(
+    () =>
+      workflowChecked && selectedWorkflow
+        ? workflowInputProblems(
+            prompt.workflow,
+            selectedWorkflow.inputs,
+            selectedWorkflow.inputMapping,
+            workflowOutputKind,
+          )
+        : {},
+    [workflowChecked, selectedWorkflow, prompt.workflow, workflowOutputKind],
   );
   useEffect(() => {
     mounted.current = true;
@@ -932,11 +1104,16 @@ export default function TryPage() {
       workflow: JSON.stringify(inputs, null, 2),
     }));
     setWorkflowFiles({});
+    setWorkflowChecked(false);
   }, [selectedWorkflow]);
 
   useEffect(() => {
     activeTabRef.current = activeTab;
     if (activeTab !== "transcribe") stopRecording();
+    // On a phone the strip scrolls; keep the chosen chip in view.
+    document
+      .querySelector<HTMLElement>('[aria-label="Try capability"] [data-state="active"]')
+      ?.scrollIntoView?.({ inline: "nearest", block: "nearest" });
   }, [activeTab]);
 
   async function prepareKey() {
@@ -1266,6 +1443,24 @@ export default function TryPage() {
     event.preventDefault();
     if (tab === "workflow" && selectedWorkflow?.availability?.available === false)
       return;
+    if (tab === "workflow" && selectedWorkflow?.example_request?.path) {
+      // Nothing doomed goes to the gateway: say what is missing, on the field.
+      const problems = workflowInputProblems(
+        prompt.workflow,
+        selectedWorkflow.inputs,
+        selectedWorkflow.inputMapping,
+        workflowOutputKind,
+      );
+      const first = selectedWorkflow.inputs.find((input) => problems[input.name]);
+      setWorkflowChecked(true);
+      if (first) {
+        setErrors((current) => ({ ...current, workflow: undefined }));
+        window.requestAnimationFrame(() =>
+          document.getElementById(`workflow-input-${first.name}`)?.focus(),
+        );
+        return;
+      }
+    }
     let runKey = key;
     let preparedCatalog: CatalogGroups | null = null;
     if (!runKey?.secret) {
@@ -1282,8 +1477,14 @@ export default function TryPage() {
     setErrors((current) => ({ ...current, [tab]: undefined }));
     try {
       const request = buildRequest(tab, selectedModel);
-      let result: Awaited<ReturnType<typeof publicRequest>>;
-      if (request.multipart) {
+      let result: Awaited<ReturnType<typeof publicRequest>> & {
+        requestId?: string;
+      };
+      if (tab === "image") {
+        const finished = await runImageAsJob(request, runKey.secret);
+        if (!finished) return;
+        result = finished;
+      } else if (request.multipart) {
         const form = new FormData();
         if (tab === "workflow") {
           for (const fileSpec of request.files ?? []) {
@@ -1325,6 +1526,7 @@ export default function TryPage() {
       const receiptId = await verifiedReceiptId(
         result.response,
         result.payload,
+        result.requestId,
       );
       const oldUrls = [
         results[tab]?.audioUrl,
@@ -1354,15 +1556,21 @@ export default function TryPage() {
         ),
       }));
     } catch (error) {
+      const lost =
+        error instanceof LostRequestError || isNetworkFailure(error)
+          ? lostCopy(tab)
+          : null;
       setErrors((current) => ({
         ...current,
         [tab]: {
+          ...(lost ? { ...lost, lost: true } : {}),
           message:
-            error instanceof ApiError && tab === "decide" && error.status === 404
+            lost?.message ??
+            (error instanceof ApiError && tab === "decide" && error.status === 404
               ? "Decisions not enabled on this gateway"
               : error instanceof Error
                 ? error.message
-                : "This request could not be completed.",
+                : "This request could not be completed."),
           ...(error instanceof PublicRequestError
             ? {
                 status: error.status,
@@ -1375,6 +1583,117 @@ export default function TryPage() {
     } finally {
       setRunning(null);
     }
+  }
+
+  /**
+   * A picture can outlast the page: the phone browser drops a long fetch when
+   * the person switches apps. So it runs as a media job that is polled, and
+   * polling resumes the moment the page is shown again. Returns null when
+   * the page went away.
+   */
+  async function runImageAsJob(request: RequestInfo, secret: string) {
+    const idempotencyKey = newIdempotencyKey();
+    const startedAt = Date.now();
+    const clock = performance.now();
+    const wake: { fn: (() => void) | null } = { fn: null };
+    const onShown = () => {
+      if (document.visibilityState !== "hidden") wake.fn?.();
+    };
+    document.addEventListener("visibilitychange", onShown);
+    window.addEventListener("online", onShown);
+    window.addEventListener("pageshow", onShown);
+    try {
+      const outcome = await runImageJob({
+        submit: async () => {
+          const response = await publicRequest(IMAGE_JOB_PATH, secret, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "idempotency-key": idempotencyKey,
+            },
+            body: JSON.stringify(request.body),
+          });
+          const job = workflowJob(response.payload);
+          if (!job) {
+            throw new Error("The gateway did not start a picture job.");
+          }
+          return { id: job.id, status: job.status, requestId: job.requestId };
+        },
+        poll: async (id) => {
+          const response = await publicRequest(
+            `/gateway/v1/media/jobs/${encodeURIComponent(id)}`,
+            secret,
+            { method: "GET" },
+          );
+          const job = workflowJob(response.payload);
+          if (!job) throw new Error("The gateway did not return a job status.");
+          return {
+            status: job.status,
+            error: job.error,
+            requestId: job.requestId,
+          };
+        },
+        content: (id) =>
+          publicRequest(
+            `/gateway/v1/media/jobs/${encodeURIComponent(id)}/content`,
+            secret,
+            { method: "GET" },
+          ),
+        wait: (ms) =>
+          new Promise<void>((resolve) => {
+            const finish = () => {
+              window.clearTimeout(timer);
+              wake.fn = null;
+              resolve();
+            };
+            const timer = window.setTimeout(finish, ms);
+            wake.fn = finish;
+          }),
+        isNetworkFailure,
+        now: () => Date.now(),
+        stopped: () => !mounted.current,
+      });
+      if (outcome.kind === "stopped") return null;
+      if (outcome.kind === "failed") throw new Error(outcome.message);
+      if (outcome.kind === "lost") {
+        const assetId = await recentCreation(
+          (request.body as { prompt?: unknown }).prompt,
+          startedAt,
+        );
+        if (!assetId) throw new LostRequestError("image", outcome.jobId);
+        return {
+          response: new Response(null),
+          payload: {
+            data: [
+              { url: `/me/api/media/${encodeURIComponent(assetId)}/download?scope=me` },
+            ],
+          } as unknown,
+          elapsedMs: Math.round(performance.now() - clock),
+        };
+      }
+      return {
+        ...outcome.content,
+        elapsedMs: Math.round(performance.now() - clock),
+        requestId: outcome.requestId,
+      };
+    } finally {
+      document.removeEventListener("visibilitychange", onShown);
+      window.removeEventListener("online", onShown);
+      window.removeEventListener("pageshow", onShown);
+    }
+  }
+
+  function editFailedRun(tab: TryTab) {
+    const form = formRefs.current[tab];
+    if (!form) return;
+    form.scrollIntoView?.({ block: "start", behavior: "smooth" });
+    const target =
+      form.querySelector<HTMLElement>('[aria-invalid="true"]') ??
+      form.querySelector<HTMLElement>(
+        "textarea:not([disabled]), input:not([type=file]):not([type=hidden]):not([disabled])",
+      ) ??
+      form.querySelector<HTMLElement>('button[type="submit"]');
+    target?.focus({ preventScroll: true });
   }
 
   async function checkWorkflowJob() {
@@ -1586,7 +1905,7 @@ export default function TryPage() {
           </div>
         ) : (
           <p>
-            Using a Try key
+            Try uses a temporary key
             <span aria-hidden="true"> · </span>
             <button
               type="button"
@@ -1605,13 +1924,22 @@ export default function TryPage() {
         onValueChange={(value) => setActiveTab(value as TryTab)}
       >
         <div
-          className="overflow-x-auto pb-1"
+          // On a phone the strip runs edge to edge and fades at both ends,
+          // so a chip that is partly off screen reads as "more this way",
+          // not as a label cut mid-word.
+          className="overflow-x-auto pb-1 max-sm:-mx-5 max-sm:scroll-px-5 max-sm:px-5 max-sm:[mask-image:linear-gradient(to_right,transparent,#000_20px,#000_calc(100%-20px),transparent)]"
           tabIndex={0}
           aria-label="Try capability tabs"
         >
           <TabsList aria-label="Try capability" className="min-w-max">
             {TAB_ITEMS.map((tab) => (
-              <TabsTrigger key={tab.value} value={tab.value}>
+              <TabsTrigger
+                key={tab.value}
+                value={tab.value}
+                // A chip keeps its full label; the strip scrolls instead of
+                // squeezing chips into each other.
+                className="max-sm:min-w-fit flex-none shrink-0"
+              >
                 <tab.icon aria-hidden="true" />
                 {tab.label}
               </TabsTrigger>
@@ -1626,20 +1954,17 @@ export default function TryPage() {
               <div className="grid gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
                 <form
                   noValidate
+                  ref={(node) => {
+                    formRefs.current[tab.value] = node;
+                  }}
                   onSubmit={(event) => void run(tab.value, event)}
                   className="bg-card min-w-0 space-y-4 rounded-xl border p-5"
                 >
-                  <div>
-                    <h2 className="flex items-center gap-2 font-semibold">
-                      <tab.icon aria-hidden="true" className="size-4" />
-                      {tab.label}
-                    </h2>
-                    {tab.help && (
-                      <p className="text-muted-foreground mt-1 text-sm">
-                        {tab.help}
-                      </p>
-                    )}
-                  </div>
+                  {/* The selected tab is the heading; repeating it above the
+                      form said the same word twice. */}
+                  {tab.help && (
+                    <p className="text-muted-foreground text-sm">{tab.help}</p>
+                  )}
                   <label className="block space-y-2">
                     <span className="text-sm font-medium">Model name</span>
                     <ModelSelect
@@ -1682,6 +2007,20 @@ export default function TryPage() {
                         this gateway exposes one.
                       </p>
                     )}
+                  {tab.value === "image" && (
+                    <p className="text-muted-foreground text-xs">
+                      Editing, upscaling and other tools that start from a
+                      picture are under{" "}
+                      <button
+                        type="button"
+                        className="text-foreground underline underline-offset-4"
+                        onClick={() => setActiveTab("workflow")}
+                      >
+                        Workflow
+                      </button>
+                      .
+                    </p>
+                  )}
                   {tab.value === "decide" && (
                     <label className="block space-y-2">
                       <span className="text-sm font-medium">State</span>
@@ -1697,6 +2036,8 @@ export default function TryPage() {
                     <WorkflowInputs
                       inputs={selectedWorkflow.inputs}
                       mapping={selectedWorkflow.inputMapping}
+                      outputKind={workflowOutputKind}
+                      problems={workflowProblems}
                       json={prompt.workflow}
                       onChange={(json) =>
                         setPrompt((current) => ({ ...current, workflow: json }))
@@ -1869,6 +2210,15 @@ export default function TryPage() {
                 >
                   {running === tab.value ? (
                     <div aria-busy="true" className="space-y-3">
+                      {tab.value === "image" && (
+                        <p
+                          role="status"
+                          className="text-muted-foreground text-sm"
+                        >
+                          Making your picture. You can switch apps; it keeps
+                          going.
+                        </p>
+                      )}
                       <Skeleton className="h-6 w-40" />
                       <Skeleton className="h-28 w-full" />
                       <Skeleton className="h-20 w-full" />
@@ -1876,12 +2226,24 @@ export default function TryPage() {
                   ) : currentError ? (
                     <div className="space-y-5">
                       {/* A failed run says what failed (it was titled
-                          "Couldn't load this"; D1.5b). Try again reloads the
-                          catalog and never repeats a generation. */}
+                          "Couldn't load this"; D1.5b). It never repeats a
+                          generation by itself: it takes the person back to the
+                          form with their values kept. A catalog that failed
+                          to load has its own retry button above the form. */}
                       <ErrorState
-                        heading={`${tab.label} request failed`}
+                        heading={
+                          currentError.heading ?? `${tab.label} request failed`
+                        }
                         message={currentError.message}
-                        onRetry={() => void loadCatalog(key?.secret)}
+                        severity={currentError.lost ? "attention" : "critical"}
+                        action={
+                          currentError.library
+                            ? { label: "Open Library", href: "/ui/library/" }
+                            : {
+                                label: "Edit and run again",
+                                onClick: () => editFailedRun(tab.value),
+                              }
+                        }
                       />
                       {currentError.status !== undefined && (
                         <dl className="grid gap-3 text-sm sm:grid-cols-3">

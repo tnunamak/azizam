@@ -369,7 +369,7 @@ for (const width of [1024, 768]) {
     await expect(page.getByLabel("Gateway health")).toBeVisible();
     await page
       .getByLabel("Gateway health")
-      .getByRole("link", { name: "View status" })
+      .getByRole("link", { name: /^(View status|See why)$/ })
       .click();
     await expect(page).toHaveURL(/\/ui\/status\/?$/);
   });

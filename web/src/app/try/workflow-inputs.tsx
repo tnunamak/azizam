@@ -1,6 +1,7 @@
 "use client";
 
 import { AlertCircle } from "lucide-react";
+import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -12,6 +13,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  inputHint,
+  inputLabel,
+  inputPlaceholder,
+  isPlausibleMediaReference,
+  mediaKindOfInput,
+  MEDIA_DESCRIPTION,
+  missingMessage,
+  type OutputKind,
+} from "./workflow-input-meta";
+import { MediaInput } from "./workflow-media-input";
 
 export type WorkflowInput = {
   name: string;
@@ -26,6 +38,8 @@ export type WorkflowInput = {
   maximum?: number;
   accepted?: boolean;
   ignored?: boolean;
+  /** The gateway marks media inputs; their `type` is still "string". */
+  asset?: boolean;
 };
 
 export type WorkflowInputsProps = {
@@ -33,6 +47,10 @@ export type WorkflowInputsProps = {
   json: string;
   onChange: (json: string) => void;
   mapping?: WorkflowInputMapping;
+  /** What the workflow makes; picks the words ("Describe the video"). */
+  outputKind?: OutputKind;
+  /** Plain messages by input name, shown under the field. */
+  problems?: Record<string, string>;
 };
 
 type JsonObject = Record<string, unknown>;
@@ -80,13 +98,17 @@ export function parseWorkflowInputs(
       continue;
     }
     const value = readWorkflowInputValue(values, inputs, input, mapping);
-    if (value === undefined || value === null || value === "") {
+    if (
+      value === undefined ||
+      value === null ||
+      (typeof value === "string" && !value.trim())
+    ) {
       if (input.required) {
         throw new Error(`${input.name} is required.`);
       }
       continue;
     }
-    validateWorkflowInputValue(input, value);
+    validateWorkflowInputValue(input, value, mapping);
   }
   return values;
 }
@@ -97,6 +119,15 @@ export function workflowDefaults(
   mapping: WorkflowInputMapping = {},
 ): JsonObject {
   const values = cloneJsonObject(example);
+  // The catalog's example body shows the request's shape. Its values are
+  // made up ("value", seed 0, a one-second clip), so a form that starts from
+  // them sends text the person never wrote. Only what the manifest declares,
+  // a default or a fixed choice, is a starting value.
+  for (const input of inputs) {
+    if (isFileInput(input, mapping)) continue;
+    if (input.default !== undefined || input.enum?.length) continue;
+    setWorkflowInputValue(values, inputs, input, undefined, mapping);
+  }
   for (const input of inputs) {
     if (isFileInput(input, mapping) || input.default === undefined) continue;
     if (readWorkflowInputValue(values, inputs, input, mapping) === undefined) {
@@ -106,16 +137,71 @@ export function workflowDefaults(
   return values;
 }
 
+/**
+ * What is missing or unusable before Run sends anything, by input name, in
+ * words a member can act on. Unreadable JSON is reported by the form itself.
+ */
+export function workflowInputProblems(
+  json: string,
+  inputs: WorkflowInput[],
+  mapping: WorkflowInputMapping = {},
+  output: OutputKind = "other",
+): Record<string, string> {
+  let values: JsonObject;
+  try {
+    values = parseWorkflowInputs(json);
+  } catch {
+    return {};
+  }
+  const problems: Record<string, string> = {};
+  for (const input of inputs) {
+    if (
+      isFileInput(input, mapping) ||
+      input.ignored ||
+      input.accepted === false ||
+      isUnsupportedCombinedInput(input, inputs, mapping)
+    ) {
+      continue;
+    }
+    const value = readWorkflowInputValue(values, inputs, input, mapping);
+    const empty =
+      value === undefined ||
+      value === null ||
+      (typeof value === "string" && !value.trim());
+    if (empty) {
+      if (input.required) problems[input.name] = missingMessage(input, output);
+    } else if (
+      isMediaBodyInput(input, mapping) &&
+      !(typeof value === "string" && isPlausibleMediaReference(value))
+    ) {
+      problems[input.name] = missingMessage(input, output);
+    }
+  }
+  return problems;
+}
+
 export function WorkflowInputs({
   inputs,
   json,
   onChange,
   mapping = {},
+  outputKind = "other",
+  problems = {},
 }: WorkflowInputsProps) {
   if (!inputs.length) return null;
   const values = safeObject(json);
   const parseError = values.ok ? null : values.error;
   const current = values.ok ? values.value : {};
+  // A member sees what they can set. Inputs the gateway fills in or ignores
+  // are listed with the rest under Technical details.
+  const settable = inputs.filter(
+    (input) => !input.ignored && input.accepted !== false,
+  );
+  // What is needed comes first; the options follow, in the catalog's order.
+  const shown = [
+    ...settable.filter((input) => input.required),
+    ...settable.filter((input) => !input.required),
+  ];
 
   function update(input: WorkflowInput, value: unknown) {
     const next = cloneJsonObject(current);
@@ -127,9 +213,6 @@ export function WorkflowInputs({
     <div className="rounded-lg border">
       <div className="border-b p-3">
         <h3 className="text-sm font-medium">Inputs</h3>
-        <p className="text-muted-foreground mt-1 text-xs">
-          Guided controls update the same JSON sent with the request.
-        </p>
         {parseError && (
           <p className="text-destructive mt-2 flex items-center gap-2 text-xs">
             <AlertCircle aria-hidden="true" className="size-3.5" />
@@ -138,7 +221,7 @@ export function WorkflowInputs({
         )}
       </div>
       <div className="grid gap-3 p-3 md:grid-cols-2">
-        {inputs.map((input) => (
+        {shown.map((input) => (
           <WorkflowInputControl
             key={input.name}
             input={input}
@@ -148,6 +231,9 @@ export function WorkflowInputs({
               isUnsupportedCombinedInput(input, inputs, mapping)
             }
             fileInput={isFileInput(input, mapping)}
+            mediaInput={isMediaBodyInput(input, mapping)}
+            outputKind={outputKind}
+            problem={problems[input.name]}
             unsupportedCombined={isUnsupportedCombinedInput(
               input,
               inputs,
@@ -157,6 +243,29 @@ export function WorkflowInputs({
           />
         ))}
       </div>
+      <details className="border-t px-3">
+        <summary className="text-muted-foreground min-h-11 cursor-pointer py-3 text-xs">
+          Input details
+        </summary>
+        <dl className="space-y-3 pb-3 text-xs">
+          {inputs.map((input) => (
+            <div key={input.name} data-technical-input={input.name}>
+              <dt className="font-medium">
+                {input.name}
+                <span className="text-muted-foreground ml-2 font-normal">
+                  {input.type}
+                  {input.required ? " · required" : ""}
+                </span>
+              </dt>
+              <dd className="text-muted-foreground">
+                {inputExplanation(input, isFileInput(input, mapping))}
+                {input.applies ? ` ${input.applies}.` : ""}
+                {input.description ? ` ${input.description}` : ""}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </details>
     </div>
   );
 }
@@ -166,6 +275,9 @@ function WorkflowInputControl({
   value,
   disabled: parentDisabled = false,
   fileInput = false,
+  mediaInput = false,
+  outputKind,
+  problem,
   unsupportedCombined = false,
   onChange,
 }: {
@@ -173,43 +285,82 @@ function WorkflowInputControl({
   value: unknown;
   disabled?: boolean;
   fileInput?: boolean;
+  mediaInput?: boolean;
+  outputKind: OutputKind;
+  problem?: string;
   unsupportedCombined?: boolean;
   onChange: (value: unknown) => void;
 }) {
   const id = `workflow-input-${input.name}`;
-  const label = input.required ? `${input.name} Required` : input.name;
-  const disabled =
-    parentDisabled ||
-    input.ignored ||
-    input.accepted === false ||
-    fileInput ||
-    isUnsupportedValue(value);
-  const explanation = unsupportedCombined
+  const text = inputLabel(input, outputKind);
+  const label = input.required ? `${text} Required` : text;
+  const hint = unsupportedCombined
     ? "This combined field is not supported by guided controls yet. Edit Advanced JSON."
-    : inputExplanation(input, fileInput);
+    : fileInput
+      ? "Choose this file in the upload control below."
+      : inputHint(input, outputKind);
+  const errorId = problem ? `${id}-error` : undefined;
+  const disabled = parentDisabled || fileInput || isUnsupportedValue(value);
+  const header = (
+    <span className="flex items-center justify-between gap-3">
+      <span className="min-w-0">
+        <span className="font-medium" id={`${id}-label`}>
+          {text}
+        </span>
+        {input.required && (
+          <span className="text-muted-foreground ml-1">Required</span>
+        )}
+      </span>
+    </span>
+  );
+  const hintLine = hint ? (
+    <span className="text-muted-foreground text-xs">{hint}</span>
+  ) : null;
+  const problemLine = problem ? (
+    <span
+      id={errorId}
+      role="alert"
+      className="text-destructive flex items-center gap-1.5 text-xs"
+    >
+      <AlertCircle aria-hidden="true" className="size-3.5 shrink-0" />
+      {problem}
+    </span>
+  ) : null;
+  const wrapper = `flex min-w-0 flex-col gap-2 text-sm ${
+    (input.type === "string" && !input.enum?.length) || mediaInput
+      ? "md:col-span-2"
+      : ""
+  }`;
+
+  if (mediaInput && !disabled) {
+    return (
+      <div role="group" aria-labelledby={`${id}-label`} className={wrapper}>
+        {header}
+        {hintLine}
+        <MediaInput
+          id={id}
+          label={text}
+          kind={mediaKindOfInput(input)}
+          value={typeof value === "string" ? value : undefined}
+          invalid={Boolean(problem)}
+          describedBy={errorId}
+          onChange={onChange}
+        />
+        {problemLine}
+      </div>
+    );
+  }
 
   return (
-    <label
-      className={`flex min-w-0 flex-col gap-2 text-sm ${input.type === "string" && !input.enum?.length ? "md:col-span-2" : ""}`}
-    >
-      <span className="flex items-center justify-between gap-3">
-        <span className="min-w-0">
-          <span className="font-medium">{input.name}</span>
-          {input.required && (
-            <span className="text-muted-foreground ml-1">Required</span>
-          )}
-        </span>
-        <span className="text-muted-foreground shrink-0 text-xs">
-          {input.type}
-        </span>
-      </span>
-      {(input.description || input.applies) && (
-        <span className="text-muted-foreground text-xs">
-          {[input.description, input.applies].filter(Boolean).join(" · ")}
-        </span>
-      )}
-      {controlFor(input, id, label, value, disabled, fileInput, onChange)}
-      <span className="text-muted-foreground text-xs">{explanation}</span>
+    <label className={wrapper}>
+      {header}
+      {controlFor(input, id, label, value, disabled, fileInput, onChange, {
+        placeholder: inputPlaceholder(input, outputKind),
+        invalid: Boolean(problem),
+        describedBy: errorId,
+      })}
+      {hintLine}
+      {problemLine}
     </label>
   );
 }
@@ -220,6 +371,15 @@ function isShortSingleLine(value: string) {
   return value.length <= 80 && !value.includes("\n");
 }
 
+// An example in a field must not read as something already typed.
+const PLACEHOLDER_CLASS = "placeholder:italic placeholder:opacity-80";
+
+type ControlExtras = {
+  placeholder?: string;
+  invalid?: boolean;
+  describedBy?: string;
+};
+
 function controlFor(
   input: WorkflowInput,
   id: string,
@@ -228,16 +388,22 @@ function controlFor(
   disabled: boolean,
   fileInput: boolean,
   onChange: (value: unknown) => void,
+  extras: ControlExtras = {},
 ) {
   const type = normalizedType(input);
+  const aria = {
+    "aria-label": label,
+    "aria-required": input.required || undefined,
+    "aria-invalid": extras.invalid || undefined,
+    "aria-describedby": extras.describedBy,
+  };
   if (fileInput) {
     return (
       <Input
         id={id}
         disabled
         value="Managed by the workflow file picker"
-        aria-label={label}
-        aria-required={input.required || undefined}
+        {...aria}
         readOnly
       />
     );
@@ -246,8 +412,7 @@ function controlFor(
     return (
       <Textarea
         id={id}
-        aria-label={label}
-        aria-required={input.required || undefined}
+        {...aria}
         disabled
         value={JSON.stringify(value, null, 2)}
         readOnly
@@ -265,12 +430,7 @@ function controlFor(
           else if (next) onChange(enumValue(input, next));
         }}
       >
-        <SelectTrigger
-          id={id}
-          className="w-full"
-          aria-label={label}
-          aria-required={input.required || undefined}
-        >
+        <SelectTrigger id={id} className="w-full" {...aria}>
           <SelectValue placeholder="Choose a value" />
         </SelectTrigger>
         <SelectContent>
@@ -289,8 +449,7 @@ function controlFor(
       <span className="flex min-h-11 items-center gap-3">
         <Checkbox
           id={id}
-          aria-label={label}
-          aria-required={input.required || undefined}
+          {...aria}
           checked={value === true}
           disabled={disabled}
           onCheckedChange={(checked) => onChange(checked === true)}
@@ -317,13 +476,14 @@ function controlFor(
     return (
       <Input
         id={id}
-        aria-label={label}
-        aria-required={input.required || undefined}
+        {...aria}
         type="number"
         inputMode={type === "integer" ? "numeric" : "decimal"}
         step={type === "integer" ? 1 : "any"}
         min={input.minimum}
         max={input.maximum}
+        placeholder={extras.placeholder}
+        className={PLACEHOLDER_CLASS}
         disabled={disabled}
         value={numberDisplay(value)}
         onChange={(event) => {
@@ -337,13 +497,13 @@ function controlFor(
     <Textarea
       id={id}
       rows={1}
-      className={
-        isShortSingleLine(String(value ?? ""))
-          ? "h-11 min-h-11 resize-none field-sizing-fixed py-1 shadow-none"
-          : undefined
-      }
-      aria-label={label}
-      aria-required={input.required || undefined}
+      className={cn(
+        PLACEHOLDER_CLASS,
+        isShortSingleLine(String(value ?? "")) &&
+          "h-11 min-h-11 resize-none field-sizing-fixed py-1 shadow-none",
+      )}
+      {...aria}
+      placeholder={extras.placeholder}
       disabled={disabled}
       value={String(value ?? "")}
       onChange={(event) => onChange(event.currentTarget.value)}
@@ -363,13 +523,23 @@ function controlFor(
   );
 }
 
-function validateWorkflowInputValue(input: WorkflowInput, value: unknown) {
+function validateWorkflowInputValue(
+  input: WorkflowInput,
+  value: unknown,
+  mapping: WorkflowInputMapping,
+) {
   const type = normalizedType(input);
   if (input.enum && !input.enum.includes(value)) {
     throw new Error(`${input.name} must be one of: ${input.enum.join(", ")}.`);
   }
   if (type === "string" && typeof value !== "string") {
     throw new Error(`${input.name} must be a string.`);
+  }
+  if (
+    isMediaBodyInput(input, mapping) &&
+    !(typeof value === "string" && isPlausibleMediaReference(value))
+  ) {
+    throw new Error(`${input.name} needs a file, a link or a Library asset.`);
   }
   if (type === "boolean" && typeof value !== "boolean") {
     throw new Error(`${input.name} must be a boolean.`);
@@ -500,6 +670,33 @@ function isFileInput(input: WorkflowInput, mapping: WorkflowInputMapping = {}) {
     return false;
   }
   return true;
+}
+
+/**
+ * A media input that travels inside the request (a data URI, a link or an
+ * asset id) rather than as a multipart file. The gateway's catalog types it
+ * "string", so the signal is its own flag or the description it writes for
+ * every asset input, never the input's name.
+ */
+export function isMediaBodyInput(
+  input: WorkflowInput,
+  mapping: WorkflowInputMapping = {},
+): boolean {
+  if (input.ignored || input.accepted === false) return false;
+  if (isFileInput(input, mapping)) return false;
+  const location = inputTarget(input, mapping).in;
+  if (location === "none" || location === "file" || location === "form") {
+    return false;
+  }
+  const applies = String(input.applies ?? "").toLowerCase();
+  if (applies.includes("file upload") || applies.includes("multipart")) {
+    return false;
+  }
+  return (
+    input.asset === true ||
+    normalizedType(input) === "asset" ||
+    MEDIA_DESCRIPTION.test(input.description ?? "")
+  );
 }
 
 function inputExplanation(

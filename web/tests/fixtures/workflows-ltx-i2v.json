@@ -1,0 +1,300 @@
+{
+ "schema_version": 1,
+ "object": "workflow.catalog",
+ "discovery_url": "/gateway/v1/workflows",
+ "workflows": [
+  {
+   "id": "video.generate.ltx-2.5-i2v",
+   "short_id": "ltx-2.5-i2v",
+   "capability": "video",
+   "intent": "video.generate",
+   "title": "LTX 2.5 Distilled I2V",
+   "purpose": "Animate an image, with sound",
+   "description": "Animate an image, with sound",
+   "inputs": [
+    {
+     "name": "prompt",
+     "type": "string",
+     "required": true,
+     "accepted": true,
+     "ignored": false,
+     "applies": "Request body",
+     "request_field": "prompt"
+    },
+    {
+     "name": "negative_prompt",
+     "type": "string",
+     "required": false,
+     "accepted": true,
+     "ignored": false,
+     "applies": "Request body",
+     "request_field": "negative_prompt"
+    },
+    {
+     "name": "frame_rate",
+     "type": "number",
+     "required": false,
+     "accepted": false,
+     "ignored": true,
+     "applies": "Managed by gateway",
+     "request_field": null,
+     "default": 24,
+     "minimum": 1,
+     "maximum": 50
+    },
+    {
+     "name": "seed",
+     "type": "integer",
+     "required": false,
+     "accepted": true,
+     "ignored": false,
+     "applies": "Request body",
+     "request_field": "seed",
+     "minimum": 0
+    },
+    {
+     "name": "image",
+     "type": "string",
+     "required": true,
+     "accepted": true,
+     "ignored": false,
+     "applies": "Request body",
+     "request_field": "input_reference",
+     "description": "Media input: a data URI, an http(s) URL, or a gateway asset or video reference."
+    },
+    {
+     "name": "image_strength",
+     "type": "number",
+     "required": false,
+     "accepted": true,
+     "ignored": false,
+     "applies": "Request body",
+     "request_field": "image_strength",
+     "default": 0.7,
+     "minimum": 0,
+     "maximum": 1
+    },
+    {
+     "name": "seconds",
+     "type": "number",
+     "required": false,
+     "accepted": true,
+     "ignored": false,
+     "applies": "Route option",
+     "request_field": "seconds",
+     "minimum": 1,
+     "description": "Clip length in seconds."
+    },
+    {
+     "name": "size",
+     "type": "string",
+     "required": false,
+     "accepted": true,
+     "ignored": false,
+     "applies": "Route option",
+     "request_field": "size",
+     "description": "WIDTHxHEIGHT, e.g. 960x512."
+    }
+   ],
+   "outputs": [
+    {
+     "name": "video",
+     "media_type": "video/mp4"
+    }
+   ],
+   "engine_binding": "comfyui",
+   "engine_binding_detail": {
+    "backends": [
+     "comfyui"
+    ],
+    "available": true,
+    "status": "configured",
+    "measured": false,
+    "reason_code": "configured"
+   },
+   "availability": {
+    "status": "configured",
+    "available": true,
+    "measured": false,
+    "reason_code": "configured"
+   },
+   "typical_seconds": 56,
+   "aliases": [],
+   "example_request": {
+    "method": "POST",
+    "path": "/v1/videos",
+    "content_type": "application/json",
+    "body": {
+     "model": "video-ltx-2.5-i2v",
+     "prompt": "A small teal fish mark on a clean white card.",
+     "negative_prompt": "value",
+     "seed": 0,
+     "input_reference": "value",
+     "image_strength": 0.7,
+     "seconds": 1.0,
+     "size": "1024x1024"
+    },
+    "form": {},
+    "files": {},
+    "curl": "curl '/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-ltx-2.5-i2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"negative_prompt\":\"value\",\"seed\":0,\"input_reference\":\"value\",\"image_strength\":0.7,\"seconds\":1.0,\"size\":\"1024x1024\"}'",
+    "python": "import os\nimport requests\n\nresponse = requests.request('POST', '/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-ltx-2.5-i2v', 'prompt': 'A small teal fish mark on a clean white card.', 'negative_prompt': 'value', 'seed': 0, 'input_reference': 'value', 'image_strength': 0.7, 'seconds': 1.0, 'size': '1024x1024'}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())",
+    "javascript": "const response = await fetch(\"/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-ltx-2.5-i2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"negative_prompt\": \"value\",\n  \"seed\": 0,\n  \"input_reference\": \"value\",\n  \"image_strength\": 0.7,\n  \"seconds\": 1.0,\n  \"size\": \"1024x1024\"\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());"
+   },
+   "examples": {
+    "curl": "curl '/v1/videos' \\\n  -H 'Authorization: Bearer '$AZIZAM_API_KEY \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"model\":\"video-ltx-2.5-i2v\",\"prompt\":\"A small teal fish mark on a clean white card.\",\"negative_prompt\":\"value\",\"seed\":0,\"input_reference\":\"value\",\"image_strength\":0.7,\"seconds\":1.0,\"size\":\"1024x1024\"}'",
+    "python": "import os\nimport requests\n\nresponse = requests.request('POST', '/v1/videos',\n    headers={'Authorization': f\"Bearer {os.environ.get('AZIZAM_API_KEY') or ''}\"},\n    json={'model': 'video-ltx-2.5-i2v', 'prompt': 'A small teal fish mark on a clean white card.', 'negative_prompt': 'value', 'seed': 0, 'input_reference': 'value', 'image_strength': 0.7, 'seconds': 1.0, 'size': '1024x1024'}, timeout=300)\nresponse.raise_for_status()\nprint(response.json())",
+    "javascript": "const response = await fetch(\"/v1/videos\", {\n  method: \"POST\",\n  headers: { authorization: `Bearer ${process.env.AZIZAM_API_KEY}`, 'content-type': 'application/json' },\n  body: JSON.stringify({\n  \"model\": \"video-ltx-2.5-i2v\",\n  \"prompt\": \"A small teal fish mark on a clean white card.\",\n  \"negative_prompt\": \"value\",\n  \"seed\": 0,\n  \"input_reference\": \"value\",\n  \"image_strength\": 0.7,\n  \"seconds\": 1.0,\n  \"size\": \"1024x1024\"\n}),\n});\nif (!response.ok) throw new Error(await response.text());\nconsole.log(await response.json());"
+   },
+   "native_route": null,
+   "native_passthrough_route": null,
+   "discovery_url": "/gateway/v1/workflows/video.generate.ltx-2.5-i2v",
+   "machine_readable_discovery_url": "/openapi.json#x-azizam-workflows",
+   "recent_jobs_url": "/me/api/media?workflow=video.generate.ltx-2.5-i2v",
+   "try_url": "/ui/try/?workflow=video.generate.ltx-2.5-i2v",
+   "capabilities": [
+    {
+     "intent": "video.generate",
+     "input_modalities": [],
+     "output_modalities": [],
+     "execution": "sync",
+     "streaming": false,
+     "exposure": "default",
+     "trust_tier": "stable",
+     "resource_tier": "interactive",
+     "tags": [],
+     "available": true,
+     "caveats": [],
+     "capability": "video",
+     "capability_title": "Video",
+     "icon_key": "video",
+     "title": "Video.generate.ltx 2.5 I2v",
+     "recommended_model": "Video.generate.ltx 2.5 I2v",
+     "summary": "Video from a prompt or image.",
+     "use_names": [
+      "video.generate.ltx-2.5-i2v"
+     ],
+     "secondary_profile": false,
+     "use_name": "video.generate.ltx-2.5-i2v",
+     "availability": {
+      "available": false,
+      "status": "unknown",
+      "reason": "Not measured yet",
+      "measured": false,
+      "enabled": true,
+      "configured": true,
+      "up": null,
+      "idle_startable": false,
+      "evidence": {
+       "kind": "unknown"
+      }
+     },
+     "workflow": "video.generate.ltx-2.5-i2v"
+    }
+   ],
+   "recent_jobs": [],
+   "recent_receipts": [],
+   "openapi": {
+    "inputs_schema": {
+     "$ref": "#/components/schemas/WorkflowInputs_video_generate_ltx_2_5_i2v"
+    },
+    "route_inputs": [
+     {
+      "name": "seconds",
+      "type": "number",
+      "minimum": 1,
+      "description": "Clip length in seconds.",
+      "in": "body",
+      "field": "seconds"
+     },
+     {
+      "name": "size",
+      "type": "string",
+      "description": "WIDTHxHEIGHT, e.g. 960x512.",
+      "in": "body",
+      "field": "size"
+     }
+    ],
+    "execution": {
+     "recommended": "async",
+     "sync": null,
+     "async": {
+      "kind": "video",
+      "submit": {
+       "method": "POST",
+       "path": "/v1/videos",
+       "content_type": "application/json",
+       "model": "video-ltx-2.5-i2v"
+      },
+      "poll": {
+       "method": "GET",
+       "path": "/v1/videos/{video_id}"
+      },
+      "content": {
+       "method": "GET",
+       "path": "/v1/videos/{video_id}/content"
+      },
+      "cancel": {
+       "method": "DELETE",
+       "path": "/v1/videos/{video_id}"
+      },
+      "statuses": [
+       "queued",
+       "in_progress",
+       "completed",
+       "failed"
+      ],
+      "terminal": [
+       "completed",
+       "failed"
+      ],
+      "fields": {
+       "prompt": {
+        "in": "body",
+        "field": "prompt"
+       },
+       "negative_prompt": {
+        "in": "body",
+        "field": "negative_prompt"
+       },
+       "frame_rate": {
+        "in": "none"
+       },
+       "seed": {
+        "in": "body",
+        "field": "seed"
+       },
+       "image": {
+        "in": "body",
+        "field": "input_reference"
+       },
+       "image_strength": {
+        "in": "body",
+        "field": "image_strength"
+       }
+      }
+     }
+    }
+   },
+   "technical_notes": "LTX-2.5 22B distilled image-to-video with synchronized audio. Selected automatically when /v1/videos gets input_reference with model ltx-2.5, or by model id. Same size and length rules as ltx-2.5 (multiples of 64, max 1280x704, 1-10 s). About 85 s for 5 s at 960x512. image_strength default 0.7. License: LTX-2.x Community License."
+  }
+ ],
+ "groups": [
+  {
+   "capability": "video",
+   "title": "Video",
+   "count": 1,
+   "workflow_ids": [
+    "video.generate.ltx-2.5-i2v"
+   ]
+  }
+ ],
+ "counts": {
+  "workflows": 1,
+  "capabilities": 1
+ },
+ "links": {
+  "self": "/me/api/workflows",
+  "gateway_discovery": "/gateway/v1/workflows",
+  "openapi": "/openapi.json"
+ }
+}

@@ -155,7 +155,7 @@ describe("AppShell accessible names", () => {
       </AppShell>,
     );
     const buttons = await screen.findAllByRole("button", {
-      name: "Gateway status: Status unknown",
+      name: "Gateway status: Not checked yet",
     });
     expect(buttons.length).toBeGreaterThan(0);
     expect(

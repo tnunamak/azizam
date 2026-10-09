@@ -1,3 +1,4 @@
+import { networkFetch } from "./network-error";
 import { accountApi, type AccountSnapshot } from "./account-api";
 import { ApiError, adminFetch } from "./api";
 import type {
@@ -13,7 +14,7 @@ export type * from "./product-api-types";
 export type HomeSnapshot = AccountSnapshot & HomeProjection;
 
 async function memberGet<T>(path: string): Promise<T> {
-  const response = await fetch(path, { credentials: "same-origin" });
+  const response = await networkFetch(path, { credentials: "same-origin" });
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
     throw new ApiError(
@@ -34,7 +35,7 @@ export const productApi = {
     event: SetupEvidenceRequest,
   ): Promise<SetupEvidenceResponse> => {
     const session = await accountApi.session();
-    const response = await fetch("/admin/api/setup-evidence", {
+    const response = await networkFetch("/admin/api/setup-evidence", {
       method: "POST",
       credentials: "same-origin",
       headers: {
