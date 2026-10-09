@@ -1,5 +1,10 @@
 // Capture + computed-style measurement for the Azizam craft comparison.
 // Usage: node measure.mjs <manifest.json> <outdir>   (server must already be running)
+// Env (all optional; defaults reproduce MEASUREMENTS.md):
+//   MEASURE_SURFACES=home,status   only these surfaces
+//   MEASURE_WIDTHS=1440            only these widths
+//   MEASURE_SHOTS=all|viewport|none  screenshots to write (default all)
+// scripts/ui/craft_numbers.py runs this as its measuring step.
 import { createRequire } from "node:module";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
@@ -15,11 +20,15 @@ const seed = JSON.parse(await readFile(manifestPath, "utf8"));
 const base = seed.base_url;
 await mkdir(outDir, { recursive: true });
 
-const surfaces = [
+const allSurfaces = [
   ["home", "/ui/home/"], ["status", "/ui/status/"], ["library", "/ui/library/"],
   ["try", "/ui/try/"], ["people", "/ui/people/"], ["usage", "/ui/usage/"],
   ["workflows", "/ui/workflows/"], ["settings", "/ui/settings/"],
 ];
+const only = (process.env.MEASURE_SURFACES ?? "").split(",").map(s => s.trim()).filter(Boolean);
+const surfaces = only.length ? allSurfaces.filter(([name]) => only.includes(name)) : allSurfaces;
+const widths = (process.env.MEASURE_WIDTHS ?? "1440,390").split(",").map(Number).filter(Boolean);
+const shots = process.env.MEASURE_SHOTS ?? "all";
 
 const NO_ANIM = `*,*::before,*::after{animation-duration:0s!important;animation-delay:0s!important;transition:none!important;caret-color:transparent!important}`;
 
@@ -107,7 +116,7 @@ function measure(scope) {
       fontSize: parseFloat(s.fontSize), fontWeight: Number(s.fontWeight), lineHeight: s.lineHeight === "normal" ? "normal" : parseFloat(s.lineHeight),
       letterSpacing: s.letterSpacing, color: s.color, fontFamily: s.fontFamily.split(",")[0].replace(/["']/g, "").trim(),
       tone: s.color === tokens.foreground ? "foreground" : s.color === tokens.muted ? "muted" : "other",
-      textTransform: s.textTransform, box: box(e),
+      textTransform: s.textTransform, box: box(e), inMark: !!e.closest("[data-slot=person-mark]"),
     });
   }
 
@@ -134,8 +143,11 @@ function measure(scope) {
       if (/\bbg-primary\b/.test(c)) variant = "default"; else if (/\bborder\b/.test(c)) variant = "outline"; else if (/\btext-link\b|underline/.test(c)) variant = "link"; else variant = "unstyled/ghost-like";
     }
     const vmap = { default: "primary", outline: "secondary(outline)", secondary: "secondary", ghost: "ghost", link: "link", destructive: "destructive" };
+    const group = e.closest("[role=tablist], [role=radiogroup], [role=group]");
     controls.push({
       type, variant: variant ? (vmap[variant] || variant) : null, size: e.getAttribute("data-size"),
+      groupHeight: group && visible(group) ? Math.round(group.getBoundingClientRect().height * 10) / 10 : null,
+      pressed: e.hasAttribute("aria-pressed"),
       tag: t, role, text: (e.getAttribute("aria-label") || e.textContent || e.placeholder || "").replace(/\s+/g, " ").trim().slice(0, 40),
       height: Math.round(e.getBoundingClientRect().height * 10) / 10, width: Math.round(e.getBoundingClientRect().width * 10) / 10,
       borderRadius: s.borderRadius, padding: `${s.paddingTop} ${s.paddingRight} ${s.paddingBottom} ${s.paddingLeft}`,
@@ -275,6 +287,21 @@ function measure(scope) {
     };
   }
 
+  // --- rows of the list template: ListRow and table body rows ---
+  const listRows = [];
+  for (const e of roots.flatMap(r => r ? [...r.querySelectorAll("[data-slot=list-row], [data-slot=table] > tbody > tr, [data-slot=setting-row]")] : [])) {
+    if (!visible(e)) continue;
+    listRows.push({ kind: e.getAttribute("data-slot") || "table-row", height: Math.round(e.getBoundingClientRect().height * 10) / 10, text: (e.innerText || "").replace(/\s+/g, " ").trim().slice(0, 40), box: box(e) });
+  }
+  // --- regions outside the colour budget: media and charts (viewport px) ---
+  const masks = [];
+  for (const e of roots.flatMap(r => r ? [...r.querySelectorAll("img, video, canvas, picture, .recharts-wrapper, [data-chart], [data-slot=chart], [data-media]")] : [])) {
+    if (!visible(e)) continue;
+    const r = e.getBoundingClientRect();
+    if (r.bottom <= 0 || r.top >= vh) continue;
+    masks.push({ x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height), tag: e.tagName.toLowerCase() });
+  }
+
   // --- svg ---
   const icons = {};
   for (const e of all) {
@@ -292,12 +319,12 @@ function measure(scope) {
     if (transparent(s.backgroundColor) || !visible(e)) continue;
     bgColors[s.backgroundColor] = (bgColors[s.backgroundColor] || 0) + 1;
   }
-  return { scope, url: location.pathname, tokens, layout, text, controls, controlGroups: groups, cards, rowLists, icons, textColors, bgColors };
+  return { scope, url: location.pathname, tokens, layout, text, controls, controlGroups: groups, cards, rowLists, listRows, masks, icons, textColors, bgColors };
 }
 
 const browser = await chromium.launch({ headless: true });
 try {
-  for (const width of [1440, 390]) {
+  for (const width of widths) {
     const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 900 }, deviceScaleFactor: 1, colorScheme: "light", reducedMotion: "reduce", locale: "en-US", timezoneId: "America/Chicago" });
     await context.clock.setFixedTime(new Date(seed.now * 1000));
     await context.addInitScript(() => localStorage.setItem("theme", "light"));
@@ -326,8 +353,8 @@ try {
         await writeFile(path.join(outDir, `shell-${width}.json`), JSON.stringify(shell, null, 1));
         shellDone = true;
       }
-      await page.screenshot({ path: path.join(outDir, `${name}-${width}.png`), fullPage: false, animations: "disabled" });
-      await page.screenshot({ path: path.join(outDir, `${name}-${width}-full.png`), fullPage: true, animations: "disabled" });
+      if (shots !== "none") await page.screenshot({ path: path.join(outDir, `${name}-${width}.png`), fullPage: false, animations: "disabled" });
+      if (shots === "all") await page.screenshot({ path: path.join(outDir, `${name}-${width}-full.png`), fullPage: true, animations: "disabled" });
     }
     await context.close();
   }
