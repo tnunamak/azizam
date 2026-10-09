@@ -1404,7 +1404,9 @@ async def ensure_target(
     finish. If they do not finish within `timeout_s`, nothing is swapped and
     SwapDeferred is raised; callers turn it into a 503 with Retry-After.
 
-    Returns True on success. Caller turns False into a 503.
+    Returns True on success. Caller turns False into a 503. Raises
+    SwapRecoveryFailed when a failed swap could not be rolled back either
+    (the backend may be down); callers answer 503 backend_recovery_failed.
     """
     ready, _lease = await _ensure_target(backend, model, mmproj, profile, take_lease=False)
     return ready

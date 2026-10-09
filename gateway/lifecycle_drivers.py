@@ -291,6 +291,8 @@ class LifecycleDriver(Protocol):
         fresh set is used (so warnings always fire — safe for isolated tests).
 
         Returns True iff the engine is serving the target after the swap.
+        Raises SwapRecoveryFailed if the swap failed and the driver could not
+        put back the previous activation either.
         ExternalDriver / DockerDriver do NOT implement this (no single slot).
         Callers MUST check supports_swap(driver) before calling this method.
         """
