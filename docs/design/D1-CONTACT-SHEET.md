@@ -1,6 +1,6 @@
 # D1 contact sheet: Home, Status, Library
 
-Captures: `~/.tmp/azizam-redesign/d1-13/` for D1.5b, round 6 (made by `scripts/ui/d1-states-capture`, branch `design/d12-continue`; earlier sets: `d1-12` for D1.5 before the coordinator's decisions, `d1-11` for D1.4, `d1-10` for D1.3, `d1-8` and `d1-9` for D1.2). `try-image` and `try-speech` are populated captures of the Try page; `d1-13/task-flows/` holds six household jobs step by step (`web/e2e/d1-task-flows.mjs`); in D1.5b the picture and speech runs finish in the fixture. One folder per household scenario. File names are `<scenario>_<role>_<surface>_<state>_<theme>_<width>.png`; each has a `_viewport.png` twin (1440×900 or 390×844, not full page, which is what the benchmarks show) and the page text in a `.txt`. A `manifest.json` per folder records console errors and forced states. Every state exists for owner (Sam) and member (Robin), at 390 and 1440 px, in light and dark. Loading, error, empty and expired are forced by request interception and labelled so in the manifest. The fixture's public address is `https://ai.household.example`.
+Captures: `~/.tmp/azizam-redesign/d1-14/` for D1.6, round 7 (made by `scripts/ui/d1-states-capture`, branch `design/d12-continue`; earlier sets: `d1-13` for D1.5b, `d1-12` for D1.5 before the coordinator's decisions, `d1-11` for D1.4, `d1-10` for D1.3, `d1-8` and `d1-9` for D1.2). `try-image` and `try-speech` are populated captures of the Try page; `d1-14/task-flows/` holds six household jobs step by step (`web/e2e/d1-task-flows.mjs`); in D1.5b the picture and speech runs finish in the fixture. One folder per household scenario. File names are `<scenario>_<role>_<surface>_<state>_<theme>_<width>.png`; each has a `_viewport.png` twin (1440×900 or 390×844, not full page, which is what the benchmarks show) and the page text in a `.txt`. A `manifest.json` per folder records console errors and forced states. Every state exists for owner (Sam) and member (Robin), at 390 and 1440 px, in light and dark. Loading, error, empty and expired are forced by request interception and labelled so in the manifest. The fixture's public address is `https://ai.household.example`.
 
 Benchmark ids refer to `benchmarks/BOARD.md`. State words and rules: DESIGN.md, "Status model".
 
@@ -21,7 +21,7 @@ Benchmark ids refer to `benchmarks/BOARD.md`. State words and rules: DESIGN.md, 
 
 | State | What it shows, and the trait it meets |
 |---|---|
-| populated, owner | Verdict "Video degraded". One 896 px column at every width: the card, Capabilities as two columns of rows in one card, then "Engines and providers" folded to one line ("Other engines: 4 ready, 1 turned off." with "Show all"; opened, each engine's name sits over what it serves, with a wide strip, "24/24 h up" and its state). The card: "Video studio is answering with errors", "Inspect Video studio", the fix, Affects ("Video: no other engine serves it." and, on wide screens, "A request from Robin's personal app failed 1h ago."), Last 24 hours ("Degraded since about 1:30 PM", then "Down for 4 hours and degraded for 2 in the last 24 hours, in 3 separate stretches.", the legend, the large strip and clock times 3:30 PM, 9:30 PM, 3:30 AM, 9:30 AM, Now), Failed requests. On a phone: one column, each label above its value: title, Affects, Last 24 hours, the fix, the button, "Show evidence"; no header pill. |
+| populated, owner | Verdict "Video degraded". One 896 px column at every width: the card, Capabilities as two columns of rows in one card, then "Engines and providers" folded to one line ("Other engines: 4 ready, 1 turned off." with "Show all"; opened, each engine's name sits over what it serves, with a wide strip, "24/24 h up" and its state). The card, in one order at every width (D1.6): "Video requests can fail right now"; "What's wrong: Video studio is answering with errors."; "Affects: Video: no other engine serves it." with "A request from Robin's personal app failed 1h ago."; the fix "Check the engine's log and restart it." in 16 px full weight with "Inspect Video studio" under it; then "Last 24 hours": "Degraded since about 1:30 PM", "Down for 4 hours and degraded for 2 in the last 24 hours, in 3 separate stretches. Fully down at times (red); partly working now (amber).", the legend, the 32 px strip and clock times; then "Show details" (failed requests). On a phone each label sits above its value; no header pill. |
 | populated, member | The same verdict as Home; "Your video request failed"; "Your capabilities"; "Model names"; "Your latest requests" (the gateway sends five); the next step follows the failure ("Ask Sam if it does not recover.", not "Check your connection"). |
 | new-member / budget-exhausted, member | Video reads Degraded, "Answering with errors. Requests may fail." Since main 00f10bc the gateway reports "degraded" itself (backend ask 16, done), so member and owner tell one story. |
 | running, owner | "Running now" lists the two requests in progress, with their people. |
@@ -35,12 +35,38 @@ Benchmark ids refer to `benchmarks/BOARD.md`. State words and rules: DESIGN.md, 
 
 | State | What it shows, and the trait it meets |
 |---|---|
-| populated | Title with the count the grid shows; one control row: search, kind (chips with icons, the chosen one tinted), person (the household's marks for "Everyone") and "Filters". Date groups with quiet headers: Today, Yesterday, This week, October. Media only, no captions (Apple Photos, Midjourney 3a.1–3a.2); video and audio carry a duration badge; hover or focus shows a two-line title of whole words, the maker and the day. Phone: one row of kind chips, a Search button and an icon Filters button, three columns. |
-| library-audio | Every clip has the same calm face: the sunken surface, its waveform and a "▷ 0:04" badge that plays it in place on wider screens and opens it on a phone. No per-person colour, no words on the tile. The viewer shows the clip on a plain card: "Voice", its words, a primary play button and the waveform as position. |
+| populated | Title with the count the grid shows; one control row: search, kind (chips with icons, the chosen one tinted), person (the household's marks for "Everyone") and "Filters". One continuous grid; the day rides on the first tile of each day ("Today", "Yesterday", "Monday", "Oct 21"). Media only, no captions (Apple Photos, Midjourney 3a.1–3a.2); video and audio carry their type glyph and length bottom left and a play disc in the middle; with Everyone, each tile carries its maker's mark; hover or focus shows a two-line title of whole words, the maker and the day. Phone: one row of kind chips, a Search button and an icon Filters button, three columns. |
+| library-audio | Every clip has the same calm face: the sunken surface and its waveform under the play disc (which plays it in place on wider screens; a phone opens it), the sound glyph and "0:04" bottom left. No per-person colour, no words on the tile. The viewer shows the clip on a plain card: "Voice", a primary play button and the waveform as position; its words are in the details, once. |
 | library-video / library-detail | The viewer: media on the stage, designed play, position, times and mute; Share first where the browser has a share sheet, then Download, Copy prompt, Receipt; facts with display names. |
 | expired | "20" in the title and "4 no longer stored" beside it, which opens the list; "Their prompts and receipts remain." for owners and members. |
 | loading / error / empty / filtered empty | Square skeletons; a critical Callout with "Try again"; "No creations yet" with "Make an image"; "Clear filters to see more." |
 | running | Calm placeholders for work in progress. |
+
+## Craft diff (D1.6, round 6 judges and the benchmarks)
+
+Round 6 (set-7): win or tie 82 / 71 / 82 / 82%, Status 100% for every judge, Library 71 / 43 / 57 / 57%, craft 6.5 to 7.0 against about 7.9, coherence failed for 3 of 4. "Before" is `d1-13`, "after" is `d1-14`. Each row was checked side by side with the benchmark named in its heading.
+
+### Library: Apple Photos (iOS), Midjourney explore
+| Measured in the benchmark, or judged | `d1-13` | `d1-14` change |
+|---|---|---|
+| Apple Photos' All Photos: one continuous grid, days labelled without breaking rows. All judges: Today and Yesterday rows mostly blank | Date groups; on a 1440 screen Today held 2 tiles and Yesterday 1 in a 6-column grid | One continuous grid; the day sits on the first tile of each day as a small chip ("Today", "Yesterday", "Monday", "Oct 21"). A 390 phone shows 15 tiles in its first screen (d1-13: about 9) |
+| p1, p3, x4: no type, maker or play cue; video and audio look like stills | A duration badge bottom right on video and audio; no maker | Type glyph and length bottom left, a 40 px play disc in the middle of video and audio; with Everyone shown, the maker's initial in their colour top right of every tile |
+| p2, p3: finding one item means opening each; items made by apps read "Image" | "Image" when there is no prompt | Named by type and time: "Picture, Oct 20 at 7:45 PM" (apps' requests never store prompts, a privacy contract) |
+
+### Status: Linear status, incident.io incident
+| Measured in the benchmark, or judged | `d1-13` | `d1-14` change |
+|---|---|---|
+| incident.io: the incident's title, then what to do, then the timeline. p1: headline and card title repeat; the what-to-do line is small grey text under the chart | Verdict "Video degraded", card "Video studio is answering with errors", the fix in 13 px under the title, the chart in the middle of the facts | Verdict names the state; the card names the consequence ("Video requests can fail right now"); "What's wrong" and "Affects" first; then the fix in 16 px full-weight text with its primary button right under it; then "Last 24 hours"; then "Show details". The same order at every width |
+| p2: red Down bars read more severe than "degraded" | No link between red hours and the verdict | "Fully down at times (red); partly working now (amber)." beside the day's story |
+| p3, x4: the timeline is cramped and tiny | 24 px cells, 12 px clock labels | 32 px down and 24 px up cells, 14 px clock labels, the strip under the fix instead of in the middle of the facts |
+
+### Shell, Home and type: Linear, Apple Home
+| Judged | `d1-13` | `d1-14` change |
+|---|---|---|
+| p2: the sidebar uses two nav type sizes | Gateway rows 28 px, 12 px, subtle ink | Every nav row 32 px and 14 px in one ink; the owner's group is set apart by space and its label only |
+| p1, p2, p3, x4: two big cards then a list, for no clear reason | Unlabelled tiles, then a card of rows | "Your usual" over the two tiles ("Start here" for someone new), "Everything else" over the rows |
+| p2: "Connect an app" competes with the page title on a phone | Outline button beside the title | A quiet link ("+ Connect an app") |
+| p3, x4: secondary text small and low-contrast | 13 px; #4F6268 (5.9:1 on the page); subtle #5E7076 (4.8:1) | 14 px (text-sm) and 15 px body; #3D4F55 (7.9:1); subtle #4A5C62 (6.4:1); nav ink 7.6:1 on the chrome. Dark: 9.6:1, 7.7:1, 10.3:1 |
 
 ## D1.5b: the coordinator's decisions
 
@@ -257,12 +283,12 @@ Conclusion: the judges' "no poster" was audio tiles that looked like un-postered
 
 ## Gate results for this set
 
-D1.5b on `design/d12-continue` (main 00f10bc merged). Fixture servers on ports 18940 to 18990; nothing on 5000.
+D1.6 on `design/d12-continue` (includes a5c31a0, the dot's Activity states). Fixture servers on ports 18940 to 18990; nothing on 5000.
 
-- axe WCAG 2 AA: 0 violations over 32 page checks (owner and member; Home, Status, Library, viewer; light and dark; 1440 and 390). Horizontal overflow, clipped text, targets under 44 px at 390, tab stops without visible focus and console errors: 0 (`~/.tmp/azizam-redesign/d1-13-gates`).
-- Impeccable detector on 16 snapshots (`d1-13-snap`): Sonner's toast height transition (recorded exception). On the four viewer snapshots, which opened a picture made in Try: a skipped heading (fixed in 92eade5, Workflow is now an h3) and low contrast on the disabled "Copy prompt" (disabled controls are exempt from WCAG contrast; the picture has no recorded prompt, see the report).
-- Token drift: 0. State palette (`scripts/ui/state_palette.py --fail`): passes.
-- lint.py on a copy of the production data (eleven engines blocked): Home, Library and member Status pass. Owner Status reads 86 words against 60, as in D1.4 (D1.5: 212).
-- Unit tests: vitest 536 in the main config plus all 11 folder configs (198) pass. `tsc` and ESLint: clean.
-- Playwright: the 16 affected spec files passed 178 of 179; the one failure (the command palette in shell.spec, untouched by D1.5b) timed out while the hermetic Python suite was running and passed 11 of 11 alone. Live-data config: 4 of 4.
-- Hermetic Python at b858bbe (with the merge and the fixture changes): 5794 passed, 0 failed. Later commits change `web/` and docs only.
+- axe WCAG 2 AA: 0 violations over 32 page checks (owner and member; Home, Status, Library, viewer; light and dark; 1440 and 390). Horizontal overflow, clipped text, targets under 44 px at 390, tab stops without visible focus and console errors: 0 (`~/.tmp/azizam-redesign/d1-14-gates`).
+- Impeccable detector on 16 snapshots (`d1-14-snap`): only Sonner's toast height transition (recorded exception).
+- Token drift: 0. State palette (`scripts/ui/state_palette.py --fail`): passes; Unknown's text is now 7.0:1 on cards (was 5.2).
+- lint.py on a copy of the production data (eleven engines blocked): Home, Library and member Status pass. Owner Status reads 80 words against 60 (D1.5b: 86). The first crawl flagged "evidence" as a system word once the control showed at every width; it now reads "Show details".
+- Unit tests: vitest 536 in the main config plus all 11 folder configs pass. `tsc` and ESLint: clean.
+- Playwright, main config: the full run passed 601 of 612. Ten failures came from a5c31a0, which renamed Activity's error titles ("Couldn't load requests") without updating its e2e specs; one was a race in a Status spec's helper. Both fixed in 7ea2841; those three spec files then passed 46 of 46. Live-data config: 4 of 4. The task flows caught one regression of mine before the run (audio tiles could not be opened; fixed in 0c5df68 with a unit test).
+- Hermetic Python at b858bbe: 5794 passed, 0 failed. D1.6 changes `web/` and docs only.
