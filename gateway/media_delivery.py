@@ -1,8 +1,7 @@
-"""Per-request media delivery context: stored copy is full, delivery is a choice.
+"""Per-request media delivery context and metadata policy.
 
-The gateway keeps every generated asset with full metadata (ComfyUI ``prompt``
-and ``workflow`` plus a gateway provenance record). Whether the bytes sent to
-a client keep that metadata is decided per request, in this order:
+Generated assets are stored without embedded prompt or workflow metadata.
+The bytes sent to a caller use the metadata choice, in this order:
 
 1. ``extensions["com.azizam.workflow"].metadata`` on the request;
 2. the caller's app profile (``media_metadata.default``);
@@ -11,7 +10,7 @@ a client keep that metadata is decided per request, in this order:
 This module holds the request-scoped context (a ``ContextVar``, so concurrent
 requests and background tasks stay separate) and the two byte operations:
 :func:`attach_provenance` (store side) and :func:`deliver_bytes` (delivery
-side). It never imports ``proxy`` and never touches the stored copy.
+side). It never imports ``proxy``.
 """
 
 from __future__ import annotations

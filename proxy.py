@@ -4421,7 +4421,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
         body_json = json.loads(body)
         # Gateway-level control; engines never see the extensions envelope.
         _begin_media_delivery(auth_context, receipt)
-        if isinstance(body_json, dict) and "extensions" in body_json:
+        if isinstance(body_json, dict):
             metadata_error = _note_media_metadata_body(body_json, request.headers)
             if metadata_error is not None:
                 return metadata_error
@@ -10704,7 +10704,7 @@ async def _submit_video_graph(
                 "created_at": now,
                 "completed_at": None,
                 "expires_at": now + 86400,
-                "prompt": prompt,
+                "prompt": _tracked_video_fields(prompt_id).get("prompt"),
                 "remixed_from_video_id": remixed_from_video_id,
                 "error": None,
                 "size": f"{width}x{height}",
@@ -13320,7 +13320,7 @@ def _note_media_metadata_body(body: Any, headers: Mapping[str, Any] | None = Non
         ctx = media_delivery.current()
         if ctx is not None and isinstance(body, Mapping):
             ctx.prompt_decision = prompt_memory.decide_for_app(
-                ctx.app_id, body, admin_path=ADMIN_STORE.path, request_headers=headers,
+                ctx.app_id, body, admin_path=ADMIN_STORE.path,
             )
             ctx.prompt_text = prompt_memory.prompt_text(body)
     except prompt_memory.PromptModeError as exc:
@@ -21472,6 +21472,12 @@ async def _run_video_media_job(job_id: str) -> None:
                 suffix=suffix,
                 owner_key_hash=_asset_owner_key(auth_context),
             )
+            person_id = prompt_memory.person_for_app(
+                getattr(getattr(auth_context, "identity", None), "app_id", None),
+                admin_path=ADMIN_STORE.path,
+            )
+            if person_id:
+                prompt_memory.move(f"video_{_prompt_id_from_video_id(video_id)}", asset_id, person_id)
             asset = video_media_job_http.completed_asset_from_stored_video(
                 filename=filename,
                 asset_id=asset_id,
