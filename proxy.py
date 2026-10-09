@@ -98,6 +98,7 @@ from gateway import mcp_server
 from gateway import identity_api, identity_scene
 from gateway import likeness as likeness_module
 from gateway import stt_chunking
+from gateway.swap_drain import ServingLease, SwapDeferred, SwapDrain, SwapDrainSettings
 from gateway.alias_policy import (
     AliasPolicyResolutionError,
     ResolvedRequestTarget,
@@ -1126,6 +1127,22 @@ def swap_lock_for(service_id: str) -> asyncio.Lock:
         lock = _service_swap_locks.setdefault(service_id, asyncio.Lock())
     return lock
 
+
+# Requests in flight per swap-capable backend, so a swap can wait for them
+# (gateway/swap_drain.py). Leases are taken and swaps cleared under
+# swap_lock_for(backend). Only active when `llm.swap_drain.enabled` is true.
+_swap_drain = SwapDrain()
+
+
+def _swap_drain_settings() -> SwapDrainSettings:
+    """`llm.swap_drain`, read per call so a config reload applies."""
+    return SwapDrainSettings.from_llm_config(config.get("llm"))
+
+
+def _swap_target_key(model: Optional[str], mmproj: Optional[str], profile: Optional[str]) -> str:
+    """The loaded identity a lease is valid for: what ensure_target compares."""
+    return json.dumps([model or "", mmproj or "", profile or ""])
+
 # Kobold loaded-state cache. Seeded from the backend's state endpoint on first read
 # after startup, then updated authoritatively after every swap. TTL guards against
 # the server being restarted out-of-band (e.g. manual systemctl restart).
@@ -1385,6 +1402,11 @@ async def ensure_target(
     `profile` is an optional named engine profile selected by model data. The
     lifecycle driver owns its meaning and rejects unknown names.
 
+    With `llm.swap_drain.enabled`, a swap that would interrupt the backend
+    first waits (still under the lock) for the requests it is serving to
+    finish. If they do not finish within `timeout_s`, nothing is swapped and
+    SwapDeferred is raised; callers turn it into a 503 with Retry-After.
+
     Returns True on success. Caller turns False into a 503.
     """
     from gateway.lifecycle_drivers import driver_for_service, supports_swap, SwapContext
@@ -1423,19 +1445,80 @@ async def ensure_target(
     # The driver does the already-loaded short-circuit and pin-loaded skip from
     # SwapContext — no engine literal appears here.
     async with swap_lock_for(backend):
-        return await driver.swap(
-            bcfg,
-            activation,
-            ctx=SwapContext(
-                loaded_model=await _currently_loaded_model_for(backend),
-                target_model=model,
-                loaded_aux=_currently_loaded_aux_for(backend),
-                target_aux=mmproj or None,
-                pin_loaded=bool(bcfg.get("pin_loaded_model", PIN_LOADED_MODEL)),
-                target_profile=profile,
-            ),
-            warned_models=_pin_mismatch_warned,
+        ctx = SwapContext(
+            loaded_model=await _currently_loaded_model_for(backend),
+            target_model=model,
+            loaded_aux=_currently_loaded_aux_for(backend),
+            target_aux=mmproj or None,
+            pin_loaded=bool(bcfg.get("pin_loaded_model", PIN_LOADED_MODEL)),
+            target_profile=profile,
         )
+        drain = _swap_drain_settings()
+        swapping = drain.enabled and driver.swap_required(bcfg, activation, ctx)
+        if swapping:
+            # Raises SwapDeferred (lock released, nothing changed) on timeout.
+            await _swap_drain.clear_for_swap(backend, drain)
+        try:
+            ready = await driver.swap(
+                bcfg,
+                activation,
+                ctx=ctx,
+                warned_models=_pin_mismatch_warned,
+            )
+        finally:
+            if swapping:
+                # The loaded-state cache predates the swap; re-probe on next read.
+                _kobold_state["ts"] = 0.0
+        if ready and drain.enabled:
+            _swap_drain.mark_ready(backend, _swap_target_key(model, mmproj, profile))
+        return ready
+
+
+async def _ensure_target_leased(
+    backend: str,
+    activation: "LocalModelActivation",
+) -> tuple[bool, Optional[ServingLease]]:
+    """ensure_target for one upstream forward, plus a lease that holds off swaps.
+
+    Returns (ready, lease). The lease is None when `llm.swap_drain` is off.
+    The caller must release the lease after the final upstream byte, on error
+    and on cancellation (ServingLease.hand_off does this for a stream).
+
+    The lease is granted only for the target this request made ready. If
+    another request swapped the backend between our ensure_target and our
+    lease, make the target ready again (bounded). Raises SwapDeferred.
+    """
+    if not _swap_drain_settings().enabled:
+        ready = await ensure_target(backend, activation.model, activation.mmproj, profile=activation.profile)
+        return ready, None
+    target = _swap_target_key(activation.model, activation.mmproj, activation.profile)
+    for _attempt in range(3):
+        if not await ensure_target(backend, activation.model, activation.mmproj, profile=activation.profile):
+            return False, None
+        async with swap_lock_for(backend):
+            lease = _swap_drain.lease(backend, target)
+        if lease is not None:
+            return True, lease
+    raise SwapDeferred(
+        backend,
+        in_flight=_swap_drain.in_flight(backend, max_age_s=_swap_drain_settings().lease_max_age_s),
+        waited_s=0.0,
+    )
+
+
+def _swap_deferred_response(requested_model: str, deferred: SwapDeferred) -> Response:
+    response = openai_error_response(
+        (
+            f"Backend {deferred.backend!r} is busy serving its loaded model "
+            f"({deferred.in_flight} request(s) in flight), so it was not switched to serve "
+            f"{requested_model!r}. Retry after {deferred.retry_after_s} seconds."
+        ),
+        status_code=503,
+        error_type="service_unavailable",
+        code="model_switch_deferred",
+    )
+    response.headers["Retry-After"] = str(deferred.retry_after_s)
+    return response
 
 
 # =============================================================================
@@ -3242,12 +3325,15 @@ async def _ensure_litellm_local_backend_target(
     availability = _service_availability_response(backend, service_label=backend)
     if availability is not None:
         return availability
-    ready = await ensure_target(
-        backend,
-        target_model,
-        target_mmproj,
-        profile=target_profile,
-    )
+    try:
+        ready = await ensure_target(
+            backend,
+            target_model,
+            target_mmproj,
+            profile=target_profile,
+        )
+    except SwapDeferred as deferred:
+        return _swap_deferred_response(requested_model, deferred)
     if ready:
         return None
     return _litellm_activation_failure_response(
@@ -26624,6 +26710,14 @@ async def _forward_current_loaded_openai_request(
             extra={"body_bytes": request_body_byte_count(execution_body)},
         )
 
+        # "current" serves whatever is loaded, but a swap would still cut it
+        # off: hold a lease around the forward. The lock makes it queue behind
+        # a pending swap instead of starving it.
+        lease: Optional[ServingLease] = None
+        if _swap_drain_settings().enabled:
+            async with swap_lock_for(target.backend):
+                lease = _swap_drain.lease(target.backend, None)
+
         cancellation_span = _OuterCancellationSpan(
             request_id or new_request_id(), receive=request.receive
         )
@@ -26701,8 +26795,9 @@ async def _forward_current_loaded_openai_request(
                         await client.aclose()
                         await cancellation_span.aclose()
 
+                stream = owner.handoff_stream(stream_response())
                 return StreamingResponse(
-                    owner.handoff_stream(stream_response()),
+                    lease.hand_off(stream) if lease is not None else stream,
                     status_code=resp.status_code,
                     headers=response_headers,
                     media_type=content_type,
@@ -26776,6 +26871,9 @@ async def _forward_current_loaded_openai_request(
             )
             response.headers["Retry-After"] = "10"
             return response
+        finally:
+            if lease is not None and not lease.handed_off:
+                lease.release()
 
 
 async def _forward_litellm_proxy_request(
@@ -27380,19 +27478,40 @@ async def _forward_internal_litellm_local_chat_completions(
     availability = _service_availability_response(backend, service_label=backend)
     if availability is not None:
         return availability
-    ready = await ensure_target(
-        backend,
-        activation.model,
-        activation.mmproj,
-        profile=activation.profile,
-    )
+    # This hop forwards to the engine, so it (not the outer route) holds the
+    # serving lease: a swap waits for it, and it never waits on a swap that
+    # waits for it (it takes the lease only after its own ensure_target).
+    try:
+        ready, lease = await _ensure_target_leased(backend, activation)
+    except SwapDeferred as deferred:
+        return _swap_deferred_response(str(body.get("model") or target_model), deferred)
     if not ready:
         return _litellm_activation_failure_response(
             requested_model=str(body.get("model") or target_model),
             backend=backend,
             target_model=activation.model,
         )
+    try:
+        return await _forward_internal_litellm_local_upstream(
+            request, backend=backend, upstream_base=upstream_base,
+            body=body, activation=activation, target_model=target_model, lease=lease,
+        )
+    finally:
+        if lease is not None and not lease.handed_off:
+            lease.release()
 
+
+async def _forward_internal_litellm_local_upstream(
+    request: Request,
+    *,
+    backend: str,
+    upstream_base: str,
+    body: dict,
+    activation: "LocalModelActivation",
+    target_model: str,
+    lease: Optional[ServingLease],
+) -> Response | StreamingResponse:
+    """Forward one ready, leased request to the engine. A stream takes the lease."""
     body["model"] = activation.backend_model or target_model
     execution_request = LlmExecutionRequest(
         method="POST",
@@ -27501,8 +27620,10 @@ async def _forward_internal_litellm_local_chat_completions(
                     if cancellation_handle is not None:
                         cancellation_handle.release()
 
+            # The stream outlives this handler: it releases the lease after
+            # the final upstream byte, on error, or on cancellation.
             return StreamingResponse(
-                stream_response(),
+                lease.hand_off(stream_response()) if lease is not None else stream_response(),
                 status_code=resp.status_code,
                 headers=response_headers,
                 media_type=content_type,

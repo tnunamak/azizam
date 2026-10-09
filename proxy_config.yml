@@ -3,6 +3,14 @@ proxy:
   port: 5000
 llm:
   pin_loaded_model: false
+  # Swap drain (gateway/swap_drain.py). When enabled, a model/profile swap on a
+  # swap-capable backend waits for the requests it is serving to finish, up to
+  # timeout_s; if they do not finish, the swap is refused and the request that
+  # wanted it gets 503 + Retry-After. Off by default: a swap restarts at once.
+  # swap_drain:
+  #   enabled: true
+  #   timeout_s: 120          # longest a swap waits for requests in flight
+  #   lease_max_age_s: 1800   # a request counted longer than this no longer blocks swaps
 backends:
   azizam:
     name: Azizam (self)
