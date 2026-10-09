@@ -279,25 +279,40 @@ describe("the health story matches the strip (D1.3, D1.4)", () => {
   });
 });
 
-describe("a gateway 'busy' is not a queue unless a check says so (red team round 2, P0)", () => {
+describe("busy and degraded are the gateway's own words since main 00f10bc (red team round 2, P0)", () => {
   const end = 1_800_000_000;
   const busy = {
     ...chat,
     status: "busy",
     evidence: { source: "status", observed_at_s: end - 60 },
   };
-  it("tells a member only what busy and degraded share", () => {
+  it("reads a gateway 'busy' as Busy: degraded is no longer folded into it", () => {
     const view = capabilityView(busy, { now: end });
-    expect(view.state).toBe("degraded");
-    expect(view.detail).toBe("May be slow or fail right now.");
-  });
-  it("says Busy when an engine check itself says busy (owner evidence)", () => {
-    const view = capabilityView(busy, {
-      now: end,
-      engines: [engine({ observation: "busy", tone: "ok" })],
-    });
     expect(view.state).toBe("busy");
     expect(view.detail).toBe("Working on other requests.");
+  });
+  it("reads a gateway 'degraded' as Degraded, even though it is marked available", () => {
+    const view = capabilityView(
+      { ...busy, status: "degraded", available: true },
+      { now: end },
+    );
+    expect(view.state).toBe("degraded");
+    expect(view.detail).toBe("Answering with errors. Requests may fail.");
+  });
+  it("says when requests have failed since the last success", () => {
+    const view = capabilityView(
+      { ...busy, status: "degraded", available: true },
+      {
+        now: end,
+        requests: [
+          { capability: "chat", status: "failed", at: end - 120 },
+        ],
+      },
+    );
+    expect(view.state).toBe("degraded");
+    expect(view.detail).toBe(
+      "Answering with errors; requests have failed since the last success.",
+    );
   });
   it("matches the owner's Degraded when the engine check says degraded", () => {
     const view = capabilityView(busy, {
