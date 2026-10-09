@@ -437,7 +437,9 @@ function AudioTile({
           />
           <button
             type="button"
-            className={mediaBadgeButton()}
+            // A phone opens the clip in the viewer instead: a 44 px play
+            // target would outweigh a 125 px tile (Apple Photos plays on open).
+            className={cn(mediaBadgeButton(), "max-sm:hidden")}
             aria-label={label}
             onClick={async (event) => {
               event.stopPropagation();
@@ -467,6 +469,9 @@ function AudioTile({
             {isPlaying ? <Pause aria-hidden /> : <Play aria-hidden />}
             {durationText ?? "Audio"}
           </button>
+          <MediaBadge icon={Play} className="sm:hidden">
+            {durationText ?? "Audio"}
+          </MediaBadge>
         </>
       }
     />

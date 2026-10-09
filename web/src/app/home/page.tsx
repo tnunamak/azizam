@@ -1036,7 +1036,8 @@ function CreationMedia({
             />
             <button
               type="button"
-              className={mediaBadgeButton(true)}
+              // On a phone the tile opens the clip in Library instead.
+              className={cn(mediaBadgeButton(true), "max-sm:hidden")}
               aria-label={`${isPlaying ? "Pause" : "Play"} ${title}`}
               onClick={async () => {
                 const audio = audioRef.current;
@@ -1073,6 +1074,7 @@ function CreationMedia({
                 <Play aria-hidden="true" />
               )}
             </button>
+            <MediaBadge icon={Play} className="sm:hidden" />
           </>
         }
       />
