@@ -34,7 +34,7 @@ export function Segmented<T extends string>({
       role="group"
       aria-label={label}
       className={cn(
-        "bg-muted inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-control p-1",
+        "bg-muted rounded-control inline-flex max-w-full items-center gap-0.5 overflow-x-auto p-1",
         className,
       )}
     >
@@ -48,7 +48,13 @@ export function Segmented<T extends string>({
             onClick={() => onChange(option.value)}
             className="text-muted-foreground hover:text-foreground aria-pressed:bg-card aria-pressed:text-foreground aria-pressed:border-border flex min-h-8 shrink-0 items-center gap-1.5 rounded-sm border border-transparent px-3 text-sm font-medium whitespace-nowrap transition-colors max-sm:min-h-11 max-sm:min-w-11 max-sm:flex-1 max-sm:justify-center"
           >
-            {Icon ? <Icon aria-hidden="true" className="size-4" /> : null}
+            {/* No room for icons in four phone segments; the words carry it. */}
+            {Icon ? (
+              <Icon
+                aria-hidden="true"
+                className="size-4 shrink-0 max-sm:hidden"
+              />
+            ) : null}
             {option.label}
             {typeof option.count === "number" ? (
               <span className="figures text-muted-foreground text-xs">
