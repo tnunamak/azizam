@@ -447,7 +447,7 @@ class CreateLongVideoTests(H3RouteBase):
             self.assertEqual(body["model"], model)
             self.assertEqual(body["segments"], 3)
             self.assertAlmostEqual(body["total_seconds"], 13, delta=0.9)
-            self.assertEqual(body["prompt"], "wide shot of a harbor\nclose on a fisherman\nthe boat leaves")
+            self.assertIsNone(body["prompt"])
             self.assertEqual(body["size"], "960x544")
             g = self.graph
             self.assertEqual([g[f"s{i}_cond"]["inputs"]["prompt"] for i in range(3)],
