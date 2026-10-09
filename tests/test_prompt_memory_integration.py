@@ -69,7 +69,9 @@ def test_pruner_removes_interrupted_payload_temp_file(tmp_path):
     payload_dir.mkdir(parents=True)
     file = payload_dir / "mj_interrupted.json.tmp"
     file.write_text('{"prompt":"orphan-sentinel"}', encoding="utf-8")
-    with patch.object(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", payload_dir), patch.object(media_jobs, "DB_PATH", tmp_path / "data" / "jobs.db"):
+    jobs_db = tmp_path / "data" / "jobs.db"
+    media_jobs.init_db(jobs_db)
+    with patch.object(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", payload_dir), patch.object(media_jobs, "DB_PATH", jobs_db):
         assert proxy._prune_orphaned_media_job_payloads() == 1
     assert not file.exists()
 

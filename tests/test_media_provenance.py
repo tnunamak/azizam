@@ -468,10 +468,10 @@ class ImageRouteTests(unittest.IsolatedAsyncioTestCase):
         ))
         cases = [
             (none_profile, None, False),
-            (none_profile, {NS: {"metadata": "full"}}, False),
-            (full_profile, None, False),
+            (none_profile, {NS: {"metadata": "full"}}, True),
+            (full_profile, None, True),
             (full_profile, {NS: {"metadata": "none"}}, False),
-            (proxy.NO_AUTH_CONTEXT, None, False),
+            (proxy.NO_AUTH_CONTEXT, None, True),
         ]
         for auth, extensions, expect_full in cases:
             with self.subTest(profile=auth.identity.name if auth.identity else "no-auth", ext=extensions):
@@ -690,7 +690,7 @@ class SpeechRouteTests(unittest.TestCase):
     def test_full_keeps_engine_bytes_and_none_strips(self) -> None:
         full = self._speak(extensions={NS: {"metadata": "full"}})
         self.assertEqual(full.status_code, 200, full.text)
-        self.assertNotIn("engine-generated-note", self._tags(full.content))
+        self.assertEqual(full.content, self.wav)
         none = self._speak(extensions={NS: {"metadata": "none"}})
         self.assertEqual(none.status_code, 200, none.text)
         self.assertNotIn("engine-generated-note", self._tags(none.content))
@@ -774,7 +774,7 @@ class AudioGenerateRouteTests(unittest.TestCase):
         self.assertEqual(full.status_code, 200, full.text)
         blob = self._tags(full.content)
         for needle in ("KSampler", "azizam_provenance", "audio.generate.fx"):
-            self.assertNotIn(needle, blob)
+            self.assertIn(needle, blob)
         none = self._generate(extensions={NS: {"metadata": "none"}})
         self.assertEqual(none.status_code, 200, none.text)
         left = self._tags(none.content)
@@ -897,7 +897,7 @@ class NativeWorkflowRunTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(AvDeliveryTests()._stream_md5(explicit.body, ".mp4"), AvDeliveryTests()._stream_md5(raw, ".mp4"))
         up, _ = await self._run({self.FIELD: "full"}, none_auth)
         self.assertEqual(up.status_code, 200, up.body)
-        self.assertNotIn("azizam_provenance", self._blob(up.body))
+        self.assertIn("azizam_provenance", self._blob(up.body))
         self.assertNotIn("vividfish_provenance", self._blob(up.body))
 
     async def test_bad_value_is_a_400(self) -> None:

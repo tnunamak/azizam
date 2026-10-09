@@ -10,9 +10,9 @@ def test_asset_prompt_is_maker_only_and_expires(tmp_path):
     prompt_memory.put("img_abc", "person-a", "a private blue dragon", kept_until=None, path=db)
     assert prompt_memory.get("img_abc", "person-a", path=db)["prompt_text"] == "a private blue dragon"
     assert prompt_memory.get("img_abc", "person-b", path=db) is None
-    prompt_memory.put("img_expired", "person-a", "expired text", kept_until=int(time.time()) - 1, path=db)
+    assert not prompt_memory.put("img_expired", "person-a", "expired text", kept_until=int(time.time()) - 1, path=db)
     assert prompt_memory.get("img_expired", "person-a", path=db) is None
-    assert prompt_memory.prune(path=db) == 1
+    assert prompt_memory.prune(path=db) == 0
 
 
 def test_delete_person_preserves_other_prompts_and_media(tmp_path):
@@ -87,6 +87,10 @@ def test_anonymous_direct_output_keeps_its_profile_mode_but_forget_is_clean():
         request_body={"extensions": {"com.azizam.prompts": {"mode": "forget"}}},
     )
     assert context.mode == "none"
+    context.prompt_decision = prompt_memory.decide(
+        person_id=None, member=None, household={"never_keep": True}, request_body={"prompt": "hello"},
+    )
+    assert context.mode == "none"
 
 
 def test_in_flight_decision_cannot_write_after_owner_kill_switch(tmp_path):
@@ -126,7 +130,3 @@ def test_video_prompt_move_keeps_finished_asset_workflow_metadata(tmp_path):
     assert prompt_memory.move("video_pending", "vid_finished", "person-a", path=db)
     assert prompt_memory.get("video_pending", "person-a", path=db) is None
     assert prompt_memory.get("vid_finished", "person-a", path=db)["metadata"] == {"workflow": "private graph"}
-    context.prompt_decision = prompt_memory.decide(
-        person_id=None, member=None, household={"never_keep": True}, request_body={"prompt": "hello"},
-    )
-    assert context.mode == "none"
