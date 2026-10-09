@@ -208,6 +208,7 @@ export function UptimeBar({
   className,
   showAxis = true,
   showLegend = false,
+  hourByHour = true,
   size = "sm",
 }: {
   series: SeriesPoint[] | undefined;
@@ -219,6 +220,11 @@ export function UptimeBar({
   showAxis?: boolean;
   /** Name each colour once, so the last amber or red cell explains itself. */
   showLegend?: boolean;
+  /**
+   * The hour-by-hour text list. Off in the engine table, whose rows open
+   * the engine's sheet (D1.5: the row grew a second line).
+   */
+  hourByHour?: boolean;
   /**
    * "lg" on a problem card: taller cells and a 14 px legend (D1.4: the
    * strip and legend were small and fussy); "sm" in the engine table.
@@ -312,7 +318,8 @@ export function UptimeBar({
         </div>
       ) : null}
       {large ? null : legend}
-      {enabled &&
+      {hourByHour &&
+      enabled &&
       slots.some((slot) => slot.value !== null && slot.value < 1) ? (
         <HourByHour slots={slots} />
       ) : null}

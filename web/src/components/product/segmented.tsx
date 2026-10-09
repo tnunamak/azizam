@@ -12,9 +12,11 @@ export interface SegmentOption<T extends string> {
 }
 
 /**
- * The product's one segment pattern (ban-list 21): a sunken track with the
- * selected segment raised on a card surface. Each segment is a pressed button,
- * so the choice reads without colour.
+ * The product's one segment pattern (ban-list 21). D1.5: the sunken track
+ * with a raised white segment read as a component kit. Segments are now
+ * quiet chips with no track; the chosen one takes the selection tint and
+ * semibold weight, the same "you are here" as the sidebar, so the choice
+ * reads without colour too. Each segment is a pressed button.
  */
 export function Segmented<T extends string>({
   label,
@@ -34,7 +36,7 @@ export function Segmented<T extends string>({
       role="group"
       aria-label={label}
       className={cn(
-        "bg-muted rounded-control inline-flex max-w-full items-center gap-0.5 overflow-x-auto p-1",
+        "inline-flex max-w-full items-center gap-1 overflow-x-auto",
         className,
       )}
     >
@@ -46,7 +48,7 @@ export function Segmented<T extends string>({
             type="button"
             aria-pressed={value === option.value}
             onClick={() => onChange(option.value)}
-            className="text-muted-foreground hover:text-foreground aria-pressed:bg-card aria-pressed:text-foreground aria-pressed:border-border flex min-h-8 shrink-0 items-center gap-1.5 rounded-sm border border-transparent px-3 text-sm font-medium whitespace-nowrap transition-colors max-sm:min-h-11 max-sm:min-w-11 max-sm:flex-1 max-sm:justify-center"
+            className="text-muted-foreground hover:bg-muted hover:text-foreground aria-pressed:bg-accent aria-pressed:text-accent-foreground rounded-control flex min-h-9 shrink-0 items-center gap-1.5 px-3 text-sm font-medium whitespace-nowrap transition-colors duration-(--motion-fast) aria-pressed:font-semibold max-sm:min-h-11 max-sm:min-w-11 max-sm:flex-1 max-sm:justify-center max-sm:px-2"
           >
             {/* No room for icons in four phone segments; the words carry it. */}
             {Icon ? (

@@ -877,6 +877,7 @@ function EngineRow({
             end={end}
             label={engine.shortName}
             showAxis={false}
+            hourByHour={false}
           />
         ) : null}
       </td>
@@ -933,7 +934,7 @@ function ProviderRow({ provider }: { provider: ProviderStatusView }) {
               <span
                 role="img"
                 aria-label={`${Math.round(share * 100)}% of this month’s cap used`}
-                className="bg-muted relative h-1.5 w-24 shrink-0 overflow-hidden rounded-full"
+                className="bg-muted relative h-1.5 w-16 shrink-0 overflow-hidden rounded-full"
               >
                 <span
                   className={cn(
@@ -948,9 +949,9 @@ function ProviderRow({ provider }: { provider: ProviderStatusView }) {
                 />
               </span>
             ) : null}
-            <span className="figures">
+            <span className="figures whitespace-nowrap">
               {spent}
-              {typeof cap === "number" ? ` of USD ${cap.toFixed(2)}` : ""} this
+              {typeof cap === "number" ? ` of ${cap.toFixed(2)}` : ""} this
               month
             </span>
           </span>
