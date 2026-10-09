@@ -360,7 +360,8 @@ describe("LibraryPage batch J provenance", () => {
     const playButton = await screen.findByRole("button", {
       name: `Play ${audioAsset.prompt}`,
     });
-    expect(screen.getByText("2:05")).toBeVisible();
+    // The play badge carries the length (a phone shows a plain badge twin).
+    expect(playButton).toHaveTextContent("2:05");
     expect(
       screen.queryByLabelText(`Play ${audioAsset.prompt}`, {
         selector: "audio",

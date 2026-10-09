@@ -285,7 +285,8 @@ describe("Home and Library polish", () => {
     expect(audio?.closest("button")).toBeNull();
     expect(container.querySelector("video")).not.toBeNull();
     expect(screen.getByText("0:06")).toBeVisible();
-    expect(screen.getByText("0:12")).toBeVisible();
+    // The play badge carries the length (a phone shows a plain badge twin).
+    expect(play).toHaveTextContent("0:12");
     const playAudio = vi
       .spyOn(HTMLMediaElement.prototype, "play")
       .mockImplementation(function (this: HTMLMediaElement) {
