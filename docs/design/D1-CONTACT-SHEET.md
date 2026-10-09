@@ -1,6 +1,6 @@
 # D1.2 contact sheet: Home, Status, Library
 
-Captures: `~/.tmp/azizam-redesign/d1-9/` (made by `scripts/ui/d1-states-capture`, branch `design/d12-continue`; the earlier D1.2 set is `d1-8`). One folder per household scenario. File names are `<scenario>_<role>_<surface>_<state>_<theme>_<width>.png`; each has a `_viewport.png` twin (1440×900 or 390×844, not full page, which is what the benchmarks show) and the page text in a `.txt`. A `manifest.json` per folder records console errors and forced states. Every state exists for owner (Sam) and member (Robin), at 390 and 1440 px, in light and dark. Loading, error, empty and expired are forced by request interception and labelled so in the manifest. The fixture's public address is `https://ai.household.example`.
+Captures: `~/.tmp/azizam-redesign/d1-10/` for D1.3, round 4 (made by `scripts/ui/d1-states-capture`, branch `design/d12-continue`; the D1.2 sets are `d1-8` and `d1-9`). One folder per household scenario. File names are `<scenario>_<role>_<surface>_<state>_<theme>_<width>.png`; each has a `_viewport.png` twin (1440×900 or 390×844, not full page, which is what the benchmarks show) and the page text in a `.txt`. A `manifest.json` per folder records console errors and forced states. Every state exists for owner (Sam) and member (Robin), at 390 and 1440 px, in light and dark. Loading, error, empty and expired are forced by request interception and labelled so in the manifest. The fixture's public address is `https://ai.household.example`.
 
 Benchmark ids refer to `benchmarks/BOARD.md`. State words and rules: DESIGN.md, "Status model".
 
@@ -8,19 +8,19 @@ Benchmark ids refer to `benchmarks/BOARD.md`. State words and rules: DESIGN.md, 
 
 | State | What it shows, and the trait it meets |
 |---|---|
-| populated, member | Title, then the verdict label "Video degraded" with "Checked just now" (Linear 2a.1). "Make something": every task as one 56 px row in one panel (two columns on desktop). Each row leads with a 40 px square of what this person last made with it (Robin's garden picture, the first frame of her video, a voice cover in her amber) or the task's tinted icon when there is nothing yet; the right side says "Used 39m ago" or the state (Video: Degraded). No chevrons. "Recent" media, audio as covers (Midjourney 3a.2). "Connect an app" in the header on phones, the right-hand panel on desktop. |
+| populated, member | Title, then one 14 px line: "Video degraded", "Checked just now" (Linear 2a.1, small). "Make something": every task as one row with its tinted icon in one panel (two columns on desktop); only Video carries a state ("Degraded"). "Recent": four of Robin's creations in a strip, on the first phone screen (Apple Home's cameras). "Connect an app" in the header on phones, the right-hand panel on desktop. |
 | populated, owner | The same Home with "Open Status" beside the verdict. |
 | new-member | No app has made a request, so the panel opens on the app chooser with real marks (Open WebUI, LibreChat, SillyTavern, Cursor, Codex, Claude Code, Another app). On a phone it still comes after the tasks. Persian name in the person mark. |
 | budget-exhausted, member | "Paid models were paused for you": the household reached its monthly limit, when it resets, and "Ask Sam if you need them sooner" (the owner's name now comes from the gateway; "the gateway owner" when it has none). Chat reads Degraded: "Some models are paused: a spending limit was reached." |
 | budget-exhausted, owner | "A spending limit refused paid requests" with the gateway's sentence, the reset and "Open Status". |
 | stale-health | Voice, Transcription, Music and Sound effects read Unknown; the verdict counts them ("5 of 7 capabilities need attention"); nothing says Ready on old evidence. |
-| loading / error / empty / signed-out | The real header and seven 56 px row skeletons in the task panel (D1.2 replaced D1's tile-grid skeleton); a critical Callout with "Try again"; "Nothing is set up yet"; "Sign in to use your AI" as an info Callout with one button. |
+| loading / error / empty / signed-out | The real header, a verdict-line placeholder and seven row skeletons in the task panel; a critical Callout with "Try again"; "Nothing is set up yet"; "Sign in to use your AI" as an info Callout with one button. |
 
 ## Status
 
 | State | What it shows, and the trait it meets |
 |---|---|
-| populated, owner | Verdict "Video degraded" with check time. One card titled with the fault, "Video studio is answering with errors", with "Inspect Video studio" beside it, the fix, then Affects, Started (between 1:30 and 2:30 PM), "16 of 24 checked hours up, last 24 h" with the hourly bar and its legend, and "1 of the latest 50 requests, from Robin" with its receipt (incident.io 2c.1–2c.3, Linear 2a.3). Capabilities as one row of chips, engines and providers as one line. One 896 px reading column. |
+| populated, owner | Verdict "Video degraded" with check time. One card titled with the fault, "Video studio is answering with errors", with "Inspect Video studio", the fix, then Affects ("Video: no other engine serves it." and "A request from Robin's personal app failed 1h ago.") and Last 24 hours ("Down 4 and degraded 2 of the last 24 hours, in 3 spells; failing again since about 1:30 PM"); evidence follows: the hourly bar with its legend and "1 of the latest 50 requests · Open receipt" (incident.io 2c.1–2c.3, Linear 2a.3). At 1440 the card is beside a column with Capabilities as rows and "4 other engines are ready and 1 is turned off. 1 remote provider is set up." On a phone the instruction comes before the button and the evidence folds behind "Show evidence". |
 | populated, member | The same verdict as Home; "Your video request failed" with what state Video is in now; "Your capabilities"; "Model names"; "Your recent requests" with Failed and In progress. |
 | running, owner | "Running now" lists the two requests in progress, with their people. |
 | budget-exhausted, owner | Two cards: Video studio, and "The Everyone plan reached its spending limit" with limits (USD 1.00 a day, USD 8.00 a month), spend not reported by the gateway, the gateway's sentence, both resets, who was refused, and "Edit the Everyone plan". |
@@ -33,12 +33,44 @@ Benchmark ids refer to `benchmarks/BOARD.md`. State words and rules: DESIGN.md, 
 
 | State | What it shows, and the trait it meets |
 |---|---|
-| populated | Title with count, search on the right; kind (segmented), person and "Filters" at one height (on a phone the kinds fill the width and person, Filters and Clear filters share the line below). "This week", "Last week", "Week of …" groups. Square tiles with the maker's person mark (Midjourney 3a.1–3a.2, Suno 3b.1). The video's poster is folded into the video, so the count is 24. |
-| library-audio | Audio tiles are covers on deep water washed with the maker's hue (olive for Robin's amber, plum for Aziz's rose, teal for Sam): "Voice", the clip's words, its real waveform in the maker's hue, its length, and a play disc in that hue with ink on it. The viewer shows the same cover at full size with the waveform as position. |
+| populated | Title with count; one control row: search, kind (segmented, with icons), person (the household's marks for "Everyone") and "Filters". On a phone: search and Filters only, kind and person inside Filters. One grid, newest first. Square tiles with the maker's person mark and a caption: the subject ("Golden retriever asleep …") and the day ("Monday") (Midjourney 3a.1–3a.2, Suno 3b.1, Apple Music's title under the artwork). The video's poster is folded into the video, so the count is 24. |
+| library-audio | Audio tiles are covers on deep water washed with the maker's hue (olive for Robin's amber, plum for Aziz's rose, teal for Sam): "Voice", the clip's words as whole sentences or whole words to a clause end ("On Saturday we will take the train to the coast, walk by the harbor…"), its real waveform in the maker's hue, its length, and a play disc in that hue with ink on it; the caption is the day. The viewer shows the same cover at full size with the waveform as position. |
 | library-video / library-detail | The viewer: media on the stage, designed play, position, times and mute; title, maker and age; Download, Copy prompt, Receipt; facts with display names (LTX Video), size, length, made in, charge. |
 | expired | Gone files fold into one line; owners are warned before pictures expire. |
 | loading / error / empty / filtered empty | Square skeletons; a critical Callout with "Try again"; "No creations yet" with "Make an image"; "Clear filters to see more." |
 | running | Calm placeholders for work in progress. |
+
+## Craft diff (D1.3, round 3 judges and the benchmarks)
+
+Round 3 (set-4): win or tie 82 / 65 / 82 / 71%, AI-made 0 / 3 / 0 / 0 of 17, craft 6.8 to 7.0 against 7.7 to 8.4 (still failing for every judge). Each change below answers a weakness at least two judges named (`~/.tmp/azizam-judging/set-4-our-weaknesses.txt`), checked side by side with the benchmark at DPR 1. "Before" is `d1-9`, "after" is `d1-10`.
+
+### Status: Linear status, incident.io incident (phone and desktop)
+| Measured in the benchmark, or judged | `d1-9` | `d1-10` change |
+|---|---|---|
+| Three judges: "Started between 1:30 and 2:30 PM" contradicts red Down hours across the strip | "Started" came from the latest run of bad hours only | "Last 24 hours: Down 4 and degraded 2 of the last 24 hours, in 3 spells; failing again since about 1:30 PM", counted from the strip's own hourly slots. The fixture was inconsistent as well (its probe said degraded, its history said down) and is fixed |
+| n1: "Affects: Video only repeats the title" | "Affects: Video" | "Video: no other engine serves it." plus who hit it: "A request from Robin's personal app failed 1h ago." with her mark |
+| incident.io phone: instruction, then action; 3 short facts on the first screen | Button above its instruction; six facts with a bar and legend | Instruction, then button; Affects and Last 24 hours; the bar, legend and failed-request count fold behind "Show evidence" on a phone. "Capabilities" starts at y = 671 instead of 749 |
+| incident.io desktop: a main column and a properties column; nothing stands empty | Card in a 896 px column, right third empty; "4 other engines ready, 1 off, 1 provider" | 1152 px page with an 18rem column: Capabilities as rows with their states, and "4 other engines are ready and 1 is turned off. 1 remote provider is set up." |
+
+### Library: Midjourney, Apple Photos, Apple Music
+| Measured in the benchmark, or judged | `d1-9` | `d1-10` change |
+|---|---|---|
+| Midjourney phone: one line of controls, grid at about y = 72 under the app bar; all four judges: controls take 40 to 50% of the phone | Grid at y = 346 (41% of 844) under search, kinds and person plus Filters | Search and one Filters control on one line (kind and person inside, counted in its badge). Grid at y = 204 (24%) |
+| Midjourney desktop: controls in one row with the search | Search alone at the far right | One row from the left: search (256 px), kinds with icons, person with the household's marks, Filters; all 40 px |
+| Apple Music: a title under every piece of art; judges: no titles or dates | No text on picture tiles | A 12 px caption: the subject from the prompt without its framing, and the day |
+| n3: half-empty first row | Week groups; "This week" held 5 of 6 | One grid, newest first; dates live in captions |
+| n2: voice cards cut mid-sentence | CSS clamp at four lines | Whole sentences, else whole words to a clause end, never a trailing "a" or "and"; 14 px at every width |
+
+### Home: Apple Home (iPhone), Stripe iOS
+| Measured in the benchmark, or judged | `d1-9` | `d1-10` change |
+|---|---|---|
+| Apple Home: the home's state is a row of small chips; the screen leads with the things you use. n2: the large verdict and its gap take the prime space | 20 px verdict and its age on two lines, "Make something" at y = 239 | One 14 px verdict line; "Make something" at y = 207 |
+| Apple Home: one tile grammar. n3: photos and flat icons read as two systems, and "Used Xm ago" is noise | Photos in three rows, icons in four; "Used 39m ago" on two rows | One system: a 32 px tinted icon on every row; a state only when not Ready |
+| Apple Home: cameras (live content) on the first screen. n1: Recent below the fold | Recent started below 844 px | Recent is a strip of four under the tasks, on the first phone screen (y = 692 to 775); 52 px rows on a phone, 28 px section gaps |
+
+### Coherence
+- One Callout anatomy on phones everywhere (instruction before action, full-width body); one caption line under every Library tile, in-progress tiles included; one row grammar for tasks; skeletons follow each new layout.
+- Not changed, and why: Status keeps its 20 px verdict (it is that page's answer); the state vocabulary and freshness rules are unchanged; the Video verdict word stays "degraded" because the latest checks are degraded, and the card now says the day's history beside it.
 
 ## Craft diff (D1.2, side by side with the benchmarks)
 
