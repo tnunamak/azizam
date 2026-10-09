@@ -25,8 +25,8 @@ from fastapi.responses import Response
 
 from gateway import media_metadata, provenance
 
-# Scratch space for ffmpeg rewrites. Disk-backed on purpose: /tmp is RAM here.
-DEFAULT_WORKDIR = Path(__file__).resolve().parent.parent / "cache" / "media_metadata"
+# Media scratch uses anonymous memfd buffers; no prompt-bearing cache files.
+DEFAULT_WORKDIR = None
 
 
 @dataclass
@@ -41,8 +41,10 @@ class DeliveryContext:
     seeds: list[int | None] = field(default_factory=list)
     model_alias: str | None = None
     app_id: str | None = None
+    person_id: str | None = None
     prompt_decision: Any = None
     prompt_text: str | None = None
+    capture_embedded_prompt: bool = True
 
     @property
     def mode(self) -> str:

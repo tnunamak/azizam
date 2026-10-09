@@ -366,7 +366,7 @@ class OpenAICompatValidationTests(unittest.TestCase):
 
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.headers["content-type"], "audio/mpeg")
-        self.assertTrue(resp.content)
+        self.assertEqual(resp.content, _encoded_audio("mp3"))
         convert.assert_called_once()
         self.assertEqual(len(_FakeTTSAsyncClient.requests), 1)
         downstream = json.loads(_FakeTTSAsyncClient.requests[0]["content"])
@@ -400,7 +400,8 @@ class OpenAICompatValidationTests(unittest.TestCase):
 
                 self.assertEqual(resp.status_code, 200)
                 self.assertEqual(resp.headers["content-type"], content_type)
-                self.assertTrue(resp.content)
+                expected = b"\x00\x00" * 16 if audio_format == "pcm" else _encoded_audio(audio_format)
+                self.assertEqual(resp.content, expected)
                 convert.assert_called_once()
 
     def test_tts_rejects_unsupported_response_format(self) -> None:

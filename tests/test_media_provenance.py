@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -27,7 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import proxy  # noqa: E402
-from gateway import comfy_object_info, media_delivery, media_jobs, media_metadata, provenance, receipt_store  # noqa: E402
+from gateway import admin_store, comfy_object_info, media_delivery, media_jobs, media_metadata, prompt_memory, provenance, receipt_store  # noqa: E402
 
 _REAL_OBJECT_INFO_LOOKUP = comfy_object_info.lookup  # tests/conftest.py stubs the module attribute
 from gateway.extensions import validate_extension_inputs  # noqa: E402
@@ -569,13 +570,22 @@ class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         _patch_route_stores(self, Path(tmp.name))
+        admin_db = Path(tmp.name) / "admin.db"
+        admin_store.init_db(admin_db)
+        maker = admin_store.upsert_oidc_user("test", "video-maker", path=admin_db)
+        admin_path = patch.object(proxy.ADMIN_STORE, "path", admin_db)
+        admin_path.start()
+        self.addCleanup(admin_path.stop)
+        auth = proxy.AuthContext(identity=replace(auth.identity, person_id=maker["id"]))
         raw = AvDeliveryTests()._make(".mp4", audio=False)
         prompt_id = "pid-1"
         record = {
             "owner_key_hash": proxy._asset_owner_key(auth), "deleted_at": None,
+            "person_id": maker["id"],
             "metadata_mode": record_mode,
             "provenance": provenance.build_provenance_record(kind="video", seed=3, request_id="video_x"),
         }
+        prompt_memory.put(f"video_{prompt_id}", maker["id"], "video test prompt", kept_until=None, admin_path=admin_db)
 
         class View:
             status_code = 200
@@ -620,19 +630,19 @@ class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
         ))
         # profile default
         self.assertFalse(self._has_metadata(await self._fetch(query="", record_mode=None, auth=none_auth)))
-        self.assertFalse(self._has_metadata(await self._fetch(query="", record_mode=None, auth=full_auth)))
+        self.assertTrue(self._has_metadata(await self._fetch(query="", record_mode=None, auth=full_auth)))
         # choice made at submit time beats the profile
-        self.assertFalse(self._has_metadata(await self._fetch(query="", record_mode="full", auth=none_auth)))
+        self.assertTrue(self._has_metadata(await self._fetch(query="", record_mode="full", auth=none_auth)))
         self.assertFalse(self._has_metadata(await self._fetch(query="", record_mode="none", auth=full_auth)))
         # the GET's own control beats both
         q = "extensions[com.azizam.workflow][metadata]=full"
-        self.assertFalse(self._has_metadata(await self._fetch(query=q, record_mode="none", auth=none_auth)))
+        self.assertTrue(self._has_metadata(await self._fetch(query=q, record_mode="none", auth=none_auth)))
         q = "metadata=none"
         self.assertFalse(self._has_metadata(await self._fetch(query=q, record_mode="full", auth=full_auth)))
         # full delivery carries the provenance record
         blob = json.dumps(media_metadata.read_media_tags(
             await self._fetch(query="", record_mode=None, auth=full_auth), ".mp4"))
-        self.assertNotIn("azizam_provenance", blob)
+        self.assertIn("azizam_provenance", blob)
 
 
 @unittest.skipUnless(FFMPEG, "ffmpeg is required")

@@ -62,6 +62,7 @@ def _connect(path: Path | None) -> sqlite3.Connection:
     target.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(target), timeout=5.0)
     media_jobs._apply_pragmas(conn)
+    conn.execute("PRAGMA secure_delete=ON")
     migrate(conn)
     return conn
 
