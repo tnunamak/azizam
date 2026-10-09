@@ -35,9 +35,11 @@ test("health popover explains a measured outage and links to Status", async ({
     }),
   );
   await page.goto("/ui/models/");
-  // D1: the health line counts capability issues for a signed-in person;
-  // the popover keeps reachability on its own "Gateway" row.
-  await page.getByRole("button", { name: "Gateway status: 1 issue" }).click();
+  // The owner alert reports the engine fault, while the capability has no
+  // measured route evidence: the health line says it is not checked yet.
+  await page
+    .getByRole("button", { name: "Gateway status: Not checked yet" })
+    .click();
   const explanation = page.getByLabel("Gateway health");
   await expect(explanation).toContainText(
     "Image engine is down. Check its connection on Status.",
@@ -49,7 +51,7 @@ test("health popover explains a measured outage and links to Status", async ({
     ),
   ).toEqual([]);
   await expect(
-    explanation.getByRole("link", { name: "View status" }),
+    explanation.getByRole("link", { name: "See why" }),
   ).toHaveAttribute("href", "/ui/status/");
   await page.keyboard.press("Escape");
   // Off-page owner alerts hand keyboard focus to the affected section. The
@@ -151,7 +153,7 @@ test("member health uses their allowed models and never requests owner diagnosti
   await expect(explanation).toContainText("Your AIImages down");
   await expect(explanation).toContainText("GatewayReachable");
   await expect(
-    explanation.getByRole("link", { name: "View status" }),
+    explanation.getByRole("link", { name: "See why" }),
   ).toHaveAttribute("href", "/ui/status/");
   expect(ownerRequests).toEqual([]);
 });

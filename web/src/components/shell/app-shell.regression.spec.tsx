@@ -116,6 +116,53 @@ afterEach(() => {
 });
 
 describe("AppShell accessible names", () => {
+  it("labels missing capability evidence as unknown rather than an issue", async () => {
+    const originalFetch = fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input).endsWith("/admin/api/operator/service-registry")) {
+          return jsonResponse({
+            service_registry: { schema_version: 1, services: {} },
+          });
+        }
+        if (String(input).endsWith("/me/api/home")) {
+          return jsonResponse({
+            authenticated: true,
+            capabilities: [
+              {
+                capability: "chat",
+                icon_key: "chat",
+                capability_title: "Chat",
+                status: "unknown",
+                available: false,
+                reason_code: "unknown",
+                availability: {
+                  evidence: { source: "health", kind: "no_response" },
+                },
+              },
+            ],
+            aliases: [],
+            receipts: [],
+          });
+        }
+        return originalFetch(input, init);
+      }),
+    );
+    render(
+      <AppShell>
+        <h1>Home</h1>
+      </AppShell>,
+    );
+    const buttons = await screen.findAllByRole("button", {
+      name: "Gateway status: Not checked yet",
+    });
+    expect(buttons.length).toBeGreaterThan(0);
+    expect(
+      screen.queryByRole("button", { name: "Gateway status: 1 issue" }),
+    ).toBeNull();
+  });
+
   it("signs out through a POST with the current session CSRF token", async () => {
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockImplementation((input) => {

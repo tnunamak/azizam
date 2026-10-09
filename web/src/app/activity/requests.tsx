@@ -25,6 +25,7 @@ import { Callout, StatusLine } from "@/components/product/status-ui";
 import { RelativeTime } from "@/components/product";
 import { errorCopy } from "@/lib/error-copy";
 import { receiptSelectionKeys } from "@/lib/receipt-selection";
+import { safeModelId } from "@/lib/model-name";
 
 type Receipt = {
   request_id: string;
@@ -383,7 +384,11 @@ export function Requests() {
                     {row.receipt.resolved_model || row.receipt.requested_model ? (
                       <>
                         {" · "}
-                        {row.receipt.resolved_model || row.receipt.requested_model}
+                        {safeModelId(
+                          row.receipt.resolved_model ||
+                            row.receipt.requested_model ||
+                            "",
+                        )}
                       </>
                     ) : null}
                     {row.created_at ? <> · <RelativeTime ts={row.created_at} /></> : null}
@@ -487,11 +492,11 @@ export function Requests() {
                     ["Source", record.source?.label ?? record.app_label],
                     [
                       "Requested model",
-                      record.receipt.requested_model || "",
+                      safeModelId(record.receipt.requested_model || ""),
                     ],
                     [
                       "Served model",
-                      record.receipt.resolved_model || "",
+                      safeModelId(record.receipt.resolved_model || ""),
                     ],
                     ...(declaredFallback(record.receipt)
                       ? ([

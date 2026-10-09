@@ -1,10 +1,44 @@
 import { expect, test } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import ltxCatalog from "../tests/fixtures/workflows-ltx-i2v.json";
 
 async function prepareTryKey(page: import("@playwright/test").Page) {
   await page.goto("/ui/try/");
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("Using a Try key")).toBeVisible();
+  await expect(page.getByText("Try uses a temporary key")).toBeVisible();
+}
+
+const TINY_PNG =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+
+async function routeImageJob(page: import("@playwright/test").Page) {
+  await page.route("**/gateway/v1/media/jobs/image-generations", (route) =>
+    route.fulfill({
+      status: 202,
+      json: {
+        object: "media.job",
+        id: "job_image_try",
+        status: "queued",
+        request_id: "req_image_try",
+      },
+    }),
+  );
+  await page.route("**/gateway/v1/media/jobs/job_image_try", (route) =>
+    route.fulfill({
+      json: {
+        object: "media.job",
+        id: "job_image_try",
+        status: "succeeded",
+        request_id: "req_image_try",
+      },
+    }),
+  );
+  await page.route("**/gateway/v1/media/jobs/job_image_try/content", (route) =>
+    route.fulfill({
+      headers: { "x-azizam-request-id": "req_image_try" },
+      json: { id: "req_image_try", data: [{ url: TINY_PNG }] },
+    }),
+  );
 }
 
 async function waitForCatalog(page: import("@playwright/test").Page) {
@@ -95,19 +129,9 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   await page.unroute("**/me/api/receipts/generic_request");
 
   await page.getByRole("tab", { name: "Make a picture" }).click();
-  await page.route("**/openai/v1/images/generations", (route) =>
-    route.fulfill({
-      headers: { "x-azizam-request-id": "req_image_try" },
-      json: {
-        id: "req_image_try",
-        data: [
-          {
-            url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
-          },
-        ],
-      },
-    }),
-  );
+  // Pictures run as pollable media jobs, so a dropped connection cannot
+  // lose the result.
+  await routeImageJob(page);
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Image result", { exact: true })).toBeVisible();
 
@@ -274,7 +298,7 @@ test("try query params select capability and preserve requested model", async ({
   );
   await page.goto("/ui/try/?capability=decide");
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("Using a Try key")).toBeVisible();
+  await expect(page.getByText("Try uses a temporary key")).toBeVisible();
   await expect(
     page.getByRole("tab", { name: "Choose an option" }),
   ).toHaveAttribute("aria-selected", "true");
@@ -284,7 +308,7 @@ test("try query params select capability and preserve requested model", async ({
 
   await page.goto("/ui/try/?capability=chat&model=fast");
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("Using a Try key")).toBeVisible();
+  await expect(page.getByText("Try uses a temporary key")).toBeVisible();
   await expect(page.getByRole("tab", { name: "Chat" })).toHaveAttribute(
     "aria-selected",
     "true",
@@ -293,7 +317,7 @@ test("try query params select capability and preserve requested model", async ({
 
   await page.goto("/ui/try/?capability=chat&model=chat");
   await page.getByRole("button", { name: "Run", exact: true }).click();
-  await expect(page.getByText("Using a Try key")).toBeVisible();
+  await expect(page.getByText("Try uses a temporary key")).toBeVisible();
   await expect(page.getByRole("combobox").first()).toContainText("chat model");
   await expect(page.getByRole("combobox").first()).not.toContainText(
     "coder model",
@@ -487,3 +511,211 @@ function catalogRow(
     ...overrides,
   };
 }
+
+test("capability chips keep full labels and never overlap on a phone", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/ui/try/");
+  const tabs = page.getByRole("tablist", { name: "Try capability" });
+  await expect(tabs.getByRole("tab")).toHaveCount(7);
+  const layout = await tabs.evaluate((list) =>
+    [...list.querySelectorAll<HTMLElement>('[role="tab"]')].map((tab) => {
+      const box = tab.getBoundingClientRect();
+      return {
+        text: tab.textContent?.trim() ?? "",
+        left: box.left,
+        right: box.right,
+        // Text wider than its chip means it spills into the next one.
+        clipped: tab.scrollWidth > tab.clientWidth + 1,
+        // A label that ends mid-word has an ellipsis or a cut-off box.
+        overflow: getComputedStyle(tab).textOverflow,
+      };
+    }),
+  );
+  expect(layout.map((tab) => tab.text)).toEqual([
+    "Chat",
+    "Make a picture",
+    "Read text aloud",
+    "Turn a recording into text",
+    "Choose an option",
+    "Turn text into numbers",
+    "Workflow",
+  ]);
+  for (const [index, tab] of layout.entries()) {
+    expect(tab.clipped, `${tab.text} is clipped`).toBe(false);
+    expect(tab.overflow).not.toBe("ellipsis");
+    const next = layout[index + 1];
+    if (next) {
+      expect(tab.right, `${tab.text} overlaps ${next.text}`).toBeLessThanOrEqual(
+        next.left + 0.5,
+      );
+    }
+  }
+  // The strip scrolls; the page itself does not.
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await page.getByRole("tab", { name: "Workflow" }).click();
+  await expect(page.getByRole("tab", { name: "Workflow" })).toBeInViewport();
+});
+
+test("an image-to-video workflow offers a picture picker, checks before it runs and keeps values after a failure", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route("**/me/api/models/catalog", (route) =>
+    route.fulfill({
+      json: { schema_version: 1, aliases: [], models: [], counts: {} },
+    }),
+  );
+  await page.route("**/me/api/workflows", (route) =>
+    route.fulfill({ json: ltxCatalog }),
+  );
+  await page.goto("/ui/try/?workflow=video.generate.ltx-2.5-i2v");
+  await expect(page.getByRole("tab", { name: "Workflow" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.getByRole("combobox").first()).toContainText(
+    "LTX 2.5 Distilled I2V",
+  );
+
+  // One heading for the tab: the chip, not the chip and a card title.
+  await expect(page.getByRole("heading", { name: "Workflow" })).toHaveCount(0);
+  await expect(page.getByText("Workflow", { exact: true })).toHaveCount(1);
+
+  // A picture picker, in plain words; nothing reads as developer output.
+  const group = page.getByRole("group", { name: /Starting picture/ });
+  await expect(group.getByRole("button", { name: "Choose a file" })).toBeVisible();
+  await expect(
+    group.getByRole("button", { name: "Choose from Library" }),
+  ).toBeVisible();
+  await expect(group).toContainText("up to 10 MB");
+  const prompt = page.getByRole("textbox", { name: /Describe the video/ });
+  await expect(prompt).toHaveValue("");
+  await expect(prompt).toHaveAttribute("placeholder", /boat|camera/i);
+  // An example must not read as typed text: it is set apart in style.
+  expect(
+    await prompt.evaluate((el) => getComputedStyle(el, "::placeholder").fontStyle),
+  ).toBe("italic");
+  const visible = (await page.locator("main").innerText()).replace(/\s+/g, " ");
+  for (const jargon of [
+    "Request body",
+    "Writes prompt",
+    "Guided controls update",
+    "Media input:",
+    "string",
+    "A small teal fish mark",
+  ]) {
+    expect(visible, jargon).not.toContain(jargon);
+  }
+  expect(await page.getByRole("textbox", { name: /Avoid/ }).inputValue()).toBe("");
+
+  await page.screenshot({ path: "test-results/screens/try-workflow-media-top-390.png" });
+
+  // Run is enabled, but nothing is sent: the missing parts are named.
+  let posted = 0;
+  await page.route("**/v1/videos", async (route) => {
+    posted += 1;
+    await route.fulfill({
+      status: 400,
+      json: { error: { message: "The gateway could not start this video." } },
+    });
+  });
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(page.getByText("Choose a picture to start from")).toBeVisible();
+  await expect(page.getByText("Describe the video first")).toBeVisible();
+  await page.screenshot({ path: "test-results/screens/try-workflow-media-missing-390.png" });
+  expect(posted).toBe(0);
+  await expect(prompt).toBeFocused();
+
+  // Choose a picture and describe the video.
+  await page.setInputFiles("input[data-media-file-input]", {
+    name: "boat.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(TINY_PNG.split(",")[1], "base64"),
+  });
+  await expect(page.getByRole("img", { name: "Chosen picture" })).toBeVisible();
+  await prompt.fill("A paper boat drifts across a pond.");
+  await expect(page.getByText("Choose a picture to start from")).toHaveCount(0);
+  await page.screenshot({ path: "test-results/screens/try-workflow-media-chosen-390.png" });
+  await group.screenshot({ path: "test-results/screens/try-workflow-media-picker-390.png" });
+
+  const request = page.waitForRequest("**/v1/videos");
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  const body = (await request).postDataJSON() as Record<string, unknown>;
+  expect(body.input_reference).toMatch(/^data:image\/png;base64,/);
+  expect(body.prompt).toBe("A paper boat drifts across a pond.");
+  expect(JSON.stringify(body)).not.toContain('"value"');
+
+  // The failed run says what failed and offers to edit, not to "try again".
+  await expect(
+    page.getByText("The gateway could not start this video."),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Try again" })).toHaveCount(0);
+  await checkState(page, "try-workflow-media-error-390.png");
+  await page.getByRole("button", { name: "Edit and run again" }).click();
+  await expect(prompt).toBeFocused();
+  await expect(prompt).toHaveValue("A paper boat drifts across a pond.");
+  await expect(page.getByRole("img", { name: "Chosen picture" })).toBeVisible();
+  expect(posted).toBe(1);
+});
+
+test("a picture survives a dropped connection and never reports the browser's error", async ({
+  page,
+}) => {
+  await page.goto("/ui/try/");
+  await prepareTryKey(page);
+  await waitForCatalog(page);
+  await page.getByRole("tab", { name: "Make a picture" }).click();
+  await page.route("**/gateway/v1/media/jobs/image-generations", (route) =>
+    route.fulfill({
+      status: 202,
+      json: { object: "media.job", id: "job_phone", status: "queued" },
+    }),
+  );
+  let polls = 0;
+  await page.route("**/gateway/v1/media/jobs/job_phone", (route) => {
+    polls += 1;
+    // The phone switched apps: the first check gets no answer at all.
+    if (polls === 1) return route.abort("connectionfailed");
+    return route.fulfill({
+      json: { object: "media.job", id: "job_phone", status: "succeeded" },
+    });
+  });
+  await page.route("**/gateway/v1/media/jobs/job_phone/content", (route) =>
+    route.fulfill({ json: { data: [{ url: TINY_PNG }] } }),
+  );
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(page.getByText("Image result", { exact: true })).toBeVisible({
+    timeout: 15_000,
+  });
+  expect(polls).toBe(2);
+  await expect(page.getByText(/Failed to fetch/i)).toHaveCount(0);
+  await expect(page.getByText(/request failed/i)).toHaveCount(0);
+});
+
+test("a picture whose connection never returns says it may still be finishing", async ({
+  page,
+}) => {
+  await page.goto("/ui/try/");
+  await prepareTryKey(page);
+  await waitForCatalog(page);
+  await page.getByRole("tab", { name: "Make a picture" }).click();
+  await page.route("**/gateway/v1/media/jobs/image-generations", (route) =>
+    route.abort("connectionfailed"),
+  );
+  await page.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(
+    page.getByText("Your picture may still be finishing"),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("link", { name: "Open Library" })).toHaveAttribute(
+    "href",
+    "/ui/library/",
+  );
+  await expect(page.getByText(/Failed to fetch/i)).toHaveCount(0);
+  await expect(page.getByText("Make a picture request failed")).toHaveCount(0);
+});

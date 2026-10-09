@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { productApi, type CatalogRow, type ModelTag } from "@/lib/product-api";
-import { preferredTerms } from "@/lib/terms";
+import { capabilityLabels as terms, preferredTerms } from "@/lib/terms";
 import { availabilityReason } from "@/lib/status-copy";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -93,17 +93,17 @@ const productCapabilityOrder: ProductCapability[] = [
 ];
 
 const capabilityLabels: Record<ProductCapability, string> = {
-  chat: "Chat",
-  image: "Images",
-  video: "Video",
-  music: "Music",
-  sfx: "Sound effects",
-  speech: "Speech",
-  audio: "Audio",
-  transcribe: "Transcription",
-  decide: "Decisions",
-  embed: "Embeddings",
-  rerank: "Reranking",
+  chat: terms.chat,
+  image: terms.image,
+  video: terms.video,
+  music: terms.music,
+  sfx: terms.sound_effects,
+  speech: terms.speech,
+  audio: terms.audio,
+  transcribe: terms.transcribe,
+  decide: terms.decisions,
+  embed: terms.embeddings,
+  rerank: terms.reranking,
 };
 
 // The server owns taxonomy and labels; this map only selects a glyph.

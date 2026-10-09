@@ -10,6 +10,7 @@
  * 403 admin_csrf_required (rolled session). No secret values are ever
  * logged by this module. */
 
+import { networkFetch } from "./network-error";
 import { QueryClient } from "@tanstack/react-query";
 
 const SERVICE_REGISTRY_PATH = "/admin/api/operator/service-registry";
@@ -646,7 +647,7 @@ let cachedSession: Session | null = null;
 let sessionInFlight: Promise<Session> | null = null;
 
 async function requestSession(): Promise<Session> {
-  const response = await fetch(SESSION_PATH, { credentials: "same-origin" });
+  const response = await networkFetch(SESSION_PATH, { credentials: "same-origin" });
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     if (isErrorEnvelope(payload)) {
@@ -715,7 +716,7 @@ async function rawFetch(
     headers.set("x-azizam-admin-action", "1");
     if (csrfToken) headers.set("x-azizam-csrf", csrfToken);
   }
-  return fetch(path, {
+  return networkFetch(path, {
     method,
     headers,
     credentials: "same-origin",

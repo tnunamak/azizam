@@ -1,0 +1,66 @@
+/**
+ * The Source picker's list. Sources doing work come first, busiest first;
+ * turned-off apps and apps with no requests this month come last, under their
+ * own heading. Apps that share a name are told apart by a number, in the order
+ * they were created.
+ */
+
+export interface UsageSource {
+  id: string;
+  label: string;
+  /** Requests this month in the current person scope; null when not reported. */
+  requests: number | null;
+  disabled: boolean;
+  createdAt: number | null;
+}
+
+export interface SourceOption {
+  id: string;
+  label: string;
+}
+
+export interface SourceGroups {
+  active: SourceOption[];
+  inactive: SourceOption[];
+}
+
+function byLabel(a: UsageSource, b: UsageSource): number {
+  return a.label.localeCompare(b.label) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+}
+
+function busiestFirst(a: UsageSource, b: UsageSource): number {
+  return (b.requests ?? 0) - (a.requests ?? 0) || byLabel(a, b);
+}
+
+/** "Daisy", "Daisy (2)": the number follows creation order, so it is stable. */
+function uniqueLabels(sources: UsageSource[]): Map<string, string> {
+  const byName = new Map<string, UsageSource[]>();
+  for (const source of sources) {
+    byName.set(source.label, [...(byName.get(source.label) ?? []), source]);
+  }
+  const labels = new Map<string, string>();
+  for (const [label, same] of byName) {
+    const created = [...same].sort(
+      (a, b) =>
+        (a.createdAt ?? 0) - (b.createdAt ?? 0) || (a.id < b.id ? -1 : 1),
+    );
+    created.forEach((source, index) =>
+      labels.set(source.id, same.length > 1 ? `${label} (${index + 1})` : label),
+    );
+  }
+  return labels;
+}
+
+export function sourceGroups(sources: UsageSource[]): SourceGroups {
+  const labels = uniqueLabels(sources);
+  const option = (source: UsageSource): SourceOption => ({
+    id: source.id,
+    label: labels.get(source.id) ?? source.label,
+  });
+  const isInactive = (source: UsageSource) =>
+    source.disabled || source.requests === 0;
+  return {
+    active: sources.filter((s) => !isInactive(s)).sort(busiestFirst).map(option),
+    inactive: sources.filter(isInactive).sort(busiestFirst).map(option),
+  };
+}

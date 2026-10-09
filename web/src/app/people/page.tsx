@@ -10,6 +10,7 @@ import { formatPersonName } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -169,7 +170,7 @@ export default function PeoplePage() {
   );
   const requestedFound = Boolean(
     requestedPerson &&
-      peopleData?.people.some((person) => person.id === requestedPerson),
+    peopleData?.people.some((person) => person.id === requestedPerson),
   );
   useEffect(() => {
     if (requestedFound) setTab("people");
@@ -465,7 +466,7 @@ export default function PeoplePage() {
                     tabIndex: -1,
                     "aria-current": "true" as const,
                   })}
-                  className={`${person.id === requestedPerson ? "bg-muted rounded-md px-2 " : ""}grid grid-cols-[minmax(0,1fr)_44px] gap-4 py-4 md:items-center ${hasUsageMeasurement ? "md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_44px]" : "md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_44px]"}`}
+                  className={`${person.id === requestedPerson ? "bg-muted rounded-md px-2" : ""} grid grid-cols-[minmax(0,1fr)_44px] gap-4 py-4 md:items-center ${hasUsageMeasurement ? "md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_44px]" : "md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_44px]"}`}
                 >
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
@@ -487,7 +488,10 @@ export default function PeoplePage() {
                         </Badge>
                       )}
                       {person.grants?.map((grant, index) => (
-                        <Badge key={`${grant.role}-${grant.source}-${index}`} variant="outline">
+                        <Badge
+                          key={`${grant.role}-${grant.source}-${index}`}
+                          variant="outline"
+                        >
                           {grant.role} · {grantSourceLabel(grant.source)}
                         </Badge>
                       ))}
@@ -894,6 +898,7 @@ function InviteDialog({
 }) {
   const [plan, setPlan] = useState("");
   const [email, setEmail] = useState("");
+  const [allowAnyone, setAllowAnyone] = useState(false);
   const [expiry, setExpiry] = useState("604800");
   const selectedPlan = profiles.find((profile) => profile.id === plan);
   const mutation = useMutation({
@@ -921,6 +926,7 @@ function InviteDialog({
           className="space-y-4"
           onSubmit={(e) => {
             e.preventDefault();
+            if (!email.trim() && !allowAnyone) return;
             mutation.mutate();
           }}
         >
@@ -935,12 +941,29 @@ function InviteDialog({
               id="invite-email"
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => {
+                setEmail(e.target.value);
+                setAllowAnyone(false);
+              }}
             />
             <p className="text-muted-foreground text-xs">
-              Leave blank to let anyone with the link accept.
+              For password signup, this limits the address but does not verify
+              the mailbox.
             </p>
           </div>
+          {!email.trim() && (
+            <div className="flex items-start gap-3">
+              <Checkbox
+                id="allow-anyone"
+                checked={allowAnyone}
+                onCheckedChange={(checked) => setAllowAnyone(checked === true)}
+              />
+              <Label htmlFor="allow-anyone" className="text-sm leading-5">
+                Allow anyone with the link to create an account and receive an
+                API key
+              </Label>
+            </div>
+          )}
           <div className="space-y-2">
             <Label htmlFor="expiry">Link expires after</Label>
             <Select value={expiry} onValueChange={setExpiry}>
@@ -968,7 +991,11 @@ function InviteDialog({
             >
               Cancel
             </Button>
-            <Button disabled={!plan || mutation.isPending}>
+            <Button
+              disabled={
+                !plan || (!email.trim() && !allowAnyone) || mutation.isPending
+              }
+            >
               {mutation.isPending ? "Creating…" : "Create invite link"}
             </Button>
           </DialogFooter>

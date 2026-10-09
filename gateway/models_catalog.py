@@ -617,6 +617,9 @@ def _base_row(
            if presentation_metadata.get("technical_description")
            or raw_description and raw_description != presentation.get("summary") else {}),
         "name": presentation.get("title", display_name),
+        # A manifest's own name for a kind of output that is not plain
+        # text-to-picture (e.g. "texture-tile"), so a UI can keep it apart.
+        **({"task": manifest["task"]} if isinstance(manifest.get("task"), str) and manifest["task"] else {}),
         "capabilities": _capability_summaries(capabilities, manifest),
         "provider": _provider(service, model_mapping or model_entry, service_id),
         "engine_label": engine_label(service, service_id),
@@ -1068,6 +1071,13 @@ def _availability_from_health_payload(payload: Mapping[str, Any]) -> bool | None
         return True
     if status_value in {"down", "failed", "unhealthy", "unavailable", "busy", "warming", "starting"}:
         return False
+    # A nonempty OpenAI model list is a successful check of a usable route.
+    # Explicit readiness fields above still take precedence.
+    if not status_value and payload.get("object") == "list" and isinstance(payload.get("data"), list):
+        if any(isinstance(model, Mapping) and model.get("object") == "model"
+               and isinstance(model.get("id"), str) and model["id"].strip()
+               for model in payload["data"]):
+            return True
     return None
 
 

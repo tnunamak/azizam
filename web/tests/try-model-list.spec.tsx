@@ -1,0 +1,188 @@
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import TryPage from "@/app/try/page";
+
+const account = vi.hoisted(() => ({
+  session: vi.fn(),
+  mintKey: vi.fn(),
+  revokeKey: vi.fn(),
+  params: new URLSearchParams(),
+}));
+vi.mock("next/navigation", () => ({ useSearchParams: () => account.params }));
+vi.mock("@/lib/account-api", () => ({ accountApi: account }));
+
+// Rows shaped like gateway/models_catalog.py `_base_row`: capability intents
+// and input modalities under `capabilities`, `alias` and `use_names` on
+// aliases, and a manifest `task` for models that make another kind of picture.
+const row = (
+  id: string,
+  name: string,
+  intent: string,
+  input: string[],
+  extra: Record<string, unknown> = {},
+) => ({
+  id,
+  name,
+  display_name: name,
+  capability: "image",
+  alias: false,
+  use_names: [id],
+  locality: "local",
+  capabilities: [
+    {
+      intent,
+      capability: "image",
+      input_modalities: input,
+      output_modalities: ["image"],
+    },
+  ],
+  ...extra,
+});
+const catalog = {
+  aliases: [
+    row("image", "Krea 2 Turbo", "image.generate", ["text"], {
+      alias: true,
+      recommended: true,
+      use_names: ["image", "krea2-turbo"],
+    }),
+    row("image-edit", "Qwen-Image 2.1 Edit", "image.edit", ["text", "image"], {
+      alias: true,
+      use_names: ["image-edit", "qwen-image-2.1-edit"],
+    }),
+  ],
+  models: [
+    row("krea2-turbo", "Krea 2 Turbo", "image.generate", ["text"]),
+    row("anima-turbo", "Anima Turbo (anime)", "image.generate", ["text"]),
+    row("flux2-klein-4b", "Flux2 Klein 4B", "image.generate", ["text"]),
+    row("qwen-image-2.1-edit", "Qwen-Image 2.1 Edit", "image.edit", ["text", "image"]),
+    row("flux2-klein-4b-edit", "Flux2 Klein 4B Edit", "image.edit", ["text", "image"]),
+    row("flux2-klein-4b-inpaint", "Flux2 Klein 4B Inpaint", "image.edit", ["text", "image"]),
+    row("qwen-image-2.1-inpaint", "Qwen-Image 2.1 Inpaint (LanPaint)", "image.edit", ["text", "image"]),
+    row("qwen-image-2.1-edit-multiref", "Qwen-Image 2.1 Multi-Reference Edit", "image.edit", ["text", "image"]),
+    row("seedvr2-upscale", "SeedVR2 7B Sharp Upscale", "image.edit", ["image"]),
+    row("face-likeness", "Face Likeness Check", "image.analyze", ["image"]),
+    row("sdxl-seamless-tile", "SDXL Seamless Tile", "image.generate", ["text"], {
+      task: "texture-tile",
+    }),
+    row("flux2-klein-4b-seamless-tile", "Flux2 Klein 4B Seamless Tile", "image.generate", ["text"], {
+      task: "texture-tile",
+    }),
+    {
+      id: "chat-a",
+      name: "Chat model",
+      capability: "chat",
+      capabilities: [{ intent: "chat.completions", input_modalities: ["text"] }],
+      locality: "local",
+    },
+  ],
+};
+const json = (body: unknown) =>
+  new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+
+beforeEach(() => {
+  Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", {
+    configurable: true,
+    value: () => false,
+  });
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: () => {},
+  });
+  account.params = new URLSearchParams("capability=image");
+  account.session.mockResolvedValue({ authenticated: true, apps: [] });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) =>
+      json(url.includes("workflows") ? { workflows: [] } : catalog),
+    ),
+  );
+});
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+async function optionNames() {
+  const user = userEvent.setup();
+  render(<TryPage />);
+  await waitFor(() =>
+    expect(screen.getByRole("combobox")).toHaveTextContent("Krea 2 Turbo"),
+  );
+  await user.click(screen.getByRole("combobox"));
+  return screen.getAllByRole("option").map((option) => option.textContent);
+}
+
+describe("Make a picture lists only models that make a picture from a prompt", () => {
+  it("leaves out edit, inpaint, upscale, tile and check models", async () => {
+    const names = await optionNames();
+    expect(names).toEqual(["Krea 2 Turbo", "Anima Turbo (anime)", "Flux2 Klein 4B"]);
+    for (const hidden of [
+      "Qwen-Image 2.1 Edit",
+      "Flux2 Klein 4B Edit",
+      "Flux2 Klein 4B Inpaint",
+      "Qwen-Image 2.1 Inpaint (LanPaint)",
+      "Qwen-Image 2.1 Multi-Reference Edit",
+      "SeedVR2 7B Sharp Upscale",
+      "Face Likeness Check",
+      "SDXL Seamless Tile",
+      "Flux2 Klein 4B Seamless Tile",
+    ])
+      expect(names.join("|")).not.toContain(hidden);
+  });
+
+  it("lists Krea 2 Turbo once: the alias and its model are one choice", async () => {
+    const names = await optionNames();
+    expect(names.filter((name) => name?.includes("Krea 2 Turbo"))).toHaveLength(1);
+    // Not disambiguated with ids either: there is nothing to tell apart.
+    expect(names.join("|")).not.toContain("krea2-turbo");
+  });
+
+  it("still opens a deep link to the model the alias stands for", async () => {
+    account.params = new URLSearchParams("capability=image&model=krea2-turbo");
+    render(<TryPage />);
+    await waitFor(() =>
+      expect(screen.getByRole("combobox")).toHaveTextContent("Krea 2 Turbo"),
+    );
+    expect(screen.getByRole("combobox")).not.toHaveTextContent("Unverified");
+  });
+
+  it("points to Workflow for tools that start from a picture", async () => {
+    const user = userEvent.setup();
+    render(<TryPage />);
+    await waitFor(() =>
+      expect(screen.getByRole("combobox")).toHaveTextContent("Krea 2 Turbo"),
+    );
+    await user.click(screen.getByRole("button", { name: "Workflow" }));
+    expect(screen.getByRole("tab", { name: "Workflow" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("keeps a row that carries no intent detail", async () => {
+    // An older gateway: `capability` only. Nothing is hidden by guesswork.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        json(
+          url.includes("workflows")
+            ? { workflows: [] }
+            : {
+                aliases: [],
+                models: [
+                  { id: "old-image", name: "Old picture model", capability: "image" },
+                ],
+              },
+        ),
+      ),
+    );
+    render(<TryPage />);
+    await waitFor(() =>
+      expect(screen.getByRole("combobox")).toHaveTextContent("Old picture model"),
+    );
+  });
+});

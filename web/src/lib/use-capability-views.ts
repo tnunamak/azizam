@@ -131,7 +131,12 @@ export interface CapabilityViewsResult {
  * engine, provider and household request evidence; members use their own.
  */
 export function useCapabilityViews(owner: boolean): CapabilityViewsResult {
-  const homeQuery = useQuery({ queryKey: ["account", "home"], queryFn: homeApi.home });
+  const homeQuery = useQuery({
+    queryKey: ["account", "home"],
+    queryFn: homeApi.home,
+    // Readiness evidence expires after 15 minutes; refresh it while the page stays open.
+    refetchInterval: 60_000,
+  });
   const statusQuery = useQuery({
     queryKey: ["foundation", "health"],
     queryFn: api.status,

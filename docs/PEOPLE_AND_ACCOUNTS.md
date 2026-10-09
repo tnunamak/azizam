@@ -18,6 +18,20 @@ are unchanged by this feature.
 4. The browser shows the new key once. After saving it, the member continues
    to Home. Keys use the existing runtime authentication and policy paths.
 
+The key is for an app calling the gateway, not for browser sign-in. A member
+who created a built-in account signs in later with the email and password they
+entered when accepting the invitation. A member who accepted through OIDC
+signs in later through that identity provider. There is no magic-link or
+passkey sign-in in this flow.
+
+An invitation link is a bearer capability. A targeted invite restricts the
+email entered at acceptance; built-in password signup does not verify control
+of that mailbox. Targeted OIDC acceptance requires a verified provider email.
+An invite without an email lets any link holder choose an address. Links are
+single-use and expire after the chosen period (seven days by default). Share
+them privately. A redeemed link cannot be revoked; if the wrong person used
+it, remove or disable their account and revoke its App key.
+
 New passwords require 12–1,024 characters and use scrypt. Existing local-owner
 PBKDF2 passwords still work. Login attempts have persistent per-email and
 per-IP limits. Browser sessions reuse the existing signed cookie and CSRF

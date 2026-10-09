@@ -112,10 +112,13 @@ for (const theme of ["light", "dark"] as const) {
           },
         }),
       );
+      await page
+        .getByRole("textbox", { name: /^prompt Required$/i })
+        .fill("A teal poster.");
       await page.getByRole("button", { name: "Run", exact: true }).click();
       await expect(page.getByAltText("Generated result")).toBeVisible();
       await expect(
-        page.getByText("Using a Try key", { exact: false }),
+        page.getByText("Try uses a temporary key", { exact: false }),
       ).toBeVisible();
       await checkState(page, `workflow-try-result-${theme}-${width}.png`);
       await page.unroute("**/v1/images/generations");

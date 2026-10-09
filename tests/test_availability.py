@@ -856,6 +856,52 @@ def test_declared_health_success_path_does_not_mask_readiness(payload, expected)
     assert row["live_status"] == expected
 
 
+@pytest.mark.parametrize("payload,expected", [
+    ({"object": "list", "data": [{"id": "fixture-model", "object": "model"}]}, "up"),
+    ({"object": "list", "data": []}, "unknown"),
+    ({"object": "list", "data": [{"object": "model"}]}, "unknown"),
+    ({"object": "list", "data": [{"id": "file-fixture", "object": "file"}]}, "unknown"),
+    ({"object": "list", "data": [{"id": "batch-fixture", "object": "batch"}]}, "unknown"),
+    ({"object": "list", "data": [{"id": "untyped-fixture"}]}, "unknown"),
+    ({"object": "list", "data": [{"id": "fixture-model"}], "ready": False}, "down"),
+    ({"object": "list", "data": [{"id": "fixture-model"}], "status": "degraded"}, "degraded"),
+])
+def test_openai_model_list_health_probe_requires_a_usable_model(payload, expected):
+    import asyncio
+    import status_endpoint
+
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return payload
+
+    class Client:
+        async def get(self, url):
+            return Response()
+
+    row = asyncio.run(status_endpoint._probe(
+        Client(), "svc", "Service", "http://fixture/v1/models", "required", None,
+        service={"health_endpoint": "/v1/models"},
+    ))
+    assert row["live_status"] == expected
+
+
+def test_openai_model_list_is_fresh_catalog_evidence_after_restart():
+    import asyncio
+    from gateway.models_catalog import probe_service_health
+
+    async def get_json(url):
+        return {"object": "list", "data": [{"id": "fixture-model", "object": "model"}]}
+
+    evidence = asyncio.run(probe_service_health({"services": {"svc": {"config": {
+        "base_url": "http://fixture/v1", "health_endpoint": "/v1/models",
+    }}}}, get_json=get_json))
+    assert evidence["svc"]["status"] == "ready"
+    assert evidence["svc"]["source"] == "health"
+    assert isinstance(evidence["svc"]["observed_at_s"], int)
+
+
 def test_catalog_configured_health_success_has_observation_time():
     import asyncio
     from gateway.models_catalog import probe_service_health
