@@ -356,7 +356,7 @@ class WriterResponsivenessTests(unittest.IsolatedAsyncioTestCase):
             return 10_000_000_000
 
         def probe(kind):
-            def run(_writer, _now):
+            def run(_writer, _now, *_config):
                 seen.append((kind, threading.get_ident()))
                 time.sleep(0.05)
             return run
