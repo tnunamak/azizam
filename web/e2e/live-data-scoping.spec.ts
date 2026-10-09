@@ -75,8 +75,11 @@ test("owner sees keyless LAN and service app media and usage", async ({
   await page.goto("/ui/library/");
   await expect(page.getByRole("heading", { name: "Library" })).toBeVisible();
   await expect(page.getByText("No media yet")).toHaveCount(0);
+  // Model, date and app live in the "Filters" popover since D1.
+  await page.getByRole("button", { name: /^Filters/ }).click();
   await page.getByRole("combobox", { name: "Source", exact: true }).click();
   await page.getByRole("option", { name: "Daisy", exact: true }).click();
+  await page.keyboard.press("Escape");
   await expect(page.locator("article")).toHaveCount(1);
   await page.getByRole("button", { name: "Open Image", exact: true }).click();
   await page.getByText("Details", { exact: true }).click();
@@ -84,8 +87,9 @@ test("owner sees keyless LAN and service app media and usage", async ({
     page.getByRole("dialog").getByText("Daisy", { exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
-  await page.getByRole("combobox", { name: "Owner", exact: true }).click();
-  await page.getByRole("option", { name: "Mine", exact: true }).click();
+  // The owner filter is "Person"; the viewer's own option is "<name> (you)".
+  await page.getByRole("combobox", { name: "Person", exact: true }).click();
+  await page.getByRole("option", { name: /\(you\)$|^You$/ }).click();
   await expect(page.locator("article")).toHaveCount(1);
   const mine = await (await page.request.get("/me/api/media?scope=me")).json();
   expect(
