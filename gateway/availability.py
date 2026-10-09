@@ -133,8 +133,17 @@ def _project_required_dependencies(
         return project_service(capability.backend, service_records=service_records,
                                evidence=evidence, fallback_capability=capability)
 
-    projected = [(name, project_service(service, service_records=service_records, evidence=evidence))
-                 for name, service in dependencies]
+    services = _services_mapping(service_records)
+    projected = []
+    for name, service in dependencies:
+        dependency_evidence = evidence
+        record = services.get(service)
+        if service not in evidence and record is not None and _is_idle_startable(record):
+            dependency_evidence = {**evidence, service: {
+                "source": "registry", "status": "stopped", "kind": "declared_startable",
+            }}
+        projected.append((name, project_service(service, service_records=service_records,
+                                                evidence=dependency_evidence)))
     # A known failure wins over an unknown measurement; otherwise the least ready
     # required dependency determines the composed workflow's state.
     priority = {"unavailable": 0, "degraded": 1, "busy": 2, "starting": 3,
@@ -182,7 +191,7 @@ def project_service(
         projected = _from_evidence(service_id, enabled, configured, idle_startable, picked)
         if projected is not None:
             return projected
-    if idle_startable and (not picked or _observed_stopped(picked)):
+    if idle_startable and _observed_stopped(picked):
         return AvailabilityProjection(
             service_id, enabled, configured, None, "idle", "Ready to start.", False,
             {"source": "registry", "kind": "idle_startable"}, idle_startable=True,
