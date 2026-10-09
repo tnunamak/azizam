@@ -43,19 +43,12 @@ import { capabilityMeta, SectionHeading } from "@/components/product/readiness";
 import { StateWord, StatusLine } from "@/components/product/status-ui";
 import { AppMark } from "@/components/product/app-mark";
 import { CapNotice } from "@/components/product/cap-notice";
-import {
-  AudioCover,
-  audioKind,
-  CoverWash,
-  coverSurface,
-} from "@/components/product/audio-cover";
+import { AudioCover } from "@/components/product/audio-cover";
 import { PageHeader } from "@/components/product/page-header";
 import {
   activeCapRefusal,
   CAP_WARNING,
   isInFlight,
-  isSuccess,
-  requestCapability,
   type CapabilityView,
 } from "@/lib/capability-state";
 import { useCapabilityViews } from "@/lib/use-capability-views";
@@ -142,9 +135,9 @@ function HomeLoading() {
             {TASKS.map((task) => (
               <div
                 key={task.key}
-                className="bg-card flex h-14 items-center gap-3 px-2"
+                className="bg-card flex h-14 items-center gap-3 px-4 max-sm:h-13"
               >
-                <Skeleton className="rounded-control size-10" />
+                <Skeleton className="rounded-control size-8" />
                 <Skeleton className="h-4 w-32" />
               </div>
             ))}
@@ -185,136 +178,23 @@ function taskHref(task: Task, models: Record<string, string | undefined>) {
   return `/try/?${params.toString()}`;
 }
 
-/** When this person last got a result from each capability, from their receipts. */
-function lastUses(receipts: HomeReceipt[]): Map<string, number> {
-  const uses = new Map<string, number>();
-  for (const receipt of receipts) {
-    if (!isSuccess(receipt.status)) continue;
-    const capability = requestCapability(receipt.intent, receipt.path);
-    const at = receipt.accepted_at_ms
-      ? receipt.accepted_at_ms / 1000
-      : (receipt._stored_at ?? null);
-    if (!capability || at == null) continue;
-    uses.set(capability, Math.max(uses.get(capability) ?? 0, at));
-  }
-  return uses;
-}
-
-/** The task a creation came from, so a row can show what it last made. */
-function creationTask(creation: HomeCreation): string | null {
-  if (creation.kind === "image") return "image";
-  if (creation.kind === "video") return "video";
-  const label = audioKind(creation.model).label;
-  return label === "Voice"
-    ? "speech"
-    : label === "Music"
-      ? "music"
-      : label === "Sound effect"
-        ? "sfx"
-        : null;
-}
-
-/** Each task's newest creation whose file still exists. */
-function latestByTask(creations: HomeCreation[]): Map<string, HomeCreation> {
-  const latest = new Map<string, HomeCreation>();
-  for (const creation of creations) {
-    if (creation.available === false || !creation.download_url) continue;
-    const task = creationTask(creation);
-    if (task && !latest.has(task)) latest.set(task, creation);
-  }
-  return latest;
-}
-
 /**
- * A row's leading square: the last thing this person made with the task (its
- * picture, its video's first frame, or its audio cover in their hue), so the
- * list shows this household's own work; the task's icon otherwise.
- */
-function TaskLead({
-  taskKey,
-  usable,
-  creation,
-  maker,
-}: {
-  taskKey: string;
-  usable: boolean;
-  creation?: HomeCreation;
-  maker?: string | null;
-}) {
-  const meta = capabilityMeta(taskKey);
-  const Icon = meta.icon;
-  const [failed, setFailed] = useState(false);
-  const square = "rounded-control size-10 shrink-0 overflow-hidden";
-  if (usable && creation && !failed) {
-    if (creation.kind === "image")
-      return (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={creation.download_url!}
-          alt=""
-          onError={() => setFailed(true)}
-          className={cn(square, "bg-muted object-cover")}
-        />
-      );
-    if (creation.kind === "video")
-      return (
-        <video
-          src={`${creation.download_url}#t=0.1`}
-          preload="metadata"
-          muted
-          playsInline
-          aria-hidden="true"
-          tabIndex={-1}
-          onError={() => setFailed(true)}
-          className={cn(square, "bg-media-stage object-cover")}
-        />
-      );
-    return (
-      <span
-        className={cn(
-          coverSurface(maker),
-          square,
-          "flex items-center justify-center",
-        )}
-      >
-        <CoverWash />
-        <Icon aria-hidden="true" className="relative size-5 text-(--person)" />
-      </span>
-    );
-  }
-  return (
-    <span
-      className={cn(
-        square,
-        "flex items-center justify-center",
-        usable ? cn(meta.tint, meta.tone) : "bg-muted text-muted-foreground",
-      )}
-    >
-      <Icon aria-hidden="true" className="size-5" />
-    </span>
-  );
-}
-
-/**
- * One row grammar for every task: a leading square, the task, and on the
- * right the one reason that is true for this person (its state when it is
- * not Ready, otherwise when they last used it). Every row is the same height.
+ * One row grammar for every task: the task's tinted icon, the task, and on
+ * the right its state only when it is not Ready (D1.3: one icon system per
+ * row type, no repeated "Used 2m ago"; the person's own work is in Recent).
+ * Every row is the same height.
  */
 function TaskRow({
   task,
   view,
   href,
-  usedAt,
-  creation,
-  maker,
 }: {
   task: Task;
   view: CapabilityView;
   href: string;
-  usedAt: number | null;
-  creation?: HomeCreation;
-  maker?: string | null;
 }) {
+  const meta = capabilityMeta(task.key);
+  const Icon = meta.icon;
   const usable = USABLE.has(view.state);
   const trailing =
     view.state !== "ready" ? (
@@ -326,24 +206,24 @@ function TaskRow({
           </span>
         ) : null}
       </span>
-    ) : usedAt ? (
-      <span className="text-muted-foreground text-sm whitespace-nowrap">
-        Used <RelativeTime ts={usedAt} fallback="" />
-      </span>
     ) : null;
   const body = (
     <>
-      <TaskLead
-        taskKey={task.key}
-        usable={usable}
-        creation={creation}
-        maker={maker}
-      />
+      <span
+        className={cn(
+          "rounded-control flex size-8 shrink-0 items-center justify-center",
+          usable ? cn(meta.tint, meta.tone) : "bg-muted text-muted-foreground",
+        )}
+      >
+        <Icon aria-hidden="true" className="size-4" />
+      </span>
       <span className="min-w-0 flex-1 truncate font-medium">{task.title}</span>
       {trailing}
     </>
   );
-  const row = "bg-card flex h-14 min-w-0 items-center gap-3 px-2";
+  // 52 px on a phone (still above the 44 px target) so Recent reaches the
+  // first screen; 56 px elsewhere.
+  const row = "bg-card flex h-14 min-w-0 items-center gap-3 px-4 max-sm:h-13";
   if (!usable)
     return (
       <li
@@ -365,23 +245,13 @@ function TaskRow({
 function Tasks({
   views,
   models,
-  receipts,
 }: {
   views: CapabilityView[];
   models: Record<string, string | undefined>;
-  receipts: HomeReceipt[];
 }) {
-  const viewer = useViewer();
-  // Shares Recent's query, so Home asks for creations once.
-  const { data: creations } = useQuery({
-    queryKey: ["library", "home-recent-creations"],
-    queryFn: homeApi.creations,
-  });
   const byKey = new Map(views.map((view) => [view.key, view]));
   const tasks = TASKS.filter((task) => byKey.has(task.key));
   if (!tasks.length) return null;
-  const used = lastUses(receipts);
-  const latest = latestByTask(creations?.assets ?? []);
   return (
     // Two columns only when the list itself is wide enough (container
     // query), so a task name never truncates beside its reason.
@@ -396,9 +266,6 @@ function Tasks({
             task={task}
             view={byKey.get(task.key)!}
             href={taskHref(task, models)}
-            usedAt={used.get(task.key) ?? null}
-            creation={latest.get(task.key)}
-            maker={viewer.name}
           />
         ))}
         {tasks.length % 2 ? (
@@ -1216,7 +1083,6 @@ function Recent({ receipts }: { receipts: HomeReceipt[] }) {
   });
   // A creation whose file the gateway no longer stores belongs in Library, not Recent.
   const recentCreations = (creations?.assets ?? [])
-    .slice(0, 4)
     .filter(hasHomeCreationContent)
     .filter((creation) => creation.available !== false)
     .slice(0, 4);
@@ -1248,7 +1114,7 @@ function Recent({ receipts }: { receipts: HomeReceipt[] }) {
           role="status"
           aria-label="Loading recent creations"
           aria-busy="true"
-          className="grid grid-cols-2 gap-2 md:grid-cols-4"
+          className="grid grid-cols-4 gap-1.5 sm:gap-2"
         >
           {[0, 1, 2, 3].map((item) => (
             <Skeleton
@@ -1270,7 +1136,10 @@ function Recent({ receipts }: { receipts: HomeReceipt[] }) {
               Recent results may be incomplete.
             </p>
           ) : null}
-          <ul className="grid grid-cols-2 gap-2 md:grid-cols-4">
+          {/* Four across at every width: on a phone, a strip of the
+              household's latest work right under the tasks (Apple Home's
+              cameras sit on the first screen). */}
+          <ul className="grid grid-cols-4 gap-1.5 sm:gap-2">
             {making.slice(0, 2).map((receipt) => {
               const kind = inFlightKind(receipt);
               const Icon =
@@ -1285,10 +1154,10 @@ function Recent({ receipts }: { receipts: HomeReceipt[] }) {
               return (
                 <li
                   key={receipt.request_id}
-                  className="bg-muted text-muted-foreground rounded-media flex aspect-square flex-col justify-end gap-1 p-3"
+                  className="bg-muted text-muted-foreground rounded-media flex aspect-square flex-col justify-end gap-1 p-3 max-sm:items-center max-sm:justify-center max-sm:p-2"
                 >
                   <Icon aria-hidden="true" className="size-5" />
-                  <span className="text-foreground text-sm font-medium">
+                  <span className="text-foreground text-sm font-medium max-sm:sr-only">
                     {kind === "video"
                       ? "Making your video"
                       : kind === "audio"
@@ -1296,7 +1165,7 @@ function Recent({ receipts }: { receipts: HomeReceipt[] }) {
                         : "Making your picture"}
                   </span>
                   {at ? (
-                    <span className="text-xs">
+                    <span className="text-xs max-sm:sr-only">
                       Started <RelativeTime ts={at} fallback="" />
                     </span>
                   ) : null}
@@ -1354,7 +1223,7 @@ export default function HomePage() {
       {homePending ? (
         <>
           <PageHeader title="Home">
-            <Skeleton className="h-7 w-48" />
+            <Skeleton className="h-5 w-56" />
           </PageHeader>
           <HomeLoading />
         </>
@@ -1401,6 +1270,7 @@ export default function HomePage() {
             }
           >
             <StatusLine
+              compact
               tone={verdict.tone}
               text={verdict.text}
               checkedAt={verdict.checkedAt}
@@ -1426,7 +1296,7 @@ export default function HomePage() {
             </StatusLine>
           </PageHeader>
           <div className="grid items-start gap-x-12 gap-y-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,21rem)]">
-            <div className="min-w-0 space-y-10 lg:col-start-1 lg:row-start-1">
+            <div className="min-w-0 space-y-10 max-sm:space-y-7 lg:col-start-1 lg:row-start-1">
               {refusal ? (
                 <CapNotice
                   warning={
@@ -1438,11 +1308,7 @@ export default function HomePage() {
                   owner={isOwner}
                 />
               ) : null}
-              <Tasks
-                views={views}
-                models={models}
-                receipts={home.receipts ?? []}
-              />
+              <Tasks views={views} models={models} />
               <Recent receipts={home.receipts ?? []} />
             </div>
             {/* Top aligned with the first list, under its section heading. */}

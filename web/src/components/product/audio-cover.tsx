@@ -160,10 +160,15 @@ export function AudioCover({
   /** A short error or state line, shown in place of the waveform. */
   status?: ReactNode;
   control: ReactNode;
+  /**
+   * Home's Recent tile: three lines of words; on a phone, where the tile is
+   * a quarter of the width, only the maker's hue and the play disc.
+   */
   compact?: boolean;
   className?: string;
 }) {
   const peaks = useAudioPeaks(peaksKey, src, visible);
+  const phoneHidden = compact ? "max-sm:hidden" : undefined;
   const kind = audioKind(model);
   const Icon = kind.icon;
   return (
@@ -171,17 +176,24 @@ export function AudioCover({
       className={cn(
         coverSurface(maker),
         "rounded-media flex size-full flex-col gap-2 p-3",
+        compact && "max-sm:items-center max-sm:justify-center max-sm:p-2",
         className,
       )}
     >
       <CoverWash />
-      <p className="text-foreground/80 relative flex items-center justify-end gap-1 text-xs font-medium">
+      <p
+        className={cn(
+          "text-foreground/80 relative flex items-center justify-end gap-1 text-xs font-medium",
+          phoneHidden,
+        )}
+      >
         <Icon aria-hidden="true" className="size-3.5 text-(--person)" />
         {kind.label}
       </p>
       <p
         className={cn(
           "relative min-h-0 flex-1 font-medium break-words",
+          phoneHidden,
           compact
             ? "line-clamp-3 text-sm leading-snug"
             : "line-clamp-4 text-sm leading-snug",
@@ -192,12 +204,24 @@ export function AudioCover({
       <div className="relative flex items-center gap-2">
         {control}
         {status ? (
-          <span className="min-w-0 flex-1 text-xs font-medium">{status}</span>
+          <span
+            className={cn("min-w-0 flex-1 text-xs font-medium", phoneHidden)}
+          >
+            {status}
+          </span>
         ) : (
-          <Waveform peaks={peaks} className="text-(--person)" />
+          <Waveform
+            peaks={peaks}
+            className={cn("text-(--person)", phoneHidden)}
+          />
         )}
         {duration && !status ? (
-          <span className="figures text-foreground/80 shrink-0 text-xs font-medium">
+          <span
+            className={cn(
+              "figures text-foreground/80 shrink-0 text-xs font-medium",
+              phoneHidden,
+            )}
+          >
             {duration}
           </span>
         ) : null}

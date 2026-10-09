@@ -154,13 +154,10 @@ describe("Home and Library polish", () => {
       "href",
       expect.stringMatching(/^\/try\/?\?capability=image(&|$)/),
     );
-    // The row leads with the person's latest picture, as decoration: the
-    // link is named by its task.
-    expect(picture.querySelector("img")).toHaveAttribute(
-      "src",
-      "/signed/image1",
-    );
-    expect(picture.querySelector("img")).toHaveAttribute("alt", "");
+    // One row system: every task leads with its icon (the person's own work
+    // is in Recent), and a Ready task carries no "Used …" note.
+    expect(picture.querySelector("img")).toBeNull();
+    expect(within(picture).queryByText(/^Used /)).toBeNull();
     // Ready stays quiet: only exceptions carry a state word.
     expect(within(picture).queryByText("Ready")).toBeNull();
   });

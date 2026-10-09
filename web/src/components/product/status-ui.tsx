@@ -91,13 +91,45 @@ export function StatusLine({
   checkedAt,
   children,
   className,
+  compact = false,
 }: {
   tone: StateTone;
   text: string;
   checkedAt?: number | null;
   children?: ReactNode;
   className?: string;
+  /**
+   * One 14 px line (Home): the verdict, its age and any action side by side,
+   * so a landing page leads with what to do, not with health (D1.3). Status
+   * keeps the large verdict; it is that page's answer.
+   */
+  compact?: boolean;
 }) {
+  if (compact)
+    return (
+      <div
+        className={cn(
+          "flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-sm",
+          className,
+        )}
+      >
+        <p
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          className="flex min-w-0 items-center gap-1.5 font-semibold"
+        >
+          <StateIcon tone={tone} className="size-4" />
+          <span className="min-w-0">{text}</span>
+        </p>
+        {checkedAt != null ? (
+          <span className="text-muted-foreground">
+            Checked <RelativeTime ts={checkedAt} fallback="" />
+          </span>
+        ) : null}
+        {children}
+      </div>
+    );
   return (
     <div className={cn("min-w-0", className)}>
       <p
