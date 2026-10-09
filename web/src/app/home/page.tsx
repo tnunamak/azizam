@@ -203,9 +203,15 @@ function taskUse(receipts: HomeReceipt[]) {
   return uses;
 }
 
-/** A task's state word, only when it is not Ready. */
+/** Show faults, or explain when a Ready task must start its engine first. */
 function TaskState({ view }: { view: CapabilityView }) {
-  if (view.state === "ready") return null;
+  if (view.state === "ready") {
+    return view.detail ? (
+      <span className="text-muted-foreground truncate text-sm">
+        {view.detail}
+      </span>
+    ) : null;
+  }
   return (
     <span className="flex min-w-0 items-center gap-2">
       <StateWord tone={view.tone} word={view.word} className="shrink-0" />
@@ -248,7 +254,7 @@ function Favourite({
         {task.title}
       </span>
       <span className="text-muted-foreground min-h-5 text-sm">
-        {view.state !== "ready" ? (
+        {view.state !== "ready" || view.detail ? (
           <TaskState view={view} />
         ) : usedAt ? (
           <>

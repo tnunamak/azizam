@@ -283,9 +283,13 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
   // Owners also see the engine or provider at fault, in the banner's words.
   const ownerAlert = useOwnerAlertTarget(viewer.admin);
   const signedIn = viewer.authenticated && !viewer.serviceAdmin;
-  // Busy is not a fault, so it is not counted as an issue.
-  const issues = model.verdict.problems.filter((view) => view.state !== "busy");
-  const busy = model.verdict.problems.length - issues.length;
+  // Missing evidence and busy work are not issues. Down, degraded and blocked are.
+  const issues = model.verdict.problems.filter(
+    (view) => !["busy", "unknown"].includes(view.state),
+  );
+  const busy = model.verdict.problems.filter(
+    (view) => view.state === "busy",
+  ).length;
   const { label, tone } = gatewayError
     ? { label: "Gateway unreachable", tone: "bad" as const }
     : !gatewayData
@@ -304,11 +308,13 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
                   label: `${issues.length} issue${issues.length === 1 ? "" : "s"}`,
                   tone: issues[0].tone,
                 }
-              : busy
-                ? { label: "Busy", tone: "busy" as const }
-                : model.verdict.tone === "off"
-                  ? { label: "Nothing turned on", tone: "off" as const }
-                  : { label: "All working", tone: "ok" as const };
+              : model.verdict.unconfirmed
+                ? { label: "Status unknown", tone: "unknown" as const }
+                : busy
+                  ? { label: "Busy", tone: "busy" as const }
+                  : model.verdict.tone === "off"
+                    ? { label: "Nothing turned on", tone: "off" as const }
+                    : { label: "All working", tone: "ok" as const };
   const visibleLabel = label;
   // State fills, the same as strips and legends (D1.5).
   const dot =

@@ -43,6 +43,23 @@ describe("capabilityView: one state word from recorded evidence", () => {
   it("says Unknown when there is no evidence, even if available is true", () => {
     expect(capabilityView({ ...chat, evidence: null }, { now }).state).toBe("unknown");
   });
+  it("shows a checked stopped on-demand engine as ready to start", () => {
+    const view = capabilityView(
+      { ...chat, status: "idle", available: true, evidence: { source: "lifecycle", observed_at_s: now - 60 } },
+      { now },
+    );
+    expect(view.state).toBe("ready");
+    expect(view.detail).toBe("Ready to start when you make a request.");
+    expect(view.checkedAt).toBe(now - 60);
+  });
+  it("does not trust a stale or untimed stopped on-demand state", () => {
+    for (const evidence of [
+      { source: "lifecycle", observed_at_s: now - 16 * 60 },
+      { source: "registry" },
+    ]) {
+      expect(capabilityView({ ...chat, status: "idle", available: true, evidence }, { now }).state).toBe("unknown");
+    }
+  });
   it("never shows a request as a check", () => {
     const view = capabilityView(
       { ...chat, evidence: { source: "request", observed_at_s: now - 60 } },

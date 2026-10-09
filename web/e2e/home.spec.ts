@@ -6,6 +6,89 @@ const homeApi = "**/me/api/home";
 const mediaApi = "**/me/api/media?limit=50";
 const setupApi = "**/admin/api/setup-progress";
 
+test("Home names a freshly checked on-demand task as ready to start", async ({
+  page,
+}) => {
+  await page.route(homeApi, async (route) => {
+    const response = await route.fetch();
+    const home = await response.json();
+    await route.fulfill({
+      response,
+      json: {
+        ...home,
+        capabilities: home.capabilities.map(
+          (capability: { capability: string; availability?: object }) =>
+            capability.capability === "chat"
+              ? {
+                  ...capability,
+                  status: "idle",
+                  available: true,
+                  reason_code: "idle",
+                  availability: {
+                    ...capability.availability,
+                    status: "idle",
+                    available: true,
+                    evidence: {
+                      source: "lifecycle",
+                      observed_at_s: Math.floor(Date.now() / 1000),
+                    },
+                  },
+                }
+              : capability,
+        ),
+      },
+    });
+  });
+  await page.goto(homePath);
+  await expect(page.locator("main")).toContainText(
+    "Ready to start when you make a request.",
+  );
+});
+
+test("Home refreshes capability evidence while it stays open", async ({
+  page,
+}) => {
+  await page.clock.install({ time: new Date() });
+  let ready = false;
+  await page.route(homeApi, async (route) => {
+    const response = await route.fetch();
+    const home = await response.json();
+    await route.fulfill({
+      response,
+      json: {
+        ...home,
+        capabilities: home.capabilities.map(
+          (capability: { capability: string; availability?: object }) =>
+            capability.capability === "chat"
+              ? {
+                  ...capability,
+                  status: ready ? "ready" : "unknown",
+                  available: ready,
+                  reason_code: ready ? "ready" : "unknown",
+                  availability: {
+                    ...capability.availability,
+                    status: ready ? "ready" : "unknown",
+                    evidence: ready
+                      ? {
+                          source: "status",
+                          observed_at_s: Math.floor(Date.now() / 1000),
+                        }
+                      : {},
+                  },
+                }
+              : capability,
+        ),
+      },
+    });
+  });
+  await page.goto(homePath);
+  const chat = page.locator('a[href*="capability=chat"]');
+  await expect(chat).toContainText("Unknown");
+  ready = true;
+  await page.clock.fastForward(61_000);
+  await expect(chat).not.toContainText("Unknown");
+});
+
 async function chooseRecipeKey(page: Page, optionName: string | RegExp) {
   await page.getByRole("combobox", { name: "API key" }).click();
   await page.getByRole("option", { name: optionName }).click();

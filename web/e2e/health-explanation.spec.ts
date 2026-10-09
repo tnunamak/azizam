@@ -35,9 +35,11 @@ test("health popover explains a measured outage and links to Status", async ({
     }),
   );
   await page.goto("/ui/models/");
-  // D1: the health line counts capability issues for a signed-in person;
-  // the popover keeps reachability on its own "Gateway" row.
-  await page.getByRole("button", { name: "Gateway status: 1 issue" }).click();
+  // The owner alert reports the engine fault, while the capability has no
+  // measured route evidence and the health line stays neutral.
+  await page
+    .getByRole("button", { name: "Gateway status: Status unknown" })
+    .click();
   const explanation = page.getByLabel("Gateway health");
   await expect(explanation).toContainText(
     "Image engine is down. Check its connection on Status.",
