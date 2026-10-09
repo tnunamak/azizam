@@ -4244,6 +4244,17 @@ def _tts_error(message: str, status_code: int, code: str | None = None) -> Respo
     )
 
 
+def _tts_gpu_memory_response() -> Response:
+    response = openai_error_response(
+        "The GPU is out of memory right now. Retry the speech request later.",
+        status_code=503,
+        error_type="api_error",
+        code="gpu_memory_unavailable",
+    )
+    response.headers["Retry-After"] = "30"
+    return response
+
+
 async def _stream_tts_upstream(
     *,
     url: str,
@@ -4265,6 +4276,8 @@ async def _stream_tts_upstream(
         upstream = await client.send(client.build_request("POST", url, headers=headers, content=body), stream=True)
         if not 200 <= upstream.status_code < 300:
             content = await upstream.aread()
+            if _speech_allocation_failed(upstream.status_code, content.decode("utf-8", "replace")):
+                return _tts_gpu_memory_response()
             return Response(
                 content=content,
                 status_code=upstream.status_code,
@@ -4515,10 +4528,10 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
             resp = await client.post(url, headers=headers, content=body)
 
             if not 200 <= resp.status_code < 300:
-                # Retain allocation-failure fallback without exposing engine diagnostics.
-                allocation_failed = resp.status_code in {500, 502, 507} and _RESOURCE_ERROR.search(resp.text[:4096])
+                if _speech_allocation_failed(resp.status_code, resp.text):
+                    return _tts_gpu_memory_response()
                 return openai_error_response(
-                    "TTS backend ran out of memory." if allocation_failed else "TTS backend rejected the speech request.",
+                    "TTS backend rejected the speech request.",
                     status_code=resp.status_code if 400 <= resp.status_code < 600 else 502,
                     error_type="invalid_request_error" if 400 <= resp.status_code < 500 else "api_error",
                     code="tts_backend_error",
@@ -4705,6 +4718,12 @@ _RESOURCE_ERROR = re.compile(
     r"alloc|out of memory|\boom\b|cudamalloc|cuda error|insufficient (?:vram|memory)|not enough (?:vram|memory)",
     re.IGNORECASE,
 )
+
+
+def _speech_allocation_failed(status: int, text: str) -> bool:
+    return status in (500, 502, 507) and bool(_RESOURCE_ERROR.search(text[:4096]))
+
+
 # 503s the gateway itself raises: another engine behind the same gateway would hit them too.
 _GATEWAY_OWN_503_CODES = {"stt_cancellation_capacity", "stt_configuration_invalid"}
 
@@ -4729,11 +4748,13 @@ def _speech_fallback_reason(response: Response) -> str | None:
         return "connection_refused"
     if code == "stt_backend_connection_lost":
         return "connection_lost"
+    if status == 503 and code == "gpu_memory_unavailable":
+        return "gpu_oom"
     if status == 503:
         if code == "backend_unavailable":  # the gateway's own: operator drain carries a `state`, else the unit would not start
             return "unavailable" if error.get("state") else "start_failed"
         return None if code in _GATEWAY_OWN_503_CODES else "busy"
-    if status in (500, 502, 507) and _RESOURCE_ERROR.search(text):
+    if _speech_allocation_failed(status, text):
         return "gpu_oom"
     return None
 

@@ -178,6 +178,14 @@ class TtsRuntimeFallbackTests(RouteCase):
         self.assertNotIn("x-azizam-fallback", resp.headers)
         self.assertEqual(len(seen), 1)
 
+    def test_streaming_engine_allocation_failure_is_retryable_503(self) -> None:
+        seen = self._upstream(lambda r: httpx.Response(500, json={"detail": "CUDA out of memory. Tried to allocate 4.70 GiB."}))
+        resp = self._speak(model="supertonic", response_format="pcm", stream_format="audio")
+        self.assertEqual(resp.status_code, 503, resp.text)
+        self.assertEqual(resp.json()["error"]["code"], "gpu_memory_unavailable")
+        self.assertEqual(resp.headers["retry-after"], "30")
+        self.assertEqual(len(seen), 1)
+
     def test_non_allocation_server_error_is_unchanged(self) -> None:
         seen = self._upstream(lambda r: httpx.Response(500, json={"detail": "synthesis failed"}))
         resp = self._speak()
