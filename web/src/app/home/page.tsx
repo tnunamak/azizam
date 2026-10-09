@@ -274,7 +274,11 @@ function Favourite({
   );
 }
 
-/** Every other task: a quiet row, a state only when it is not Ready. */
+/**
+ * Every other task: a quiet row, a state only when it is not Ready. The rows
+ * sit in one card under the favourites, so the section reads as cards of
+ * one family, not cards and then a bare list (D1.5).
+ */
 function MoreRow({
   task,
   view,
@@ -298,17 +302,19 @@ function MoreRow({
     </>
   );
   const row = "flex min-h-11 min-w-0 items-center gap-3 py-2 text-sm";
+  // A hairline between rows; none above the first row of each column.
+  const rule = "border-t first:border-t-0 @2xl:nth-2:border-t-0";
   if (!usable)
     return (
       <li
-        className={cn(row, "text-muted-foreground")}
+        className={cn(row, rule, "text-muted-foreground")}
         title={view.detail ?? undefined}
       >
         {body}
       </li>
     );
   return (
-    <li className="min-w-0">
+    <li className={cn("min-w-0", rule)}>
       <Link
         href={href}
         className={cn(row, "hover:text-link font-medium transition-colors")}
@@ -361,7 +367,7 @@ function Tasks({
         ))}
       </ul>
       {rest.length ? (
-        <ul className="mt-2 grid gap-x-8 @2xl:grid-cols-2">
+        <ul className="bg-card rounded-panel mt-2 grid border px-4 sm:mt-3 @2xl:grid-cols-2 @2xl:gap-x-8">
           {rest.map((task) => (
             <MoreRow
               key={task.key}
@@ -1365,6 +1371,7 @@ export default function HomePage() {
         <>
           <PageHeader
             title="Home"
+            tight
             actions={
               // Connecting an app is secondary, but one tap from the top
               // (Apple Home puts "+" in the top bar).

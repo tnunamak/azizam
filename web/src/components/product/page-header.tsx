@@ -12,6 +12,11 @@ export interface PageHeaderProps {
   count?: number | null;
   /** The status line or other content under the title row. */
   children?: ReactNode;
+  /**
+   * Keep a one-line status close under the title, as its subtitle (D1.5:
+   * Home's status line floated in a gap between the title and Recent).
+   */
+  tight?: boolean;
 }
 
 export function PageHeader({
@@ -23,6 +28,7 @@ export function PageHeader({
   actions,
   count,
   children,
+  tight = false,
 }: PageHeaderProps) {
   const legacySubtitle = answer || description;
   const requestedSubtitle = subtitle === undefined ? legacySubtitle : subtitle;
@@ -41,7 +47,7 @@ export function PageHeader({
   const longSubtitle = copy && wordCount(copy) > 8 ? copy : null;
 
   return (
-    <header className="mb-8">
+    <header className={tight ? "mb-6" : "mb-8"}>
       <div className="flex min-h-10 flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-tight text-balance">
@@ -73,7 +79,9 @@ export function PageHeader({
           </div>
         )}
       </div>
-      {children ? <div className="mt-4">{children}</div> : null}
+      {children ? (
+        <div className={tight ? "mt-1" : "mt-4"}>{children}</div>
+      ) : null}
     </header>
   );
 }
