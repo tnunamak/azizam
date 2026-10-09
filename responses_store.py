@@ -168,6 +168,16 @@ def delete(response_id: str, path: Path = DB_PATH) -> bool:
         return cur.rowcount > 0
 
 
+def delete_all(path: Path = DB_PATH) -> int:
+    """Discard stored conversations when the household disables prompt retention."""
+    with _conn(path) as conn:
+        conn.execute("PRAGMA secure_delete=ON")
+        cur = conn.execute("DELETE FROM responses")
+        conn.commit()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        return cur.rowcount
+
+
 def walk_chain(
     response_id: str,
     *,

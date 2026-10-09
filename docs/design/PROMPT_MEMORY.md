@@ -115,5 +115,7 @@ strips their embedded prompt/workflow on delivery. Rewriting stored bytes
 would invalidate content-addressed asset IDs, so historical cache files are
 not rewritten in place. Historical
 video records are purged of the prompt field on load/save, and no Library read
-falls back to embedded metadata. Existing Responses rows keep their original
-seven-day expiry; they are not retroactively reclassified as media prompts.
+falls back to embedded metadata. Enabling the owner kill switch also deletes
+existing Responses rows because their request bodies may contain prompt text.
+This breaks previously stored conversation chains; future forced-off Responses
+requests have `store:false` semantics until the owner turns retention back on.

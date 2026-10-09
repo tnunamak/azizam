@@ -15036,7 +15036,7 @@ app.include_router(create_settings_router(
     instance_defaults=_instance_presentation_defaults,
     overrides_provider=ADMIN_STORE.operator_overrides,
     prompt_memory_path=media_jobs.DB_PATH,
-    on_prompt_memory_kill=lambda: _purge_prompt_payload_files(),
+    on_prompt_memory_kill=lambda: _purge_prompt_memory_on_kill(),
 ))
 app.include_router(create_activity_router(auth=ADMIN_AUTH, admin_path=ADMIN_DB_PATH))
 app.include_router(build_setup_api_router(lambda request: {
@@ -19928,6 +19928,12 @@ def _purge_prompt_payload_files() -> None:
     for pattern in ("mj_*.json", "mj_*.json.tmp"):
         for path in IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob(pattern):
             path.unlink(missing_ok=True)
+
+
+def _purge_prompt_memory_on_kill() -> None:
+    """Remove pending bodies and earlier Responses conversations on owner kill."""
+    _purge_prompt_payload_files()
+    responses_store.delete_all(path=responses_store.DB_PATH)
 
 
 _EPHEMERAL_MEDIA_JOB_PAYLOADS: dict[str, dict[str, Any]] = {}
