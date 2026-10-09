@@ -44,6 +44,7 @@ import {
   engineShortName,
 } from "@/lib/health-presentation";
 import { cn } from "@/lib/cn";
+import type { PlanSpend } from "@/lib/product-api-types";
 import { SectionHeading } from "@/components/product/readiness";
 import {
   Callout,
@@ -75,6 +76,7 @@ import {
   requestCapability,
   STATE_WORDS,
   type CapabilityStateKey,
+  type CapabilityView,
   type StateTone,
 } from "@/lib/capability-state";
 import {
@@ -422,7 +424,9 @@ function affectsFact(
     <span className="block space-y-1">
       <span className="block">{scope}</span>
       {who ? (
-        <span className="flex items-start gap-2">
+        // On a phone the scope line stands alone; the receipt is in the
+        // folded evidence (D1.4: one line of scope).
+        <span className="flex items-start gap-2 max-sm:hidden">
           <span className="flex shrink-0 -space-x-1 pt-px">
             {people.slice(0, 4).map((name) => (
               <PersonMark
@@ -438,6 +442,44 @@ function affectsFact(
       ) : null}
     </span>
   );
+}
+
+/**
+ * Capabilities that read Unknown with no card to explain them: the gateway
+ * does not name an engine for them that is failing or unchecked (red team
+ * round 2: Voice and Transcription were Unknown with no card). One card
+ * names them, says what is known, and points at Engines.
+ */
+function unexplainedProblems(
+  views: CapabilityView[],
+  troubledEngines: EngineView[],
+): Problem[] {
+  const explained = new Set(
+    troubledEngines.flatMap((engine) =>
+      engine.label ? engine.label.split(", ") : [],
+    ),
+  );
+  const unknown = views.filter(
+    (view) => view.state === "unknown" && !explained.has(view.label),
+  );
+  if (!unknown.length) return [];
+  const names = joinNames(unknown.map((view) => view.label));
+  return [
+    {
+      key: `unconfirmed:${unknown.map((view) => view.key).join(",")}`,
+      severity: "attention",
+      tone: "unknown",
+      title: `${names} ${unknown.length === 1 ? "is" : "are"} not confirmed`,
+      headline: `${names} unknown`,
+      facts: [],
+      body: [
+        unknown[0].detail ?? "No recent check has answered for them.",
+        "The gateway does not say which engine serves them.",
+      ],
+      href: "/engines/",
+      action: "Open Engines",
+    },
+  ];
 }
 
 function symptomOf(engine: EngineView): string {
@@ -506,18 +548,33 @@ function engineProblems(
       const slots = hourSlots(series, end);
       // The words come from the same hourly slots the strip draws, so the
       // card never calls a day of failures a short, recent problem.
-      const story = healthStory(healthHistory(slots));
-      if (story) facts.push(["Last 24 hours", story]);
-      if (series?.length)
-        evidence.push([
-          "Health checks",
-          <div key="u" className="max-w-md">
-            <UptimeBar
-              series={series}
-              end={end}
-              label={first.shortName}
-              showLegend
-            />
+      const story = healthStory(healthHistory(slots), slots);
+      // Where it stands, the strip itself, then the day's spells: two short
+      // lines around the picture instead of one run-on sentence (D1.4).
+      if (story.current || series?.length)
+        facts.push([
+          "Last 24 hours",
+          <div key="u" className="max-w-xl space-y-2">
+            {story.current || story.day ? (
+              <p>
+                {story.current ? (
+                  <span className="font-medium">{story.current}</span>
+                ) : null}
+                {story.current && story.day ? " · " : null}
+                {story.day ? (
+                  <span className="text-muted-foreground">{story.day}</span>
+                ) : null}
+              </p>
+            ) : null}
+            {series?.length ? (
+              <UptimeBar
+                series={series}
+                end={end}
+                label={first.shortName}
+                showLegend
+                size="lg"
+              />
+            ) : null}
           </div>,
         ]);
     } else {
@@ -641,33 +698,74 @@ function capProblems(
       (refused[0].receipt?.warnings ?? []).find((text) =>
         CAP_WARNING.test(text),
       ) ?? "";
+    // What the refusals and the plan's own spend record support, and no
+    // more (red team round 2): spend per period when the gateway knows it
+    // (plan_spend), else "Unavailable"; the refusal's own words, quoted;
+    // reset times in local time from the gateway when it gives them.
+    const spend =
+      (profile as { plan_spend?: PlanSpend[] | null } | undefined)
+        ?.plan_spend ?? [];
+    const when = (ts: number) =>
+      new Date(ts * 1000).toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      });
+    const per = (period: PlanSpend["period"]) =>
+      period === "daily" ? "in the last 24 h" : "this month";
     const facts: Array<[string, ReactNode]> = [
+      ["Affects", "Paid models for people on this plan"],
       [
-        "Limits",
-        [
-          daily != null ? `USD ${daily.toFixed(2)} a day (rolling 24 h)` : null,
-          monthly != null ? `USD ${monthly.toFixed(2)} a month` : null,
-        ]
-          .filter(Boolean)
-          .join(", ") || "Not recorded",
+        "Spent",
+        spend.length ? (
+          <span key="s" className="block space-y-0.5">
+            {spend.map((item) => (
+              <span key={item.period} className="block">
+                {item.spent_usd != null
+                  ? `USD ${Number(item.spent_usd).toFixed(2)} of ${Number(item.cap_usd).toFixed(2)} ${per(item.period)}`
+                  : `Unavailable (limit USD ${Number(item.cap_usd).toFixed(2)} ${per(item.period)})`}
+              </span>
+            ))}
+          </span>
+        ) : (
+          [
+            "Unavailable",
+            daily != null ? `limit USD ${daily.toFixed(2)} a day` : null,
+            monthly != null ? `USD ${monthly.toFixed(2)} a month` : null,
+          ]
+            .filter(Boolean)
+            .join("; ")
+        ),
       ],
-      // The gateway does not report a plan's spend yet (DESIGN.md, Backend asks).
-      ["Spent", "Not reported by the gateway"],
-      ["Reached", warning || "A spending limit"],
+      ["Gateway said", warning ? `“${warning}”` : "A spending limit"],
       [
         "Resets",
-        <span key="r" className="block space-y-0.5">
-          {daily != null ||
-          !/monthly/i.test(warning) ||
-          /daily/i.test(warning) ? (
-            <span className="block">
-              Daily: as charges older than 24 hours roll off
-            </span>
-          ) : null}
-          {monthly != null || /monthly/i.test(warning) ? (
-            <span className="block">Monthly: on {resets} (UTC)</span>
-          ) : null}
-        </span>,
+        spend.some((item) => item.resets_at != null) ? (
+          <span key="r" className="block space-y-0.5">
+            {spend
+              .filter((item) => item.resets_at != null)
+              .map((item) => (
+                <span key={item.period} className="block">
+                  {item.period === "daily" ? "Daily" : "Monthly"}:{" "}
+                  {when(item.resets_at!)}
+                </span>
+              ))}
+          </span>
+        ) : (
+          <span key="r" className="block space-y-0.5">
+            {daily != null ||
+            !/monthly/i.test(warning) ||
+            /daily/i.test(warning) ? (
+              <span className="block">
+                Daily: as charges older than 24 hours roll off
+              </span>
+            ) : null}
+            {monthly != null || /monthly/i.test(warning) ? (
+              <span className="block">Monthly: on {resets} (UTC)</span>
+            ) : null}
+          </span>
+        ),
       ],
       ["Refused", failedRequestsFact(refused)],
     ];
@@ -675,9 +773,11 @@ function capProblems(
       key: `cap:${planId}`,
       severity: "attention",
       tone: "warn",
+      // The refusals show a limit refused paid requests; they do not show
+      // how much was spent.
       title: profile
-        ? `The ${name} plan reached its spending limit`
-        : "An access plan reached its spending limit",
+        ? `A spending limit on the ${name} plan refused paid requests`
+        : "A spending limit refused paid requests",
       headline: profile
         ? `${name} plan reached its spending limit`
         : "Spending limit reached",
@@ -1135,15 +1235,13 @@ export function StatusClient() {
             key: `unchecked:${engine.service.id}`,
             severity: "attention" as CalloutSeverity,
             tone: "unknown" as StateTone,
-            title: `${engine.shortName} is not answering checks`,
+            // What the data shows: no answered check for this long. Not
+            // "is not answering", which claims more (red team round 2).
+            title: `${engine.shortName} has not answered a check in ${ageText(now - last).replace(/ ago$/, "")}`,
             headline: `${engine.shortName} unchecked`,
-            facts: [
-              ["Affects", engine.label || "Unknown"],
-              [
-                "Last check",
-                last ? `${ageText(now - last)}` : "Never recorded",
-              ],
-            ] as Array<[string, ReactNode]>,
+            facts: [["Affects", engine.label || "Unknown"]] as Array<
+              [string, ReactNode]
+            >,
             body: [
               "Its capabilities read Unknown until it answers.",
               "Check that the engine is running and its health address answers.",
@@ -1165,6 +1263,17 @@ export function StatusClient() {
       end,
     ),
     ...uncheckedProblems,
+    // Only once checks have loaded: while loading, everything is Unknown.
+    ...(statusIsError ||
+    model.isPending ||
+    !observedStatus?.current_health?.observation_available
+      ? []
+      : unexplainedProblems(
+          model.views,
+          [...engines, ...tableEngines].filter((engine) =>
+            ["down", "degraded", "unknown"].includes(engineStateKey(engine)),
+          ),
+        )),
     ...providerProblems,
     ...capProblems(records, profiles, now),
     ...signalProblems,
@@ -1238,8 +1347,10 @@ export function StatusClient() {
   const providersDown = providerList.filter(
     (provider) => providerState(provider) === "down",
   ).length;
-  // The folded engines and providers, in sentences (D1.3: "4 other engines
-  // ready, 1 off, 1 provider" read as a code).
+  // The folded engines and providers as two labelled lines (D1.3 found
+  // "4 other engines ready, 1 off, 1 provider" cryptic; D1.4 found the
+  // sentences that replaced it read as prose): "Other engines: 4 ready,
+  // 1 turned off" and "Remote providers: 1 set up".
   const engineParts = (
     [
       ["ready", "ready"],
@@ -1252,31 +1363,24 @@ export function StatusClient() {
   )
     .map(([key, words]) => [count(key), words] as const)
     .filter(([n]) => n > 0);
-  const engineSentence = engineParts.length
-    ? engineParts
-        .map(([n, words], index) =>
-          index === 0
-            ? `${n} ${troubled.size ? "other " : ""}engine${n === 1 ? " is" : "s are"} ${words}`
-            : `${n} ${n === 1 ? "is" : "are"} ${words}`,
-        )
-        .reduce(
-          (text, part, index, parts) =>
-            index === 0
-              ? part
-              : `${text}${index === parts.length - 1 ? " and " : ", "}${part}`,
-          "",
-        ) + "."
-    : null;
-  const providerSentence = providerList.length
-    ? `${providerList.length} remote provider${providerList.length === 1 ? " is" : "s are"} set up${
-        providersDown
-          ? `; ${providersDown} ${providersDown === 1 ? "is" : "are"} down`
-          : ""
-      }.`
-    : null;
-  const foldedSummary = [engineSentence, providerSentence]
-    .filter(Boolean)
-    .join(" ");
+  const summaryLines: Array<[string, string]> = [
+    ...(engineParts.length
+      ? [
+          [
+            troubled.size ? "Other engines" : "Engines",
+            engineParts.map(([n, words]) => `${n} ${words}`).join(", "),
+          ] as [string, string],
+        ]
+      : []),
+    ...(providerList.length
+      ? [
+          [
+            "Remote providers",
+            `${providerList.length} set up${providersDown ? `, ${providersDown} down` : ""}`,
+          ] as [string, string],
+        ]
+      : []),
+  ];
   // A provider-status failure and its retry stay visible even while the
   // table is folded: an error is not healthy detail (principle 7).
   const providerError =
@@ -1343,6 +1447,7 @@ export function StatusClient() {
         <StatusLine
           tone={verdict.tone}
           text={verdict.text}
+          unconfirmed={model.verdict.unconfirmed}
           checkedAt={
             !statusIsError && health && model.verdict.checkedAt
               ? model.verdict.checkedAt
@@ -1359,7 +1464,7 @@ export function StatusClient() {
         className={cn(
           "flex min-w-0 flex-col gap-10",
           rail &&
-            "xl:grid xl:grid-cols-[minmax(0,1fr)_18rem] xl:items-start xl:gap-x-10",
+            "xl:grid xl:grid-cols-[minmax(0,1fr)_18rem] xl:grid-rows-[auto_auto_1fr] xl:items-start xl:gap-x-10",
         )}
       >
         {statusIsPending && registryIsPending ? (
@@ -1433,11 +1538,14 @@ export function StatusClient() {
               </section>
             ) : null}
 
-            <div className="flex min-w-0 flex-col gap-10 xl:col-start-2 xl:row-span-2 xl:row-start-1">
+            <div className="flex min-w-0 flex-col gap-10 xl:contents">
               {/* Capability states lean on engine checks; without a current
               check they cannot vouch for anything, so they stay hidden. */}
               {health && modelReady ? (
-                <section aria-labelledby="capability-strip-heading">
+                <section
+                  aria-labelledby="capability-strip-heading"
+                  className="xl:col-start-2 xl:row-span-3 xl:row-start-1"
+                >
                   <SectionHeading
                     id="capability-strip-heading"
                     title="Capabilities"
@@ -1451,12 +1559,15 @@ export function StatusClient() {
                       columns={2}
                     />
                   ) : (
-                    <CapabilityChips views={model.views} railAt={rail} />
+                    <CapabilityChips views={model.views} />
                   )}
                 </section>
               ) : null}
 
-              <section aria-labelledby="layers-heading">
+              <section
+                aria-labelledby="layers-heading"
+                className="xl:col-start-1"
+              >
                 <SectionHeading
                   id="layers-heading"
                   title="Engines and providers"
@@ -1547,7 +1658,18 @@ export function StatusClient() {
                       onClick={() => setShowAll(true)}
                       className="bg-card hover:border-input rounded-panel flex min-h-11 w-full flex-wrap items-center justify-between gap-x-3 gap-y-1 border px-5 py-3 text-left text-sm"
                     >
-                      <span>{foldedSummary || "Engines and providers"}</span>
+                      <span className="grid min-w-0 gap-0.5">
+                        {summaryLines.length
+                          ? summaryLines.map(([label, value]) => (
+                              <span key={label}>
+                                <span className="text-muted-foreground">
+                                  {label}:
+                                </span>{" "}
+                                {value}.
+                              </span>
+                            ))
+                          : "Engines and providers"}
+                      </span>
                       <span className="text-link inline-flex shrink-0 items-center gap-1 font-medium whitespace-nowrap">
                         Show all
                         <ChevronRight aria-hidden="true" className="size-4" />

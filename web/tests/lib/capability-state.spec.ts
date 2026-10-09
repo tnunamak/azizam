@@ -226,7 +226,7 @@ describe("uptime: hours up out of checked hours in the window", () => {
   });
 });
 
-describe("the health story matches the strip (D1.3)", () => {
+describe("the health story matches the strip (D1.3, D1.4)", () => {
   const end = 1_800_000_000;
   // One check per hour, oldest first: hour index 0 is 24 h ago.
   const day = (values: Array<number | null>) =>
@@ -237,6 +237,10 @@ describe("the health story matches the strip (D1.3)", () => {
       end,
     );
   const up = Array<number | null>(24).fill(1);
+  const story = (values: Array<number | null>) => {
+    const slots = day(values);
+    return healthStory(healthHistory(slots), slots);
+  };
 
   it("counts every failing spell, not only the latest", () => {
     const values = [...up];
@@ -247,30 +251,29 @@ describe("the health story matches the strip (D1.3)", () => {
     const history = healthHistory(day(values));
     expect(history).toMatchObject({ down: 4, degraded: 2, spells: 3 });
     expect(history.failingSince).toBe(end - 2 * 3600);
-    const story = healthStory(history)!;
-    expect(story).toMatch(
-      /^Down 4 and degraded 2 of the last 24 hours, in 3 spells; failing again since about /,
-    );
+    const told = story(values);
+    // The current run is named in the strip's own word for its colour.
+    expect(told.current).toMatch(/^Degraded since about /);
+    expect(told.day).toBe("3 spells: down 4 h, degraded 2 h");
   });
 
-  it("says one spell plainly", () => {
+  it("says one spell plainly, and Down when the run was down", () => {
     const values = [...up];
     values[23] = 0;
-    expect(healthStory(healthHistory(day(values)))).toMatch(
-      /^Down 1 of the last 24 hours; failing since about /,
-    );
+    const told = story(values);
+    expect(told.current).toMatch(/^Down since about /);
+    expect(told.day).toBe("1 spell: down 1 h");
   });
 
   it("says when it recovered if it is not failing now", () => {
     const values = [...up];
     values[5] = 0;
-    const history = healthHistory(day(values));
-    expect(history.recoveredAt).toBe(end - 18 * 3600);
-    expect(healthStory(history)).toMatch(/; working again since about /);
+    expect(healthHistory(day(values)).recoveredAt).toBe(end - 18 * 3600);
+    expect(story(values).current).toMatch(/^Working again since about /);
   });
 
   it("says nothing when every checked hour was up", () => {
-    expect(healthStory(healthHistory(day(up)))).toBeNull();
+    expect(story(up)).toEqual({ current: null, day: null });
   });
 });
 

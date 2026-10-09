@@ -120,7 +120,11 @@ export function MemberStatus() {
       : isError || model.isError
         ? { tone: "unknown" as const, text: "Couldn’t check status" }
         : modelVerdict;
-  const checkedAt = isError || model.isError ? null : modelVerdict.checkedAt;
+  // No check time while checking or after a failed check (red team round 2).
+  const checkedAt =
+    isPending || model.isPending || isError || model.isError
+      ? null
+      : modelVerdict.checkedAt;
 
   return (
     <div className="min-w-0">
@@ -147,6 +151,9 @@ export function MemberStatus() {
           tone={verdict.tone}
           text={verdict.text}
           checkedAt={checkedAt}
+          unconfirmed={
+            isPending || model.isPending ? 0 : modelVerdict.unconfirmed
+          }
         />
       </PageHeader>
       <div className="flex min-w-0 flex-col gap-10">

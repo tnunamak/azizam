@@ -92,10 +92,16 @@ export function StatusLine({
   children,
   className,
   compact = false,
+  unconfirmed = 0,
 }: {
   tone: StateTone;
   text: string;
   checkedAt?: number | null;
+  /**
+   * Capabilities the check time does not vouch for (Unknown): said beside
+   * the time, so "Checked just now" never reads as a fresh check of them.
+   */
+  unconfirmed?: number;
   children?: ReactNode;
   className?: string;
   /**
@@ -125,6 +131,7 @@ export function StatusLine({
         {checkedAt != null ? (
           <span className="text-muted-foreground">
             Checked <RelativeTime ts={checkedAt} fallback="" />
+            {unconfirmed ? ` · ${unconfirmed} unknown` : ""}
           </span>
         ) : null}
         {children}
@@ -146,6 +153,7 @@ export function StatusLine({
           {checkedAt != null ? (
             <span>
               Checked <RelativeTime ts={checkedAt} fallback="" />
+              {unconfirmed ? ` · ${unconfirmed} unknown` : ""}
             </span>
           ) : null}
           {children}
@@ -238,48 +246,51 @@ export function Callout({
             ) : null}
           </div>
           {headerAction ? (
-            <div className="flex shrink-0 items-start gap-2 max-sm:order-2 max-sm:-ml-8 sm:col-start-2 sm:row-start-1">
+            <div className="flex shrink-0 items-start gap-2 max-sm:order-3 max-sm:-ml-8 sm:col-start-2 sm:row-start-1">
               {headerAction}
             </div>
           ) : null}
           {children ? (
-            <div className="space-y-1 text-sm max-sm:order-1 max-sm:-ml-8 sm:col-span-2">
+            <div className="space-y-1 text-sm max-sm:order-2 max-sm:-ml-8 sm:col-span-2">
               {children}
             </div>
           ) : null}
-          {facts?.length || evidence?.length ? (
-            <div className="space-y-2 max-sm:order-3 max-sm:-ml-8 sm:col-span-2">
-              {facts?.length ? (
-                <dl className={factGrid}>{rows(facts)}</dl>
-              ) : null}
-              {evidence?.length ? (
-                <>
-                  <button
-                    type="button"
-                    aria-expanded={evidenceOpen}
-                    onClick={() => setEvidenceOpen((open) => !open)}
-                    className="text-link inline-flex min-h-11 items-center gap-1 text-sm font-medium sm:hidden"
-                  >
-                    {evidenceOpen ? "Hide evidence" : "Show evidence"}
-                    <ChevronDown
-                      aria-hidden="true"
-                      className={cn(
-                        "size-4 transition-transform",
-                        evidenceOpen && "rotate-180",
-                      )}
-                    />
-                  </button>
-                  <dl
-                    className={cn(factGrid, !evidenceOpen && "max-sm:hidden")}
-                  >
-                    {rows(evidence)}
-                  </dl>
-                </>
-              ) : null}
+          {/* A phone reads: title, scope and history (facts), the
+              instruction, its button, then evidence on request (D1.4). */}
+          {facts?.length ? (
+            <dl
+              className={cn(
+                factGrid,
+                "max-sm:order-1 max-sm:-ml-8 sm:col-span-2",
+              )}
+            >
+              {rows(facts)}
+            </dl>
+          ) : null}
+          {evidence?.length ? (
+            <div className="space-y-2 max-sm:order-4 max-sm:-ml-8 sm:col-span-2">
+              <button
+                type="button"
+                aria-expanded={evidenceOpen}
+                onClick={() => setEvidenceOpen((open) => !open)}
+                className="text-link inline-flex min-h-11 items-center gap-1 text-sm font-medium sm:hidden"
+              >
+                {evidenceOpen ? "Hide evidence" : "Show evidence"}
+                <ChevronDown
+                  aria-hidden="true"
+                  className={cn(
+                    "size-4 transition-transform",
+                    evidenceOpen && "rotate-180",
+                  )}
+                />
+              </button>
+              <dl className={cn(factGrid, !evidenceOpen && "max-sm:hidden")}>
+                {rows(evidence)}
+              </dl>
             </div>
           ) : null}
           {actions ? (
-            <div className="flex flex-wrap items-center gap-2 max-sm:order-4 max-sm:-ml-8 sm:col-span-2">
+            <div className="flex flex-wrap items-center gap-2 max-sm:order-5 max-sm:-ml-8 sm:col-span-2">
               {actions}
             </div>
           ) : null}
@@ -345,41 +356,27 @@ export function CapabilityList({
  * problem (Apple Home's status chips): name and state icon, plus the state
  * word when it is not Ready. The detail stays in the chip's title.
  */
-export function CapabilityChips({
-  views,
-  railAt = false,
-}: {
-  views: CapabilityView[];
-  /** On wide screens (xl), draw the chips as rows in a side rail. */
-  railAt?: boolean;
-}) {
+export function CapabilityChips({ views }: { views: CapabilityView[] }) {
+  // One column of 44 px rows at every width (D1.4: pills wrapped unevenly
+  // and the phone's tab bar cut them off). Ready stays quiet; any other
+  // state shows its word on the right.
   return (
-    <ul
-      className={cn(
-        "flex flex-wrap gap-2",
-        railAt &&
-          "xl:bg-card xl:rounded-panel xl:block xl:divide-y xl:border xl:px-4",
-      )}
-    >
+    <ul className="bg-card rounded-panel divide-y border px-4">
       {views.map((view) => (
         <li
           key={view.key}
           title={view.detail ?? undefined}
-          className={cn(
-            "bg-card flex h-9 items-center gap-2 rounded-full border pr-3.5 pl-2.5 text-sm",
-            railAt &&
-              "xl:h-11 xl:rounded-none xl:border-x-0 xl:border-b-0 xl:bg-transparent xl:px-0 xl:first:border-t-0",
-          )}
+          className="flex min-h-11 items-center gap-2 text-sm"
         >
           <StateIcon
             tone={view.tone}
             label={view.state === "ready" ? view.word : undefined}
           />
-          <span className={cn("font-medium", railAt && "xl:flex-1")}>
+          <span className="min-w-0 flex-1 truncate font-medium">
             {view.label}
           </span>
           {view.state !== "ready" ? (
-            <span className={cn("font-medium", toneText[view.tone])}>
+            <span className={cn("shrink-0 font-medium", toneText[view.tone])}>
               {view.word}
             </span>
           ) : null}

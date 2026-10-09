@@ -96,29 +96,47 @@ export function healthHistory(
   };
 }
 
+export type HealthStory = {
+  /** Where it stands: "Degraded since about 1:30 PM", "Working again since …". */
+  current: string | null;
+  /** The day in one short line: "3 spells: down 4 h, degraded 2 h". */
+  day: string | null;
+};
+
 /**
- * One sentence for a problem card, from `healthHistory`: how much of the day
- * failed, in how many spells, and whether it is failing now. Times are to the
- * hour ("about"), because checks are counted per hour. Null when every
- * checked hour was up.
+ * The strip in two short lines (D1.4: the single sentence read as a run-on),
+ * from `healthHistory`: where it stands now, in the strip's own words (down
+ * or degraded, the colour of its latest cells), and the day's spells. Times
+ * are to the hour ("about"), because checks are counted per hour.
  */
-export function healthStory(history: HealthHistory): string | null {
+export function healthStory(
+  history: HealthHistory,
+  slots: Array<{ start: number; value: number | null }>,
+): HealthStory {
   const { down, degraded, spells, failingSince: since, recoveredAt } = history;
-  if (!down && !degraded) return null;
+  if (!down && !degraded) return { current: null, day: null };
   const amounts = [
-    down ? `down ${down}` : null,
-    degraded ? `degraded ${degraded}` : null,
+    down ? `down ${down} h` : null,
+    degraded ? `degraded ${degraded} h` : null,
   ]
     .filter(Boolean)
-    .join(" and ");
-  const span = `${amounts[0].toUpperCase()}${amounts.slice(1)} of the last 24 hours${
-    spells > 1 ? `, in ${spells} spells` : ""
-  }`;
-  if (since !== null)
-    return `${span}; failing ${spells > 1 ? "again " : ""}since about ${clock(since)}`;
-  return recoveredAt !== null
-    ? `${span}; working again since about ${clock(recoveredAt)}`
-    : span;
+    .join(", ");
+  const day = `${spells} spell${spells === 1 ? "" : "s"}: ${amounts}`;
+  if (since !== null) {
+    // The current run is "down" if any of its hours was down, else degraded.
+    const run = slots.filter((slot) => slot.start >= since);
+    const word = run.some((slot) => slot.value !== null && slot.value <= 0)
+      ? "Down"
+      : "Degraded";
+    return { current: `${word} since about ${clock(since)}`, day };
+  }
+  return {
+    current:
+      recoveredAt !== null
+        ? `Working again since about ${clock(recoveredAt)}`
+        : null,
+    day,
+  };
 }
 
 function slotClass(value: number | null, enabled: boolean): string {
@@ -183,6 +201,7 @@ export function UptimeBar({
   className,
   showAxis = true,
   showLegend = false,
+  size = "sm",
 }: {
   series: SeriesPoint[] | undefined;
   /** End of the window, epoch seconds: the status payload's time. */
@@ -193,7 +212,13 @@ export function UptimeBar({
   showAxis?: boolean;
   /** Name each colour once, so the last amber or red cell explains itself. */
   showLegend?: boolean;
+  /**
+   * "lg" on a problem card: taller cells and a 14 px legend (D1.4: the
+   * strip and legend were small and fussy); "sm" in the engine table.
+   */
+  size?: "sm" | "lg";
 }) {
+  const large = size === "lg";
   if (!series?.length) return null;
   const slots = hourSlots(series, end);
   const { up, checked } = hoursUp(slots);
@@ -205,7 +230,10 @@ export function UptimeBar({
       <div
         role="img"
         aria-label={summary}
-        className="flex h-4 min-w-0 items-end gap-0.5"
+        className={cn(
+          "flex min-w-0 items-end",
+          large ? "h-6 gap-0.5 sm:gap-1" : "h-4 gap-0.5",
+        )}
       >
         {slots.map((slot) => (
           <span
@@ -215,8 +243,12 @@ export function UptimeBar({
               "flex-1 rounded-xs",
               slotClass(slot.value, enabled),
               slot.value !== null && slot.value < 1 && enabled
-                ? "h-4"
-                : "h-2.5",
+                ? large
+                  ? "h-6"
+                  : "h-4"
+                : large
+                  ? "h-4"
+                  : "h-2.5",
             )}
           />
         ))}
@@ -231,7 +263,12 @@ export function UptimeBar({
         </div>
       ) : null}
       {showLegend ? (
-        <ul className="text-muted-foreground mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+        <ul
+          className={cn(
+            "text-muted-foreground mt-1.5 flex flex-wrap gap-x-3 gap-y-1",
+            large ? "text-sm" : "text-xs",
+          )}
+        >
           {/* Only the colours this bar shows, so every word names a cell. */}
           {[
             ["bg-success/70", "Up"],
@@ -246,7 +283,11 @@ export function UptimeBar({
               <li key={word} className="flex items-center gap-1.5">
                 <span
                   aria-hidden="true"
-                  className={cn("size-2 rounded-xs", swatch)}
+                  className={cn(
+                    "rounded-xs",
+                    large ? "size-2.5" : "size-2",
+                    swatch,
+                  )}
                 />
                 {word}
               </li>

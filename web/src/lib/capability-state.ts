@@ -410,6 +410,11 @@ export interface Verdict {
   problems: CapabilityView[];
   /** Oldest fresh check time behind the verdict. */
   checkedAt: number | null;
+  /**
+   * Counted capabilities whose state is Unknown: "Checked just now" must not
+   * read as a fresh check of them (red team round 2, P0).
+   */
+  unconfirmed: number;
 }
 
 function capitalise(value: string) {
@@ -423,18 +428,27 @@ export function verdictFor(views: CapabilityView[]): Verdict {
     .filter((value): value is number => typeof value === "number");
   const checkedAt = checks.length ? Math.min(...checks) : null;
   const counted = views.filter((view) => view.state !== "off");
+  const unconfirmed = counted.filter((view) => view.state === "unknown").length;
   if (!counted.length)
     return {
       tone: "off",
-      text: "Nothing is set up yet",
+      // Not "set up": a member cannot set anything up (red team round 2).
+      text: "Nothing is turned on yet",
       problems: [],
       checkedAt,
+      unconfirmed,
     };
   const problems = counted
     .filter((view) => view.state !== "ready")
     .toSorted((a, b) => STATE_WORDS[b.state].rank - STATE_WORDS[a.state].rank);
   if (!problems.length)
-    return { tone: "ok", text: "Everything works", problems, checkedAt };
+    return {
+      tone: "ok",
+      text: "Everything works",
+      problems,
+      checkedAt,
+      unconfirmed,
+    };
   const worst = problems[0];
   if (counted.every((view) => view.state === "down"))
     return {
@@ -442,6 +456,7 @@ export function verdictFor(views: CapabilityView[]): Verdict {
       text: "Nothing works right now",
       problems,
       checkedAt,
+      unconfirmed,
     };
   const text =
     problems.length <= 2
@@ -454,5 +469,5 @@ export function verdictFor(views: CapabilityView[]): Verdict {
             .join(", "),
         )
       : `${problems.length} of ${counted.length} capabilities need attention`;
-  return { tone: worst.tone, text, problems, checkedAt };
+  return { tone: worst.tone, text, problems, checkedAt, unconfirmed };
 }

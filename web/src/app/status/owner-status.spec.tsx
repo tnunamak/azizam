@@ -603,17 +603,15 @@ it("tells the 24-hour story from the strip's own hours and names who is affected
       name: "Local chat is not accepting connections",
     })
   ).closest("article")!;
-  expect(
-    within(card).getByText(
-      /^Down 5 of the last 24 hours, in 3 spells; failing again since about /,
-    ),
-  ).toBeVisible();
+  // Where it stands, in the strip's own word, then the day's spells.
+  expect(within(card).getByText(/^Down since about /)).toBeVisible();
+  expect(within(card).getByText("3 spells: down 5 h")).toBeVisible();
   // No narrow "Started" window that the strip contradicts.
   expect(within(card).queryByText("Started")).not.toBeInTheDocument();
-  // The folded engines read as a sentence, not a code.
+  // The folded engines read as labelled lines, not a code or prose.
   expect(
     screen.getByRole("button", {
-      name: "1 other engine is turned off. Show all",
+      name: "Other engines: 1 turned off. Show all",
     }),
   ).toBeVisible();
   // Affects names the scope, not the capability again.
