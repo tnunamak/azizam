@@ -150,7 +150,7 @@ class TtsRuntimeFallbackTests(RouteCase):
         )
 
     def test_allocation_failure_falls_back_with_a_header(self) -> None:
-        seen = self._upstream(lambda r: httpx.Response(500, json={"detail": "CUDA out of memory. Tried to allocate 4.70 GiB."}))
+        seen = self._upstream(lambda r: httpx.Response(500, json={"detail": "CUDA out of memory. Tried to allocate 18.00 MiB."}))
         resp = self._speak()
         self.assertEqual((resp.status_code, resp.content), (200, b"RIFFwav"))
         self.assertEqual([r.url.port for r in seen], list(self._ports()))
@@ -160,7 +160,7 @@ class TtsRuntimeFallbackTests(RouteCase):
 
     def test_last_engine_allocation_failure_is_retryable_503(self) -> None:
         self.cfg["backends"]["tts-supertonic"]["enabled"] = False
-        seen = self.use_upstream(lambda r: httpx.Response(500, json={"detail": "CUDA out of memory. Tried to allocate 4.70 GiB."}))
+        seen = self.use_upstream(lambda r: httpx.Response(500, json={"detail": "CUDA out of memory. Tried to allocate 18.00 MiB."}))
         resp = self._speak()
         self.assertEqual(resp.status_code, 503, resp.text)
         self.assertEqual(resp.json()["error"]["code"], "gpu_memory_unavailable")
@@ -170,7 +170,7 @@ class TtsRuntimeFallbackTests(RouteCase):
         self.assertEqual(len(seen), 1)
 
     def test_explicit_engine_allocation_failure_does_not_fall_back(self) -> None:
-        seen = self._upstream(lambda r: httpx.Response(500, json={"detail": "CUDA out of memory. Tried to allocate 4.70 GiB."}))
+        seen = self._upstream(lambda r: httpx.Response(500, json={"detail": "CUDA out of memory. Tried to allocate 18.00 MiB."}))
         resp = self._speak(model="supertonic")
         self.assertEqual(resp.status_code, 503, resp.text)
         self.assertEqual(resp.json()["error"]["code"], "gpu_memory_unavailable")
@@ -179,7 +179,7 @@ class TtsRuntimeFallbackTests(RouteCase):
         self.assertEqual(len(seen), 1)
 
     def test_streaming_engine_allocation_failure_is_retryable_503(self) -> None:
-        seen = self._upstream(lambda r: httpx.Response(500, json={"detail": "CUDA out of memory. Tried to allocate 4.70 GiB."}))
+        seen = self._upstream(lambda r: httpx.Response(500, json={"detail": "CUDA out of memory. Tried to allocate 18.00 MiB."}))
         resp = self._speak(model="supertonic", response_format="pcm", stream_format="audio")
         self.assertEqual(resp.status_code, 503, resp.text)
         self.assertEqual(resp.json()["error"]["code"], "gpu_memory_unavailable")
