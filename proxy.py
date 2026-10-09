@@ -7500,35 +7500,21 @@ def _build_image_response_payload(
     delivery = media_delivery.current()
     mode = delivery.mode if delivery is not None else _media_metadata_default(auth_context)
     for index, raw in enumerate(images):
-        # Stored copy stays metadata-free. Prompt/workflow bytes live only in
-        # the maker-scoped prompt record when policy allows retaining them.
+        # Keep the in-memory response copy for the requester's profile mode.
+        # store_asset_bytes strips the cache copy and writes the sole prompt row.
         record = _image_provenance_record(
             delivery, index, size=size, quality=quality, background=background,
             output_format=output_format, output_compression=output_compression,
         )
         raw = media_delivery.attach_provenance(raw, ".png", record)
-        prompt_metadata = prompt_memory.capture_metadata(raw, ".png")
-        raw = media_delivery.deliver_bytes(raw, ".png", provenance.METADATA_NONE)
-        exif = None
+        exif = (
+            media_metadata.exif_bytes(media_delivery.image_exif_entries(raw, record))
+            if output_format != "png" else None
+        )
         encoded, mime_type = encode_image_bytes(
             raw, output_format, output_compression, exif=exif
         )
         image_id = store_image_bytes(encoded, owner_key_hash=owner_key_hash, suffix=suffix)
-        decision = getattr(delivery, "prompt_decision", None)
-        prompt_text_value = getattr(delivery, "prompt_text", None)
-        if (
-            decision is not None
-            and getattr(decision, "keep", False)
-            and getattr(decision, "person_id", None)
-            and prompt_text_value
-        ):
-            prompt_memory.put(
-                image_id,
-                str(decision.person_id),
-                str(prompt_text_value),
-                kept_until=decision.kept_until,
-                metadata=prompt_metadata,
-            )
         item: dict[str, Any] = {
             "asset_id": image_id,
             "asset_url": build_signed_asset_url(request, image_id, mode),
@@ -10628,7 +10614,6 @@ async def _submit_video_graph(
                     size=f"{width}x{height}",
                     seconds=seconds_val,
                     key_name=key_name_for_event,
-                    prompt_text=prompt,
                 )
                 firehose_metrics.record_event(
                     "video_submit",
@@ -12022,6 +12007,10 @@ async def proxy_comfy_video_content(
 
             video_bytes = view_resp.content
             record = _video_job_records.get(prompt_id) or {}
+            person_id = prompt_memory.person_for_app(record.get("app_id"), admin_path=ADMIN_STORE.path)
+            saved_prompt = prompt_memory.get(str(record.get("asset_id") or f"video_{prompt_id}"), person_id) if person_id else None
+            if saved_prompt is None:
+                metadata_mode = provenance.METADATA_NONE
             try:
                 stored_video_bytes = await asyncio.to_thread(
                     media_delivery.attach_provenance, video_bytes, ext, record.get("provenance")
@@ -14190,13 +14179,17 @@ app.include_router(
         admin_db_path=lambda: ADMIN_STORE.path,
         media_jobs_path=lambda: media_jobs.DB_PATH,
         receipts_path=lambda: receipt_store.DB_PATH,
+        prompt_memory_path=lambda: media_jobs.DB_PATH,
     )
 )
 
 app.include_router(
     me_prompt_memory.create_me_prompt_memory_router(
         session_provider=lambda request: _oidc_session_from_request(request),
+        mutation_validator=lambda request, session: _require_user_action_header(request, session),
         household_provider=lambda: prompt_memory_settings(ADMIN_DB_PATH),
+        admin_db_path=ADMIN_STORE.path,
+        prompt_memory_path=media_jobs.DB_PATH,
     )
 )
 

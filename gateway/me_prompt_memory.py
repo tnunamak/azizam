@@ -42,8 +42,8 @@ def create_me_prompt_memory_router(
         return _household_policy(getattr(request.app.state, "prompt_memory_household", None))
 
     def _settings_response(person_id: str, request: Request) -> JSONResponse:
-        member = _member_settings(person_id, path=admin_db_path)
         household = _household(request)
+        member = _member_settings(person_id, path=admin_db_path, default_remember=household["default_remember"])
         effective = _effective(member, household)
         return JSONResponse(
             {
@@ -112,10 +112,10 @@ def create_me_prompt_memory_router(
     return router
 
 
-def _member_settings(person_id: str, *, path: Path) -> dict[str, Any]:
+def _member_settings(person_id: str, *, path: Path, default_remember: bool) -> dict[str, Any]:
     record = admin_store.get_prompt_memory_preference(person_id, path=path)
     if record is None:
-        return dict(MEMBER_DEFAULT)
+        return {**MEMBER_DEFAULT, "remember": default_remember}
     return {
         "remember": bool(record.get("remember")),
         "retention": str(record.get("retention") or MEMBER_DEFAULT["retention"]),

@@ -48,10 +48,7 @@ class PromptModeError(ValueError):
     pass
 
 
-def requested_mode(
-    body: Mapping[str, Any] | None,
-    headers: Mapping[str, Any] | None = None,
-) -> str | None:
+def requested_mode(body: Mapping[str, Any] | None, headers: Mapping[str, Any] | None = None) -> str | None:
     if headers:
         for key, value in headers.items():
             if str(key).lower() != "x-azizam-retain-prompt":
@@ -150,7 +147,7 @@ def decide(
         return Decision(person_id, False, "server_disabled")
     if mode == "forget" or responses_store is False:
         return Decision(person_id, False, "request_forget")
-    preference = {**MEMBER_DEFAULTS, **(member or {})}
+    preference = {**MEMBER_DEFAULTS, "remember": policy["default_remember"], **(member or {})}
     if not preference.get("remember", policy["default_remember"]):
         return Decision(person_id, False, "member_disabled")
     member_period = RETENTION_SECONDS.get(preference.get("retention", "never"))
