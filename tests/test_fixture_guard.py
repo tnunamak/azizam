@@ -84,3 +84,44 @@ asyncio.run(probe())
     listener.settimeout(.1)
     with pytest.raises(TimeoutError):
         listener.accept()
+
+
+def test_household_allows_only_the_speech_mp3_encode_between_temp_files(tmp_path):
+    import tempfile
+    from pathlib import Path
+
+    temp = Path(tempfile.gettempdir())
+    encode = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i",
+              str(temp / "speech.wav"), "-codec:a", "libmp3lame", "-f", "mp3", str(temp / "speech.mp3")]
+    media = tmp_path / "images"
+    check_event("subprocess.Popen", ("ffmpeg", encode, None, None), {18080}, media)
+    # Not without the household media root, not outside the temp dir, not another codec.
+    with pytest.raises(RuntimeError, match="child process"):
+        check_event("subprocess.Popen", ("ffmpeg", encode, None, None), {18080})
+    elsewhere = encode[:6] + ["/etc/passwd.wav"] + encode[7:]
+    with pytest.raises(RuntimeError, match="child process"):
+        check_event("subprocess.Popen", ("ffmpeg", elsewhere, None, None), {18080}, media)
+    other = encode[:7] + ["-codec:a", "pcm_s16le", "-f", "wav", str(temp / "x.wav")]
+    with pytest.raises(RuntimeError, match="child process"):
+        check_event("subprocess.Popen", ("ffmpeg", other, None, None), {18080}, media)
+
+
+def test_household_allows_the_provenance_stamp_only_inside_its_state(tmp_path):
+    work = tmp_path / "media_metadata"
+    work.mkdir()
+    media = tmp_path / "images"
+    source = work / "token.in.mp3"
+    source.write_bytes(b"fixture")
+    stamp = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", str(source), "-map", "0",
+             "-metadata", 'azizam_provenance={"kind":"audio"}', "-c", "copy",
+             "-fflags", "+bitexact", "-f", "mp3", str(work / "token.out.mp3")]
+    check_event("subprocess.Popen", ("ffmpeg", stamp, None, None), {18080}, media)
+    with pytest.raises(RuntimeError, match="child process"):
+        check_event("subprocess.Popen", ("ffmpeg", stamp, None, None), {18080})
+    # Anything but -metadata pairs in the middle is refused.
+    other = stamp[:9] + ["-filter_complex", "x=1"] + stamp[11:]
+    with pytest.raises(RuntimeError, match="child process"):
+        check_event("subprocess.Popen", ("ffmpeg", other, None, None), {18080}, media)
+    outside = tmp_path.parent / "elsewhere.in.mp3"
+    with pytest.raises(RuntimeError, match="child process"):
+        check_event("subprocess.Popen", ("ffmpeg", stamp[:6] + [str(outside)] + stamp[7:], None, None), {18080}, media)

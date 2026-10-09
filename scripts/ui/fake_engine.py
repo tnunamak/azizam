@@ -75,3 +75,84 @@ def degraded():
 def down():
     from fastapi.responses import JSONResponse
     return JSONResponse({"status": "down", "detail": "Provider returned 503"}, status_code=503)
+
+
+# The household fixture's image and voice engines (D1.5b): the two core member
+# tasks, "Make a picture" and "Read text aloud", must finish in the isolated
+# harness. The gateway always generates images through a ComfyUI API
+# (proxy_comfy_request), so this answers the ComfyUI calls it makes; speech
+# answers the OpenAI speech route. Both return fixture media.
+_FIXTURE_MEDIA = os.path.join(os.path.dirname(__file__), "fixtures", "household")
+_COMFY_PROMPTS: dict[str, int] = {}
+
+
+@app.post("/prompt")
+async def comfy_prompt(request: Request):
+    await request.json()
+    prompt_id = f"fixture-{time.time_ns()}"
+    _COMFY_PROMPTS[prompt_id] = len(_COMFY_PROMPTS)
+    return {"prompt_id": prompt_id, "number": _COMFY_PROMPTS[prompt_id], "node_errors": {}}
+
+
+@app.get("/history/{prompt_id}")
+def comfy_history(prompt_id: str):
+    if prompt_id not in _COMFY_PROMPTS:
+        return {}
+    return {prompt_id: {
+        "status": {"completed": True, "status_str": "success", "messages": []},
+        "outputs": {"9": {"images": [{"filename": "apple-tart.png", "subfolder": "", "type": "output"}]}},
+    }}
+
+
+@app.get("/view")
+def comfy_view(filename: str):
+    """The fixture photo re-encoded as PNG, as ComfyUI saves its output. The
+    gateway's cache is content-addressed, so serving the seeded file's own
+    bytes would fold the new picture into an existing Library item."""
+    import io
+    from fastapi.responses import JSONResponse, Response
+    from PIL import Image
+
+    stem = os.path.splitext(os.path.basename(filename))[0]
+    path = os.path.join(_FIXTURE_MEDIA, f"{stem}.webp")
+    if not os.path.isfile(path):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    buffer = io.BytesIO()
+    with Image.open(path) as image:
+        image.convert("RGB").save(buffer, format="PNG")
+    return Response(buffer.getvalue(), media_type="image/png")
+
+
+@app.get("/queue")
+def comfy_queue():
+    return {"queue_running": [], "queue_pending": []}
+
+
+@app.get("/system_stats")
+def comfy_system_stats():
+    return {"system": {"os": "fixture"}, "devices": []}
+
+
+@app.post("/v1/audio/speech")
+async def speech(request: Request):
+    """Two seconds of a soft tone as WAV, as a real speech engine returns WAV
+    that the gateway then encodes to the requested format."""
+    import io
+    import math
+    import struct
+    import wave
+    from fastapi.responses import Response
+
+    await request.body()
+    rate = 16000
+    frames = b"".join(
+        struct.pack("<h", int(2000 * math.sin(2 * math.pi * 220 * n / rate) * min(1, n / 800, (2 * rate - n) / 800)))
+        for n in range(2 * rate)
+    )
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(rate)
+        out.writeframes(frames)
+    return Response(buffer.getvalue(), media_type="audio/wav")

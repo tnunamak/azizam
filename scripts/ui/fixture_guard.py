@@ -7,6 +7,7 @@ is created. This guard lives only in fixture entrypoints, never production.
 
 import socket
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -95,6 +96,62 @@ def check_event(event, args, allowed_ports, media_root=None):
                     and source.is_relative_to(root)
                     and source.suffix in {".mp3", ".mp4", ".wav"}
                     and destination.suffix == source.suffix
+                ):
+                    return
+            # The provenance stamp (gateway.media_metadata.embed_media_tags):
+            # the same stream copy as the strip above, with -metadata pairs
+            # instead of the -map_metadata clears (D1.5b: a new speech clip
+            # is stamped before it is stored).
+            tail = ["-c", "copy", "-fflags", "+bitexact", "-f"]
+            if (
+                executable == "ffmpeg"
+                and isinstance(command, (list, tuple))
+                and len(command) >= 17
+                and list(command[:6]) == strip_prefix
+                and list(command[7:9]) == ["-map", "0"]
+                and list(command[-7:-2]) == tail
+            ):
+                middle = list(command[9:-7])
+                if middle[-2:] == ["-movflags", "+use_metadata_tags"]:
+                    middle = middle[:-2]
+                pairs_ok = (
+                    len(middle) >= 2
+                    and len(middle) % 2 == 0
+                    and all(flag == "-metadata" for flag in middle[0::2])
+                    and all("=" in str(value) for value in middle[1::2])
+                )
+                source, destination = (
+                    Path(command[6]).resolve(),
+                    Path(command[-1]).resolve(),
+                )
+                root = Path(media_root).resolve().parent
+                if (
+                    pairs_ok
+                    and source.is_file()
+                    and source.parent == destination.parent
+                    and source.is_relative_to(root)
+                    and source.suffix in {".mp3", ".mp4", ".wav"}
+                    and destination.suffix == source.suffix
+                ):
+                    return
+            # The speech route's WAV-to-MP3 encode (proxy.convert_wav_to_mp3),
+            # between two temporary files, so Try's "Read text aloud" can
+            # finish in the household fixture (D1.5b).
+            encode = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i"]
+            if (
+                executable == "ffmpeg"
+                and isinstance(command, (list, tuple))
+                and len(command) == 12
+                and list(command[:6]) == encode
+                and list(command[7:11]) == ["-codec:a", "libmp3lame", "-f", "mp3"]
+            ):
+                source, destination = Path(command[6]), Path(command[11])
+                temp = Path(tempfile.gettempdir()).resolve()
+                if (
+                    source.resolve().parent == temp
+                    and destination.resolve().parent == temp
+                    and source.suffix == ".wav"
+                    and destination.suffix == ".mp3"
                 ):
                     return
         raise RuntimeError("Fixture blocked a child process")

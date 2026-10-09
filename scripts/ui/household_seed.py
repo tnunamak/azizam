@@ -69,7 +69,10 @@ MODEL_GROUPS = {
         ("gemma-12b", "Gemma 3 12B", "chat"),
         ("mistral-small", "Mistral Small", "chat"),
     ],
-    "household-image": [
+    # The image engine's id is "comfyui": the gateway's image route always
+    # runs on the backend of that name (proxy_comfy_request), and the fake
+    # engine answers its API, so Try's "Make a picture" finishes (D1.5b).
+    "comfyui": [
         ("image", "Krea 2 Turbo", "image"),
         ("krea2-turbo", "Krea 2 Turbo", "image"),
         ("qwen-image-edit", "Qwen Image Edit", "image-edit"),
@@ -109,7 +112,7 @@ APP_CAPABILITY_CHOICES = {
 }
 SERVICE_NAMES = {
     "household-chat": "Study and coding",
-    "household-image": "Image studio",
+    "comfyui": "Image studio",
     # An engine name of its own: the household's Home Assistant is an app
     # (the "home" app below); naming the engine after it sent the owner to the
     # wrong system (red team round 2).
@@ -547,7 +550,7 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
             "image.generate",
             "/v1/images/generations",
             "image",
-            "household-image",
+            "comfyui",
         ),
         ("tts", "audio.speech", "/v1/audio/speech", "voice", "household-voice"),
         (
@@ -563,7 +566,7 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
             "image.edit",
             "/v1/images/edits",
             "qwen-image-edit",
-            "household-image",
+            "comfyui",
         ),
         ("music", "audio.music", "/v1/audio/music", "musicgen", "household-voice"),
         ("sfx", "audio.sfx", "/v1/audio/sfx", "audio-sfx", "household-voice"),
@@ -1171,7 +1174,7 @@ def _scenario_running(ctx):
             "ltx-2.5", "household-video", 140, "in_progress")
     job("req_household_running_video", "sam", "video.generate", "ltx-2.5", 140, "running", 42)
     receipt("req_household_failed_image", "alex", "image.generate", "/v1/images/generations",
-            "krea2-turbo", "household-image", 1320, "failed", latency_ms=41000,
+            "krea2-turbo", "comfyui", 1320, "failed", latency_ms=41000,
             metadata={"status_code": 503}, warnings=["The image engine ran out of memory before finishing."])
     job("req_household_failed_image", "alex", "image.generate", "krea2-turbo", 1320, "failed", 0,
         error="The image engine ran out of memory before finishing.")

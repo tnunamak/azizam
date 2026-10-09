@@ -53,7 +53,7 @@ const flows = {
     ["try", async (page) => page.getByRole("link", { name: /Make a picture/ }).first().click()],
     ["prompt", async (page) => {
       const prompt = page.getByRole("textbox", { name: /prompt/i }).first();
-      await prompt.fill("A ripe tomato on a wooden table by a window");
+      await prompt.fill("An apple tart cooling on the kitchen table");
     }],
     ["result", async (page) => {
       await page.getByRole("button", { name: "Run", exact: true }).click();
