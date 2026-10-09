@@ -1,6 +1,7 @@
 import { networkFetch } from "./network-error";
 import { accountApi, type AccountSnapshot } from "./account-api";
 import { ApiError, adminFetch } from "./api";
+import { scrubModelPaths } from "./model-name";
 import type {
   MemberStatus,
   HomeProjection,
@@ -23,7 +24,8 @@ async function memberGet<T>(path: string): Promise<T> {
       response.status,
     );
   }
-  return payload as T;
+  // A model can be registered by file path; screens show its file name only.
+  return scrubModelPaths(payload) as T;
 }
 
 export const productApi = {

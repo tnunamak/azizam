@@ -51,60 +51,11 @@ export function dayMarks(dates: (Date | null)[], now: Date): (string | null)[] {
   });
 }
 
-/**
- * A readable name from a raw model id: "krea2-turbo" -> "Krea2 Turbo",
- * "tts-1" -> "TTS 1". Short all-letter words read as acronyms.
- */
-export function prettifyModelId(id: string): string {
-  return id
-    .split(/[-_./:\s]+/)
-    .filter(Boolean)
-    .map((word) =>
-      /^[a-z]{1,3}$/i.test(word)
-        ? word.toUpperCase()
-        : word[0].toUpperCase() + word.slice(1),
-    )
-    .join(" ");
-}
-
-interface CatalogNameRow {
-  id: string;
-  title?: string | null;
-  display_name?: string | null;
-}
-
-export interface CapabilityNameRow {
-  recommended_model?: string | null;
-  use_name?: string | null;
-  use_names?: Array<string> | null;
-  model?: string | null;
-}
-
-/**
- * The name a person reads for a model: the catalog's title, else the
- * recommended name of a capability that answers to this id, else the id made
- * readable. The raw id stays in Details as "Model name".
- */
-export function modelDisplayName(
-  model: string,
-  catalog?: { aliases?: CatalogNameRow[]; models?: CatalogNameRow[] },
-  capabilities: CapabilityNameRow[] = [],
-): string {
-  const row = [...(catalog?.aliases ?? []), ...(catalog?.models ?? [])].find(
-    (item) => item.id === model,
-  );
-  const titled = [row?.title, row?.display_name].find(
-    (name) => name && name.trim() && name !== model,
-  );
-  if (titled) return titled;
-  const capability = capabilities.find(
-    (item) =>
-      item.recommended_model &&
-      [item.use_name, item.model, ...(item.use_names ?? [])].includes(model),
-  );
-  if (capability?.recommended_model) return capability.recommended_model;
-  return prettifyModelId(model);
-}
+export {
+  modelDisplayName,
+  prettifyModelId,
+  type CapabilityNameRow,
+} from "@/lib/model-name";
 
 export type InProgressKind = "image" | "video" | "audio";
 

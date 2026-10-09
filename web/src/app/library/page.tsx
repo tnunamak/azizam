@@ -78,6 +78,7 @@ import {
 } from "@/components/ui/select";
 import { useViewer } from "@/components/shell/session";
 import { productApi, type MemberStatus } from "@/lib/product-api";
+import { safeModelId } from "@/lib/model-name";
 import { api } from "@/lib/api";
 import {
   MAKING_COPY,
@@ -1609,12 +1610,14 @@ function CreationViewer({
                     label="Model name"
                     value={
                       asset.model ? (
-                        <span className="font-mono text-xs">{asset.model}</span>
+                        <span className="font-mono text-xs">
+                          {safeModelId(asset.model)}
+                        </span>
                       ) : (
                         ""
                       )
                     }
-                    title={asset.model || undefined}
+                    title={asset.model ? safeModelId(asset.model) : undefined}
                   />
                   <Detail label="Seed" value={asset.seed ?? ""} />
                   {asset.source ? (

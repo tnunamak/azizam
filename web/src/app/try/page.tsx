@@ -43,6 +43,7 @@ import { ReceiptLink } from "./receipt-link";
 import { accountApi, type AccountApp } from "@/lib/account-api";
 import { ApiError } from "@/lib/api";
 import { availabilityReason } from "@/lib/status-copy";
+import { taskNames } from "@/lib/terms";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -184,31 +185,31 @@ const TAB_ITEMS: Array<{
   },
   {
     value: "image",
-    label: "Make a picture",
+    label: taskNames.image,
     icon: ImageIcon,
     help: "Describe the picture you want to make.",
   },
   {
     value: "speech",
-    label: "Read text aloud",
+    label: taskNames.speech,
     icon: AudioLines,
     help: "Enter text to hear it spoken aloud.",
   },
   {
     value: "transcribe",
-    label: "Turn a recording into text",
+    label: taskNames.transcribe,
     icon: Mic,
     help: "Upload a recording or record your voice to get the words as text.",
   },
   {
     value: "decide",
-    label: "Choose an option",
+    label: taskNames.decisions,
     icon: GitBranch,
     help: "Provide information to help pick one of the options.",
   },
   {
     value: "embed",
-    label: "Turn text into numbers",
+    label: taskNames.embeddings,
     icon: Layers,
     help: "Turn text into numbers that search tools can use.",
   },

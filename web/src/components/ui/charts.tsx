@@ -100,23 +100,26 @@ function ChartAccessibleEquivalent({
   }
 
   return (
-    <table className="sr-only">
-      <caption>{accessibility.label}</caption>
-      <thead>
-        <tr>
-          <th scope="col">Sample</th>
-          <th scope="col">Value</th>
-        </tr>
-      </thead>
-      <tbody>
-        {data.map((point, index) => (
-          <tr key={`${String(point.x)}-${index}`}>
-            <th scope="row">{point.label ?? String(point.x)}</th>
-            <td>{String(point.y)}</td>
+    // The wrapper clips the table; a table alone ignores sr-only and widens the page.
+    <div className="sr-only">
+      <table>
+        <caption>{accessibility.label}</caption>
+        <thead>
+          <tr>
+            <th scope="col">Sample</th>
+            <th scope="col">Value</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {data.map((point, index) => (
+            <tr key={`${String(point.x)}-${index}`}>
+              <th scope="row">{point.label ?? String(point.x)}</th>
+              <td>{String(point.y)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
