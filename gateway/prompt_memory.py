@@ -13,11 +13,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from gateway import admin_store, media_jobs
+from gateway import admin_store, media_jobs, media_metadata
 
 NAMESPACE = "com.azizam.prompts"
 RETENTION_SECONDS = {"never": None, "3_months": 90 * 86400, "1_year": 365 * 86400}
-HOUSEHOLD_DEFAULTS = {"default_remember": True, "never_keep": False, "retention_cap": "never"}
+MEMBER_DEFAULTS = {"remember": True, "retention": "3_months"}
+HOUSEHOLD_DEFAULTS = {"default_remember": True, "never_keep": False, "retention_cap": "1_year"}
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS asset_prompts (
@@ -46,7 +47,20 @@ class PromptModeError(ValueError):
     pass
 
 
-def requested_mode(body: Mapping[str, Any] | None) -> str | None:
+def requested_mode(
+    body: Mapping[str, Any] | None,
+    headers: Mapping[str, Any] | None = None,
+) -> str | None:
+    if headers:
+        for key, value in headers.items():
+            if str(key).lower() != "x-azizam-retain-prompt":
+                continue
+            normalized = str(value).strip().lower()
+            if normalized in {"false", "0", "no", "off"}:
+                return "forget"
+            if normalized in {"true", "1", "yes", "on"}:
+                break
+            raise PromptModeError("X-Azizam-Retain-Prompt must be true or false")
     if not isinstance(body, Mapping):
         return None
     extensions = body.get("extensions")
@@ -62,13 +76,72 @@ def requested_mode(body: Mapping[str, Any] | None) -> str | None:
     return "forget"
 
 
+def prompt_text(body: Mapping[str, Any] | None) -> str | None:
+    """Extract the maker's original words, not an engine-rewritten prompt."""
+    if not isinstance(body, Mapping):
+        return None
+    for field in ("prompt", "input", "tags"):
+        value = body.get(field)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    shots = body.get("shots")
+    if isinstance(shots, list):
+        texts = [shot["prompt"].strip() for shot in shots
+                 if isinstance(shot, Mapping) and isinstance(shot.get("prompt"), str) and shot["prompt"].strip()]
+        return "\n\n".join(texts) if texts else None
+    return None
+
+
+def capture_metadata(content: bytes, suffix: str) -> dict[str, str]:
+    """Capture workflow data in the sole prompt record before store-time strip."""
+    kind = media_metadata.media_kind(suffix)
+    if kind == "png":
+        return media_metadata.png_text_chunks(content)
+    if kind in {"jpeg", "webp"}:
+        from io import BytesIO
+        from PIL import Image
+
+        with Image.open(BytesIO(content)) as image:
+            exif = image.getexif()
+            values: dict[str, str] = {}
+            for key, label in ((0x010F, "workflow"), (0x0110, "prompt"), (0x010E, "azizam_provenance")):
+                value = exif.get(key)
+                if isinstance(value, str) and value:
+                    values[label] = value.removeprefix(f"{label}:")
+            return values
+    if kind in {"video", "audio"}:
+        return media_metadata.read_media_tags(content, suffix)
+    return {}
+
+
+def restore_metadata(content: bytes, suffix: str, values: Mapping[str, str]) -> bytes:
+    """Build a maker-only full download from clean media plus one prompt row."""
+    kind = media_metadata.media_kind(suffix)
+    if not values:
+        return content
+    if kind == "png":
+        return media_metadata.embed_png_text(content, values)
+    if kind in {"video", "audio"}:
+        return media_metadata.embed_media_tags(content, suffix, values)
+    if kind in {"jpeg", "webp"}:
+        from io import BytesIO
+        from PIL import Image
+
+        with Image.open(BytesIO(content)) as image:
+            out = BytesIO()
+            image.save(out, format=image.format, exif=media_metadata.exif_bytes(values))
+            return out.getvalue()
+    return content
+
+
 def decide(
     *, person_id: str | None, member: Mapping[str, Any] | None,
     household: Mapping[str, Any] | None, request_body: Mapping[str, Any] | None,
+    request_headers: Mapping[str, Any] | None = None,
     responses_store: bool | None = None, now: int | None = None,
 ) -> Decision:
     """Resolve policy before any payload, media or Responses persistence."""
-    mode = requested_mode(request_body)
+    mode = requested_mode(request_body, request_headers)
     policy = {**HOUSEHOLD_DEFAULTS, **(household or {})}
     if not person_id:
         return Decision(None, False, "no_person")
@@ -76,7 +149,7 @@ def decide(
         return Decision(person_id, False, "server_disabled")
     if mode == "forget" or responses_store is False:
         return Decision(person_id, False, "request_forget")
-    preference = member or {}
+    preference = {**MEMBER_DEFAULTS, **(member or {})}
     if not preference.get("remember", policy["default_remember"]):
         return Decision(person_id, False, "member_disabled")
     member_period = RETENTION_SECONDS.get(preference.get("retention", "never"))
@@ -105,15 +178,64 @@ def person_for_app(app_id: str | None, *, admin_path: Path | None = None) -> str
 
 def decide_for_app(
     app_id: str | None, body: Mapping[str, Any] | None, *,
-    admin_path: Path | None = None, responses_store: bool | None = None,
+    admin_path: Path | None = None,
+    request_headers: Mapping[str, Any] | None = None,
+    responses_store: bool | None = None,
 ) -> Decision:
     path = admin_path or admin_store.DB_PATH
     person_id = person_for_app(app_id, admin_path=path)
     member = admin_store.get_prompt_memory_preference(person_id, path=path) if person_id else None
     return decide(
         person_id=person_id, member=member, household=household_settings(admin_path=path),
-        request_body=body, responses_store=responses_store,
+        request_body=body, request_headers=request_headers, responses_store=responses_store,
     )
+
+
+def get_member(person_id: str, *, path: Path | None = None) -> dict[str, Any]:
+    record = admin_store.get_prompt_memory_preference(person_id, path=path or admin_store.DB_PATH)
+    if not record:
+        return dict(MEMBER_DEFAULTS)
+    return {
+        "remember": bool(record.get("remember")),
+        "retention": str(record.get("retention") or MEMBER_DEFAULTS["retention"]),
+    }
+
+
+def put_member(
+    person_id: str,
+    *,
+    remember: bool,
+    retention: str,
+    path: Path | None = None,
+) -> dict[str, Any]:
+    return admin_store.put_prompt_memory_preference(
+        person_id,
+        remember=bool(remember),
+        retention=retention,
+        updated_by=person_id,
+        path=path or admin_store.DB_PATH,
+    )
+
+
+def household_default(value: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    return {**HOUSEHOLD_DEFAULTS, **(value or {})}
+
+
+def effective(member: Mapping[str, Any] | None, household: Mapping[str, Any] | None) -> dict[str, Any]:
+    prefs = {**MEMBER_DEFAULTS, **(member or {})}
+    policy = household_default(household)
+    remember = bool(prefs.get("remember", True)) and not bool(policy.get("never_keep"))
+    return {
+        "remember": remember,
+        "retention": _effective_retention(str(prefs.get("retention") or "3_months"), str(policy.get("retention_cap") or "1_year")),
+    }
+
+
+def _effective_retention(member_retention: str, cap_retention: str) -> str:
+    finite = [value for value in (member_retention, cap_retention) if RETENTION_SECONDS.get(value) is not None]
+    if not finite:
+        return "never"
+    return min(finite, key=lambda value: RETENTION_SECONDS[value] or 0)
 
 
 def _connect(path: Path | None) -> sqlite3.Connection:
@@ -189,6 +311,29 @@ def delete_asset(asset_id: str, *, path: Path | None = None) -> int:
         count = conn.execute("DELETE FROM asset_prompts WHERE asset_id=?", (asset_id,)).rowcount
         conn.commit()
         return count
+    finally:
+        conn.close()
+
+
+def move(source_id: str, asset_id: str, person_id: str, *, metadata: Mapping[str, str] | None = None, path: Path | None = None) -> bool:
+    """Move an in-flight video prompt to its finished asset in one transaction."""
+    conn = _connect(path)
+    try:
+        row = conn.execute(
+            "SELECT prompt_text,metadata_json,created_at,kept_until FROM asset_prompts "
+            "WHERE asset_id=? AND person_id=?", (source_id, person_id),
+        ).fetchone()
+        if row is None:
+            return False
+        merged = dict(metadata) if metadata else json.loads(row["metadata_json"] or "{}")
+        conn.execute(
+            "INSERT OR REPLACE INTO asset_prompts(asset_id,person_id,prompt_text,metadata_json,created_at,kept_until) "
+            "VALUES(?,?,?,?,?,?)",
+            (asset_id, person_id, row["prompt_text"], json.dumps(merged, ensure_ascii=False), row["created_at"], row["kept_until"]),
+        )
+        conn.execute("DELETE FROM asset_prompts WHERE asset_id=? AND person_id=?", (source_id, person_id))
+        conn.commit()
+        return True
     finally:
         conn.close()
 

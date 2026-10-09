@@ -68,7 +68,9 @@ from gateway import (
     audio_media_jobs,
     default_profiles,
     media_jobs,
+    me_prompt_memory,
     me_media,
+    prompt_memory,
     receipt_store,
     resource_admission_http,
     route_registry,
@@ -116,7 +118,7 @@ from gateway.admin_api import (
     derive_admin_attention,
 )
 from gateway.admin_catalog import admin_api_surfaces, profile_policy_catalog
-from gateway.settings_api import create_settings_router, instance_settings
+from gateway.settings_api import create_settings_router, instance_settings, prompt_memory_settings
 from gateway.lan_auth_policy import DEFAULT_LAN_PLACEHOLDER_KEYS, lan_placeholder_keys
 from gateway.activity_api import create_activity_router
 from gateway.setup_api import build_setup_api_router
@@ -4420,7 +4422,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
         # Gateway-level control; engines never see the extensions envelope.
         _begin_media_delivery(auth_context, receipt)
         if isinstance(body_json, dict) and "extensions" in body_json:
-            metadata_error = _note_media_metadata_body(body_json)
+            metadata_error = _note_media_metadata_body(body_json, request.headers)
             if metadata_error is not None:
                 return metadata_error
             body_json.pop("extensions", None)
@@ -6923,13 +6925,20 @@ def store_asset_bytes(
     suffix: str = ".png",
     owner_key_hash: str | None = None,
 ) -> str:
-    """Write `content` to the content-addressed cache. Returns the asset_id."""
+    """Store clean media; any retained prompt lives only in asset_prompts."""
     kind = str(kind).strip().lower()
     if kind not in {"img", "aud", "vid"}:
         raise ValueError("asset kind must be one of img, aud, vid")
     suffix = str(suffix or "").strip().lower()
     if not suffix.startswith("."):
         suffix = f".{suffix or 'bin'}"
+    delivery = media_delivery.current()
+    decision = getattr(delivery, "prompt_decision", None)
+    text = getattr(delivery, "prompt_text", None)
+    metadata: dict[str, str] = {}
+    if decision is not None and decision.keep and text:
+        metadata = prompt_memory.capture_metadata(content, suffix)
+    content = media_metadata.strip_metadata(content, suffix, workdir=media_delivery.DEFAULT_WORKDIR)
     digest = hashlib.sha256(content).hexdigest()
     asset_id = f"{kind}_{digest}"
     IMAGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -6940,6 +6949,11 @@ def store_asset_bytes(
         tmp.write_bytes(content)
         tmp.replace(target)
     _record_asset_owner(asset_id, owner_key_hash)
+    if decision is not None and decision.keep and text:
+        prompt_memory.put(
+            asset_id, decision.person_id, text,
+            kept_until=decision.kept_until, metadata=metadata,
+        )
     return asset_id
 
 
@@ -7056,7 +7070,7 @@ def build_signed_asset_url(request: Request, asset_id: str, metadata_mode: str |
     The URL carries ``md=full|none``: the metadata mode the bytes are
     delivered with. Default is the current request's resolved mode.
     """
-    mode = metadata_mode or media_delivery.current_mode()
+    mode = metadata_mode or provenance.METADATA_NONE
     expires = int(time.time()) + IMAGE_SIGNED_URL_TTL
     sig = _sign_asset_token(asset_id, expires, mode)
     proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "http").split(",")[0].strip()
@@ -7070,7 +7084,7 @@ def build_signed_image_url(request: Request, image_id: str, metadata_mode: str |
     Honors `X-Forwarded-Proto` and the request's Host header so the URL works
     regardless of which Traefik route the client came in on.
     """
-    mode = metadata_mode or media_delivery.current_mode()
+    mode = metadata_mode or provenance.METADATA_NONE
     expires = int(time.time()) + IMAGE_SIGNED_URL_TTL
     sig = _sign_asset_token(image_id, expires, mode)
     proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "http").split(",")[0].strip()
@@ -7486,21 +7500,35 @@ def _build_image_response_payload(
     delivery = media_delivery.current()
     mode = delivery.mode if delivery is not None else _media_metadata_default(auth_context)
     for index, raw in enumerate(images):
-        # Stored copy: always full (ComfyUI prompt/workflow + provenance record).
+        # Stored copy stays metadata-free. Prompt/workflow bytes live only in
+        # the maker-scoped prompt record when policy allows retaining them.
         record = _image_provenance_record(
             delivery, index, size=size, quality=quality, background=background,
             output_format=output_format, output_compression=output_compression,
         )
         raw = media_delivery.attach_provenance(raw, ".png", record)
-        exif = (
-            media_metadata.exif_bytes(media_delivery.image_exif_entries(raw, record))
-            if output_format != "png"
-            else None
-        )
+        prompt_metadata = prompt_memory.capture_metadata(raw, ".png")
+        raw = media_delivery.deliver_bytes(raw, ".png", provenance.METADATA_NONE)
+        exif = None
         encoded, mime_type = encode_image_bytes(
             raw, output_format, output_compression, exif=exif
         )
         image_id = store_image_bytes(encoded, owner_key_hash=owner_key_hash, suffix=suffix)
+        decision = getattr(delivery, "prompt_decision", None)
+        prompt_text_value = getattr(delivery, "prompt_text", None)
+        if (
+            decision is not None
+            and getattr(decision, "keep", False)
+            and getattr(decision, "person_id", None)
+            and prompt_text_value
+        ):
+            prompt_memory.put(
+                image_id,
+                str(decision.person_id),
+                str(prompt_text_value),
+                kept_until=decision.kept_until,
+                metadata=prompt_metadata,
+            )
         item: dict[str, Any] = {
             "asset_id": image_id,
             "asset_url": build_signed_asset_url(request, image_id, mode),
@@ -7990,7 +8018,7 @@ async def proxy_comfy_request(
     )
     if unknown_response is not None:
         return unknown_response
-    metadata_error = _note_media_metadata_body(body)
+    metadata_error = _note_media_metadata_body(body, request.headers)
     if metadata_error is not None:
         return metadata_error
 
@@ -8445,7 +8473,7 @@ async def proxy_comfy_edit_request(
     )
     if unknown_response is not None:
         return unknown_response
-    metadata_error = _note_media_metadata_body(form_dict)
+    metadata_error = _note_media_metadata_body(form_dict, request.headers)
     if metadata_error is not None:
         return metadata_error
 
@@ -9365,13 +9393,17 @@ def _tracked_video_fields(prompt_id: str) -> dict[str, Any]:
         key: record.get(key)
         for key in (
             "model", "size", "seconds", "actual_seconds", "created_at", "completed_at",
-            "expires_at", "prompt", "error", "remixed_from_video_id",
+            "expires_at", "error", "remixed_from_video_id",
             "extended_from_video_id", "total_seconds",
         )
         if record.get(key) is not None
     }
     if record.get("resolved_model") is not None:
         fields["azizam_resolved_model"] = record["resolved_model"]
+    person_id = prompt_memory.person_for_app(record.get("app_id"), admin_path=ADMIN_STORE.path)
+    prompt_asset_id = str(record.get("asset_id") or f"video_{prompt_id}")
+    saved = prompt_memory.get(prompt_asset_id, person_id) if person_id else None
+    fields["prompt"] = saved["prompt_text"] if saved else None
     return fields
 
 
@@ -10637,7 +10669,6 @@ async def _submit_video_graph(
                         "created_at": now,
                         "completed_at": None,
                         "expires_at": now + 86400,
-                        "prompt": prompt,
                         "error": None,
                         "remixed_from_video_id": remixed_from_video_id,
                         # Delivery control from the submit request (None = use profile default).
@@ -10669,6 +10700,13 @@ async def _submit_video_graph(
                         "deleted_at": None,
                     }
                 _persist_video_record(prompt_id)
+                context = media_delivery.current()
+                memory = context.prompt_decision if context is not None else None
+                if memory is not None and memory.keep and context.prompt_text:
+                    prompt_memory.put(
+                        f"video_{prompt_id}", memory.person_id, context.prompt_text,
+                        kept_until=memory.kept_until,
+                    )
             except Exception:
                 pass
             payload = {
@@ -10779,7 +10817,7 @@ async def proxy_comfy_video_create(
             media_type="application/json",
         )
     _begin_media_delivery(auth_context)
-    metadata_error = _note_media_metadata_body(body)
+    metadata_error = _note_media_metadata_body(body, request.headers)
     if metadata_error is not None:
         return metadata_error
 
@@ -11989,6 +12027,8 @@ async def proxy_comfy_video_content(
                     media_delivery.attach_provenance, video_bytes, ext, record.get("provenance")
                 )
                 if index_library:
+                    person_id = prompt_memory.person_for_app(record.get("app_id"), admin_path=ADMIN_STORE.path)
+                    workflow_metadata = prompt_memory.capture_metadata(stored_video_bytes, ext) if person_id and prompt_memory.get(f"video_{prompt_id}", person_id) else {}
                     asset_id = await asyncio.to_thread(
                         store_asset_bytes,
                         stored_video_bytes,
@@ -11996,6 +12036,10 @@ async def proxy_comfy_video_content(
                         suffix=ext,
                         owner_key_hash=record.get("owner_key_hash") if isinstance(record.get("owner_key_hash"), str) else None,
                     )
+                    if person_id:
+                        prompt_memory.move(f"video_{prompt_id}", asset_id, person_id, metadata=workflow_metadata)
+                    record["asset_id"] = asset_id
+                    _persist_video_record(prompt_id)
                     from gateway import media_ingestion
                     await asyncio.to_thread(
                         media_ingestion.index_video_delivery,
@@ -13259,9 +13303,12 @@ def _media_metadata_default(auth_context: AuthContext | None) -> str:
 
 def _begin_media_delivery(auth_context: AuthContext | None, receipt: Any = None) -> media_delivery.DeliveryContext:
     """Open the per-request media delivery context (profile default, receipt)."""
-    return media_delivery.begin(
+    ctx = media_delivery.begin(
         profile_default=_media_metadata_default(auth_context), receipt=receipt
     )
+    identity = getattr(auth_context, "identity", None)
+    ctx.app_id = getattr(identity, "app_id", None)
+    return ctx
 
 
 def _media_metadata_error(exc: Exception) -> Response:
@@ -13277,10 +13324,21 @@ def _media_metadata_error(exc: Exception) -> Response:
     )
 
 
-def _note_media_metadata_body(body: Any) -> Response | None:
+def _note_media_metadata_body(body: Any, headers: Mapping[str, Any] | None = None) -> Response | None:
     """Read the metadata control from a parsed body; return a 400 if invalid."""
     try:
         media_delivery.note_body(body if isinstance(body, Mapping) else None)
+        ctx = media_delivery.current()
+        if ctx is not None and isinstance(body, Mapping):
+            ctx.prompt_decision = prompt_memory.decide_for_app(
+                ctx.app_id, body, admin_path=ADMIN_STORE.path, request_headers=headers,
+            )
+            ctx.prompt_text = prompt_memory.prompt_text(body)
+    except prompt_memory.PromptModeError as exc:
+        return Response(
+            content=json.dumps({"error": {"message": str(exc), "type": "invalid_request_error", "code": "invalid_prompt_mode", "param": f"extensions.{prompt_memory.NAMESPACE}.mode"}}),
+            status_code=400, media_type="application/json",
+        )
     except provenance.MetadataModeError as exc:
         return _media_metadata_error(exc)
     return None
@@ -14132,6 +14190,13 @@ app.include_router(
         admin_db_path=lambda: ADMIN_STORE.path,
         media_jobs_path=lambda: media_jobs.DB_PATH,
         receipts_path=lambda: receipt_store.DB_PATH,
+    )
+)
+
+app.include_router(
+    me_prompt_memory.create_me_prompt_memory_router(
+        session_provider=lambda request: _oidc_session_from_request(request),
+        household_provider=lambda: prompt_memory_settings(ADMIN_DB_PATH),
     )
 )
 
@@ -19859,6 +19924,13 @@ def _image_media_job_payload_path(job_id: str) -> Path:
     return IMAGE_MEDIA_JOB_PAYLOAD_DIR / f"{job_id}.json"
 
 
+_EPHEMERAL_MEDIA_JOB_PAYLOADS: dict[str, dict[str, Any]] = {}
+
+
+def _has_image_media_job_payload(job_id: str) -> bool:
+    return job_id in _EPHEMERAL_MEDIA_JOB_PAYLOADS or _image_media_job_payload_path(job_id).exists()
+
+
 def _persist_image_media_job_payload(
     job_id: str,
     *,
@@ -19866,7 +19938,6 @@ def _persist_image_media_job_payload(
     request: Request,
     auth_context: AuthContext,
 ) -> None:
-    IMAGE_MEDIA_JOB_PAYLOAD_DIR.mkdir(parents=True, exist_ok=True)
     identity = auth_context.identity
     payload = {
         "schema_version": 1,
@@ -19882,6 +19953,15 @@ def _persist_image_media_job_payload(
         },
         "created_at": int(time.time()),
     }
+    memory = prompt_memory.decide_for_app(
+        getattr(identity, "app_id", None), body, admin_path=ADMIN_STORE.path,
+    )
+    if not memory.keep:
+        # A forgotten async job can run in this process but cannot survive a
+        # restart: a durable request spool would itself retain the prompt.
+        _EPHEMERAL_MEDIA_JOB_PAYLOADS[job_id] = payload
+        return
+    IMAGE_MEDIA_JOB_PAYLOAD_DIR.mkdir(parents=True, exist_ok=True)
     path = _image_media_job_payload_path(job_id)
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
@@ -19893,6 +19973,8 @@ def _persist_image_media_job_payload(
 
 
 def _load_image_media_job_payload(job_id: str) -> dict[str, Any] | None:
+    if job_id in _EPHEMERAL_MEDIA_JOB_PAYLOADS:
+        return _EPHEMERAL_MEDIA_JOB_PAYLOADS[job_id]
     path = _image_media_job_payload_path(job_id)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -19905,6 +19987,7 @@ def _load_image_media_job_payload(job_id: str) -> dict[str, Any] | None:
 
 
 def _delete_image_media_job_payload(job_id: str) -> None:
+    _EPHEMERAL_MEDIA_JOB_PAYLOADS.pop(job_id, None)
     try:
         _image_media_job_payload_path(job_id).unlink(missing_ok=True)
     except Exception:
@@ -20289,6 +20372,7 @@ def _mark_image_media_job_failed(
         )
     except Exception:
         pass
+    _delete_image_media_job_payload(job_id)
 
 
 async def _run_image_media_job(job_id: str) -> None:
@@ -20518,7 +20602,7 @@ def _resume_pending_image_media_jobs() -> int:
             job_id = str(job.get("job_id") or "")
             if not job_id:
                 continue
-            if not _image_media_job_payload_path(job_id).exists():
+            if not _has_image_media_job_payload(job_id):
                 _mark_image_media_job_failed(
                     job_id,
                     "Image media job payload missing after proxy restart",
@@ -20778,6 +20862,7 @@ def _mark_audio_media_job_failed(
         )
     except Exception:
         pass
+    _delete_audio_media_job_payload(job_id)
 
 
 async def _run_audio_media_job(job_id: str) -> None:
@@ -20913,7 +20998,7 @@ def _resume_pending_audio_media_jobs() -> int:
             job_id = str(job.get("job_id") or "")
             if not job_id:
                 continue
-            if not _image_media_job_payload_path(job_id).exists():
+            if not _has_image_media_job_payload(job_id):
                 _mark_audio_media_job_failed(
                     job_id,
                     "Audio media job payload missing after proxy restart",
@@ -21194,6 +21279,7 @@ def _mark_video_media_job_failed(
         )
     except Exception:
         pass
+    _delete_video_media_job_payload(job_id)
 
 
 def _video_response_status(response: Response) -> tuple[str | None, int]:
@@ -21458,7 +21544,7 @@ def _resume_pending_video_media_jobs() -> int:
             job_id = str(job.get("job_id") or "")
             if not job_id:
                 continue
-            if not _image_media_job_payload_path(job_id).exists():
+            if not _has_image_media_job_payload(job_id):
                 _mark_video_media_job_failed(
                     job_id,
                     "Video media job payload missing after proxy restart",
@@ -21692,7 +21778,7 @@ async def gateway_image_generations_media_job(request: Request):
     if existing is not None:
         if existing.get("status") in {media_jobs.STATUS_QUEUED, media_jobs.STATUS_RUNNING}:
             job_id = str(existing.get("job_id") or "")
-            if job_id and _image_media_job_payload_path(job_id).exists():
+            if job_id and _has_image_media_job_payload(job_id):
                 _schedule_image_media_job(job_id)
         response = _image_media_job_response(existing, request)
         finish_image_route_receipt(receipt, response)
@@ -22138,6 +22224,24 @@ def _signed_asset_content_response(
         )
 
     data = cache_path.read_bytes()
+    if md_raw == provenance.METADATA_FULL:
+        person_id: str | None = None
+        if auth_context is None:
+            checked = authenticate_request(request, "/v1/assets/{asset_id}/content")
+            if not isinstance(checked, Response):
+                auth_context = checked
+        if auth_context is not None:
+            identity = getattr(auth_context, "identity", None)
+            person_id = prompt_memory.person_for_app(
+                getattr(identity, "app_id", None), admin_path=ADMIN_STORE.path,
+            )
+        if person_id is None:
+            session = _oidc_session_from_request(request)
+            person_id = str(session.subject) if session is not None else None
+        record = prompt_memory.get(asset_id, person_id) if person_id else None
+        if record is None or prompt_memory.household_settings(admin_path=ADMIN_STORE.path)["never_keep"]:
+            return JSONResponse({"error": {"code": "prompt_not_accessible", "message": "Full metadata is available only to the maker while their prompt is kept."}}, status_code=403)
+        data = prompt_memory.restore_metadata(data, cache_path.suffix, record["metadata"])
     try:
         data = media_delivery.deliver_bytes(
             data, cache_path.suffix, md_raw or provenance.METADATA_NONE
@@ -22702,7 +22806,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
         name, reason = next(iter(unknown_top_level.items()))
         return _audio_extension_error_response(reason, param=name)
     _begin_media_delivery(auth_context, receipt)
-    metadata_error = _note_media_metadata_body(body)
+    metadata_error = _note_media_metadata_body(body, request.headers)
     if metadata_error is not None:
         return metadata_error
 

@@ -21,7 +21,7 @@ from typing import Any, Callable, Iterable, Mapping
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, media_jobs, media_metadata, ownership, provenance, receipt_store
+from gateway import admin_store, media_jobs, media_metadata, ownership, prompt_memory, provenance, receipt_store
 from gateway.admin_oidc import AdminSession
 from gateway.user_runtime import UserPortalError
 
@@ -95,6 +95,7 @@ def create_me_media_router(
     admin_db_path: PathProvider = admin_store.DB_PATH,
     media_jobs_path: PathProvider = media_jobs.DB_PATH,
     receipts_path: PathProvider = receipt_store.DB_PATH,
+    prompt_memory_path: PathProvider = prompt_memory.DB_PATH,
 ) -> APIRouter:
     router = APIRouter(prefix="/me/api", tags=["me"])
 
@@ -104,6 +105,7 @@ def create_me_media_router(
             admin_path = _resolve_path(admin_db_path)
             jobs_path = _resolve_path(media_jobs_path)
             receipt_path = _resolve_path(receipts_path)
+            prompt_path = _resolve_path(prompt_memory_path)
             actor = _actor_from_request(request, session_provider, admin_path)
             scope = _media_scope(request, actor, admin_path)
             result = _list_media(
@@ -117,6 +119,7 @@ def create_me_media_router(
                 admin_db_path=admin_path,
                 media_jobs_path=jobs_path,
                 receipts_path=receipt_path,
+                prompt_memory_path=prompt_path,
             )
             if scope.audit_everyone:
                 _audit_everyone(actor, "media.library.everyone", admin_path)
@@ -130,6 +133,7 @@ def create_me_media_router(
             admin_path = _resolve_path(admin_db_path)
             jobs_path = _resolve_path(media_jobs_path)
             receipt_path = _resolve_path(receipts_path)
+            prompt_path = _resolve_path(prompt_memory_path)
             actor = _actor_from_request(request, session_provider, admin_path)
             scope = _media_scope(request, actor, admin_path)
             item = _find_asset(
@@ -144,6 +148,7 @@ def create_me_media_router(
                 admin_db_path=admin_path,
                 media_jobs_path=jobs_path,
                 receipts_path=receipt_path,
+                prompt_memory_path=prompt_path,
             )
             if item is None:
                 raise _ApiError("asset_not_found", "Asset not found for this account", 404)
@@ -164,6 +169,7 @@ def create_me_media_router(
             admin_path = _resolve_path(admin_db_path)
             jobs_path = _resolve_path(media_jobs_path)
             receipt_path = _resolve_path(receipts_path)
+            prompt_path = _resolve_path(prompt_memory_path)
             actor = _actor_from_session(session, admin_path)
             scope = _member_media_scope(actor.user_id, admin_path)
             item = _find_asset(
@@ -178,6 +184,7 @@ def create_me_media_router(
                 admin_db_path=admin_path,
                 media_jobs_path=jobs_path,
                 receipts_path=receipt_path,
+                prompt_memory_path=prompt_path,
             )
             if item is None:
                 raise _ApiError("asset_not_found", "Asset not found for this account", 404)
@@ -206,6 +213,7 @@ def create_me_media_router(
             admin_path = _resolve_path(admin_db_path)
             jobs_path = _resolve_path(media_jobs_path)
             receipt_path = _resolve_path(receipts_path)
+            prompt_path = _resolve_path(prompt_memory_path)
             actor = _actor_from_request(request, session_provider, admin_path)
             scope = _media_scope(request, actor, admin_path)
             item = _find_asset(
@@ -220,6 +228,7 @@ def create_me_media_router(
                 admin_db_path=admin_path,
                 media_jobs_path=jobs_path,
                 receipts_path=receipt_path,
+                prompt_memory_path=prompt_path,
             )
             if item is None:
                 raise _ApiError("asset_not_found", "Asset not found for this account", 404)
@@ -228,6 +237,8 @@ def create_me_media_router(
             mode = request.query_params.get("metadata", "none")
             if mode not in {"none", "full"}:
                 raise _ApiError("invalid_metadata", "Metadata must be full or none", 400)
+            if mode == "full" and not item.get("workflow_download_url"):
+                raise _ApiError("prompt_not_accessible", "Full metadata is only available to the maker while the prompt is kept", 403)
             if scope.audit_everyone:
                 _audit_everyone(actor, "media.download.everyone", admin_path)
             return _json({"asset_id": asset_id, "download_url": signed_url_builder(request, asset_id, mode)})
@@ -428,6 +439,7 @@ def _list_media(
     admin_db_path: Path,
     media_jobs_path: Path,
     receipts_path: Path,
+    prompt_memory_path: Path,
 ) -> dict[str, Any]:
     limit = _bounded_int(request.query_params.get("limit"), MEDIA_DEFAULT_LIMIT, MEDIA_MAX_LIMIT)
     cursor = _decode_cursor(request.query_params.get("cursor"))
@@ -444,6 +456,7 @@ def _list_media(
         admin_db_path=admin_db_path,
         media_jobs_path=media_jobs_path,
         receipts_path=receipts_path,
+        prompt_memory_path=prompt_memory_path,
     )
     filtered = [_item for _item in all_items if _matches_media_filters(_item, request)]
     if source_filter is not None:
@@ -486,6 +499,7 @@ def _find_asset(
     admin_db_path: Path,
     media_jobs_path: Path,
     receipts_path: Path,
+    prompt_memory_path: Path,
 ) -> dict[str, Any] | None:
     for item in _media_items(
         request=request,
@@ -498,6 +512,7 @@ def _find_asset(
         admin_db_path=admin_db_path,
         media_jobs_path=media_jobs_path,
         receipts_path=receipts_path,
+        prompt_memory_path=prompt_memory_path,
     ):
         if item.get("asset_id") == asset_id:
             return item
@@ -516,6 +531,7 @@ def _media_items(
     admin_db_path: Path,
     media_jobs_path: Path,
     receipts_path: Path,
+    prompt_memory_path: Path,
 ) -> list[dict[str, Any]]:
     jobs = media_jobs.recent(
         limit=media_jobs.count(path=media_jobs_path),
@@ -546,11 +562,8 @@ def _media_items(
             embedded = _embedded_provenance(path)
             media_type = str(asset.get("media_type") or asset_media_type_resolver(asset_id, path))
             created_at = _asset_created_at(path, job, receipt, embedded)
-            prompt = _string_first(
-                _prompt_for_asset(asset, job, receipt),
-                _nested(embedded, "parameters", "prompt"),
-                embedded.get("prompt"),
-            )
+            prompt_record = prompt_memory.get(asset_id, scope.person_id, path=prompt_memory_path)
+            prompt = prompt_record.get("prompt_text") if prompt_record else None
             model = _string_first(
                 _model_for_asset(asset, job, receipt),
                 embedded.get("resolved_model"),
@@ -582,9 +595,9 @@ def _media_items(
                 "duration_s": _first_present(asset.get("duration_s"), asset.get("duration"), _nested(job, "metadata", "duration_s"), _nested(embedded, "parameters", "duration_s")),
                 "poster_asset_id": asset.get("poster_asset_id"),
                 "download_url": signed_url_builder(request, asset_id, "none") if path is not None and path.is_file() else None,
-                "workflow_download_url": signed_url_builder(request, asset_id, "full") if path is not None and path.is_file() and embedded.get("workflow_available") else None,
+                "workflow_download_url": signed_url_builder(request, asset_id, "full") if path is not None and path.is_file() and prompt_record else None,
                 "generation_ms": receipt.get("latency_ms") if receipt else None,
-                "provenance": _provenance(asset, job, receipt, embedded, created_at=created_at),
+                "provenance": _provenance(asset, job, receipt, embedded, created_at=created_at, prompt=prompt),
                 "source": _source_projection(receipt, admin_db_path, metadata=job, visible_app_ids=scope.app_ids),
                 "unavailable_reason": None if path is not None and path.is_file() else "Asset file is missing or expired.",
             })
@@ -619,7 +632,7 @@ def _media_items(
                 "job_id": None,
                 "request_id": (receipt or embedded).get("request_id"),
                 "status": "available",
-                "prompt": _string_first(_nested(embedded, "parameters", "prompt"), embedded.get("prompt")),
+                "prompt": None,
                 "model": _string_first(embedded.get("resolved_model"), embedded.get("requested_model")),
                 "workflow": _string_first(embedded.get("workflow_id"), embedded.get("workflow")),
                 "seed": embedded.get("seed"),
@@ -628,10 +641,10 @@ def _media_items(
                 "duration_s": _nested(embedded, "parameters", "duration_s"),
                 "poster_asset_id": None,
                 "download_url": signed_url_builder(request, asset_id, "none"),
-                "workflow_download_url": signed_url_builder(request, asset_id, "full") if embedded.get("workflow_available") else None,
+                "workflow_download_url": None,
                 "generation_ms": None,
                 "provenance": {
-                    "prompt": _string_first(_nested(embedded, "parameters", "prompt"), embedded.get("prompt")),
+                    "prompt": None,
                     "model": _string_first(embedded.get("resolved_model"), embedded.get("requested_model")),
                     "workflow": _string_first(embedded.get("workflow_id"), embedded.get("workflow")),
                     "seed": embedded.get("seed"),
@@ -1022,14 +1035,11 @@ def _provenance(
     embedded: Mapping[str, Any] | None = None,
     *,
     created_at: int,
+    prompt: str | None = None,
 ) -> dict[str, Any]:
     embedded = embedded or {}
     return {
-        "prompt": _string_first(
-            _prompt_for_asset(asset, job, receipt),
-            _nested(embedded, "parameters", "prompt"),
-            embedded.get("prompt"),
-        ),
+        "prompt": prompt,
         "model": _string_first(
             _model_for_asset(asset, job, receipt),
             embedded.get("resolved_model"),

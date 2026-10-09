@@ -41,6 +41,9 @@ class DeliveryContext:
     parameters: dict[str, Any] = field(default_factory=dict)
     seeds: list[int | None] = field(default_factory=list)
     model_alias: str | None = None
+    app_id: str | None = None
+    prompt_decision: Any = None
+    prompt_text: str | None = None
 
     @property
     def mode(self) -> str:

@@ -217,6 +217,15 @@ CREATE TABLE IF NOT EXISTS operator_settings_generations (
   operator_settings_generation INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS prompt_memory_preferences (
+  user_id TEXT PRIMARY KEY,
+  remember INTEGER NOT NULL,
+  retention TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  updated_by TEXT,
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
+
 
 CREATE TABLE IF NOT EXISTS audit_events (
   id TEXT PRIMARY KEY,
@@ -2350,6 +2359,58 @@ def get_operator_setting(
     return _operator_setting_row_to_dict(row) if row is not None else None
 
 
+def get_prompt_memory_preference(
+    user_id: str,
+    *,
+    path: Path = DB_PATH,
+) -> dict[str, Any] | None:
+    if not user_id:
+        return None
+    with _conn(path) as conn:
+        row = conn.execute(
+            "SELECT * FROM prompt_memory_preferences WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    data = _row_to_dict(row)
+    if data is None:
+        return None
+    data["remember"] = bool(data.get("remember"))
+    return data
+
+
+def put_prompt_memory_preference(
+    user_id: str,
+    *,
+    remember: bool,
+    retention: str,
+    updated_by: str | None = None,
+    now: int | None = None,
+    path: Path = DB_PATH,
+) -> dict[str, Any]:
+    if not user_id:
+        raise ValueError("user_id is required")
+    if retention not in {"3_months", "1_year", "never"}:
+        raise ValueError("retention must be one of 3_months, 1_year, never")
+    ts = _now() if now is None else int(now)
+    with _conn(path) as conn:
+        conn.execute(
+            "INSERT INTO prompt_memory_preferences"
+            "(user_id, remember, retention, updated_at, updated_by) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET "
+            "remember=excluded.remember, retention=excluded.retention, "
+            "updated_at=excluded.updated_at, updated_by=excluded.updated_by",
+            (user_id, 1 if remember else 0, retention, ts, updated_by),
+        )
+        conn.commit()
+    record = get_prompt_memory_preference(user_id, path=path)
+    if record is None:
+        raise RuntimeError("prompt memory preference write failed")
+    return record
+
+
 def list_operator_settings(*, path: Path = DB_PATH) -> list[dict[str, Any]]:
     with _conn(path) as conn:
         rows = conn.execute(
@@ -2431,6 +2492,8 @@ __all__ = [
     "OperatorSettingsGenerationConflict",
     "get_operator_setting",
     "list_operator_settings",
+    "get_prompt_memory_preference",
+    "put_prompt_memory_preference",
     "record_audit",
     "list_audit",
     "get_audit_event",
