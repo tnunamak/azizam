@@ -1834,9 +1834,9 @@ export default function TryPage() {
                       </span>
                     </label>
                   )}
+                  {/* Run is the page's one primary action (D1.5b). */}
                   <Button
                     type="submit"
-                    variant="outline"
                     disabled={
                       running !== null ||
                       keyBusy ||
@@ -1875,7 +1875,11 @@ export default function TryPage() {
                     </div>
                   ) : currentError ? (
                     <div className="space-y-5">
+                      {/* A failed run says what failed (it was titled
+                          "Couldn't load this"; D1.5b). Try again reloads the
+                          catalog and never repeats a generation. */}
                       <ErrorState
+                        heading={`${tab.label} request failed`}
                         message={currentError.message}
                         onRetry={() => void loadCatalog(key?.secret)}
                       />
