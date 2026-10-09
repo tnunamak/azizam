@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { capabilityLabels } from "@/lib/terms";
-import { availabilityReason } from "@/lib/status-copy";
 import { safeModelId } from "@/lib/model-name";
 import { useViewer } from "@/components/shell/session";
 import { Button } from "@/components/ui/button";
