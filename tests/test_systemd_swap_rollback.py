@@ -224,3 +224,57 @@ def test_an_unhealthy_previous_activation_is_reported_as_a_recovery_failure(engi
         _swap_to_p_b(fake_svc(health_timeout_s=0.1))
     assert engine.dropin.read_text() == dropin_text("p-a")
     assert engine.restarts() == ["p-b", "p-a"]
+
+
+# ---------------------------------------------------------------------------
+# Durability is reported, and every systemctl call is bounded
+# ---------------------------------------------------------------------------
+
+
+def test_a_failed_directory_fsync_is_a_logged_durability_warning(engine, monkeypatch, capsys) -> None:
+    real_open = ld.os.open
+
+    def open_without_directory_sync(path, flags, *args, **kwargs):
+        if flags & getattr(ld.os, "O_DIRECTORY", 0):
+            raise OSError(5, "Input/output error")
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(ld.os, "open", open_without_directory_sync)
+    assert _swap_to_p_b() is True, "the drop-in is in place; durability is best effort"
+    _assert_runs(engine, "p-b")
+    out = capsys.readouterr().out
+    assert "directory fsync failed" in out and "power loss" in out
+
+
+def test_a_hung_systemctl_call_times_out_and_the_swap_ends(engine, monkeypatch) -> None:
+    """A restart that never returns must not hold the swap lock forever: the
+    call times out, the rollback's restart times out too, and the swap ends
+    with SwapRecoveryFailed and the previous drop-in on disk."""
+    monkeypatch.setattr(ld.SystemdDriver, "_SYSTEMCTL_JOB_TIMEOUT_S", 0.1)
+    engine.restart_gate = asyncio.Event()  # never set: every restart hangs
+    with pytest.raises(ld.SwapRecoveryFailed):
+        _swap_to_p_b()
+    assert engine.dropin.read_text() == dropin_text("p-a")
+
+
+def test_a_hung_systemctl_process_is_killed(monkeypatch) -> None:
+    class HungProc:
+        returncode = None
+        killed = False
+
+        async def communicate(self):
+            await asyncio.Event().wait()
+
+        def kill(self) -> None:
+            self.killed = True
+
+    proc = HungProc()
+
+    async def spawn(*_cmd, **_kwargs):
+        return proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    monkeypatch.setattr(ld.SystemdDriver, "_SYSTEMCTL_JOB_TIMEOUT_S", 0.1)
+    ok = asyncio.run(asyncio.wait_for(ld.SystemdDriver()._run_systemctl(["systemctl", "--user", "daemon-reload"]), 5))
+    assert ok is False
+    assert proc.killed

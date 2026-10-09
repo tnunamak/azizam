@@ -90,7 +90,9 @@ def _replace_file_atomically(path: Path, text: str) -> None:
 
     Writes a temporary file in the same directory, flushes and fsyncs it, then
     renames it over ``path``. On any failure the temporary file is removed and
-    ``path`` is unchanged.
+    ``path`` is unchanged. The rename is then made durable with a directory
+    fsync, best effort: if that fails, the new bytes are in place but the rename
+    may not survive a power loss, and a warning is logged.
     """
     fd, temp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
@@ -103,13 +105,18 @@ def _replace_file_atomically(path: Path, text: str) -> None:
         with contextlib.suppress(OSError):
             os.unlink(temp_name)
         raise
-    # Make the rename itself durable. Best effort: the new bytes are in place.
-    with contextlib.suppress(OSError):
+    try:
         dir_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
         try:
             os.fsync(dir_fd)
         finally:
             os.close(dir_fd)
+    except OSError as exc:
+        print(
+            f"[lifecycle] WARN: {path} was replaced, but the directory fsync failed ({exc}); "
+            "the change may not survive a power loss",
+            flush=True,
+        )
 
 
 async def _finish_even_if_cancelled(operation: Awaitable[_T]) -> _T:
@@ -868,6 +875,9 @@ class SystemdDriver:
 
     _SWAPPABLE = True
     _SYSTEMCTL_TIMEOUT_S: float = 30.0
+    # daemon-reload, restart and start wait for systemd's job; 120 s is longer
+    # than systemd's default 90 s start timeout, so only a hung call trips it.
+    _SYSTEMCTL_JOB_TIMEOUT_S: float = 120.0
     _DEFAULT_HEALTH_TIMEOUT_S: float = 60.0
 
     # ------------------------------------------------------------------
@@ -1080,8 +1090,13 @@ class SystemdDriver:
         that rollback fails too, raises SwapRecoveryFailed.
 
         Drop-ins are replaced atomically (a failed write leaves the old bytes).
-        Once the drop-in has changed, the swap runs to its end even if the
-        caller is cancelled; the cancellation is raised afterwards.
+        Durability across a power loss is best effort: a failed directory fsync
+        after the rename is logged, not treated as a failed swap. Once the
+        drop-in has changed, the swap runs to its end even if the caller is
+        cancelled; the cancellation is raised afterwards. It does not survive
+        the gateway process exiting mid-swap. Each systemctl call is bounded by
+        _SYSTEMCTL_JOB_TIMEOUT_S, so the swap (and the caller's swap lock) ends
+        within about four such calls plus two health timeouts.
         """
         dc = self._driver_config(svc)
         scope_flag = self._scope_flag(dc)
@@ -1338,24 +1353,46 @@ class SystemdDriver:
         return d
 
     async def _run_systemctl(self, cmd: list[str]) -> bool:
-        """Run a systemctl command asynchronously. Returns True on exit code 0."""
-        try:
+        """Run a systemctl command. True on exit code 0; False on failure or timeout.
+
+        A call that runs longer than _SYSTEMCTL_JOB_TIMEOUT_S is killed and treated
+        as failed. Killing the client does not cancel a job systemd already
+        queued; the rollback that follows queues its own restart.
+        """
+        proc = None
+
+        async def run() -> bytes:
+            nonlocal proc
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
             _, stderr = await proc.communicate()
-            if proc.returncode != 0:
-                print(
-                    f"[lifecycle] SystemdDriver: `{' '.join(cmd)}` failed: {stderr.decode()}",
-                    flush=True,
-                )
-                return False
-            return True
+            return stderr
+
+        try:
+            stderr = await asyncio.wait_for(run(), timeout=self._SYSTEMCTL_JOB_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            print(
+                f"[lifecycle] SystemdDriver: `{' '.join(cmd)}` did not finish within "
+                f"{self._SYSTEMCTL_JOB_TIMEOUT_S:.0f}s; treated as failed",
+                flush=True,
+            )
+            if proc is not None and proc.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
+            return False
         except Exception as e:
             print(f"[lifecycle] SystemdDriver: subprocess error: {e}", flush=True)
             return False
+        if proc.returncode != 0:
+            print(
+                f"[lifecycle] SystemdDriver: `{' '.join(cmd)}` failed: {stderr.decode()}",
+                flush=True,
+            )
+            return False
+        return True
 
 
 # ---------------------------------------------------------------------------

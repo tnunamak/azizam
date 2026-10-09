@@ -11,9 +11,6 @@ data/metrics.db
 data/metrics.db-wal
 data/metrics.db-shm
 data/metrics.db.broken-*
-# Kernel-journal position the metrics sampler has counted NVKMS failures up to.
-data/nvkms-journal.cursor
-data/nvkms-journal.cursor.tmp
 
 # Responses API persistence: SQLite store for /v1/responses stateful
 # conversations. Ephemeral runtime state with 7-day retention.

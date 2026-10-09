@@ -47,11 +47,16 @@ writes the same rows to `metrics.db` as `service_vram_mb` (tags `gpu`,
 `service`; slow tier, once a minute). Each 10 s tick it also writes
 `vram_free_mb` and `gpu_desktop_alloc_failures` (count of kernel "Failed to
 allocate NVKMS memory" lines logged since the last read). The sampler reads the
-kernel journal on from a cursor kept next to `metrics.db`
-(`nvkms-journal.cursor`), so failures logged while the journal was unreadable or
-the gateway was down count on the next readable tick. While it is unreadable
-there is no row and the gateway logs one warning. With no cursor file (first
-run) counting starts at the journal's end; delete the file to restart there.
+kernel journal on from a cursor that it commits to `metrics.db` (table
+`sampler_state`) in the same transaction as the counts, so failures logged while
+the journal was unreadable, a write failed or the gateway was down count once,
+on the next tick that reads them. A tick reads at most 2000 journal entries, so
+a large backlog is caught up over several ticks. While the journal is unreadable
+there is no row and the gateway logs one warning. With no committed cursor
+(first run) counting starts at the journal's end. If the committed cursor is no
+longer in the journal (rotated away), the gateway logs the gap and restarts at
+the journal's end: failures in that gap are not counted, and none are counted
+twice.
 
 | Env var | What it controls | Default |
 |---|---|---|
