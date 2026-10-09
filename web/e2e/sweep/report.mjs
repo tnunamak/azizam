@@ -101,6 +101,7 @@ const summary = {
   pages_checked: checked,
   states_skipped: skipped.length,
   states_errored: errored.length,
+  states_still_loading: states.filter((s) => s.status === "checked" && s.loading).length,
   unique_findings: unique.length,
   unique_failing: failing.length,
   raw_findings: findings.length,
@@ -159,6 +160,21 @@ for (const surface of surfaces) {
     if (hits.length > 40) lines.push(`- … ${hits.length - 40} more in sweep.json`);
     lines.push("");
   }
+}
+
+const loading = states.filter((s) => s.status === "checked" && s.loading);
+if (loading.length) {
+  lines.push("## Checked while still loading", "");
+  lines.push("These states still showed a loading indicator when probed; their findings may be incomplete.", "");
+  const seen = new Map();
+  for (const s of loading) {
+    const key = `${s.surface}|${s.route}|${s.state}`;
+    const entry = seen.get(key) ?? { ...s, views: new Set() };
+    entry.views.add(`${s.role} ${s.width} ${s.theme}`);
+    seen.set(key, entry);
+  }
+  for (const s of seen.values()) lines.push(`- ${s.surface} \`${s.route}\` ${s.state} (${viewsLabel([...s.views])})`);
+  lines.push("");
 }
 
 if (skipped.length || errored.length) {

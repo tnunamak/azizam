@@ -48,6 +48,8 @@ interface StateRecord {
   url: string;
   status: "checked" | "skipped" | "error";
   reason?: string;
+  /** Still showing a loading state when probed. */
+  loading?: boolean;
   ms: number;
 }
 
@@ -63,10 +65,14 @@ function readContext() {
   };
 }
 
-async function settle(page: Page) {
+// Real data loads slowly on a busy harness; a page probed mid-load hides its defects.
+const SETTLE_MS = Number(process.env.SWEEP_SETTLE_MS ?? (target.name === "copy" ? "45000" : "15000"));
+
+/** Wait until the page stops loading. Returns false if it was still busy at the deadline. */
+async function settle(page: Page): Promise<boolean> {
   await page.waitForLoadState("domcontentloaded");
-  await page.waitForLoadState("networkidle", { timeout: 8_000 }).catch(() => {});
-  await page
+  await page.waitForLoadState("networkidle", { timeout: SETTLE_MS / 2 }).catch(() => {});
+  const settled = await page
     .waitForFunction(
       () => {
         const shown = (el: Element) => {
@@ -76,11 +82,12 @@ async function settle(page: Page) {
         return ![...document.querySelectorAll('[aria-busy="true"], [data-slot="skeleton"]')].some(shown);
       },
       null,
-      { timeout: 10_000 },
+      { timeout: SETTLE_MS },
     )
-    .catch(() => {});
+    .then(() => true, () => false);
   await page.evaluate(() => document.fonts.ready).catch(() => {});
   await page.waitForTimeout(300);
+  return settled;
 }
 
 const stateRoles = (route: SweepRoute, state: SweepState) =>
@@ -178,7 +185,7 @@ for (const route of ROUTES) {
             });
             try {
               await page.goto(`${base}${relative}`);
-              await settle(page);
+              let settled = await settle(page);
               if (state.act) {
                 const applied = await state.act(page, sweepCtx);
                 if (applied !== true) {
@@ -187,8 +194,9 @@ for (const route of ROUTES) {
                   if (!state.optional && role === "owner") record.status = "error";
                   continue;
                 }
-                await settle(page);
+                settled = await settle(page);
               }
+              if (!settled) record.loading = true;
               record.url = page.url().replace(base, "");
               // A member sent elsewhere (an owner page redirecting Home) sees the destination,
               // which is swept on its own; checking it again here would double count.

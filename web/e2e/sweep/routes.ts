@@ -43,7 +43,8 @@ export interface SweepRoute {
 }
 
 /** Wait briefly for a control; data can arrive after the page settles. */
-const appears = (locator: ReturnType<Page["locator"]>, timeout = 5_000) =>
+const CONTROL_MS = Number(process.env.SWEEP_CONTROL_MS ?? (process.env.SWEEP_TARGET === "copy" ? "15000" : "5000"));
+const appears = (locator: ReturnType<Page["locator"]>, timeout = CONTROL_MS) =>
   locator.waitFor({ state: "visible", timeout }).then(() => true, () => false);
 
 const click = (name: RegExp | string, role: "button" | "tab" | "link" | "switch" = "button"): StateAction =>
@@ -223,7 +224,7 @@ export const ROUTES: SweepRoute[] = [
           if (applied !== true) return applied;
           const receipts = page.getByRole("button", { name: /^Request details:/ });
           const failed = receipts.filter({ hasText: "Failed" }).first();
-          if (!(await appears(receipts.first(), 10_000))) return "no request rows";
+          if (!(await appears(receipts.first(), CONTROL_MS * 2))) return "no request rows";
           const receipt = (await failed.count()) ? failed : receipts.first();
           await receipt.click();
           return true;

@@ -58,10 +58,11 @@ export default defineConfig({
   testMatch: "sweep.spec.ts",
   globalSetup: "./e2e/sweep/setup.ts",
   outputDir: path.join(paths.dir, "artifacts"),
-  workers: Number(process.env.SWEEP_WORKERS ?? "4"),
+  // The production copy has months of history; more than two browsers starve its gateway.
+  workers: Number(process.env.SWEEP_WORKERS ?? (target.name === "copy" ? "2" : "4")),
   fullyParallel: true,
   retries: 0,
-  timeout: 240_000,
+  timeout: 600_000,
   expect: { timeout: 10_000 },
   reporter: [["dot"], ["json", { outputFile: path.join(paths.dir, "playwright.json") }]],
   use: {
