@@ -694,7 +694,11 @@ def _availability(capabilities: list[Capability]) -> dict[str, Any]:
         result = dict(selected.availability)
         status = str(result.get("status") or "unknown")
         evidence = result.get("evidence") or {}
-        result.pop("reason", None)
+        # Only a gateway-composed workflow's reason is product copy: it names
+        # the engine it waits on in plain language. Other reasons are raw.
+        if evidence.get("source") != "dependencies":
+            result.pop("reason", None)
+            result.pop("engine", None)
         result["reason_code"] = {
             ("unavailable", "disabled"): "unavailable_disabled",
             ("unavailable", "unconfigured"): "unavailable_unconfigured",

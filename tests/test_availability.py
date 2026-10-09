@@ -109,6 +109,26 @@ def test_real_composed_workflows_have_derived_catalog_states_offline():
     }
 
 
+def test_workflows_catalog_carries_the_composed_reason_and_engine_only():
+    from gateway.capabilities import capability_from_workflow_record
+    from gateway.workflows_catalog import build_workflows_catalog
+
+    registry = _composed_registry()
+    composed = _composed_cap(registry, "image.edit.image-identity")
+    plain = capability_from_workflow_record(registry.get("image.generate.flux2-klein-4b"), backend="comfyui")
+    services = {"services": {"faces": _FACES, "comfyui": _COMFYUI}}
+    projected = project_capabilities([composed, plain], service_records=services,
+                                     evidence={"faces": _FACES_STOPPED,
+                                               "comfyui": {"status": "down", "available": False, "observed_at_s": 900}},
+                                     workflow_records=registry.records())
+    rows = {row["id"]: row["availability"]
+            for row in build_workflows_catalog(records=registry.records(), capabilities=projected)["workflows"]}
+    identity = rows["image.edit.image-identity"]
+    assert (identity["status"], identity["reason"], identity["engine"]) == ("unavailable", "ComfyUI is down.", "comfyui")
+    assert "reason" not in rows["image.generate.flux2-klein-4b"]
+    assert "engine" not in rows["image.generate.flux2-klein-4b"]
+
+
 def test_composed_sidecar_check_is_read_only_and_fills_the_cached_status_gap(monkeypatch):
     """The face sidecar is checked by lifecycle status, never started, even with a warm status cache."""
     import asyncio

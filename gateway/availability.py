@@ -49,6 +49,8 @@ class AvailabilityProjection:
     measured: bool
     evidence: dict[str, Any]
     idle_startable: bool = False
+    # A gateway-composed workflow names the engine that limits it.
+    engine: str | None = None
 
     @property
     def available(self) -> bool:
@@ -65,6 +67,7 @@ class AvailabilityProjection:
             "up": self.up,
             "idle_startable": self.idle_startable,
             "evidence": _public_evidence(self.evidence),
+            **({"engine": self.engine} if self.engine else {}),
         }
 
 
@@ -159,7 +162,7 @@ def _project_required_dependencies(
         False if status == "unavailable" else None if status in {"idle", "starting", "unknown"} else True,
         status, _dependency_reason(limiting, services.get(limiting.service_id) or {}),
         all(item.measured for item in projected), composed_evidence,
-        idle_startable=status == "idle",
+        idle_startable=status == "idle", engine=limiting.service_id,
     )
 
 
