@@ -1555,7 +1555,10 @@ export function StatusClient() {
               {health && modelReady ? (
                 <section
                   aria-labelledby="capability-strip-heading"
-                  className="xl:col-start-2 xl:row-span-3 xl:row-start-1"
+                  className={cn(
+                    "xl:col-start-2 xl:row-start-1",
+                    running.length > 0 && "xl:row-span-2",
+                  )}
                 >
                   <SectionHeading
                     id="capability-strip-heading"
@@ -1577,7 +1580,13 @@ export function StatusClient() {
 
               <section
                 aria-labelledby="layers-heading"
-                className="xl:col-start-1"
+                // Full width under the card and Capabilities (D1.5: the
+                // lower half stood empty), in the row after Running now
+                // when there is work running.
+                className={cn(
+                  "xl:col-span-2",
+                  running.length ? "xl:row-start-3" : "xl:row-start-2",
+                )}
               >
                 <SectionHeading
                   id="layers-heading"
