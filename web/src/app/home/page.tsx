@@ -1163,7 +1163,28 @@ function inFlightKind(
   return null;
 }
 
-function Recent({ receipts }: { receipts: HomeReceipt[] }) {
+/**
+ * Work running on a capability that is failing says so (red team round 2:
+ * a video ran on a failing engine with no warning).
+ */
+function runningRisk(
+  receipt: HomeReceipt,
+  views: CapabilityView[],
+): string | null {
+  const key = requestCapability(receipt.intent, receipt.path);
+  const view = views.find((item) => item.key === key);
+  return view && !["ready", "busy"].includes(view.state)
+    ? `${view.label} ${view.word.toLowerCase()}: it may not finish`
+    : null;
+}
+
+function Recent({
+  receipts,
+  views,
+}: {
+  receipts: HomeReceipt[];
+  views: CapabilityView[];
+}) {
   const making = receipts.filter(
     (receipt) => isInFlight(receipt.status) && inFlightKind(receipt),
   );
@@ -1247,6 +1268,7 @@ function Recent({ receipts }: { receipts: HomeReceipt[] }) {
               const at = receipt.accepted_at_ms
                 ? receipt.accepted_at_ms / 1000
                 : receipt._stored_at;
+              const risk = runningRisk(receipt, views);
               return (
                 <li
                   key={receipt.request_id}
@@ -1263,6 +1285,11 @@ function Recent({ receipts }: { receipts: HomeReceipt[] }) {
                   {at ? (
                     <span className="text-xs max-sm:sr-only">
                       Started <RelativeTime ts={at} fallback="" />
+                    </span>
+                  ) : null}
+                  {risk ? (
+                    <span className="text-warning text-xs font-medium max-sm:sr-only">
+                      {risk}
                     </span>
                   ) : null}
                 </li>
@@ -1412,7 +1439,7 @@ export default function HomePage() {
                   owner={isOwner}
                 />
               ) : null}
-              <Recent receipts={home.receipts ?? []} />
+              <Recent receipts={home.receipts ?? []} views={views} />
               <Tasks
                 views={views}
                 models={models}
