@@ -7121,29 +7121,34 @@ def build_signed_image_url(request: Request, image_id: str, metadata_mode: str |
     return f"{proto}://{host}/v1/images/{image_id}/content?expires={expires}&md={mode}&sig={sig}"
 
 
+def _evict_image_cache() -> None:
+    cutoff = time.time() - IMAGE_CACHE_TTL
+    if not IMAGE_CACHE_DIR.exists():
+        return
+    kinds = {suffix: kind for kind, suffixes in _ASSET_SUFFIXES_BY_KIND.items() for suffix in suffixes}
+    with prompt_metadata_migration.CACHE_MUTATION_LOCK:
+        for entry in IMAGE_CACHE_DIR.iterdir():
+            if not entry.is_file() or entry.suffix not in kinds:
+                continue
+            try:
+                if entry.stat().st_mtime >= cutoff:
+                    continue
+                asset_id = f"{kinds[entry.suffix]}_{entry.stem}"
+                prompt_memory.delete_asset(asset_id)
+                entry.unlink(missing_ok=True)
+                sidecar = _asset_metadata_path(asset_id)
+                if sidecar is not None:
+                    sidecar.unlink(missing_ok=True)
+            except FileNotFoundError:
+                continue
+
+
 async def evict_image_cache_loop(stop_event: asyncio.Event) -> None:
-    """Background task: delete cache entries older than IMAGE_CACHE_TTL seconds."""
     while not stop_event.is_set():
         try:
-            cutoff = time.time() - IMAGE_CACHE_TTL
-            if IMAGE_CACHE_DIR.exists():
-                asset_suffixes = {
-                    suffix
-                    for suffixes in _ASSET_SUFFIXES_BY_KIND.values()
-                    for suffix in suffixes
-                }
-                for entry in IMAGE_CACHE_DIR.iterdir():
-                    if not entry.is_file():
-                        continue
-                    if entry.suffix not in asset_suffixes and not entry.name.endswith(".meta.json"):
-                        continue
-                    try:
-                        if entry.stat().st_mtime < cutoff:
-                            entry.unlink(missing_ok=True)
-                    except Exception:
-                        continue
-        except Exception as e:
-            print(f"[proxy] image cache eviction: {e}", flush=True)
+            await asyncio.to_thread(_evict_image_cache)
+        except Exception as exc:
+            print(f"[proxy] image cache eviction failed: {type(exc).__name__}", flush=True)
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=IMAGE_CACHE_EVICT_INTERVAL)
         except asyncio.TimeoutError:
@@ -7186,8 +7191,7 @@ def _comfy_execution_error_message(job: Mapping[str, Any] | None) -> str | None:
         payload = msg[1] if len(msg) > 1 and isinstance(msg[1], Mapping) else {}
         node_type = str(payload.get("node_type") or "").strip()
         node_id = str(payload.get("node_id") or "").strip()
-        exception_message = str(payload.get("exception_message") or "").strip()
-        exception_type = str(payload.get("exception_type") or "").strip()
+
 
         location = "ComfyUI execution error"
         if node_type and node_id:
@@ -7197,8 +7201,7 @@ def _comfy_execution_error_message(job: Mapping[str, Any] | None) -> str | None:
         elif node_id:
             location = f"ComfyUI node {node_id}"
 
-        reason = exception_message or exception_type or "execution_error"
-        return f"{location}: {reason}"[:500]
+        return f"{location}: execution failed"[:500]
 
     status = str(status_block.get("status_str") or status_block.get("status") or "").lower()
     if status == "error":
@@ -13146,8 +13149,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] Admin store failed to start: {e}", flush=True)
 
+    prompt_memory_stop = asyncio.Event()
+    prompt_memory_task = asyncio.create_task(_prompt_memory_maintenance_loop(prompt_memory_stop))
+    metadata_migration_task = asyncio.create_task(prompt_metadata_migration.background_migration(
+        IMAGE_CACHE_DIR, _prompt_migration_state_path(),
+    ))
+
     yield
 
+    prompt_memory_stop.set()
+    prompt_memory_task.cancel()
+    metadata_migration_task.cancel()
+    await asyncio.gather(prompt_memory_task, metadata_migration_task, return_exceptions=True)
     state.shutdown_requested = True
     if watchdog is not None:
         watchdog.stop()
@@ -14239,6 +14252,7 @@ app.include_router(
         asset_url_ttl_s=IMAGE_SIGNED_URL_TTL,
         media_job_store_path=media_jobs.DB_PATH,
         media_job_submitter=_gateway_media_job_submitter,
+        media_job_canceler=lambda job_id, **kwargs: _cancel_media_job(job_id, **kwargs),
         record_authorizer=_gateway_record_authorizer,
         record_scope_provider=_gateway_record_scope,
     )
@@ -14255,6 +14269,7 @@ app.include_router(
             metadata_reader=_read_asset_metadata,
             asset_path_resolver=lambda asset_id: asset_cache_path(asset_id),
             metadata_path_resolver=_asset_metadata_path,
+            prompt_memory_path=lambda: media_jobs.DB_PATH,
         ),
         asset_catalog_provider=lambda: me_media.create_asset_catalog_provider(IMAGE_CACHE_DIR)(),
         asset_metadata_reader=_read_asset_metadata,
@@ -14270,6 +14285,7 @@ app.include_router(
         session_provider=lambda request: _oidc_session_from_request(request),
         mutation_validator=lambda request, session: _require_user_action_header(request, session),
         household_provider=lambda: prompt_memory_settings(ADMIN_DB_PATH),
+        on_person_prompt_purge=lambda person_id: _purge_person_prompt_memory(person_id),
         admin_db_path=ADMIN_STORE.path,
         prompt_memory_path=media_jobs.DB_PATH,
     )
@@ -15140,6 +15156,7 @@ app.include_router(create_account_router(
     instance_provider=lambda: instance_settings(ADMIN_DB_PATH, _instance_presentation_defaults()),
     client_ip_resolver=resolve_real_client_ip,
     effective_plan_resolver=_effective_plan_for_person,
+    on_person_prompt_purge=lambda person_id: _purge_person_prompt_memory(person_id),
 ))
 
 
@@ -20001,22 +20018,173 @@ def _image_media_job_payload_path(job_id: str) -> Path:
     return IMAGE_MEDIA_JOB_PAYLOAD_DIR / f"{job_id}.json"
 
 
-def _purge_prompt_payload_files() -> None:
-    """Remove pending durable request bodies when the owner disables memory."""
-    if not IMAGE_MEDIA_JOB_PAYLOAD_DIR.exists():
-        return
-    for pattern in ("mj_*.json", "mj_*.json.tmp"):
-        for path in IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob(pattern):
-            path.unlink(missing_ok=True)
+def _prompt_migration_state_path() -> Path:
+    return Path(media_jobs.DB_PATH).with_name("prompt_metadata_migration.db")
 
 
-def _purge_prompt_memory_on_kill() -> None:
-    """Remove pending bodies and earlier Responses conversations on owner kill."""
+def _queue_prompt_purge(person_id: str) -> None:
+    import sqlite3
+    path = _prompt_migration_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with contextlib.closing(sqlite3.connect(path, timeout=5)) as conn, conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS prompt_purge_queue (person_id TEXT PRIMARY KEY)")
+        conn.execute("INSERT OR IGNORE INTO prompt_purge_queue VALUES (?)", (person_id,))
+
+
+def _pending_prompt_purges() -> list[str]:
+    import sqlite3
+    path = _prompt_migration_state_path()
+    if not path.exists():
+        return []
+    with contextlib.closing(sqlite3.connect(path, timeout=5)) as conn, conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS prompt_purge_queue (person_id TEXT PRIMARY KEY)")
+        return [row[0] for row in conn.execute("SELECT person_id FROM prompt_purge_queue")]
+
+
+def _finish_prompt_purge(person_id: str) -> None:
+    import sqlite3
+    with contextlib.closing(sqlite3.connect(_prompt_migration_state_path(), timeout=5)) as conn, conn:
+        conn.execute("DELETE FROM prompt_purge_queue WHERE person_id=?", (person_id,))
+
+
+def _person_cached_asset_ids(person_id: str) -> set[str]:
+    # Legacy assets have App attribution only. Their metadata is stripped for
+    # that App's owner; new assets use explicit authenticated maker facts.
+    app_ids = {app["id"] for app in ADMIN_STORE.list_apps() if app.get("owner_user_id") == person_id}
+    owner_keys = {f"app:{app_id}" for app_id in app_ids}
+    for credential in admin_store.list_credentials(path=ADMIN_STORE.path):
+        if credential.get("app_id") in app_ids:
+            owner_keys.add(credential["hash"])
+    assets: set[str] = set()
+    for asset_id in me_media.create_asset_catalog_provider(IMAGE_CACHE_DIR)():
+        metadata = _read_asset_metadata(asset_id)
+        if "maker_person_ids" in metadata:
+            owned = person_id in metadata["maker_person_ids"]
+        else:
+            owned = bool(owner_keys.intersection(metadata.get("owner_key_hashes") or []))
+        if owned:
+            assets.add(asset_id)
+    return assets
+
+
+def _purge_prompt_payload_files(person_id: str | None = None) -> None:
+    with _MEDIA_PAYLOAD_LOCK:
+        # Move active jobs to memory so they can finish without a durable prompt.
+        if IMAGE_MEDIA_JOB_PAYLOAD_DIR.exists():
+            for path in IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json"):
+                job_id = path.stem
+                payload = _load_image_media_job_payload(job_id)
+                if person_id is not None and (payload or {}).get("auth", {}).get("person_id") != person_id:
+                    continue
+                job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
+                if job and job.get("status") not in media_jobs.TERMINAL_STATUSES and payload is not None and isinstance(payload.get("body"), dict):
+                    payload["body"].setdefault("extensions", {})[prompt_memory.NAMESPACE] = {"mode": "forget"}
+                    _EPHEMERAL_MEDIA_JOB_PAYLOADS[job_id] = payload
+                path.unlink(missing_ok=True)
+            # A partial spool cannot be resumed or reliably attributed.
+            for path in IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json.tmp"):
+                if person_id is None:
+                    path.unlink(missing_ok=True)
+        for payload in list(_EPHEMERAL_MEDIA_JOB_PAYLOADS.values()):
+            if not isinstance(payload.get("body"), dict):
+                continue
+            if person_id is None or payload.get("auth", {}).get("person_id") == person_id:
+                payload["body"].setdefault("extensions", {})[prompt_memory.NAMESPACE] = {"mode": "forget"}
+
+
+def _purge_person_prompt_memory(person_id: str, *, mark_erasure: bool = True) -> dict[str, Any]:
+    if mark_erasure:
+        prompt_memory.mark_person_erasure(person_id, admin_path=ADMIN_STORE.path)
+    _queue_prompt_purge(person_id)
+    with prompt_memory.retention_guard(ADMIN_STORE.path, person_id) as policy:
+        cutoff = policy.get("forgot_before", 0)
+    prompt_memory.prune_person_before(person_id, cutoff)
+    responses_store.delete_person_before(person_id, cutoff, path=responses_store.DB_PATH)
+    _purge_prompt_payload_files(person_id)
+    result = prompt_metadata_migration.strip_cached_assets(
+        IMAGE_CACHE_DIR, _prompt_migration_state_path(), asset_ids=_person_cached_asset_ids(person_id), legacy_workdir=Path(__file__).resolve().parent / "cache" / "media_metadata",
+    )
+    if result.complete:
+        _finish_prompt_purge(person_id)
+    return {"metadata_stripping": {"pending": result.pending, "stripped": result.stripped},
+            "pending": not result.complete}
+
+
+def _purge_prompt_memory_on_kill() -> dict[str, Any]:
+    _queue_prompt_purge("*")
+    prompt_memory.delete_all()
     _purge_prompt_payload_files()
     responses_store.delete_all(path=responses_store.DB_PATH)
+    result = prompt_metadata_migration.strip_cached_assets(IMAGE_CACHE_DIR, _prompt_migration_state_path(), legacy_workdir=Path(__file__).resolve().parent / "cache" / "media_metadata")
+    if result.complete:
+        _finish_prompt_purge("*")
+    return {"metadata_stripping": {"pending": result.pending, "stripped": result.stripped},
+            "pending": not result.complete}
+
+
+def _maintain_prompt_memory() -> None:
+    # Persisted settings are retry intent even if a previous queue write failed.
+    household = prompt_memory.household_settings(admin_path=ADMIN_STORE.path)
+    operations = []
+    if household["never_keep"]:
+        operations.append(_purge_prompt_memory_on_kill)
+    operations.append(lambda: prompt_memory.tighten_retention(household["retention_cap"]))
+    for user in admin_store.list_users(path=ADMIN_STORE.path):
+        person_id = user["id"]
+        with prompt_memory.retention_guard(ADMIN_STORE.path, person_id) as policy:
+            remember = policy["remember"]
+            retention = policy["retention"]
+            cutoff = policy.get("forgot_before", 0)
+        if not remember:
+            operations.append(lambda person_id=person_id: _purge_person_prompt_memory(person_id))
+        else:
+            operations.append(lambda person_id=person_id, retention=retention:
+                              prompt_memory.tighten_retention(retention, person_id=person_id))
+            if cutoff:
+                operations.append(lambda person_id=person_id, cutoff=cutoff:
+                                  prompt_memory.prune_person_before(person_id, cutoff))
+                operations.append(lambda person_id=person_id, cutoff=cutoff:
+                                  responses_store.delete_person_before(person_id, cutoff, path=responses_store.DB_PATH))
+    for person_id in _pending_prompt_purges():
+        operations.append(_purge_prompt_memory_on_kill if person_id == "*" else
+                          lambda person_id=person_id: _purge_person_prompt_memory(person_id, mark_erasure=False))
+    for operation in operations:
+        try:
+            operation()
+        except Exception as exc:
+            print(f"[proxy] prompt privacy cleanup pending: {type(exc).__name__}", flush=True)
+    assets = set(me_media.create_asset_catalog_provider(IMAGE_CACHE_DIR)())
+    prompt_memory.prune(available_asset_ids=assets)
+    _prune_orphaned_media_job_payloads()
+
+
+async def _prompt_memory_maintenance_loop(stop_event: asyncio.Event) -> None:
+    while not stop_event.is_set():
+        try:
+            await asyncio.to_thread(_maintain_prompt_memory)
+        except Exception as exc:
+            print(f"[proxy] prompt privacy maintenance pending: {type(exc).__name__}", flush=True)
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=60)
+        except asyncio.TimeoutError:
+            pass
 
 
 _EPHEMERAL_MEDIA_JOB_PAYLOADS: dict[str, dict[str, Any]] = {}
+_MEDIA_PAYLOAD_LOCK = threading.RLock()
+
+
+def _cancel_media_job(job_id: str, *, audience: str, reason: str | None = None) -> dict[str, Any] | None:
+    result = media_jobs.update_status(job_id, media_jobs.STATUS_CANCELED,
+                                     error="Canceled by requester", path=media_jobs.DB_PATH)
+    if result is None:
+        return None
+    _delete_image_media_job_payload(job_id)
+    video_id = (result.get("metadata") or {}).get("upstream_video_id")
+    prompt_id = _prompt_id_from_video_id(video_id) if isinstance(video_id, str) else None
+    if prompt_id:
+        prompt_memory.delete_asset(f"video_{prompt_id}")
+    return media_jobs.get(job_id, audience=audience, path=media_jobs.DB_PATH)
 
 
 def _has_image_media_job_payload(job_id: str) -> bool:
@@ -20024,90 +20192,95 @@ def _has_image_media_job_payload(job_id: str) -> bool:
 
 
 def _persist_image_media_job_payload(
-    job_id: str,
-    *,
-    body: Mapping[str, Any],
-    request: Request,
+    job_id: str, *, body: Mapping[str, Any], request: Request,
     auth_context: AuthContext,
 ) -> None:
-    identity = auth_context.identity
-    payload = {
-        "schema_version": 1,
-        "body": copy.deepcopy(dict(body)),
-        "headers": _safe_image_job_headers(request),
-        "url": {
-            "scheme": request.url.scheme or "http",
-            "netloc": getattr(request.url, "netloc", "") or request.headers.get("host", "127.0.0.1"),
-        },
-        "auth": {
-            "name": identity.name if identity else None,
-            "key_hash": identity.key_hash if identity else None,
-        },
-        "created_at": int(time.time()),
-    }
-    memory = prompt_memory.decide_for_app(
-        getattr(identity, "app_id", None), body, admin_path=ADMIN_STORE.path,
-    )
-    with prompt_memory.retention_guard(ADMIN_STORE.path, memory.person_id) as policy:
-        if not memory.keep or policy["never_keep"] or not policy["remember"]:
-            # A forgotten async job can run in this process but cannot survive
-            # a restart: a durable request spool would retain the prompt.
-            # Keep the submit-time decision sticky if settings change before
-            # the worker starts. The injected control is stripped at dispatch.
-            extensions = payload["body"].setdefault("extensions", {})
-            extensions[prompt_memory.NAMESPACE] = {"mode": "forget"}
-            _EPHEMERAL_MEDIA_JOB_PAYLOADS[job_id] = payload
-            return
-        IMAGE_MEDIA_JOB_PAYLOAD_DIR.mkdir(parents=True, exist_ok=True)
-        path = _image_media_job_payload_path(job_id)
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
-        try:
-            os.chmod(tmp, 0o600)
-        except Exception:
-            pass
-        tmp.replace(path)
+    with _MEDIA_PAYLOAD_LOCK:
+        identity = auth_context.identity
+        person_id = _auth_person_id(auth_context)
+        payload = {
+            "schema_version": 1,
+            "body": copy.deepcopy(dict(body)),
+            "headers": _safe_image_job_headers(request),
+            "url": {"scheme": request.url.scheme or "http",
+                    "netloc": getattr(request.url, "netloc", "") or request.headers.get("host", "127.0.0.1")},
+            "auth": {"name": identity.name if identity else None,
+                     "key_hash": identity.key_hash if identity else None,
+                     "app_id": getattr(identity, "app_id", None), "person_id": person_id},
+            "created_at": int(time.time()),
+        }
+        memory = prompt_memory.decide_for_person(person_id, body, admin_path=ADMIN_STORE.path)
+        with prompt_memory.retention_guard(ADMIN_STORE.path, person_id) as policy:
+            # Service/LAN execution spools are temporary operational state. Their
+            # prompt is required to resume, so retain it only until terminal state.
+            # Explicit privacy choices always suppress durable execution payloads.
+            durable = (memory.keep or memory.reason == "no_person") and not policy["never_keep"]
+            if person_id and not policy["remember"]:
+                durable = False
+            if not durable:
+                extensions = payload["body"].setdefault("extensions", {})
+                extensions[prompt_memory.NAMESPACE] = {"mode": "forget"}
+                _EPHEMERAL_MEDIA_JOB_PAYLOADS[job_id] = payload
+                return
+            IMAGE_MEDIA_JOB_PAYLOAD_DIR.mkdir(parents=True, exist_ok=True)
+            path = _image_media_job_payload_path(job_id)
+            tmp = path.with_suffix(".json.tmp")
+            try:
+                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                    json.dump(payload, stream, sort_keys=True)
+                tmp.replace(path)
+            finally:
+                tmp.unlink(missing_ok=True)
 
 
 def _load_image_media_job_payload(job_id: str) -> dict[str, Any] | None:
-    if job_id in _EPHEMERAL_MEDIA_JOB_PAYLOADS:
-        return _EPHEMERAL_MEDIA_JOB_PAYLOADS[job_id]
-    path = _image_media_job_payload_path(job_id)
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return None
-    except Exception as exc:  # noqa: BLE001
-        print(f"[proxy] image media job payload read failed for {job_id}: {exc}", flush=True)
-        return None
-    return data if isinstance(data, dict) else None
+    with _MEDIA_PAYLOAD_LOCK:
+        if job_id in _EPHEMERAL_MEDIA_JOB_PAYLOADS:
+            return _EPHEMERAL_MEDIA_JOB_PAYLOADS[job_id]
+        path = _image_media_job_payload_path(job_id)
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return None
+        except Exception as exc:  # noqa: BLE001
+            print(f"[proxy] image media job payload read failed for {job_id}: {exc}", flush=True)
+            return None
+        return data if isinstance(data, dict) else None
 
 
 def _delete_image_media_job_payload(job_id: str) -> None:
-    _EPHEMERAL_MEDIA_JOB_PAYLOADS.pop(job_id, None)
-    for path in (_image_media_job_payload_path(job_id),
-                 _image_media_job_payload_path(job_id).with_suffix(".json.tmp")):
-        try:
-            path.unlink(missing_ok=True)
-        except Exception:
-            pass
+    with _MEDIA_PAYLOAD_LOCK:
+        _EPHEMERAL_MEDIA_JOB_PAYLOADS.pop(job_id, None)
+        for path in (_image_media_job_payload_path(job_id),
+                     _image_media_job_payload_path(job_id).with_suffix(".json.tmp")):
+            try:
+                path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 def _prune_orphaned_media_job_payloads(*, now: float | None = None) -> int:
-    """Remove old or terminal request spools left by an interrupted worker."""
-    if not IMAGE_MEDIA_JOB_PAYLOAD_DIR.exists():
-        return 0
-    cutoff = (time.time() if now is None else now) - media_jobs.RETAIN_S
-    removed = 0
-    for path in (*IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json"),
-                 *IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json.tmp")):
-        job_id = path.name.split(".json", 1)[0]
-        job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
-        if (job is None or job.get("status") in media_jobs.TERMINAL_STATUSES
-                or path.stat().st_mtime < cutoff):
-            path.unlink(missing_ok=True)
-            removed += 1
-    return removed
+    with _MEDIA_PAYLOAD_LOCK:
+        """Remove old or terminal request spools left by an interrupted worker."""
+        removed = 0
+        for job_id in list(_EPHEMERAL_MEDIA_JOB_PAYLOADS):
+            job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
+            if job is None or job.get("status") in media_jobs.TERMINAL_STATUSES:
+                _EPHEMERAL_MEDIA_JOB_PAYLOADS.pop(job_id, None)
+                removed += 1
+        if not IMAGE_MEDIA_JOB_PAYLOAD_DIR.exists():
+            return removed
+        cutoff = (time.time() if now is None else now) - media_jobs.RETAIN_S
+        for path in (*IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json"),
+                     *IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json.tmp")):
+            job_id = path.name.split(".json", 1)[0]
+            job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
+            if (job is None or job.get("status") in media_jobs.TERMINAL_STATUSES
+                    or path.stat().st_mtime < cutoff):
+                path.unlink(missing_ok=True)
+                removed += 1
+        return removed
 
 
 def _image_job_body_has_seed(body: Mapping[str, Any]) -> bool:
@@ -20150,6 +20323,9 @@ def _image_media_job_request_id(
         ).encode("utf-8")
         digest = hmac.new(_image_signing_secret(), canonical, hashlib.sha256).hexdigest()
         return f"imgjob_idem_{digest[:40]}", digest, "idempotency_key"
+    memory = prompt_memory.decide_for_person(_auth_person_id(auth_context), body, admin_path=ADMIN_STORE.path)
+    if not memory.keep and memory.reason != "no_person":
+        return fallback_request_id, uuid.uuid4().hex + uuid.uuid4().hex, "request"
     if _image_job_body_has_seed(body):
         digest = _image_job_request_digest(body, auth_context)
         return f"imgjob_seeded_{digest[:40]}", digest, "seeded_request"
@@ -20544,11 +20720,13 @@ async def _run_image_media_job(job_id: str) -> None:
                     },
                     path=media_jobs.DB_PATH,
                 )
-                response = await proxy_comfy_request(
-                    request_shim,
-                    auth_context,
-                    receipt=receipt,
-                )
+                # Retry the same request, including its original retention clock.
+                # Deletion fences must survive copied bodies and worker retries.
+                token = _MEDIA_JOB_PROMPT_STARTED_AT.set(int(payload.get("created_at") or job["created_at"]))
+                try:
+                    response = await proxy_comfy_request(request_shim, auth_context, receipt=receipt)
+                finally:
+                    _MEDIA_JOB_PROMPT_STARTED_AT.reset(token)
                 finish_image_route_receipt(receipt, response)
             except asyncio.CancelledError:
                 raise
@@ -21038,7 +21216,7 @@ async def _run_audio_media_job(job_id: str) -> None:
             response_format=str(response_format) if response_format else None,
             media_type=media_type,
         )
-        assets = audio_media_jobs.store_audio_artifacts(
+        assets = await asyncio.to_thread(audio_media_jobs.store_audio_artifacts,
             artifacts,
             store_asset=store_asset_bytes,
             owner_key_hash=_asset_owner_key(auth_context),
@@ -21522,6 +21700,10 @@ async def _run_video_media_job(job_id: str) -> None:
         last_progress = 5
         while time.monotonic() < deadline:
             await asyncio.sleep(_VIDEO_MEDIA_JOB_POLL_INTERVAL_SECONDS)
+            current_job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
+            if current_job is None or current_job.get("status") in media_jobs.TERMINAL_STATUSES:
+                _delete_image_media_job_payload(job_id)
+                return
             status_response = await proxy_comfy_video_status(video_id, auth_context)
             status_code = int(getattr(status_response, "status_code", 0) or 0)
             if status_code >= 500:
@@ -21560,7 +21742,7 @@ async def _run_video_media_job(job_id: str) -> None:
             if status_value != "succeeded":
                 continue
 
-            content_response = await proxy_comfy_video_content(video_id, auth_context, index_library=False)
+            content_response = await proxy_comfy_video_content(video_id, auth_context, index_library=False, metadata_mode=provenance.METADATA_NONE)
             content_status = int(getattr(content_response, "status_code", 0) or 0)
             if not 200 <= content_status < 300:
                 message, _code = _image_response_error(content_response)
@@ -21573,18 +21755,15 @@ async def _run_video_media_job(job_id: str) -> None:
                 default=video_id,
             )
             suffix = _video_suffix_for_response(content_response, filename=filename)
-            asset_id = store_asset_bytes(
+            asset_id = await asyncio.to_thread(store_asset_bytes,
                 content,
                 kind="vid",
                 suffix=suffix,
                 owner_key_hash=_asset_owner_key(auth_context),
             )
-            person_id = prompt_memory.person_for_app(
-                getattr(getattr(auth_context, "identity", None), "app_id", None),
-                admin_path=ADMIN_STORE.path,
-            )
+            person_id = _auth_person_id(auth_context)
             if person_id:
-                prompt_memory.move(f"video_{_prompt_id_from_video_id(video_id)}", asset_id, person_id,
+                await asyncio.to_thread(prompt_memory.move, f"video_{_prompt_id_from_video_id(video_id)}", asset_id, person_id,
                                    admin_path=ADMIN_STORE.path)
                 prompt_id = _prompt_id_from_video_id(video_id)
                 if prompt_id and prompt_id in _video_job_records:
@@ -22417,14 +22596,13 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
         _begin_media_delivery(auth_context)
         metadata_field = f"extensions[{WORKFLOW_EXTENSION_NAMESPACE}][{provenance.METADATA_CONTROL}]"
         form_fields = set(form.keys())
-        metadata_value = form.get(metadata_field)
-        if metadata_value is not None:
-            metadata_error = _note_media_metadata_body({
-                "extensions": {WORKFLOW_EXTENSION_NAMESPACE: {provenance.METADATA_CONTROL: metadata_value}}
-            })
-            if metadata_error is not None:
-                return metadata_error
-        unknown_fields = form_fields - set(input_specs) - {metadata_field}
+        prompt_mode_field = f"extensions[{prompt_memory.NAMESPACE}][mode]"
+        controls: dict[str, Any] = {}
+        if form.get(metadata_field) is not None:
+            controls[WORKFLOW_EXTENSION_NAMESPACE] = {provenance.METADATA_CONTROL: form.get(metadata_field)}
+        if form.get(prompt_mode_field) is not None:
+            controls[prompt_memory.NAMESPACE] = {"mode": form.get(prompt_mode_field)}
+        unknown_fields = form_fields - set(input_specs) - {metadata_field, prompt_mode_field}
         if unknown_fields:
             raise ValueError(f"unknown workflow input: {sorted(unknown_fields)[0]}")
         supplied: dict[str, Any] = {}
@@ -22461,6 +22639,9 @@ async def _execute_video_manifest_workflow(request: Request, workflow_id: str, a
                     supplied[name] = str(raw)
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"invalid value for {name}") from exc
+        memory_error = _note_media_metadata_body({**supplied, "extensions": controls})
+        if memory_error is not None:
+            return memory_error
         validation = validate_inputs(record.manifest, supplied)
         if validation.rejected:
             raise ValueError(next(iter(validation.rejected.values())))
@@ -23237,7 +23418,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
                     err_msg = "ComfyUI generation failed"
                     for tag, payload in (status_obj.get("messages") or []):
                         if tag == "execution_error" and isinstance(payload, dict):
-                            err_msg = f"ComfyUI {payload.get('node_type','')}: {payload.get('exception_message','').strip() or payload.get('exception_type','')}"
+                            err_msg = _comfy_execution_error_message({"status": {"messages": [["execution_error", payload]]}})
                             break
                     return Response(
                         content=json.dumps({"error": {"message": err_msg, "type": "api_error"}}),
@@ -24456,9 +24637,7 @@ async def _responses_prune_loop(stop_event: asyncio.Event) -> None:
     interval_s = 3600
     while not stop_event.is_set():
         try:
-            deleted = responses_store.prune()
-            prompt_memory.prune()
-            _prune_orphaned_media_job_payloads()
+            deleted = await asyncio.to_thread(responses_store.prune)
             if deleted:
                 print(f"[proxy] responses_store: pruned {deleted} expired row(s)", flush=True)
         except Exception as e:  # noqa: BLE001

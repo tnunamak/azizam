@@ -77,6 +77,29 @@ def test_prompt_memory_owner_cap_tightens_existing_prompts(settings, tmp_path, m
     assert prompt_memory.get("img_old", "person-a", path=prompt_db) is None
 
 
+def test_prompt_memory_kill_switch_reports_pending_metadata_cleanup(tmp_path):
+    path = tmp_path / "admin.db"
+    admin_store.init_db(path)
+    auth = lambda _request: AdminContext(
+        subject="owner", roles=frozenset({"owner"}), auth_method="session", csrf_token="csrf-fixture",
+    )
+    app = FastAPI()
+    app.include_router(create_settings_router(
+        auth=auth, admin_path=path, config_provider=lambda: {},
+        on_prompt_memory_kill=lambda: {"metadata_stripping": {"pending": 3}},
+    ))
+    client = TestClient(app)
+    current = client.get("/admin/api/settings/prompt-memory", headers=OWNER)
+    response = client.put(
+        "/admin/api/settings/prompt-memory",
+        json={"default_remember": True, "never_keep": True, "retention_cap": "never"},
+        headers={**OWNER, "If-Match": current.json()["revision"]},
+    )
+    assert response.status_code == 202
+    assert response.json()["prompt_purge"]["metadata_stripping"]["pending"] == 3
+    assert response.json()["prompt_purge"]["retry_scheduled"] is True
+
+
 @pytest.mark.parametrize("route", ["instance", "defaults", "lan-placeholder-keys", "effective", "effective/export"])
 def test_settings_reject_missing_member_and_admin(settings, route):
     client, _, _ = settings

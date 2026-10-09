@@ -44,6 +44,12 @@ _RAW_PAYLOAD_KEYS = frozenset(
     {
         "prompt",
         "prompts",
+        "negative_prompt",
+        "lyrics",
+        "tags",
+        "text",
+        "instructions",
+        "shots",
         "input",
         "inputs",
         "messages",

@@ -72,12 +72,12 @@ _DEFAULT_CACHE_PATH = Path(get_env(
     str(Path(__file__).parent / "cache" / "key_activity.jsonl"),
 ))
 
-_PROMPT_FIELD_FRAGMENTS = ("prompt",)
+_PROMPT_FIELDS = frozenset({"prompt", "prompts", "prompt_preview", "prompt_snippet", "negative_prompt", "text", "input", "inputs",
+                            "lyrics", "tags", "instructions", "shots", "messages", "workflow"})
 
 
 def _is_prompt_field(name: str) -> bool:
-    lowered = name.lower()
-    return any(fragment in lowered for fragment in _PROMPT_FIELD_FRAGMENTS)
+    return name.lower() in _PROMPT_FIELDS
 
 
 def _without_prompt_fields(record: dict[str, Any]) -> dict[str, Any]:

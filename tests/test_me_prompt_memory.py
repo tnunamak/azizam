@@ -37,6 +37,7 @@ def _client(
     *,
     user_id: str = "usr_alice",
     household: dict | None = None,
+    on_person_prompt_purge=None,
 ) -> TestClient:
     app = FastAPI()
     app.include_router(
@@ -46,6 +47,7 @@ def _client(
             household_provider=lambda: household or {},
             admin_db_path=admin_db,
             prompt_memory_path=prompt_db,
+            on_person_prompt_purge=on_person_prompt_purge,
         )
     )
     return TestClient(app)
@@ -106,6 +108,10 @@ def test_member_prompt_memory_honors_household_kill_switch_and_delete_all(tmp_pa
 def test_new_member_inherits_owner_default_off(tmp_path: Path) -> None:
     admin_db = tmp_path / "admin.db"
     admin_store.init_db(admin_db)
+    admin_store.put_operator_setting(
+        "prompt_memory", {"default_remember": False, "never_keep": False, "retention_cap": "never"},
+        path=admin_db,
+    )
     user = admin_store.upsert_oidc_user("issuer", "new", email="new@example.test", path=admin_db)
     client = _client(admin_db, tmp_path / "prompt.db", user_id=user["id"], household={"default_remember": False})
     settings = client.get("/me/api/prompt-memory").json()["prompt_memory"]
@@ -127,7 +133,8 @@ def test_member_prompt_memory_rejects_bad_settings(tmp_path: Path) -> None:
     )
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "invalid_prompt_memory_settings"
-    assert admin_store.get_prompt_memory_preference(user["id"], path=admin_db) is None
+    saved = admin_store.get_prompt_memory_preference(user["id"], path=admin_db)
+    assert saved is not None and saved["remember"] is True and saved["retention"] == "never"
 
 
 def test_member_shorter_retention_removes_expired_saved_prompt(tmp_path: Path) -> None:
@@ -143,3 +150,41 @@ def test_member_shorter_retention_removes_expired_saved_prompt(tmp_path: Path) -
     )
     assert response.status_code == 200
     assert prompt_memory.get("img_old", user["id"], path=prompt_db) is None
+
+
+def test_member_prompt_purge_reports_pending_work_for_off_and_delete(tmp_path: Path) -> None:
+    admin_db = tmp_path / "admin.db"
+    prompt_db = tmp_path / "prompt.db"
+    admin_store.init_db(admin_db)
+    user = admin_store.upsert_oidc_user("issuer", "alice", email="alice@example.test", path=admin_db)
+    client = _client(
+        admin_db, prompt_db, user_id=user["id"],
+        on_person_prompt_purge=lambda _person_id: {"metadata_stripping": {"pending": 2}},
+    )
+    updated = client.put(
+        "/me/api/prompt-memory", json={"remember": False, "retention": "never"},
+        headers={"x-azizam-user-action": "1"},
+    )
+    assert updated.status_code == 202
+    assert updated.json()["prompt_purge"]["metadata_stripping"]["pending"] == 2
+
+    deleted = client.delete("/me/api/prompt-memory/prompts", headers={"x-azizam-user-action": "1"})
+    assert deleted.status_code == 202
+    assert deleted.json()["prompt_purge"]["retry_scheduled"] is True
+
+
+def test_delete_reports_retry_required_when_erasure_intent_cannot_be_saved(tmp_path, monkeypatch):
+    admin_db = tmp_path / "admin.db"
+    prompt_db = tmp_path / "prompts.db"
+    admin_store.init_db(admin_db)
+    user = admin_store.upsert_oidc_user("issuer", "maker", email="maker@test", path=admin_db)
+    def purge(person_id):
+        return prompt_memory.mark_person_erasure(person_id, admin_path=admin_db)
+    def busy(*args, **kwargs):
+        raise RuntimeError("database is locked")
+    monkeypatch.setattr(prompt_memory, "mark_person_erasure", busy)
+    client = _client(admin_db, prompt_db, user_id=user["id"], on_person_prompt_purge=purge)
+    response = client.delete("/me/api/prompt-memory/prompts", headers={"x-azizam-user-action": "1"})
+    assert response.status_code == 503
+    assert response.json()["prompt_purge"]["retry_scheduled"] is False
+    assert response.json()["prompt_purge"]["retry_required"] is True

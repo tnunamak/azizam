@@ -1,6 +1,7 @@
 """Owner settings backed by the existing runtime database, never bootstrap writes."""
 from __future__ import annotations
 
+import asyncio
 import re
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -52,6 +53,18 @@ def _validate_prompt_memory(value: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _has_pending_purge(value: Any) -> bool:
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            if str(key).endswith("pending") and item not in (None, False, 0, ""):
+                return True
+            if _has_pending_purge(item):
+                return True
+    elif isinstance(value, (list, tuple)):
+        return any(_has_pending_purge(item) for item in value)
+    return False
+
+
 def redact_config(value: Any) -> Any:
     """Redact nested credentials and credential-bearing URLs in runtime data."""
     if isinstance(value, Mapping):
@@ -87,7 +100,7 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
                            instance_defaults: Callable[[], Mapping[str, Any]] | None = None,
                            overrides_provider: Callable[[], Mapping[str, Any]] | None = None,
                            prompt_memory_path: Path | None = None,
-                           on_prompt_memory_kill: Callable[[], None] | None = None) -> APIRouter:
+                           on_prompt_memory_kill: Callable[[], Any] | None = None) -> APIRouter:
     router = APIRouter(prefix="/admin/api/settings", tags=["admin"])
 
     def guard(request: Request) -> AdminContext | JSONResponse:
@@ -115,13 +128,16 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
             "apply_mode": "live",
         }, headers={"Cache-Control": "no-store"})
 
-    def prompt_memory_response() -> JSONResponse:
+    def prompt_memory_response(*, extra: Mapping[str, Any] | None = None,
+                               status_code: int = 200) -> JSONResponse:
         record = admin_store.get_operator_setting(PROMPT_MEMORY_SETTING_KEY, path=admin_path)
         value = dict(PROMPT_MEMORY_DEFAULT)
         if record:
             value.update(_validate_prompt_memory(record["value"]))
         return JSONResponse(
-            {"prompt_memory": value, "revision": admin_store.operator_setting_revision(record), "source": "admin.db", "apply_mode": "live"},
+            {"prompt_memory": value, "revision": admin_store.operator_setting_revision(record),
+             "source": "admin.db", "apply_mode": "live", **(extra or {})},
+            status_code=status_code,
             headers={"Cache-Control": "no-store"},
         )
 
@@ -154,7 +170,8 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
         if not revision:
             return JSONResponse({"error": {"code": "settings_revision_required", "message": "Reload settings and supply If-Match."}}, status_code=428)
         try:
-            admin_store.put_operator_setting_with_audit(
+            await asyncio.to_thread(
+                admin_store.put_operator_setting_with_audit,
                 PROMPT_MEMORY_SETTING_KEY, body, updated_by=ctx.subject, expected_revision=revision.strip('"'),
                 audit_action="operator.prompt_memory.update", audit_actor_kind=ctx.actor_kind,
                 audit_actor_id=ctx.audit_actor_id, audit_actor_label=ctx.actor_label,
@@ -163,12 +180,32 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
             )
         except admin_store.SettingsConflictError:
             return JSONResponse({"error": {"code": "settings_conflict", "message": "Settings changed elsewhere; reload to see the latest"}}, status_code=409)
+        purge_info: dict[str, Any] = {}
+        purge_failed = False
         if body["never_keep"]:
-            prompt_memory.delete_all(path=prompt_memory_path)
+            try:
+                await asyncio.to_thread(prompt_memory.delete_all, path=prompt_memory_path)
+            except Exception:
+                purge_failed = True
             if on_prompt_memory_kill is not None:
-                on_prompt_memory_kill()
+                try:
+                    result = await asyncio.to_thread(on_prompt_memory_kill)
+                    if isinstance(result, Mapping):
+                        purge_info.update(result)
+                except Exception:
+                    purge_failed = True
         else:
-            prompt_memory.tighten_retention(body["retention_cap"], path=prompt_memory_path)
+            try:
+                await asyncio.to_thread(prompt_memory.tighten_retention, body["retention_cap"], path=prompt_memory_path)
+            except Exception:
+                purge_failed = True
+        pending = purge_failed or _has_pending_purge(purge_info)
+        if pending:
+            purge_info["pending"] = True
+            purge_info["retry_scheduled"] = True
+            return prompt_memory_response(extra={"prompt_purge": purge_info}, status_code=202)
+        if purge_info:
+            return prompt_memory_response(extra={"prompt_purge": purge_info})
         return prompt_memory_response()
 
     @router.put("/instance")
