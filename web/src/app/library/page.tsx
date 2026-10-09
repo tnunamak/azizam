@@ -2021,6 +2021,9 @@ export default function LibraryPage() {
       >
         <Segmented
           label="Kind"
+          // On a phone the kinds take the full width and person, Filters and
+          // Clear filters share one line below, instead of three ragged rows.
+          className="max-sm:w-full"
           value={kind}
           onChange={setKind}
           options={[
@@ -2041,7 +2044,7 @@ export default function LibraryPage() {
             <SelectTrigger
               aria-label="Person"
               // Match the segmented control and Filters (40 px) above phone width.
-              className="w-auto min-w-40 sm:data-[size=default]:h-10"
+              className="w-auto min-w-40 max-sm:min-w-0 max-sm:flex-1 sm:data-[size=default]:h-10"
             >
               <SelectValue />
             </SelectTrigger>
