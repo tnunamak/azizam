@@ -76,7 +76,7 @@ const flows = {
   "play-a-clip": ["member", [
     ["library", async (page) => page.goto(`${base}/ui/library/`)],
     ["audio", async (page) => page.getByRole("group", { name: "Kind" }).getByRole("button", { name: "Audio", exact: true }).click()],
-    ["viewer", async (page) => page.getByRole("button", { name: /^Open / }).first().click()],
+    ["viewer", async (page) => page.getByRole("button", { name: /^Open / }).first().click({ position: { x: 24, y: 60 } })],
   ]],
   // The owner finds what Robin made.
   "find-robins-work": ["owner", [
