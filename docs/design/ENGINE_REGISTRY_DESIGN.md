@@ -389,6 +389,8 @@ class LifecycleDriver(Protocol):
   4. Once drained, `swap_state: swapping`, the driver executes the swap, polls health, then `running`.
   5. `active_requests`, `swap_state`, `loaded_at`, `expires_at` are exposed on the runtime panel (§6.4).
   This replaces the current per-service module locks (`kobold_swap_lock`/`tabby_swap_lock`, `proxy.py:789,1101`) with a **generic per-service lock + drain**, and fixes the verified gap: today those locks serialize *callers* but never drain *in-flight streams*, so a long generation gets a hard mid-stream error when someone else requests a swap.
+
+  **Status (2026-10):** steps 1–3 shipped as an opt-in, `llm.swap_drain` (`gateway/swap_drain.py`, off by default). Differences from the plan above: requests are counted at the gateway's last hop to the engine (the LiteLLM inner hop and the `current` route), not at the outer route, because chat calls `ensure_target` on both hops and an outer count deadlocks the inner hop; a drain that times out (`timeout_s`, default 120) refuses the swap with 503 + `Retry-After` instead of forcing it; arriving requests queue on the per-service swap lock for the drain plus the swap, with no separate `max_queue_wait_s`; a lease older than `lease_max_age_s` stops counting. Step 5 (runtime panel) is not built.
 - **`engine-managed`** — the engine schedules its own model loading/unloading (Ollama `num_parallel`/`keep_alive`, LM Studio, vLLM multi-LoRA). The gateway sends the model name and **does not gate**. Distinct from `external` (which implies one always-on model) — `engine-managed` can still be `managed: true` for idle-unload of the *whole* engine, while never serializing per-model requests.
 
 ---

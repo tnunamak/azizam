@@ -230,6 +230,21 @@ class LifecycleDriver(Protocol):
         """
         ...
 
+    def swap_required(
+        self,
+        svc: Mapping[str, Any],
+        activation: Mapping[str, Any],
+        ctx: SwapContext,
+    ) -> bool:
+        """OPTIONAL — swap drivers only. Would ``swap(svc, activation, ctx=ctx)``
+        restart or reload the engine?
+
+        False when ``swap`` would short-circuit (already loaded) or skip the
+        switch (pin_loaded). No side effects. Callers use it to let requests in
+        flight finish before a swap interrupts them.
+        """
+        ...
+
 
 def supports_swap(driver: Any) -> bool:
     """Return True if the driver implements the optional swap() method.
@@ -1011,25 +1026,7 @@ class SystemdDriver:
         # --- SwapContext policy (already-loaded short-circuit + pin) ----------
         if ctx is not None:
             target = ctx.target_model
-            # Aux match: only compare aux if the activation env carries an aux
-            # key — drivers without aux (e.g. tabby) won't have it, so we only
-            # factor aux in when the env dict actually contains an aux-shaped key.
-            # We detect aux by checking whether loaded_aux / target_aux are
-            # meaningful: if the activation.env is empty there's nothing to do
-            # anyway, but for correctness we mirror the kobold logic:
-            # mismatch = (model mismatch) OR (aux mismatch, normalised to None).
-            loaded_aux_norm = ctx.loaded_aux or None
-            target_aux_norm = ctx.target_aux or None
-            profile_matches = (
-                ctx.target_profile is None
-                or self._managed_dropin_matches(dropin_path, dropin_text)
-            )
-            already_loaded = (
-                ctx.loaded_model == target
-                and loaded_aux_norm == target_aux_norm
-                and profile_matches
-            )
-            if already_loaded:
+            if self._already_loaded(dropin_path, dropin_text, ctx):
                 return True
             if ctx.pin_loaded:
                 # Warn once per model path — use the caller-supplied set so
@@ -1107,9 +1104,40 @@ class SystemdDriver:
         )
         return False
 
+    def swap_required(
+        self,
+        svc: Mapping[str, Any],
+        activation: Mapping[str, Any],
+        ctx: SwapContext,
+    ) -> bool:
+        """True when swap() would restart the unit (not loaded, not pinned)."""
+        dc = self._driver_config(svc)
+        if not dc.get("unit", ""):
+            return False
+        loaded = self._already_loaded(self._dropin_path(dc), self._dropin_text(activation), ctx)
+        return not loaded and not ctx.pin_loaded
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    def _already_loaded(self, dropin_path: Path, dropin_text: str, ctx: SwapContext) -> bool:
+        # Aux match: only compare aux if the activation env carries an aux
+        # key — drivers without aux (e.g. tabby) won't have it, so we only
+        # factor aux in when the env dict actually contains an aux-shaped key.
+        # We detect aux by checking whether loaded_aux / target_aux are
+        # meaningful: if the activation.env is empty there's nothing to do
+        # anyway, but for correctness we mirror the kobold logic:
+        # mismatch = (model mismatch) OR (aux mismatch, normalised to None).
+        profile_matches = (
+            ctx.target_profile is None
+            or self._managed_dropin_matches(dropin_path, dropin_text)
+        )
+        return (
+            ctx.loaded_model == ctx.target_model
+            and (ctx.loaded_aux or None) == (ctx.target_aux or None)
+            and profile_matches
+        )
 
     async def _wait_until_healthy(
         self, svc: Mapping[str, Any], health_ep: str, health_timeout: float,
@@ -1483,6 +1511,16 @@ class HttpLoadUnloadDriver:
         except Exception as e:
             print(f"[lifecycle] HttpLoadUnloadDriver.swap: load error: {e}", flush=True)
             return False
+
+    def swap_required(
+        self,
+        svc: Mapping[str, Any],
+        activation: Mapping[str, Any],
+        ctx: SwapContext,
+    ) -> bool:
+        """True when swap() would unload/load. Like swap(), ignores pin_loaded."""
+        target_model = activation.get("model_name", "")
+        return bool(target_model) and ctx.loaded_model != target_model
 
     # ------------------------------------------------------------------
     # Internals
