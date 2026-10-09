@@ -401,7 +401,8 @@ test("session failure explains the problem and retry restores the account", asyn
 
 test("phone header navigation has 44px touch targets", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/ui/");
+  // Library: Home and Status carry their own verdict instead of the pill.
+  await page.goto("/ui/library/");
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   const header = page.locator("header").first();
   const navigation = page.getByRole("navigation", { name: "Phone navigation" });

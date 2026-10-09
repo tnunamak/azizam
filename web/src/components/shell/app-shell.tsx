@@ -1063,7 +1063,11 @@ function Shell({ children }: { children: React.ReactNode }) {
                   </span>
                 </Link>
                 <div className="flex items-center">
-                  <HealthLink compact />
+                  {/* Home and Status open with their own verdict; the
+                      header pill would say it a third time (D1.5). */}
+                  {/^\/(home|status)?\/?$/.test(pathname ?? "") ? null : (
+                    <HealthLink compact />
+                  )}
                   <AccountMenu compact />
                 </div>
               </header>
