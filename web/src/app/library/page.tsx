@@ -1673,12 +1673,6 @@ function focusTile(
 
 const DAY_S = 86_400;
 
-function retentionText(seconds: number) {
-  return seconds % DAY_S === 0
-    ? `${seconds / DAY_S} day${seconds === DAY_S ? "" : "s"}`
-    : `${Math.round(seconds / 3600)} hours`;
-}
-
 export default function LibraryPage() {
   const viewer = useViewer();
   const searchParams = useSearchParams();
@@ -1923,7 +1917,7 @@ export default function LibraryPage() {
   const goneConfirmed = goneAssets.every((asset) =>
     confirmedGone(asset.unavailable_reason),
   );
-  const goneImages = goneAssets.some((asset) => asset.kind === "image");
+  const [goneOpen, setGoneOpen] = useState(false);
   // Display names: the catalog, else a capability's recommended name (from
   // home, or the status payload if another page already loaded it).
   const cachedStatus = queryClient.getQueryData<MemberStatus>([
@@ -2098,11 +2092,33 @@ export default function LibraryPage() {
         >
           Library
           {hasLoadedAssets && !hasNextPage && !activeFilters ? (
+            // The count is what the grid shows; files no longer stored are
+            // counted beside it, not inside it (red team round 2).
             <span className="text-subtle-foreground figures ml-2.5 text-lg font-normal">
-              {assets.length}
+              {storedAssets.length}
             </span>
           ) : null}
         </h1>
+        {!isLoading && !showInitialError && goneAssets.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => {
+              setGoneOpen(true);
+              document
+                .getElementById("gone-files")
+                ?.scrollIntoView({ block: "start" });
+            }}
+            className="text-link ml-3 min-h-11 text-sm font-medium underline-offset-4 hover:underline sm:min-h-0"
+          >
+            {goneAssets.length === 1
+              ? goneConfirmed
+                ? "1 no longer stored"
+                : "1 unavailable"
+              : goneConfirmed
+                ? `${goneAssets.length} no longer stored`
+                : `${goneAssets.length} unavailable`}
+          </button>
+        ) : null}
       </header>
       <section
         aria-label="Library filters"
@@ -2251,6 +2267,7 @@ export default function LibraryPage() {
       ) : null}
       {!isLoading && !showInitialError && goneAssets.length > 0 ? (
         <section
+          id="gone-files"
           aria-label={
             goneConfirmed ? "Files no longer stored" : "Unavailable files"
           }
@@ -2265,15 +2282,10 @@ export default function LibraryPage() {
                 : goneConfirmed
                   ? `${goneAssets.length} files are no longer stored.`
                   : `${goneAssets.length} files are unavailable.`}{" "}
-              {imageTtl && goneImages ? (
-                <span className="text-muted-foreground">
-                  The gateway keeps pictures for {retentionText(imageTtl)}.
-                </span>
-              ) : (
-                <span className="text-muted-foreground">
-                  Their prompts and receipts remain.
-                </span>
-              )}
+              {/* One explanation for owners and members alike. */}
+              <span className="text-muted-foreground">
+                Their prompts and receipts remain.
+              </span>
             </p>
             <Button
               variant="link"
@@ -2283,7 +2295,11 @@ export default function LibraryPage() {
               Refresh library
             </Button>
           </div>
-          <details className="group mt-2">
+          <details
+            className="group mt-2"
+            open={goneOpen}
+            onToggle={(event) => setGoneOpen(event.currentTarget.open)}
+          >
             <summary className="text-link flex min-h-11 w-fit cursor-pointer items-center text-sm font-medium sm:min-h-8">
               Show them
             </summary>

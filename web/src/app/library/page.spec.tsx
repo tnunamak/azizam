@@ -937,7 +937,10 @@ describe("Library honesty and access", () => {
         "2 pictures will be removed within 3 days. Download the ones to keep.",
       ),
     ).toBeVisible();
-    expect(screen.getByText("The gateway keeps pictures for 1 day.")).toBeVisible();
+    // Gone files get one explanation for owners and members (red team
+    // round 2), counted beside the title.
+    expect(screen.getByText("Their prompts and receipts remain.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "1 no longer stored" })).toBeVisible();
     expect(screen.queryByText(/keeps files/)).toBeNull();
   });
 
