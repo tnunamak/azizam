@@ -60,7 +60,7 @@
     flex-shrink: 0;
     width: 1em;
     height: 1em;
-    margin-right: 0.25rem;
+    @apply mr-1;
     vertical-align: -0.15em;
     background-color: currentColor;
     opacity: 0.75;
