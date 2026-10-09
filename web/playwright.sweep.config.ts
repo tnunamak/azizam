@@ -13,7 +13,8 @@ const python =
   process.env.UI_E2E_PYTHON ?? (existsSync(localPython) ? localPython : "python3");
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
-const servers =
+type Server = { command: string; env: Record<string, string>; url: string };
+const servers: Server[] =
   target.name === "fixtures"
     ? [
         {

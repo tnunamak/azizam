@@ -2,6 +2,7 @@
 // helper can leak in). Collects what the sweep rules need from one screen:
 // overflow, visible text, and controls hidden under the phone bottom nav.
 // Every element it reports gets data-sweep-ref so the runner can outline it.
+// eslint-disable-next-line @typescript-eslint/no-unused-expressions -- evaluated as an expression string
 (async function probe(options) {
   const vw = document.documentElement.clientWidth;
   const vh = window.innerHeight;

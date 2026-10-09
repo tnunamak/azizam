@@ -1,6 +1,6 @@
 // Global setup for the quality sweep: signs in the owner and a member, and
 // records what the states need (a picture workflow, an invitation link).
-import { request, type FullConfig } from "@playwright/test";
+import { request } from "@playwright/test";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { sweepPaths, sweepTarget } from "./target";
@@ -45,7 +45,7 @@ const isPicture = (item?: Media | string) => {
   return item.kind === "image" || item.type === "image" || !!item.media_type?.startsWith("image/") || accept.includes("image/");
 };
 
-export default async function setup(_config: FullConfig) {
+export default async function setup() {
   const target = sweepTarget();
   const paths = sweepPaths(target);
   await mkdir(paths.dir, { recursive: true });
