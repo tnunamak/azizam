@@ -4,13 +4,10 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import {
-  AudioLines,
   ArrowUpRight,
   GitBranch,
-  Image as ImageInputIcon,
   Search,
   SlidersHorizontal,
-  Type,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { capabilityLabels } from "@/lib/terms";
@@ -57,7 +54,6 @@ import {
 } from "./workflow-api";
 import { RelativeTime } from "@/components/product";
 type WorkflowCapability = Capability | "audio" | "music" | "sfx" | "workflow";
-type InputKind = "image" | "text" | "audio";
 const EMPTY_WORKFLOWS: WorkflowRow[] = [];
 
 const capabilityOrder: WorkflowCapability[] = [
@@ -165,41 +161,6 @@ function purposeLabel(workflow: WorkflowRow) {
   return conciseWords(sentence);
 }
 
-function workflowInputKind(input: WorkflowInput): InputKind | null {
-  const name = input.name.toLowerCase();
-  const type = input.type.toLowerCase();
-  const media = [input.media_type, ...(input.accepted_media_types ?? [])]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-  const imageFieldNames = new Set([
-    "image",
-    "input_image",
-    "init_image",
-    "mask_image",
-    "source_image",
-    "reference_image",
-  ]);
-  if (media.includes("image/")) {
-    return "image";
-  }
-  if (media.includes("audio/")) return "audio";
-  if (
-    imageFieldNames.has(name) &&
-    ["image", "file", "binary", "blob", "string"].includes(type)
-  ) {
-    return "image";
-  }
-  if (
-    ["file", "upload", "blob", "binary"].includes(type) ||
-    name.endsWith("_file")
-  ) {
-    return null;
-  }
-  if (type === "string") return "text";
-  return null;
-}
-
 function matches(row: WorkflowRow, query: string) {
   if (!query) return true;
   const haystack = [
@@ -225,73 +186,117 @@ function matches(row: WorkflowRow, query: string) {
   return haystack.includes(query.toLowerCase());
 }
 
-// Types describe the manifest; they do not imply an engine is ready to run.
-function requiredInputs(workflow: WorkflowRow) {
-  return workflow.inputs.filter((input) => input.accepted && input.required);
+// Describe only declared metadata, never infer a need from a field name or icon.
+function joinWords(values: string[], conjunction = "and") {
+  if (values.length < 2) return values[0] ?? "";
+  return `${values.slice(0, -1).join(", ")} ${conjunction} ${values.at(-1)}`;
 }
 
-function requiredInputLabel(workflow: WorkflowRow) {
-  const required = requiredInputs(workflow);
-  if (!workflow.inputs.length) return "Inputs not listed";
-  if (!required.length) return "No required inputs";
-  return required.map((input) => input.name).join(", ");
-}
-
-function outputKinds(workflow: WorkflowRow) {
-  const kinds = [
-    ...new Set(
-      (workflow.outputs ?? []).map(
-        (output) => output.media_type || output.name,
-      ),
-    ),
-  ];
+function mediaLabel(value: string, fallback: string) {
+  const family = value.trim().toLowerCase().split("/")[0];
   return (
-    kinds.join(", ") ||
-    (workflow.capability === "workflow"
-      ? ""
-      : capabilityLabel(workflow.capability))
+    { image: "a picture", audio: "an audio clip", video: "a video", text: "text" }[
+      family as "image" | "audio" | "video" | "text"
+    ] ?? fallback
   );
 }
 
-function WorkflowInputIcons({ workflow }: { workflow: WorkflowRow }) {
-  const kinds = [
-    ...new Set(
-      workflow.inputs
-        .filter((input) => input.accepted)
-        .map(workflowInputKind)
-        .filter((kind): kind is InputKind => kind != null),
-    ),
-  ];
-  const icons: Record<InputKind, [typeof Type, string]> = {
-    image: [ImageInputIcon, "Image"],
-    text: [Type, "Text"],
-    audio: [AudioLines, "Audio"],
-  };
-  const needsImage = requiredInputs(workflow).some(
-    (input) => workflowInputKind(input) === "image",
+function inputLabel(input: WorkflowInput) {
+  const media = [input.media_type, ...(input.accepted_media_types ?? [])]
+    .filter((value): value is string => !!value);
+  if (media.length) {
+    return joinWords([...new Set(media.map((value) => mediaLabel(value, "a file")))], "or");
+  }
+  switch (input.type.toLowerCase()) {
+    case "string": return "text";
+    case "image": return "a picture";
+    case "audio": return "an audio clip";
+    case "video": return "a video";
+    case "number":
+    case "integer": return "a number";
+    case "boolean": return "a yes-or-no choice";
+    case "array": return "a list";
+    case "object": return "structured information";
+    case "file":
+    case "upload":
+    case "blob":
+    case "binary": return "a file";
+    default: return "an input";
+  }
+}
+
+function inputSummary(workflow: WorkflowRow, required: boolean) {
+  return joinWords(
+    workflow.inputs
+      .filter((input) => input.accepted && !!input.required === required)
+      .map(inputLabel),
   );
-  if (!kinds.length && !needsImage) return null;
+}
+
+function outputSummary(workflow: WorkflowRow) {
+  return joinWords([...new Set(
+    (workflow.outputs ?? []).map((output) =>
+      output.media_type ? mediaLabel(output.media_type, "a file") : "an output",
+    ),
+  )]) || "output not listed";
+}
+
+function WorkflowSummary({ workflow }: { workflow: WorkflowRow }) {
+  const required = inputSummary(workflow, true);
+  const optional = inputSummary(workflow, false);
   return (
-    <div
-      role="group"
-      aria-label="Inputs"
-      className="flex min-h-8 flex-wrap items-center gap-2"
-    >
-      {kinds.map((kind) => {
-        const [Icon, label] = icons[kind];
-        return (
-          <span
-            key={kind}
-            role="img"
-            aria-label={`${label} input`}
-            title={`${label} input`}
-            className="text-muted-foreground inline-flex size-8 items-center justify-center rounded-md border"
-          >
-            <Icon aria-hidden="true" className="size-4" />
-          </span>
-        );
-      })}
-      {needsImage && <Badge variant="outline">Needs an image</Badge>}
+    <div aria-label="What you need and get" className="space-y-1 text-sm">
+      <p>Needs: {required || (workflow.inputs.length ? "no required inputs" : "inputs not listed")}</p>
+      {optional && <p>Optional: {optional}</p>}
+      <p>Makes: {outputSummary(workflow)}</p>
+    </div>
+  );
+}
+
+function WorkflowAction({
+  workflow,
+  hideReadyStatus = false,
+}: {
+  workflow: WorkflowRow;
+  hideReadyStatus?: boolean;
+}) {
+  const unavailable = workflow.availability.available === false;
+  const showStatus =
+    !hideReadyStatus || !["ready", "idle"].includes(workflow.availability.status);
+  return (
+    <div className="space-y-3">
+      {showStatus && (
+        <StatusPill
+          status={
+            workflow.availability.status === "not_configured"
+              ? "unavailable"
+              : workflow.availability.status
+          }
+          summary
+        />
+      )}
+      {unavailable ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" disabled>
+            Open in Try
+          </Button>
+          <p className="text-muted-foreground text-sm">
+            {availabilityReason(
+              workflow.availability.status,
+              workflow.availability.reason_code,
+            ) ?? "Unavailable."}
+          </p>
+          <p className="text-muted-foreground w-full text-sm">
+            Not available right now. The person who manages Azizam can set it up.
+          </p>
+        </div>
+      ) : (
+        <Button asChild size="sm">
+          <Link href={`/try/?workflow=${encodeURIComponent(workflow.id)}`}>
+            Open in Try
+          </Link>
+        </Button>
+      )}
     </div>
   );
 }
@@ -316,40 +321,12 @@ function WorkflowCard({
             {purposeLabel(workflow)}
           </p>
           <div className="mt-3">
-            <WorkflowInputIcons workflow={workflow} />
+            <WorkflowSummary workflow={workflow} />
           </div>
         </div>
       </div>
-      {!(["ready", "idle"].includes(workflow.availability.status)) && (
-        <StatusPill
-          status={
-            workflow.availability.status === "not_configured"
-              ? "unavailable"
-              : workflow.availability.status
-          }
-          summary
-        />
-      )}
-      <div className="mt-auto flex flex-wrap gap-2">
-        {workflow.availability.available === false ? (
-          <>
-            <Button size="sm" disabled>
-              Run in Try
-            </Button>
-            <p className="text-muted-foreground text-sm">
-              {availabilityReason(
-                workflow.availability.status,
-                workflow.availability.reason_code,
-              ) ?? "Unavailable."}
-            </p>
-          </>
-        ) : (
-          <Button asChild size="sm">
-            <Link href={`/try/?workflow=${encodeURIComponent(workflow.id)}`}>
-              Run in Try
-            </Link>
-          </Button>
-        )}
+      <div className="mt-auto space-y-3">
+        <WorkflowAction workflow={workflow} hideReadyStatus />
         <Button variant="outline" size="sm" onClick={() => onDetail(workflow)}>
           Details
         </Button>
@@ -389,7 +366,7 @@ function DetailSheet({
             <SheetHeader className="border-b pr-12">
               <SheetTitle>{workflow.title}</SheetTitle>
               <SheetDescription>
-                Inputs, example requests and recent outputs.
+                What you need, what you get and how to start.
               </SheetDescription>
             </SheetHeader>
             <div className="space-y-6 p-4">
@@ -400,18 +377,9 @@ function DetailSheet({
                     {purposeLabel(workflow)}
                   </p>
                 )}
-                <div className="grid gap-3 text-sm sm:grid-cols-2">
-                  {workflow.inputs.length > 0 && (
-                    <Fact
-                      label="Required inputs"
-                      value={requiredInputLabel(workflow)}
-                    />
-                  )}
-                  {outputKinds(workflow) && (
-                    <Fact label="Output" value={outputKinds(workflow)} />
-                  )}
-                </div>
+                <WorkflowSummary workflow={workflow} />
               </section>
+              <WorkflowAction workflow={workflow} />
               <details className="rounded-lg border p-4">
                 <summary className="focus-visible:outline-ring min-h-11 cursor-pointer py-3 font-medium focus-visible:outline-2">
                   Technical details
@@ -420,17 +388,6 @@ function DetailSheet({
                   {workflow.technical_notes && (
                     <p className="text-muted-foreground text-sm break-words whitespace-pre-wrap">
                       {workflow.technical_notes}
-                    </p>
-                  )}
-                  {availabilityReason(
-                    workflow.availability.status,
-                    workflow.availability.reason_code,
-                  ) && (
-                    <p className="text-muted-foreground text-sm break-words">
-                      {availabilityReason(
-                        workflow.availability.status,
-                        workflow.availability.reason_code,
-                      )}
                     </p>
                   )}
                   <div className="grid gap-4 text-sm sm:grid-cols-2">
@@ -449,6 +406,18 @@ function DetailSheet({
                     <Fact
                       label="Capability"
                       value={capabilityLabel(workflow.capability)}
+                    />
+                    <Fact
+                      label="Input media types"
+                      value={workflow.inputs.map((input) =>
+                        `${input.name}: ${[input.media_type, ...(input.accepted_media_types ?? [])].filter(Boolean).join(", ") || "not listed"}`,
+                      ).join("; ") || "Not listed"}
+                    />
+                    <Fact
+                      label="Output names and types"
+                      value={(workflow.outputs ?? []).map((output) =>
+                        `${output.name}: ${output.media_type || "not listed"}`,
+                      ).join("; ") || "Not listed"}
                     />
                     <Fact
                       label="Engine binding"
@@ -502,158 +471,139 @@ function DetailSheet({
                       )}
                     </div>
                   </div>
-                </div>
-              </details>
-              <div>
-                <h3 className="font-medium">Inputs</h3>
-                <p className="text-muted-foreground mt-1 text-sm">
-                  Inputs marked Applies change the request. Ignored inputs have
-                  no effect on this route.
-                </p>
-                <ul
-                  aria-label="Input summaries"
-                  className="mt-3 divide-y rounded-lg border px-4 sm:hidden"
-                >
-                  {workflow.inputs.map((input) => (
-                    <li key={input.name} className="space-y-2 py-4">
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <h4 className="font-mono text-sm break-all">
-                            {input.name}
-                          </h4>
-                          <p className="text-muted-foreground text-xs">
-                            {input.type}
-                            {input.required ? " · Required" : " · Optional"}
-                          </p>
-                        </div>
-                        <Badge
-                          variant={input.accepted ? "secondary" : "outline"}
-                        >
-                          {input.accepted ? "Applies" : "Ignored"}
-                        </Badge>
-                      </div>
-                      {input.description && (
-                        <p className="text-muted-foreground text-sm break-words">
-                          {input.description}
-                        </p>
-                      )}
-                      <dl className="space-y-2 text-sm">
-                        {input.default != null && (
-                          <div>
-                            <dt className="text-muted-foreground text-xs">
-                              Default
-                            </dt>
-                            <dd className="break-words">
-                              {valueLabel(input.default)}
-                            </dd>
-                          </div>
-                        )}
-                        {rangeLabel(input) && (
-                          <div>
-                            <dt className="text-muted-foreground text-xs">
-                              Range
-                            </dt>
-                            <dd className="break-words">{rangeLabel(input)}</dd>
-                          </div>
-                        )}
-                      </dl>
-                    </li>
-                  ))}
-                </ul>
-                <div
-                  className="mt-3 hidden max-w-full overflow-x-auto rounded-lg border sm:block [&>div]:overflow-visible"
-                  tabIndex={0}
-                  aria-label="Scrollable inputs"
-                >
-                  <Table className="min-w-[40rem] table-fixed">
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Name</TableHead>
-                        <TableHead>Type</TableHead>
-                        <TableHead>Default</TableHead>
-                        <TableHead>Range</TableHead>
-                        <TableHead>Applies</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
+                  <div>
+                    <h3 className="font-medium">Inputs</h3>
+                    <p className="text-muted-foreground mt-1 text-sm">
+                      Inputs marked Applies change the request. Ignored inputs have
+                      no effect on this route.
+                    </p>
+                    <ul
+                      aria-label="Input summaries"
+                      className="mt-3 divide-y rounded-lg border px-4 sm:hidden"
+                    >
                       {workflow.inputs.map((input) => (
-                        <TableRow key={input.name}>
-                          <TableCell className="font-mono text-xs break-all !whitespace-normal">
-                            {input.name}
-                            {input.required && (
-                              <span className="ml-1 text-xs">(required)</span>
-                            )}
-                            {input.description && (
-                              <p className="text-muted-foreground mt-1 font-sans text-xs">
-                                {input.description}
+                        <li key={input.name} className="space-y-2 py-4">
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <h4 className="font-mono text-sm break-all">
+                                {input.name}
+                              </h4>
+                              <p className="text-muted-foreground text-xs">
+                                {input.type}
+                                {input.required ? " · Required" : " · Optional"}
                               </p>
-                            )}
-                          </TableCell>
-                          <TableCell>{input.type}</TableCell>
-                          <TableCell className="max-w-48 break-words !whitespace-normal">
-                            {valueLabel(input.default)}
-                          </TableCell>
-                          <TableCell className="max-w-48 break-words !whitespace-normal">
-                            {rangeLabel(input)}
-                          </TableCell>
-                          <TableCell>
+                            </div>
                             <Badge
-                              variant={
-                                !input.accepted ? "outline" : "secondary"
-                              }
+                              variant={input.accepted ? "secondary" : "outline"}
                             >
                               {input.accepted ? "Applies" : "Ignored"}
                             </Badge>
-                          </TableCell>
-                        </TableRow>
+                          </div>
+                          {input.description && (
+                            <p className="text-muted-foreground text-sm break-words">
+                              {input.description}
+                            </p>
+                          )}
+                          <dl className="space-y-2 text-sm">
+                            {input.default != null && (
+                              <div>
+                                <dt className="text-muted-foreground text-xs">
+                                  Default
+                                </dt>
+                                <dd className="break-words">
+                                  {valueLabel(input.default)}
+                                </dd>
+                              </div>
+                            )}
+                            {rangeLabel(input) && (
+                              <div>
+                                <dt className="text-muted-foreground text-xs">
+                                  Range
+                                </dt>
+                                <dd className="break-words">{rangeLabel(input)}</dd>
+                              </div>
+                            )}
+                          </dl>
+                        </li>
                       ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              </div>
-              <div>
-                <h3 className="font-medium">Example request</h3>
-                <div className="mt-3 [&_pre]:overflow-visible [&_pre]:break-all [&_pre]:whitespace-pre-wrap">
-                  <CodeBlock
-                    snippets={[
-                      { language: "curl", code: workflow.examples.curl },
-                      { language: "Python", code: workflow.examples.python },
-                      {
-                        language: "JavaScript",
-                        code: workflow.examples.javascript,
-                      },
-                    ]}
-                  />
-                </div>
-              </div>
-              <RecentJobs key={workflow.id} workflow={workflow} />
-              <div className="flex flex-wrap gap-2">
-                {workflow.availability.available === false ? (
-                  <>
-                    <Button disabled>Run in Try</Button>
-                    <p className="text-muted-foreground text-sm">
-                      {availabilityReason(
-                workflow.availability.status,
-                workflow.availability.reason_code,
-              ) ?? "Unavailable."}
-                    </p>
-                  </>
-                ) : (
-                  <Button asChild>
-                    <Link
-                      href={`/try/?workflow=${encodeURIComponent(workflow.id)}`}
+                    </ul>
+                    <div
+                      className="mt-3 hidden max-w-full overflow-x-auto rounded-lg border sm:block [&>div]:overflow-visible"
+                      tabIndex={0}
+                      aria-label="Scrollable inputs"
                     >
-                      Run in Try
-                    </Link>
-                  </Button>
-                )}
-                <Button asChild variant="outline">
-                  <a href={"/me/api/workflows"}>
-                    Discovery list
-                    <ArrowUpRight aria-hidden="true" />
-                  </a>
-                </Button>
-              </div>
+                      <Table className="min-w-[40rem] table-fixed">
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Name</TableHead>
+                            <TableHead>Type</TableHead>
+                            <TableHead>Default</TableHead>
+                            <TableHead>Range</TableHead>
+                            <TableHead>Applies</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {workflow.inputs.map((input) => (
+                            <TableRow key={input.name}>
+                              <TableCell className="font-mono text-xs break-all !whitespace-normal">
+                                {input.name}
+                                {input.required && (
+                                  <span className="ml-1 text-xs">(required)</span>
+                                )}
+                                {input.description && (
+                                  <p className="text-muted-foreground mt-1 font-sans text-xs">
+                                    {input.description}
+                                  </p>
+                                )}
+                              </TableCell>
+                              <TableCell>{input.type}</TableCell>
+                              <TableCell className="max-w-48 break-words !whitespace-normal">
+                                {valueLabel(input.default)}
+                              </TableCell>
+                              <TableCell className="max-w-48 break-words !whitespace-normal">
+                                {rangeLabel(input)}
+                              </TableCell>
+                              <TableCell>
+                                <Badge
+                                  variant={
+                                    !input.accepted ? "outline" : "secondary"
+                                  }
+                                >
+                                  {input.accepted ? "Applies" : "Ignored"}
+                                </Badge>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                  <div>
+                    <h3 className="font-medium">Example request</h3>
+                    <div className="mt-3 [&_pre]:overflow-visible [&_pre]:break-all [&_pre]:whitespace-pre-wrap">
+                      <CodeBlock
+                        snippets={[
+                          { language: "curl", code: workflow.examples.curl },
+                          { language: "Python", code: workflow.examples.python },
+                          {
+                            language: "JavaScript",
+                            code: workflow.examples.javascript,
+                          },
+                        ]}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button asChild variant="outline">
+                      <a href={"/me/api/workflows"}>
+                        Discovery list
+                        <ArrowUpRight aria-hidden="true" />
+                      </a>
+                    </Button>
+                  </div>
+                </div>
+              </details>
+              <RecentJobs key={workflow.id} workflow={workflow} />
             </div>
           </>
         )}
@@ -840,7 +790,7 @@ export default function WorkflowsPage() {
         <EmptyState
           icon={GitBranch}
           title="No workflows available"
-          description="Workflows appear here when configured and allowed by your access plan. Ask the gateway owner to connect a workflow engine and grant access."
+          description="No workflows are set up yet. The person who manages Azizam can add them."
           action={
             <Button variant="outline" asChild>
               <Link href="/models">Explore models</Link>

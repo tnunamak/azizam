@@ -97,8 +97,11 @@ it("keeps browsing cards compact and leaves manifest facts in the detail view", 
     await screen.findByRole("article", { name: "Product render" }),
   );
 
-  expect(card.getByRole("img", { name: "Text input" })).toBeVisible();
-  expect(card.queryByRole("img", { name: "Number input" })).toBeNull();
+  expect(card.getByText("Needs: text")).toBeVisible();
+  expect(card.getByText("Optional: a number")).toBeVisible();
+  expect(card.getByText("Makes: a picture")).toBeVisible();
+  expect(card.queryByRole("img", { name: "Text input" })).toBeNull();
+  expect(card.queryByText("prompt")).toBeNull();
   expect(card.getByText("Create product renders.")).toBeVisible();
   expect(card.queryByText("Output")).toBeNull();
   expect(card.queryByText("image/png")).toBeNull();
@@ -141,6 +144,7 @@ it("renders mobile input summaries beside the desktop table", async () => {
   renderWorkflows();
   await user.click(await screen.findByRole("button", { name: "Details" }));
   const sheet = within(screen.getByRole("dialog", { name: "Product render" }));
+  await user.click(sheet.getByText("Technical details"));
   const mobileSummaries = sheet.getByRole("list", { name: "Input summaries" });
   const tableScrollport = sheet.getByLabelText("Scrollable inputs");
 
@@ -169,18 +173,18 @@ it("disables unavailable workflow runs and shows the recorded reason beside each
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(<QueryClientProvider client={client}><WorkflowsPage /></QueryClientProvider>);
   const card = within(await screen.findByRole("article", { name: "Product render" }));
-  const run = card.getByRole("button", { name: "Run in Try" });
+  const run = card.getByRole("button", { name: "Open in Try" });
   expect(run).toBeDisabled();
   expect(run.nextElementSibling).toHaveTextContent(reason);
   expect(run.nextElementSibling).toBeVisible();
-  expect(card.queryByRole("link", { name: "Run in Try" })).toBeNull();
+  expect(card.queryByRole("link", { name: "Open in Try" })).toBeNull();
   await user.click(card.getByRole("button", { name: "Details" }));
   const sheet = within(screen.getByRole("dialog", { name: "Product render" }));
-  const sheetRun = sheet.getByRole("button", { name: "Run in Try" });
+  const sheetRun = sheet.getByRole("button", { name: "Open in Try" });
   expect(sheetRun).toBeDisabled();
   expect(sheetRun.nextElementSibling).toHaveTextContent(reason);
   expect(sheetRun.nextElementSibling).toBeVisible();
-  expect(sheet.queryByRole("link", { name: "Run in Try" })).toBeNull();
+  expect(sheet.queryByRole("link", { name: "Open in Try" })).toBeNull();
   expect(sheet.getByText("Technical details").closest("details")).not.toHaveAttribute("open");
 });
 
@@ -188,10 +192,10 @@ it("keeps available workflow Run links unchanged on cards and in details", async
   const user = userEvent.setup();
   renderWorkflows();
   const card = within(await screen.findByRole("article", { name: "Product render" }));
-  expect(card.getByRole("link", { name: "Run in Try" })).toHaveAttribute("href", "/try?workflow=image.product-render");
+  expect(card.getByRole("link", { name: "Open in Try" })).toHaveAttribute("href", "/try?workflow=image.product-render");
   await user.click(card.getByRole("button", { name: "Details" }));
   const sheet = within(screen.getByRole("dialog", { name: "Product render" }));
-  expect(sheet.getByRole("link", { name: "Run in Try" })).toHaveAttribute("href", "/try?workflow=image.product-render");
+  expect(sheet.getByRole("link", { name: "Open in Try" })).toHaveAttribute("href", "/try?workflow=image.product-render");
 });
 
 it("updates an open details sheet when a refresh makes its workflow unavailable", async () => {
@@ -213,13 +217,13 @@ it("updates an open details sheet when a refresh makes its workflow unavailable"
   const card = within(await screen.findByRole("article", { name: "Product render" }));
   await user.click(card.getByRole("button", { name: "Details" }));
   const sheet = within(screen.getByRole("dialog", { name: "Product render" }));
-  expect(sheet.getByRole("link", { name: "Run in Try" })).toBeInTheDocument();
+  expect(sheet.getByRole("link", { name: "Open in Try" })).toBeInTheDocument();
   available = false;
   await act(async () => {
     await client.refetchQueries({ queryKey: ["workflows", "catalog"] });
   });
   const sheetRun = await within(screen.getByRole("dialog", { name: "Product render" }))
-    .findByRole("button", { name: "Run in Try" });
+    .findByRole("button", { name: "Open in Try" });
   expect(sheetRun).toBeDisabled();
   expect(sheetRun.nextElementSibling).toHaveTextContent(
     "Unavailable. Ask the owner to enable this capability.",
