@@ -4422,7 +4422,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
         # Gateway-level control; engines never see the extensions envelope.
         _begin_media_delivery(auth_context, receipt)
         if isinstance(body_json, dict):
-            metadata_error = _note_media_metadata_body(body_json, request.headers)
+            metadata_error = _note_media_metadata_body(body_json)
             if metadata_error is not None:
                 return metadata_error
             body_json.pop("extensions", None)
@@ -8005,7 +8005,7 @@ async def proxy_comfy_request(
     )
     if unknown_response is not None:
         return unknown_response
-    metadata_error = _note_media_metadata_body(body, request.headers)
+    metadata_error = _note_media_metadata_body(body)
     if metadata_error is not None:
         return metadata_error
 
@@ -8460,7 +8460,7 @@ async def proxy_comfy_edit_request(
     )
     if unknown_response is not None:
         return unknown_response
-    metadata_error = _note_media_metadata_body(form_dict, request.headers)
+    metadata_error = _note_media_metadata_body(form_dict)
     if metadata_error is not None:
         return metadata_error
 
@@ -10804,7 +10804,7 @@ async def proxy_comfy_video_create(
             media_type="application/json",
         )
     _begin_media_delivery(auth_context)
-    metadata_error = _note_media_metadata_body(body, request.headers)
+    metadata_error = _note_media_metadata_body(body)
     if metadata_error is not None:
         return metadata_error
 
@@ -13315,7 +13315,7 @@ def _media_metadata_error(exc: Exception) -> Response:
     )
 
 
-def _note_media_metadata_body(body: Any, headers: Mapping[str, Any] | None = None) -> Response | None:
+def _note_media_metadata_body(body: Any) -> Response | None:
     """Read the metadata control from a parsed body; return a 400 if invalid."""
     try:
         media_delivery.note_body(body if isinstance(body, Mapping) else None)
@@ -22853,7 +22853,7 @@ async def proxy_audio_generate(request: Request, auth_context, *, store_full: bo
         name, reason = next(iter(unknown_top_level.items()))
         return _audio_extension_error_response(reason, param=name)
     _begin_media_delivery(auth_context, receipt)
-    metadata_error = _note_media_metadata_body(body, request.headers)
+    metadata_error = _note_media_metadata_body(body)
     if metadata_error is not None:
         return metadata_error
 
@@ -25812,7 +25812,7 @@ async def create_response(request: Request):
         store = req_body.get("store")
         if store is None:
             store = True
-        if not prompt_decision.keep:
+        if not prompt_decision.keep and prompt_decision.reason != "no_person":
             store = False
             req_body["store"] = False
         profile = _profile_for_auth_context(auth_context)
@@ -25878,7 +25878,7 @@ async def create_response(request: Request):
                         if store:
                             try:
                                 with prompt_memory.retention_guard(ADMIN_STORE.path, prompt_decision.person_id) as policy:
-                                    if not policy["never_keep"] and policy["remember"]:
+                                    if not policy["never_keep"] and (prompt_decision.person_id is None or policy["remember"]):
                                         responses_store.save(
                                             response_id,
                                             created_at=created_at,
@@ -25956,7 +25956,7 @@ async def create_response(request: Request):
             if store:
                 try:
                     with prompt_memory.retention_guard(ADMIN_STORE.path, prompt_decision.person_id) as policy:
-                        if not policy["never_keep"] and policy["remember"]:
+                        if not policy["never_keep"] and (prompt_decision.person_id is None or policy["remember"]):
                             responses_store.save(
                                 response_id,
                                 created_at=created_at,

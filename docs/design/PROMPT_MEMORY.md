@@ -30,12 +30,16 @@ authenticated maker on an API content route. Old signed URLs with `md=full`
 must fail closed. The `full` profile default still governs the direct response
 to the maker's own authenticated API request.
 
-No-key LAN calls and service Apps have no person. Their prompts are not saved:
+No-key LAN calls and service Apps have no person. Their media prompts are not saved:
 there is no defensible maker-only viewer or retention setting for them. They
 still receive their generated media. Existing owner instance views retain
 metadata about these calls, without prompt-derived content.
 Their direct API response follows the caller's metadata profile because it is
 the caller's own output; the gateway cache and later signed URLs remain clean.
+The OpenAI Responses store is a separate protocol contract: a no-person caller
+can still opt into its seven-day conversation state with `store:true`. The
+request-level forget control, `store:false`, and the owner kill switch disable
+that storage.
 
 Azizam cannot promise prompt erasure from an inference engine's own history,
 external backend output directory, filesystem snapshots, or a recipient's

@@ -12,6 +12,7 @@ import copy
 import sys
 import tempfile
 import unittest
+import wave
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -36,6 +37,21 @@ def _png_bytes(color: tuple[int, int, int, int], size: tuple[int, int] = (2, 1))
     output = io.BytesIO()
     image.save(output, format="PNG")
     return output.getvalue()
+
+
+def _wav_bytes() -> bytes:
+    output = io.BytesIO()
+    with wave.open(output, "wb") as sound:
+        sound.setnchannels(1)
+        sound.setsampwidth(2)
+        sound.setframerate(8000)
+        sound.writeframes(b"\x00\x00" * 16)
+    return output.getvalue()
+
+
+def _wav_frames(content: bytes) -> bytes:
+    with wave.open(io.BytesIO(content), "rb") as sound:
+        return sound.readframes(sound.getnframes())
 
 
 def _image_pixels(content: bytes) -> list[tuple[int, int, int, int]]:
@@ -507,7 +523,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
 
     def test_generic_asset_content_accepts_signed_url_without_bearer(self) -> None:
         raw_key = "opk_audio_asset_policy_test"
-        raw = b"RIFF....WAVEfmt "
+        raw = _wav_bytes()
         owner_hash = proxy.hash_api_key(raw_key)
         asset_id = proxy.store_asset_bytes(
             raw,
@@ -516,8 +532,8 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
             owner_key_hash=owner_hash,
         )
         expires = int(proxy.time.time()) + 60
-        sig = proxy._sign_asset_token(asset_id, expires, "full")
-        query = {"expires": str(expires), "md": "full", "sig": sig}
+        sig = proxy._sign_asset_token(asset_id, expires, "none")
+        query = {"expires": str(expires), "md": "none", "sig": sig}
         client = TestClient(proxy.app)
 
         with patch.object(proxy, "AUTH_ENABLED", True):
@@ -527,7 +543,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(ok.status_code, 200, ok.text)
             self.assertEqual(ok.headers["content-type"], "audio/wav")
-            self.assertEqual(ok.content, raw)
+            self.assertEqual(_wav_frames(ok.content), _wav_frames(raw))
 
     def test_gateway_asset_metadata_uses_asset_kind_profile_and_owner(self) -> None:
         raw_key = "opk_gateway_asset_test"
@@ -585,7 +601,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
 
     def test_gateway_asset_content_accepts_same_signed_url_contract(self) -> None:
         raw_key = "opk_gateway_asset_content_test"
-        raw = b"RIFF....WAVEfmt "
+        raw = _wav_bytes()
         owner_hash = proxy.hash_api_key(raw_key)
         asset_id = proxy.store_asset_bytes(
             raw,
@@ -594,7 +610,7 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
             owner_key_hash=owner_hash,
         )
         expires = int(proxy.time.time()) + 60
-        sig = proxy._sign_asset_token(asset_id, expires, "full")
+        sig = proxy._sign_asset_token(asset_id, expires, "none")
         audio_profile = AppProfile(
             id="audio",
             protocols=frozenset({"openai.audio"}),
@@ -612,13 +628,13 @@ class TestGeneratedImageAssets(unittest.IsolatedAsyncioTestCase):
         ):
             ok = TestClient(proxy.app).get(
                 f"/gateway/v1/assets/{asset_id}/content",
-                params={"expires": str(expires), "md": "full", "sig": sig},
+                params={"expires": str(expires), "md": "none", "sig": sig},
                 headers={"Authorization": f"Bearer {raw_key}"},
             )
 
         self.assertEqual(ok.status_code, 200, ok.text)
         self.assertEqual(ok.headers["content-type"], "audio/wav")
-        self.assertEqual(ok.content, raw)
+        self.assertEqual(_wav_frames(ok.content), _wav_frames(raw))
 
     def test_invalid_generic_asset_id_uses_signed_asset_validation(self) -> None:
         raw_key = "opk_invalid_asset_policy_test"
