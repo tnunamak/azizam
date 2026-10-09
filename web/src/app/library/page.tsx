@@ -1352,17 +1352,13 @@ function CreationViewer({
               >
                 {asset.kind === "audio" ? (
                   <>
-                    {/* The clip on one neutral card (D1.5): its kind, its
-                        words and the player. Who made it is in the details. */}
-                    <div className="relative w-full space-y-3">
-                      <p className="text-muted-foreground flex items-center gap-1.5 text-xs font-medium">
-                        <AudioLines aria-hidden="true" className="size-3.5" />
-                        {audioKind(asset.model).label}
-                      </p>
-                      <p className="line-clamp-5 text-lg leading-snug font-medium break-words">
-                        {asset.prompt?.trim() || assetTitle(asset)}
-                      </p>
-                    </div>
+                    {/* The clip on one neutral card (D1.5): its kind and the
+                        player. Its words are in the details beside it, once,
+                        as a picture's are (D1.5b: the prompt showed twice). */}
+                    <p className="text-muted-foreground relative flex w-full items-center gap-1.5 text-xs font-medium">
+                      <AudioLines aria-hidden="true" className="size-3.5" />
+                      {audioKind(asset.model).label}
+                    </p>
                   </>
                 ) : null}
                 <Preview
