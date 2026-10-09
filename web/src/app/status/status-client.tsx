@@ -44,7 +44,6 @@ import {
   engineShortName,
 } from "@/lib/health-presentation";
 import { cn } from "@/lib/cn";
-import { useMediaQuery } from "@/lib/use-media-query";
 import type { PlanSpend } from "@/lib/product-api-types";
 import { SectionHeading } from "@/components/product/readiness";
 import {
@@ -993,9 +992,6 @@ export function StatusClient() {
   const selectedServiceId = searchParams.get("service");
   const [diskHelpOpen, setDiskHelpOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
-  // At 1280 px and wider the engines table fills the space under a card
-  // (D1.5: the lower half stood empty beside a plain summary box).
-  const wide = useMediaQuery("(min-width: 1280px)");
   const {
     data: statusData,
     isError: statusIsError,
@@ -1336,10 +1332,10 @@ export function StatusClient() {
     verdict = { tone: model.verdict.tone, text: model.verdict.text };
   }
   if (providers.state === "error") note = "Provider status did not load.";
-  const tableOpen = showAll || !problems.length || wide;
+  // While something needs attention, healthy engines fold to one line
+  // (principle 7 ranks above filling space; D1.5b).
+  const tableOpen = showAll || !problems.length;
   const capsOpen = !problems.length;
-  // The side column holds the folded capabilities while a card is open.
-  const rail = problems.length > 0;
   // Engines that already have a card are not counted again in the summary.
   const troubled = new Set(
     problems.flatMap((problem) => {
@@ -1417,7 +1413,9 @@ export function StatusClient() {
   return (
     // A reading column, like Linear and incident.io status pages (about 670 to
     // 900 px), so facts and actions stay within one eye span.
-    <div className={cn("max-w-4xl min-w-0", rail && "xl:max-w-6xl")}>
+    // D1.5b: one column at every width, problem or not; no side column
+    // to stand empty (Linear and incident.io incident pages).
+    <div className="max-w-4xl min-w-0">
       <PageHeader
         title="Status"
         actions={
@@ -1471,13 +1469,7 @@ export function StatusClient() {
       {/* While a card explains a problem, a wide screen keeps the card in a
           reading column and puts the rest of the system beside it (D1.3:
           the right third stood empty). */}
-      <div
-        className={cn(
-          "flex min-w-0 flex-col gap-10",
-          rail &&
-            "xl:grid xl:grid-cols-[minmax(0,1fr)_18rem] xl:grid-rows-[auto_auto_1fr] xl:items-start xl:gap-x-10",
-        )}
-      >
+      <div className="flex min-w-0 flex-col gap-10">
         {statusIsPending && registryIsPending ? (
           <div aria-busy="true" className="space-y-4">
             <Skeleton className="rounded-panel h-40 w-full" />
@@ -1488,7 +1480,7 @@ export function StatusClient() {
             {problems.length ? (
               <section
                 aria-labelledby="attention-heading"
-                className="space-y-3 xl:col-start-1 xl:row-start-1"
+                className="space-y-3"
               >
                 <SectionHeading
                   id="attention-heading"
@@ -1508,10 +1500,7 @@ export function StatusClient() {
             ) : null}
 
             {running.length ? (
-              <section
-                aria-labelledby="running-heading"
-                className="xl:col-start-1 xl:row-start-2"
-              >
+              <section aria-labelledby="running-heading">
                 <SectionHeading
                   id="running-heading"
                   title="Running now"
@@ -1553,13 +1542,7 @@ export function StatusClient() {
               {/* Capability states lean on engine checks; without a current
               check they cannot vouch for anything, so they stay hidden. */}
               {health && modelReady ? (
-                <section
-                  aria-labelledby="capability-strip-heading"
-                  className={cn(
-                    "xl:col-start-2 xl:row-start-1",
-                    running.length > 0 && "xl:row-span-2",
-                  )}
-                >
+                <section aria-labelledby="capability-strip-heading">
                   <SectionHeading
                     id="capability-strip-heading"
                     title="Capabilities"
@@ -1578,16 +1561,7 @@ export function StatusClient() {
                 </section>
               ) : null}
 
-              <section
-                aria-labelledby="layers-heading"
-                // Full width under the card and Capabilities (D1.5: the
-                // lower half stood empty), in the row after Running now
-                // when there is work running.
-                className={cn(
-                  "xl:col-span-2",
-                  running.length ? "xl:row-start-3" : "xl:row-start-2",
-                )}
-              >
+              <section aria-labelledby="layers-heading">
                 <SectionHeading
                   id="layers-heading"
                   title="Engines and providers"

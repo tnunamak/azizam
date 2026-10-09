@@ -376,16 +376,17 @@ export function CapabilityList({
  * word when it is not Ready. The detail stays in the chip's title.
  */
 export function CapabilityChips({ views }: { views: CapabilityView[] }) {
-  // One column of 44 px rows at every width (D1.4: pills wrapped unevenly
-  // and the phone's tab bar cut them off). Ready stays quiet; any other
+  // 44 px rows in one card (D1.4: pills wrapped unevenly and the phone's
+  // tab bar cut them off): one column on a phone, two beside each other in
+  // Status's single reading column (D1.5b). Ready stays quiet; any other
   // state shows its word on the right.
   return (
-    <ul className="bg-card rounded-panel divide-y border px-4">
+    <ul className="bg-card rounded-panel grid border px-4 sm:grid-cols-2 sm:gap-x-8">
       {views.map((view) => (
         <li
           key={view.key}
           title={view.detail ?? undefined}
-          className="flex min-h-11 items-center gap-2 text-sm"
+          className="flex min-h-11 items-center gap-2 border-t text-sm first:border-t-0 sm:nth-2:border-t-0"
         >
           <StateIcon
             tone={view.tone}
