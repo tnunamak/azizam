@@ -29,6 +29,7 @@ import {
   Play,
   ReceiptText,
   Search,
+  Share,
   Trash2,
   Video,
   Volume2,
@@ -316,6 +317,32 @@ async function prepareDownload(asset: MediaAsset, everyone: boolean) {
   link.href = payload.download_url;
   link.download = assetTitle(asset);
   link.click();
+}
+
+/**
+ * Share the file itself where the browser can (a phone's share sheet), so
+ * "send the birthday picture to the family" is one tap (red team round 2).
+ * Falls back to sharing the creation's title alone if files cannot be
+ * shared; the signed link would expire, so it is never shared.
+ */
+async function shareCreation(asset: MediaAsset, everyone: boolean) {
+  const path = `/me/api/media/${encodeURIComponent(asset.asset_id)}/download?scope=${everyone ? "everyone" : "me"}`;
+  const response = await fetch(path, { credentials: "same-origin" });
+  const payload = response.ok
+    ? ((await response.json()) as { download_url?: string })
+    : null;
+  if (!payload?.download_url)
+    throw new Error("The file could not be prepared. Try again.");
+  const blob = await (await fetch(payload.download_url)).blob();
+  // The gateway's media type first; the response's as a fallback.
+  const type = asset.media_type || blob.type;
+  const extension = type.split("/")[1]?.split(";")[0] ?? "bin";
+  const file = new File([blob], `${shortTitle(asset)}.${extension}`, {
+    type,
+  });
+  if (navigator.canShare?.({ files: [file] }))
+    await navigator.share({ files: [file], title: shortTitle(asset) });
+  else throw new Error("This browser cannot share files. Use Download.");
 }
 
 function absolute(ts: MediaAsset["created_at"]) {
@@ -1289,6 +1316,9 @@ function CreationViewer({
       ),
     retry: false,
   });
+  // Only where the browser has a share sheet (phones, mostly).
+  const [canShare, setCanShare] = useState(false);
+  useEffect(() => setCanShare(typeof navigator.share === "function"), []);
   const created = toDateValue(asset.created_at);
   const model = asset.model ? nameModel(asset.model) : "";
   const title = shortTitle(asset);
@@ -1457,10 +1487,30 @@ function CreationViewer({
                 </p>
               ) : null}
               <div className="flex flex-wrap gap-2">
+                {asset.available !== false && canShare ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() =>
+                      void shareCreation(asset, everyone).catch((error) => {
+                        // Closing the share sheet is not a failure.
+                        if (
+                          error instanceof Error &&
+                          error.name !== "AbortError"
+                        )
+                          toast.error(error.message);
+                      })
+                    }
+                  >
+                    <Share aria-hidden="true" />
+                    Share
+                  </Button>
+                ) : null}
                 {asset.available !== false ? (
                   <Button
                     type="button"
                     size="sm"
+                    variant={canShare ? "outline" : "default"}
                     disabled={downloading}
                     aria-busy={downloading || undefined}
                     onClick={() => onDownload(asset)}

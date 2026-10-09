@@ -790,6 +790,34 @@ describe("Library honesty and access", () => {
     );
   });
 
+  test("10d shares the file itself where the browser has a share sheet", async () => {
+    routeFetch((path) =>
+      path.startsWith("/me/api/media?")
+        ? list([{ ...picture("p1", "A birthday cake"), media_type: "image/png" }])
+        : path.includes("/download?")
+          ? Response.json({ download_url: "https://signed.example/p1.png" })
+          : path === "https://signed.example/p1.png"
+            ? new Response(new Blob(["png"], { type: "image/png" }))
+            : undefined,
+    );
+    const share = vi.fn(async () => undefined);
+    Object.assign(navigator, { share, canShare: () => true });
+    try {
+      renderLibrary();
+      fireEvent.click(await screen.findByRole("button", { name: "Open A birthday cake" }));
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.click(await within(dialog).findByRole("button", { name: "Share" }));
+      await waitFor(() => expect(share).toHaveBeenCalledOnce());
+      const shared = (share.mock.calls[0] as unknown as [{ files: File[] }])[0];
+      expect(shared.files[0].name).toBe("A birthday cake.png");
+      // Download stays, as the secondary action.
+      expect(within(dialog).getByRole("button", { name: "Download" })).toBeVisible();
+    } finally {
+      Reflect.deleteProperty(navigator, "share");
+      Reflect.deleteProperty(navigator, "canShare");
+    }
+  });
+
   test("10c the download control is a real button, disabled while it prepares", async () => {
     let ready!: () => void;
     routeFetch((path) =>
