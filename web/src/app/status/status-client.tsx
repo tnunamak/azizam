@@ -44,6 +44,7 @@ import {
   engineShortName,
 } from "@/lib/health-presentation";
 import { cn } from "@/lib/cn";
+import { useMediaQuery } from "@/lib/use-media-query";
 import type { PlanSpend } from "@/lib/product-api-types";
 import { SectionHeading } from "@/components/product/readiness";
 import {
@@ -558,16 +559,12 @@ function engineProblems(
         facts.push([
           "Last 24 hours",
           <div key="u" className="max-w-xl space-y-2">
-            {story.current || story.day ? (
-              <p>
-                {story.current ? (
-                  <span className="font-medium">{story.current}</span>
-                ) : null}
-                {story.current && story.day ? " · " : null}
-                {story.day ? (
-                  <span className="text-muted-foreground">{story.day}</span>
-                ) : null}
-              </p>
+            {/* Two lines, never one wrapped mid-phrase (D1.5). */}
+            {story.current ? (
+              <p className="font-semibold">{story.current}</p>
+            ) : null}
+            {story.day ? (
+              <p className="text-muted-foreground">{story.day}</p>
             ) : null}
             {series?.length ? (
               <UptimeBar
@@ -988,6 +985,9 @@ export function StatusClient() {
   const selectedServiceId = searchParams.get("service");
   const [diskHelpOpen, setDiskHelpOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  // At 1280 px and wider the engines table fills the space under a card
+  // (D1.5: the lower half stood empty beside a plain summary box).
+  const wide = useMediaQuery("(min-width: 1280px)");
   const {
     data: statusData,
     isError: statusIsError,
@@ -1328,10 +1328,10 @@ export function StatusClient() {
     verdict = { tone: model.verdict.tone, text: model.verdict.text };
   }
   if (providers.state === "error") note = "Provider status did not load.";
-  const tableOpen = showAll || !problems.length;
+  const tableOpen = showAll || !problems.length || wide;
   const capsOpen = !problems.length;
-  // The side rail exists only while capabilities and engines are folded.
-  const rail = problems.length > 0 && !tableOpen;
+  // The side column holds the folded capabilities while a card is open.
+  const rail = problems.length > 0;
   // Engines that already have a card are not counted again in the summary.
   const troubled = new Set(
     problems.flatMap((problem) => {

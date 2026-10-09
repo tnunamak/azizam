@@ -605,7 +605,11 @@ it("tells the 24-hour story from the strip's own hours and names who is affected
   ).closest("article")!;
   // Where it stands, in the strip's own word, then the day's spells.
   expect(within(card).getByText(/^Down since about /)).toBeVisible();
-  expect(within(card).getByText("3 spells: down 5 h")).toBeVisible();
+  expect(
+    within(card).getByText(
+      "Down for 5 hours in the last 24 hours, in 3 separate stretches.",
+    ),
+  ).toBeVisible();
   // No narrow "Started" window that the strip contradicts.
   expect(within(card).queryByText("Started")).not.toBeInTheDocument();
   // The folded engines read as labelled lines, not a code or prose.

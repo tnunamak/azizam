@@ -99,7 +99,10 @@ export function healthHistory(
 export type HealthStory = {
   /** Where it stands: "Degraded since about 1:30 PM", "Working again since …". */
   current: string | null;
-  /** The day in one short line: "3 spells: down 4 h, degraded 2 h". */
+  /**
+   * The day in plain words: "Down for 4 hours and degraded for 2 in the
+   * last 24 hours, in 3 separate stretches."
+   */
   day: string | null;
 };
 
@@ -115,13 +118,17 @@ export function healthStory(
 ): HealthStory {
   const { down, degraded, spells, failingSince: since, recoveredAt } = history;
   if (!down && !degraded) return { current: null, day: null };
-  const amounts = [
-    down ? `down ${down} h` : null,
-    degraded ? `degraded ${degraded} h` : null,
-  ]
-    .filter(Boolean)
-    .join(", ");
-  const day = `${spells} spell${spells === 1 ? "" : "s"}: ${amounts}`;
+  // Plain words (D1.5: "3 spells: down 4 h" read as jargon).
+  const hours = (n: number) => `${n} hour${n === 1 ? "" : "s"}`;
+  const amounts =
+    down && degraded
+      ? `Down for ${hours(down)} and degraded for ${degraded}`
+      : down
+        ? `Down for ${hours(down)}`
+        : `Degraded for ${hours(degraded)}`;
+  const day = `${amounts} in the last 24 hours${
+    spells > 1 ? `, in ${spells} separate stretches` : ""
+  }.`;
   if (since !== null) {
     // The current run is "down" if any of its hours was down, else degraded.
     const run = slots.filter((slot) => slot.start >= since);
@@ -225,8 +232,42 @@ export function UptimeBar({
   const summary = !enabled
     ? `${label}: turned off`
     : `${label}: ${up} of ${checked} checked hours up in the last 24 hours${checked < 24 ? `; ${24 - checked} hours had no check` : ""}`;
+  // Only the colours this bar shows, so every word names a cell.
+  const legend = showLegend ? (
+    <ul
+      className={cn(
+        "text-muted-foreground flex flex-wrap gap-x-3 gap-y-1",
+        large ? "mb-2" : "mt-1.5",
+        large ? "text-sm" : "text-xs",
+      )}
+    >
+      {[
+        ["bg-success-fill", "Up"],
+        ["bg-warning-fill", "Degraded"],
+        ["bg-danger-fill", "Down"],
+        ["bg-nocheck-fill", "No check"],
+      ]
+        .filter(([swatch]) =>
+          slots.some((slot) => slotClass(slot.value, enabled) === swatch),
+        )
+        .map(([swatch, word]) => (
+          <li key={word} className="flex items-center gap-1.5">
+            <span
+              aria-hidden="true"
+              className={cn(
+                "rounded-xs",
+                large ? "size-2.5" : "size-2",
+                swatch,
+              )}
+            />
+            {word}
+          </li>
+        ))}
+    </ul>
+  ) : null;
   return (
     <div className={cn("min-w-0", className)}>
+      {large ? legend : null}
       <div
         role="img"
         aria-label={summary}
@@ -258,42 +299,19 @@ export function UptimeBar({
           aria-hidden="true"
           className="text-subtle-foreground mt-1 flex justify-between text-xs"
         >
-          <span>24 h ago</span>
+          {large ? (
+            // Clock times every six hours, so "since about 1:30 PM" can be
+            // matched to the cells (D1.5).
+            [0, 6, 12, 18].map((index) => (
+              <span key={index}>{clock(slots[index].start)}</span>
+            ))
+          ) : (
+            <span>24 h ago</span>
+          )}
           <span>Now</span>
         </div>
       ) : null}
-      {showLegend ? (
-        <ul
-          className={cn(
-            "text-muted-foreground mt-1.5 flex flex-wrap gap-x-3 gap-y-1",
-            large ? "text-sm" : "text-xs",
-          )}
-        >
-          {/* Only the colours this bar shows, so every word names a cell. */}
-          {[
-            ["bg-success-fill", "Up"],
-            ["bg-warning-fill", "Degraded"],
-            ["bg-danger-fill", "Down"],
-            ["bg-nocheck-fill", "No check"],
-          ]
-            .filter(([swatch]) =>
-              slots.some((slot) => slotClass(slot.value, enabled) === swatch),
-            )
-            .map(([swatch, word]) => (
-              <li key={word} className="flex items-center gap-1.5">
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    "rounded-xs",
-                    large ? "size-2.5" : "size-2",
-                    swatch,
-                  )}
-                />
-                {word}
-              </li>
-            ))}
-        </ul>
-      ) : null}
+      {large ? null : legend}
       {enabled &&
       slots.some((slot) => slot.value !== null && slot.value < 1) ? (
         <HourByHour slots={slots} />

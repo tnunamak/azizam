@@ -1,5 +1,20 @@
-import { test, expect, type Page, type Route } from "@playwright/test";
+import {
+  test,
+  expect,
+  type Locator,
+  type Page,
+  type Route,
+} from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+
+/** Open the engines table: folded under a card below 1280 px, open above. */
+async function openLayerTable(main: Locator, summary: string) {
+  const button = main.getByRole("button", { name: summary, exact: true });
+  if (await button.isVisible()) await button.click();
+  await expect(
+    main.getByRole("table", { name: "Engine status" }),
+  ).toBeVisible();
+}
 
 const registry = {
   schema_version: 1,
@@ -244,13 +259,12 @@ for (const theme of ["light", "dark"] as const) {
             main.getByText(/Media disk .*above the warning threshold/),
           ).toBeVisible();
           // D1: while a card is open, the layer table folds to one line of
-          // counts; the disabled engine is counted and listed as Off.
-          await main
-            .getByRole("button", {
-              name: "Engines: 2 ready, 1 turned off. Remote providers: 1 set up. Show all",
-              exact: true,
-            })
-            .click();
+          // counts below 1280 px (D1.5: open beside the card above it); the
+          // disabled engine is counted and listed as Off.
+          await openLayerTable(
+            main,
+            "Engines: 2 ready, 1 turned off. Remote providers: 1 set up. Show all",
+          );
           await expect(
             main.getByRole("row", { name: /Image-only engine/ }),
           ).toBeVisible();
@@ -323,10 +337,12 @@ for (const theme of ["light", "dark"] as const) {
             }),
           ).toHaveCount(0);
           await expect(
-            main.getByRole("button", {
-              name: "Engines: 2 ready, 1 turned off. Show all",
-              exact: true,
-            }),
+            main
+              .getByRole("button", {
+                name: "Engines: 2 ready, 1 turned off. Show all",
+                exact: true,
+              })
+              .or(main.getByRole("table", { name: "Engine status" })),
           ).toBeVisible();
         }
       });
@@ -363,12 +379,7 @@ test("failed refresh removes stale green engine observations", async ({
   await page.goto("/ui/status/");
   const main = page.locator("main");
   // Open the folded layer table so the engines' green states are on screen.
-  await main
-    .getByRole("button", {
-      name: "Engines: 2 ready, 1 turned off. Show all",
-      exact: true,
-    })
-    .click();
+  await openLayerTable(main, "Engines: 2 ready, 1 turned off. Show all");
   const engineRows = main
     .getByRole("row")
     .filter({ hasText: /engine/i })

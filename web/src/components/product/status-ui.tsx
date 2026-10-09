@@ -219,12 +219,17 @@ export function Callout({
   const rows = (items: Array<[string, ReactNode]>) =>
     items.map(([label, value]) => (
       <div key={label} className="contents">
-        <dt className="text-muted-foreground">{label}</dt>
-        <dd className="min-w-0">{value}</dd>
+        <dt className="text-muted-foreground max-sm:text-xs max-sm:font-medium">
+          {label}
+        </dt>
+        <dd className="min-w-0 max-sm:mb-1">{value}</dd>
       </div>
     ));
+  // One column on a phone, the label above its value (D1.5: the squeezed
+  // two-column card wrapped the evidence mid-phrase); 14 px values on wide
+  // screens.
   const factGrid =
-    "grid grid-cols-[6rem_minmax(0,1fr)] gap-x-3 gap-y-2 text-sm sm:grid-cols-[8.5rem_minmax(0,1fr)] sm:gap-x-4";
+    "grid grid-cols-1 gap-y-1 text-sm sm:grid-cols-[8.5rem_minmax(0,1fr)] sm:gap-x-4 sm:gap-y-2 sm:text-base";
   return (
     <Tag
       role={severity === "critical" && Tag === "div" ? "alert" : undefined}

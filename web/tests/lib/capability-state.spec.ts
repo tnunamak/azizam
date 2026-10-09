@@ -254,7 +254,9 @@ describe("the health story matches the strip (D1.3, D1.4)", () => {
     const told = story(values);
     // The current run is named in the strip's own word for its colour.
     expect(told.current).toMatch(/^Degraded since about /);
-    expect(told.day).toBe("3 spells: down 4 h, degraded 2 h");
+    expect(told.day).toBe(
+      "Down for 4 hours and degraded for 2 in the last 24 hours, in 3 separate stretches.",
+    );
   });
 
   it("says one spell plainly, and Down when the run was down", () => {
@@ -262,7 +264,7 @@ describe("the health story matches the strip (D1.3, D1.4)", () => {
     values[23] = 0;
     const told = story(values);
     expect(told.current).toMatch(/^Down since about /);
-    expect(told.day).toBe("1 spell: down 1 h");
+    expect(told.day).toBe("Down for 1 hour in the last 24 hours.");
   });
 
   it("says when it recovered if it is not failing now", () => {
