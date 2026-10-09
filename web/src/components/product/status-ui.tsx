@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import {
-  ChevronDown,
+  ChevronRight,
   CircleAlert,
   CircleCheck,
   CircleDashed,
@@ -283,14 +283,15 @@ export function Callout({
                 onClick={() => setEvidenceOpen((open) => !open)}
                 className="text-link inline-flex min-h-11 items-center gap-1 text-sm font-medium sm:hidden"
               >
-                {evidenceOpen ? "Hide evidence" : "Show evidence"}
-                <ChevronDown
+                {/* The disclosure chevron every <summary> draws (D1.5). */}
+                <ChevronRight
                   aria-hidden="true"
                   className={cn(
-                    "size-4 transition-transform",
-                    evidenceOpen && "rotate-180",
+                    "size-4 opacity-75 transition-transform",
+                    evidenceOpen && "rotate-90",
                   )}
                 />
+                {evidenceOpen ? "Hide evidence" : "Show evidence"}
               </button>
               <dl className={cn(factGrid, !evidenceOpen && "max-sm:hidden")}>
                 {rows(evidence)}
