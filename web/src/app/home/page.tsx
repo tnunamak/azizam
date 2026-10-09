@@ -49,6 +49,8 @@ import {
   activeCapRefusal,
   CAP_WARNING,
   isInFlight,
+  isSuccess,
+  requestCapability,
   type CapabilityView,
 } from "@/lib/capability-state";
 import { useCapabilityViews } from "@/lib/use-capability-views";
@@ -178,13 +180,98 @@ function taskHref(task: Task, models: Record<string, string | undefined>) {
   return `/try/?${params.toString()}`;
 }
 
+/** How often, and when last, this person got a result from each task. */
+function taskUse(receipts: HomeReceipt[]) {
+  const uses = new Map<string, { count: number; last: number }>();
+  for (const receipt of receipts) {
+    if (!isSuccess(receipt.status)) continue;
+    const capability = requestCapability(receipt.intent, receipt.path);
+    if (!capability) continue;
+    const at = receipt.accepted_at_ms
+      ? receipt.accepted_at_ms / 1000
+      : (receipt._stored_at ?? 0);
+    const use = uses.get(capability) ?? { count: 0, last: 0 };
+    uses.set(capability, {
+      count: use.count + 1,
+      last: Math.max(use.last, at),
+    });
+  }
+  return uses;
+}
+
+/** A task's state word, only when it is not Ready. */
+function TaskState({ view }: { view: CapabilityView }) {
+  if (view.state === "ready") return null;
+  return (
+    <span className="flex min-w-0 items-center gap-2">
+      <StateWord tone={view.tone} word={view.word} className="shrink-0" />
+      {!USABLE.has(view.state) && view.detail ? (
+        <span className="text-muted-foreground truncate text-sm">
+          {view.detail}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 /**
- * One row grammar for every task: the task's tinted icon, the task, and on
- * the right its state only when it is not Ready (D1.3: one icon system per
- * row type, no repeated "Used 2m ago"; the person's own work is in Recent).
- * Every row is the same height.
+ * The person's two most-used tasks, with real weight (D1.4: seven equal
+ * rows never showed the next step; Apple Home puts favourites before the
+ * rest). Picked from their own successful requests; someone new gets
+ * pictures and chat, the household's most common asks.
  */
-function TaskRow({
+function Favourite({
+  task,
+  view,
+  href,
+  usedAt,
+}: {
+  task: Task;
+  view: CapabilityView;
+  href: string;
+  usedAt: number | null;
+}) {
+  const meta = capabilityMeta(task.key);
+  const Icon = meta.icon;
+  const usable = USABLE.has(view.state);
+  const body = (
+    <>
+      <Icon
+        aria-hidden="true"
+        className={cn("size-6", usable ? meta.tone : "text-muted-foreground")}
+      />
+      <span className="mt-auto text-base leading-snug font-semibold">
+        {task.title}
+      </span>
+      <span className="text-muted-foreground min-h-5 text-sm">
+        {view.state !== "ready" ? (
+          <TaskState view={view} />
+        ) : usedAt ? (
+          <>
+            Last used <RelativeTime ts={usedAt} fallback="" />
+          </>
+        ) : null}
+      </span>
+    </>
+  );
+  const tile =
+    "bg-card rounded-panel flex h-32 min-w-0 flex-col items-start gap-1 border p-4";
+  return usable ? (
+    <li className="min-w-0">
+      <Link
+        href={href}
+        className={cn(tile, "hover:border-input transition-colors")}
+      >
+        {body}
+      </Link>
+    </li>
+  ) : (
+    <li className={cn(tile, "text-muted-foreground")}>{body}</li>
+  );
+}
+
+/** Every other task: a quiet row, a state only when it is not Ready. */
+function MoreRow({
   task,
   view,
   href,
@@ -196,34 +283,17 @@ function TaskRow({
   const meta = capabilityMeta(task.key);
   const Icon = meta.icon;
   const usable = USABLE.has(view.state);
-  const trailing =
-    view.state !== "ready" ? (
-      <span className="flex min-w-0 items-center gap-2">
-        <StateWord tone={view.tone} word={view.word} className="shrink-0" />
-        {!usable && view.detail ? (
-          <span className="text-muted-foreground truncate text-sm">
-            {view.detail}
-          </span>
-        ) : null}
-      </span>
-    ) : null;
   const body = (
     <>
-      <span
-        className={cn(
-          "rounded-control flex size-8 shrink-0 items-center justify-center",
-          usable ? cn(meta.tint, meta.tone) : "bg-muted text-muted-foreground",
-        )}
-      >
-        <Icon aria-hidden="true" className="size-4" />
-      </span>
-      <span className="min-w-0 flex-1 truncate font-medium">{task.title}</span>
-      {trailing}
+      <Icon
+        aria-hidden="true"
+        className={cn("size-4 shrink-0", usable ? meta.tone : undefined)}
+      />
+      <span className="min-w-0 flex-1 truncate">{task.title}</span>
+      <TaskState view={view} />
     </>
   );
-  // 52 px on a phone (still above the 44 px target) so Recent reaches the
-  // first screen; 56 px elsewhere.
-  const row = "bg-card flex h-14 min-w-0 items-center gap-3 px-4 max-sm:h-13";
+  const row = "flex min-h-11 min-w-0 items-center gap-3 py-2 text-sm";
   if (!usable)
     return (
       <li
@@ -235,7 +305,10 @@ function TaskRow({
     );
   return (
     <li className="min-w-0">
-      <Link href={href} className={cn(row, "hover:bg-muted transition-colors")}>
+      <Link
+        href={href}
+        className={cn(row, "hover:text-link font-medium transition-colors")}
+      >
         {body}
       </Link>
     </li>
@@ -245,33 +318,56 @@ function TaskRow({
 function Tasks({
   views,
   models,
+  receipts,
 }: {
   views: CapabilityView[];
   models: Record<string, string | undefined>;
+  receipts: HomeReceipt[];
 }) {
   const byKey = new Map(views.map((view) => [view.key, view]));
   const tasks = TASKS.filter((task) => byKey.has(task.key));
   if (!tasks.length) return null;
+  const uses = taskUse(receipts);
+  const usable = (task: Task) => USABLE.has(byKey.get(task.key)!.state);
+  // Most-used first, then the fixed order; only usable tasks are favourites.
+  const favourites = tasks
+    .filter(usable)
+    .map((task, index) => ({ task, index, use: uses.get(task.key) }))
+    .sort(
+      (a, b) =>
+        (b.use?.count ?? 0) - (a.use?.count ?? 0) ||
+        (b.use?.last ?? 0) - (a.use?.last ?? 0) ||
+        a.index - b.index,
+    )
+    .slice(0, 2)
+    .map(({ task }) => task);
+  const rest = tasks.filter((task) => !favourites.includes(task));
   return (
-    // Two columns only when the list itself is wide enough (container
-    // query), so a task name never truncates beside its reason.
     <section aria-labelledby="tasks-heading" className="@container">
       <SectionHeading id="tasks-heading" title="Make something" />
-      {/* Hairlines are the 1 px gaps of the grid, so one and two columns
-          share one row grammar. */}
-      <ul className="bg-border rounded-panel grid gap-px overflow-hidden border @2xl:grid-cols-2">
-        {tasks.map((task) => (
-          <TaskRow
+      <ul className="grid grid-cols-2 gap-2 sm:gap-3">
+        {favourites.map((task) => (
+          <Favourite
             key={task.key}
             task={task}
             view={byKey.get(task.key)!}
             href={taskHref(task, models)}
+            usedAt={uses.get(task.key)?.last || null}
           />
         ))}
-        {tasks.length % 2 ? (
-          <li aria-hidden="true" className="bg-card hidden @2xl:block" />
-        ) : null}
       </ul>
+      {rest.length ? (
+        <ul className="mt-2 grid gap-x-8 @2xl:grid-cols-2">
+          {rest.map((task) => (
+            <MoreRow
+              key={task.key}
+              task={task}
+              view={byKey.get(task.key)!}
+              href={taskHref(task, models)}
+            />
+          ))}
+        </ul>
+      ) : null}
     </section>
   );
 }
@@ -1275,12 +1371,14 @@ export default function HomePage() {
               text={verdict.text}
               checkedAt={verdict.checkedAt}
             >
-              {verdict.problems.length && isOwner ? (
+              {verdict.problems.length ? (
+                // Members too: on a phone Status is under More, so the
+                // warning itself leads to its explanation (red team round 2).
                 <Link
                   href="/status/"
                   className="text-link inline-flex min-h-11 items-center gap-0.5 font-medium underline-offset-4 hover:underline sm:min-h-0"
                 >
-                  Open Status
+                  {isOwner ? "Open Status" : "See what is happening"}
                   <ChevronRight aria-hidden="true" className="size-4" />
                 </Link>
               ) : verdict.tone === "off" && isOwner ? (
@@ -1308,8 +1406,12 @@ export default function HomePage() {
                   owner={isOwner}
                 />
               ) : null}
-              <Tasks views={views} models={models} />
               <Recent receipts={home.receipts ?? []} />
+              <Tasks
+                views={views}
+                models={models}
+                receipts={home.receipts ?? []}
+              />
             </div>
             {/* Top aligned with the first list, under its section heading. */}
             <div className="min-w-0 lg:col-start-2 lg:row-start-1 lg:mt-11">
