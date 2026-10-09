@@ -13763,7 +13763,7 @@ def _workflow_availability_services(registry: Mapping[str, Any]) -> dict[str, An
     services = dict(registry.get("services") or {})
     face_config = (config.get("identity") or {}).get("face_service")
     if isinstance(face_config, Mapping) and face_config:
-        services["faces"] = {"enabled": True, "config": dict(face_config)}
+        services["faces"] = {"enabled": True, "config": dict(face_config), "availability_probe": False}
     return {**registry, "services": services}
 
 
@@ -13802,7 +13802,11 @@ async def _capabilities_availability_evidence(
     status_payload = _cached_status_payload_for_availability()
     if not status_payload:
         backends = service_registry.runtime_backends(service_records)
-        scoped_backends = {key: value for key, value in backends.items() if key in visible}
+        service_rows = service_records.get("services") or {}
+        scoped_backends = {
+            key: value for key, value in backends.items()
+            if key in visible and (service_rows.get(key) or {}).get("availability_probe") is not False
+        }
         status_payload = {
             "backends": await status_endpoint._backend_grid({"backends": scoped_backends}),
             "generated_at": int(time.time()),
