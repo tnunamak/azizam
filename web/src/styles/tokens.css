@@ -45,16 +45,28 @@
   --media-stage-foreground: #10232a;
   --subtle-foreground: #5e7076;
 
-  /* States: always paired with an icon and a word */
-  --success: #17703f;
+  /* States: always paired with an icon and a word. D1.5: each state has
+     a text colour (4.5:1 or better on page and card) and a fill for
+     strips, dots and legends (3:1 or better on the card). Degraded is a
+     clear amber, lighter than Down's red, so the two part by lightness for
+     colour-blind readers too; checks in DESIGN.md. */
+  --success: #15703f;
   --success-tint: #e3f3ea;
-  --warning: #8f5300;
+  --success-fill: #2e9e63;
+  --warning: #b45309;
   --warning-tint: #fdf1dc;
+  --warning-fill: #d97706;
   --danger: var(--destructive);
   --danger-tint: #fce9e7;
+  --danger-fill: #c62828;
   --info: #1f5fa6;
   --info-tint: #e6effa;
+  --info-fill: #3b82d6;
+  --blocked: #6b4fb0;
+  --blocked-tint: #efe9fb;
+  --blocked-fill: #8b6fd1;
   --neutral: #6a7c81;
+  --nocheck-fill: #c9d3d6;
 
   /* Household people: a stable hue per person, ink text on top */
   --person-ink: #10232a;
@@ -129,12 +141,20 @@
   --subtle-foreground: #8197a0;
   --success: #6fd39b;
   --success-tint: #12352a;
-  --warning: #e8b65a;
+  --success-fill: #4cc283;
+  --warning: #f5b544;
   --warning-tint: #3a2e15;
+  --warning-fill: #f2a93b;
   --danger-tint: #3f1f1e;
+  --danger-fill: #f0655a;
   --info: #8db8f2;
   --info-tint: #182e4a;
+  --info-fill: #6aa2ec;
+  --blocked: #c2a8f0;
+  --blocked-tint: #2a2340;
+  --blocked-fill: #a68be6;
   --neutral: #8aa1a7;
+  --nocheck-fill: #3b5961;
   --capability-chat: #8cc8cb;
   --capability-image: #c2a8f0;
   --capability-video: #f0a3bf;
@@ -215,12 +235,20 @@
   --color-sidebar-foreground: var(--chrome-foreground);
   --color-success: var(--success);
   --color-success-tint: var(--success-tint);
+  --color-success-fill: var(--success-fill);
   --color-warning: var(--warning);
   --color-warning-tint: var(--warning-tint);
+  --color-warning-fill: var(--warning-fill);
   --color-danger: var(--danger);
   --color-danger-tint: var(--danger-tint);
+  --color-danger-fill: var(--danger-fill);
   --color-info: var(--info);
   --color-info-tint: var(--info-tint);
+  --color-info-fill: var(--info-fill);
+  --color-blocked: var(--blocked);
+  --color-blocked-tint: var(--blocked-tint);
+  --color-blocked-fill: var(--blocked-fill);
+  --color-nocheck-fill: var(--nocheck-fill);
   --color-neutral: var(--neutral);
   --color-person-ink: var(--person-ink);
   --color-person-1: var(--person-1);

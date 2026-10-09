@@ -10,6 +10,7 @@ import {
   CircleX,
   Clock3,
   Info,
+  Lock,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -23,6 +24,7 @@ const toneIcon: Record<StateTone, LucideIcon> = {
   busy: Clock3,
   warn: CircleAlert,
   bad: CircleX,
+  blocked: Lock,
   off: CircleMinus,
   unknown: CircleDashed,
 };
@@ -31,6 +33,7 @@ const toneText: Record<StateTone, string> = {
   busy: "text-info",
   warn: "text-warning",
   bad: "text-danger",
+  blocked: "text-blocked",
   off: "text-subtle-foreground",
   unknown: "text-subtle-foreground",
 };

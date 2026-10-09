@@ -140,10 +140,10 @@ export function healthStory(
 }
 
 function slotClass(value: number | null, enabled: boolean): string {
-  if (value === null || !enabled) return "bg-muted";
-  if (value >= 1) return "bg-success/70";
-  if (value <= 0) return "bg-danger";
-  return "bg-warning";
+  if (value === null || !enabled) return "bg-nocheck-fill";
+  if (value >= 1) return "bg-success-fill";
+  if (value <= 0) return "bg-danger-fill";
+  return "bg-warning-fill";
 }
 
 function slotWord(value: number | null): string {
@@ -271,10 +271,10 @@ export function UptimeBar({
         >
           {/* Only the colours this bar shows, so every word names a cell. */}
           {[
-            ["bg-success/70", "Up"],
-            ["bg-warning", "Degraded"],
-            ["bg-danger", "Down"],
-            ["bg-muted", "No check"],
+            ["bg-success-fill", "Up"],
+            ["bg-warning-fill", "Degraded"],
+            ["bg-danger-fill", "Down"],
+            ["bg-nocheck-fill", "No check"],
           ]
             .filter(([swatch]) =>
               slots.some((slot) => slotClass(slot.value, enabled) === swatch),

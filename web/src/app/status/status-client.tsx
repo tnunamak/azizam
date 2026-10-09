@@ -942,9 +942,9 @@ function ProviderRow({ provider }: { provider: ProviderStatusView }) {
                   className={cn(
                     "absolute inset-y-0 left-0 rounded-full",
                     share >= 1
-                      ? "bg-danger"
+                      ? "bg-danger-fill"
                       : share >= 0.8
-                        ? "bg-warning"
+                        ? "bg-warning-fill"
                         : "bg-link",
                   )}
                   style={{ width: `${share * 100}%` }}

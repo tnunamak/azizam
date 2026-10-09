@@ -17,7 +17,14 @@ export type CapabilityStateKey =
   | "off"
   | "unknown";
 
-export type StateTone = "ok" | "busy" | "warn" | "bad" | "off" | "unknown";
+export type StateTone =
+  | "ok"
+  | "busy"
+  | "warn"
+  | "bad"
+  | "blocked"
+  | "off"
+  | "unknown";
 
 /** The fixed vocabulary. Definitions live in DESIGN.md; keep them in step. */
 export const STATE_WORDS: Record<
@@ -25,7 +32,8 @@ export const STATE_WORDS: Record<
   { word: string; tone: StateTone; rank: number }
 > = {
   down: { word: "Down", tone: "bad", rank: 6 },
-  blocked: { word: "Blocked", tone: "warn", rank: 5 },
+  // Not a fault: its own violet and lock, apart from Degraded's amber (D1.5).
+  blocked: { word: "Blocked", tone: "blocked", rank: 5 },
   degraded: { word: "Degraded", tone: "warn", rank: 4 },
   unknown: { word: "Unknown", tone: "unknown", rank: 3 },
   busy: { word: "Busy", tone: "busy", rank: 2 },

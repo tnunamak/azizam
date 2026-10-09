@@ -310,16 +310,19 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
                   ? { label: "Nothing turned on", tone: "off" as const }
                   : { label: "All working", tone: "ok" as const };
   const visibleLabel = label;
+  // State fills, the same as strips and legends (D1.5).
   const dot =
     tone === "ok"
-      ? "bg-success"
+      ? "bg-success-fill"
       : tone === "warn"
-        ? "bg-warning"
+        ? "bg-warning-fill"
         : tone === "bad"
-          ? "bg-danger"
+          ? "bg-danger-fill"
           : tone === "busy"
-            ? "bg-info"
-            : "bg-neutral";
+            ? "bg-info-fill"
+            : tone === "blocked"
+              ? "bg-blocked-fill"
+              : "bg-neutral";
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -498,7 +501,7 @@ function AlertSlot() {
       <span className="flex min-w-0 items-center gap-2">
         <span
           aria-hidden="true"
-          className="bg-warning size-2 shrink-0 rounded-full"
+          className="bg-warning-fill size-2 shrink-0 rounded-full"
         />
         {alert.message}
       </span>
