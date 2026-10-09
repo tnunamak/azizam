@@ -55,8 +55,8 @@ def test_member_prompt_memory_defaults_and_put_are_admin_store_backed(tmp_path: 
     admin_db = tmp_path / "admin.db"
     prompt_db = tmp_path / "prompt.db"
     admin_store.init_db(admin_db)
-    admin_store.upsert_oidc_user("issuer", "alice", email="alice@example.test", user_id="usr_alice", path=admin_db)
-    client = _client(admin_db, prompt_db, household={"retention_cap": "1_year"})
+    user = admin_store.upsert_oidc_user("issuer", "alice", email="alice@example.test", path=admin_db)
+    client = _client(admin_db, prompt_db, user_id=user["id"], household={"retention_cap": "1_year"})
 
     response = client.get("/me/api/prompt-memory")
     assert response.status_code == 200
@@ -78,7 +78,7 @@ def test_member_prompt_memory_defaults_and_put_are_admin_store_backed(tmp_path: 
         headers={"x-azizam-user-action": "1"},
     )
     assert updated.status_code == 200
-    assert admin_store.get_prompt_memory_preference("usr_alice", path=admin_db)["remember"] is False
+    assert admin_store.get_prompt_memory_preference(user["id"], path=admin_db)["remember"] is False
     assert updated.json()["prompt_memory"]["effective_remember"] is False
 
 
@@ -86,9 +86,9 @@ def test_member_prompt_memory_honors_household_kill_switch_and_delete_all(tmp_pa
     admin_db = tmp_path / "admin.db"
     prompt_db = tmp_path / "prompt.db"
     admin_store.init_db(admin_db)
-    admin_store.upsert_oidc_user("issuer", "alice", email="alice@example.test", user_id="usr_alice", path=admin_db)
-    prompt_memory.put("img_one", "usr_alice", "sentinel text", kept_until=None, path=prompt_db)
-    client = _client(admin_db, prompt_db, household={"never_keep": True})
+    user = admin_store.upsert_oidc_user("issuer", "alice", email="alice@example.test", path=admin_db)
+    prompt_memory.put("img_one", user["id"], "sentinel text", kept_until=None, path=prompt_db)
+    client = _client(admin_db, prompt_db, user_id=user["id"], household={"never_keep": True})
 
     response = client.get("/me/api/prompt-memory")
     assert response.json()["prompt_memory"]["effective_remember"] is False
@@ -100,15 +100,15 @@ def test_member_prompt_memory_honors_household_kill_switch_and_delete_all(tmp_pa
     )
     assert deleted.status_code == 200
     assert deleted.json() == {"deleted_prompts": 1}
-    assert prompt_memory.get("img_one", "usr_alice", path=prompt_db) is None
+    assert prompt_memory.get("img_one", user["id"], path=prompt_db) is None
 
 
 def test_member_prompt_memory_rejects_bad_settings(tmp_path: Path) -> None:
     admin_db = tmp_path / "admin.db"
     prompt_db = tmp_path / "prompt.db"
     admin_store.init_db(admin_db)
-    admin_store.upsert_oidc_user("issuer", "alice", email="alice@example.test", user_id="usr_alice", path=admin_db)
-    client = _client(admin_db, prompt_db)
+    user = admin_store.upsert_oidc_user("issuer", "alice", email="alice@example.test", path=admin_db)
+    client = _client(admin_db, prompt_db, user_id=user["id"])
 
     response = client.put(
         "/me/api/prompt-memory",
@@ -117,4 +117,4 @@ def test_member_prompt_memory_rejects_bad_settings(tmp_path: Path) -> None:
     )
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "invalid_prompt_memory_settings"
-    assert admin_store.get_prompt_memory_preference("usr_alice", path=admin_db) is None
+    assert admin_store.get_prompt_memory_preference(user["id"], path=admin_db) is None
