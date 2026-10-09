@@ -127,23 +127,32 @@ function firstWords(value?: string | null): string | null {
   return words.slice(0, 12).join(" ");
 }
 
+/**
+ * Home's skeleton is the page it becomes (DESIGN.md: skeletons in the final
+ * layout): under the real header and a verdict placeholder, the task panel's
+ * 56 px rows, and the Connect panel beside them on desktop.
+ */
 function HomeLoading() {
   return (
-    <div
-      role="status"
-      aria-label="Loading Home"
-      aria-busy="true"
-      className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]"
-    >
-      <div className="space-y-8">
-        <Skeleton className="h-9 w-3/4" />
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
-            <Skeleton className="rounded-panel h-28 w-full" key={i} />
-          ))}
+    <div role="status" aria-label="Loading Home" aria-busy="true">
+      <div className="grid items-start gap-x-12 gap-y-10 lg:grid-cols-[minmax(0,1fr)_minmax(0,21rem)]">
+        <div className="@container min-w-0">
+          <Skeleton className="mb-3 h-6 w-36" />
+          <div className="bg-border rounded-panel grid gap-px overflow-hidden border @2xl:grid-cols-2">
+            {TASKS.map((task) => (
+              <div
+                key={task.key}
+                className="bg-card flex h-14 items-center gap-3 px-2"
+              >
+                <Skeleton className="rounded-control size-10" />
+                <Skeleton className="h-4 w-32" />
+              </div>
+            ))}
+            <div aria-hidden="true" className="bg-card hidden @2xl:block" />
+          </div>
         </div>
+        <Skeleton className="rounded-panel h-64 w-full lg:mt-11" />
       </div>
-      <Skeleton className="rounded-panel h-96 w-full" />
     </div>
   );
 }
@@ -1343,7 +1352,9 @@ export default function HomePage() {
     <div className="min-w-0">
       {homePending ? (
         <>
-          <h1 className="sr-only">Home</h1>
+          <PageHeader title="Home">
+            <Skeleton className="h-7 w-48" />
+          </PageHeader>
           <HomeLoading />
         </>
       ) : homeError ? (
