@@ -459,8 +459,11 @@ function unexplainedProblems(
       engine.label ? engine.label.split(", ") : [],
     ),
   );
+  // Only a check that went stale or got no answer; a capability the gateway
+  // never checks stays a quiet Unknown row, as engines do.
   const unknown = views.filter(
-    (view) => view.state === "unknown" && !explained.has(view.label),
+    (view) =>
+      view.state === "unknown" && view.detail && !explained.has(view.label),
   );
   if (!unknown.length) return [];
   const names = joinNames(unknown.map((view) => view.label));

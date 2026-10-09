@@ -108,16 +108,13 @@ for (const mode of ["light", "dark"] as const) {
         path: `test-results/screens/library-grid-${mode}-${width}.png`,
         fullPage: true,
       });
-      // On a phone, kind lives inside Filters (D1.3).
-      if (width === 390)
-        await page.getByRole("button", { name: /^Filters/ }).click();
+      // The kind switch is in the row at every width (D1.4).
       const images = page
         .getByRole("group", { name: "Kind" })
         .getByRole("button", { name: "Images", exact: true });
       await images.click();
       await expect(images).toHaveAttribute("aria-pressed", "true");
       expect(mediaRequests.at(-1)).toContain("kind=image");
-      if (width === 390) await page.keyboard.press("Escape");
       await page
         .locator('input[placeholder="Search your creations"]:visible')
         .fill("desk");
