@@ -404,7 +404,12 @@ function Nav({
       className={`flex flex-col gap-5 ${expanded ? "sheet-nav" : ""}`}
     >
       {["You", ...(viewer.admin ? ["Gateway"] : [])].map((group) => (
-        <div key={group}>
+        // The owner's tools sit quieter than the household's own places
+        // (D1.5: Engines and Providers weighed as much as Home and Library).
+        <div
+          key={group}
+          className={group === "Gateway" ? "shell-group-admin" : undefined}
+        >
           <p className="shell-group-label">
             {group === "Gateway" ? "Gateway" : "You"}
           </p>
@@ -1010,7 +1015,10 @@ function Shell({ children }: { children: React.ReactNode }) {
                 // navigation row with its shortcut.
                 className="text-chrome-muted hover:text-chrome-foreground hover:bg-chrome-raised rounded-control mb-4 flex min-h-11 items-center justify-center gap-2.5 px-2.5 text-sm transition-colors lg:min-h-8 lg:justify-start"
               >
-                <CornerDownRight className="size-4 shrink-0" aria-hidden="true" />
+                <CornerDownRight
+                  className="size-4 shrink-0"
+                  aria-hidden="true"
+                />
                 <span className="shell-nav-label flex-1 text-left">Go to…</span>
                 <kbd
                   aria-hidden="true"

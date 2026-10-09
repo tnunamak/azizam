@@ -60,7 +60,7 @@
     outline-color: var(--chrome-accent);
   }
   .shell-nav-link {
-    @apply text-chrome-muted hover:bg-chrome-raised hover:text-chrome-foreground flex min-h-11 items-center gap-2.5 rounded-control px-2.5 text-sm transition-colors duration-(--motion-fast) lg:min-h-8;
+    @apply text-chrome-muted hover:bg-chrome-raised hover:text-chrome-foreground rounded-control flex min-h-11 items-center gap-2.5 px-2.5 text-sm transition-colors duration-(--motion-fast) lg:min-h-8;
   }
   .shell-nav-link[aria-current="page"] {
     @apply bg-chrome-raised text-chrome-foreground font-medium;
@@ -77,8 +77,22 @@
   .shell-group-label {
     @apply text-subtle-foreground mb-1 hidden px-2.5 text-xs lg:block;
   }
+  /* The owner's group: a hairline above, smaller rows and text, quieter ink.
+     Desktop only; the rail and the phone sheet keep full-size targets. */
+  .shell-group-admin {
+    @apply lg:border-chrome-border lg:border-t lg:pt-4;
+  }
+  .shell-group-admin .shell-nav-link {
+    @apply lg:text-subtle-foreground lg:min-h-7 lg:text-xs;
+  }
+  .shell-group-admin .shell-nav-link svg {
+    @apply lg:size-3.5;
+  }
+  .shell-group-admin .shell-nav-link[aria-current="page"] {
+    @apply lg:text-chrome-foreground;
+  }
   .shell-nav-footer {
-    @apply text-chrome-muted hover:bg-chrome-raised hover:text-chrome-foreground flex min-h-11 min-w-11 items-center gap-2.5 rounded-control px-2.5 text-sm lg:min-h-8;
+    @apply text-chrome-muted hover:bg-chrome-raised hover:text-chrome-foreground rounded-control flex min-h-11 min-w-11 items-center gap-2.5 px-2.5 text-sm lg:min-h-8;
   }
   .shell-content {
     @apply mx-auto w-full max-w-(--content-max) px-5 pt-6 pb-10 sm:px-8 sm:pt-8 lg:px-12 lg:pt-10;
