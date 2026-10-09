@@ -1,4 +1,5 @@
 import type { WorkflowInput } from "./workflow-inputs";
+import { MEDIA_DESCRIPTION } from "@/lib/workflow-media-input";
 
 /**
  * Plain words and checks for workflow inputs on Try.
@@ -10,7 +11,6 @@ import type { WorkflowInput } from "./workflow-inputs";
  */
 
 export type OutputKind = "video" | "image" | "audio" | "other";
-export type MediaKind = "image" | "video" | "audio";
 
 /** Largest file the picker turns into a data URI; larger ones need a link. */
 export const MAX_MEDIA_BYTES = 10 * 1024 * 1024;
@@ -35,9 +35,6 @@ export function outputKindOf(outputs: OutputLike[] | undefined): OutputKind {
   if (/\baudio\b|audio\//.test(text)) return "audio";
   return "other";
 }
-
-/** The gateway's own wording for every asset input; it is jargon to a member. */
-export const MEDIA_DESCRIPTION = /^media input:/i;
 
 function gatewayBoilerplate(description: string | undefined) {
   return Boolean(description && MEDIA_DESCRIPTION.test(description));
@@ -125,13 +122,6 @@ export function missingMessage(input: WorkflowInput, output: OutputKind): string
       : `Describe the ${OUTPUT_NOUN[output]} first`;
   }
   return `Add ${inputLabel(input, output)} to continue`;
-}
-
-export function mediaKindOfInput(input: WorkflowInput): MediaKind {
-  const text = `${input.name} ${input.request_field ?? ""}`.toLowerCase();
-  if (/video/.test(text)) return "video";
-  if (/audio|voice|speech/.test(text)) return "audio";
-  return "image";
 }
 
 const HEX_ID = /^(?:asset:)?(?:img|vid|aud)_[0-9a-f]{64}$/;

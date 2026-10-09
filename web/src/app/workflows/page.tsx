@@ -11,6 +11,15 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { capabilityLabels } from "@/lib/terms";
+import {
+  MEDIA_NOUN,
+  declaredMediaTypes,
+  isMediaInput,
+  mediaFamily,
+  mediaKindOf,
+  withArticle,
+  type MediaKind,
+} from "@/lib/workflow-media-input";
 import { safeModelId } from "@/lib/model-name";
 import { useViewer } from "@/components/shell/session";
 import { Button } from "@/components/ui/button";
@@ -194,51 +203,37 @@ function joinWords(values: string[], conjunction = "and") {
   return `${values.slice(0, -1).join(", ")} ${conjunction} ${values.at(-1)}`;
 }
 
-function mediaFamily(value: string) {
-  return value.trim().toLowerCase().split("/")[0];
-}
-
 function mediaLabel(value: string, fallback: string) {
-  return (
-    { image: "a picture", audio: "an audio clip", video: "a video", text: "text" }[
-      mediaFamily(value) as "image" | "audio" | "video" | "text"
-    ] ?? fallback
-  );
+  const family = mediaFamily(value);
+  if (family === "text") return "text";
+  return family in MEDIA_NOUN
+    ? withArticle(MEDIA_NOUN[family as MediaKind])
+    : fallback;
 }
 
 function plainName(name: string) {
   return name.replace(/[_-]+/g, " ").trim().toLowerCase();
 }
 
-function withArticle(noun: string) {
-  return /^[aeiou]/i.test(noun) ? `an ${noun}` : `a ${noun}`;
-}
-
 /** The best noun for one input: the manifest's label, its media kind, then its type. */
 function inputNoun(input: WorkflowInput) {
   const label = input.label?.trim();
   if (label) return label;
-  const media = [input.media_type, ...(input.accepted_media_types ?? [])].filter(
-    (value): value is string => !!value,
-  );
+  const media = declaredMediaTypes(input);
   if (media.length) {
     return joinWords([...new Set(media.map((value) => mediaLabel(value, "a file")))], "or");
   }
-  if (input.asset) return "a file";
+  if (isMediaInput(input)) {
+    const kind = mediaKindOf(input);
+    return kind ? withArticle(MEDIA_NOUN[kind]) : "a file";
+  }
   switch (input.type.toLowerCase()) {
     case "string": return "text";
-    case "image": return "a picture";
-    case "audio": return "an audio clip";
-    case "video": return "a video";
     case "number":
     case "integer": return "a number";
     case "boolean": return "a yes-or-no choice";
     case "array": return "a list";
     case "object": return "structured information";
-    case "file":
-    case "upload":
-    case "blob":
-    case "binary": return "a file";
     default: return "an input";
   }
 }
