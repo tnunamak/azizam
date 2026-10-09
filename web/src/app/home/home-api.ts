@@ -169,7 +169,9 @@ export const homeApi = {
       hasMore = Boolean(page.has_more && cursor);
     }
     if (hasMore && previewable.length < 4) partial = true;
-    return { assets: [...previewable, ...fallback].slice(0, 4), partial };
+    // Recent shows the first four; Home's task rows look further for each
+    // task's newest creation.
+    return { assets: [...previewable, ...fallback], partial };
   },
   mediaDownload: (assetId: string) =>
     homeRequest<{ download_url?: string }>(

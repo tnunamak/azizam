@@ -144,7 +144,9 @@ describe("Home and Library polish", () => {
     ).toBeVisible();
     expect(screen.queryByText("An ocean")).toBeNull();
     expect(
-      container.querySelector('img[src="/signed/image1"]'),
+      container.querySelector(
+        'section[aria-labelledby="recent-heading"] img[src="/signed/image1"]',
+      ),
     ).toHaveAttribute("alt", "An ocean");
     // Tasks come first, in the member's words, and open Try.
     const picture = screen.getByRole("link", { name: /Make a picture/ });
@@ -152,6 +154,13 @@ describe("Home and Library polish", () => {
       "href",
       expect.stringMatching(/^\/try\/?\?capability=image(&|$)/),
     );
+    // The row leads with the person's latest picture, as decoration: the
+    // link is named by its task.
+    expect(picture.querySelector("img")).toHaveAttribute(
+      "src",
+      "/signed/image1",
+    );
+    expect(picture.querySelector("img")).toHaveAttribute("alt", "");
     // Ready stays quiet: only exceptions carry a state word.
     expect(within(picture).queryByText("Ready")).toBeNull();
   });
