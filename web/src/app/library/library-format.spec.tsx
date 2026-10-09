@@ -104,19 +104,24 @@ describe("captionTitle", () => {
   test.each([
     [
       "An overhead photograph of a raised garden bed with ripe tomatoes, gloves and a trowel.",
-      "Raised garden bed with ripe tomatoes, gloves and a trowel",
+      "Raised garden bed with ripe tomatoes…",
     ],
     [
-      "A golden retriever asleep on a knit blanket",
-      "Golden retriever asleep on a knit blanket",
+      "A golden retriever asleep on a knit rug",
+      "Golden retriever asleep on a knit rug",
     ],
     [
       "A cozy reading corner by a rainy window. Warm light.",
       "Cozy reading corner by a rainy window",
     ],
     [
+      "Basil, rosemary and thyme on a sunny windowsill",
+      "Basil, rosemary and thyme on a sunny…",
+    ],
+    [
+      // Never ends on a joining word.
       "Basil, rosemary and thyme on a windowsill",
-      "Basil, rosemary and thyme on a windowsill",
+      "Basil, rosemary and thyme…",
     ],
     ["", "Image"],
     [null, "Image"],

@@ -167,5 +167,21 @@ export function captionTitle(
       "",
     )
     .trim();
-  return words ? words[0].toUpperCase() + words.slice(1) : fallback;
+  if (!words) return fallback;
+  // A caption is one line: stop at a whole word within 40 characters, so
+  // the ellipsis lands after a word (CSS truncation stays as a backstop).
+  const max = 40;
+  const space = words.lastIndexOf(" ", max);
+  const short =
+    words.length <= max
+      ? words
+      : `${words
+          .slice(0, space > 0 ? space : max)
+          // Never end on a joining word ("… on a…").
+          .replace(
+            /(?:\s+(?:a|an|the|and|or|but|to|of|in|on|at|by|for|with|from))+$/i,
+            "",
+          )
+          .replace(/[,;:]$/, "")}…`;
+  return short[0].toUpperCase() + short.slice(1);
 }

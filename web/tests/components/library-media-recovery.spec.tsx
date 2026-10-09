@@ -321,7 +321,10 @@ describe("Library media recovery", () => {
     // A posterless tile loads metadata only and shows the frame at 0.1 s on
     // the media stage; it never plays.
     await waitFor(() =>
-      expect(container.querySelector("video")).toHaveAttribute("src", "/video.mp4#t=0.1"),
+      expect(container.querySelector("video")).toHaveAttribute(
+        "src",
+        "/video.mp4#t=0.1",
+      ),
     );
     const preview = container.querySelector("video")!;
     expect(preview).toHaveAttribute("preload", "metadata");
@@ -433,7 +436,7 @@ describe("Library media recovery", () => {
     expect(
       await screen.findByRole("button", { name: `Open ${prompt}` }),
     ).toBeVisible();
-    expect(screen.getByText(`X${"x".repeat(499)}`)).toHaveClass("truncate");
+    expect(screen.getByText(`X${"x".repeat(39)}…`)).toHaveClass("truncate");
     expect(screen.getByText(`${"y".repeat(84)}…`)).toHaveClass("break-words");
     await userEvent.click(
       screen.getByRole("button", { name: `Open ${prompt}` }),

@@ -41,7 +41,7 @@ export function PageHeader({
   const longSubtitle = copy && wordCount(copy) > 8 ? copy : null;
 
   return (
-    <header className="pb-8">
+    <header className="mb-8">
       <div className="flex min-h-10 flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-tight text-balance">
