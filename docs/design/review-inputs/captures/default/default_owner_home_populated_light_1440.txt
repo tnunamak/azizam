@@ -1,0 +1,31 @@
+Home
+
+Video degraded
+
+Checked just now
+Open Status
+Recent
+Library
+Make something
+Make a picture
+Last used 15m ago
+Chat
+Last used 22m ago
+Read text aloud
+Make music
+Make a sound effect
+Make a video
+Degraded
+Turn a recording into text
+Connect an app
+
+For chat apps, phone apps and coding tools. Each app gets its own key.
+
+Your apps
+Sam's personal app
+Used just now
+Home Assistant voice
+Used 6h ago
+Codex
+Used 7h ago
+Add an app

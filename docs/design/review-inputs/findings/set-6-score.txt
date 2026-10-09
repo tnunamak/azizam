@@ -1,0 +1,44 @@
+== q1
+  T-1 ALL         14/17    82%
+  T-1 library      5/7     71%
+  T-1 status       8/8    100%
+  T-1 home         1/2     50%
+  T-2 coherence    azizam  7.9 bench  8.1  FAIL
+  T-2 specificity  azizam  8.2 bench  5.6
+  T-2 craft        azizam  7.2 bench  7.9  FAIL
+  T-2 clarity      azizam  8.2 bench  5.8
+  T-2 honesty      azizam  8.5 bench  8.1
+  T-3 ai_made 0/17   holds_up 17/17
+== q2
+  T-1 ALL         15/17    88%
+  T-1 library      5/7     71%
+  T-1 status       8/8    100%
+  T-1 home         2/2    100%
+  T-2 coherence    azizam  7.6 bench  8.0  FAIL
+  T-2 specificity  azizam  7.3 bench  7.1
+  T-2 craft        azizam  6.6 bench  8.1  FAIL
+  T-2 clarity      azizam  8.2 bench  5.7
+  T-2 honesty      azizam  8.0 bench  7.9
+  T-3 ai_made 7/17  FAIL   holds_up 4/17
+== q3
+  T-1 ALL         15/17    88%
+  T-1 library      5/7     71%
+  T-1 status       8/8    100%
+  T-1 home         2/2    100%
+  T-2 coherence    azizam  8.0 bench  7.9
+  T-2 specificity  azizam  8.6 bench  6.0
+  T-2 craft        azizam  7.5 bench  8.1  FAIL
+  T-2 clarity      azizam  8.0 bench  6.2
+  T-2 honesty      azizam  8.0 bench  7.4
+  T-3 ai_made 0/17   holds_up 17/17
+== x3
+  T-1 ALL         15/17    88%
+  T-1 library      5/7     71%
+  T-1 status       8/8    100%
+  T-1 home         2/2    100%
+  T-2 coherence    azizam  7.0 bench  7.9  FAIL
+  T-2 specificity  azizam  7.8 bench  7.5
+  T-2 craft        azizam  7.0 bench  8.3  FAIL
+  T-2 clarity      azizam  7.8 bench  6.2
+  T-2 honesty      azizam  8.0 bench  7.9
+  T-3 ai_made 7/17  FAIL   holds_up 0/17

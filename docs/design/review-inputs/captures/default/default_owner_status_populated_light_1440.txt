@@ -1,0 +1,92 @@
+Status
+Refresh
+
+Video degraded
+
+Checked just now
+Needs attention
+Video studio is answering with errors
+Inspect Video studio
+
+Check the engine’s log and restart it.
+
+Affects
+Video: no other engine serves it.
+R
+A request from Robin's personal app failed 1h ago.
+Last 24 hours
+
+Degraded since about 1:30 PM
+
+Down for 4 hours and degraded for 2 in the last 24 hours, in 3 separate stretches.
+
+Up
+Degraded
+Down
+3:30 PM
+9:30 PM
+3:30 AM
+9:30 AM
+Now
+Hour by hour
+Failed requests
+1 of the latest 50 requests · Open receipt
+Capabilities
+Chat
+Images
+Video
+Degraded
+Voice
+Transcription
+Music
+Sound effects
+Embeddings
+Off
+Engines and providers
+Engine status
+Engine	Health checks, last 24 h	
+Hours up
+	State
+
+Document search
+Embeddings
+			
+Off
+
+Execution gateway
+Chat
+	
+	1/1 h up	
+Ready
+
+Image studio
+Images
+	
+	24/24 h up	
+Ready
+
+Study and coding
+Chat
+	
+	24/24 h up	
+Ready
+
+Video studio
+Video
+	
+	18/24 h up	
+Degraded
+
+Voice and sound
+Music, Sound effects
+	
+	24/24 h up	
+Ready
+
+Remote backup
+Remote provider
+	
+USD 2.02 of 8.00 this month
+	
+Unknown
+Not checked yet

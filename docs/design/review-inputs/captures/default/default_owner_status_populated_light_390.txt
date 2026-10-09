@@ -1,0 +1,45 @@
+Status
+Refresh
+
+Video degraded
+
+Checked just now
+Needs attention
+Video studio is answering with errors
+Inspect Video studio
+
+Check the engine’s log and restart it.
+
+Affects
+Video: no other engine serves it.
+Last 24 hours
+
+Degraded since about 1:30 PM
+
+Down for 4 hours and degraded for 2 in the last 24 hours, in 3 separate stretches.
+
+Up
+Degraded
+Down
+3:30 PM
+9:30 PM
+3:30 AM
+9:30 AM
+Now
+Hour by hour
+Show evidence
+Capabilities
+Chat
+Images
+Video
+Degraded
+Voice
+Transcription
+Music
+Sound effects
+Embeddings
+Off
+Engines and providers
+Other engines: 4 ready, 1 turned off.
+Remote providers: 1 set up.
+Show all
