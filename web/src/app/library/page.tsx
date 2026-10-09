@@ -364,6 +364,7 @@ function AudioTile({
   duration,
   visible,
   maker,
+  meta,
   model,
 }: {
   assetId: string;
@@ -373,6 +374,8 @@ function AudioTile({
   duration?: number | null;
   visible: boolean;
   maker?: string | null;
+  /** Who and when, on the cover's top line ("Robin · Monday"). */
+  meta?: string;
   model?: string | null;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -415,6 +418,8 @@ function AudioTile({
       src={src}
       visible={visible}
       maker={maker}
+      meta={meta}
+      miniOnPhone
       model={model}
       text={text}
       duration={durationText}
@@ -972,23 +977,16 @@ function toDateValue(ts: MediaAsset["created_at"]): Date | null {
 function InProgressTile({ item }: { item: InProgressItem }) {
   const Icon = kindIcon(item.kind);
   return (
-    <div className="min-w-0">
-      <div className="bg-muted text-muted-foreground rounded-media flex aspect-square flex-col items-center justify-center gap-2 p-3 text-center">
-        <Icon aria-hidden="true" className="size-5" />
-        <p className="text-foreground text-sm font-medium">
-          {MAKING_COPY[item.kind]}
-        </p>
-      </div>
-      {/* The same caption line as a finished tile, so rows stay level. */}
-      <p className="text-subtle-foreground mt-1.5 px-0.5 text-xs">
-        {item.startedAt != null ? (
-          <>
-            Started <RelativeTime ts={item.startedAt} fallback="" />
-          </>
-        ) : (
-          "Today"
-        )}
+    <div className="bg-muted text-muted-foreground rounded-media flex aspect-square min-w-0 flex-col items-center justify-center gap-2 p-3 text-center">
+      <Icon aria-hidden="true" className="size-5" />
+      <p className="text-foreground text-sm font-medium max-sm:sr-only">
+        {MAKING_COPY[item.kind]}
       </p>
+      {item.startedAt != null ? (
+        <p className="text-xs max-sm:sr-only">
+          Started <RelativeTime ts={item.startedAt} fallback="" />
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -1011,7 +1009,6 @@ function AssetTile({
     asset.kind === "audio" && asset.download_url && asset.available !== false;
   return (
     <article className="group relative min-w-0">
-      {/* One target for the square and its caption. */}
       <button
         type="button"
         data-asset-open={asset.asset_id}
@@ -1036,6 +1033,12 @@ function AssetTile({
             duration={asset.duration_s}
             visible={visible}
             maker={person}
+            meta={[
+              everyone ? (person?.split(" ")[0] ?? null) : null,
+              tileDate(toDateValue(asset.created_at), new Date()),
+            ]
+              .filter(Boolean)
+              .join(" · ")}
             model={asset.model}
           />
         ) : (
@@ -1053,28 +1056,30 @@ function AssetTile({
               : "Video"}
           </DurationChip>
         ) : null}
-        {person && everyone ? (
-          <PersonMark
-            name={person}
-            size="xs"
-            label={`Made by ${person}`}
-            className="ring-card pointer-events-none absolute top-2 left-2 z-20 ring-2"
-          />
+        {/* D1.4: always-on captions were cut to two or three words and the
+            maker badge sat on every tile. The grid now shows media only; on
+            a wide screen, hover or keyboard focus shows a short title (whole
+            words, two lines), the maker and the day. The button's name
+            carries the full prompt for screen readers. */}
+        {asset.kind !== "audio" ? (
+          <div
+            aria-hidden="true"
+            className="dark bg-card/90 text-foreground pointer-events-none absolute inset-x-0 bottom-0 z-20 px-2.5 py-2 opacity-0 transition-opacity duration-(--motion-fast) group-focus-within:opacity-100 group-hover:opacity-100 max-sm:hidden"
+          >
+            <p className="line-clamp-2 text-xs leading-snug font-medium">
+              {captionTitle(asset.prompt, kindLabel(asset.kind), 56)}
+            </p>
+            <p className="text-foreground/80 mt-0.5 text-xs">
+              {[
+                everyone ? person : null,
+                tileDate(toDateValue(asset.created_at), new Date()),
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+          </div>
         ) : null}
       </div>
-      {/* A quiet caption names what the tile cannot show: a picture's or a
-          video's title (an audio cover already shows its words) and the
-          date (D1.3: items could not be told apart by name or day). */}
-      <p className="mt-1.5 flex min-w-0 items-baseline gap-2 px-0.5 text-xs">
-        {asset.kind !== "audio" ? (
-          <span className="text-foreground min-w-0 flex-1 truncate font-medium">
-            {captionTitle(asset.prompt, kindLabel(asset.kind))}
-          </span>
-        ) : null}
-        <span className="text-subtle-foreground shrink-0">
-          {tileDate(toDateValue(asset.created_at), new Date())}
-        </span>
-      </p>
     </article>
   );
 }
@@ -2018,20 +2023,8 @@ export default function LibraryPage() {
   const ownerValue = owner === "default" ? "everyone" : owner;
   // Kind and person: in the control row on wide screens, inside Filters on a
   // phone. One function so both places stay the same control.
-  const kindAndPerson = (place: "row" | "sheet") => (
+  const personPicker = (place: "row" | "sheet") => (
     <>
-      <Segmented
-        label="Kind"
-        className={place === "sheet" ? "w-full" : undefined}
-        value={kind}
-        onChange={setKind}
-        options={[
-          { value: "all", label: "All" },
-          { value: "image", label: "Images", icon: ImageIcon },
-          { value: "video", label: "Video", icon: Video },
-          { value: "audio", label: "Audio", icon: AudioLines },
-        ]}
-      />
       {canChooseOwner ? (
         <Select
           value={ownerValue}
@@ -2113,7 +2106,7 @@ export default function LibraryPage() {
       </header>
       <section
         aria-label="Library filters"
-        className="mb-6 flex items-center gap-2 sm:flex-wrap"
+        className="mb-6 flex flex-wrap items-center gap-2"
       >
         <label className="relative block min-w-0 max-sm:flex-1 sm:w-64">
           <span className="sr-only">Search your creations</span>
@@ -2128,7 +2121,21 @@ export default function LibraryPage() {
             className="pl-9"
           />
         </label>
-        <div className="contents max-sm:hidden">{kindAndPerson("row")}</div>
+        {/* The kind switch stays one tap away on a phone too (D1.4: audio
+            was buried behind Filters); there it takes its own line. */}
+        <Segmented
+          label="Kind"
+          className="max-sm:order-last max-sm:w-full"
+          value={kind}
+          onChange={setKind}
+          options={[
+            { value: "all", label: "All" },
+            { value: "image", label: "Images", icon: ImageIcon },
+            { value: "video", label: "Video", icon: Video },
+            { value: "audio", label: "Audio", icon: AudioLines },
+          ]}
+        />
+        <div className="contents max-sm:hidden">{personPicker("row")}</div>
         <MoreFilters
           model={model}
           setModel={setModel}
@@ -2140,8 +2147,8 @@ export default function LibraryPage() {
           sources={sources}
           instanceView={instanceView}
           nameModel={nameModel}
-          phoneExtras={kindAndPerson("sheet")}
-          phoneActive={(kind !== "all" ? 1 : 0) + (owner !== "default" ? 1 : 0)}
+          phoneExtras={canChooseOwner ? personPicker("sheet") : undefined}
+          phoneActive={owner !== "default" ? 1 : 0}
           onClear={activeFilters ? clearFilters : undefined}
         />
         {activeFilters ? (
@@ -2225,7 +2232,7 @@ export default function LibraryPage() {
         <div aria-busy={updating} className="space-y-7">
           {/* One continuous grid, newest first; each tile's caption carries
               its date, so no part-filled week group leaves a gap. */}
-          <div className="grid grid-cols-2 gap-x-1.5 gap-y-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+          <div className="grid grid-cols-3 gap-1 sm:gap-1.5 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             {inProgress.map((item) => (
               <InProgressTile key={item.id} item={item} />
             ))}

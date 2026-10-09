@@ -153,11 +153,13 @@ export const MAKING_COPY: Record<InProgressKind, string> = {
  * A tile caption from a prompt: its first sentence without the framing a
  * prompt opens with ("An overhead photograph of a …", "A …"), so the first
  * words are the ones that tell creations apart ("Raised garden bed with
- * ripe tomatoes"). The caption truncates; the full prompt is in the viewer.
+ * ripe tomatoes"), cut at a whole word within `max` characters. Library
+ * shows it on hover or focus; the full prompt is in the viewer.
  */
 export function captionTitle(
   prompt: string | null | undefined,
   fallback: string,
+  max = 40,
 ): string {
   const sentence = (prompt ?? "").trim().split(/(?<=[.!?])\s/)[0] ?? "";
   const words = sentence
@@ -168,9 +170,8 @@ export function captionTitle(
     )
     .trim();
   if (!words) return fallback;
-  // A caption is one line: stop at a whole word within 40 characters, so
-  // the ellipsis lands after a word (CSS truncation stays as a backstop).
-  const max = 40;
+  // Stop at a whole word within `max` characters, never on a joining word,
+  // so a short title never ends mid-word.
   const space = words.lastIndexOf(" ", max);
   const short =
     words.length <= max

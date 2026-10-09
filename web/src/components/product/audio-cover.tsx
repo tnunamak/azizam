@@ -147,7 +147,9 @@ export function AudioCover({
   duration,
   status,
   control,
+  meta,
   compact = false,
+  miniOnPhone = compact,
   className,
 }: {
   peaksKey: string;
@@ -160,15 +162,19 @@ export function AudioCover({
   /** A short error or state line, shown in place of the waveform. */
   status?: ReactNode;
   control: ReactNode;
-  /**
-   * Home's Recent tile: three lines of words; on a phone, where the tile is
-   * a quarter of the width, only the maker's hue and the play disc.
-   */
+  /** Who and when, at the start of the top line ("Robin · Monday"). */
+  meta?: string;
+  /** Home's Recent tile: three lines of words instead of four. */
   compact?: boolean;
+  /**
+   * On a phone, where a tile is a third or a quarter of the width, show only
+   * the maker's hue and the play disc (Home's Recent, Library's grid).
+   */
+  miniOnPhone?: boolean;
   className?: string;
 }) {
   const peaks = useAudioPeaks(peaksKey, src, visible);
-  const phoneHidden = compact ? "max-sm:hidden" : undefined;
+  const phoneHidden = miniOnPhone ? "max-sm:hidden" : undefined;
   const kind = audioKind(model);
   const Icon = kind.icon;
   return (
@@ -176,19 +182,22 @@ export function AudioCover({
       className={cn(
         coverSurface(maker),
         "rounded-media flex size-full flex-col gap-2 p-3",
-        compact && "max-sm:items-center max-sm:justify-center max-sm:p-2",
+        miniOnPhone && "max-sm:items-center max-sm:justify-center max-sm:p-2",
         className,
       )}
     >
       <CoverWash />
       <p
         className={cn(
-          "text-foreground/80 relative flex items-center justify-end gap-1 text-xs font-medium",
+          "text-foreground/80 relative flex items-center gap-1 text-xs font-medium",
           phoneHidden,
         )}
       >
-        <Icon aria-hidden="true" className="size-3.5 text-(--person)" />
-        {kind.label}
+        {meta ? <span className="min-w-0 flex-1 truncate">{meta}</span> : null}
+        <span className="ml-auto flex shrink-0 items-center gap-1">
+          <Icon aria-hidden="true" className="size-3.5 text-(--person)" />
+          {kind.label}
+        </span>
       </p>
       <p
         className={cn(
