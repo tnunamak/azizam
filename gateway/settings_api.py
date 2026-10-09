@@ -13,6 +13,12 @@ from gateway import admin_store, lan_auth_policy
 from gateway.admin_api import AdminAuth, AdminContext, _require_admin
 
 INSTANCE_SETTING_KEY = "instance_presentation"
+PROMPT_MEMORY_SETTING_KEY = "prompt_memory"
+PROMPT_MEMORY_DEFAULT = {
+    "default_remember": True,
+    "never_keep": False,
+    "retention_cap": "1_year",
+}
 
 
 def instance_settings(path: Path, defaults: Mapping[str, Any] | None = None) -> dict[str, Any]:
@@ -21,6 +27,29 @@ def instance_settings(path: Path, defaults: Mapping[str, Any] | None = None) -> 
     if stored:
         value.update(stored["value"])
     return value
+
+
+def prompt_memory_settings(path: Path) -> dict[str, Any]:
+    stored = admin_store.get_operator_setting(PROMPT_MEMORY_SETTING_KEY, path=path)
+    value = dict(PROMPT_MEMORY_DEFAULT)
+    if stored:
+        value.update(_validate_prompt_memory(stored["value"]))
+    return value
+
+
+def _validate_prompt_memory(value: Mapping[str, Any]) -> dict[str, Any]:
+    default_remember = value.get("default_remember", PROMPT_MEMORY_DEFAULT["default_remember"])
+    never_keep = value.get("never_keep", PROMPT_MEMORY_DEFAULT["never_keep"])
+    retention_cap = value.get("retention_cap", PROMPT_MEMORY_DEFAULT["retention_cap"])
+    if not isinstance(default_remember, bool) or not isinstance(never_keep, bool):
+        raise ValueError("prompt memory switches must be booleans")
+    if retention_cap not in {"never", "3_months", "1_year"}:
+        raise ValueError("retention_cap must be never, 3_months, or 1_year")
+    return {
+        "default_remember": default_remember,
+        "never_keep": never_keep,
+        "retention_cap": retention_cap,
+    }
 
 
 def redact_config(value: Any) -> Any:
@@ -84,10 +113,55 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
             "apply_mode": "live",
         }, headers={"Cache-Control": "no-store"})
 
+    def prompt_memory_response() -> JSONResponse:
+        record = admin_store.get_operator_setting(PROMPT_MEMORY_SETTING_KEY, path=admin_path)
+        value = dict(PROMPT_MEMORY_DEFAULT)
+        if record:
+            value.update(_validate_prompt_memory(record["value"]))
+        return JSONResponse(
+            {"prompt_memory": value, "revision": admin_store.operator_setting_revision(record), "source": "admin.db", "apply_mode": "live"},
+            headers={"Cache-Control": "no-store"},
+        )
+
     @router.get("/instance")
     def get_instance(request: Request):
         ctx = guard(request)
         return ctx if isinstance(ctx, JSONResponse) else instance_response()
+
+    @router.get("/prompt-memory")
+    def get_prompt_memory(request: Request):
+        ctx = guard(request)
+        return ctx if isinstance(ctx, JSONResponse) else prompt_memory_response()
+
+    @router.put("/prompt-memory")
+    async def put_prompt_memory(request: Request):
+        ctx = guard(request)
+        if isinstance(ctx, JSONResponse):
+            return ctx
+        try:
+            body = await request.json()
+            if not isinstance(body, Mapping):
+                raise ValueError
+            body = _validate_prompt_memory(body)
+        except (ValueError, TypeError):
+            return JSONResponse(
+                {"error": {"code": "invalid_prompt_memory", "message": "Supply default_remember, never_keep and retention_cap."}},
+                status_code=400,
+            )
+        revision = request.headers.get("if-match")
+        if not revision:
+            return JSONResponse({"error": {"code": "settings_revision_required", "message": "Reload settings and supply If-Match."}}, status_code=428)
+        try:
+            admin_store.put_operator_setting_with_audit(
+                PROMPT_MEMORY_SETTING_KEY, body, updated_by=ctx.subject, expected_revision=revision.strip('"'),
+                audit_action="operator.prompt_memory.update", audit_actor_kind=ctx.actor_kind,
+                audit_actor_id=ctx.audit_actor_id, audit_actor_label=ctx.actor_label,
+                audit_target_kind="operator_setting", audit_target_id=PROMPT_MEMORY_SETTING_KEY,
+                audit_metadata={"fields": sorted(body)}, path=admin_path,
+            )
+        except admin_store.SettingsConflictError:
+            return JSONResponse({"error": {"code": "settings_conflict", "message": "Settings changed elsewhere; reload to see the latest"}}, status_code=409)
+        return prompt_memory_response()
 
     @router.put("/instance")
     async def put_instance(request: Request):
