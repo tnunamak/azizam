@@ -578,7 +578,9 @@ of embedded prompt/workflow metadata at store time. A full metadata download
 requires the authenticated maker and an unexpired prompt record; signed URLs
 default to `metadata=none`. `extensions.com.azizam.prompts.mode="forget"`, a
 member's off setting, or the owner kill switch prevents retention. Responses
-`store:false` is also a forget request. See `docs/design/PROMPT_MEMORY.md`.
+`store:false` is also a forget request. No-person callers keep the standard
+Responses `store:true` conversation state unless they forget or the owner kill
+switch is on. See `docs/design/PROMPT_MEMORY.md`.
 
 Receipts have audiences:
 
