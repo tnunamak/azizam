@@ -1143,7 +1143,11 @@ function MoreFilters({
       </PopoverTrigger>
       <PopoverContent align="end" className="w-72 space-y-4">
         {phoneExtras ? (
-          <div className="space-y-2 sm:hidden">{phoneExtras}</div>
+          // Labelled like the filters under it (D1.5).
+          <div className="space-y-1.5 sm:hidden">
+            <p className="text-sm font-medium">Person</p>
+            {phoneExtras}
+          </div>
         ) : null}
         <div className="space-y-1.5">
           <p className="text-sm font-medium">Model</p>
