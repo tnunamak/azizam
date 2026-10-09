@@ -179,7 +179,7 @@ const TAB_ITEMS: Array<{
 }> = [
   {
     value: "chat",
-    label: "Chat",
+    label: taskNames.chat,
     icon: MessageSquare,
     help: "Send a message and get a reply.",
   },
