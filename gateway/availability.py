@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from gateway.capabilities import Capability, resolve_capability_targets
+from gateway.discovery import WorkflowRecord
 
 READY_STATUSES = frozenset({"ready", "up", "ok", "healthy", "available"})
 STARTING_STATUSES = frozenset({"starting", "warming"})
@@ -72,11 +73,13 @@ def project_capabilities(
     *,
     service_records: Mapping[str, Any] | None = None,
     evidence: Mapping[str, Mapping[str, Any]] | None = None,
+    workflow_records: Iterable[WorkflowRecord] = (),
 ) -> list[Capability]:
     """Stamp capability lifecycle/health from the shared projection."""
 
     service_records = service_records or {}
     evidence = evidence or {}
+    records = {record.id: record for record in workflow_records}
     out: list[Capability] = []
     for capability in resolve_capability_targets(capabilities, service_records):
         if _capability_declares_unavailable(capability):
@@ -86,12 +89,19 @@ def project_capabilities(
                 health="unhealthy",
             ))
             continue
-        projection = project_service(
-            capability.backend,
-            service_records=service_records,
-            evidence=evidence,
-            fallback_capability=capability,
-        )
+        record = records.get(capability.workflow or capability.resolved_workflow or "")
+        requirements = record.manifest.get("requires") if record else None
+        if capability.backend == "gateway" and isinstance(requirements, Mapping):
+            projection = _project_required_dependencies(
+                capability, requirements, records, service_records, evidence,
+            )
+        else:
+            projection = project_service(
+                capability.backend,
+                service_records=service_records,
+                evidence=evidence,
+                fallback_capability=capability,
+            )
         lifecycle, health = _capability_states(projection)
         out.append(replace(
             capability,
@@ -100,6 +110,47 @@ def project_capabilities(
             availability=projection.to_public_dict(),
         ))
     return out
+
+
+def _project_required_dependencies(
+    capability: Capability,
+    requirements: Mapping[str, Any],
+    records: Mapping[str, WorkflowRecord],
+    service_records: Mapping[str, Any],
+    evidence: Mapping[str, Mapping[str, Any]],
+) -> AvailabilityProjection:
+    dependencies: list[tuple[str, str]] = [(str(service), str(service)) for service in requirements.get("services") or ()]
+    for workflow_id in requirements.get("workflows") or ():
+        record = records.get(str(workflow_id))
+        if record is None or len(record.supported_backends) != 1:
+            return AvailabilityProjection(
+                capability.backend, True, False, None, "unknown",
+                f"Required workflow {workflow_id} has no unambiguous backend binding.", False,
+                {"source": "dependencies", "kind": "missing_workflow"},
+            )
+        dependencies.append((str(workflow_id), record.supported_backends[0]))
+    if not dependencies:
+        return project_service(capability.backend, service_records=service_records,
+                               evidence=evidence, fallback_capability=capability)
+
+    projected = [(name, project_service(service, service_records=service_records, evidence=evidence))
+                 for name, service in dependencies]
+    # A known failure wins over an unknown measurement; otherwise the least ready
+    # required dependency determines the composed workflow's state.
+    priority = {"unavailable": 0, "degraded": 1, "busy": 2, "starting": 3,
+                "unknown": 4, "idle": 5, "ready": 6}
+    name, limiting = min(projected, key=lambda item: priority.get(item[1].status, 4))
+    status = limiting.status
+    reason = (f"Required dependency {name} ({limiting.service_id}): {limiting.reason}"
+              if status != "ready" else "Required dependencies are ready.")
+    return AvailabilityProjection(
+        capability.backend, all(item.enabled for _, item in projected),
+        all(item.configured for _, item in projected),
+        False if status == "unavailable" else None if status in {"idle", "starting", "unknown"} else True,
+        status, reason, all(item.measured for _, item in projected),
+        {"source": "dependencies", "kind": "required", "services": [service for _, service in dependencies]},
+        idle_startable=status == "idle",
+    )
 
 
 def project_service(
@@ -131,7 +182,7 @@ def project_service(
         projected = _from_evidence(service_id, enabled, configured, idle_startable, picked)
         if projected is not None:
             return projected
-    if idle_startable and _observed_stopped(picked):
+    if idle_startable and (not picked or _observed_stopped(picked)):
         return AvailabilityProjection(
             service_id, enabled, configured, None, "idle", "Ready to start.", False,
             {"source": "registry", "kind": "idle_startable"}, idle_startable=True,
