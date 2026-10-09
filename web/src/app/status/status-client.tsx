@@ -358,7 +358,7 @@ type Problem = {
   /** Names the subject and its state word: "Video studio is down". */
   title: string;
   facts: Array<[string, ReactNode]>;
-  /** Supporting evidence, folded behind "Show evidence". */
+  /** Supporting evidence, folded behind "Show details". */
   evidence?: Array<[string, ReactNode]>;
   /** The 24-hour strip and its story, after what to do (D1.6). */
   history?: ReactNode;

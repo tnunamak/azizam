@@ -293,7 +293,7 @@ export function Callout({
                     evidenceOpen && "rotate-90",
                   )}
                 />
-                {evidenceOpen ? "Hide evidence" : "Show evidence"}
+                {evidenceOpen ? "Hide details" : "Show details"}
               </button>
               {evidenceOpen ? (
                 <dl className={factGrid}>{rows(evidence)}</dl>
@@ -364,7 +364,7 @@ export function Callout({
                     evidenceOpen && "rotate-90",
                   )}
                 />
-                {evidenceOpen ? "Hide evidence" : "Show evidence"}
+                {evidenceOpen ? "Hide details" : "Show details"}
               </button>
               <dl className={cn(factGrid, !evidenceOpen && "max-sm:hidden")}>
                 {rows(evidence)}
