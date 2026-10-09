@@ -609,6 +609,10 @@ forget, member-off and the kill switch use a memory-only execution spool.
 Those jobs can finish in the current process but cannot resume after restart.
 Delete-all and the kill switch move active spools to memory and remove their
 durable copies. The submit-time forget decision stays in effect during retries.
+Normal seeded no-person jobs also retain their existing prompt-derived body
+HMAC for automatic deduplication after the execution spool is deleted. Explicit
+forget, member-off and kill-switch jobs use random request hashes instead;
+caller-supplied Idempotency-Key semantics remain unchanged.
 
 Deleting media, evicting the cache, deleting a video, failing a video, and
 removing a member remove associated prompt rows. Cancellation removes the
