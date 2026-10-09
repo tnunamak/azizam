@@ -44,7 +44,7 @@ A self-hosted gateway that speaks the vendors' own protocols exactly, so existin
 
 ## Brand Commitments
 
-- Name: Azizam (adopted 2026-10-06). Domain: azizam.dev. The previous working name (Vivid Fish, vivid.fish) survives in the designer handoff art.
+- Name: Azizam (adopted 2026-10-06). Domain: azizam.dev. The previous working name, still the vivid.fish domain, survives in the designer handoff art.
 - No marketing voice inside the product: "we shouldn't have a big slogan like 'Build on AI in minutes' - that doesn't fit the vibe/identity" (2026-06-25).
 - Binding visual authority, per the owner: the designer handoff in `docs/design/assets/reference-ui/` ("the absolute authority on look and feel and UX best practices"). Its visual grammar is binding input to the direction round; its marketing copy and metrics are illustrative only (see that folder's README).
 - **Open (checkpoint T1):** the visual world. The shipped cream-and-serif look diverges from the designer handoff's dark, deep-water grammar; the owner picks between rendered directions.
