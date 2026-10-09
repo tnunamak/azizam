@@ -19966,6 +19966,10 @@ def _persist_image_media_job_payload(
         if not memory.keep or policy["never_keep"] or not policy["remember"]:
             # A forgotten async job can run in this process but cannot survive
             # a restart: a durable request spool would retain the prompt.
+            # Keep the submit-time decision sticky if settings change before
+            # the worker starts. The injected control is stripped at dispatch.
+            extensions = payload["body"].setdefault("extensions", {})
+            extensions[prompt_memory.NAMESPACE] = {"mode": "forget"}
             _EPHEMERAL_MEDIA_JOB_PAYLOADS[job_id] = payload
             return
         IMAGE_MEDIA_JOB_PAYLOAD_DIR.mkdir(parents=True, exist_ok=True)

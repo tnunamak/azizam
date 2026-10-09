@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -89,3 +90,32 @@ def test_owner_kill_switch_removes_pending_payload_files(tmp_path):
     with patch.object(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", payload_dir):
         proxy._purge_prompt_payload_files()
     assert list(payload_dir.iterdir()) == []
+
+
+def test_async_member_off_stays_forgotten_if_enabled_before_worker_starts(tmp_path):
+    admin_db = tmp_path / "data" / "admin.db"
+    payload_dir = tmp_path / "cache" / "payloads"
+    admin_store.init_db(admin_db)
+    person = admin_store.upsert_oidc_user("issuer", "maker", email="maker@example.test", path=admin_db)
+    app = admin_store.create_app("Maker", kind="personal", owner_user_id=person["id"], path=admin_db)
+    admin_store.put_prompt_memory_preference(person["id"], remember=False, retention="never", path=admin_db)
+    auth = proxy.AuthContext(identity=proxy.AuthIdentity(
+        name="maker", key_hash="sha256:maker", app_id=app["id"],
+    ))
+    request = SimpleNamespace(
+        headers={"host": "testserver"}, url=SimpleNamespace(scheme="http", netloc="testserver"),
+    )
+    job_id = "mj_sticky_forget"
+    with patch.object(proxy.ADMIN_STORE, "path", admin_db), patch.object(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", payload_dir):
+        try:
+            proxy._persist_image_media_job_payload(
+                job_id, body={"prompt": "sticky-secret"}, request=request, auth_context=auth,
+            )
+            payload = proxy._load_image_media_job_payload(job_id)
+            assert payload and payload["body"]["extensions"][prompt_memory.NAMESPACE] == {"mode": "forget"}
+            assert not payload_dir.exists()
+            admin_store.put_prompt_memory_preference(person["id"], remember=True, retention="never", path=admin_db)
+            decision = prompt_memory.decide_for_app(app["id"], payload["body"], admin_path=admin_db)
+            assert decision.reason == "request_forget" and not decision.keep
+        finally:
+            proxy._delete_image_media_job_payload(job_id)
