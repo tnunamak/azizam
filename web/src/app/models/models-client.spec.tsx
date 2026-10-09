@@ -1,9 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -124,6 +126,7 @@ function renderModels(snapshot: ModelsCatalog, viewer: Viewer = member) {
       </QueryClientProvider>
     </ViewerContext.Provider>,
   );
+  return client;
 }
 
 beforeEach(() => {
@@ -132,6 +135,163 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+});
+
+describe("models catalog refresh", () => {
+  it.each([true, false])(
+    "refreshes the open detail by id (alias: %s)",
+    async (alias) => {
+      const original = row({
+        id: "refresh-model",
+        alias,
+        object: alias ? "model_catalog.alias" : "model_catalog.model",
+        title: "Original title",
+        description: "Original purpose.",
+        locality: "remote",
+        cost: { kind: "paid", price: "$1" },
+      });
+      const snapshot = (entry: CatalogRow) =>
+        alias ? catalog([entry]) : catalog([], [entry]);
+      const client = renderModels(snapshot(original));
+      if (!alias) {
+        fireEvent.click(await screen.findByRole("button", { name: "All models" }));
+      }
+      const copy = await screen.findByRole("button", {
+        name: "Copy model name refresh-model",
+      });
+      fireEvent.click(
+        within(copy.closest(alias ? "article" : "tr")!).getByRole("button", {
+          name: "Details",
+        }),
+      );
+      expect(within(screen.getByRole("dialog")).getByText("Original purpose.")).toBeVisible();
+      vi.mocked(productApi.models).mockResolvedValue(snapshot({
+        ...original,
+        title: "Updated title",
+        description: "Updated purpose.",
+        engine_label: "Updated engine",
+        resolves_to: { chat: "updated-target" },
+        cost: { kind: "paid", price: "$2" },
+        availability: {
+          ...original.availability,
+          available: false,
+          status: "unavailable",
+        },
+      }));
+      await act(async () => {
+        await client.refetchQueries({ queryKey: ["models", "catalog"] });
+      });
+      await waitFor(() => {
+        const detail = within(screen.getByRole("dialog"));
+        expect(detail.getByRole("heading", { name: "Updated title" })).toBeVisible();
+        expect(detail.getByText("Updated purpose.")).toBeVisible();
+        expect(detail.getByText("Updated engine")).toBeVisible();
+        expect(detail.getByText("chat: updated-target")).toBeVisible();
+        expect(detail.getByText("Paid · $2")).toBeVisible();
+        expect(detail.getByText("Unavailable")).toBeVisible();
+        expect(detail.queryByText("Original purpose.")).toBeNull();
+      });
+    },
+  );
+
+  it.each([true, false])(
+    "closes a removed model with a note and does not reopen it (alias: %s)",
+    async (alias) => {
+      const original = row({
+        id: "removed-model",
+        alias,
+        object: alias ? "model_catalog.alias" : "model_catalog.model",
+      });
+      const snapshot = alias ? catalog([original]) : catalog([], [original]);
+      const client = renderModels(snapshot);
+      if (!alias) {
+        fireEvent.click(await screen.findByRole("button", { name: "All models" }));
+      }
+      const copy = await screen.findByRole("button", {
+        name: "Copy model name removed-model",
+      });
+      fireEvent.click(
+        within(copy.closest(alias ? "article" : "tr")!).getByRole("button", {
+          name: "Details",
+        }),
+      );
+      expect(screen.getByRole("dialog")).toBeVisible();
+      vi.mocked(productApi.models).mockResolvedValue(catalog([]));
+      await act(async () => {
+        await client.refetchQueries({ queryKey: ["models", "catalog"] });
+      });
+      await waitFor(() => {
+        expect(screen.queryByRole("dialog")).toBeNull();
+        expect(screen.getByRole("status")).toHaveTextContent(
+          "This model is no longer in the catalog.",
+        );
+      });
+      vi.mocked(productApi.models).mockResolvedValue(snapshot);
+      await act(async () => {
+        await client.refetchQueries({ queryKey: ["models", "catalog"] });
+      });
+      const restoredCopy = await screen.findByRole("button", {
+        name: "Copy model name removed-model",
+      });
+      expect(screen.queryByRole("dialog")).toBeNull();
+      fireEvent.click(
+        within(restoredCopy.closest(alias ? "article" : "tr")!).getByRole("button", {
+          name: "Details",
+        }),
+      );
+      expect(screen.getByRole("dialog")).toBeVisible();
+      expect(screen.queryByText("This model is no longer in the catalog.")).toBeNull();
+    },
+  );
+});
+
+describe("models visible-text search", () => {
+  it.each([
+    ["title", "LANTERN"],
+    ["purpose", "gentle explanations"],
+    ["capability", "CONVERSATION"],
+    ["id", "opaque-17"],
+  ])("matches visible %s text and retains id search", async (_field, query) => {
+    renderModels(catalog([
+      row({ id: "default" }),
+      row({
+        id: "opaque-17",
+        title: "Lantern",
+        description: "Offers gentle explanations.",
+        capability_title: "Conversation",
+      }),
+    ]));
+    await screen.findByRole("button", { name: "Copy model name default" });
+    fireEvent.click(screen.getByRole("button", { name: "1 more Chat models" }));
+    expect(screen.getByRole("heading", { name: "Lantern" })).toBeVisible();
+    expect(screen.getByText("Offers gentle explanations.")).toBeVisible();
+    fireEvent.change(screen.getByRole("textbox", { name: "Search models" }), {
+      target: { value: query },
+    });
+    expect(screen.getByRole("heading", { name: "Lantern" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Conversation", level: 2 })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Copy model name opaque-17" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Copy model name default" })).toBeNull();
+  });
+
+  it("finds an exact model by its visible title", async () => {
+    renderModels(catalog([], [
+      row({
+        id: "opaque-exact",
+        alias: false,
+        object: "model_catalog.model",
+        title: "Firefly",
+      }),
+    ]));
+    fireEvent.click(await screen.findByRole("button", { name: "All models" }));
+    expect(within(screen.getByRole("table")).getByText("Firefly")).toBeVisible();
+    fireEvent.change(screen.getByRole("textbox", { name: "Search models" }), {
+      target: { value: "FIREFLY" },
+    });
+    expect(within(screen.getByRole("table")).getByRole("button", {
+      name: "Copy model name opaque-exact",
+    })).toBeVisible();
+  });
 });
 
 describe("models catalog contract distinctions", () => {
@@ -731,6 +891,118 @@ describe("models catalog contract distinctions", () => {
     ).toBeNull();
     expect(screen.getByText("No models match these filters")).toBeVisible();
   });
+
+  it("keeps local unknown-cost rows outside the remote unknown category", async () => {
+    renderModels(catalog([
+      row({
+        id: "local-unknown",
+        locality: "local",
+        cost: { kind: "unknown", price: null },
+      }),
+      row({
+        id: "remote-unknown",
+        locality: "remote",
+        cost: { kind: "unknown", price: null },
+      }),
+    ]));
+    const localCopy = await screen.findByRole("button", {
+      name: "Copy model name local-unknown",
+    });
+    expect(within(localCopy.closest("article")!).queryByText("Cost not recorded")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "1 more Chat models" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cost not recorded" }));
+    expect(localCopy).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Copy model name remote-unknown" })).toBeNull();
+  });
+
+  it(
+    "labels unknown remote costs in primary rows, alternatives, details, and tables",
+    async () => {
+      const unknown = row({
+        locality: "remote",
+        cost: { kind: "unknown", price: null },
+      });
+      renderModels(catalog(
+        [unknown, { ...unknown, id: "unknown-alternative" }],
+        [{
+          ...unknown,
+          id: "unknown-exact",
+          alias: false,
+          object: "model_catalog.model",
+        }],
+      ));
+      const copy = await screen.findByRole("button", {
+        name: "Copy model name chat",
+      });
+      const card = within(copy.closest("article")!);
+      expect(card.getByText("Cost not recorded")).toBeVisible();
+      fireEvent.click(screen.getByRole("button", { name: "1 more Chat models" }));
+      const alternative = screen.getByRole("button", {
+        name: "Copy model name unknown-alternative",
+      }).closest("article")!;
+      expect(within(alternative).getByText("Cost not recorded")).toBeVisible();
+      fireEvent.click(card.getByRole("button", { name: "Details" }));
+      expect(within(screen.getByRole("dialog")).getByText("Cost not recorded")).toBeVisible();
+      fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Close",
+      }));
+      fireEvent.click(screen.getByRole("button", { name: "All models" }));
+      const tableRow = screen.getByRole("button", {
+        name: "Copy model name unknown-exact",
+      }).closest("tr")!;
+      expect(within(tableRow).getByText("Cost not recorded")).toBeVisible();
+    },
+  );
+
+  it(
+    "filters unknown remote costs independently and restores them with Clear filters",
+    async () => {
+      const unknown = row({
+        id: "unknown-cost",
+        locality: "remote",
+        cost: { kind: "unknown", price: null },
+      });
+      renderModels(catalog(
+        [
+          unknown,
+          row({ id: "free", locality: "remote" }),
+          row({ id: "paid", locality: "remote", cost: { kind: "paid", price: "$1" } }),
+        ],
+        [{
+          ...unknown,
+          id: "unknown-exact",
+          alias: false,
+          object: "model_catalog.model",
+        }],
+      ));
+      await screen.findByRole("button", { name: "Copy model name unknown-cost" });
+      fireEvent.click(screen.getByRole("button", { name: "All models" }));
+      const priceFilters = within(screen.getByRole("group", {
+        name: "Price filters (choose any)",
+      }));
+      const unknownFilter = priceFilters.getByRole("button", {
+        name: "Cost not recorded",
+      });
+      expect(unknownFilter).toHaveAttribute("aria-pressed", "true");
+      fireEvent.click(priceFilters.getByRole("button", { name: "No provider charge" }));
+      fireEvent.click(priceFilters.getByRole("button", { name: "Paid" }));
+      for (const id of ["unknown-cost", "unknown-exact"]) {
+        expect(screen.getByRole("button", { name: `Copy model name ${id}` })).toBeVisible();
+      }
+      fireEvent.click(unknownFilter);
+      expect(unknownFilter).toHaveAttribute("aria-pressed", "false");
+      for (const id of ["unknown-cost", "unknown-exact"]) {
+        expect(screen.queryByRole("button", { name: `Copy model name ${id}` })).toBeNull();
+      }
+      expect(screen.getByText("No models match these filters")).toBeVisible();
+      fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+      expect(unknownFilter).toHaveAttribute("aria-pressed", "true");
+      fireEvent.click(screen.getByRole("button", { name: "2 more Chat models" }));
+      for (const id of ["unknown-cost", "unknown-exact", "free", "paid"]) {
+        expect(screen.getByRole("button", { name: `Copy model name ${id}` })).toBeVisible();
+      }
+    },
+  );
 
   it("keeps local rows when paid filter is off even if backend cost is inconsistent", async () => {
     renderModels(
