@@ -40,11 +40,18 @@ no unit and a local `host`/`port` owns the process listening on that port.
 Other processes are reported as `desktop`, and `__unattributed` is device-used
 memory minus the sum of the per-process rows. A service can declare
 `vram_budget_key` (a variable in the `AZIZAM_GPU_BUDGET_PATH` script, e.g.
-`GPU1_LLM`) to be compared with that budget on the status page. The sampler
+`GPU1_LLM`) to be compared with that budget on the status page, using the
+memory on the GPU where its process holds the most; a share on another GPU is
+shown as spillover with no budget verdict. The sampler
 writes the same rows to `metrics.db` as `service_vram_mb` (tags `gpu`,
 `service`; slow tier, once a minute). Each 10 s tick it also writes
-`vram_free_mb` and `gpu_desktop_alloc_failures` (count of new kernel
-"Failed to allocate NVKMS memory" lines; no row when the journal is unreadable).
+`vram_free_mb` and `gpu_desktop_alloc_failures` (count of kernel "Failed to
+allocate NVKMS memory" lines logged since the last read). The sampler reads the
+kernel journal on from a cursor kept next to `metrics.db`
+(`nvkms-journal.cursor`), so failures logged while the journal was unreadable or
+the gateway was down count on the next readable tick. While it is unreadable
+there is no row and the gateway logs one warning. With no cursor file (first
+run) counting starts at the journal's end; delete the file to restart there.
 
 | Env var | What it controls | Default |
 |---|---|---|

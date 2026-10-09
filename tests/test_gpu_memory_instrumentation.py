@@ -7,6 +7,8 @@ allocation-failure metric next to GPU free memory.
 
 from __future__ import annotations
 
+import importlib
+import io
 import json
 import sys
 import tempfile
@@ -18,6 +20,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+import firehose_render  # noqa: E402
 import metrics_sampler  # noqa: E402
 import metrics_store  # noqa: E402
 import status_endpoint  # noqa: E402
@@ -134,6 +137,30 @@ class TestAttributionFromConfig(unittest.TestCase):
         self.assertIsNone(self.rows(0)["tts-supertonic"]["budget_gb"])
         self.assertEqual(self.rows(0)["desktop"]["budget_gb"], 3)
 
+    def test_a_two_gpu_pid_is_compared_with_its_budget_on_the_primary_gpu_only(self) -> None:
+        """Red-team-3 A2: llama-server (pid 300) holds 20 GiB on GPU 1 and 8 GiB
+        on GPU 0. GPU1_LLM (24 GiB) is a GPU 1 budget: the GPU 1 row is
+        compared with it using the GPU 1 bytes only; the GPU 0 row is reported
+        as spillover with no budget verdict. 28 GiB in total is not flagged."""
+        split_apps = [app for app in APPS if app["pid"] != 300] + [
+            {"pid": 300, "gpu_uuid": U1, "used_mb": 20 * 1024, "process_name": "llama-server"},
+            {"pid": 300, "gpu_uuid": U0, "used_mb": 8 * 1024, "process_name": "llama-server"},
+        ]
+        with patch.object(status_endpoint, "_get_compute_apps", return_value=split_apps):
+            primary, spill = self.rows(1)["kobold"], self.rows(0)["kobold"]
+        self.assertEqual(
+            (primary["used_mb"], primary["budget_gb"], primary["pct_of_budget"], primary["over_budget"], primary["spillover"]),
+            (20 * 1024, 24, 83.3, False, False),
+        )
+        self.assertEqual(
+            (spill["used_mb"], spill["budget_gb"], spill["pct_of_budget"], spill["over_budget"], spill["spillover"]),
+            (8 * 1024, None, None, False, True),
+        )
+        self.assertEqual(spill["spillover_from_gpu"], 1)
+        label = firehose_render._vram_row_label(spill)
+        self.assertIn("spillover from GPU1", label)
+        self.assertIn("no budget verdict", label)
+
 
 class SamplerCase(unittest.TestCase):
     def setUp(self) -> None:
@@ -144,7 +171,6 @@ class SamplerCase(unittest.TestCase):
         metrics_store.init_db(self.db)
         metrics_sampler.close_writer()
         self.writer = metrics_sampler.start_writer()
-        metrics_sampler._state["nvkms_seen"] = None
 
     def tearDown(self) -> None:
         metrics_sampler.close_writer()
@@ -204,53 +230,132 @@ FAIL = (
 NOISE = "1791503490.100000 peregrine kernel: usb 9-2.2.1.4: USB disconnect, device number 86"
 
 
-class TestNvkmsFailureMetric(SamplerCase):
-    def tick(self, journal_lines, *, journal_rc=0, gpus=GPUS) -> None:
-        def run(cmd, timeout=None):
-            if cmd[0] == "journalctl":
-                return journal_rc, "\n".join(journal_lines) + "\n", ""
-            if cmd[0] == "nvidia-smi":
-                return 0, "0, 00000000:01:00.0\n1, 00000000:03:00.0\n", ""
-            return 1, "", ""
+class FakeKernelJournal:
+    """The kernel journal as journalctl shows it: entries with cursors.
 
+    Answers ``--since @T`` (time window), ``--after-cursor=C`` (read on from a
+    saved position) and ``-n 0`` (no entries, only the end position);
+    ``--show-cursor`` adds the ``-- cursor:`` line journalctl prints.
+    """
+
+    EMPTY = f"s={'a' * 32};i=0;b={'b' * 32};m=0;t=0;x=0"  # the end of an empty journal
+
+    def __init__(self) -> None:
+        self.now = 1791503000.0
+        self.entries: list[tuple[float, str, str]] = []  # (ts, line, cursor)
+        self.readable = True
+
+    def log(self, template: str, *, after_s: float = 0.0) -> None:
+        self.now += after_s
+        cursor = f"s={'a' * 32};i={len(self.entries) + 1:x};b={'b' * 32};m=1;t=1;x=1"
+        self.entries.append((self.now, template.format(ts=f"{self.now:.6f}"), cursor))
+
+    def run(self, cmd, timeout=None):
+        if cmd[0] == "nvidia-smi":
+            return 0, "0, 00000000:01:00.0\n1, 00000000:03:00.0\n", ""
+        if cmd[0] != "journalctl":
+            return 1, "", ""
+        if not self.readable:
+            return 1, "", "Failed to get journal access"
+        args = list(cmd[1:])
+        shown = list(self.entries)
+        position = self.entries[-1][2] if self.entries else self.EMPTY
+        for arg in args:
+            if arg.startswith("--after-cursor="):
+                saved = arg.removeprefix("--after-cursor=")
+                cursors = [self.EMPTY] + [cursor for _ts, _line, cursor in self.entries]
+                shown, position = self.entries[cursors.index(saved):], saved
+        if "--since" in args:
+            since = float(args[args.index("--since") + 1].lstrip("@"))
+            shown = [entry for entry in shown if entry[0] >= since]
+        if "-n" in args and args[args.index("-n") + 1] == "0":
+            shown = []
+        out = [line for _ts, line, _cursor in shown]
+        if "--show-cursor" in args:
+            out.append(f"-- cursor: {shown[-1][2] if shown else position}")
+        return 0, "\n".join(out) + "\n", ""
+
+
+class TestNvkmsFailureMetric(SamplerCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.journal = FakeKernelJournal()
+
+    def tick(self, *, after_s: float = 10.0, gpus=GPUS) -> None:
+        self.journal.now += after_s
         with (
-            patch.object(status_endpoint, "_run", run),
+            patch.object(metrics_sampler.time, "time", lambda: self.journal.now),
+            patch.object(status_endpoint, "_run", self.journal.run),
             patch.object(status_endpoint, "_gpus_raw", return_value=gpus),
             patch.object(status_endpoint, "_read_sensors", return_value={}),
             patch.object(status_endpoint, "_load_average", return_value=(0.0, 0.0, 0.0)),
             patch.object(status_endpoint, "_ram_attribution", return_value={}),
         ):
-            metrics_sampler._emit_fast(self.writer, int(time.time()))
+            metrics_sampler._emit_fast(self.writer, int(self.journal.now))
 
-    def failures(self) -> list[tuple[dict, float]]:
-        return self.samples("gpu_desktop_alloc_failures")
+    def failures(self, gpu: int | None = 0) -> list[float]:
+        tags = {} if gpu is None else {"gpu": gpu}
+        return [v for t, v in self.samples("gpu_desktop_alloc_failures") if t == tags]
 
-    def test_counts_only_new_failures_and_tags_the_gpu(self) -> None:
-        old = FAIL.format(ts="1791503000.000001")
-        new = FAIL.format(ts="1791503480.000002")
-        self.tick([NOISE, old])  # baseline: history is not counted
-        self.tick([NOISE, old, new])
-        self.tick([NOISE, old, new])  # same window again: nothing new
-        by_tick = [v for t, v in self.failures() if t == {"gpu": 0}]
-        self.assertEqual(by_tick, [0.0, 1.0, 0.0])
-        self.assertEqual([v for t, v in self.failures() if t == {"gpu": 1}], [0.0, 0.0, 0.0])
+    def test_first_run_starts_at_the_journal_end_and_counts_no_history(self) -> None:
+        self.journal.log(NOISE)
+        self.journal.log(FAIL)  # before the deploy: history
+        self.tick()
+        self.journal.log(FAIL, after_s=1)
+        self.tick()
+        self.tick()
+        self.assertEqual(self.failures(0), [0.0, 1.0, 0.0])
+        self.assertEqual(self.failures(1), [0.0, 0.0, 0.0])
 
-    def test_two_failures_in_the_same_microsecond_both_count(self) -> None:
-        line = FAIL.format(ts="1791503480.000002")
-        self.tick([])
-        self.tick([line, line])
-        self.assertEqual([v for t, v in self.failures() if t == {"gpu": 0}], [0.0, 2.0])
+    def test_the_cursor_is_kept_next_to_metrics_db(self) -> None:
+        self.tick()
+        cursor_file = self.db.parent / "nvkms-journal.cursor"
+        self.assertTrue(cursor_file.read_text().startswith("s="))
 
-    def test_unreadable_journal_records_no_failure_rows_and_does_not_raise(self) -> None:
-        self.tick([], journal_rc=1)
-        self.tick([FAIL.format(ts="1791503480.000002")], journal_rc=1)
-        self.assertEqual(self.failures(), [])
-        self.assertEqual(len(self.samples("vram_used_mb")), 4)  # rest of the tick still ran
+    def test_failures_during_a_gap_longer_than_the_window_count_on_recovery(self) -> None:
+        self.tick()
+        self.journal.readable = False
+        self.tick()
+        self.journal.log(FAIL, after_s=5)
+        self.journal.log(FAIL, after_s=20)
+        self.tick(after_s=300)  # still unreadable, five minutes later
+        self.journal.readable = True
+        self.tick()
+        self.assertEqual(self.failures(0), [0.0, 2.0], "no rows while unreadable; both counted on recovery")
+
+    def test_a_sampler_restart_resumes_from_the_saved_cursor(self) -> None:
+        self.tick()
+        self.journal.log(FAIL, after_s=1)
+        importlib.reload(metrics_sampler)  # the gateway restarts: module state is gone
+        self.tick(after_s=120)
+        self.assertEqual(self.failures(0), [0.0, 1.0])
+
+    def test_identical_repeated_lines_each_count_once(self) -> None:
+        self.tick()
+        self.journal.log(FAIL, after_s=1)
+        self.journal.log(FAIL)  # same text, same microsecond
+        self.tick()
+        self.tick()
+        self.assertEqual(self.failures(0), [0.0, 2.0, 0.0])
+
+    def test_unreadable_journal_records_no_rows_keeps_the_cursor_and_warns_once(self) -> None:
+        self.tick()
+        cursor_file = self.db.parent / "nvkms-journal.cursor"
+        saved = cursor_file.read_text()
+        self.journal.readable = False
+        with patch("sys.stdout", new_callable=io.StringIO) as out:
+            self.tick()
+            self.tick()
+        self.assertEqual(self.failures(0), [0.0])
+        self.assertEqual(cursor_file.read_text(), saved)
+        self.assertEqual(out.getvalue().count("kernel journal unreadable"), 1)
+        self.assertEqual(len(self.samples("vram_used_mb")), 6)  # the rest of each tick still ran
 
     def test_failure_from_unknown_gpu_id_is_counted_without_a_gpu_tag(self) -> None:
-        self.tick([])
-        self.tick([FAIL.format(ts="1791503480.000002").replace("0x00000100", "0x00000900")])
-        self.assertIn(({}, 1.0), self.failures())
+        self.tick()
+        self.journal.log(FAIL.replace("0x00000100", "0x00000900"), after_s=1)
+        self.tick()
+        self.assertEqual(self.failures(None), [1.0])
 
 
 class TestGpuFreeMemory(SamplerCase):

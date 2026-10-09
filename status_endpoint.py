@@ -1173,9 +1173,12 @@ def _vram_attribution(gpus: Optional[list[dict]], config: Optional[Mapping[str, 
       - __total:        total_used_mb (table footer).
 
     Tensor-split spillover: when a single PID maps to multiple GPUs (e.g.
-    llama-server with --tensor-split 52,12), the row on the smaller share is
-    flagged so the budget question stays meaningful — the PID's full VRAM
-    is governed by its primary GPU's budget, not split per-card.
+    llama-server with --tensor-split 52,12), its primary GPU is the one where
+    it holds the most VRAM. The service row on the primary GPU is compared with
+    the service's budget using that GPU's bytes only: budgets are per card
+    (GPU1_LLM is a GPU 1 allocation). Rows on the other GPUs are flagged as
+    spillover, shown, and get no budget verdict. Nothing compares the PID's
+    total across GPUs; a total-per-process cap would need its own budget key.
 
     Services are the `config` backends (see `_service_pids`). Desktop bucket:
     any compute-app whose PID no backend owns is bucketed under "desktop"
@@ -1265,8 +1268,8 @@ def _vram_attribution(gpus: Optional[list[dict]], config: Optional[Mapping[str, 
         accounted_mb = 0
         for svc, mb in sorted(svc_map.items(), key=lambda x: -x[1]):
             is_spillover = spillover_flags.get(idx, {}).get(svc, False)
-            # Spillover rows aren't compared against the local-GPU budget —
-            # the PID's allocation is governed by its primary GPU's budget.
+            # A spillover row gets no budget verdict: the service's budget is
+            # compared on its primary GPU only, with that GPU's bytes.
             budget_gb = None if is_spillover else budget_for(idx, svc)
             used_gb = mb / 1024.0
             over_budget = (
