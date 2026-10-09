@@ -176,7 +176,7 @@ No new component without a director decision.
 - Run `scripts/ui/token_drift.py --fail` (default scope: the surfaces above and their primitives). Legacy routes report with `--all` and are out of D1 scope.
 - Ban-list exceptions: none recorded.
 - Impeccable detector exception: `layout-transition` (height) comes from Sonner's own toast stylesheet, a third-party package; no Azizam style animates height.
-- Impeccable detector exception (D1.3): `text-overflow` on Library tile captions. A caption is one line by design (Apple Music truncates titles under artwork); `captionTitle` stops at a whole word within 40 characters and CSS adds the ellipsis where a narrow tile cannot fit even that. The full prompt is the tile's accessible name and is in the viewer.
+- Impeccable detector exception (D1.4): `text-overflow` on an audio cover's top line, where a long first name with the day ("Alexandria · Oct 21") meets the kind label in a narrow tile; the line truncates by design; the cover's hue and the viewer still name the maker. (D1.3's caption exception is gone with the captions.)
 - Console exception: signed-out pages get a 401 from `/admin/api/session` while the shell checks for a service key. It is expected and carries no user-facing error.
 
 ## How the gates run (T-4)

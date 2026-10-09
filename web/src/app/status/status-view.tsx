@@ -344,7 +344,7 @@ export function MemberStatus() {
                 {refusal ? (
                   `${askOwner(ownerName)} if you need paid models before the limit resets.`
                 ) : modelVerdict.problems.length ? (
-                  `${askOwner(ownerName)} if it does not recover; the problem is on the gateway, not your app.`
+                  `${askOwner(ownerName)} if it does not recover.`
                 ) : (
                   <>
                     App still not working?{" "}

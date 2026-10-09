@@ -1,6 +1,6 @@
-# D1.2 contact sheet: Home, Status, Library
+# D1 contact sheet: Home, Status, Library
 
-Captures: `~/.tmp/azizam-redesign/d1-10/` for D1.3, round 4 (made by `scripts/ui/d1-states-capture`, branch `design/d12-continue`; the D1.2 sets are `d1-8` and `d1-9`). One folder per household scenario. File names are `<scenario>_<role>_<surface>_<state>_<theme>_<width>.png`; each has a `_viewport.png` twin (1440×900 or 390×844, not full page, which is what the benchmarks show) and the page text in a `.txt`. A `manifest.json` per folder records console errors and forced states. Every state exists for owner (Sam) and member (Robin), at 390 and 1440 px, in light and dark. Loading, error, empty and expired are forced by request interception and labelled so in the manifest. The fixture's public address is `https://ai.household.example`.
+Captures: `~/.tmp/azizam-redesign/d1-11/` for D1.4, round 5 (made by `scripts/ui/d1-states-capture`, branch `design/d12-continue`; earlier sets: `d1-10` for D1.3, `d1-8` and `d1-9` for D1.2). D1.4 adds `try-image` and `try-speech` populated captures. One folder per household scenario. File names are `<scenario>_<role>_<surface>_<state>_<theme>_<width>.png`; each has a `_viewport.png` twin (1440×900 or 390×844, not full page, which is what the benchmarks show) and the page text in a `.txt`. A `manifest.json` per folder records console errors and forced states. Every state exists for owner (Sam) and member (Robin), at 390 and 1440 px, in light and dark. Loading, error, empty and expired are forced by request interception and labelled so in the manifest. The fixture's public address is `https://ai.household.example`.
 
 Benchmark ids refer to `benchmarks/BOARD.md`. State words and rules: DESIGN.md, "Status model".
 
@@ -8,37 +8,93 @@ Benchmark ids refer to `benchmarks/BOARD.md`. State words and rules: DESIGN.md, 
 
 | State | What it shows, and the trait it meets |
 |---|---|
-| populated, member | Title, then one 14 px line: "Video degraded", "Checked just now" (Linear 2a.1, small). "Make something": every task as one row with its tinted icon in one panel (two columns on desktop); only Video carries a state ("Degraded"). "Recent": four of Robin's creations in a strip, on the first phone screen (Apple Home's cameras). "Connect an app" in the header on phones, the right-hand panel on desktop. |
+| populated, member | Title, then one 14 px line: "Video degraded", "Checked just now" and "See what is happening" (to Status). Apple Home's order: "Recent", four of Robin's creations; then "Make something": her two most-used tasks as 128 px tiles ("Chat, Last used 22m ago", "Make a picture, Last used 39m ago"), then the other tasks as quiet 44 px rows; only Video carries a state ("Degraded"). "Connect an app" in the header on phones, the right-hand panel on desktop. |
 | populated, owner | The same Home with "Open Status" beside the verdict. |
-| new-member | No app has made a request, so the panel opens on the app chooser with real marks (Open WebUI, LibreChat, SillyTavern, Cursor, Codex, Claude Code, Another app). On a phone it still comes after the tasks. Persian name in the person mark. |
-| budget-exhausted, member | "Paid models were paused for you": the household reached its monthly limit, when it resets, and "Ask Sam if you need them sooner" (the owner's name now comes from the gateway; "the gateway owner" when it has none). Chat reads Degraded: "Some models are paused: a spending limit was reached." |
+| running | "Making your video" with "Video degraded: it may not finish" (wide screens). |
+| new-member | No app has made a request, so the panel opens on the app chooser with real marks. Favourites fall back to pictures and chat. |
+| budget-exhausted, member | "Paid models are paused": the gateway reported the monthly limit for paid AI services was reached, when it resets, and "Ask Sam if you need paid models sooner". |
 | budget-exhausted, owner | "A spending limit refused paid requests" with the gateway's sentence, the reset and "Open Status". |
-| stale-health | Voice, Transcription, Music and Sound effects read Unknown; the verdict counts them ("5 of 7 capabilities need attention"); nothing says Ready on old evidence. |
-| loading / error / empty / signed-out | The real header, a verdict-line placeholder and seven row skeletons in the task panel; a critical Callout with "Try again"; "Nothing is set up yet"; "Sign in to use your AI" as an info Callout with one button. |
+| stale-health | The verdict counts what it cannot vouch for: "5 of 7 capabilities need attention", "Checked just now · 4 unknown". |
+| loading / error / empty / signed-out | Skeletons in the layout; "Couldn't load Home" with "Try again"; "Nothing is turned on yet" with "Ask Sam to turn something on." (member) or "Add an engine" (owner), and no Recent; "Sign in to use your AI". |
 
 ## Status
 
 | State | What it shows, and the trait it meets |
 |---|---|
-| populated, owner | Verdict "Video degraded" with check time. One card titled with the fault, "Video studio is answering with errors", with "Inspect Video studio", the fix, then Affects ("Video: no other engine serves it." and "A request from Robin's personal app failed 1h ago.") and Last 24 hours ("Down 4 and degraded 2 of the last 24 hours, in 3 spells; failing again since about 1:30 PM"); evidence follows: the hourly bar with its legend and "1 of the latest 50 requests · Open receipt" (incident.io 2c.1–2c.3, Linear 2a.3). At 1440 the card is beside a column with Capabilities as rows and "4 other engines are ready and 1 is turned off. 1 remote provider is set up." On a phone the instruction comes before the button and the evidence folds behind "Show evidence". |
-| populated, member | The same verdict as Home; "Your video request failed" with what state Video is in now; "Your capabilities"; "Model names"; "Your recent requests" with Failed and In progress. |
+| populated, owner | Verdict "Video degraded". At 1440: the card and "Engines and providers" in the left column, Capabilities as a list in the right. The card: "Video studio is answering with errors", "Inspect Video studio", the fix, Affects ("Video: no other engine serves it." and, on wide screens, "A request from Robin's personal app failed 1h ago."), Last 24 hours ("Degraded since about 1:30 PM · 3 spells: down 4 h, degraded 2 h", then the large strip and its legend), Failed requests. On a phone: title, Affects, Last 24 hours, the fix, the button, "Show evidence". Engines: "Other engines: 4 ready, 1 turned off." "Remote providers: 1 set up." |
+| populated, member | The same verdict as Home; "Your video request failed"; "Your capabilities"; "Model names"; "Your latest requests" (the gateway sends five); the next step follows the failure ("Ask Sam if it does not recover.", not "Check your connection"). |
+| new-member / budget-exhausted, member | Video reads Degraded, "May be slow or fail right now." (it read "Busy, working on other requests" while the owner saw errors; DESIGN backend ask 16). |
 | running, owner | "Running now" lists the two requests in progress, with their people. |
-| budget-exhausted, owner | Two cards: Video studio, and "The Everyone plan reached its spending limit" with limits (USD 1.00 a day, USD 8.00 a month), spend not reported by the gateway, the gateway's sentence, both resets, who was refused, and "Edit the Everyone plan". |
+| budget-exhausted, owner | Two cards: Video studio, and "A spending limit on the Everyone plan refused paid requests": Affects, Spent ("Unavailable" with each limit, or the plan's spend per period when the gateway records it), "Gateway said" quoting the refusal, Resets, Refused. |
 | provider-down, owner | "Remote backup is down": the last connection check failed, Chat is still served by an engine on this computer, 7 of the latest 50 requests failed from Robin, Zoë and Sam. |
-| stale-health, owner | "Home Assistant voice is not answering checks", last check 7 h ago; the Voice, Transcription, Music and Sound effects chips read Unknown (each chip's detail: "Last checked 7 h ago; no answer since"). Member: the same four read Unknown, "No answer to the latest check." |
-| error | Owner: "Couldn't check status" and a card naming the gateway. Member: "The gateway returned an error. Try again." with the HTTP code under Technical details; a fetch that never reached the gateway names no layer. |
-| loading / empty | "Checking" with skeletons; "No engines yet" with "Add an engine". |
+| stale-health, owner | "Checked just now · 4 unknown". "Voice and sound has not answered a check in 7 h" (Affects: Music, Sound effects), and "Voice and Transcription are not confirmed" for the two the gateway does not attribute to an engine, with "Open Engines". |
+| error | Owner: "Couldn't check status", a card naming the gateway, and the badge reads "Status unknown". Member: "The gateway returned an error. Try again." |
+| loading / empty | "Checking" with no check time; "No engines yet" with "Add an engine". |
 
 ## Library
 
 | State | What it shows, and the trait it meets |
 |---|---|
-| populated | Title with count; one control row: search, kind (segmented, with icons), person (the household's marks for "Everyone") and "Filters". On a phone: search and Filters only, kind and person inside Filters. One grid, newest first. Square tiles with the maker's person mark and a caption: the subject ("Golden retriever asleep …") and the day ("Monday") (Midjourney 3a.1–3a.2, Suno 3b.1, Apple Music's title under the artwork). The video's poster is folded into the video, so the count is 24. |
-| library-audio | Audio tiles are covers on deep water washed with the maker's hue (olive for Robin's amber, plum for Aziz's rose, teal for Sam): "Voice", the clip's words as whole sentences or whole words to a clause end ("On Saturday we will take the train to the coast, walk by the harbor…"), its real waveform in the maker's hue, its length, and a play disc in that hue with ink on it; the caption is the day. The viewer shows the same cover at full size with the waveform as position. |
-| library-video / library-detail | The viewer: media on the stage, designed play, position, times and mute; title, maker and age; Download, Copy prompt, Receipt; facts with display names (LTX Video), size, length, made in, charge. |
-| expired | Gone files fold into one line; owners are warned before pictures expire. |
+| populated | Title with the count the grid shows; one control row: search, kind (segmented, with icons), person (the household's marks for "Everyone") and "Filters". Media only, no captions or badges (Midjourney 3a.1–3a.2); hover or focus shows a two-line title of whole words, the maker and the day. Phone: search and Filters on one line, the kind switch on the next, three columns. |
+| library-audio | Covers on deep water in the maker's hue with "Robin · Oct 20" and "Voice" on the top line, the clip's words, waveform, length and play disc; on a phone, the hue and the play disc. |
+| library-video / library-detail | The viewer: media on the stage, designed play, position, times and mute; Share first where the browser has a share sheet, then Download, Copy prompt, Receipt; facts with display names. |
+| expired | "20" in the title and "4 no longer stored" beside it, which opens the list; "Their prompts and receipts remain." for owners and members. |
 | loading / error / empty / filtered empty | Square skeletons; a critical Callout with "Try again"; "No creations yet" with "Make an image"; "Clear filters to see more." |
 | running | Calm placeholders for work in progress. |
+
+## Craft diff (D1.4, round 4 judges and the benchmarks)
+
+Round 4 (set-5): win or tie 88 / 82 / 82 / 94%, Status 100% for all four, craft 7.0 to 7.2 against 7.8 to 8.1 (gap about 0.9). "Before" is `d1-10`, "after" is `d1-11`.
+
+### Library: Midjourney, iOS Photos, Apple Music
+| Measured in the benchmark, or judged | `d1-10` | `d1-11` change |
+|---|---|---|
+| All four judges: captions cut after two or three words read as noise; r3, x2: a badge on every tile | A 12 px caption under every tile; a maker mark on every tile in "Everyone" | Media only. Hover or focus shows a short title of whole words on up to two lines, the maker and the day; audio covers carry "Robin · Oct 20" |
+| iOS Photos phone: 8 to 10 items per screen; r1, r3: only six | Two columns of captioned tiles | Three columns, 4 px gaps, no captions: about 13 items on a 390 × 844 screen (all 11 of Robin's) |
+| r2, x2: no quick type switch on a phone; audio buried | Kind inside Filters | The kind switch has its own full-width line under search and Filters |
+| r3: dark voice cards break the rhythm; x2: audio has low visibility | Covers with a caption under them | Same covers without the caption, so every tile is the same square; on a phone a cover is the maker's hue and a play disc |
+
+### Home: Apple Home (iPhone)
+| Measured in the benchmark, or judged | `d1-10` | `d1-11` change |
+|---|---|---|
+| Apple Home: the home's pictures, then favourites, then the rest; all judges: seven equal rows never show the next step | Seven equal rows with pastel chips, Recent last | Recent first; the person's two most-used tasks as 128 px tiles; the rest as quiet rows without chips |
+| r1: Recent below the fold | Recent at y = 692 | Recent at y = 262 on a 390 × 844 screen |
+
+### Status: Linear status, incident.io incident
+| Measured in the benchmark, or judged | `d1-10` | `d1-11` change |
+|---|---|---|
+| incident.io desktop: the main column holds the incident and its context; r1, r3: an empty area under the card | Card alone in the left column; engines in the side column | Engines and providers under the card; Capabilities alone in the side column, so the columns end within about 150 px of each other |
+| r3, x2: the 24-hour summary is a run-on sentence; r1: strip and legend small | One 20-word sentence; 16 px cells, 12 px legend | "Degraded since about 1:30 PM · 3 spells: down 4 h, degraded 2 h"; 24 px cells (16 px up), 14 px legend |
+| r2: the engines line reads as prose | Two sentences | "Other engines: 4 ready, 1 turned off." "Remote providers: 1 set up." |
+| r1, r2, r3: phone pills wrap and the tab bar cuts them | Wrapping pills | One column of 44 px rows in a card |
+| x2, r1: a narrow wall of text on a phone | Instruction, button, then facts | Title, Affects (one line), Last 24 hours, instruction, button, "Show evidence" |
+
+### Red team round 2: status of every P0 and P1
+| Finding | Status |
+|---|---|
+| P0: member told "Busy, working on other requests" while the owner sees errors | Fixed in the UI (`3e004f8`): a gateway "busy" without an engine check reads Degraded, "May be slow or fail right now." Root cause is the gateway's projection (DESIGN backend ask 16) |
+| P0: owner card names Robin's failed video, Robin's list lacks it | Explained, not a contradiction: members get their latest five requests (`gateway/home_api.py:354`); the list is titled "Your latest requests" (backend ask 19) |
+| P0: stale health shown as fresh; Affects omits Voice and Transcription | Fixed: "Checked just now · 4 unknown"; "has not answered a check in 7 h"; a card for Unknown capabilities no engine card explains (backend ask 18) |
+| P0: expired files are the newest | Capture artefact (the forced state expired the first four); fixed in the capture. One explanation for both roles, counted beside the title |
+| P0: "Nothing is set up yet" beside recent pictures; member Status Ready in the same state | Capture artefact (each surface emptied one source); fixed in the capture. Copy is "Nothing is turned on yet" with who can change it |
+| P1: one incident, five words | Fixed for this incident: the card's history uses the strip's own word (Degraded/Down) and members no longer get "Busy" |
+| P1: issue badge during errors and loading | Fixed for an owner's failed checks ("Status unknown"); "Checked" is hidden while checking. Badge counts stay per capability (deferred: owners and members see the same count only when their evidence matches) |
+| P1: budget card claims | Fixed: "refused paid requests", spend per period or "Unavailable", the refusal quoted, Affects, local reset times when known |
+| P1: member warning with no route to Status | Fixed: "See what is happening" |
+| P1: expired files below the grid | Fixed: beside the count |
+| P1: "Check your connection" under server-side refusals | Fixed: the next step follows the failure |
+| P1: "Simulated outage" fixture text | Fixed in the capture |
+| P1: Home error points to Status without a link | Fixed: the retry is the next step |
+| P1: running work on a failing engine | Fixed: "Video degraded: it may not finish" on the running tile |
+| P1: Home Assistant voice is an app and an engine | Fixed in the fixture: the engine is "Voice and sound" |
+| P1: no Share on the phone | Fixed: Share sends the file where the browser can |
+| P1: Try flow not captured | Fixed: the capture takes Try for a picture and for reading aloud |
+| P1: Home elevates the budget card, not the video fault | Deferred: Home shows one verdict line for every fault; a compact top card is a later Home change |
+| P1: failed jobs never appear in Library | Deferred: `/me/api/media` lists succeeded jobs only (backend ask 17) |
+| P1: provider down has no "since" | Deferred: providers have only a last check (backend ask 7) |
+| P1: "Restart it" needs a terminal | Deferred: no restart or log API in the product yet |
+| P1: member jargon (Degraded, Embeddings, model ids, Receipt) | Partly: limit and failure copy reworded; a member vocabulary layer is a later round |
+| P1: signed-out screen looks alarming | Deferred to the next Home pass |
 
 ## Craft diff (D1.3, round 3 judges and the benchmarks)
 
@@ -155,12 +211,12 @@ Conclusion: the judges' "no poster" was audio tiles that looked like un-postered
 
 ## Gate results for this set
 
-D1.3 on `design/d12-continue` after merging main (edc0388). Fixture servers on ports 18740 to 18820; nothing on 5000.
+D1.4 on `design/d12-continue` (main edc0388 merged). Fixture servers on ports 18840 to 18960; nothing on 5000.
 
-- axe WCAG 2 AA: 0 violations over 32 page checks (owner and member; Home, Status, Library, viewer; light and dark; 1440 and 390). Horizontal overflow, clipped text, targets under 44 px at 390, tab stops without visible focus and console errors: 0 (`~/.tmp/azizam-redesign/d1-10-gates`).
-- Impeccable detector on the 16 snapshots (`d1-10-snap`): Sonner's toast height transition (recorded exception) and `text-overflow` on Library captions (recorded D1.3 exception: one-line captions by design). Its first pass also found heading crowding on Status's two columns; fixed (PageHeader's space is a margin).
+- axe WCAG 2 AA: 0 violations over 32 page checks (owner and member; Home, Status, Library, viewer; light and dark; 1440 and 390). Horizontal overflow, clipped text, targets under 44 px at 390, tab stops without visible focus and console errors: 0 (`~/.tmp/azizam-redesign/d1-11-gates`).
+- Impeccable detector on 16 snapshots (`d1-11-snap`): Sonner's toast height transition (recorded exception) and `text-overflow` on an audio cover's top line on owner Library (recorded D1.4 exception).
 - Token drift: 0.
-- lint.py on a copy of the production data (eleven engines blocked): Home, Library and member Status pass. Owner Status reads 88 words against 60 (`d1-9`: 76). The plain-words engines line the judges asked for ("4 other engines are down, 1 is not checked and 2 are turned off. 2 remote providers are set up.") and the Affects sentence add words; Affects counts capabilities instead of naming them when more than three are exposed. Whether to trade those words back is a judging question.
-- Unit tests: vitest 529 in the main config plus all 11 folder configs pass.
-- Playwright, main config: 611 of 612 passed in the full run; the one failure was a transient ECONNRESET in a request fixture while a capture and a copied-data gateway also ran, and its spec file passed 12 of 12 on rerun. The Library specs that main fixed for main's UI were updated for this branch's controls (20 of 20). Status specs on the final build: 37 of 37. Live-data config: 4 of 4.
-- Hermetic Python at a910a9b (after the fixture change): 5789 passed, 0 failed.
+- lint.py on a copy of the production data (eleven engines blocked): Home, Library and member Status pass. Owner Status reads 86 words against 60 (D1.3: 88), so it did not grow.
+- Unit tests: vitest 533 in the main config plus all 11 folder configs pass.
+- Playwright, main config: the full run passed 609 of 612. The three failures were mine and are fixed (a Library spec still opened Filters on a phone; the new Unknown card fired for never-checked capabilities); the affected spec files then passed 85 of 85, and member Status and copy contracts 23 of 23. Live-data config: 4 of 4.
+- Hermetic Python at a64514a (with the fixture rename): 5789 passed, 0 failed.
