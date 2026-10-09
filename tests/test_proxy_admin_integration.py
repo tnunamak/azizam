@@ -33,6 +33,11 @@ async def _test_status_projection(_config):
     return {}
 
 
+async def _test_backend_grid(_config):
+    """Availability checks (such as the face sidecar's) find no engine rows."""
+    return []
+
+
 def assert_authenticated_admin_dashboard(
     test_case: unittest.TestCase, client: TestClient
 ) -> None:
@@ -66,6 +71,10 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
             proxy.status_endpoint, "get_cached_status", _test_status_projection
         )
         self._status_projection.start()
+        self._backend_grid = patch.object(
+            proxy.status_endpoint, "_backend_grid", _test_backend_grid
+        )
+        self._backend_grid.start()
         self._loaded_model_projection = patch.object(
             proxy, "currently_loaded_kobold_model", return_value=None
         )
@@ -83,6 +92,7 @@ class ProxyAdminIntegrationTests(unittest.TestCase):
         proxy.ADMIN_AUTH.cookie = self.old_cookie
         proxy.AUTH_ENABLED = self.old_auth_enabled
         self._status_projection.stop()
+        self._backend_grid.stop()
         self._loaded_model_projection.stop()
         self.env_patcher.stop()
         proxy.ADMIN_OIDC_STATES.clear()
