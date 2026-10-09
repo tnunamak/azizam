@@ -321,7 +321,7 @@ describe("Library media recovery", () => {
     // A posterless tile loads metadata only and shows the frame at 0.1 s on
     // the media stage; it never plays.
     await waitFor(() =>
-      expect(container.querySelector("video")).toHaveAttribute("src", "/video.mp4"),
+      expect(container.querySelector("video")).toHaveAttribute("src", "/video.mp4#t=0.1"),
     );
     const preview = container.querySelector("video")!;
     expect(preview).toHaveAttribute("preload", "metadata");
@@ -389,7 +389,7 @@ describe("Library media recovery", () => {
     await waitFor(() =>
       expect(container.querySelector("video")).toHaveAttribute(
         "src",
-        "/video.mp4",
+        "/video.mp4#t=0.1",
       ),
     );
   });

@@ -850,11 +850,14 @@ function Preview({
         onFailed={() => setMediaFailed(true)}
       />
     ) : (
-      // No poster: load metadata only and show the frame at 0.1 s; the stage
-      // colour keeps a blank frame reading as media, not as a missing file.
+      // No poster (the gateway records none for real video jobs): load
+      // metadata only and show the frame at 0.1 s. The media fragment asks
+      // Safari for that frame too, which ignores the seek below until played;
+      // the server never sees a fragment. The stage colour keeps a blank frame
+      // reading as media, not as a missing file.
       <video
         key={`video-${asset.asset_id}-${retryKey}`}
-        src={visible ? currentSrc : undefined}
+        src={visible ? `${currentSrc}#t=0.1` : undefined}
         preload="metadata"
         muted
         playsInline
