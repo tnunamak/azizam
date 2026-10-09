@@ -78,17 +78,22 @@ export function Waveform({
  */
 export function coverSurface(maker?: string | null): string {
   return cn(
-    "dark bg-card text-foreground relative isolate overflow-hidden",
+    "dark bg-card text-foreground relative overflow-hidden",
     maker ? personHueVar(maker) : "[--person:var(--capability-voice)]",
   );
 }
 
-/** The maker's wash; the first child of a cover surface. */
+/**
+ * The maker's wash; the first child of a cover surface. It is positioned
+ * without a z-index, so the cover's content must be positioned too
+ * (`relative`) to paint above it. The cover makes no stacking context: a
+ * tile's play control (z-20) must stay above the tile's open button (z-10).
+ */
 export function CoverWash() {
   return (
     <span
       aria-hidden="true"
-      className="pointer-events-none absolute inset-0 -z-10 bg-(--person)/24"
+      className="pointer-events-none absolute inset-0 bg-(--person)/24"
     />
   );
 }
@@ -137,13 +142,13 @@ export function AudioCover({
       )}
     >
       <CoverWash />
-      <p className="text-foreground/80 flex items-center justify-end gap-1 text-xs font-medium">
+      <p className="text-foreground/80 relative flex items-center justify-end gap-1 text-xs font-medium">
         <Icon aria-hidden="true" className="size-3.5 text-(--person)" />
         {kind.label}
       </p>
       <p
         className={cn(
-          "min-h-0 flex-1 font-medium break-words",
+          "relative min-h-0 flex-1 font-medium break-words",
           compact
             ? "line-clamp-3 text-sm leading-snug"
             : "line-clamp-4 text-sm leading-snug sm:text-base sm:leading-snug",
@@ -151,7 +156,7 @@ export function AudioCover({
       >
         {text}
       </p>
-      <div className="flex items-center gap-2">
+      <div className="relative flex items-center gap-2">
         {control}
         {status ? (
           <span className="min-w-0 flex-1 text-xs font-medium">{status}</span>

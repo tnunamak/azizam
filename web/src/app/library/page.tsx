@@ -501,7 +501,7 @@ function LargeAudioPlayer({
   return (
     <div
       data-media-controls
-      className="flex w-full flex-col items-center gap-5"
+      className="relative flex w-full flex-col items-center gap-5"
     >
       <audio
         ref={audioRef}
@@ -1310,7 +1310,7 @@ function CreationViewer({
                   <>
                     {/* The clip's own cover: maker's hue, kind, its words. */}
                     <CoverWash />
-                    <div className="w-full space-y-3">
+                    <div className="relative w-full space-y-3">
                       <p className="text-foreground/80 flex items-center gap-1.5 text-xs font-medium">
                         <AudioLines
                           aria-hidden="true"

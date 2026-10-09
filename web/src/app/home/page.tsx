@@ -278,7 +278,7 @@ function TaskLead({
         )}
       >
         <CoverWash />
-        <Icon aria-hidden="true" className="size-5 text-(--person)" />
+        <Icon aria-hidden="true" className="relative size-5 text-(--person)" />
       </span>
     );
   }
