@@ -16,3 +16,5 @@ dogfood
 re:\banecdotally\b
 re:\bper (?:the )?(?:forum|thread|discord)\b
 re:\bin my testing\b
+re:\bcommunity (?:sweet spot|consensus|favou?rite|reports?)\b
+re:\b(?:users|people) (?:on|in) (?:the )?(?:forums?|threads?|discord|subreddit)\b

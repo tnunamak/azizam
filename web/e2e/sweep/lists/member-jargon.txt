@@ -35,3 +35,5 @@ re:\bstdout\b|\bstderr\b
 re:\bSSE\b
 re:\bwebhook
 re:\bQ\d_K(?:_[MSL])?\b
+# A snake_case identifier shown as text is a raw field name (batch_size, source_image).
+re:(?<![\w./:@-])[a-z][a-z0-9]*_[a-z0-9_]*[a-z0-9](?![\w./@-])
