@@ -42,6 +42,7 @@ import {
   RelativeTime,
   CopyField,
 } from "@/components/product";
+import { StatusLine } from "@/components/product/status-ui";
 import {
   peopleApi,
   planSummary,
@@ -151,6 +152,7 @@ export default function PeoplePage() {
     data: plansData,
     isPending: plansIsPending,
     isError: plansIsError,
+    isFetching: plansIsFetching,
     refetch: plansRefetch,
   } = useQuery({ queryKey: plansKey, queryFn: api.profiles.list });
   const [tab, setTab] = useState("people");
@@ -220,6 +222,58 @@ export default function PeoplePage() {
   const profiles =
     plansData || peopleData?.profiles || invitesData?.profiles || [];
   const invites = invitesData?.invites || [];
+  // Why "Invite someone" cannot be used yet: an invitation needs an access plan.
+  const planGate: "ready" | "loading" | "failed" | "none" = profiles.length
+    ? "ready"
+    : plansIsPending
+      ? "loading"
+      : plansIsError
+        ? "failed"
+        : "none";
+  const createPlan = () => {
+    setTab("plans");
+    setEditor("new");
+  };
+  const gateCopy = {
+    loading: {
+      title: "Loading access plans",
+      description: "You can invite someone once your access plans load.",
+    },
+    failed: {
+      title: "Access plans couldn’t be loaded",
+      description: "Inviting someone needs an access plan. Try again.",
+    },
+    none: {
+      title: "Create an access plan before inviting someone",
+      description: "An invitation gives one person the access a plan allows.",
+    },
+  } as const;
+  const gateButton = (size: "sm" | "default") =>
+    planGate === "failed" ? (
+      <Button
+        variant="outline"
+        size={size}
+        disabled={plansIsFetching}
+        onClick={() => void plansRefetch()}
+      >
+        {plansIsFetching ? "Trying again…" : "Try again"}
+      </Button>
+    ) : planGate === "none" ? (
+      <Button
+        variant={size === "sm" ? "outline" : "default"}
+        size={size}
+        onClick={createPlan}
+      >
+        Create an access plan
+      </Button>
+    ) : null;
+  // An owner who cannot invite yet gets the reason and a way forward in the
+  // empty state of the tab they are on, or beside the Invite action.
+  const gateInEmptyState =
+    owner &&
+    planGate !== "ready" &&
+    ((tab === "people" && !!peopleData && !peopleData.people.length) ||
+      (tab === "invites" && !!invitesData && !invites.length));
   const actions = (person: Person) =>
     !owner || (person.protected && person.builtin === false) ? null : (
       <DropdownMenu>
@@ -323,7 +377,23 @@ export default function PeoplePage() {
             Invite someone
           </Button>
         }
-      />
+      >
+        {owner && planGate !== "ready" && !gateInEmptyState ? (
+          <StatusLine
+            compact
+            tone={
+              planGate === "loading"
+                ? "unknown"
+                : planGate === "failed"
+                  ? "bad"
+                  : "warn"
+            }
+            text={gateCopy[planGate].title}
+          >
+            {gateButton("sm")}
+          </StatusLine>
+        ) : null}
+      </PageHeader>
       <Tabs value={tab} onValueChange={setTab} className="gap-6">
         <TabsList variant="line" className="w-full justify-start border-b">
           <TabsTrigger className="flex-none px-4" value="people">
@@ -355,23 +425,27 @@ export default function PeoplePage() {
               }
             />
           ) : !peopleData.people.length ? (
-            <EmptyState
-              icon={Users}
-              title="Your people will appear here"
-              description="Invite someone to list their access and activity."
-              action={
-                <Button
-                  disabled={!owner}
-                  onClick={() =>
-                    profiles.length
-                      ? setInviteOpen(true)
-                      : (setTab("plans"), setEditor("new"))
-                  }
-                >
-                  {profiles.length ? "Invite someone" : "Create an access plan"}
-                </Button>
-              }
-            />
+            gateInEmptyState ? (
+              <EmptyState
+                icon={Users}
+                {...gateCopy[planGate]}
+                action={gateButton("default")}
+              />
+            ) : (
+              <EmptyState
+                icon={Users}
+                title="Your people will appear here"
+                description="Invite someone to list their access and activity."
+                action={
+                  <Button
+                    disabled={!owner || !profiles.length}
+                    onClick={() => setInviteOpen(true)}
+                  >
+                    Invite someone
+                  </Button>
+                }
+              />
+            )
           ) : (
             <div className="divide-y">
               <div
@@ -477,19 +551,27 @@ export default function PeoplePage() {
               }
             />
           ) : !invites.length ? (
-            <EmptyState
-              icon={Mail}
-              title="No invitations yet"
-              description="Create a single-use link for one access plan."
-              action={
-                <Button
-                  disabled={!owner || !profiles.length}
-                  onClick={() => setInviteOpen(true)}
-                >
-                  Invite someone
-                </Button>
-              }
-            />
+            gateInEmptyState ? (
+              <EmptyState
+                icon={Mail}
+                {...gateCopy[planGate]}
+                action={gateButton("default")}
+              />
+            ) : (
+              <EmptyState
+                icon={Mail}
+                title="No invitations yet"
+                description="Create a single-use link for one access plan."
+                action={
+                  <Button
+                    disabled={!owner || !profiles.length}
+                    onClick={() => setInviteOpen(true)}
+                  >
+                    Invite someone
+                  </Button>
+                }
+              />
+            )
           ) : (
             <div className="divide-y">
               {invites.map((invite) => (
