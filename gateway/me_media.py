@@ -1011,16 +1011,6 @@ def _asset_created_at(
     return int(path.stat().st_mtime) if path and path.exists() else 0
 
 
-def _prompt_for_asset(asset: Mapping[str, Any], job: Mapping[str, Any], receipt: Mapping[str, Any] | None) -> str | None:
-    return _string_first(
-        asset.get("prompt"),
-        _nested(job, "metadata", "prompt"),
-        _nested(job, "metadata", "parameters", "prompt"),
-        _nested(receipt, "metadata", "prompt"),
-        _nested(receipt, "metadata", "parameters", "prompt"),
-    )
-
-
 def _model_for_asset(asset: Mapping[str, Any], job: Mapping[str, Any], receipt: Mapping[str, Any] | None) -> str | None:
     return _string_first(
         asset.get("model"),

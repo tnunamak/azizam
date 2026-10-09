@@ -117,4 +117,3 @@ not rewritten in place. Historical
 video records are purged of the prompt field on load/save, and no Library read
 falls back to embedded metadata. Existing Responses rows keep their original
 seven-day expiry; they are not retroactively reclassified as media prompts.
-
