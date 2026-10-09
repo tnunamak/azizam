@@ -84,13 +84,14 @@ All raw values live in `web/src/styles/tokens.css`. Components use Tailwind util
 | Media badge | `--media-badge` / `-foreground` / `-hover` | rgb(5 15 18 / 64%) / white / 80% | same | The duration badge on video and audio tiles and the audio play badge (white text 9:1 or better over the scrim on white) |
 | Subtle ink | `--subtle-foreground` | #4A5C62 | #9FB2B9 | Group labels, axis labels, quiet counts: 6.4:1 on the light page (was 4.8), 7.7:1 on the dark (was 5.5) |
 | Success | `--success` / tint / fill | #15703F / #E3F3EA / #2E9E63 | #6FD39B / #12352A / #4CC283 | Ready |
-| Warning | `--warning` / tint / fill | #B45309 / #FDF1DC / #D97706 | #F5B544 / #3A2E15 / #F2A93B | Degraded, Refused |
+| Warning | `--warning` / tint / fill | #B45309 / #FEF4E3 / #D97706 | #F5B544 / #3A2E15 / #F2A93B | Degraded, Refused |
 | Danger | `--danger` / tint / fill | #B3261E / #FCE9E7 / #C62828 | #FF8F85 / #3F1F1E / #F0655A | Down, Failed |
 | Info | `--info` / tint / fill | #1F5FA6 / #E6EFFA / #3B82D6 | #8DB8F2 / #182E4A / #6AA2EC | Busy, In progress |
 | Blocked | `--blocked` / tint / fill | #6B4FB0 / #EFE9FB / #5B3A9E | #C2A8F0 / #2A2340 / #D6C4FF | Blocked (with a lock icon) |
 | Neutral | `--neutral`, `--nocheck-fill` | #6A7C81, #C9D3D6 | #8AA1A7, #3B5961 | Off, Unknown (with the subtle ink for the word); an hour with no check |
 | People | `--person-1…7`, `--person-ink` | coral, sky, sage, violet, amber, rose, teal on #10232A | same | Person marks (all 6:1 or better) |
-| Capabilities | `--capability-*` | seven hues | lighter pairs | Capability icons and tints at 12% |
+| Capabilities | `--capability-*` | seven hues | lighter pairs | The capability's glyph where it is the subject (the Try chip, the Library type badge); never a list icon or a tinted tile (System numbers v2, "Colour budget") |
+| Charts | `--chart-1`, `--chart-2`, `--chart-3`, `--chart-other` | = primary, #2F8F9B, #8C7A55, = neutral | = link, #2F7F88, #B9A274, = neutral | One series in `--chart-1`; a breakdown in at most three hues plus Other (`chartColors`). Every fill is 3:1 or better on the card |
 
 All text pairs pass WCAG AA in both themes: axe colour-contrast passes on every gated page (owner and member; Home, Status, Library and the viewer; light and dark; 1440 and 390).
 
@@ -143,16 +144,16 @@ D1.1 retuned the scale so weight and size carry the hierarchy (judges: "craft fa
 
 ### Spacing, radius, elevation, motion
 
-- **Spacing:** Tailwind's 4 px scale (`--spacing: 0.25rem`). Page gutters 20 / 32 / 48 px at 390 / 640 / 1024+. Section rhythm 40 px; inside a section 12 px; rows 8–12 px vertical. Content width caps at 1200 px.
-- **Radius:** controls 6 px (`rounded-control`), panels and dialogs 10 px (`rounded-panel`), media 6 px (`rounded-media`), uptime segments 2 px, people and the round play button full. No pill buttons (ban 13).
+- **Spacing:** Tailwind's 4 px scale (`--spacing: 0.25rem`). Page padding 20 / 24 / 32 px at 390 / 640 / 1024+ (`--page-pad`, craft PR 1; it was 48 at 1024+). Section rhythm and the rest: System numbers v2 below. Content width caps at 1200 px.
+- **Radius:** controls 6 px (`rounded-control`), cards, panels, dialogs and popovers 8 px (`rounded-panel`; 10 before craft PR 1), status badges and chips 4 px (`rounded-badge`), media 6 px (`rounded-media`), uptime segments 2 px, people and the round play button full. No pill buttons (ban 13).
 - **Elevation:** borders build structure; a shadow only lifts something above the page: menus, popovers, dialogs, the viewer (`--shadow-overlay`). Cards never carry a shadow (ban A4).
 - **Icons:** lucide at 16 px in rows and 20 px for state, stroke 1.75 (the default 2 read heavy beside 13–14 px text).
 - **Motion:** 120 ms for hover and press (`--motion-fast`), 200 ms for disclosure and overlays (`--motion-duration`), easing cubic-bezier(0.2, 0, 0, 1). `prefers-reduced-motion` sets both to 0.
-- **Targets:** at < 640 px every control is at least 44 × 44 px (`max-sm:min-h-11`). Desktop controls are 32–40 px.
+- **Targets:** at < 640 px every control is at least 44 × 44 px (`max-sm:min-h-11`). Desktop controls are 32 or 40 px.
 
 ## System numbers v2 (craft system, 2026-10-09)
 
-Status: **spec**. Nothing below has shipped. It takes effect in the token-and-components PR (PR 1 in `craft-system/PLAN.md`). Until then, the "Tokens" section above describes the code. Where the two disagree, this section is the target and "Tokens" is today.
+Status: **PR 1 shipped** (`craft-system/PLAN.md`): the tokens, the shared components (controls, cards, tables, badges, headers, empty and loading states, charts), the four new components in "Components" and the gates. Pages adopt the templates surface by surface in PRs 2–9, so a page that has not moved yet can still differ from the numbers here; `scripts/ui/craft_numbers.py` reports by how much. Where this section and "Tokens" disagree, this section wins.
 
 Why this section exists: craft levelled off at about 7.0 against about 7.9 for the benchmarks after four rounds of page-by-page patches. The measurements (`craft-system/MEASUREMENTS.md`) show the gap is in the system. Desktop uses six control heights, the same two-line row is drawn at five heights, two sizes serve one text role, 44 px touch targets leak onto the desktop, and cards are still the kit default. Every number below cites its evidence: a benchmark file under `benchmarks/` (measured in `MEASUREMENTS.md` §1), or a measurement of Azizam (§2).
 
@@ -292,7 +293,9 @@ PR 1 turns `craft-system/azizam/_scripts/measure.mjs` and `summarize.py` into a 
 - a card has a shadow or a radius other than 8;
 - the coloured-pixel budget is broken outside media and charts.
 
-`token_drift.py` also flags unprefixed `min-h-11` and `h-11`, `rounded-lg` and `rounded-xl` in `app/`, `shadow-*` on non-overlay elements, and the old text utilities once their surface has moved.
+How it runs (PR 1): `scripts/ui/craft_numbers.py [--fail] [--routes home,status] [--manifest PATH]` starts the household fixture on `UI_E2E_PORT` (or measures a running one), runs `measure.mjs` and reports every check for every measured route. `--fail` fails only the checks `scripts/ui/craft_numbers.json` enforces for a route. PR 1 enforces the control heights on Home, Status and Library, the pages that already use the shared parts; each surface PR turns on the rest for its routes. Exempt from the control check: buttons taller than 64 (media tiles, whole-card buttons), textareas, switches, checkboxes and link-styled buttons; a tab or segment counts as its group. A 10 px text is allowed only as a person mark's initial.
+
+`token_drift.py` also flags unprefixed `min-h-11` and `h-11`, `rounded-lg` and `rounded-xl` in `app/`, `shadow-*` on non-overlay elements, and the old text utilities once their surface has moved. They fail in the files listed in its `SYSTEM_FILES` (PR 1: the shared parts) and are warnings elsewhere; a `craft-allow` comment exempts one line and says why (Button's `lg`, the full-width phone action).
 
 ## Shell
 
@@ -308,27 +311,35 @@ PR 1 turns `craft-system/azizam/_scripts/measure.mjs` and `summarize.py` into a 
 | Component | File | Job |
 |---|---|---|
 | Status model | `lib/capability-state.ts`, `lib/use-capability-views.ts` | The state words, the rules above, the verdict; `useCapabilityViews(owner)` gathers the evidence |
-| PageHeader | `components/product/page-header.tsx` | The one page header: 24 px title, optional count, actions on the right, the StatusLine under it. `tight` (Home) keeps a one-line status close under the title, as its subtitle |
+| PageHeader | `components/product/page-header.tsx` | The one page header: `text-title`, optional count in `text-heading` subtle, actions at 32 on the right, a `text-meta` subtitle 4 under the title, the StatusLine under it, 24 to the first section. `tight` (Home) keeps a one-line status close under the title, as its subtitle |
 | StatusLine | `components/product/status-ui.tsx` | The verdict label with its icon and "Checked …" age; `role=status`, `aria-atomic`. `compact` draws it as one 14 px line (Home) |
-| StateWord, StateIcon | same | One icon, colour and word per state; Ready stays quiet |
+| StateWord, StateIcon | same | One icon, colour and word per state; Ready stays quiet. Icons 16 in rows, 14 in badges, 20 beside the verdict |
+| StateBadge | same, on `components/ui/badge.tsx` (`variant="state"`) | A state that is not Ready, on a row or card title: 20 tall, radius 4, the 14 icon and the word in `text-badge`, the state's ink on its tint (4.5:1 or better, `state_palette.py`) |
 | Callout | same | The one callout for every problem, notice and error: severity icon, a title naming the subject, meta, facts, body, actions. On wide screens the header action sits on the title row; on a phone it follows the body, so the instruction comes before its button, and everything under the title uses the full width. `evidence` facts follow `facts` on wide screens and fold behind "Show details" on a phone. D1.4 phone order: title, facts (scope, history), the instruction, its button, then evidence |
-| CapabilityList | same | The one way to draw capabilities, in the task-row anatomy: tinted 32 px icon tile, name, state word, reason or age; one or two columns |
-| CapabilityChips | same | While problem cards are open, the capabilities as 44 px rows in one card (state icon, name, state word when not Ready): one column on a phone, two from 640 px, under the cards (D1.4 replaced the wrapping pills; D1.5b removed the side column) |
+| CapabilityList | same | The one way to draw capabilities: rows of 40 (60 with the reason or age, 48 on a phone), the capability icon in ink, the name in `text-body` 500, the state word; one or two columns |
+| CapabilityChips | same | While problem cards are open, the capabilities as 40 px rows (48 on a phone) in one card (state icon, name, state word when not Ready): one column on a phone, two from 640 px, under the cards (D1.4 replaced the wrapping pills; D1.5b removed the side column) |
 | AudioFace, MediaBadge, PlayDisc, `playDiscButton`, DayChip, Waveform, `audioKind` | `components/product/audio-cover.tsx` | The tile cues (D1.6), all on one dark scrim. AudioFace: one neutral face for every clip (sunken surface, real waveform or the glyph) with a `center` slot that lets clicks through to the tile; MediaBadge: type glyph and length, bottom left (the glyph alone without a length); PlayDisc: the 40 px play cue in the middle of video and audio tiles; `playDiscButton`: the disc as the in-place audio play button on wider screens; DayChip: the day on the first tile of each day. The waveform doubles as the position in the viewer |
 | `useAudioPeaks` | `lib/audio-peaks.ts` | Peaks decoded from the file with Web Audio, one file at a time, cached; null (no waveform drawn) when decoding is unavailable |
 | CapNotice | `components/product/cap-notice.tsx` | A spending-limit refusal for owner or member (rule 6) |
-| SectionHeading | `components/product/readiness.tsx` | Every titled region: 16 px heading, optional count and one action |
+| SectionHeading | `components/product/readiness.tsx` | Every titled region: `text-heading`, 12 above its content, optional count and one action at 32 |
 | `capabilityMeta` | same | Capability name, icon and hue |
 | UptimeBar, `hourSlots`, `hoursUp`, `failingSince`, `healthHistory`, `healthStory` | `components/product/uptime-bar.tsx` | Rule 4: 24 hourly segments, down hours taller as well as red, a legend of the colours shown, hour-by-hour list (`hourByHour={false}` in the engine table). `size="lg"` on problem cards: 24 px cells, the legend above the strip, clock times every six hours and "Now" under it. `healthStory` gives a card its two plain lines (rule 4) |
 | AppMark | `components/product/app-mark.tsx` | Real marks for known apps (Simple Icons, CC0) and a monogram otherwise |
 | PersonMark | `components/product/person-mark.tsx` | A person's initial in their stable hue |
 | BrandMark | `components/product/brand-mark.tsx` | The fish, in the chrome accent |
-| Segmented, Tabs | `components/product/segmented.tsx`, `components/ui/tabs.tsx` | The only segment pattern for filtering, and the tab pattern. D1.5: no sunken track; quiet chips, the chosen one in the accent tint and semibold (the sidebar's "you are here"). Options may carry an icon (hidden on phones, where four segments share the width). Tabs' `line` variant (People) keeps its underline |
+| Segmented, Tabs | `components/product/segmented.tsx`, `components/ui/tabs.tsx` | The only segment pattern for filtering, and the tab pattern. D1.5: no sunken track; quiet chips, the chosen one in the accent tint and semibold (the sidebar's "you are here"). Options may carry an icon (hidden on phones, where four segments share the width). Tabs' `line` variant (People) keeps its underline. Segmented and chip tabs are a 32 group of 28 segments; `line` tabs are 40 with a 2 px indicator; all 44 on a phone |
 | Disclosure | `app/globals.css` (`summary`) | Every `<summary>` draws one chevron in the text colour that turns 90° when open; a summary with `list-none` draws its own. Disclosure buttons (the Callout's "Show details") lead with the same chevron |
 | CopyField | `components/product/copy-field.tsx` | One boxed value with the copy button inside its edge (Cloudflare 6a.2) |
-| Button | `components/ui/button.tsx` | default (primary), outline, secondary, ghost, link, destructive (D1.5 removed `cover`) |
-| Input, Select, Popover, Dialog, Sheet, DropdownMenu, Tooltip, Skeleton | `components/ui/*` | shadcn primitives on the tokens |
-| EmptyState | `components/product/empty-state.tsx` | Left-aligned dashed panel with an icon, a label and the one action that fills it (Geist 12c.2); never a centred illustration |
+| Button | `components/ui/button.tsx` | default (primary), outline, secondary, ghost, link, destructive (D1.5 removed `cover`). Sizes: 32 by default (also `sm`), `md` 40 for a form's submit, Run and a dialog's primary, `icon` 32, `lg` 44 for a full-width phone action; every size 44 below 640 |
+| Input, Select, Popover, Dialog, Sheet, DropdownMenu, Tooltip, Skeleton | `components/ui/*` | shadcn primitives on the tokens. Input and Select: `md` 40 in forms (the default), `sm` 32 in toolbars, 44 on a phone. `SkeletonRows` draws loading rows at the row heights |
+| Card | `components/ui/card.tsx` | The content card: radius 8, a hairline, no shadow, padding 24 (16 on a phone), blocks 16 apart |
+| Table | `components/ui/table.tsx` | A 36 header in `text-label` subtle ink with no fill, rows of 40 (`dense` 36), `numeric` cells right-aligned in tabular figures |
+| ListCard, ListRow | `components/product/list-card.tsx` | The list template: a bordered card with an optional 36 header band and hairline rows at 40 (`lines={1}`) or 60 (`lines={2}`), 48 and 64 on a phone; a leading mark or icon, the title in `text-body` 500, a `text-meta` second line, trailing facts (folded into the second line with " · " on a phone) and a 32 row action; `href` opens the row (craft PR 1, director decision) |
+| SettingsSection, SettingRow | `components/product/setting-row.tsx` | The settings template: a `text-heading` 12 above one card of rows at least 64 tall, each a label in `text-body` 500, one line of description and the control right-aligned at 32 (craft PR 1, director decision) |
+| StatStrip, Stat | `components/product/stat-strip.tsx` | Up to four figures in one bordered card divided by hairlines: a `text-meta` label, the `text-figure` number, an optional note; no icon tiles (craft PR 1, director decision) |
+| KeyValueList | `components/product/key-value.tsx` | Facts on a detail page, a receipt or a Status card: 32 rows, the key in `text-meta` muted in a 160 column (stacked on a phone), the value in `text-body` (craft PR 1, director decision) |
+| ChartLegend, `chartColors` | `components/ui/charts.tsx` | A breakdown's colours (three hues plus Other) and its legend of 8 px dots |
+| EmptyState | `components/product/empty-state.tsx` | Drawn in the region it would fill, left-aligned, at least 160 tall: a 20 icon in muted ink, the title in `text-body` 500, one sentence in `text-meta`, the one action at 32 (Geist 12c.2); a dashed edge only outside a card (`inCard` drops it); never a centred illustration |
 | ErrorState | `components/product/error-state.tsx` | A Callout with heading, an optional sentence, retry, and the HTTP code under "Technical details" |
 | Favourites and task rows | `app/home/page.tsx` | D1.4: the person's two most-used tasks (from their own successful requests; pictures and chat for someone new) as two 128 px tiles with "Last used 22m ago"; every other task a quiet 44 px row with a small icon in its colour, no chip; a state only when not Ready; a link into Try with the right mode, or a plain row with the reason when unusable. D1.5: the rows sit in one card under the tiles, with hairlines between rows (one column on a phone, two on a wide card), so the section reads as one family of cards. D1.6: "Your usual" ("Start here" for someone new) heads the tiles and "Everything else" the rows, so the hierarchy says why |
 | Problem card | `app/status/status-client.tsx` | A Callout in the `incident` variant (D1.6), one order at every width: a title that names the consequence ("Video requests can fail right now"; the verdict above names the state, so nothing repeats), "What's wrong" (the cause) and "Affects" (scope and who already hit it); what to do in full-weight 16 px text with its button right under it; then "Last 24 hours" (the story, one line tying red hours to the verdict, the 32 px strip with 14 px clock labels); then evidence behind "Show details". Only the first card's action is primary |
@@ -351,14 +362,16 @@ No new component without a director decision.
 
 - Run `scripts/ui/token_drift.py --fail` (default scope: the surfaces above and their primitives). Legacy routes report with `--all` and are out of D1 scope.
 - Ban-list exceptions: none recorded.
+- Benchmark exception (director decision, 2026-10-09): fields keep the darker `--input` edge (3:1, WCAG 1.4.11) where the benchmarks use about 1.3:1 (System numbers v2, "Field edge").
 - Impeccable detector exception: `layout-transition` (height) comes from Sonner's own toast stylesheet, a third-party package; no Azizam style animates height.
 - D1.4's detector exception (`text-overflow` on an audio cover's top line) is gone with the covers (D1.5).
 - Console exception: signed-out pages get a 401 from `/admin/api/session` while the shell checks for a service key. It is expected and carries no user-facing error.
 
 ## How the gates run (T-4)
 
-- `scripts/ui/token_drift.py --fail`: token drift.
-- `scripts/ui/state_palette.py --fail`: state text 4.5:1, fills 3:1, Degraded and Down apart under every colour-vision simulation.
+- `scripts/ui/token_drift.py --fail`: token drift, and the craft-system rules (unprefixed `min-h-11` and `h-11`, `rounded-lg` and `rounded-xl`, kit shadows outside overlays, `text-[Npx]`): failures in files moved to the system, warnings elsewhere.
+- `scripts/ui/state_palette.py --fail`: state text 4.5:1, fills 3:1, Degraded and Down apart under every colour-vision simulation; StateBadge ink 4.5:1 on its tint; chart fills 3:1 on the card.
+- `scripts/ui/craft_numbers.py --fail`: the System numbers v2 at 1440 and 390 on the household fixture ("Gates for these numbers"). `scripts/ui/craft_numbers.json` lists the checks each route enforces; a surface PR turns its route on.
 - `node web/e2e/d1-gates.mjs <out>`: axe WCAG 2 AA (contrast included), horizontal overflow, clipped text, 44 px targets at 390, visible focus on every tab stop, console errors and failed requests; owner and member, both themes, both widths, plus the Library viewer.
 - `node web/e2e/d1-snapshots.mjs <dir>` then `npx impeccable detect <url>` on each snapshot: the detector cannot sign in, so signed-in pages are saved without scripts and served locally.
 - `~/.tmp/gw-product/audit/{boot.py,crawl.mjs,lint.py}` on a copy of the production data: repeated facts and word budgets.
