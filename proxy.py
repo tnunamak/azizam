@@ -19996,10 +19996,12 @@ def _load_image_media_job_payload(job_id: str) -> dict[str, Any] | None:
 
 def _delete_image_media_job_payload(job_id: str) -> None:
     _EPHEMERAL_MEDIA_JOB_PAYLOADS.pop(job_id, None)
-    try:
-        _image_media_job_payload_path(job_id).unlink(missing_ok=True)
-    except Exception:
-        pass
+    for path in (_image_media_job_payload_path(job_id),
+                 _image_media_job_payload_path(job_id).with_suffix(".json.tmp")):
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 def _prune_orphaned_media_job_payloads(*, now: float | None = None) -> int:

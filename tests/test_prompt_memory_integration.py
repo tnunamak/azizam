@@ -59,9 +59,12 @@ def test_failed_payload_is_removed(tmp_path):
     payload_dir.mkdir(parents=True)
     file = payload_dir / "mj_failed.json"
     file.write_text('{"prompt":"orphan-sentinel"}', encoding="utf-8")
+    temporary = payload_dir / "mj_failed.json.tmp"
+    temporary.write_text('{"prompt":"temporary-sentinel"}', encoding="utf-8")
     with patch.object(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", payload_dir), patch.object(media_jobs, "DB_PATH", tmp_path / "data" / "jobs.db"):
         proxy._mark_image_media_job_failed("mj_failed", "failed")
     assert not file.exists()
+    assert not temporary.exists()
 
 
 def test_pruner_removes_interrupted_payload_temp_file(tmp_path):

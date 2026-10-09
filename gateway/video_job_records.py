@@ -1,7 +1,8 @@
 """Durable store for ``/v1/videos`` job records.
 
-``proxy.py`` keeps one small record per video job (model, size, prompt,
-owner key hash, tombstone, extension lineage). It used to live only in process
+``proxy.py`` keeps one small record per video job (model, size,
+owner key hash, tombstone, extension lineage). Prompt text lives only in the
+maker-scoped asset prompt table. This record used to live only in process
 memory, so a restart lost the owner of every video. That made old ids readable
 by any API key, and it lost the source an extension needs.
 

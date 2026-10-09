@@ -128,12 +128,12 @@ def attach_provenance(
     *,
     workdir: Path | None = None,
 ) -> bytes:
-    """Embed the provenance record into the bytes that will be stored.
+    """Embed provenance in the in-memory output before delivery and cache strip.
 
     PNG gets a ``azizam_provenance`` text chunk; video and audio get a
     container tag. JPEG and WebP are handled at encode time (EXIF), so they
     pass through unchanged here. Failure to embed never fails the request:
-    the original bytes come back and the caller still stores a full copy.
+    the original bytes come back and the cache still strips metadata.
     """
     if not record:
         return content

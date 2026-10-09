@@ -580,6 +580,7 @@ def _media_items(
                 embedded.get("workflow_id"),
                 embedded.get("workflow"),
             )
+            source = _source_projection(receipt, admin_db_path, metadata=job, visible_app_ids=scope.app_ids)
             out.append({
                 "asset_id": asset_id,
                 "id": asset_id,
@@ -593,7 +594,7 @@ def _media_items(
                 "status": job.get("status"),
                 "available": bool(path is not None and path.is_file()),
                 "prompt": prompt,
-                "title": _prompt_title(prompt),
+                "title": _media_title(prompt, kind, created_at, source),
                 "model": model,
                 "workflow": workflow,
                 "seed": _first_present(asset.get("seed"), _nested(job, "metadata", "seed"), _nested(receipt, "metadata", "seed"), embedded.get("seed")),
@@ -605,7 +606,7 @@ def _media_items(
                 "workflow_download_url": signed_url_builder(request, asset_id, "full") if path is not None and path.is_file() and prompt_record else None,
                 "generation_ms": receipt.get("latency_ms") if receipt else None,
                 "provenance": _provenance(asset, job, receipt, embedded, created_at=created_at, prompt=prompt),
-                "source": _source_projection(receipt, admin_db_path, metadata=job, visible_app_ids=scope.app_ids),
+                "source": source,
                 "unavailable_reason": None if path is not None and path.is_file() else "Asset file is missing or expired.",
             })
     if asset_catalog_provider is not None and asset_metadata_reader is not None:
@@ -629,6 +630,8 @@ def _media_items(
             created_at = _asset_created_at(path, {}, None, embedded)
             prompt_record = prompt_memory.get(asset_id, scope.viewer_person_id, path=prompt_memory_path)
             prompt = prompt_record.get("prompt_text") if prompt_record else None
+            source = _source_projection(receipt, admin_db_path, metadata=metadata, embedded=embedded,
+                                        visible_app_ids=scope.app_ids)
             seen.add(asset_id)
             out.append({
                 "asset_id": asset_id,
@@ -642,7 +645,7 @@ def _media_items(
                 "request_id": (receipt or embedded).get("request_id"),
                 "status": "available",
                 "prompt": prompt,
-                "title": _prompt_title(prompt),
+                "title": _media_title(prompt, kind, created_at, source),
                 "model": _string_first(embedded.get("resolved_model"), embedded.get("requested_model")),
                 "workflow": _string_first(embedded.get("workflow_id"), embedded.get("workflow")),
                 "seed": embedded.get("seed"),
@@ -668,7 +671,7 @@ def _media_items(
                     "source": "asset_cache",
                     "complete": bool(embedded),
                 },
-                "source": _source_projection(receipt, admin_db_path, metadata=metadata, embedded=embedded, visible_app_ids=scope.app_ids),
+                "source": source,
             })
     return sorted(out, key=lambda item: (int(item.get("created_at") or 0), str(item.get("asset_id") or "")), reverse=True)
 
@@ -1076,6 +1079,16 @@ def _prompt_title(prompt: str | None) -> str | None:
         return None
     first_line = next((line.strip() for line in prompt.splitlines() if line.strip()), "")
     return first_line[:120] or None
+
+
+def _media_title(prompt: str | None, kind: str, created_at: int, source: Mapping[str, Any]) -> str:
+    private = _prompt_title(prompt)
+    if private:
+        return private
+    noun = {"image": "Picture", "audio": "Audio", "video": "Video"}.get(kind, "Item")
+    maker = str(source.get("label") or "unknown maker")
+    date = datetime.fromtimestamp(created_at, timezone.utc).strftime("%b %-d, %Y")
+    return f"{noun} by {maker} · {date}"
 
 
 def _matches_media_filters(item: Mapping[str, Any], request: Request) -> bool:

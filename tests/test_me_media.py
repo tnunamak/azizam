@@ -261,10 +261,12 @@ class MeMediaRouterTests(unittest.TestCase):
         allowed = self.client.get("/me/api/media?scope=everyone")
         self.assertEqual(allowed.status_code, 200, allowed.text)
         self.assertEqual({item["asset_id"] for item in allowed.json()["assets"]}, {alice_asset, bob_asset})
-        self.assertTrue(all(item["prompt"] is None and item["title"] is None for item in allowed.json()["assets"]))
+        self.assertTrue(all(item["prompt"] is None and item["title"].startswith("Picture by ")
+                            and "misty lake" not in item["title"] for item in allowed.json()["assets"]))
         foreign = self.client.get(f"/me/api/media?person={self.alice['id']}")
         self.assertEqual(foreign.status_code, 200, foreign.text)
-        self.assertTrue(all(item["prompt"] is None and item["title"] is None for item in foreign.json()["assets"]))
+        self.assertTrue(all(item["prompt"] is None and "misty lake" not in item["title"]
+                            for item in foreign.json()["assets"]))
         audit = admin_store.list_audit(action_prefix="media.library.everyone", path=self.admin_db)
         self.assertEqual(len(audit), 1)
 
@@ -748,6 +750,9 @@ class MeMediaRouterTests(unittest.TestCase):
         self.current_user = self.owner
         detail = self.client.get(f"/me/api/media/{asset_id}")
         self.assertEqual(detail.status_code, 200)
+        self.assertIsNone(detail.json()["asset"]["prompt"])
+        self.assertIsNone(detail.json()["asset"]["workflow_download_url"])
+        self.assertEqual(self.client.get(f"/me/api/media/{asset_id}/download?metadata=full").status_code, 403)
         self.assertTrue(admin_store.list_audit(action_prefix="media.detail.everyone", path=self.admin_db))
         headers = {"x-azizam-user-action": "1", "x-azizam-csrf": "valid-csrf"}
         self.assertEqual(self.client.delete(f"/me/api/media/{asset_id}?scope=everyone", headers=headers).status_code, 404)
