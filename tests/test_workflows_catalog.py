@@ -319,6 +319,36 @@ class WorkflowsCatalogTests(unittest.TestCase):
         )
         self.assertIn("Objective likeness check", face["technical_notes"])
 
+    def test_asset_inputs_and_outputs_carry_the_meaning_the_manifest_declares(self) -> None:
+        manifest_root = Path(__file__).resolve().parents[1] / "manifests" / "workflows"
+        registry = WorkflowRegistry.from_directory(manifest_root)
+        records = registry.records()
+        payload = build_workflows_catalog(
+            records=records,
+            capabilities=[
+                Capability(intent=r.intent, backend=r.supported_backends[0], workflow=r.id)
+                for r in records
+            ],
+        )
+        face = next(row for row in payload["workflows"] if row["id"] == "image.analyze.face-likeness")
+        inputs = {row["name"]: row for row in face["inputs"]}
+        # An asset is a media file, not "text": the flag and the intent's media kind survive.
+        self.assertTrue(inputs["reference"]["asset"])
+        self.assertEqual(inputs["reference"]["media_type"], "image/*")
+        self.assertTrue(inputs["candidate"]["asset"])
+        self.assertNotIn("asset", inputs["people"])
+        self.assertNotIn("media_type", inputs["people"])
+        # The manifest's own short names reach the page.
+        self.assertEqual(inputs["reference"]["label"], "a face photo")
+        self.assertEqual(inputs["candidate"]["label"], "a photo to check")
+        self.assertEqual(face["outputs"], [
+            {"name": "report", "media_type": "application/json", "label": "a likeness score"},
+        ])
+        # A mixed manifest keeps each asset's declared kind.
+        scail = next(row for row in payload["workflows"] if row["id"].endswith("scail-2-replace"))
+        kinds = {row["name"]: row["media_type"] for row in scail["inputs"] if row.get("asset")}
+        self.assertEqual(kinds, {"reference_image": "image/*", "source_video": "video/*"})
+
     def test_catalog_description_rejects_internal_tokens_files_and_license_notes(self) -> None:
         for description in (
             "Edit int8_convrot images for this request.",

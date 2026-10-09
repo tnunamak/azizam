@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse, Response
 
 from gateway.capabilities import Capability, summarize_capability
 from gateway.discovery import WorkflowRecord, summarize_workflow
+from gateway.model_metadata import asset_media_type
 from gateway.model_presentation import CAPABILITY_DESCRIPTIONS
 from gateway.workflow_openapi import (
     _execution,
@@ -257,6 +258,7 @@ def _is_technical_workflow_note(value: str) -> bool:
 def _input_rows(record: WorkflowRecord, routes: Mapping[str, Any]) -> list[dict[str, Any]]:
     schema = workflow_inputs_schema(record)
     props = schema.get("properties") if isinstance(schema.get("properties"), Mapping) else {}
+    manifest_inputs = record.manifest.get("inputs") if isinstance(record.manifest.get("inputs"), Mapping) else {}
     required = set(schema.get("required") or [])
     preferred = routes.get(str(routes.get("recommended") or "sync")) or routes.get("sync") or routes.get("async") or {}
     mode = "async" if preferred == routes.get("async") else "sync"
@@ -279,10 +281,16 @@ def _input_rows(record: WorkflowRecord, routes: Mapping[str, Any]) -> list[dict[
         for optional in ("default", "minimum", "maximum", "enum", "description"):
             if optional in spec:
                 row[optional] = spec[optional]
-        # The row's type is the JSON type ("string"); without this flag a UI
-        # cannot tell a picture input from a text input except by its prose.
-        if spec.get("x-azizam-asset"):
+        declared = manifest_inputs.get(name) if isinstance(manifest_inputs.get(name), Mapping) else {}
+        # The JSON schema calls an asset "string" (and flags it x-azizam-asset);
+        # keep what it really is, so a page can tell a picture input from a text one.
+        if declared.get("type") == "asset" or spec.get("x-azizam-asset"):
             row["asset"] = True
+            media_type = asset_media_type(record.intent, declared)
+            if media_type:
+                row["media_type"] = media_type
+        if isinstance(declared.get("label"), str) and declared["label"].strip():
+            row["label"] = declared["label"].strip()
         rows.append(row)
     for extra in route_inputs(record):
         row = {

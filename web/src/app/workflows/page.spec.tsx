@@ -9,7 +9,17 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
+import { ViewerContext, type Viewer } from "@/components/shell/session";
 import WorkflowsPage from "./page";
+
+const member: Viewer = {
+  authenticated: true,
+  name: "Sam",
+  email: null,
+  role: "member",
+  admin: false,
+};
+const owner: Viewer = { ...member, name: "Tim", role: "owner", admin: true };
 
 const workflows = [
   {
@@ -68,15 +78,42 @@ const workflows = [
   },
 ];
 
-function renderWorkflows() {
+function renderWorkflows(viewer: Viewer = member) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <WorkflowsPage />
+      <ViewerContext.Provider value={viewer}>
+        <WorkflowsPage />
+      </ViewerContext.Provider>
     </QueryClientProvider>,
   );
+}
+
+/** The catalog row for Face Likeness Check as /me/api/workflows returns it. */
+const faceLikeness = {
+  ...workflows[0],
+  id: "image.analyze.face-likeness",
+  title: "Face Likeness Check",
+  purpose: "Score how closely a face matches a reference",
+  inputs: [
+    { name: "reference", type: "string", asset: true, media_type: "image/*", label: "a face photo", required: true, accepted: true },
+    { name: "candidate", type: "string", asset: true, media_type: "image/*", label: "a photo to check", required: true, accepted: true },
+    { name: "people", type: "string", label: "a list of people", required: false, accepted: true },
+    { name: "thresholds", type: "string", label: "custom thresholds", required: false, accepted: true },
+  ],
+  outputs: [{ name: "report", media_type: "application/json", label: "a likeness score" }],
+  engine_binding: "gateway",
+  availability: { status: "unknown", reason_code: "unknown", available: false, measured: false, evidence: { kind: "unknown" } },
+};
+
+function serve(rows: unknown[]) {
+  vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+    url.includes("/me/api/media")
+      ? Response.json({ assets: [] })
+      : Response.json({ schema_version: 1, workflows: rows }),
+  ));
 }
 
 describe("WorkflowsPage empathy copy", () => {
@@ -244,30 +281,103 @@ describe("WorkflowsPage empathy copy", () => {
     expect(details).toHaveAttribute("open");
   });
 
-  test("unavailable cards and details give the setup next step without an owner-only link", async () => {
-    const catalog = [{
+  test("summaries name each input and output in plain words, never 'text and text' or 'a file'", async () => {
+    serve([faceLikeness, { ...workflows[0], id: "w.ready", title: "Ready one" }]);
+    renderWorkflows(owner);
+    fireEvent.click(await screen.findByText("Not set up (1)"));
+    const card = screen.getByRole("article", { name: "Face Likeness Check" });
+    expect(within(card).getByText("Needs: a face photo and a photo to check")).toBeVisible();
+    expect(within(card).getByText("Optional: a list of people and custom thresholds")).toBeVisible();
+    expect(within(card).getByText("Makes: a likeness score")).toBeVisible();
+    expect(card).not.toHaveTextContent(/text and text|a file/);
+  });
+
+  test("without declared labels it falls back to the media kind, then to the input name, and de-duplicates", async () => {
+    serve([{
       ...workflows[0],
-      availability: { status: "not_configured", reason_code: "not_configured", available: false },
-    }];
-    vi.stubGlobal("fetch", vi.fn(async (url: string) =>
-      url.includes("/me/api/media")
-        ? Response.json({ assets: [] })
-        : Response.json({ schema_version: 1, workflows: catalog }),
-    ));
+      inputs: [
+        { name: "reference", type: "string", asset: true, media_type: "image/*", required: true, accepted: true },
+        { name: "candidate", type: "string", asset: true, media_type: "image/*", required: true, accepted: true },
+        { name: "clip", type: "string", asset: true, required: true, accepted: true },
+        { name: "people", type: "string", required: false, accepted: true },
+        { name: "thresholds", type: "string", required: false, accepted: true },
+        { name: "width", type: "integer", required: false, accepted: true },
+      ],
+      outputs: [{ name: "report", media_type: "application/json" }],
+    }]);
     renderWorkflows();
     const card = await screen.findByRole("article", { name: "Upscale image" });
-    const nextStep = "Not available right now. The person who manages Azizam can set it up.";
-    expect(within(card).getByText(nextStep)).toBeVisible();
-    expect(within(card).queryByRole("link", { name: "Open in Try" })).toBeNull();
+    expect(within(card).getByText("Needs: a picture for reference, a picture for candidate and a file")).toBeVisible();
+    expect(within(card).getByText("Optional: text for people, text for thresholds and a number")).toBeVisible();
+    expect(within(card).getByText("Makes: a report")).toBeVisible();
+  });
+
+  test("members do not see workflows that are not set up, but still see ones that are only busy", async () => {
+    serve([
+      { ...workflows[0], id: "w.ready", title: "Ready one" },
+      faceLikeness,
+      { ...workflows[0], id: "w.off", title: "Turned off", availability: { status: "unavailable", reason_code: "unavailable_disabled", available: false } },
+      { ...workflows[0], id: "w.busy", title: "Busy one", availability: { status: "busy", reason_code: "busy", available: false } },
+    ]);
+    renderWorkflows(member);
+    expect(await screen.findByText("Ready one")).toBeVisible();
+    expect(screen.getByText("Busy one")).toBeVisible();
+    expect(screen.queryByText("Face Likeness Check")).toBeNull();
+    expect(screen.queryByText("Turned off")).toBeNull();
+    expect(screen.queryByText(/Not set up/)).toBeNull();
+    expect(screen.getByText("2 workflows")).toBeVisible();
+    expect(document.querySelector('a[href^="/engines"], a[href^="/status"], a[href^="/people"]')).toBeNull();
+  });
+
+  test("a member whose every workflow is not set up sees the empty state", async () => {
+    serve([faceLikeness]);
+    renderWorkflows(member);
+    expect(await screen.findByText("No workflows are set up yet. The person who manages Azizam can add them.")).toBeVisible();
+  });
+
+  test("the owner finds unavailable workflows in a folded Not set up section", async () => {
+    serve([{ ...workflows[0], id: "w.ready", title: "Ready one" }, faceLikeness]);
+    renderWorkflows(owner);
+    await screen.findByText("Ready one");
+    const section = screen.getByText("Not set up (1)").closest("details")!;
+    expect(section).not.toHaveAttribute("open");
+    expect(within(section).getByRole("article", { name: "Face Likeness Check", hidden: true })).toBeInTheDocument();
+    expect(screen.getByText("2 workflows")).toBeVisible();
+    fireEvent.click(screen.getByText("Not set up (1)"));
+    expect(section).toHaveAttribute("open");
+  });
+
+  test.each([
+    [{ status: "unavailable", reason_code: "unavailable_disabled" }, "Turned off. Turn it on in Engines.", "Open Engines", "/engines"],
+    [{ status: "unavailable", reason_code: "unavailable_unconfigured" }, "Setup is not finished. Finish it in Engines.", "Open Engines", "/engines"],
+    [{ status: "not_available", reason_code: "not_available" }, "No engine is set up for it. Add one in Engines.", "Open Engines", "/engines"],
+    [{ status: "unavailable", reason_code: "unavailable" }, "Its engine is not answering. See Status.", "Open Status", "/status"],
+    [{ status: "unknown", reason_code: "unknown" }, "No health check has reported on it yet. See Status.", "Open Status", "/status"],
+    [{ status: "unavailable", reason_code: "policy_denied" }, "An access plan blocks it. Review plans in People.", "Open access plans", "/people?tab=plans"],
+  ])("the owner gets one specific reason and a real next step for %j", async (availability, line, linkName, href) => {
+    serve([{ ...workflows[0], availability: { ...availability, available: false } }]);
+    renderWorkflows(owner);
+    const card = await screen.findByRole("article", { name: "Upscale image", hidden: true });
+    expect(within(card).getByText(line)).toBeInTheDocument();
+    expect(within(card).getByRole("link", { name: linkName, hidden: true })).toHaveAttribute("href", href);
+    expect(card).not.toHaveTextContent(/Unavailable\.|Not available right now/);
+    expect(within(card).queryByRole("link", { name: "Open in Try", hidden: true })).toBeNull();
+  });
+
+  test("the engine link goes to the one engine the workflow is bound to", async () => {
+    serve([{ ...workflows[0], engine_binding: "comfyui", availability: { status: "unavailable", reason_code: "unavailable_disabled", available: false } }]);
+    renderWorkflows(owner);
+    const card = await screen.findByRole("article", { name: "Upscale image", hidden: true });
+    expect(within(card).getByRole("link", { name: "Open Engines", hidden: true })).toHaveAttribute("href", "/engines?service=comfyui");
+  });
+
+  test("busy and starting workflows keep a disabled Try button and one retry line", async () => {
+    serve([{ ...workflows[0], availability: { status: "starting", reason_code: "starting", available: false } }]);
+    renderWorkflows(member);
+    const card = await screen.findByRole("article", { name: "Upscale image" });
     expect(within(card).getByRole("button", { name: "Open in Try" })).toBeDisabled();
-    fireEvent.click(within(card).getByRole("button", { name: "Details" }));
-    const dialog = screen.getByRole("dialog");
-    const message = within(dialog).getByText(nextStep);
-    const details = within(dialog).getByText("Technical details").closest("details")!;
-    expect(message).toBeVisible();
-    expect(message.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(within(dialog).queryByRole("link", { name: "Open in Try" })).toBeNull();
-    expect(dialog.querySelector('a[href="/engines"], a[href="/status"], a[href="/people"]')).toBeNull();
+    expect(within(card).getByText("Try again in a moment.")).toBeVisible();
+    expect(within(card).getAllByText(/Starting/)).toHaveLength(1);
   });
 
   test("an empty catalog says who can add workflows without directing members to owner pages", async () => {

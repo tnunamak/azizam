@@ -184,6 +184,33 @@ async function preparePage(
   ).toBeVisible();
 }
 
+/** The owner folds workflows that are not set up; open that section. */
+async function openNotSetUp(page: Page, count = 1) {
+  await page.getByText(`Not set up (${count})`, { exact: true }).click();
+}
+
+const faceLikenessRow = {
+  id: "image.analyze.face-likeness",
+  capability: "image",
+  title: "Face Likeness Check",
+  purpose: "Score how closely a face matches a reference",
+  description: "Score how closely a face matches a reference",
+  inputs: [
+    { name: "reference", type: "string", asset: true, media_type: "image/*", label: "a face photo", required: true, accepted: true },
+    { name: "candidate", type: "string", asset: true, media_type: "image/*", label: "a photo to check", required: true, accepted: true },
+    { name: "people", type: "string", label: "a list of people", required: false, accepted: true },
+    { name: "thresholds", type: "string", label: "custom thresholds", required: false, accepted: true },
+  ],
+  outputs: [{ name: "report", media_type: "application/json", label: "a likeness score" }],
+  engine_binding: "gateway",
+  availability: { status: "unknown", reason_code: "unknown", available: false, measured: false, evidence: { kind: "unknown" } },
+  typical_seconds: 2,
+  aliases: [],
+  examples: { curl: "curl", python: "python", javascript: "js" },
+  native_route: null,
+  discovery_url: "/gateway/v1/workflows/image.analyze.face-likeness",
+};
+
 async function assertNoSeriousAxe(page: Page) {
   const a11y = await new AxeBuilder({ page }).analyze();
   const violations = a11y.violations
@@ -349,6 +376,7 @@ test("missing input and time details stay quiet", async ({
   await routeWorkflows(page, seededCatalog);
   await routeRecentJobs(page, { assets: [], models: [], next_cursor: null });
   await page.goto("/ui/workflows/");
+  await openNotSetUp(page);
   await page.getByRole("button", { name: "Details" }).nth(1).click();
   const sheet = page.getByRole("dialog", { name: "Voiceover" });
   await sheet.getByText("Technical details", { exact: true }).click();
@@ -393,17 +421,25 @@ for (const theme of ["light", "dark"] as const) {
         page.getByRole("heading", { name: "Images", exact: true }),
       ).toBeVisible();
       await expect(
+        page.getByRole("heading", { name: "Product render", exact: true }),
+      ).toBeVisible();
+      // The owner sees the workflow that is not set up, folded, with one reason and a next step.
+      await openNotSetUp(page);
+      await expect(
         page.getByRole("heading", { name: "Audio", exact: true }),
       ).toBeVisible();
       await expect(
-        page.getByRole("heading", { name: "Product render", exact: true }),
+        page.getByText("Setup is not finished. Finish it in Engines."),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("link", { name: "Open Engines" }),
       ).toBeVisible();
       await expect(
         page.getByText(/Long manifest guidance stays searchable/),
       ).toHaveCount(0);
       await expect(page.getByText("image/png")).toHaveCount(0);
       await expect(page.getByText("product-shot", { exact: true })).toHaveCount(0);
-      await expect(page.getByText("Unavailable", { exact: true })).toBeVisible();
+      await expect(page.getByText("Unavailable", { exact: true })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Details" })).toHaveCount(
         2,
       );
@@ -507,9 +543,62 @@ test("workflows search filters aliases and can be cleared", async ({
   await expect(
     page.getByRole("heading", { name: "Product render", exact: true }),
   ).toBeVisible();
+  await openNotSetUp(page);
   await expect(
     page.getByRole("heading", { name: "Voiceover", exact: true }),
   ).toBeVisible();
+});
+
+test("a search that only matches a workflow that is not set up opens its folded section", async ({
+  page,
+}) => {
+  await preparePage(page, "light", 1440, seededCatalog);
+  await page.getByPlaceholder("Search workflows").fill("speech");
+  await expect(
+    page.getByRole("heading", { name: "Voiceover", exact: true }),
+  ).toBeVisible();
+});
+
+test("owner sees Face Likeness Check in plain words with a reason and a link", async ({
+  page,
+}) => {
+  await preparePage(page, "light", 1440, {
+    schema_version: 1,
+    workflows: [seededCatalog.workflows[0], faceLikenessRow],
+  });
+  await openNotSetUp(page);
+  const card = page.getByRole("article", { name: "Face Likeness Check" });
+  await expect(card).toContainText("Needs: a face photo and a photo to check");
+  await expect(card).toContainText("Optional: a list of people and custom thresholds");
+  await expect(card).toContainText("Makes: a likeness score");
+  await expect(card).toContainText("No health check has reported on it yet. See Status.");
+  await expect(card).not.toContainText(/Unavailable|Not available right now|text and text/);
+  await expect(card.getByRole("link", { name: "Open Status" })).toHaveAttribute("href", /\/status/);
+  await assertNoSeriousAxe(page);
+});
+
+test("a member does not see workflows that are not set up", async ({ page }) => {
+  await page.route("**/me/api/session", (route) =>
+    route.fulfill({
+      json: {
+        authenticated: true,
+        csrf_token: "fixture",
+        apps: [],
+        user: { id: "member-wf", name: "Member", role: "member", email: "member@example.test" },
+      },
+    }),
+  );
+  await preparePage(page, "light", 1440, {
+    schema_version: 1,
+    workflows: [seededCatalog.workflows[0], faceLikenessRow, seededCatalog.workflows[1]],
+  });
+  await expect(
+    page.getByRole("heading", { name: "Product render", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("Face Likeness Check")).toHaveCount(0);
+  await expect(page.getByText("Voiceover")).toHaveCount(0);
+  await expect(page.getByText(/Not set up/)).toHaveCount(0);
+  await expect(page.getByText("1 workflow", { exact: true })).toBeVisible();
 });
 
 test("workflow sheet shows controls, code, links and seeded recent jobs", async ({
@@ -618,6 +707,7 @@ test("workflow sheet recent jobs handles empty records", async ({ page }) => {
   await routeWorkflows(page, seededCatalog);
   await routeRecentJobs(page, { assets: [], models: [], next_cursor: null });
   await page.goto("/ui/workflows/");
+  await openNotSetUp(page);
   await page.getByRole("button", { name: "Details" }).nth(1).click();
   await expect(page.getByRole("dialog")).toContainText(
     /No recent (jobs|records)/,

@@ -442,6 +442,15 @@ def _asset_input_modality(spec: Mapping[str, Any], *, default: str | None) -> st
     return major if major in INPUT_MODALITIES else default
 
 
+def asset_media_type(intent: str | None, spec: Mapping[str, Any]) -> str | None:
+    """Media kind of one asset input as ``image/*``: its declared type, else its intent's default."""
+    declared = str(spec.get("media_type") or "").strip()
+    if declared:
+        return declared
+    major = _asset_input_modality(spec, default=_INTENT_ASSET_MODALITY.get(str(intent or "")))
+    return f"{major}/*" if major else None
+
+
 def _manifest_output_modalities(manifest: Mapping[str, Any]) -> list[str]:
     outputs = manifest.get("outputs")
     if not isinstance(outputs, Mapping):

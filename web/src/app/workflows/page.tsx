@@ -13,6 +13,7 @@ import { cn } from "@/lib/cn";
 import { capabilityLabels } from "@/lib/terms";
 import { availabilityReason } from "@/lib/status-copy";
 import { safeModelId } from "@/lib/model-name";
+import { useViewer } from "@/components/shell/session";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CopyButton } from "@/components/ui/copy-button";
@@ -51,6 +52,7 @@ import {
   type RecentAsset,
   type Workflow as WorkflowRow,
   type WorkflowInput,
+  type WorkflowOutput,
   type WorkflowCatalog as WorkflowsCatalog,
 } from "./workflow-api";
 import { RelativeTime } from "@/components/product";
@@ -193,21 +195,37 @@ function joinWords(values: string[], conjunction = "and") {
   return `${values.slice(0, -1).join(", ")} ${conjunction} ${values.at(-1)}`;
 }
 
+function mediaFamily(value: string) {
+  return value.trim().toLowerCase().split("/")[0];
+}
+
 function mediaLabel(value: string, fallback: string) {
-  const family = value.trim().toLowerCase().split("/")[0];
   return (
     { image: "a picture", audio: "an audio clip", video: "a video", text: "text" }[
-      family as "image" | "audio" | "video" | "text"
+      mediaFamily(value) as "image" | "audio" | "video" | "text"
     ] ?? fallback
   );
 }
 
-function inputLabel(input: WorkflowInput) {
-  const media = [input.media_type, ...(input.accepted_media_types ?? [])]
-    .filter((value): value is string => !!value);
+function plainName(name: string) {
+  return name.replace(/[_-]+/g, " ").trim().toLowerCase();
+}
+
+function withArticle(noun: string) {
+  return /^[aeiou]/i.test(noun) ? `an ${noun}` : `a ${noun}`;
+}
+
+/** The best noun for one input: the manifest's label, its media kind, then its type. */
+function inputNoun(input: WorkflowInput) {
+  const label = input.label?.trim();
+  if (label) return label;
+  const media = [input.media_type, ...(input.accepted_media_types ?? [])].filter(
+    (value): value is string => !!value,
+  );
   if (media.length) {
     return joinWords([...new Set(media.map((value) => mediaLabel(value, "a file")))], "or");
   }
+  if (input.asset) return "a file";
   switch (input.type.toLowerCase()) {
     case "string": return "text";
     case "image": return "a picture";
@@ -226,20 +244,39 @@ function inputLabel(input: WorkflowInput) {
   }
 }
 
+function outputNoun(output: WorkflowOutput) {
+  const label = output.label?.trim();
+  if (label) return label;
+  const family = output.media_type ? mediaFamily(output.media_type) : "";
+  if (["image", "audio", "video", "text"].includes(family)) {
+    return mediaLabel(output.media_type!, "");
+  }
+  return output.name.trim() ? withArticle(plainName(output.name)) : "an output";
+}
+
+/** Nouns for the accepted inputs. Two inputs never share a noun: each is named by its field. */
+function inputNouns(inputs: WorkflowInput[]) {
+  const nouns = inputs.map(inputNoun);
+  return new Map(
+    inputs.map((input, index) => [
+      input,
+      nouns.filter((noun) => noun === nouns[index]).length > 1
+        ? `${nouns[index]} for ${plainName(input.name)}`
+        : nouns[index],
+    ]),
+  );
+}
+
 function inputSummary(workflow: WorkflowRow, required: boolean) {
+  const accepted = workflow.inputs.filter((input) => input.accepted);
+  const nouns = inputNouns(accepted);
   return joinWords(
-    workflow.inputs
-      .filter((input) => input.accepted && !!input.required === required)
-      .map(inputLabel),
+    accepted.filter((input) => !!input.required === required).map((input) => nouns.get(input)!),
   );
 }
 
 function outputSummary(workflow: WorkflowRow) {
-  return joinWords([...new Set(
-    (workflow.outputs ?? []).map((output) =>
-      output.media_type ? mediaLabel(output.media_type, "a file") : "an output",
-    ),
-  )]) || "output not listed";
+  return joinWords([...new Set((workflow.outputs ?? []).map(outputNoun))]) || "output not listed";
 }
 
 function WorkflowSummary({ workflow }: { workflow: WorkflowRow }) {
@@ -254,59 +291,120 @@ function WorkflowSummary({ workflow }: { workflow: WorkflowRow }) {
   );
 }
 
+// Who can act on a workflow. "ready" runs. "wait" is busy, starting or degraded:
+// it fixes itself, so everyone sees it. "setup" needs the owner, so members do not.
+type Readiness = "ready" | "wait" | "setup";
+
+function readiness(workflow: WorkflowRow): Readiness {
+  if (workflow.availability.available !== false) return "ready";
+  return ["starting", "busy", "degraded"].includes(workflow.availability.status)
+    ? "wait"
+    : "setup";
+}
+
+const waitNote: Record<string, string> = {
+  starting: "Try again in a moment.",
+  busy: "Busy with other requests. Try again soon.",
+  degraded: "Requests may fail.",
+};
+
+const MEMBER_SETUP_NOTE =
+  "Not available right now. The person who manages Azizam can set it up.";
+
+function enginesHref(workflow: WorkflowRow) {
+  const binding = workflow.engine_binding?.trim();
+  // "gateway" is the gateway itself, not an engine the Engines page lists.
+  return binding && binding !== "gateway" && !binding.includes(",")
+    ? `/engines?service=${encodeURIComponent(binding)}`
+    : "/engines";
+}
+
+/** What is missing and where the owner fixes it, from the availability codes the catalog gives. */
+function ownerSetupHelp(workflow: WorkflowRow) {
+  const { status, reason_code: code } = workflow.availability;
+  const engines = { href: enginesHref(workflow), action: "Open Engines" };
+  const statusPage = { href: "/status", action: "Open Status" };
+  if (code === "unavailable_disabled") {
+    return { ...engines, text: "Turned off. Turn it on in Engines." };
+  }
+  if (code === "unavailable_unconfigured" || status === "not_configured") {
+    return { ...engines, text: "Setup is not finished. Finish it in Engines." };
+  }
+  if (code === "not_available" || status === "not_available") {
+    return { ...engines, text: "No engine is set up for it. Add one in Engines." };
+  }
+  if (code === "policy_denied") {
+    return {
+      href: "/people?tab=plans",
+      action: "Open access plans",
+      text: "An access plan blocks it. Review plans in People.",
+    };
+  }
+  if (status === "unknown" || code === "unknown") {
+    return { ...statusPage, text: "No health check has reported on it yet. See Status." };
+  }
+  return { ...statusPage, text: "Its engine is not answering. See Status." };
+}
+
 function WorkflowAction({
   workflow,
+  owner,
   hideReadyStatus = false,
 }: {
   workflow: WorkflowRow;
+  owner: boolean;
   hideReadyStatus?: boolean;
 }) {
-  const unavailable = workflow.availability.available === false;
-  const showStatus =
-    !hideReadyStatus || !["ready", "idle"].includes(workflow.availability.status);
-  return (
-    <div className="space-y-3">
-      {showStatus && (
-        <StatusPill
-          status={
-            workflow.availability.status === "not_configured"
-              ? "unavailable"
-              : workflow.availability.status
-          }
-          summary
-        />
-      )}
-      {unavailable ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" disabled>
-            Open in Try
-          </Button>
-          <p className="text-muted-foreground text-sm">
-            {availabilityReason(
-              workflow.availability.status,
-              workflow.availability.reason_code,
-            ) ?? "Unavailable."}
-          </p>
-          <p className="text-muted-foreground w-full text-sm">
-            Not available right now. The person who manages Azizam can set it up.
-          </p>
-        </div>
-      ) : (
+  const state = readiness(workflow);
+  if (state === "setup" && owner) {
+    const help = ownerSetupHelp(workflow);
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-muted-foreground text-sm">{help.text}</p>
+        <Button asChild variant="outline" size="sm">
+          <Link href={help.href}>{help.action}</Link>
+        </Button>
+      </div>
+    );
+  }
+  if (state === "ready") {
+    const showStatus =
+      !hideReadyStatus || !["ready", "idle"].includes(workflow.availability.status);
+    return (
+      <div className="space-y-3">
+        {showStatus && <StatusPill status={workflow.availability.status} summary />}
         <Button asChild size="sm">
           <Link href={`/try/?workflow=${encodeURIComponent(workflow.id)}`}>
             Open in Try
           </Link>
         </Button>
-      )}
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-3">
+      {state === "wait" && <StatusPill status={workflow.availability.status} summary />}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" disabled>
+          Open in Try
+        </Button>
+        <p className="text-muted-foreground text-sm">
+          {state === "wait"
+            ? (waitNote[workflow.availability.status] ?? "Try again in a moment.")
+            : MEMBER_SETUP_NOTE}
+        </p>
+      </div>
     </div>
   );
 }
 
 function WorkflowCard({
   workflow,
+  owner,
   onDetail,
 }: {
   workflow: WorkflowRow;
+  owner: boolean;
   onDetail: (workflow: WorkflowRow) => void;
 }) {
   return (
@@ -327,7 +425,7 @@ function WorkflowCard({
         </div>
       </div>
       <div className="mt-auto space-y-3">
-        <WorkflowAction workflow={workflow} hideReadyStatus />
+        <WorkflowAction workflow={workflow} owner={owner} hideReadyStatus />
         <Button variant="outline" size="sm" onClick={() => onDetail(workflow)}>
           Details
         </Button>
@@ -354,9 +452,11 @@ function LoadingWorkflows() {
 
 function DetailSheet({
   workflow,
+  owner,
   onOpenChange,
 }: {
   workflow: WorkflowRow | null;
+  owner: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   return (
@@ -380,7 +480,7 @@ function DetailSheet({
                 )}
                 <WorkflowSummary workflow={workflow} />
               </section>
-              <WorkflowAction workflow={workflow} />
+              <WorkflowAction workflow={workflow} owner={owner} />
               <details className="rounded-lg border p-4">
                 <summary className="focus-visible:outline-ring min-h-11 cursor-pointer py-3 font-medium focus-visible:outline-2">
                   Technical details
@@ -727,17 +827,25 @@ function RecentJobs({ workflow }: { workflow: WorkflowRow }) {
 }
 
 export default function WorkflowsPage() {
+  const owner = useViewer().admin;
   const [query, setQuery] = useState("");
   const [capability, setCapability] = useState<string>("all");
   const [detailId, setDetailId] = useState<string | null>(null);
+  const [setupOpen, setSetupOpen] = useState(false);
   const { data, isPending, isError, isFetching, refetch } = useQuery({
     queryKey: ["workflows", "catalog"],
     queryFn: fetchWorkflows,
     retry: false,
   });
-  const rows = data?.workflows ?? EMPTY_WORKFLOWS;
+  const allRows = data?.workflows ?? EMPTY_WORKFLOWS;
+  // Members have nothing to do about a workflow that is not set up, so only
+  // the owner sees those, folded away from the ones that work.
+  const rows = useMemo(
+    () => (owner ? allRows : allRows.filter((row) => readiness(row) !== "setup")),
+    [allRows, owner],
+  );
   // Read the open workflow from the latest catalog so a refresh reaches it.
-  const detail = rows.find((row) => row.id === detailId) ?? null;
+  const detail = allRows.find((row) => row.id === detailId) ?? null;
   const allCapabilities = [
     ...capabilityOrder,
     ...new Set(
@@ -758,12 +866,17 @@ export default function WorkflowsPage() {
       ),
     [rows, query, capability],
   );
-  const grouped = allCapabilities
-    .map((cap) => ({
-      capability: cap,
-      rows: filtered.filter((row) => row.capability === cap),
-    }))
-    .filter((group) => group.rows.length > 0);
+  const working = filtered.filter((row) => readiness(row) !== "setup");
+  const notSetUp = filtered.filter((row) => readiness(row) === "setup");
+  const groupsOf = (list: WorkflowRow[]) =>
+    allCapabilities
+      .map((cap) => ({
+        capability: cap,
+        rows: list.filter((row) => row.capability === cap),
+      }))
+      .filter((group) => group.rows.length > 0);
+  const grouped = groupsOf(working);
+  const setupGroups = groupsOf(notSetUp);
 
   return (
     <div className="space-y-8 [&_a[data-slot=button]]:min-h-11 [&_button]:min-h-11">
@@ -775,7 +888,7 @@ export default function WorkflowsPage() {
             <Badge variant="outline">Refreshing</Badge>
           ) : data ? (
             <Badge variant="outline">
-              {data.counts?.workflows ?? rows.length} workflows
+              {rows.length} {rows.length === 1 ? "workflow" : "workflows"}
             </Badge>
           ) : undefined
         }
@@ -853,52 +966,102 @@ export default function WorkflowsPage() {
               }
             />
           ) : (
-            <div
-              aria-label="Available workflows"
-              className={cn(
-                "grid gap-6",
-                filtered.length > 1 && "sm:grid-cols-2",
-                filtered.length > 2 && "lg:grid-cols-3",
+            <>
+              {working.length > 0 && (
+                <WorkflowGroups
+                  label="Available workflows"
+                  groups={grouped}
+                  count={working.length}
+                  owner={owner}
+                  onDetail={setDetailId}
+                />
               )}
-            >
-              {grouped.map((group) => (
-                <section
-                  key={group.capability}
-                  aria-label={`${capabilityLabel(group.capability)} workflows`}
-                  className={cn(
-                    "min-w-0 space-y-3",
-                    group.rows.length > 1 && "sm:col-span-2",
-                    group.rows.length > 2 && "lg:col-span-3",
-                  )}
+              {notSetUp.length > 0 && (
+                <details
+                  className="rounded-xl border p-4"
+                  open={setupOpen || query.trim() !== ""}
+                  onToggle={(event) => setSetupOpen(event.currentTarget.open)}
                 >
-                  <h2 className="text-lg font-semibold">
-                    {capabilityLabel(group.capability)}
-                  </h2>
-                  <div
-                    className={cn(
-                      "grid gap-4",
-                      group.rows.length > 1 && "sm:grid-cols-2",
-                      group.rows.length > 2 && "lg:grid-cols-3",
-                    )}
-                  >
-                    {group.rows.map((workflow) => (
-                      <WorkflowCard
-                        key={workflow.id}
-                        workflow={workflow}
-                        onDetail={(row) => setDetailId(row.id)}
-                      />
-                    ))}
+                  <summary className="focus-visible:outline-ring min-h-11 cursor-pointer py-3 font-medium focus-visible:outline-2">
+                    Not set up ({notSetUp.length})
+                  </summary>
+                  <div className="mt-4">
+                    <WorkflowGroups
+                      label="Workflows that are not set up"
+                      groups={setupGroups}
+                      count={notSetUp.length}
+                      owner={owner}
+                      onDetail={setDetailId}
+                    />
                   </div>
-                </section>
-              ))}
-            </div>
+                </details>
+              )}
+            </>
           )}
         </>
       )}
       <DetailSheet
         workflow={detail}
+        owner={owner}
         onOpenChange={(open) => !open && setDetailId(null)}
       />
+    </div>
+  );
+}
+
+function WorkflowGroups({
+  label,
+  groups,
+  count,
+  owner,
+  onDetail,
+}: {
+  label: string;
+  groups: { capability: string; rows: WorkflowRow[] }[];
+  count: number;
+  owner: boolean;
+  onDetail: (id: string) => void;
+}) {
+  return (
+    <div
+      aria-label={label}
+      className={cn(
+        "grid gap-6",
+        count > 1 && "sm:grid-cols-2",
+        count > 2 && "lg:grid-cols-3",
+      )}
+    >
+      {groups.map((group) => (
+        <section
+          key={group.capability}
+          aria-label={`${capabilityLabel(group.capability)} workflows`}
+          className={cn(
+            "min-w-0 space-y-3",
+            group.rows.length > 1 && "sm:col-span-2",
+            group.rows.length > 2 && "lg:col-span-3",
+          )}
+        >
+          <h2 className="text-lg font-semibold">
+            {capabilityLabel(group.capability)}
+          </h2>
+          <div
+            className={cn(
+              "grid gap-4",
+              group.rows.length > 1 && "sm:grid-cols-2",
+              group.rows.length > 2 && "lg:grid-cols-3",
+            )}
+          >
+            {group.rows.map((workflow) => (
+              <WorkflowCard
+                key={workflow.id}
+                workflow={workflow}
+                owner={owner}
+                onDetail={(row) => onDetail(row.id)}
+              />
+            ))}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }
