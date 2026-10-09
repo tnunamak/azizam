@@ -232,7 +232,7 @@ def _portable_inputs(inputs: dict[str, Any]) -> list[dict[str, Any]]:
     """Project manifest inputs to the portable contract fields only.
 
     Fields exposed: name, type, required, minimum/maximum, enum, default,
-    description. Anything else stays internal (manifests may grow custom
+    description, label (a short noun phrase such as "a face photo"). Anything else stays internal (manifests may grow custom
     keys; we don't want to leak them by accident).
     """
     portable_keys = (
@@ -243,6 +243,7 @@ def _portable_inputs(inputs: dict[str, Any]) -> list[dict[str, Any]]:
         "enum",
         "default",
         "description",
+        "label",
     )
     portable: list[dict[str, Any]] = []
     for name, spec in inputs.items():
@@ -272,6 +273,8 @@ def _portable_outputs(outputs: dict[str, Any]) -> list[dict[str, Any]]:
             entry["media_type"] = spec["media_type"]
         if "description" in spec:
             entry["description"] = spec["description"]
+        if "label" in spec:
+            entry["label"] = spec["label"]
         portable.append(entry)
     return portable
 
