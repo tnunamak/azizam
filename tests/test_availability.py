@@ -157,12 +157,16 @@ def test_composed_workflow_with_an_engine_off_or_not_set_up_is_off_not_down():
     services = {"services": {"comfyui": {**_COMFYUI, "enabled": False}}}
     rows = {row["workflow"]: row for row in _capability_rows(caps, {}, services, {}, registry.records())}
     assert rows["image.analyze.face-likeness"]["reason_code"] == "unavailable_unconfigured"
-    assert rows["image.edit.image-identity"]["reason_code"] == "unavailable_disabled"
-    projected = project_capabilities(caps, service_records=services, workflow_records=registry.records())
+    # The first engine that is off or missing names the state and the reason.
+    assert rows["image.edit.image-identity"]["reason_code"] == "unavailable_unconfigured"
+    services = {"services": {"faces": _FACES, "comfyui": {**_COMFYUI, "enabled": False}}}
+    projected = project_capabilities(caps, service_records=services, evidence={"faces": _FACES_STOPPED},
+                                     workflow_records=registry.records())
     catalog = {row["id"]: row["availability"]
                for row in build_workflows_catalog(records=registry.records(), capabilities=projected)["workflows"]}
     assert catalog["image.edit.image-identity"]["reason_code"] == "unavailable_disabled"
     assert catalog["image.edit.image-identity"]["reason"] == "ComfyUI is turned off."
+    assert catalog["image.analyze.face-likeness"]["status"] == "idle"
 
 
 def test_composed_sidecar_check_is_read_only_and_fills_the_cached_status_gap(monkeypatch):

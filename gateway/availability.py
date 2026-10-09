@@ -158,8 +158,8 @@ def _project_required_dependencies(
         if values and all(_is_epoch(value) for value in values):
             composed_evidence[field] = min(values)
     return AvailabilityProjection(
-        capability.backend, all(item.enabled for item in projected),
-        all(item.configured for item in projected),
+        # Flags follow the limiting engine, so the reason code and the reason agree.
+        capability.backend, limiting.enabled, limiting.configured,
         False if status == "unavailable" else None if status in {"idle", "starting", "unknown"} else True,
         status, _dependency_reason(limiting, services.get(limiting.service_id) or {}),
         all(item.measured for item in projected), composed_evidence,
