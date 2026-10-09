@@ -24,12 +24,10 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  PageHeader,
-  EmptyState,
-  ErrorState,
-  RelativeTime,
-} from "@/components/product";
+import { PageHeader } from "@/components/product/page-header";
+import { EmptyState } from "@/components/product/empty-state";
+import { Callout, StatusLine } from "@/components/product/status-ui";
+import { RelativeTime } from "@/components/product";
 
 const categories = [
   { value: "", label: "All changes" },
@@ -240,8 +238,23 @@ export default function ActivityPage() {
               </Button>
             )}
           </div>
-          {peoplePending && <p className="text-muted-foreground text-sm">Loading people…</p>}
-          {peopleError && <ErrorState message="People could not be loaded. Recent activity names are still available." onRetry={() => void refetchPeople()} />}
+          {peoplePending && (
+            <StatusLine tone="unknown" text="Loading people" compact />
+          )}
+          {peopleError && (
+            <Callout
+              as="div"
+              severity="critical"
+              title="Couldn't load people"
+              headerAction={
+                <Button variant="outline" onClick={() => void refetchPeople()}>
+                  Try again
+                </Button>
+              }
+            >
+              <p>Recent activity names are still available.</p>
+            </Callout>
+          )}
           <div className="flex flex-wrap items-center gap-3">
             {automatedCount > 0 && (
               <div
@@ -294,25 +307,40 @@ export default function ActivityPage() {
             </details>
           </div>
           {auditError && entries.length > 0 && !nextPageError && (
-            <ErrorState
-              message="These events could not be refreshed. Try again."
-              onRetry={() => void refetchAudit()}
-            />
+            <Callout
+              as="div"
+              severity="critical"
+              title="Couldn't refresh changes"
+              headerAction={
+                <Button variant="outline" onClick={() => void refetchAudit()}>
+                  Try again
+                </Button>
+              }
+            >
+              <p>The changes already loaded are still shown.</p>
+            </Callout>
           )}
           {auditPending ? (
             <div
-              aria-label="Loading audit events"
+              aria-label="Loading changes"
               aria-busy="true"
               className="space-y-5"
             >
+              <StatusLine tone="unknown" text="Loading changes" compact />
               {[0, 1, 2, 3, 4].map((i) => (
                 <Skeleton className="h-14 w-full" key={i} />
               ))}
             </div>
           ) : auditError && !entries.length ? (
-            <ErrorState
-              message="Changes could not be loaded. Try again."
-              onRetry={() => void refetchAudit()}
+            <Callout
+              as="div"
+              severity="critical"
+              title="Couldn't load changes"
+              headerAction={
+                <Button variant="outline" onClick={() => void refetchAudit()}>
+                  Try again
+                </Button>
+              }
             />
           ) : !entries.length ? (
             <EmptyState
@@ -374,10 +402,18 @@ export default function ActivityPage() {
               </div>
               <div className="flex flex-col items-center gap-4">
                 {nextPageError && (
-                  <ErrorState
-                    message="More events could not be loaded. Try again."
-                    onRetry={() => void fetchNextPage()}
-                  />
+                  <Callout
+                    as="div"
+                    severity="critical"
+                    title="Couldn't load more changes"
+                    headerAction={
+                      <Button variant="outline" onClick={() => void fetchNextPage()}>
+                        Try again
+                      </Button>
+                    }
+                  >
+                    <p>The changes already loaded are still shown.</p>
+                  </Callout>
                 )}
                 {hasNextPage ? (
                   <Button

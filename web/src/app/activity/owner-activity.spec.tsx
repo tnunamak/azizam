@@ -11,7 +11,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import Activity from "./page";
 
-vi.mock("./requests", () => ({ Requests: () => null }));
+import { Requests } from "./requests";
 const pointerMethods = [
   "hasPointerCapture",
   "setPointerCapture",
@@ -26,8 +26,9 @@ for (const method of pointerMethods)
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
-function mount() {
+function mount(auditResult?: () => ReturnType<typeof api.audit.list>) {
   vi.spyOn(api.users, "list").mockResolvedValue([
     {
       id: "person-beyond-audit-window",
@@ -43,7 +44,7 @@ function mount() {
   ]);
   const audit = vi
     .spyOn(api.audit, "list")
-    .mockResolvedValue({ records: [], next_cursor: null });
+    .mockImplementation(auditResult ?? (async () => ({ records: [], next_cursor: null })));
   render(
     <QueryClientProvider
       client={
@@ -126,7 +127,123 @@ it("shows people lookup errors with a retry action", async () => {
   );
   expect(
     await screen.findByText(
-      "People could not be loaded. Recent activity names are still available.",
+      "Recent activity names are still available.",
     ),
   ).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Couldn't load people" })).toBeVisible();
+});
+
+it("announces loading changes without claiming that an empty list is ready", () => {
+  mount(() => new Promise(() => {}));
+  const status = screen.getByText("Loading changes").closest('[role="status"]');
+  expect(status).toHaveTextContent("Loading changes");
+  expect(status).toHaveAttribute("aria-live", "polite");
+  expect(status).toHaveAttribute("aria-atomic", "true");
+  expect(screen.getByLabelText("Loading changes")).toHaveAttribute("aria-busy", "true");
+  expect(screen.queryByText("No changes yet")).toBeNull();
+  expect(screen.queryByText("Ready")).toBeNull();
+});
+
+it("keeps the shared page header and empty panel with its existing action", async () => {
+  mount();
+  expect(screen.getByRole("heading", { level: 1, name: "Activity" })).toBeVisible();
+  const label = await screen.findByText("No changes yet");
+  expect(label.parentElement?.parentElement).toHaveClass("border-dashed");
+  expect(screen.getByRole("link", { name: "Create an app" })).toBeVisible();
+});
+
+it("names a changes load error in an alert and retries the same query", async () => {
+  const user = userEvent.setup();
+  const audit = mount(() => Promise.reject(new Error("offline")));
+  const alert = await screen.findByRole("alert");
+  expect(within(alert).getByRole("heading", { name: "Couldn't load changes" })).toBeVisible();
+  expect(screen.queryByText("No changes yet")).toBeNull();
+  audit.mockResolvedValue({ records: [], next_cursor: null });
+  await user.click(within(alert).getByRole("button", { name: "Try again" }));
+  await screen.findByText("No changes yet");
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+function mountRequests() {
+  render(
+    <QueryClientProvider
+      client={new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: 0 } },
+      })}
+    >
+      <Requests />
+    </QueryClientProvider>,
+  );
+}
+
+it("announces loading requests without showing an empty result", () => {
+  vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+  mountRequests();
+  expect(screen.getByRole("status")).toHaveTextContent("Loading requests");
+  expect(screen.getByLabelText("Loading requests")).toHaveAttribute("aria-busy", "true");
+  expect(screen.queryByText("No request receipts yet")).toBeNull();
+});
+
+it("keeps request errors distinct from empty results and retries", async () => {
+  const user = userEvent.setup();
+  const fetchRequests = vi.fn().mockRejectedValue(new Error("offline"));
+  vi.stubGlobal("fetch", fetchRequests);
+  mountRequests();
+  const alert = await screen.findByRole("alert");
+  expect(within(alert).getByRole("heading", { name: "Couldn't load requests" })).toBeVisible();
+  expect(screen.queryByText("No request receipts yet")).toBeNull();
+  fetchRequests.mockResolvedValue({
+    ok: true,
+    json: async () => ({ records: [], next_cursor: null, people: [], sources: [] }),
+  });
+  await user.click(within(alert).getByRole("button", { name: "Try again" }));
+  const label = await screen.findByText("No request receipts yet");
+  expect(label.parentElement?.parentElement).toHaveClass("border-dashed");
+  expect(screen.getByText("Requests from apps and devices on your trusted network appear here.")).toBeVisible();
+  expect(screen.getByRole("link", { name: "Connect an app" })).toHaveAttribute("href", "/ui/");
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+const recordedChange = {
+  id: "change-1",
+  action: "app.create",
+  actor_id: "person-1",
+  actor_kind: "user",
+  actor_label: "Sam",
+  target_kind: "app",
+  target_id: "app-1",
+  metadata: { name: "Family app" },
+  created_at: 1,
+} as Awaited<ReturnType<typeof api.audit.list>>["records"][number];
+
+it("keeps recorded changes visible when refreshing fails", async () => {
+  const user = userEvent.setup();
+  const audit = mount(async () => ({ records: [recordedChange], next_cursor: null }));
+  await screen.findByRole("button", { name: /^Details:/ });
+  audit.mockRejectedValue(new Error("offline"));
+  await user.click(screen.getByRole("button", { name: "Refresh" }));
+  const alert = await screen.findByRole("alert");
+  expect(within(alert).getByRole("heading", { name: "Couldn't refresh changes" })).toBeVisible();
+  expect(within(alert).getByText("The changes already loaded are still shown.")).toBeVisible();
+  expect(screen.getByRole("button", { name: /^Details:/ })).toBeVisible();
+  audit.mockResolvedValue({ records: [recordedChange], next_cursor: null });
+  await user.click(within(alert).getByRole("button", { name: "Try again" }));
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+});
+
+it("retries the next changes page without discarding the loaded page", async () => {
+  const user = userEvent.setup();
+  const audit = mount(async () => ({ records: [recordedChange], next_cursor: "older" }));
+  await screen.findByRole("button", { name: /^Details:/ });
+  audit.mockRejectedValue(new Error("offline"));
+  await user.click(screen.getByRole("button", { name: "Load more" }));
+  const alert = await screen.findByRole("alert");
+  expect(within(alert).getByRole("heading", { name: "Couldn't load more changes" })).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "Couldn't refresh changes" })).toBeNull();
+  expect(screen.getByRole("button", { name: /^Details:/ })).toBeVisible();
+  audit.mockResolvedValue({ records: [], next_cursor: null });
+  await user.click(within(alert).getByRole("button", { name: "Try again" }));
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  expect(audit).toHaveBeenLastCalledWith(expect.objectContaining({ before: "older" }));
+  expect(screen.getByRole("button", { name: /^Details:/ })).toBeVisible();
 });

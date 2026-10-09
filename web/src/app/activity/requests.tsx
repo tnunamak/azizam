@@ -20,7 +20,9 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet";
-import { EmptyState, ErrorState, RelativeTime } from "@/components/product";
+import { EmptyState } from "@/components/product/empty-state";
+import { Callout, StatusLine } from "@/components/product/status-ui";
+import { RelativeTime } from "@/components/product";
 import { errorCopy } from "@/lib/error-copy";
 import { receiptSelectionKeys } from "@/lib/receipt-selection";
 
@@ -291,14 +293,21 @@ export function Requests() {
           aria-busy="true"
           className="space-y-4"
         >
+          <StatusLine tone="unknown" text="Loading requests" compact />
           {[0, 1, 2, 3].map((i) => (
             <Skeleton key={i} className="h-20 w-full" />
           ))}
         </div>
       ) : isError && rows.length === 0 ? (
-        <ErrorState
-          message="Requests could not be loaded. Try again."
-          onRetry={() => void refetch()}
+        <Callout
+          as="div"
+          severity="critical"
+          title="Couldn't load requests"
+          headerAction={
+            <Button variant="outline" onClick={() => void refetch()}>
+              Try again
+            </Button>
+          }
         />
       ) : rows.length === 0 ? (
         <EmptyState
@@ -308,7 +317,7 @@ export function Requests() {
               ? "No matching requests"
               : "No request receipts yet"
           }
-          description="Requests from apps and trusted-network clients appear here."
+          description="Requests from apps and devices on your trusted network appear here."
           action={
             person || source !== "all" ? (
               <Button
@@ -330,10 +339,18 @@ export function Requests() {
       ) : (
         <>
           {isError && !isFetchNextPageError && (
-            <ErrorState
-              message="These requests could not be refreshed. Try again."
-              onRetry={() => void refetch()}
-            />
+            <Callout
+              as="div"
+              severity="critical"
+              title="Couldn't refresh requests"
+              headerAction={
+                <Button variant="outline" onClick={() => void refetch()}>
+                  Try again
+                </Button>
+              }
+            >
+              <p>The requests already loaded are still shown.</p>
+            </Callout>
           )}
           <div className="divide-border divide-y">
             {rows.map((row, index) => (
@@ -395,10 +412,18 @@ export function Requests() {
           </div>
           <div className="flex flex-col items-center gap-4">
             {isFetchNextPageError && (
-              <ErrorState
-                message="More requests could not be loaded. Try again."
-                onRetry={() => void fetchNextPage()}
-              />
+              <Callout
+                as="div"
+                severity="critical"
+                title="Couldn't load more requests"
+                headerAction={
+                  <Button variant="outline" onClick={() => void fetchNextPage()}>
+                    Try again
+                  </Button>
+                }
+              >
+                <p>The requests already loaded are still shown.</p>
+              </Callout>
             )}
             {hasNextPage ? (
               <Button
