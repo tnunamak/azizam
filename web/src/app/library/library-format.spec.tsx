@@ -4,35 +4,27 @@ import {
   inProgressMedia,
   modelDisplayName,
   prettifyModelId,
-  weekLabel,
+  tileDate,
 } from "./library-format";
 
-// Thursday 8 October 2026, mid-afternoon local time. Its week starts Monday 5 October.
+// Thursday 8 October 2026, mid-afternoon local time.
 const now = new Date(2026, 9, 8, 15, 0);
 
-describe("weekLabel", () => {
+describe("tileDate", () => {
   test.each([
-    [new Date(2026, 9, 5, 0, 0), "This week"],
-    [new Date(2026, 9, 8, 9, 0), "This week"],
-    [new Date(2026, 9, 4, 23, 59), "Last week"],
-    [new Date(2026, 8, 28, 0, 0), "Last week"],
-    [new Date(2026, 8, 27, 23, 59), "Week of Sep 21"],
-    [new Date(2026, 8, 20, 12, 0), "Week of Sep 14"],
-    [new Date(2026, 0, 1, 12, 0), "Week of Dec 29, 2025"],
-    [new Date(2025, 4, 14, 12, 0), "Week of May 12, 2025"],
-  ])("groups %s as %s", (date, label) => {
-    expect(weekLabel(date, now)).toBe(label);
-  });
-
-  test("never groups by month alone", () => {
-    for (let day = 0; day < 400; day += 3) {
-      const label = weekLabel(new Date(2026, 9, 8 - day, 12), now);
-      expect(label).toMatch(/^(This week|Last week|Week of [A-Z][a-z]{2} \d{1,2}(, \d{4})?)$/);
-    }
+    [new Date(2026, 9, 8, 9, 0), "Today"],
+    [new Date(2026, 9, 7, 23, 59), "Yesterday"],
+    [new Date(2026, 9, 5, 12, 0), "Monday"],
+    [new Date(2026, 9, 2, 12, 0), "Friday"],
+    [new Date(2026, 9, 1, 12, 0), "Oct 1"],
+    [new Date(2026, 8, 20, 12, 0), "Sep 20"],
+    [new Date(2025, 4, 14, 12, 0), "May 14, 2025"],
+  ])("dates %s as %s", (date, label) => {
+    expect(tileDate(date, now)).toBe(label);
   });
 
   test("keeps undated creations apart", () => {
-    expect(weekLabel(null, now)).toBe("Undated");
+    expect(tileDate(null, now)).toBe("Undated");
   });
 });
 
@@ -52,11 +44,21 @@ describe("model display names", () => {
       models: [{ id: "flux-dev", title: "Flux Dev", display_name: "flux-dev" }],
     };
     const capabilities = [
-      { recommended_model: "ACE-Step XL Turbo", use_name: "music", use_names: ["song"] },
+      {
+        recommended_model: "ACE-Step XL Turbo",
+        use_name: "music",
+        use_names: ["song"],
+      },
     ];
-    expect(modelDisplayName("flux-dev", catalog, capabilities)).toBe("Flux Dev");
-    expect(modelDisplayName("song", catalog, capabilities)).toBe("ACE-Step XL Turbo");
-    expect(modelDisplayName("music", catalog, capabilities)).toBe("ACE-Step XL Turbo");
+    expect(modelDisplayName("flux-dev", catalog, capabilities)).toBe(
+      "Flux Dev",
+    );
+    expect(modelDisplayName("song", catalog, capabilities)).toBe(
+      "ACE-Step XL Turbo",
+    );
+    expect(modelDisplayName("music", catalog, capabilities)).toBe(
+      "ACE-Step XL Turbo",
+    );
     expect(modelDisplayName("tts-1", catalog, capabilities)).toBe("TTS 1");
   });
 
@@ -73,8 +75,18 @@ describe("inProgressMedia", () => {
   test("keeps only running media requests and reads their kind and start", () => {
     expect(
       inProgressMedia([
-        { request_id: "a", status: "running", intent: "image.generate", accepted_at_ms: 1_000_000 },
-        { request_id: "b", status: "queued", path: "/openai/v1/videos", _stored_at: 50 },
+        {
+          request_id: "a",
+          status: "running",
+          intent: "image.generate",
+          accepted_at_ms: 1_000_000,
+        },
+        {
+          request_id: "b",
+          status: "queued",
+          path: "/openai/v1/videos",
+          _stored_at: 50,
+        },
         { request_id: "c", status: "pending", path: "/openai/v1/audio/speech" },
         { request_id: "d", status: "succeeded", intent: "image.generate" },
         { request_id: "e", status: "running", intent: "chat.completions" },

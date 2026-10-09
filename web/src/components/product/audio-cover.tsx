@@ -71,6 +71,39 @@ export function Waveform({
 }
 
 /**
+ * The words a cover can show whole: every full sentence that fits in `max`
+ * characters, else the longest run of whole words with an ellipsis. A cover
+ * never stops mid-word, and stops mid-sentence only when the first sentence
+ * alone is too long (D1.3: "voice cards truncate their text mid-sentence").
+ */
+export function coverWords(text: string, max: number): string {
+  const clean = text.trim().replace(/\s+/g, " ");
+  if (clean.length <= max) return clean;
+  let out = "";
+  for (const sentence of clean.match(/[^.!?]+[.!?]+(?:\s|$)/g) ?? []) {
+    if ((out + sentence).trim().length > max) break;
+    out += sentence;
+  }
+  if (out.trim()) return out.trim();
+  // The last space at or before `max` ends the last whole word; one long
+  // word with no space is cut at `max`.
+  const space = clean.lastIndexOf(" ", max);
+  const cut = space > 0 ? clean.slice(0, space) : clean.slice(0, max);
+  // Prefer the end of a clause when one closes in the second half.
+  const comma = cut.lastIndexOf(",");
+  const words = comma >= max / 2 ? cut.slice(0, comma) : cut;
+  // Never end on a joining word ("…and have a…"): drop them, then any
+  // trailing punctuation.
+  const trimmed = words
+    .replace(
+      /(?:\s+(?:a|an|the|and|or|but|to|of|in|on|at|by|for|with|from))+$/i,
+      "",
+    )
+    .replace(/[,;:.!?]+$/, "");
+  return `${trimmed || words}…`;
+}
+
+/**
  * The surface every audio cover is drawn on: deep water (the dark theme's
  * card, in both themes) washed with the maker's hue, so a clip carries the
  * same weight as a photograph beside it and says whose it is. `dark` scopes
@@ -151,10 +184,10 @@ export function AudioCover({
           "relative min-h-0 flex-1 font-medium break-words",
           compact
             ? "line-clamp-3 text-sm leading-snug"
-            : "line-clamp-4 text-sm leading-snug sm:text-base sm:leading-snug",
+            : "line-clamp-4 text-sm leading-snug",
         )}
       >
-        {text}
+        {coverWords(text, compact ? 64 : 84)}
       </p>
       <div className="relative flex items-center gap-2">
         {control}

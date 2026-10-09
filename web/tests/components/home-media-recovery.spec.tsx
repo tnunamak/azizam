@@ -306,7 +306,7 @@ describe("Home recent media recovery", () => {
       }),
     ).toBeVisible();
     expect(screen.queryByText(prompt)).toBeNull();
-    expect(screen.getByText(audioPrompt)).toHaveClass("break-words");
+    expect(screen.getByText(`${"y".repeat(64)}…`)).toHaveClass("break-words");
     expect(
       await screen.findByText("Recent results may be incomplete."),
     ).toBeVisible();

@@ -80,7 +80,7 @@ import {
   MAKING_COPY,
   inProgressMedia,
   modelDisplayName,
-  weekLabel,
+  tileDate,
   type CapabilityNameRow,
   type InProgressItem,
 } from "./library-format";
@@ -967,32 +967,27 @@ function toDateValue(ts: MediaAsset["created_at"]): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-/** Calendar weeks (Monday start) everywhere, newest first as listed. */
-function groupByWeek(assets: MediaAsset[], now: Date) {
-  const groups: { label: string; items: MediaAsset[] }[] = [];
-  for (const asset of assets) {
-    const label = weekLabel(toDateValue(asset.created_at), now);
-    const last = groups.at(-1);
-    if (last?.label === label) last.items.push(asset);
-    else groups.push({ label, items: [asset] });
-  }
-  return groups;
-}
-
 /** Work the gateway accepted and is still making: calm, not clickable. */
 function InProgressTile({ item }: { item: InProgressItem }) {
   const Icon = kindIcon(item.kind);
   return (
-    <div className="bg-muted text-muted-foreground rounded-media flex aspect-square min-w-0 flex-col items-center justify-center gap-2 p-3 text-center">
-      <Icon aria-hidden="true" className="size-5" />
-      <p className="text-foreground text-sm font-medium">
-        {MAKING_COPY[item.kind]}
-      </p>
-      {item.startedAt != null ? (
-        <p className="text-xs">
-          Started <RelativeTime ts={item.startedAt} fallback="" />
+    <div className="min-w-0">
+      <div className="bg-muted text-muted-foreground rounded-media flex aspect-square flex-col items-center justify-center gap-2 p-3 text-center">
+        <Icon aria-hidden="true" className="size-5" />
+        <p className="text-foreground text-sm font-medium">
+          {MAKING_COPY[item.kind]}
         </p>
-      ) : null}
+      </div>
+      {/* The same caption line as a finished tile, so rows stay level. */}
+      <p className="text-subtle-foreground mt-1.5 px-0.5 text-xs">
+        {item.startedAt != null ? (
+          <>
+            Started <RelativeTime ts={item.startedAt} fallback="" />
+          </>
+        ) : (
+          "Today"
+        )}
+      </p>
     </div>
   );
 }
@@ -1014,20 +1009,22 @@ function AssetTile({
   const playableAudio =
     asset.kind === "audio" && asset.download_url && asset.available !== false;
   return (
-    <article
-      className={cn(
-        "group rounded-media relative aspect-square min-w-0 overflow-hidden",
-        selected && "outline-ring outline-2 outline-offset-2",
-      )}
-    >
+    <article className="group relative min-w-0">
+      {/* One target for the square and its caption. */}
       <button
         type="button"
         data-asset-open={asset.asset_id}
         onClick={() => onOpen(asset)}
-        className="rounded-media absolute inset-0 z-10 focus-visible:-outline-offset-2"
+        className="rounded-media absolute inset-0 z-10"
         aria-label={`Open ${assetTitle(asset)}`}
       />
-      <div ref={visibilityRef} className="relative size-full">
+      <div
+        ref={visibilityRef}
+        className={cn(
+          "rounded-media relative aspect-square overflow-hidden",
+          selected && "outline-ring outline-2 outline-offset-2",
+        )}
+      >
         {playableAudio ? (
           <AudioTile
             key={asset.download_url}
@@ -1064,6 +1061,19 @@ function AssetTile({
           />
         ) : null}
       </div>
+      {/* A quiet caption names what the tile cannot show: a picture's or a
+          video's title (an audio cover already shows its words) and the
+          date (D1.3: items could not be told apart by name or day). */}
+      <p className="mt-1.5 flex min-w-0 items-baseline gap-2 px-0.5 text-xs">
+        {asset.kind !== "audio" ? (
+          <span className="text-foreground min-w-0 flex-1 truncate font-medium">
+            {shortTitle(asset)}
+          </span>
+        ) : null}
+        <span className="text-subtle-foreground shrink-0">
+          {tileDate(toDateValue(asset.created_at), new Date())}
+        </span>
+      </p>
     </article>
   );
 }
@@ -1083,6 +1093,9 @@ function MoreFilters({
   sources,
   instanceView,
   nameModel,
+  phoneExtras,
+  phoneActive = 0,
+  onClear,
 }: {
   model: string;
   setModel: (value: string) => void;
@@ -1094,26 +1107,44 @@ function MoreFilters({
   sources: MediaSource[];
   instanceView: boolean;
   nameModel: NameModel;
+  /** Controls that live in the row on wide screens and here on a phone. */
+  phoneExtras?: ReactNode;
+  /** How many of those are set, for the count on a phone. */
+  phoneActive?: number;
+  /** Clear every filter; shown here on a phone, beside the row elsewhere. */
+  onClear?: () => void;
 }) {
   const active =
     (model !== "all" ? 1 : 0) +
     (date !== "all" ? 1 : 0) +
     (source !== "all" ? 1 : 0);
+  const badge = (count: number, className: string) =>
+    count ? (
+      <span
+        className={cn(
+          "bg-primary text-primary-foreground figures size-5 items-center justify-center rounded-full text-xs",
+          className,
+        )}
+      >
+        {count}
+        <span className="sr-only"> active</span>
+      </span>
+    ) : null;
   return (
     <Popover>
       <PopoverTrigger asChild>
         <Button variant="outline">
           <ListFilter aria-hidden="true" />
           Filters
-          {active ? (
-            <span className="bg-primary text-primary-foreground figures flex size-5 items-center justify-center rounded-full text-xs">
-              {active}
-              <span className="sr-only"> active</span>
-            </span>
-          ) : null}
+          {/* A phone counts kind and person too, which live in here. */}
+          {badge(active + phoneActive, "flex sm:hidden")}
+          {badge(active, "max-sm:hidden sm:flex")}
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-72 space-y-4">
+        {phoneExtras ? (
+          <div className="space-y-2 sm:hidden">{phoneExtras}</div>
+        ) : null}
         <div className="space-y-1.5">
           <p className="text-sm font-medium">Model</p>
           <Select value={model} onValueChange={setModel}>
@@ -1164,6 +1195,15 @@ function MoreFilters({
               </SelectContent>
             </Select>
           </div>
+        ) : null}
+        {onClear ? (
+          <Button
+            variant="outline"
+            onClick={onClear}
+            className="w-full sm:hidden"
+          >
+            Clear filters
+          </Button>
         ) : null}
       </PopoverContent>
     </Popover>
@@ -1828,10 +1868,6 @@ export default function LibraryPage() {
     () => assets.filter((asset) => asset.available === false),
     [assets],
   );
-  const groups = useMemo(
-    () => groupByWeek(storedAssets, new Date()),
-    [storedAssets],
-  );
   // The viewer's own media requests still running. They show only where the
   // viewer's own work belongs and when no filter they cannot answer is set.
   const runningMedia = useMemo(
@@ -1979,6 +2015,75 @@ export default function LibraryPage() {
       ]
     : [];
   const ownerValue = owner === "default" ? "everyone" : owner;
+  // Kind and person: in the control row on wide screens, inside Filters on a
+  // phone. One function so both places stay the same control.
+  const kindAndPerson = (place: "row" | "sheet") => (
+    <>
+      <Segmented
+        label="Kind"
+        className={place === "sheet" ? "w-full" : undefined}
+        value={kind}
+        onChange={setKind}
+        options={[
+          { value: "all", label: "All" },
+          { value: "image", label: "Images", icon: ImageIcon },
+          { value: "video", label: "Video", icon: Video },
+          { value: "audio", label: "Audio", icon: AudioLines },
+        ]}
+      />
+      {canChooseOwner ? (
+        <Select
+          value={ownerValue}
+          onValueChange={(value) => {
+            setOwner(value);
+            setSource("all");
+          }}
+        >
+          <SelectTrigger
+            aria-label="Person"
+            // Match the segmented control and Filters (40 px) above phone width.
+            className={cn(
+              "sm:data-[size=default]:h-10",
+              place === "sheet" ? "w-full" : "w-auto min-w-40",
+            )}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {personOptions.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                <span className="flex items-center gap-2">
+                  {option.value === "everyone" ? (
+                    // The household at a glance: up to three people's marks.
+                    <span className="flex -space-x-1">
+                      {people.slice(0, 3).map((person) => (
+                        <PersonMark
+                          key={person.id}
+                          name={person.name}
+                          size="xs"
+                          className="ring-card ring-2"
+                        />
+                      ))}
+                    </span>
+                  ) : (
+                    <PersonMark
+                      name={
+                        option.value === "mine"
+                          ? (viewerPerson ?? "You")
+                          : option.label
+                      }
+                      size="xs"
+                    />
+                  )}
+                  {option.label}
+                </span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : null}
+    </>
+  );
   const selectedPerson = selected
     ? instanceView
       ? personFor(selected)
@@ -1986,9 +2091,12 @@ export default function LibraryPage() {
     : null;
   return (
     <div>
-      {/* PageHeader's title and count, with search in the actions slot; the
-          heading keeps a ref so the viewer can return focus to it. */}
-      <header className="mb-4 flex min-h-10 flex-wrap items-center justify-between gap-x-6 gap-y-3">
+      {/* The title and count, then one row of controls with search first
+          (D1.3: search floated alone at the right, and on a phone four rows
+          of controls filled half the screen). On a phone the row is search
+          and one Filters control; kind and person move into it. The heading
+          keeps a ref so the viewer can return focus to it. */}
+      <header className="mb-4 flex min-h-10 items-center">
         <h1
           ref={headingRef}
           tabIndex={-1}
@@ -2001,7 +2109,12 @@ export default function LibraryPage() {
             </span>
           ) : null}
         </h1>
-        <label className="relative block w-full sm:w-72">
+      </header>
+      <section
+        aria-label="Library filters"
+        className="mb-6 flex items-center gap-2 sm:flex-wrap"
+      >
+        <label className="relative block min-w-0 max-sm:flex-1 sm:w-64">
           <span className="sr-only">Search your creations</span>
           <Search
             className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
@@ -2014,49 +2127,7 @@ export default function LibraryPage() {
             className="pl-9"
           />
         </label>
-      </header>
-      <section
-        aria-label="Library filters"
-        className="mb-8 flex flex-wrap items-center gap-2"
-      >
-        <Segmented
-          label="Kind"
-          // On a phone the kinds take the full width and person, Filters and
-          // Clear filters share one line below, instead of three ragged rows.
-          className="max-sm:w-full"
-          value={kind}
-          onChange={setKind}
-          options={[
-            { value: "all", label: "All" },
-            { value: "image", label: "Images" },
-            { value: "video", label: "Video" },
-            { value: "audio", label: "Audio" },
-          ]}
-        />
-        {canChooseOwner ? (
-          <Select
-            value={ownerValue}
-            onValueChange={(value) => {
-              setOwner(value);
-              setSource("all");
-            }}
-          >
-            <SelectTrigger
-              aria-label="Person"
-              // Match the segmented control and Filters (40 px) above phone width.
-              className="w-auto min-w-40 max-sm:min-w-0 max-sm:flex-1 sm:data-[size=default]:h-10"
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {personOptions.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        ) : null}
+        <div className="contents max-sm:hidden">{kindAndPerson("row")}</div>
         <MoreFilters
           model={model}
           setModel={setModel}
@@ -2068,9 +2139,16 @@ export default function LibraryPage() {
           sources={sources}
           instanceView={instanceView}
           nameModel={nameModel}
+          phoneExtras={kindAndPerson("sheet")}
+          phoneActive={(kind !== "all" ? 1 : 0) + (owner !== "default" ? 1 : 0)}
+          onClear={activeFilters ? clearFilters : undefined}
         />
         {activeFilters ? (
-          <Button variant="ghost" onClick={clearFilters}>
+          <Button
+            variant="ghost"
+            onClick={clearFilters}
+            className="max-sm:hidden"
+          >
             Clear filters
           </Button>
         ) : null}
@@ -2144,33 +2222,23 @@ export default function LibraryPage() {
       !showInitialError &&
       (storedAssets.length > 0 || inProgress.length > 0) ? (
         <div aria-busy={updating} className="space-y-7">
-          {(inProgress.length > 0 && groups[0]?.label !== "This week"
-            ? [{ label: "This week", items: [] as MediaAsset[] }, ...groups]
-            : groups
-          ).map((group, index) => (
-            <section key={group.label} aria-label={group.label}>
-              <h2 className="text-muted-foreground mb-2 text-sm font-semibold">
-                {group.label}
-              </h2>
-              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-                {index === 0
-                  ? inProgress.map((item) => (
-                      <InProgressTile key={item.id} item={item} />
-                    ))
-                  : null}
-                {group.items.map((asset) => (
-                  <AssetTile
-                    key={asset.asset_id}
-                    asset={asset}
-                    onOpen={openAsset}
-                    everyone={instanceView}
-                    person={instanceView ? personFor(asset) : null}
-                    selected={selected?.asset_id === asset.asset_id}
-                  />
-                ))}
-              </div>
-            </section>
-          ))}
+          {/* One continuous grid, newest first; each tile's caption carries
+              its date, so no part-filled week group leaves a gap. */}
+          <div className="grid grid-cols-2 gap-x-1.5 gap-y-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+            {inProgress.map((item) => (
+              <InProgressTile key={item.id} item={item} />
+            ))}
+            {storedAssets.map((asset) => (
+              <AssetTile
+                key={asset.asset_id}
+                asset={asset}
+                onOpen={openAsset}
+                everyone={instanceView}
+                person={instanceView ? personFor(asset) : null}
+                selected={selected?.asset_id === asset.asset_id}
+              />
+            ))}
+          </div>
         </div>
       ) : null}
       {!isLoading && !showInitialError && goneAssets.length > 0 ? (

@@ -1,5 +1,5 @@
 /**
- * Pure helpers for the Library page: week groups, model display names and
+ * Pure helpers for the Library page: tile dates, model display names and
  * in-progress work read from the home payload. Kept out of page.tsx so they
  * can be tested without rendering the page.
  */
@@ -14,28 +14,23 @@ function startOfDay(date: Date): number {
   ).getTime();
 }
 
-/** Monday 00:00 local time of the week that holds `date`. */
-export function startOfWeek(date: Date): number {
-  const day = (date.getDay() + 6) % 7; // Monday starts the week
-  return startOfDay(date) - day * DAY_MS;
-}
-
 /**
- * One scale for every group: "This week", "Last week", then "Week of Oct 12"
- * (the Monday), with the year only when it is not the current year.
+ * A creation's date as its tile caption says it: "Today", "Yesterday", the
+ * weekday within the last week, then "Oct 12", with the year only when it is
+ * not the current year. One continuous grid with dated captions replaces week
+ * groups (D1.3: a part-filled first group read as a gap).
  */
-export function weekLabel(date: Date | null, now: Date): string {
+export function tileDate(date: Date | null, now: Date): string {
   if (!date) return "Undated";
-  const week = startOfWeek(now);
-  const time = date.getTime();
-  if (time >= week) return "This week";
-  if (time >= week - 7 * DAY_MS) return "Last week";
-  const monday = new Date(startOfWeek(date));
-  return `Week of ${monday.toLocaleDateString("en-US", {
+  const days = Math.round((startOfDay(now) - startOfDay(date)) / DAY_MS);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 7) return date.toLocaleDateString("en-US", { weekday: "long" });
+  return date.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
-    ...(monday.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
-  })}`;
+    ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+  });
 }
 
 /**

@@ -1,11 +1,14 @@
 "use client";
 
+import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/cn";
 
 export interface SegmentOption<T extends string> {
   value: T;
   label: string;
   count?: number | null;
+  /** A lucide icon drawn before the label, in the label's colour. */
+  icon?: LucideIcon;
 }
 
 /**
@@ -31,26 +34,30 @@ export function Segmented<T extends string>({
       role="group"
       aria-label={label}
       className={cn(
-        "bg-muted inline-flex max-w-full items-center gap-1 overflow-x-auto rounded-control p-1",
+        "bg-muted inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-control p-1",
         className,
       )}
     >
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          aria-pressed={value === option.value}
-          onClick={() => onChange(option.value)}
-          className="text-muted-foreground hover:text-foreground aria-pressed:bg-card aria-pressed:text-foreground aria-pressed:border-border flex min-h-8 shrink-0 items-center gap-1.5 rounded-sm border border-transparent px-3 text-sm font-medium whitespace-nowrap transition-colors max-sm:min-h-11 max-sm:min-w-11 max-sm:flex-1 max-sm:justify-center"
-        >
-          {option.label}
-          {typeof option.count === "number" ? (
-            <span className="figures text-muted-foreground text-xs">
-              {option.count}
-            </span>
-          ) : null}
-        </button>
-      ))}
+      {options.map((option) => {
+        const Icon = option.icon;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={value === option.value}
+            onClick={() => onChange(option.value)}
+            className="text-muted-foreground hover:text-foreground aria-pressed:bg-card aria-pressed:text-foreground aria-pressed:border-border flex min-h-8 shrink-0 items-center gap-1.5 rounded-sm border border-transparent px-3 text-sm font-medium whitespace-nowrap transition-colors max-sm:min-h-11 max-sm:min-w-11 max-sm:flex-1 max-sm:justify-center"
+          >
+            {Icon ? <Icon aria-hidden="true" className="size-4" /> : null}
+            {option.label}
+            {typeof option.count === "number" ? (
+              <span className="figures text-muted-foreground text-xs">
+                {option.count}
+              </span>
+            ) : null}
+          </button>
+        );
+      })}
     </div>
   );
 }

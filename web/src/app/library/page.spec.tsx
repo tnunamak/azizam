@@ -291,7 +291,11 @@ describe("LibraryPage batch J provenance", () => {
     );
     renderLibrary();
 
-    expect(await screen.findByText(audioAsset.prompt)).toBeVisible();
+    // The cover shows whole words of the prompt and never cuts one.
+    const words = await screen.findByText(
+      /^A warm synth loop with brushed percussion and a soft rising melody for a loading…$/,
+    );
+    expect(words).toBeVisible();
     // The tile carries no model name or id; the viewer's facts do.
     expect(screen.queryByText("Sound model")).toBeNull();
     expect(screen.queryByText("audio.generate.test-model")).toBeNull();
@@ -824,7 +828,7 @@ describe("Library honesty and access", () => {
     click.mockRestore();
   });
 
-  test("2 groups creations by calendar week", async () => {
+  test("2 dates each creation in its caption, in one grid", async () => {
     const day = 86_400;
     const nowS = Math.floor(Date.now() / 1000);
     routeFetch((path) =>
@@ -836,10 +840,16 @@ describe("Library honesty and access", () => {
         : undefined,
     );
     renderLibrary();
-    expect(await screen.findByRole("region", { name: "This week" })).toBeVisible();
-    const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-    expect(headings[0]).toBe("This week");
-    expect(headings.at(-1)).toMatch(/^Week of [A-Z][a-z]{2} \d{1,2}(, \d{4})?$/);
+    const today = (
+      await screen.findByRole("button", { name: "Open Made today" })
+    ).closest("article")!;
+    expect(today).toHaveTextContent(/Made today\s*Today$/);
+    const old = screen
+      .getByRole("button", { name: "Open Made long ago" })
+      .closest("article")!;
+    expect(old).toHaveTextContent(/Made long ago\s*[A-Z][a-z]{2} \d{1,2}(, \d{4})?$/);
+    // No week groups: one grid, so no part-filled group leaves a gap.
+    expect(screen.queryAllByRole("heading", { level: 2 })).toHaveLength(0);
   });
 
   test("drops a video's poster from the grid, the count and viewer navigation", async () => {

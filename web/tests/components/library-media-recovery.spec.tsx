@@ -428,13 +428,13 @@ describe("Library media recovery", () => {
       { ...image, asset_id: "audio", kind: "audio", prompt: audioPrompt },
     ]);
     mount();
-    // Image tiles carry the prompt only in their accessible name; audio tiles
-    // show it as text, which must wrap.
+    // An image tile's caption names it on one truncated line; an audio
+    // cover shows whole words of its prompt, which must wrap.
     expect(
       await screen.findByRole("button", { name: `Open ${prompt}` }),
     ).toBeVisible();
-    expect(screen.queryByText(prompt)).toBeNull();
-    expect(screen.getByText(audioPrompt)).toHaveClass("break-words");
+    expect(screen.getByText(prompt)).toHaveClass("truncate");
+    expect(screen.getByText(`${"y".repeat(84)}…`)).toHaveClass("break-words");
     await userEvent.click(
       screen.getByRole("button", { name: `Open ${prompt}` }),
     );
