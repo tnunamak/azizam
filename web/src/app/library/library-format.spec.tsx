@@ -5,6 +5,7 @@ import {
   modelDisplayName,
   prettifyModelId,
   tileDate,
+  captionTitle,
 } from "./library-format";
 
 // Thursday 8 October 2026, mid-afternoon local time.
@@ -96,5 +97,30 @@ describe("inProgressMedia", () => {
       { id: "b", kind: "video", startedAt: 50 },
       { id: "c", kind: "audio", startedAt: null },
     ]);
+  });
+});
+
+describe("captionTitle", () => {
+  test.each([
+    [
+      "An overhead photograph of a raised garden bed with ripe tomatoes, gloves and a trowel.",
+      "Raised garden bed with ripe tomatoes, gloves and a trowel",
+    ],
+    [
+      "A golden retriever asleep on a knit blanket",
+      "Golden retriever asleep on a knit blanket",
+    ],
+    [
+      "A cozy reading corner by a rainy window. Warm light.",
+      "Cozy reading corner by a rainy window",
+    ],
+    [
+      "Basil, rosemary and thyme on a windowsill",
+      "Basil, rosemary and thyme on a windowsill",
+    ],
+    ["", "Image"],
+    [null, "Image"],
+  ])("captions %s as %s", (prompt, title) => {
+    expect(captionTitle(prompt, "Image")).toBe(title);
   });
 });

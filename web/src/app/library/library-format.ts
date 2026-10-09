@@ -148,3 +148,24 @@ export const MAKING_COPY: Record<InProgressKind, string> = {
   video: "Making your video",
   audio: "Making your audio",
 };
+
+/**
+ * A tile caption from a prompt: its first sentence without the framing a
+ * prompt opens with ("An overhead photograph of a …", "A …"), so the first
+ * words are the ones that tell creations apart ("Raised garden bed with
+ * ripe tomatoes"). The caption truncates; the full prompt is in the viewer.
+ */
+export function captionTitle(
+  prompt: string | null | undefined,
+  fallback: string,
+): string {
+  const sentence = (prompt ?? "").trim().split(/(?<=[.!?])\s/)[0] ?? "";
+  const words = sentence
+    .replace(/[.!?]$/, "")
+    .replace(
+      /^(?:(?:a|an|the)\s+)?(?:(?:[\w-]+\s+){0,2}(?:photo(?:graph)?|picture|image|shot|illustration|painting|render(?:ing)?|portrait|scene)\s+of\s+)?(?:(?:a|an|the)\s+)?/i,
+      "",
+    )
+    .trim();
+  return words ? words[0].toUpperCase() + words.slice(1) : fallback;
+}

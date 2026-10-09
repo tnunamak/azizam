@@ -81,6 +81,7 @@ import {
   inProgressMedia,
   modelDisplayName,
   tileDate,
+  captionTitle,
   type CapabilityNameRow,
   type InProgressItem,
 } from "./library-format";
@@ -1067,7 +1068,7 @@ function AssetTile({
       <p className="mt-1.5 flex min-w-0 items-baseline gap-2 px-0.5 text-xs">
         {asset.kind !== "audio" ? (
           <span className="text-foreground min-w-0 flex-1 truncate font-medium">
-            {shortTitle(asset)}
+            {captionTitle(asset.prompt, kindLabel(asset.kind))}
           </span>
         ) : null}
         <span className="text-subtle-foreground shrink-0">

@@ -433,7 +433,7 @@ describe("Library media recovery", () => {
     expect(
       await screen.findByRole("button", { name: `Open ${prompt}` }),
     ).toBeVisible();
-    expect(screen.getByText(prompt)).toHaveClass("truncate");
+    expect(screen.getByText(`X${"x".repeat(499)}`)).toHaveClass("truncate");
     expect(screen.getByText(`${"y".repeat(84)}…`)).toHaveClass("break-words");
     await userEvent.click(
       screen.getByRole("button", { name: `Open ${prompt}` }),
