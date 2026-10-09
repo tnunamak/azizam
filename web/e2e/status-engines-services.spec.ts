@@ -410,8 +410,12 @@ for (const theme of ["light", "dark"] as const) {
           theme,
         );
         await page.goto(`/ui/${route}/`);
-        await expect(page.getByText("Engines unavailable")).toBeVisible();
-        await expect(page.getByText("Registry offline")).toBeVisible();
+        await expect(
+          page.getByText("Engine list could not be loaded"),
+        ).toBeVisible();
+        await expect(
+          page.getByText("Each engine's state is unknown. Registry offline"),
+        ).toBeVisible();
         await checkPageBasics(page, `status-${route}-error-${theme}-${width}`);
       });
     }
@@ -657,10 +661,15 @@ test("services compatibility route is owner gated", async ({ page }) => {
   );
   await page.goto("/ui/services/");
   await expect(
-    page.getByText(
-      "This page is available to gateway owners and admins. Sign in with an owner account to continue.",
-      { exact: true },
-    ),
+    page.getByText("Owner access required", { exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByText("This page is available to gateway owners and admins.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Sign in with an owner account" }),
+  ).toHaveAttribute("href", /return_to=%2Fui%2Fservices%2F/);
   expect(adminCalls).toEqual([]);
 });

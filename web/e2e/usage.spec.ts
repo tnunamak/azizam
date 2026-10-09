@@ -232,7 +232,7 @@ test("usage labels unavailable remote spend honestly", async ({ page }) => {
   const remoteSpendCard = page
     .getByText("Remote spend", { exact: true })
     .locator("..");
-  await expect(remoteSpendCard).toContainText("No paid requests");
+  await expect(remoteSpendCard).toContainText("Unavailable");
   await expect(remoteSpendCard).not.toContainText("$0");
 });
 

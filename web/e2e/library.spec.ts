@@ -131,8 +131,15 @@ for (const mode of ["light", "dark"] as const) {
         .click();
       await expect(page.getByRole("dialog")).toContainText("Workflow");
       await expect(
-        page.getByRole("link", { name: "Download" }),
+        page
+          .getByRole("dialog")
+          .getByRole("link", { name: "Download", exact: true }),
       ).toHaveAttribute("href", mediaFixture.assets[0].download_url!);
+      await expect(
+        page
+          .getByRole("dialog")
+          .getByRole("link", { name: "Download ComfyUI workflow" }),
+      ).toHaveAttribute("href", mediaFixture.assets[0].workflow_download_url!);
       await auditPage(page);
       const cards = await page
         .locator("article")
@@ -299,7 +306,7 @@ test("library filters dates and everyone, pages forward and preserves prior item
     page.getByRole("button", { name: "Delete", exact: true }),
   ).toHaveCount(0);
   await expect(
-    page.getByRole("link", { name: "Open in ComfyUI" }),
+    page.getByRole("link", { name: "Download ComfyUI workflow" }),
   ).toBeVisible();
 });
 
