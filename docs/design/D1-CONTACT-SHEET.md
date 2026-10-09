@@ -1,6 +1,6 @@
 # D1 contact sheet: Home, Status, Library
 
-Captures: `~/.tmp/azizam-redesign/d1-12/` for D1.5, round 6 (made by `scripts/ui/d1-states-capture`, branch `design/d12-continue`; earlier sets: `d1-11` for D1.4, `d1-10` for D1.3, `d1-8` and `d1-9` for D1.2). `try-image` and `try-speech` are populated captures of the Try page; `d1-12/task-flows/` holds six household jobs step by step (`web/e2e/d1-task-flows.mjs`). One folder per household scenario. File names are `<scenario>_<role>_<surface>_<state>_<theme>_<width>.png`; each has a `_viewport.png` twin (1440×900 or 390×844, not full page, which is what the benchmarks show) and the page text in a `.txt`. A `manifest.json` per folder records console errors and forced states. Every state exists for owner (Sam) and member (Robin), at 390 and 1440 px, in light and dark. Loading, error, empty and expired are forced by request interception and labelled so in the manifest. The fixture's public address is `https://ai.household.example`.
+Captures: `~/.tmp/azizam-redesign/d1-13/` for D1.5b, round 6 (made by `scripts/ui/d1-states-capture`, branch `design/d12-continue`; earlier sets: `d1-12` for D1.5 before the coordinator's decisions, `d1-11` for D1.4, `d1-10` for D1.3, `d1-8` and `d1-9` for D1.2). `try-image` and `try-speech` are populated captures of the Try page; `d1-13/task-flows/` holds six household jobs step by step (`web/e2e/d1-task-flows.mjs`); in D1.5b the picture and speech runs finish in the fixture. One folder per household scenario. File names are `<scenario>_<role>_<surface>_<state>_<theme>_<width>.png`; each has a `_viewport.png` twin (1440×900 or 390×844, not full page, which is what the benchmarks show) and the page text in a `.txt`. A `manifest.json` per folder records console errors and forced states. Every state exists for owner (Sam) and member (Robin), at 390 and 1440 px, in light and dark. Loading, error, empty and expired are forced by request interception and labelled so in the manifest. The fixture's public address is `https://ai.household.example`.
 
 Benchmark ids refer to `benchmarks/BOARD.md`. State words and rules: DESIGN.md, "Status model".
 
@@ -21,9 +21,9 @@ Benchmark ids refer to `benchmarks/BOARD.md`. State words and rules: DESIGN.md, 
 
 | State | What it shows, and the trait it meets |
 |---|---|
-| populated, owner | Verdict "Video degraded". At 1440: the card on the left and Capabilities (one card of rows) on the right, then "Engines and providers" across the full width: each engine's name over what it serves, a wide 24-hour strip, "24/24 h up" and its state. The card: "Video studio is answering with errors", "Inspect Video studio", the fix, Affects ("Video: no other engine serves it." and, on wide screens, "A request from Robin's personal app failed 1h ago."), Last 24 hours ("Degraded since about 1:30 PM", then "Down for 4 hours and degraded for 2 in the last 24 hours, in 3 separate stretches.", the legend, the large strip and clock times 3:30 PM, 9:30 PM, 3:30 AM, 9:30 AM, Now), Failed requests. On a phone: one column, each label above its value: title, Affects, Last 24 hours, the fix, the button, "Show evidence"; no header pill. Below 1280 px the engines fold to "Engines: 4 ready, …" with "Show all". |
+| populated, owner | Verdict "Video degraded". One 896 px column at every width: the card, Capabilities as two columns of rows in one card, then "Engines and providers" folded to one line ("Other engines: 4 ready, 1 turned off." with "Show all"; opened, each engine's name sits over what it serves, with a wide strip, "24/24 h up" and its state). The card: "Video studio is answering with errors", "Inspect Video studio", the fix, Affects ("Video: no other engine serves it." and, on wide screens, "A request from Robin's personal app failed 1h ago."), Last 24 hours ("Degraded since about 1:30 PM", then "Down for 4 hours and degraded for 2 in the last 24 hours, in 3 separate stretches.", the legend, the large strip and clock times 3:30 PM, 9:30 PM, 3:30 AM, 9:30 AM, Now), Failed requests. On a phone: one column, each label above its value: title, Affects, Last 24 hours, the fix, the button, "Show evidence"; no header pill. |
 | populated, member | The same verdict as Home; "Your video request failed"; "Your capabilities"; "Model names"; "Your latest requests" (the gateway sends five); the next step follows the failure ("Ask Sam if it does not recover.", not "Check your connection"). |
-| new-member / budget-exhausted, member | Video reads Degraded, "May be slow or fail right now." (it read "Busy, working on other requests" while the owner saw errors; DESIGN backend ask 16). |
+| new-member / budget-exhausted, member | Video reads Degraded, "Answering with errors. Requests may fail." Since main 00f10bc the gateway reports "degraded" itself (backend ask 16, done), so member and owner tell one story. |
 | running, owner | "Running now" lists the two requests in progress, with their people. |
 | budget-exhausted, owner | Two cards: Video studio, and "A spending limit on the Everyone plan refused paid requests": Affects, Spent ("Unavailable" with each limit, or the plan's spend per period when the gateway records it), "Gateway said" quoting the refusal, Resets, Refused. |
 | provider-down, owner | "Remote backup is down": the last connection check failed, Chat is still served by an engine on this computer, 7 of the latest 50 requests failed from Robin, Zoë and Sam. |
@@ -41,6 +41,16 @@ Benchmark ids refer to `benchmarks/BOARD.md`. State words and rules: DESIGN.md, 
 | expired | "20" in the title and "4 no longer stored" beside it, which opens the list; "Their prompts and receipts remain." for owners and members. |
 | loading / error / empty / filtered empty | Square skeletons; a critical Callout with "Try again"; "No creations yet" with "Make an image"; "Clear filters to see more." |
 | running | Calm placeholders for work in progress. |
+
+## D1.5b: the coordinator's decisions
+
+| Item | Decision | Done |
+|---|---|---|
+| Owner Status | Fold healthy engines during an incident; fix the empty space with layout | One 896 px column at every width; engines fold to one line whenever a card is open, and open with nothing to attend to. Owner Status reads 86 words on the production copy again (D1.5: 212) |
+| Phone tiles with date headers | Accepted | |
+| Phone audio opens on tap | Accepted | |
+| Task flows | Make the fixture's runs finish; say what failed; Run primary; prompt once | Both runs finish (fixture only: the image engine's id is `comfyui`, the backend the gateway's image route always uses; the fake engine answers ComfyUI and speech; the fixture guard allows the speech route's two ffmpeg calls by exact shape). A failed run reads "Image request failed". Run is the primary button. The audio viewer shows the words once, in the details |
+| Merge main 00f10bc | Re-check colours and copy against the new `degraded` member state | Merged cleanly. The state model had no branch for the gateway's "degraded" (marked available), so it would have read Ready; it reads Degraded now, and a bare "busy" is Busy again. Status pills already use the warning colour, which is the D1.5 amber |
 
 ## Craft diff (D1.5, round 5 judges and the benchmarks)
 
@@ -62,7 +72,7 @@ Round 5 (set-6): win or tie 82 / 88 / 88 / 88% (flat), Library 71% for every jud
 | q3: the strip has no clock labels; the legend sits under the chart | "24 h ago … Now"; legend under the strip | Legend above the strip; 3:30 PM, 9:30 PM, 3:30 AM, 9:30 AM and Now under it |
 | q2, q3: "3 spells: down 4 h, degraded 2 h" is jargon and wraps mid-phrase | One run-on line | Two lines: "Degraded since about 1:30 PM" (semibold), then "Down for 4 hours and degraded for 2 in the last 24 hours, in 3 separate stretches." at 16 px on wide screens, 14 px on a phone |
 | q3, x3: on a phone the evidence is squeezed into a narrow right column | Label column beside values at 390 | One column on a phone: each label in 12 px medium above its value |
-| Linear: one wide strip per row under the name, inside one card. q3: the lower half is empty beside a plain "Engines and providers" box | Folded summary box under the card; right column ends at y ≈ 580 | At 1280 px and wider the engine table spans the full width under the card and Capabilities; each row is name over "Serves", a strip that takes the free width, hours up and state; rows are one height (no per-row "Hour by hour") |
+| Linear: one wide strip per row under the name, inside one card. q3: the lower half is empty beside a plain "Engines and providers" box | Folded summary box under the card; right column ends at y ≈ 580 | D1.5b: no side column at any width; the card, Capabilities (two columns of rows) and the folded engines line share one 896 px reading column, as on Linear's and incident.io's incident pages, so nothing stands empty beside them. Opened, each row is name over "Serves", a strip that takes the free width, hours up and state, one height (no per-row "Hour by hour"). (D1.5 opened the table at 1280 px instead; owner Status went from 86 to 212 words and the coordinator reverted it.) |
 | q3: "the degraded warning is repeated three times" (header pill, status row, video row) | Header pill on every phone page | No header pill on Home and Status, which open with their own verdict |
 
 ### Home: Apple Home (iPhone)
@@ -247,12 +257,12 @@ Conclusion: the judges' "no poster" was audio tiles that looked like un-postered
 
 ## Gate results for this set
 
-D1.5 on `design/d12-continue` (no main merge this round; main edc0388 is the last merged). Fixture servers on ports 18940 to 18990; nothing on 5000.
+D1.5b on `design/d12-continue` (main 00f10bc merged). Fixture servers on ports 18940 to 18990; nothing on 5000.
 
-- axe WCAG 2 AA: 0 violations over 32 page checks (owner and member; Home, Status, Library, viewer; light and dark; 1440 and 390). Horizontal overflow, clipped text, targets under 44 px at 390, tab stops without visible focus and console errors: 0 (`~/.tmp/azizam-redesign/d1-12-gates`). The audio play badge is 24 px, so phones show a plain badge and open the clip instead.
-- Impeccable detector on 16 snapshots (`d1-12-snap`): only Sonner's toast height transition (recorded exception). D1.4's `text-overflow` exception is gone with the audio covers.
+- axe WCAG 2 AA: 0 violations over 32 page checks (owner and member; Home, Status, Library, viewer; light and dark; 1440 and 390). Horizontal overflow, clipped text, targets under 44 px at 390, tab stops without visible focus and console errors: 0 (`~/.tmp/azizam-redesign/d1-13-gates`).
+- Impeccable detector on 16 snapshots (`d1-13-snap`): Sonner's toast height transition (recorded exception). On the four viewer snapshots, which opened a picture made in Try: a skipped heading (fixed in 92eade5, Workflow is now an h3) and low contrast on the disabled "Copy prompt" (disabled controls are exempt from WCAG contrast; the picture has no recorded prompt, see the report).
 - Token drift: 0. State palette (`scripts/ui/state_palette.py --fail`): passes.
-- lint.py on a copy of the production data (eleven engines blocked): Home, Library and member Status pass. Owner Status reads 212 words against 60 (D1.4: 86). It grew because at 1280 px and wider the engine table is now open under the card (the brief's "fill the empty lower half"), and the production copy has 18 engines and 2 providers; below 1280 px the table still folds to one line. This needs a decision (see the report).
-- Unit tests: vitest 534 in the main config plus all 11 folder configs (198) pass. `tsc` and ESLint: clean.
-- Playwright, main config: the full run on the build before the last fixes passed 608 of 612. The four failures were mine: two specs asserted D1.4 behaviour that D1.5 changed on purpose (the phone tour clicked the in-place play badge; a provider row header now reads "OpenRouter Remote provider"); fixed in e8e7813, and the ten affected spec files then passed 115 of 115 on the final build. Live-data config: 4 of 4.
-- Hermetic Python at d4f1399: 5789 passed, 0 failed. Every later commit changes `web/` only.
+- lint.py on a copy of the production data (eleven engines blocked): Home, Library and member Status pass. Owner Status reads 86 words against 60, as in D1.4 (D1.5: 212).
+- Unit tests: vitest 536 in the main config plus all 11 folder configs (198) pass. `tsc` and ESLint: clean.
+- Playwright: the 16 affected spec files passed 178 of 179; the one failure (the command palette in shell.spec, untouched by D1.5b) timed out while the hermetic Python suite was running and passed 11 of 11 alone. Live-data config: 4 of 4.
+- Hermetic Python at b858bbe (with the merge and the fixture changes): 5794 passed, 0 failed. Later commits change `web/` and docs only.
