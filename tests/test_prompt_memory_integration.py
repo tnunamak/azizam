@@ -89,7 +89,9 @@ def test_owner_kill_switch_removes_pending_payload_files(tmp_path):
     interrupted = payload_dir / "mj_writing.json.tmp"
     normal.write_text('{"prompt":"pending-secret"}', encoding="utf-8")
     interrupted.write_text('{"prompt":"interrupted-secret"}', encoding="utf-8")
-    with patch.object(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", payload_dir):
+    jobs_db = tmp_path / "data" / "jobs.db"
+    media_jobs.init_db(jobs_db)
+    with patch.object(proxy, "IMAGE_MEDIA_JOB_PAYLOAD_DIR", payload_dir), patch.object(media_jobs, "DB_PATH", jobs_db):
         proxy._purge_prompt_payload_files()
     assert list(payload_dir.iterdir()) == []
 

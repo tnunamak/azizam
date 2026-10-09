@@ -116,21 +116,23 @@ def responses_gateway(tmp_path, monkeypatch):
             request=httpx.Request("POST", "http://gateway/v1/chat/completions"),
         )
 
-    with patch.object(proxy, "_forward_chat_completions", fake_forward):
-        yield {
-            "client": TestClient(proxy.app),
-            "headers": {"Authorization": f"Bearer {raw_key}"},
-            "data": data,
-            "cache": cache,
-            "responses_db": responses_db,
-            "media_db": media_db,
-            "admin_db": admin_db,
-            "person_id": user["id"],
-            "app_id": app["id"],
-            "identity": identity,
-            "identities": identities,
-            "sent": sent,
-        }
+    # Use the same teardown stack as tests that replace this forwarder, so
+    # their cleanup cannot restore this fixture's fake into later test files.
+    monkeypatch.setattr(proxy, "_forward_chat_completions", fake_forward)
+    yield {
+        "client": TestClient(proxy.app),
+        "headers": {"Authorization": f"Bearer {raw_key}"},
+        "data": data,
+        "cache": cache,
+        "responses_db": responses_db,
+        "media_db": media_db,
+        "admin_db": admin_db,
+        "person_id": user["id"],
+        "app_id": app["id"],
+        "identity": identity,
+        "identities": identities,
+        "sent": sent,
+    }
 
 
 def _post_response(fixture, body: dict):

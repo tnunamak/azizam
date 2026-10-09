@@ -373,9 +373,12 @@ class RemixReplaceConformanceTests(RemixReplaceBase):
         done = poll()
         self.assertEqual((done["status"], done["progress"]), ("completed", 100))
         self.assertIsInstance(done["completed_at"], int)
-        content = self.client.get(f"/v1/videos/{video_id}/content")
+        full = self.client.get(f"/v1/videos/{video_id}/content")
+        self.assertEqual(full.status_code, 403)  # No retained maker identity for this caller.
+        content = self.client.get(f"/v1/videos/{video_id}/content?metadata=none")
         self.assertEqual(content.status_code, 200)
-        self.assertIn(b"ftyp", content.content[:32])
+        expected = proxy.media_metadata.strip_metadata(_rendered_mp4(), ".mp4")
+        self.assertEqual(content.content, expected)
         self.assertEqual(content.headers["content-type"], "video/mp4")
         self.assertEqual([s for s, _ in seen][0], "queued")
         progress = [p for _, p in seen]
