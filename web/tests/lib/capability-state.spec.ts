@@ -273,3 +273,37 @@ describe("the health story matches the strip (D1.3)", () => {
     expect(healthStory(healthHistory(day(up)))).toBeNull();
   });
 });
+
+describe("a gateway 'busy' is not a queue unless a check says so (red team round 2, P0)", () => {
+  const end = 1_800_000_000;
+  const busy = {
+    ...chat,
+    status: "busy",
+    evidence: { source: "status", observed_at_s: end - 60 },
+  };
+  it("tells a member only what busy and degraded share", () => {
+    const view = capabilityView(busy, { now: end });
+    expect(view.state).toBe("degraded");
+    expect(view.detail).toBe("May be slow or fail right now.");
+  });
+  it("says Busy when an engine check itself says busy (owner evidence)", () => {
+    const view = capabilityView(busy, {
+      now: end,
+      engines: [engine({ observation: "busy", tone: "ok" })],
+    });
+    expect(view.state).toBe("busy");
+    expect(view.detail).toBe("Working on other requests.");
+  });
+  it("matches the owner's Degraded when the engine check says degraded", () => {
+    const view = capabilityView(busy, {
+      now: end,
+      engines: [engine({ observation: "degraded", tone: "warn" })],
+    });
+    expect(view.state).toBe("degraded");
+  });
+  it("keeps Starting as Busy: the gateway reports starting on its own", () => {
+    expect(
+      capabilityView({ ...busy, status: "starting" }, { now: end }).state,
+    ).toBe("busy");
+  });
+});

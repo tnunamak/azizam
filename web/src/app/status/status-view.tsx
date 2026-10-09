@@ -278,7 +278,9 @@ export function MemberStatus() {
             >
               <SectionHeading
                 id="recent-status-heading"
-                title="Your recent requests"
+                // The gateway sends the latest five; the title says so, so a
+                // request the owner sees is not "missing" from this list.
+                title="Your latest requests"
               />
               {receipts.length ? (
                 <ul className="divide-y">
@@ -328,14 +330,25 @@ export function MemberStatus() {
                   No requests yet.
                 </p>
               )}
+              {/* The next step follows the failure shown (red team round 2):
+                  a spending limit is the owner's to lift, a gateway problem
+                  is not the member's connection. */}
               <p className="text-muted-foreground mt-4 text-sm">
-                App still not working?{" "}
-                <Link
-                  href="/home"
-                  className="text-link font-medium underline-offset-4 hover:underline"
-                >
-                  Check your connection
-                </Link>
+                {refusal ? (
+                  `${askOwner(ownerName)} if you need paid models before the limit resets.`
+                ) : modelVerdict.problems.length ? (
+                  `${askOwner(ownerName)} if it does not recover; the problem is on the gateway, not your app.`
+                ) : (
+                  <>
+                    App still not working?{" "}
+                    <Link
+                      href="/home"
+                      className="text-link font-medium underline-offset-4 hover:underline"
+                    >
+                      Check your connection
+                    </Link>
+                  </>
+                )}
               </p>
             </section>
           </div>

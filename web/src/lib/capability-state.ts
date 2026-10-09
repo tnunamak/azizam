@@ -373,11 +373,16 @@ export function capabilityView(
         "Reported busy, and requests have failed since the last success.",
         stamp,
       );
-    return make(
-      "busy",
-      status === "starting" ? "Starting up." : "Working on other requests.",
-      stamp,
-    );
+    if (status === "starting") return make("busy", "Starting up.", stamp);
+    // The gateway's capability "busy" also covers an engine whose check
+    // says "degraded" (gateway/availability.py BUSY_STATUSES), so a member
+    // was told "working on other requests" while the owner saw the same
+    // engine answering with errors (red team round 2, P0). Only an engine
+    // check that itself says busy (owner evidence) supports a queue; without
+    // it, say only what both readings share. DESIGN.md backend ask 16.
+    const checkedBusy = serving.some((engine) => engine.observation === "busy");
+    if (checkedBusy) return make("busy", "Working on other requests.", stamp);
+    return make("degraded", "May be slow or fail right now.", stamp);
   }
   if (refusal)
     return make(
