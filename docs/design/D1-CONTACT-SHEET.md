@@ -155,13 +155,12 @@ Conclusion: the judges' "no poster" was audio tiles that looked like un-postered
 
 ## Gate results for this set
 
-Run on `design/d12-continue` after merging main (42c6a32), HEAD 1813605. Fixture servers on ports 18620 to 18720.
+D1.3 on `design/d12-continue` after merging main (edc0388). Fixture servers on ports 18740 to 18820; nothing on 5000.
 
-- axe WCAG 2 AA: 0 violations over 32 page checks (owner and member; Home, Status, Library, viewer; light and dark; 1440 and 390). Horizontal overflow, clipped text, targets under 44 px at 390, tab stops without visible focus and console errors: 0 (`~/.tmp/azizam-redesign/d1-9-gates`).
-- Impeccable detector: only Sonner's toast height transition (the recorded exception) on all 16 snapshots (`d1-9-snap`).
+- axe WCAG 2 AA: 0 violations over 32 page checks (owner and member; Home, Status, Library, viewer; light and dark; 1440 and 390). Horizontal overflow, clipped text, targets under 44 px at 390, tab stops without visible focus and console errors: 0 (`~/.tmp/azizam-redesign/d1-10-gates`).
+- Impeccable detector on the 16 snapshots (`d1-10-snap`): Sonner's toast height transition (recorded exception) and `text-overflow` on Library captions (recorded D1.3 exception: one-line captions by design). Its first pass also found heading crowding on Status's two columns; fixed (PageHeader's space is a margin).
 - Token drift: 0.
-- lint.py on a copy of the production data (every engine blocked): Home, Library and member Status pass. Owner Status reads 76 words against a budget of 60 (`d1-8`: 83). The excess is the nine capability chips, each with its state word, in an outage where all nine need attention; the "Affects" row of the card names seven of them again. Folding them is a judging question, because each chip carries a different state. Workflows, Activity and Usage are over budget and out of scope.
-- Unit tests: vitest 524 in the main config plus all 11 folder configs pass.
-- Playwright, main config: 597 passed, 15 failed. The 15 are the same tests (spec and title) that fail at 542c95a and on main in the 2026-10-09 audit (stale specs: Library seeded, Library filters, engines and services error copy, services route gate, Usage remote spend). Live-data config: 4 of 4 pass (the stale scoping spec is fixed).
-- Hermetic Python at 1813605: 5789 passed, 0 failed.
-- One regression was found and fixed during the round: the deep-water cover isolated its stacking context and hid a tile's play control under its open button (`3a65385`); `e2e/library.spec.ts` "audio plays independently" caught it.
+- lint.py on a copy of the production data (eleven engines blocked): Home, Library and member Status pass. Owner Status reads 88 words against 60 (`d1-9`: 76). The plain-words engines line the judges asked for ("4 other engines are down, 1 is not checked and 2 are turned off. 2 remote providers are set up.") and the Affects sentence add words; Affects counts capabilities instead of naming them when more than three are exposed. Whether to trade those words back is a judging question.
+- Unit tests: vitest 529 in the main config plus all 11 folder configs pass.
+- Playwright, main config: 611 of 612 passed in the full run; the one failure was a transient ECONNRESET in a request fixture while a capture and a copied-data gateway also ran, and its spec file passed 12 of 12 on rerun. The Library specs that main fixed for main's UI were updated for this branch's controls (20 of 20). Status specs on the final build: 37 of 37. Live-data config: 4 of 4.
+- Hermetic Python at a910a9b (after the fixture change): 5789 passed, 0 failed.
