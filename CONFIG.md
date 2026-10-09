@@ -34,6 +34,30 @@ An opaque JSON response without such a declaration remains unknown. These
 fields are operator-authored registry data and apply after a registry edit;
 changing bootstrap seeds does not overwrite an existing service record.
 
+GPU memory and RSS are attributed to services from the same records. A service
+owns the processes in its `lifecycle.driver_config.unit` cgroup; a service with
+no unit and a local `host`/`port` owns the process listening on that port.
+Other processes are reported as `desktop`, and `__unattributed` is device-used
+memory minus the sum of the per-process rows. A service can declare
+`vram_budget_key` (a variable in the `AZIZAM_GPU_BUDGET_PATH` script, e.g.
+`GPU1_LLM`) to be compared with that budget on the status page, using the
+memory on the GPU where its process holds the most; a share on another GPU is
+shown as spillover with no budget verdict. The sampler
+writes the same rows to `metrics.db` as `service_vram_mb` (tags `gpu`,
+`service`; slow tier, once a minute). Each 10 s tick it also writes
+`vram_free_mb` and `gpu_desktop_alloc_failures` (count of kernel "Failed to
+allocate NVKMS memory" lines logged since the last read). The sampler reads the
+kernel journal on from a cursor that it commits to `metrics.db` (table
+`sampler_state`) in the same transaction as the counts, so failures logged while
+the journal was unreadable, a write failed or the gateway was down count once,
+on the next tick that reads them. A tick reads at most 2000 journal entries, so
+a large backlog is caught up over several ticks. While the journal is unreadable
+there is no row and the gateway logs one warning. With no committed cursor
+(first run) counting starts at the journal's end. If the committed cursor is no
+longer in the journal (rotated away), the gateway logs the gap and restarts at
+the journal's end: failures in that gap are not counted, and none are counted
+twice.
+
 | Env var | What it controls | Default |
 |---|---|---|
 | `AZIZAM_GPU_BUDGET_PATH` | Path to a shell script that exports GPU VRAM budget variables (e.g. `GPU0_TOTAL`, `GPU0_DESKTOP`). When unset, budget data is omitted from `/v1/status`. | unset (feature off) |

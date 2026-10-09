@@ -33,7 +33,7 @@ RAW_RETAIN_S = 7 * 24 * 3600
 MINUTE_RETAIN_S = 30 * 24 * 3600
 HOUR_RETAIN_S = 365 * 24 * 3600
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS samples (
@@ -74,6 +74,13 @@ CREATE INDEX IF NOT EXISTS samples_1hour_metric_ts ON samples_1hour(metric, ts);
 CREATE INDEX IF NOT EXISTS samples_1hour_ts ON samples_1hour(ts);
 
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
+
+-- Sampler positions committed in the same transaction as the samples they
+-- produced (e.g. the kernel-journal cursor NVKMS failures were counted up to).
+CREATE TABLE IF NOT EXISTS sampler_state (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 """
 
 
@@ -239,6 +246,22 @@ def record_samples(conn: sqlite3.Connection, samples: Iterable[tuple]) -> None:
         "INSERT INTO samples (ts, metric, tags, value) VALUES (?, ?, ?, ?)",
         samples,
     )
+
+
+def write_sampler_state(conn: sqlite3.Connection, state: dict[str, str]) -> None:
+    """Upsert sampler positions; call inside the transaction of their samples."""
+    conn.executemany(
+        "INSERT INTO sampler_state (key, value) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        state.items(),
+    )
+
+
+def read_sampler_state(path: Path, key: str) -> Optional[str]:
+    """The committed value of one sampler position, or None."""
+    with reader(path) as conn:
+        row = conn.execute("SELECT value FROM sampler_state WHERE key = ?", (key,)).fetchone()
+    return row[0] if row else None
 
 
 def _matches_tags(tag_json: str, filt: Optional[dict]) -> bool:

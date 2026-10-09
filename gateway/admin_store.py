@@ -1638,6 +1638,32 @@ def list_admin_roles(
     return [_row_to_dict(r) for r in rows]  # type: ignore[misc]
 
 
+def owner_display_name(*, path: Path = DB_PATH) -> str | None:
+    """Display name of the earliest active gateway owner that has a clean one.
+
+    Returns ``None`` when no owner has one. Email addresses are sign-in
+    identities, not a published contact, and must never leak through this
+    field. Setup stores the local owner's email as its display name, and OIDC
+    sign-in falls back to the email when there is no ``name`` claim, so a name
+    that equals the user's email or contains ``@`` is skipped.
+    """
+    with _conn(path) as conn:
+        rows = conn.execute(
+            "SELECT u.display_name AS name, u.email AS email FROM admin_role_assignments r "
+            "JOIN users u ON u.id = r.subject_id "
+            "WHERE r.role = 'owner' AND r.subject_kind = 'user' "
+            "AND r.revoked_at IS NULL AND r.scope_app_id IS NULL "
+            "ORDER BY r.granted_at ASC, r.id ASC"
+        ).fetchall()
+    for row in rows:
+        name = str(row["name"] or "").strip()
+        email = str(row["email"] or "").strip()
+        if not name or "@" in name or (email and name.casefold() == email.casefold()):
+            continue
+        return name
+    return None
+
+
 # ---------------------------------------------------------------------------
 # runtime profile mappings
 # ---------------------------------------------------------------------------
@@ -2391,6 +2417,7 @@ __all__ = [
     "reconcile_oidc_admin_roles",
     "revoke_admin_role",
     "list_admin_roles",
+    "owner_display_name",
     "create_runtime_profile_mapping",
     "disable_runtime_profile_mapping",
     "list_runtime_profile_mappings",

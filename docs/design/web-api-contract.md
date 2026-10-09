@@ -625,6 +625,8 @@ Notes:
   not prepend or infer a static default selection.
 - **"Apps using it" count is client-side**: count `GET /admin/api/apps` rows
   where `default_profile_id === profile.id`.
+- Each row carries `plan_spend`: spend against that plan's daily and monthly
+  caps, as the cap barrier counts it. See "Plan spend" under Member surfaces.
 
 ### GET /admin/api/profiles/{profile_id}
 
@@ -1028,3 +1030,136 @@ Setting `state: "available"` with no `reason` clears any existing override for
 that service (idempotent clear).
 
 `200` → `{ "service_availability": { "<service_id>": { "state": "…", "reason": null, "retry_after_seconds": null } } }`
+
+---
+
+## Member surfaces (`/me/api`)
+
+The member Home and Status pages read the signed-in person's own view. The
+fields below are additive; the payloads keep every earlier field.
+
+### Availability evidence (`availability.evidence`)
+
+Every capability `availability` object carries `evidence`, an allowlisted
+summary of the fact behind the state. All times are epoch seconds. A time is
+absent when it is not known; the gateway never substitutes the current time.
+
+| Field | Meaning |
+|---|---|
+| `source` | Where the fact came from: `health` (health probe), `status` (status grid), `lifecycle`, `request` (a recent request receipt), `registry`, `capability`. |
+| `kind` | Optional qualifier, for example `no_response` (the check got no usable answer), `disabled`, `unconfigured`. |
+| `receipt_status` | For `source: "request"`, the terminal status of that request. |
+| `observed_at_s` | When the check or request behind this evidence happened. A failed check is observed at its attempt time, so read it together with `kind` and `last_success_at_s`. Absent when nothing was checked (for example, a service without a health endpoint). |
+| `last_attempt_at_s` | The latest check or proven request from this source. Equal to `observed_at_s` today; kept separate so that clients do not have to infer it. |
+| `last_success_at_s` | The latest successful check or request from this source that the gateway knows of. Health checks remember it for the life of the gateway process; request evidence looks back over the recent-evidence window (15 minutes). Absent means no success is known, not that none happened. |
+
+A placeholder for an unmeasured service (`status: "unknown"`, no time) never
+hides a timed observation from another source.
+
+### GET /me/api/status — capability evidence
+
+Each `capabilities[]` row carries `availability: { "evidence": { … } }`, the
+same allowlisted evidence object as the matching `/me/api/home` capability
+(fields above). The older top-level `observed_at_s` stays for compatibility.
+
+### Busy versus failing
+
+`status: "busy"` means a status or health check reported the service busy or
+degraded and no recent request proves it is failing. When a request to the
+service failed with a server error (HTTP 5xx, a timeout, or a disconnect) in
+the recent-evidence window (15 minutes) and no later request succeeded, the
+capability projects `status: "unavailable"`, `available: false`, with
+`evidence.source: "request"`, even if a newer check says busy or degraded.
+This projection is for presentation only; routing and fallback do not read it.
+
+### Gateway owner (`gateway` on /me/api/home and /me/api/status)
+
+```json
+{ "gateway": { "owner_name": "Sam" | null } }
+```
+
+`owner_name` is the display name of the earliest active owner (role `owner`,
+not revoked) that has one. It is `null` when no owner has a display name; the
+client supplies its own wording ("the gateway owner"). No `owner_contact` is
+published: the store has no contact field, and the owner's sign-in email is an
+identity, not a contact the owner chose to share.
+
+### Receipts — `refusal` (client, admin and internal audiences)
+
+A receipt for a request that a spending limit refused carries:
+
+```json
+{ "refusal": { "code": "budget_exceeded",
+               "limit": { "period": "daily" | "monthly" | "request",
+                          "scope": "plan" | "provider" | "global" } | null } }
+```
+
+- `code` is the error code the caller received: `budget_exceeded`, or
+  `provider_needs_reconciliation` when unsettled charges block paid requests.
+- `limit` names the limit that refused the request. `plan` is the caller's
+  access plan (profile) cap, `provider` a cap on the provider (registry or
+  owner setting), `global` the owner's gateway-wide cap. `request` is the
+  plan's per-request cap. `limit` is `null` when no single limit applies (for
+  example, the price is unknown while a cap is set).
+- The field holds codes only: no amounts, provider names or other people's
+  usage. It is absent on receipts that were not refused by a spending limit.
+  Clients must use it instead of matching warning or error text.
+- Written today by paid chat/embeddings execution and the paid OpenAI-style
+  `/v1/decisions` path. The TypeSafe `/v1/decisions` receipts (a separate
+  receipt type) carry `error_code: "budget_exceeded"` but no `limit`.
+
+### Plan spend (`plan_spend` on /me/api/home and on each /admin/api/profiles row)
+
+```json
+{ "plan_spend": [
+  { "period": "daily", "window": "rolling_24h",
+    "spent_usd": "0.300000000" | null, "cap_usd": "1",
+    "resets_at": 1765… | null },
+  { "period": "monthly", "window": "calendar_month_utc",
+    "spent_usd": "0.300000000" | null, "cap_usd": "8",
+    "resets_at": 1767… }
+] }
+```
+
+- One entry per period for which the plan has a cap
+  (`remote.budget_usd_per_day`, `remote.budget_usd_per_month`). A plan without
+  caps has `[]`. `plan_spend` is `null` when the plan itself cannot be loaded.
+- The numbers are the cap barrier's own accounting (the provider spend
+  ledger): the daily window is the rolling last 24 hours, the monthly window
+  is the UTC calendar month, and reserved (in-flight), settled and unreconciled
+  charges all count. USD values are decimal strings.
+- `spent_usd` is `null`, with `unknown_reason`, when the spend is not known:
+  `ledger_unavailable` (no ledger wired or it cannot be read) or
+  `needs_reconciliation` (the plan has a charge of unknown cost; paid requests
+  are refused until an owner settles it). It is never reported as `0` in
+  these cases. A ledger file that does not exist yet means no paid request has
+  reserved spend, which the barrier also counts as `0`.
+- Like the barrier, a `reserved` charge that has expired, has no owning
+  process generation, or belongs to another process generation counts as an
+  unreconciled charge, so the spend is unknown (`needs_reconciliation`).
+- `resets_at` (epoch seconds): for `monthly`, the start of the next UTC month.
+  For `daily`, the rolling window has no single reset; this is when the oldest
+  counted charge leaves the window and the spend first drops. Always `null`
+  when the spend is unknown; for `daily` also `null` when no charge is counted.
+- On `/me/api/home` this is the member's own plan (the plan their keys
+  inherit). The spend is the plan's total across everyone on it, because the
+  caps are shared; it names no person and no request.
+- Provider and global caps (owner settings) also refuse requests; they are not
+  part of `plan_spend`. A refused receipt names the limit (see `refusal`).
+
+### Accepted limits of these member facts
+
+- **Shared plan totals.** `plan_spend` on `/me/api/home` shows the plan's
+  total spend and the daily `resets_at` (the time of the plan's oldest charge
+  in the last 24 hours, plus 24 hours). On a plan with very few members this
+  hints at when and how much others on the same plan spent. This is accepted:
+  the caps are shared, and a member cannot understand a refusal without the
+  shared total. No person, request or provider is named.
+- **`/v1/decisions` (TypeSafe) refusals.** Those receipts are a separate type
+  and carry `error_code: "budget_exceeded"` without `refusal.limit`.
+- **Health endpoints that answer 404/405** project `status: "unknown"` with
+  `evidence.kind: "no_response"` (unchanged earlier behavior): the gateway
+  cannot tell a missing health route from a down service.
+- **Same-second evidence.** When two sources observed a service in the same
+  second, a check that saw it ready wins over a busy/degraded row; otherwise
+  the source merged last wins.

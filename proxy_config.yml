@@ -3,6 +3,20 @@ proxy:
   port: 5000
 llm:
   pin_loaded_model: false
+  # Swap drain (gateway/swap_drain.py). When enabled, a model/profile swap on a
+  # swap-capable backend waits for the requests it is serving to finish, up to
+  # timeout_s; if they do not finish, the swap is refused and the request that
+  # wanted it gets 503 + Retry-After. Off by default: a swap restarts at once.
+  # A request in flight is never dropped from the count, however long it runs.
+  # /v1/status swap_state.drain shows, per backend, the requests in flight and
+  # the oldest one's age. If swaps keep returning 503 model_switch_deferred and
+  # that age is far beyond any real request, a lease leaked: no request is
+  # running, but the count says one is. Only a gateway restart clears it; use
+  # scripts/safe-restart (docs/ops/SAFE_RESTART.md), never a bare systemctl
+  # restart, so real requests in flight are drained first.
+  # swap_drain:
+  #   enabled: true
+  #   timeout_s: 120          # longest a swap waits for requests in flight
 backends:
   azizam:
     name: Azizam (self)
@@ -56,6 +70,7 @@ backends:
         # activation_model_key defaults to "model_name" (omitted = use default).
   kobold:
     name: Local llama.cpp server (official; Bee rollback available)
+    vram_budget_key: GPU1_LLM
     native_passthrough: true
     # LiteLLM must route aliases back through the gateway so lifecycle-backed
     # model/profile activation happens before the request reaches llama-server.
@@ -248,8 +263,9 @@ backends:
     port: 8002
     health_endpoint: /health
     timeout: 86400
-    # OmniVoice is the fallback behind Chatterbox, so it is on demand: the server exits after
-    # 5 min idle (OMNIVOICE_IDLE_EXIT_S in the unit's drop-in) and the gateway starts it again.
+    # OmniVoice is the fallback behind Supertonic (and the first engine of `tts-quality`), so it is
+    # on demand: the server exits after 5 min idle (OMNIVOICE_IDLE_EXIT_S in the unit's drop-in) and
+    # the gateway starts it again.
     role: standby
     note: "OmniVoice, the fallback speech engine; on demand: exits after 5 min idle (frees 2-4 GB of GPU0, more after long texts), started by the gateway lifecycle driver."
     capabilities:
@@ -329,7 +345,10 @@ backends:
     # Higher number = lower priority: the always-on default service keeps winning capability lookups.
     priority: 200
     role: standby
-    note: "On-demand audio.cpp Supertonic realtime TTS on GPU0; started by the gateway lifecycle driver."
+    # Always warm since 2026-10-08: the unit is enabled at boot and loads its model at start
+    # (lazy_load false in ~/.config/audiocpp/supertonic.json, no --idle-unload-ms), so the first
+    # voice reply never pays a model load. The gateway lifecycle driver only starts it if it was stopped.
+    note: "audio.cpp Supertonic realtime TTS on GPU0, the default speech engine; always warm: starts at boot, keeps its model loaded and never unloads it when idle. The gateway lifecycle driver starts it only if it was stopped."
     capabilities:
       - audio
       - speech
@@ -373,7 +392,12 @@ backends:
     # Higher number = lower priority: the always-on default service keeps winning capability lookups.
     priority: 200
     role: standby
-    note: "On-demand Chatterbox Turbo (Python) voice-cloning TTS on GPU0; weights unload after 10 min idle, process exits after 1 h; started by the gateway lifecycle driver."
+    # TEMPORARILY DISABLED 2026-10-08 (Tim's interim decision, GPU0 memory contention breaks the
+    # desktop). The disabled flag lives in the service registry (admin.db), not in this seed: restore it
+    # with Services -> Chatterbox -> Enable, or
+    #   POST /admin/api/operator/services/tts-chatterbox/enabled {"enabled": true}  (If-Match: "os-<generation>")
+    # and put the engine back into `model_aliases.speech.stable` (see the comment there).
+    note: "Chatterbox Turbo (Python) voice-cloning TTS on GPU0. Temporarily disabled since 2026-10-08 to free GPU0 memory for the desktop; the unit is stopped. When enabled again it is on demand, keeps its weights loaded while running (no idle unload or exit), and is started by the gateway lifecycle driver."
     capabilities:
       - audio
       - speech
@@ -395,7 +419,9 @@ backends:
     # Higher number = lower priority: the always-on default service keeps winning capability lookups.
     priority: 200
     role: standby
-    note: "On-demand audio.cpp Nemotron 3.5 streaming ASR on GPU0; started by the gateway lifecycle driver."
+    # Always warm since 2026-10-08: the unit is enabled at boot and loads both model modes at start
+    # (lazy_load false in ~/.config/audiocpp/nemotron.json, no --idle-unload-ms).
+    note: "audio.cpp Nemotron 3.5 streaming ASR on GPU0, the realtime speech-to-text engine; always warm: starts at boot, keeps its model loaded and never unloads it when idle. The gateway lifecycle driver starts it only if it was stopped."
     capabilities:
       - audio
       - transcriptions
@@ -638,6 +664,8 @@ backends:
     native_passthrough: true
     host: 127.0.0.1
     port: 7890
+    # Budget line (gpu_budget.sh variable) the status page compares this backend's VRAM to.
+    vram_budget_key: GPU0_COMFYUI
     health_endpoint: /system_stats
     health_success_path: system
     timeout: 300
@@ -1180,7 +1208,7 @@ model_aliases:
         model: k2-fsa/OmniVoice
         voice_transform: voxtral-voices    # OpenAI voice names -> cloned fixed identities
         custom_voices: true                # accepts a user-created voice (voice_ref + ref_text)
-        description: OmniVoice (Apache-2.0) cloned OpenAI voices; stable speaker identity; fallback behind Chatterbox
+        description: OmniVoice (Apache-2.0) cloned OpenAI voices; stable speaker identity; fallback behind Supertonic, first engine of tts-quality, and the only voice-cloning engine while Chatterbox is disabled
       chatterbox:
         service: tts-chatterbox
         model: chatterbox-turbo
@@ -1188,17 +1216,17 @@ model_aliases:
         streaming: true                    # response_format=pcm streams one chunk per sentence group
         native_sample_rate: 24000
         custom_voices: true                # accepts a user-created voice (voice_ref = its stored clip)
-        placement: "Python server on GPU0 (about 3.1 GB while loaded; weights unload after 10 min idle, process exits after 1 h), on-demand unit"
+        placement: "Python server on GPU0 (about 3.1 GB while running, weights never unloaded while the process lives), on-demand unit. Temporarily disabled since 2026-10-08."
         default_voice: alloy
         voices: [alloy, ash, ballad, cedar, coral, echo, fable, marin, nova, onyx, sage, shimmer, verse]
         voice_map: {alloy: alloy, ash: ash, ballad: ballad, cedar: cedar, coral: coral, echo: echo, fable: fable, marin: marin, nova: nova, onyx: onyx, sage: sage, shimmer: shimmer, verse: verse}
-        description: "Chatterbox Turbo (MIT): clones the 13 OpenAI voice names from fixed reference clips, first audio about 0.2 s streamed"
+        description: "Chatterbox Turbo (MIT): clones the 13 OpenAI voice names from fixed reference clips, first audio about 0.2 s streamed. Temporarily disabled since 2026-10-08, so it is not deployed (see the note on `stable`)"
       supertonic:
         service: tts-supertonic
         model: supertonic
         streaming: true
         native_sample_rate: 44100
-        placement: "audio.cpp on GPU0 (~0.7 GB while loaded; weights unload after 30 min idle), on-demand unit"
+        placement: "audio.cpp on GPU0 (~0.7 GB, model always loaded: never unloaded when idle), always-warm unit started at boot"
         default_voice: F1
         voices: [F1, F2, F3, F4, F5, M1, M2, M3, M4, M5]
         # Chosen by gender and measured pitch/brightness against OpenAI's voice descriptions
@@ -1219,13 +1247,25 @@ model_aliases:
         description: "Kokoro quality engine (bake-off: best quality balance, UTMOS 3.83, round-trip WER 3.1%)"
     stable:
       # Order is a policy decision: the first deployed engine wins.
-      # Chatterbox Turbo is the default (Tim's blind listening test, 7/7) and OmniVoice is the fallback.
-      tts: [chatterbox, omnivoice]
-      tts-fast: [supertonic, chatterbox, omnivoice]
-      tts-quality: [chatterbox, omnivoice, kokoro]
+      # 2026-10-08, Tim's interim decision: Chatterbox is TEMPORARILY DISABLED because GPU0 memory
+      # contention breaks the KDE desktop; Supertonic (always warm) is the default instead.
+      # To restore Chatterbox (it won Tim's blind listening test 7/7 as the default):
+      #   1. enable service `tts-chatterbox` (Services page, or POST /admin/api/operator/services/tts-chatterbox/enabled
+      #      with {"enabled": true} and If-Match "os-<generation>"); start chatterbox-tts.service if you want it warm;
+      #   2. put the previous lists back, then restart the gateway with scripts/safe-restart:
+      #        tts: [chatterbox, omnivoice]
+      #        tts-fast: [supertonic, chatterbox, omnivoice]
+      #        tts-quality: [chatterbox, omnivoice, kokoro]
+      # While it is disabled, a model that names it (`chatterbox`) answers 503 model_not_deployed. A custom
+      # voice (a stored clone) on `tts`, `tts-1` or `tts-fast` answers 400 custom_voice_engine_unsupported,
+      # because Supertonic has preset voices only; `model: omnivoice` still clones, but it needs about
+      # 4.7 GB of GPU0 for a 12 s clip, which may not fit beside the always-warm pair and ComfyUI.
+      tts: [supertonic, omnivoice]
+      tts-fast: [supertonic, omnivoice]
+      tts-quality: [omnivoice, kokoro]
     openai:
-      # tts-1 follows the default engine (Daisy sends tts-1 with voice shimmer).
-      # Re-point it at tts-fast to make tts-1 the fast tier.
+      # tts-1 follows the default engine (Daisy sends tts-1 with voice shimmer, which maps to
+      # Supertonic F4 while `tts` is [supertonic, omnivoice]).
       - {match: "tts-1", to: tts}
       - {match: "tts-1-hd", to: tts-quality}
       - {match: "gpt-4o*-tts*", to: tts}
@@ -1247,7 +1287,7 @@ model_aliases:
         stream_model: nemotron-3.5-asr-streaming-0.6b-stream  # same weights in streaming mode, used when stream=true
         streaming: true            # stream=true sends transcript.text.delta events while decoding
         upload_format: wav16k      # audio.cpp reads only 16 kHz mono WAV; the gateway converts uploads
-        placement: "audio.cpp on GPU0 (~2.4 GB with both modes loaded; weights unload after 5 min idle), on-demand unit"
+        placement: "audio.cpp on GPU0 (~2.2 GB with both modes loaded, always loaded: never unloaded when idle), always-warm unit started at boot"
         description: "Nemotron streaming (bake-off: 194 ms end-of-speech to final)"
       canary:
         service: stt-canary
@@ -1340,7 +1380,7 @@ voices:
   max_seconds: 60
   min_speech_seconds: 3.5
   target_seconds: 12          # the stored reference clip is the best window of about this length
-  quality_engine: chatterbox  # makes the post-creation speaker-similarity probe
+  quality_engine: chatterbox  # makes the post-creation speaker-similarity probe (reported "unchecked" while Chatterbox is disabled)
   quality_warn_below: 0.45    # ECAPA cosine; the 13 built-in voices score 0.64-0.79
   design_engine: omnivoice    # renders `type: prompt` voices once from a text description
 model_compatibility:

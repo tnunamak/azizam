@@ -58,6 +58,7 @@ class CustomVoiceRouteCase(unittest.TestCase):
         media_jobs.init_db(self.media_jobs_db)
         cfg = copy.deepcopy(proxy.config)
         cfg["backends"]["tts-supertonic"] = {"name": "supertonic", "host": "127.0.0.1", "port": 8010, "capabilities": ["audio", "speech"]}
+        self.cfg = cfg
         self.ready = AsyncMock(return_value=None)
         self.client = TestClient(proxy.app)
         self.patches = [
@@ -84,33 +85,92 @@ class CustomVoiceRouteCase(unittest.TestCase):
         args.update(overrides)
         return self.store.create_voice(owner, **args)
 
-    def speak(self, voice, model="tts", **extra):
+    def speak(self, voice, model="omnivoice", **extra):
         return self.client.post("/v1/audio/speech", json={"model": model, "voice": voice, "input": "hello", "response_format": "wav", **extra})
 
 
 class SpeakWithCustomVoiceTests(CustomVoiceRouteCase):
-    def test_object_form_reaches_chatterbox_with_the_stored_clip(self) -> None:
+    def test_object_form_reaches_omnivoice_with_the_stored_clip(self) -> None:
         meta = self.make_voice()
         resp = self.speak({"id": meta["id"]})
+        self.assertEqual(resp.status_code, 200, resp.text)
+        sent = [r for r in _FakeClient.requests if "/transcriptions" not in r["url"]][-1]
+        self.assertEqual(sent["url"], "http://127.0.0.1:8002/v1/audio/speech")
+        self.assertEqual(sent["body"]["model"], "k2-fsa/OmniVoice")
+        self.assertEqual(sent["body"]["voice_ref"], str(self.store.reference_path("key-a", meta["id"])))
+        self.assertEqual(sent["body"]["voice"], "alloy")  # placeholder; the engine clones voice_ref
+        self.assertEqual(sent["body"]["ref_text"], "this is the reference transcript")
+
+    def test_chatterbox_by_name_still_gets_the_stored_clip_when_it_is_enabled(self) -> None:
+        # Covers the restore path: with the registry flag back on, the engine id works again.
+        meta = self.make_voice()
+        resp = self.speak({"id": meta["id"]}, model="chatterbox")
         self.assertEqual(resp.status_code, 200, resp.text)
         sent = _FakeClient.requests[-1]
         self.assertEqual(sent["url"], "http://127.0.0.1:8015/v1/audio/speech")
         self.assertEqual(sent["body"]["model"], "chatterbox-turbo")
         self.assertEqual(sent["body"]["voice_ref"], str(self.store.reference_path("key-a", meta["id"])))
-        self.assertEqual(sent["body"]["voice"], "alloy")  # placeholder; the engine clones voice_ref
         self.assertNotIn("ref_text", sent["body"])
+
+    def test_chatterbox_while_disabled_is_a_503_and_nothing_is_forwarded(self) -> None:
+        self.cfg["backends"]["tts-chatterbox"]["enabled"] = False
+        meta = self.make_voice()
+        for voice in ({"id": meta["id"]}, "shimmer"):
+            with self.subTest(voice=voice):
+                resp = self.speak(voice, model="chatterbox")
+                self.assertEqual(resp.status_code, 503, resp.text)
+                error = resp.json()["error"]
+                self.assertEqual((error["code"], error["param"]), ("model_not_deployed", "model"))
+        self.assertEqual(_FakeClient.requests, [])
 
     def test_a_bare_id_string_works_too(self) -> None:
         meta = self.make_voice()
         self.assertEqual(self.speak(meta["id"]).status_code, 200)
         self.assertEqual(_FakeClient.requests[-1]["body"]["voice_ref"], str(self.store.reference_path("key-a", meta["id"])))
 
-    def test_every_openai_model_name_reaches_the_clone_engine(self) -> None:
+    def test_names_that_resolve_to_a_clone_engine_reach_it(self) -> None:
         meta = self.make_voice()
-        for model in ("tts-1", "tts-1-hd", "gpt-4o-mini-tts", "tts-quality", "chatterbox"):
+        for model in ("tts-1-hd", "tts-quality", "omnivoice"):
             with self.subTest(model=model):
                 self.assertEqual(self.speak({"id": meta["id"]}, model=model).status_code, 200)
-                self.assertIn(":8015", _FakeClient.requests[-1]["url"])
+                self.assertIn(":8002", _FakeClient.requests[-1]["url"])
+
+    def test_default_names_resolve_to_supertonic_so_a_custom_voice_gets_an_honest_400(self) -> None:
+        # While Chatterbox is disabled, `tts` is [supertonic, omnivoice] and Supertonic has preset voices only.
+        # A custom voice is never swapped for a preset voice and never rerouted: the caller is told which
+        # engines can use it and that it must name one (the old hint "use model tts" would be wrong now).
+        self.cfg["backends"]["tts-chatterbox"]["enabled"] = False
+        meta = self.make_voice()
+        for model in ("tts", "tts-1", "gpt-4o-mini-tts", "tts-fast", "supertonic"):
+            with self.subTest(model=model):
+                resp = self.speak({"id": meta["id"]}, model=model)
+                self.assertEqual(resp.status_code, 400, resp.text)
+                self.assertNotIn("x-azizam-fallback", resp.headers)
+                error = resp.json()["error"]
+                self.assertEqual((error["code"], error["param"]), ("custom_voice_engine_unsupported", "voice"))
+                self.assertIn("Engines that can: omnivoice.", error["message"])
+                self.assertNotIn("chatterbox", error["message"])
+                self.assertNotIn("model tts", error["message"])
+                self.assertIn("Set model to one of those engine ids", error["message"])
+        self.assertEqual(_FakeClient.requests, [])  # nothing reached any engine, and nothing started
+
+    def test_a_built_in_voice_on_the_same_names_still_gets_supertonic(self) -> None:
+        self.cfg["backends"]["tts-chatterbox"]["enabled"] = False
+        for model in ("tts", "tts-1"):
+            resp = self.speak("shimmer", model=model)
+            self.assertEqual(resp.status_code, 200, resp.text)
+            self.assertEqual(_FakeClient.requests[-1]["url"], "http://127.0.0.1:8010/v1/audio/speech")
+            self.assertEqual(_FakeClient.requests[-1]["body"]["voice"], "F4")
+
+    def test_with_no_clone_engine_deployed_the_refusal_says_so(self) -> None:
+        self.cfg["backends"]["tts-chatterbox"]["enabled"] = False
+        self.cfg["backends"]["tts"]["enabled"] = False  # OmniVoice
+        meta = self.make_voice()
+        resp = self.speak({"id": meta["id"]}, model="tts-1")
+        self.assertEqual(resp.status_code, 400, resp.text)
+        self.assertEqual(resp.json()["error"]["code"], "custom_voice_engine_unsupported")
+        self.assertIn("none deployed", resp.json()["error"]["message"])
+        self.assertEqual(_FakeClient.requests, [])
 
     def test_unknown_malformed_and_foreign_ids_are_404_and_never_fall_back_to_a_default_voice(self) -> None:
         theirs = self.make_voice(owner="key-b")
@@ -130,7 +190,7 @@ class SpeakWithCustomVoiceTests(CustomVoiceRouteCase):
 
     def test_an_engine_without_custom_voice_support_is_a_clear_400(self) -> None:
         meta = self.make_voice()
-        for model in ("supertonic", "tts-fast", "kokoro"):
+        for model in ("supertonic", "kokoro"):
             with self.subTest(model=model):
                 resp = self.speak({"id": meta["id"]}, model=model)
                 self.assertEqual(resp.status_code, 400, resp.text)
@@ -193,6 +253,7 @@ class ShadowingTests(CustomVoiceRouteCase):
 class VoiceRoutesThroughTheGatewayTests(CustomVoiceRouteCase):
     def setUp(self) -> None:
         super().setUp()
+        self.cfg["backends"]["tts-chatterbox"]["enabled"] = False  # as on the live gateway (interim, 2026-10-08)
         quality = AsyncMock(return_value={"speaker_similarity": 0.66, "encoder": "ecapa", "engine": "chatterbox"})
         patcher = patch.object(proxy, "_probe_voice_quality", quality)
         patcher.start()
@@ -205,7 +266,7 @@ class VoiceRoutesThroughTheGatewayTests(CustomVoiceRouteCase):
         created = self.create()
         self.assertEqual(created.status_code, 200, created.text)
         voice = created.json()
-        self.assertEqual(voice["compatible_engines"], ["chatterbox", "omnivoice"])
+        self.assertEqual(voice["compatible_engines"], ["omnivoice"])  # Chatterbox is disabled
         self.assertEqual(self.speak({"id": voice["id"]}).status_code, 200)
         listing = self.client.get("/v1/audio/voices").json()
         self.assertEqual([v["id"] for v in listing["data"]], [voice["id"]])
@@ -277,6 +338,12 @@ class QualityProbeTests(CustomVoiceRouteCase):
 
     def test_other_errors_are_not_retried(self) -> None:
         self.assertEqual(self.probe([500]), ({"error": "engine_http_500"}, 1))
+
+    def test_a_disabled_engine_is_reported_and_its_unit_is_never_started(self) -> None:
+        self.cfg["backends"]["tts-chatterbox"]["enabled"] = False
+        result, calls = self.probe([200])
+        self.assertEqual((result, calls), ({"error": "engine_not_deployed"}, 0))
+        self.ready.assert_not_awaited()
 
     def test_an_engine_that_will_not_start_is_reported(self) -> None:
         self.ready.return_value = object()  # a non-None response means "could not be started"

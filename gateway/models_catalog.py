@@ -955,6 +955,11 @@ class HealthProbeNoResponse(Exception):
         self.status_code = status_code
 
 
+# Latest successful health check per service in this process. Lost on
+# restart; the evidence then omits ``last_success_at_s`` instead of guessing.
+_HEALTH_LAST_SUCCESS_S: dict[str, int] = {}
+
+
 async def probe_service_health(
     service_records: Mapping[str, Any],
     *,
@@ -972,23 +977,19 @@ async def probe_service_health(
 
     async def probe_one(service_id: str) -> tuple[str, dict[str, Any]]:
         service = services.get(service_id)
-        if not isinstance(service, Mapping):
-            return service_id, {
-                "available": None,
-                "status": "unknown",
-                "reason": "Live availability is not measured for this service",
-                "source": None,
-                "observed_at_s": int(time.time()),
-            }
-        endpoint = _health_endpoint(service)
+        endpoint = _health_endpoint(service) if isinstance(service, Mapping) else None
         if not endpoint:
+            # Nothing was checked, so this evidence has no observation time.
             return service_id, {
                 "available": None,
                 "status": "unknown",
                 "reason": "Live availability is not measured for this service",
                 "source": None,
-                "observed_at_s": int(time.time()),
             }
+        attempted_at = int(time.time())
+        times = {"observed_at_s": attempted_at, "last_attempt_at_s": attempted_at}
+        if service_id in _HEALTH_LAST_SUCCESS_S:
+            times["last_success_at_s"] = _HEALTH_LAST_SUCCESS_S[service_id]
         missing_route = False
         try:
             payload = await get_json(endpoint)
@@ -1005,7 +1006,7 @@ async def probe_service_health(
                     "reason": "Health endpoint did not respond",
                     "source": "health",
                     "kind": "no_response",
-                    "observed_at_s": int(time.time()),
+                    **times,
                 }
             return service_id, {
                 "available": False,
@@ -1013,7 +1014,7 @@ async def probe_service_health(
                 "reason": "Health endpoint did not respond",
                 "source": "health",
                 "kind": "no_response",
-                "observed_at_s": int(time.time()),
+                **times,
             }
         available = _availability_from_health_payload(payload)
         status = _status_from_health_payload(payload)
@@ -1025,12 +1026,15 @@ async def probe_service_health(
             reason = "Health endpoint responded"
         else:
             reason = "Health endpoint responded; readiness is unknown"
+        if available is True:
+            _HEALTH_LAST_SUCCESS_S[service_id] = attempted_at
+            times["last_success_at_s"] = attempted_at
         return service_id, {
             "available": available,
             "status": status,
             "reason": reason,
             "source": "health",
-            "observed_at_s": int(time.time()),
+            **times,
         }
 
     semaphore = asyncio.Semaphore(8)

@@ -43,7 +43,8 @@ def home_case(tmp_path):
                            health={"backends": [{"key": "service", "live_status": "up"}]},
                            fast=True, health_error=False, inherited_profile=None, prospective_profile=None,
                            self_service=True, capabilities_override=None, aliases_override=None,
-                           registry={"services": {"service": {"enabled": True, "config": {"gateway_lifecycle": True}}}})
+                           registry={"services": {"service": {"enabled": True, "config": {"gateway_lifecycle": True}}}},
+                           ledger=tmp_path / "provider_spend.db")
     def require_session(request):
         if not case.logged_in:
             raise UserPortalError("login_required", "Sign in.", status_code=401)
@@ -76,7 +77,8 @@ def home_case(tmp_path):
                                          self_service_enabled=lambda: case.self_service,
                                          aliases=lambda: case.aliases_override or {"chat": {"stable": [{"alias": "fast", "resolves_to": "demo"}]}, "images": {"stable": [{"alias": "image", "resolves_to": "picture"}]}},
                                          public_base_url=lambda _request: "https://gateway.example",
-                                         status_provider=status, admin_auth=admin_auth))
+                                         status_provider=status, admin_auth=admin_auth,
+                                         spend_ledger_path=lambda: case.ledger))
     @app.post("/v1/chat/completions")
     async def chat(request: Request):
         case.calls.append((request.url.path, dict(request.headers), await request.json()))
@@ -379,7 +381,8 @@ def test_member_status_contains_only_allowed_capabilities_and_owned_receipts(hom
     assert data["receipts"][0]["href"] == "/ui/usage/?receipt=mine"
     assert isinstance(data["receipts"][0]["created_at"], int)
     for row in data["capabilities"]:
-        expected_fields = {"capability", "capability_title", "icon_key", "title", "recommended_model", "use_names", "summary", "use_name", "intent", "model", "workflow", "status", "available", "reason_code", "measured"}
+        expected_fields = {"capability", "capability_title", "icon_key", "title", "recommended_model", "use_names", "summary", "use_name", "intent", "model", "workflow", "status", "available", "reason_code", "measured", "availability"}
+        assert set(row["availability"]) == {"evidence"}
         if row.get("observed_at_s") is not None:
             expected_fields.add("observed_at_s")
         assert set(row) == expected_fields
@@ -892,3 +895,115 @@ def test_recipe_alias_local_provenance_excludes_remote_and_unknown(home_case):
     }
     response = c.http.get("/me/api/home")
     assert response.json()["credential_aliases"][c.cred["id"]][0]["local"] is False
+
+
+def test_member_status_capabilities_carry_home_evidence_source_and_check_time(home_case):
+    c = home_case
+    c.owner = False
+    c.health = {"generated_at": 1234, "backends": [
+        {"key": "service", "live_status": "down", "kind": "no_response", "endpoint": "http://private:1234", "last_error": "connect refused"}]}
+    home = {row["model"]: row["availability"]["evidence"] for row in c.http.get("/me/api/home").json()["capabilities"]}
+    payload = c.http.get("/me/api/status").json()
+    TypeAdapter(MemberStatus).validate_python(payload)
+    assert payload["capabilities"]
+    for row in payload["capabilities"]:
+        evidence = row["availability"]["evidence"]
+        assert evidence == home[row["model"]]
+        assert evidence["source"] == "status"
+        assert evidence["kind"] == "no_response"
+        assert evidence["observed_at_s"] == 1234
+        assert "last_success_at_s" not in evidence
+    assert "private" not in str(payload) and "connect refused" not in str(payload)
+
+
+def test_home_projects_recent_5xx_failures_as_unavailable_not_busy(home_case):
+    import time as _time
+    c = home_case
+    now = int(_time.time())
+    c.health = {"generated_at": now, "backends": [{"key": "service", "live_status": "degraded"}]}
+    receipt_store.record({"request_id": "fail-503", "app_id": c.client_app["id"], "backend": "service",
+                          "status": "failed", "status_code": 503}, created_at=now - 120, path=c.receipts)
+    rows = c.http.get("/me/api/home").json()["capabilities"]
+    assert rows and all(row["status"] == "unavailable" for row in rows)
+    assert all(row["availability"]["evidence"]["source"] == "request" for row in rows)
+    member = c.http.get("/me/api/status").json()["capabilities"]
+    assert member and all(row["status"] == "unavailable" and row["available"] is False for row in member)
+
+
+def test_home_and_member_status_name_the_gateway_owner(home_case):
+    c = home_case
+    c.owner = False
+    # No owner role yet, and no owner display name: null, never a placeholder.
+    assert c.http.get("/me/api/home").json()["gateway"] == {"owner_name": None}
+    nameless = admin_store.upsert_oidc_user("https://example.test", "nameless", email="nameless@example.test", path=c.db)
+    owner = admin_store.upsert_oidc_user("https://example.test", "owner", email="sam@example.test", display_name=" Sam ", path=c.db)
+    admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=nameless["id"], now=10, path=c.db)
+    assert c.http.get("/me/api/home").json()["gateway"] == {"owner_name": None}
+    granted = admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=owner["id"], now=20, path=c.db)
+    home = c.http.get("/me/api/home").json()
+    status = c.http.get("/me/api/status").json()
+    assert home["gateway"] == {"owner_name": "Sam"}
+    assert status["gateway"] == {"owner_name": "Sam"}
+    TypeAdapter(HomeProjection).validate_python(home)
+    TypeAdapter(MemberStatus).validate_python(status)
+    # Sign-in emails are identities, not a published contact.
+    assert "sam@example.test" not in str(home) and "sam@example.test" not in str(status)
+    admin_store.revoke_admin_role(granted["id"], path=c.db)
+    assert c.http.get("/me/api/home").json()["gateway"] == {"owner_name": None}
+
+
+def test_home_reports_the_members_own_plan_spend(home_case):
+    import sqlite3
+    import time as _time
+    from gateway.providers import ensure_ledger
+    c = home_case
+    c.owner = False
+    assert c.http.get("/me/api/home").json()["plan_spend"] == []  # the default plan has no caps
+    plan = admin_store.create_profile("Everyone", {"id": "everyone", "remote": {
+        "providers": ["typesafe"], "budget_usd_per_day": "1", "budget_usd_per_month": "8"}}, path=c.db)
+    c.prospective_profile = plan["id"]
+    ensure_ledger(c.ledger)
+    now = int(_time.time())
+    with sqlite3.connect(c.ledger) as conn:
+        for profile_id, usd in (("everyone", "0.30"), ("other-plan", "5.00")):
+            conn.execute("INSERT INTO provider_spend (provider, profile_id, status, estimated_usd, actual_usd, cost_source, created_at) "
+                         "VALUES ('typesafe', ?, 'settled', ?, ?, 'test', ?)", (profile_id, usd, usd, now - 60))
+    data = c.http.get("/me/api/home").json()
+    TypeAdapter(HomeProjection).validate_python(data)
+    daily = next(entry for entry in data["plan_spend"] if entry["period"] == "daily")
+    assert daily == {"period": "daily", "window": "rolling_24h", "spent_usd": "0.300000000",
+                     "cap_usd": "1", "resets_at": now - 60 + 86400}
+    monthly = next(entry for entry in data["plan_spend"] if entry["period"] == "monthly")
+    assert monthly["cap_usd"] == "8" and monthly["window"] == "calendar_month_utc"
+    assert "5.00" not in str(data["plan_spend"])
+
+
+def test_owner_name_never_publishes_an_email(home_case):
+    """Setup stores the local owner's email as its display name; OIDC falls
+    back to the email when there is no name claim. Neither may leak."""
+    c = home_case
+    c.owner = False
+    local = admin_store.claim_first_local_owner(
+        issuer="local", subject="sam@example.test", email="sam@example.test", display_name="sam@example.test",
+        verifier="fixture-verifier", granted_by="setup-local-owner", path=c.db)
+    assert local is not None
+    home = c.http.get("/me/api/home").json()
+    assert home["gateway"] == {"owner_name": None}
+    assert "sam@example.test" not in str(home["gateway"])
+    # OIDC without a name claim: proxy stores name-or-email, i.e. the email.
+    claims = {"sub": "oidc-owner", "email": "Robin@Example.test"}
+    oidc = admin_store.upsert_oidc_user("https://idp.example.test", claims["sub"], email=claims["email"],
+                                        display_name=str(claims.get("name") or claims.get("email") or ""), path=c.db)
+    admin_store.assign_admin_role(role="owner", subject_kind="user", subject_id=oidc["id"], now=10**10, path=c.db)
+    status = c.http.get("/me/api/status").json()
+    assert status["gateway"] == {"owner_name": None}
+    # Case and whitespace do not disguise an email; anything with '@' is skipped.
+    admin_store.upsert_oidc_user("https://idp.example.test", "oidc-owner", email="Robin@Example.test",
+                                 display_name="  robin@example.TEST ", path=c.db)
+    assert c.http.get("/me/api/home").json()["gateway"] == {"owner_name": None}
+    admin_store.upsert_oidc_user("https://idp.example.test", "oidc-owner", email="Robin@Example.test",
+                                 display_name="robin at home @family", path=c.db)
+    assert c.http.get("/me/api/home").json()["gateway"] == {"owner_name": None}
+    admin_store.upsert_oidc_user("https://idp.example.test", "oidc-owner", email="Robin@Example.test",
+                                 display_name="Robin", path=c.db)
+    assert c.http.get("/me/api/home").json()["gateway"] == {"owner_name": "Robin"}

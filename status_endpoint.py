@@ -120,22 +120,17 @@ _HOTSPOT_DIRS = [
     if entry[1] is not None
 ]
 
-# Service units we want to attribute VRAM to. Anything outside this list is
-# bucketed into "desktop" (Plasma/Xorg/Chromium/Sunshine/etc.).
+# GPU memory and RSS are attributed to the config's `backends` (see
+# `_service_pids`): a backend with `lifecycle.driver_config.unit` owns that
+# systemd unit's cgroup; a backend with no unit and a local `port` owns the
+# process listening there. Everything else is bucketed into "desktop"
+# (Plasma/Xorg/Chromium/Sunshine/etc.).
 #
-# Sunshine is intentionally NOT a service here — it's a streaming front-end for
+# Sunshine is intentionally NOT a service — it's a streaming front-end for
 # the desktop session and shares the desktop's compositor surfaces. Bucketing
 # its VRAM under "desktop" matches GPU0_DESKTOP budget intent.
-_SERVICE_UNITS = [
-    "comfyui",
-    "llama-turbo",
-    "voxtral-int4-tts",
-    "voxtral-tts",
-    "parakeet-stt",
-    "tabbyapi",
-    "azizam",
-    "daisy",
-]
+_CGROUP_ROOT = Path("/sys/fs/cgroup")
+_LOCAL_HOSTS = frozenset({"", "127.0.0.1", "localhost", "0.0.0.0", "::1", "::"})
 
 
 # --- subprocess helpers (1-2s budgets, never raise) ----------------------
@@ -898,25 +893,106 @@ def _get_compute_apps() -> list[dict]:
     return rows
 
 
-def _service_pids() -> dict[str, set[int]]:
-    """Map service name -> set of PIDs running under its cgroup."""
+def _cgroup_pids(cgroup: str) -> set[int]:
+    procs_path = _CGROUP_ROOT / cgroup.lstrip("/") / "cgroup.procs"
+    try:
+        return {int(x) for x in procs_path.read_text().split() if x.strip().isdigit()}
+    except OSError:
+        return set()
+
+
+def _unit_cgroups(units: Mapping[str, tuple[str, bool]]) -> dict[str, str]:
+    """Resolve {service: (unit, user_scope)} to {service: cgroup path}.
+
+    One `systemctl show` per scope covers every unit, so the cost does not grow
+    with the number of backends. The output is one blank-line-separated block
+    per unit, in argument order; an inactive unit has an empty ControlGroup.
+    """
+    out: dict[str, str] = {}
+    for user_scope in (True, False):
+        wanted = [(svc, unit) for svc, (unit, user) in units.items() if user == user_scope]
+        if not wanted:
+            continue
+        rc, text, _ = _run([
+            "systemctl", *(["--user"] if user_scope else []),
+            "show", "-p", "ControlGroup", *(unit for _svc, unit in wanted),
+        ])
+        if rc != 0:
+            continue
+        for (svc, _unit), block in zip(wanted, text.strip("\n").split("\n\n")):
+            cgroup = block.strip().partition("=")[2]
+            if cgroup:
+                out[svc] = cgroup
+    return out
+
+
+def _proc_service_cgroup(pid: int) -> Optional[str]:
+    """The `.service` cgroup a process runs in, or None (e.g. a login scope)."""
+    try:
+        line = Path(f"/proc/{pid}/cgroup").read_text().splitlines()[0]
+    except (OSError, IndexError):
+        return None
+    cgroup = line.split(":", 2)[-1]
+    return cgroup if cgroup.rsplit("/", 1)[-1].endswith(".service") else None
+
+
+_SS_PID_RE = re.compile(r"pid=(\d+)")
+
+
+def _listening_pids() -> dict[int, set[int]]:
+    """Map local TCP listening port -> PIDs (own processes only; `ss -ltnp`)."""
+    rc, out, _ = _run(["ss", "-H", "-ltnp"])
+    if rc != 0:
+        return {}
+    ports: dict[int, set[int]] = defaultdict(set)
+    for line in out.splitlines():
+        cols = line.split()
+        if len(cols) < 4:
+            continue
+        port = cols[3].rsplit(":", 1)[-1]
+        if port.isdigit():
+            ports[int(port)].update(int(m) for m in _SS_PID_RE.findall(line))
+    return ports
+
+
+def _service_pids(config: Optional[Mapping[str, Any]]) -> dict[str, set[int]]:
+    """Map backend key -> PIDs that belong to it, derived from `config`.
+
+    1. `lifecycle.driver_config.unit`: every PID in that unit's cgroup.
+    2. No unit but a local `port`: the process listening there (its whole
+       `.service` cgroup when it runs under one, else just that process).
+    A PID is claimed once; unit ownership wins over port ownership.
+    """
+    units: dict[str, tuple[str, bool]] = {}
+    ports: dict[str, int] = {}
+    for key, cfg in ((config or {}).get("backends") or {}).items():
+        if not isinstance(cfg, Mapping):
+            continue
+        lifecycle = cfg.get("lifecycle")
+        dc = lifecycle.get("driver_config") if isinstance(lifecycle, Mapping) else None
+        if isinstance(dc, Mapping) and dc.get("unit"):
+            units[key] = (str(dc["unit"]), str(dc.get("scope", "user")).strip().lower() == "user")
+        elif str(cfg.get("host") or "") in _LOCAL_HOSTS and str(cfg.get("port") or "").isdigit():
+            ports[key] = int(cfg["port"])
+
     out: dict[str, set[int]] = {}
-    for unit in _SERVICE_UNITS:
-        rc, ctrl, _ = _run(["systemctl", "--user", "show", "-p", "ControlGroup", f"{unit}.service"])
-        if rc != 0 or not ctrl.strip():
-            continue
-        cg = ctrl.strip().split("=", 1)[1] if "=" in ctrl else ""
-        if not cg:
-            continue
-        procs_path = Path(f"/sys/fs/cgroup{cg}/cgroup.procs")
-        if not procs_path.is_file():
-            continue
-        try:
-            pids = {int(x) for x in procs_path.read_text().split() if x.strip().isdigit()}
+    claimed: set[int] = set()
+    for svc, cgroup in _unit_cgroups(units).items():
+        pids = _cgroup_pids(cgroup) - claimed
+        if pids:
+            out[svc] = pids
+            claimed |= pids
+    if ports:
+        listening = _listening_pids()
+        for svc, port in ports.items():
+            pids = set()
+            for pid in listening.get(port, ()):
+                cgroup = _proc_service_cgroup(pid)
+                pids |= _cgroup_pids(cgroup) if cgroup else {pid}
+            pids -= claimed
             if pids:
-                out[unit] = pids
-        except Exception:
-            continue
+                out[svc] = pids
+                claimed |= pids
     return out
 
 
@@ -935,7 +1011,7 @@ _COMFY_CUSTOM_NODES = _optional_path(
 )
 
 
-def _ram_attribution() -> dict:
+def _ram_attribution(config: Optional[Mapping[str, Any]] = None) -> dict:
     """RAM analogue of _vram_attribution: per-service RSS plus a desktop bucket.
 
     No RAM budgets configured yet, so the budget column stays null and this is
@@ -962,12 +1038,12 @@ def _ram_attribution() -> dict:
                     available_kb = int(raw.split()[1])
     except Exception:
         pass
-    svc_pids = _service_pids()
+    svc_pids = _service_pids(config)
     pid_to_service: dict[int, str] = {}
     for svc, pids in svc_pids.items():
         for pid in pids:
             pid_to_service[pid] = svc
-    svc_rss_kb: dict[str, int] = {svc: 0 for svc in _SERVICE_UNITS}
+    svc_rss_kb: dict[str, int] = {}
     desktop_kb = 0
     try:
         for entry in Path("/proc").iterdir():
@@ -1084,7 +1160,7 @@ def _comfy_custom_nodes() -> list[dict]:
     return out
 
 
-def _vram_attribution(gpus: Optional[list[dict]]) -> dict:
+def _vram_attribution(gpus: Optional[list[dict]], config: Optional[Mapping[str, Any]] = None) -> dict:
     """Per-GPU per-service VRAM usage with budget comparison.
 
     Synthesized rows (prefixed with `__`) are appended after real services so
@@ -1097,20 +1173,23 @@ def _vram_attribution(gpus: Optional[list[dict]]) -> dict:
       - __total:        total_used_mb (table footer).
 
     Tensor-split spillover: when a single PID maps to multiple GPUs (e.g.
-    llama-server with --tensor-split 52,12), the row on the smaller share is
-    flagged so the budget question stays meaningful — the PID's full VRAM
-    is governed by its primary GPU's budget, not split per-card.
+    llama-server with --tensor-split 52,12), its primary GPU is the one where
+    it holds the most VRAM. The service row on the primary GPU is compared with
+    the service's budget using that GPU's bytes only: budgets are per card
+    (GPU1_LLM is a GPU 1 allocation). Rows on the other GPUs are flagged as
+    spillover, shown, and get no budget verdict. Nothing compares the PID's
+    total across GPUs; a total-per-process cap would need its own budget key.
 
-    Desktop bucket: any compute-app whose PID isn't owned by a tracked
-    service systemd cgroup is bucketed under "desktop" (Plasma, Xorg,
-    Chromium, Sunshine, kwin, etc.). Top contributing PIDs are returned as
-    `top_contributors` for tooltip/sub-table rendering.
+    Services are the `config` backends (see `_service_pids`). Desktop bucket:
+    any compute-app whose PID no backend owns is bucketed under "desktop"
+    (Plasma, Xorg, Chromium, Sunshine, kwin, etc.). Top contributing PIDs are
+    returned as `top_contributors` for tooltip/sub-table rendering.
     """
     if not gpus:
         return {"per_gpu": [], "errors": ["gpus unavailable"]}
     apps = _get_compute_apps()
     pid_to_service: dict[int, str] = {}
-    svc_pids = _service_pids()
+    svc_pids = _service_pids(config)
     for svc, pids in svc_pids.items():
         for pid in pids:
             pid_to_service[pid] = svc
@@ -1163,26 +1242,20 @@ def _vram_attribution(gpus: Optional[list[dict]]) -> dict:
     # Pull budget for comparison.
     budget = _read_gpu_budget()
 
+    # A backend names its budget line with `vram_budget_key` (a gpu_budget.sh
+    # variable, e.g. GPU1_LLM) in its own config; the generic buckets are fixed.
+    backends = (config or {}).get("backends") or {}
+    generic_budget_keys = {
+        (0, "desktop"): "GPU0_DESKTOP", (0, "__headroom"): "GPU0_HEADROOM",
+        (1, "__headroom"): "GPU1_HEADROOM",
+    }
+
     def budget_for(idx: int, svc: str) -> Optional[int]:
         if not budget:
             return None
-        raw = budget.get("raw") or {}
-        if idx == 0:
-            mapping = {
-                "comfyui": raw.get("GPU0_COMFYUI"),
-                "voxtral-int4-tts": raw.get("GPU0_TTS"),
-                "voxtral-tts": raw.get("GPU0_TTS"),
-                "desktop": raw.get("GPU0_DESKTOP"),
-                "__headroom": raw.get("GPU0_HEADROOM"),
-            }
-            return mapping.get(svc)
-        if idx == 1:
-            mapping = {
-                "llama-turbo": raw.get("GPU1_LLM"),
-                "__headroom": raw.get("GPU1_HEADROOM"),
-            }
-            return mapping.get(svc)
-        return None
+        cfg = backends.get(svc)
+        key = cfg.get("vram_budget_key") if isinstance(cfg, Mapping) else generic_budget_keys.get((idx, svc))
+        return (budget.get("raw") or {}).get(key) if key else None
 
     out_gpus: list[dict] = []
     for g in gpus:
@@ -1195,8 +1268,8 @@ def _vram_attribution(gpus: Optional[list[dict]]) -> dict:
         accounted_mb = 0
         for svc, mb in sorted(svc_map.items(), key=lambda x: -x[1]):
             is_spillover = spillover_flags.get(idx, {}).get(svc, False)
-            # Spillover rows aren't compared against the local-GPU budget —
-            # the PID's allocation is governed by its primary GPU's budget.
+            # A spillover row gets no budget verdict: the service's budget is
+            # compared on its primary GPU only, with that GPU's bytes.
             budget_gb = None if is_spillover else budget_for(idx, svc)
             used_gb = mb / 1024.0
             over_budget = (
@@ -2985,7 +3058,7 @@ def _workflow_drift_status() -> Optional[dict]:
 # --- swap state ----------------------------------------------------------
 
 def _swap_state(proxy_module) -> dict:
-    """Tabby/Kobold model-swap lock state from proxy module globals."""
+    """Model-swap lock state and swap-drain leases from proxy module globals."""
     out: dict[str, Any] = {}
     try:
         tabby_lock = getattr(proxy_module, "tabby_swap_lock", None)
@@ -2997,6 +3070,20 @@ def _swap_state(proxy_module) -> dict:
         out["kobold_swap_in_progress"] = kobold_lock.locked() if kobold_lock else None
     except Exception:
         out["kobold_swap_in_progress"] = None
+    # Swap drain (llm.swap_drain): requests a swap would wait for, per backend.
+    # Read-only; a lease far older than any real request is leaked.
+    try:
+        drain = getattr(proxy_module, "_swap_drain", None)
+        settings = getattr(proxy_module, "_swap_drain_settings", None)
+        if drain is not None and settings is not None:
+            current = settings()
+            out["drain"] = {
+                "enabled": current.enabled,
+                "timeout_s": current.timeout_s,
+                "backends": drain.snapshot(),
+            }
+    except Exception:
+        out["drain"] = None
     return out
 
 
@@ -3601,8 +3688,8 @@ async def build_status_payload(config: dict) -> dict:
         errors["gpu_workloads"] = _safe_err(e)
         gpus = gpus_raw
 
-    vram_attr = await sync_section("vram_attribution", lambda: _vram_attribution(gpus_raw))
-    ram_attr = await sync_section("ram_attribution", _ram_attribution)
+    vram_attr = await sync_section("vram_attribution", lambda: _vram_attribution(gpus_raw, config))
+    ram_attr = await sync_section("ram_attribution", lambda: _ram_attribution(config))
     repo_state = await sync_section("repo_state", _repo_state)
     comfy_custom_nodes = await sync_section("comfy_custom_nodes", _comfy_custom_nodes) or []
     capabilities = await sync_section("capabilities", lambda: _capabilities(config)) or []

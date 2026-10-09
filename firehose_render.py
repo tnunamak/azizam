@@ -1041,8 +1041,8 @@ def _vram_row_label(s: dict) -> str:
     if s.get("spillover"):
         primary = s.get("spillover_from_gpu")
         suffix = (
-            ' <span class="muted small" title="tensor-split — VRAM is '
-            f'governed by GPU{primary}\'s budget for this PID">'
+            ' <span class="muted small" title="tensor-split: this share gets no budget '
+            'verdict; the service budget is compared on its primary GPU with that GPU\'s bytes only">'
             '(tensor-split spillover'
             + (f' from GPU{primary}' if primary is not None else '')
             + ')</span>'

@@ -98,6 +98,8 @@ from gateway import mcp_server
 from gateway import identity_api, identity_scene
 from gateway import likeness as likeness_module
 from gateway import stt_chunking
+from gateway.lifecycle_drivers import SwapRecoveryFailed
+from gateway.swap_drain import ServingLease, SwapDeferred, SwapDrain, SwapDrainSettings
 from gateway.alias_policy import (
     AliasPolicyResolutionError,
     ResolvedRequestTarget,
@@ -1126,6 +1128,18 @@ def swap_lock_for(service_id: str) -> asyncio.Lock:
         lock = _service_swap_locks.setdefault(service_id, asyncio.Lock())
     return lock
 
+
+# Requests in flight per swap-capable backend, so a swap can wait for them
+# (gateway/swap_drain.py). A lease is granted in the same hold of
+# swap_lock_for(backend) that made its target ready, and swaps are cleared
+# under that lock. Only active when `llm.swap_drain.enabled` is true.
+_swap_drain = SwapDrain()
+
+
+def _swap_drain_settings() -> SwapDrainSettings:
+    """`llm.swap_drain`, read per call so a config reload applies."""
+    return SwapDrainSettings.from_llm_config(config.get("llm"))
+
 # Kobold loaded-state cache. Seeded from the backend's state endpoint on first read
 # after startup, then updated authoritatively after every swap. TTL guards against
 # the server being restarted out-of-band (e.g. manual systemctl restart).
@@ -1385,7 +1399,31 @@ async def ensure_target(
     `profile` is an optional named engine profile selected by model data. The
     lifecycle driver owns its meaning and rejects unknown names.
 
-    Returns True on success. Caller turns False into a 503.
+    With `llm.swap_drain.enabled`, a swap that would interrupt the backend
+    first waits (still under the lock) for the requests it is serving to
+    finish. If they do not finish within `timeout_s`, nothing is swapped and
+    SwapDeferred is raised; callers turn it into a 503 with Retry-After.
+
+    Returns True on success. Caller turns False into a 503. Raises
+    SwapRecoveryFailed when a failed swap could not be rolled back either
+    (the backend may be down); callers answer 503 backend_recovery_failed.
+    """
+    ready, _lease = await _ensure_target(backend, model, mmproj, profile, take_lease=False)
+    return ready
+
+
+async def _ensure_target(
+    backend: str,
+    model: Optional[str],
+    mmproj: Optional[str],
+    profile: Optional[str],
+    *,
+    take_lease: bool,
+) -> tuple[bool, Optional[ServingLease]]:
+    """ensure_target; with `take_lease`, also lease the backend once it is ready.
+
+    The lease is granted in the same hold of the swap lock that made the
+    target ready, so no other swap can land between the two.
     """
     from gateway.lifecycle_drivers import driver_for_service, supports_swap, SwapContext
 
@@ -1407,7 +1445,11 @@ async def ensure_target(
                 f"[proxy] ensure_target: backend '{backend}' unreachable via driver",
                 flush=True,
             )
-        return ready
+            return False, None
+        if not take_lease:
+            return True, None
+        async with swap_lock_for(backend):
+            return True, _swap_drain.lease(backend)
 
     # The driver builds + prechecks its own activation from driver_config. On a
     # precheck failure (e.g. a missing GGUF/aux file) it returns None.
@@ -1418,24 +1460,87 @@ async def ensure_target(
         profile=profile,
     )
     if activation is None:
-        return False
+        return False, None
 
     # The driver does the already-loaded short-circuit and pin-loaded skip from
     # SwapContext — no engine literal appears here.
     async with swap_lock_for(backend):
-        return await driver.swap(
-            bcfg,
-            activation,
-            ctx=SwapContext(
-                loaded_model=await _currently_loaded_model_for(backend),
-                target_model=model,
-                loaded_aux=_currently_loaded_aux_for(backend),
-                target_aux=mmproj or None,
-                pin_loaded=bool(bcfg.get("pin_loaded_model", PIN_LOADED_MODEL)),
-                target_profile=profile,
-            ),
-            warned_models=_pin_mismatch_warned,
+        ctx = SwapContext(
+            loaded_model=await _currently_loaded_model_for(backend),
+            target_model=model,
+            loaded_aux=_currently_loaded_aux_for(backend),
+            target_aux=mmproj or None,
+            pin_loaded=bool(bcfg.get("pin_loaded_model", PIN_LOADED_MODEL)),
+            target_profile=profile,
         )
+        drain = _swap_drain_settings()
+        swapping = drain.enabled and driver.swap_required(bcfg, activation, ctx)
+        if swapping:
+            # Raises SwapDeferred (lock released, nothing changed) on timeout.
+            await _swap_drain.clear_for_swap(backend, drain)
+        try:
+            ready = await driver.swap(
+                bcfg,
+                activation,
+                ctx=ctx,
+                warned_models=_pin_mismatch_warned,
+            )
+        finally:
+            if swapping:
+                # The loaded-state cache predates the swap; re-probe on next read.
+                _kobold_state["ts"] = 0.0
+        return ready, (_swap_drain.lease(backend) if ready and take_lease else None)
+
+
+async def _ensure_target_leased(
+    backend: str,
+    activation: "LocalModelActivation",
+) -> tuple[bool, Optional[ServingLease]]:
+    """ensure_target for one upstream forward, plus a lease that holds off swaps.
+
+    Returns (ready, lease). The lease is None when `llm.swap_drain` is off.
+    The caller must release the lease after the final upstream byte, on error
+    and on cancellation (ServingLease.hand_off does this for a stream).
+
+    The lease is granted in the same hold of the swap lock that made the
+    target ready, so it always covers the target this request asked for.
+    Raises SwapDeferred.
+    """
+    if not _swap_drain_settings().enabled:
+        ready = await ensure_target(backend, activation.model, activation.mmproj, profile=activation.profile)
+        return ready, None
+    return await _ensure_target(
+        backend, activation.model, activation.mmproj, activation.profile, take_lease=True
+    )
+
+
+def _swap_deferred_response(requested_model: str, deferred: SwapDeferred) -> Response:
+    response = openai_error_response(
+        (
+            f"Backend {deferred.backend!r} is busy serving its loaded model "
+            f"({deferred.in_flight} request(s) in flight), so it was not switched to serve "
+            f"{requested_model!r}. Retry after {deferred.retry_after_s} seconds."
+        ),
+        status_code=503,
+        error_type="service_unavailable",
+        code="model_switch_deferred",
+    )
+    response.headers["Retry-After"] = str(deferred.retry_after_s)
+    return response
+
+
+def _swap_recovery_failed_response(requested_model: str, failed: SwapRecoveryFailed) -> Response:
+    """503 for a swap whose rollback also failed: the backend may be down."""
+    return openai_error_response(
+        (
+            f"Switching to {requested_model!r} failed, and restoring the model that was "
+            f"loaded before failed too ({failed.detail}). The backend may be down until "
+            "an operator restores it."
+        ),
+        status_code=503,
+        error_type="service_unavailable",
+        code="backend_recovery_failed",
+    )
 
 
 # =============================================================================
@@ -3242,12 +3347,17 @@ async def _ensure_litellm_local_backend_target(
     availability = _service_availability_response(backend, service_label=backend)
     if availability is not None:
         return availability
-    ready = await ensure_target(
-        backend,
-        target_model,
-        target_mmproj,
-        profile=target_profile,
-    )
+    try:
+        ready = await ensure_target(
+            backend,
+            target_model,
+            target_mmproj,
+            profile=target_profile,
+        )
+    except SwapDeferred as deferred:
+        return _swap_deferred_response(requested_model, deferred)
+    except SwapRecoveryFailed as failed:
+        return _swap_recovery_failed_response(requested_model, failed)
     if ready:
         return None
     return _litellm_activation_failure_response(
@@ -3506,6 +3616,15 @@ async def current_llm_model_for_backend(backend: str) -> str:
         return ""
 
 
+def _current_model_unavailable_response(backend: str) -> Response:
+    return openai_error_response(
+        f"model 'current' requested, but backend {backend!r} has no loaded model.",
+        status_code=503,
+        error_type="service_unavailable",
+        code="current_model_unavailable",
+    )
+
+
 async def _current_loaded_llm_target(
     auth_context: AuthContext,
     *,
@@ -3537,12 +3656,7 @@ async def _current_loaded_llm_target(
 
     loaded_model = await current_llm_model_for_backend(active)
     if not loaded_model:
-        return None, openai_error_response(
-            f"model 'current' requested, but backend {active!r} has no loaded model.",
-            status_code=503,
-            error_type="service_unavailable",
-            code="current_model_unavailable",
-        )
+        return None, _current_model_unavailable_response(active)
     return CurrentLoadedLlmTarget(
         backend=active,
         host=LLM_BACKEND_HOSTS[active],
@@ -3873,6 +3987,7 @@ def _engine_voice(engine: Mapping[str, Any], requested_voice: str) -> str:
     key = requested_voice.lower()
     if key in native:
         return native[key]
+    key = LEGACY_TTS_VOICE_ALIASES.get(key, key)  # a legacy name (cheerful_female) means its canonical voice
     return voice_map.get(key) or str(engine.get("default_voice") or requested_voice)
 
 
@@ -3943,10 +4058,10 @@ def _custom_voice_engines() -> list[str]:
 
 
 def _speech_engine_endpoint(engine_id: str) -> tuple[str, str] | None:
-    """(service id, base URL) of a speech engine, or None when it is not deployed."""
+    """(service id, base URL) of a speech engine, or None when it is not deployed (unknown or disabled)."""
     spec = _speech_engines().get(engine_id)
-    if not isinstance(spec, Mapping):
-        return None
+    if not isinstance(spec, Mapping) or not _alias_engine_available_for("speech")(engine_id, spec):
+        return None  # unknown, or disabled in the registry: never start a disabled engine's unit
     service_id = str(spec.get("service") or "")
     service = (config.get("backends") or {}).get(service_id)
     if not isinstance(service, Mapping) or not service.get("host") or not service.get("port"):
@@ -4067,7 +4182,7 @@ async def _apply_custom_voice(
     if engine is None or not bool_from_config(engine.get("custom_voices"), False):
         usable = ", ".join(_custom_voice_engines()) or "none deployed"
         return openai_error_response(
-            f"The selected speech engine cannot use a custom voice. Engines that can: {usable}. Use model tts or one of those engine ids.",
+            f"The selected speech engine cannot use a custom voice. Engines that can: {usable}. Set model to one of those engine ids.",
             status_code=400,
             param="voice",
             code="custom_voice_engine_unsupported",
@@ -4129,6 +4244,17 @@ def _tts_error(message: str, status_code: int, code: str | None = None) -> Respo
     )
 
 
+def _tts_gpu_memory_response() -> Response:
+    response = openai_error_response(
+        "The GPU is out of memory right now. Retry the speech request later.",
+        status_code=503,
+        error_type="api_error",
+        code="gpu_memory_unavailable",
+    )
+    response.headers["Retry-After"] = "30"
+    return response
+
+
 async def _stream_tts_upstream(
     *,
     url: str,
@@ -4150,6 +4276,8 @@ async def _stream_tts_upstream(
         upstream = await client.send(client.build_request("POST", url, headers=headers, content=body), stream=True)
         if not 200 <= upstream.status_code < 300:
             content = await upstream.aread()
+            if _speech_allocation_failed(upstream.status_code, content.decode("utf-8", "replace")):
+                return _tts_gpu_memory_response()
             return Response(
                 content=content,
                 status_code=upstream.status_code,
@@ -4165,7 +4293,7 @@ async def _stream_tts_upstream(
         await client.aclose()
         return _tts_error(f"TTS proxy error: {e}", 502)
 
-    # An engine that loads its model lazily (Supertonic, Chatterbox) sends "200 chunked"
+    # An engine that loads its model lazily (a cold audio.cpp or Python unit) sends "200 chunked"
     # first and fails inside the stream when GPU0 is full, so the status alone cannot be
     # trusted. Read the first chunk before committing a 200 to the client: a stream that
     # dies before any audio becomes a 503 and the tier falls back to its next engine.
@@ -4400,10 +4528,10 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
             resp = await client.post(url, headers=headers, content=body)
 
             if not 200 <= resp.status_code < 300:
-                # Retain allocation-failure fallback without exposing engine diagnostics.
-                allocation_failed = resp.status_code in {500, 502, 507} and _RESOURCE_ERROR.search(resp.text[:4096])
+                if _speech_allocation_failed(resp.status_code, resp.text):
+                    return _tts_gpu_memory_response()
                 return openai_error_response(
-                    "TTS backend ran out of memory." if allocation_failed else "TTS backend rejected the speech request.",
+                    "TTS backend rejected the speech request.",
                     status_code=resp.status_code if 400 <= resp.status_code < 600 else 502,
                     error_type="invalid_request_error" if 400 <= resp.status_code < 500 else "api_error",
                     code="tts_backend_error",
@@ -4590,6 +4718,12 @@ _RESOURCE_ERROR = re.compile(
     r"alloc|out of memory|\boom\b|cudamalloc|cuda error|insufficient (?:vram|memory)|not enough (?:vram|memory)",
     re.IGNORECASE,
 )
+
+
+def _speech_allocation_failed(status: int, text: str) -> bool:
+    return status in (500, 502, 507) and bool(_RESOURCE_ERROR.search(text[:4096]))
+
+
 # 503s the gateway itself raises: another engine behind the same gateway would hit them too.
 _GATEWAY_OWN_503_CODES = {"stt_cancellation_capacity", "stt_configuration_invalid"}
 
@@ -4614,11 +4748,13 @@ def _speech_fallback_reason(response: Response) -> str | None:
         return "connection_refused"
     if code == "stt_backend_connection_lost":
         return "connection_lost"
+    if status == 503 and code == "gpu_memory_unavailable":
+        return "gpu_oom"
     if status == 503:
         if code == "backend_unavailable":  # the gateway's own: operator drain carries a `state`, else the unit would not start
             return "unavailable" if error.get("state") else "start_failed"
         return None if code in _GATEWAY_OWN_503_CODES else "busy"
-    if status in (500, 502, 507) and _RESOURCE_ERROR.search(text):
+    if _speech_allocation_failed(status, text):
         return "gpu_oom"
     return None
 
@@ -12803,7 +12939,7 @@ async def lifespan(app: FastAPI):
         await asyncio.to_thread(metrics_writer.wait_ready)
         # The full integrity scan takes seconds on a large file; keep it off the startup path.
         asyncio.get_running_loop().run_in_executor(None, metrics_store.verify_integrity, metrics_store.DB_PATH)
-        metrics_task = asyncio.create_task(metrics_sampler.sampler_loop())
+        metrics_task = asyncio.create_task(metrics_sampler.sampler_loop(lambda: config))
         print(f"[proxy] Metrics sampler started (db={metrics_store.DB_PATH})", flush=True)
     except Exception as e:  # noqa: BLE001
         print(f"[proxy] Metrics sampler failed to start: {e}", flush=True)
@@ -14815,6 +14951,7 @@ app.include_router(
             ADMIN_STORE.get_service_registry()
         ),
         effective_oidc_config_provider=lambda: _admin_oidc_config_snapshot(),
+        spend_ledger_path=lambda: ADMIN_DB_PATH.parent / "provider_spend.db",
     )
 )
 
@@ -14962,6 +15099,7 @@ app.include_router(create_home_router(
     public_base_url=lambda request: _public_base_url(request),
     status_provider=_status_payload_with_availability,
     admin_auth=ADMIN_AUTH,
+    spend_ledger_path=lambda: ADMIN_DB_PATH.parent / "provider_spend.db",
 ))
 
 
@@ -26574,58 +26712,74 @@ async def _forward_current_loaded_openai_request(
             owner.report(status="failed", reason="failed")
             return target_error
         assert target is not None
-    # These are post-acceptance resolution facts.  finalize() merges them into
-    # the same in-progress row without replacing immutable acceptance facts.
-        receipt.backend = target.backend
-        receipt.resolved_model = target.model
-
-        body = copy.deepcopy(dict(body_for_backend))
-        body.pop("_vf_requested_model", None)
-        body["model"] = target.model
-        policy_error, body, execution_body = _prepare_resolved_openai_request(
-            body,
-            request_path=request_path,
-            target=logical_target,
-            execution_service_id=target.backend,
-        )
-        terminal_body = body
-        if policy_error is not None:
-            owner.report(status="failed", reason="failed")
-            return policy_error
-        query = backend_query_string(request.url.query)
-        url = f"{target.host}{request_path}"
-        if query:
-            url = f"{url}?{query}"
-
-        headers = prepare_downstream_headers(
-            request.headers,
-            auth_context,
-            target.backend,
-            request_path,
-        )
-        headers.setdefault("content-type", "application/json")
-        headers.setdefault("accept", "application/json")
-
-        if execution_body is None:
-            execution_body = json.dumps(body).encode()
-        execution_request = LlmExecutionRequest(
-            method=request.method,
-            url=url,
-            headers=headers,
-            body=execution_body,
-            read_timeout=UPSTREAM_READ_TIMEOUT,
-        )
-
-        record_request_shape_stage(
-            receipt.metadata, "outer_egress", body,
-            extra={"body_bytes": request_body_byte_count(execution_body)},
-        )
-
-        cancellation_span = _OuterCancellationSpan(
-            request_id or new_request_id(), receive=request.receive
-        )
-
+        # "current" serves whatever is loaded, but a swap would still cut it
+        # off: hold a lease around the forward. Read the loaded model again in
+        # the same hold of the swap lock that grants the lease, so a swap that
+        # landed after the resolution above cannot leave this request
+        # forwarding, or reporting, the model it replaced. The lock also makes
+        # this request queue behind a pending swap instead of starving it.
+        lease: Optional[ServingLease] = None
+        if _swap_drain_settings().enabled:
+            async with swap_lock_for(target.backend):
+                loaded_model = await current_llm_model_for_backend(target.backend)
+                if loaded_model:
+                    lease = _swap_drain.lease(target.backend)
+            if not loaded_model:
+                owner.report(status="failed", reason="failed")
+                return _current_model_unavailable_response(target.backend)
+            target = replace(target, model=loaded_model)
         try:
+            # These are post-acceptance resolution facts.  finalize() merges them into
+            # the same in-progress row without replacing immutable acceptance facts.
+            receipt.backend = target.backend
+            receipt.resolved_model = target.model
+
+            body = copy.deepcopy(dict(body_for_backend))
+            body.pop("_vf_requested_model", None)
+            body["model"] = target.model
+            policy_error, body, execution_body = _prepare_resolved_openai_request(
+                body,
+                request_path=request_path,
+                target=logical_target,
+                execution_service_id=target.backend,
+            )
+            terminal_body = body
+            if policy_error is not None:
+                owner.report(status="failed", reason="failed")
+                return policy_error
+            query = backend_query_string(request.url.query)
+            url = f"{target.host}{request_path}"
+            if query:
+                url = f"{url}?{query}"
+
+            headers = prepare_downstream_headers(
+                request.headers,
+                auth_context,
+                target.backend,
+                request_path,
+            )
+            headers.setdefault("content-type", "application/json")
+            headers.setdefault("accept", "application/json")
+
+            if execution_body is None:
+                execution_body = json.dumps(body).encode()
+            execution_request = LlmExecutionRequest(
+                method=request.method,
+                url=url,
+                headers=headers,
+                body=execution_body,
+                read_timeout=UPSTREAM_READ_TIMEOUT,
+            )
+
+            record_request_shape_stage(
+                receipt.metadata, "outer_egress", body,
+                extra={"body_bytes": request_body_byte_count(execution_body)},
+            )
+
+            cancellation_span = _OuterCancellationSpan(
+                request_id or new_request_id(), receive=request.receive
+            )
+
             try:
                 client, resp = await cancellation_span.dispatch(execution_request)
             except ClientDisconnectedBeforeHeaders:
@@ -26698,8 +26852,9 @@ async def _forward_current_loaded_openai_request(
                         await client.aclose()
                         await cancellation_span.aclose()
 
+                stream = owner.handoff_stream(stream_response())
                 return StreamingResponse(
-                    owner.handoff_stream(stream_response()),
+                    lease.hand_off(stream) if lease is not None else stream,
                     status_code=resp.status_code,
                     headers=response_headers,
                     media_type=content_type,
@@ -26773,6 +26928,9 @@ async def _forward_current_loaded_openai_request(
             )
             response.headers["Retry-After"] = "10"
             return response
+        finally:
+            if lease is not None and not lease.handed_off:
+                lease.release()
 
 
 async def _forward_litellm_proxy_request(
@@ -27377,19 +27535,42 @@ async def _forward_internal_litellm_local_chat_completions(
     availability = _service_availability_response(backend, service_label=backend)
     if availability is not None:
         return availability
-    ready = await ensure_target(
-        backend,
-        activation.model,
-        activation.mmproj,
-        profile=activation.profile,
-    )
+    # This hop forwards to the engine, so it (not the outer route) holds the
+    # serving lease: a swap waits for it, and it never waits on a swap that
+    # waits for it (it takes the lease only after its own ensure_target).
+    try:
+        ready, lease = await _ensure_target_leased(backend, activation)
+    except SwapDeferred as deferred:
+        return _swap_deferred_response(str(body.get("model") or target_model), deferred)
+    except SwapRecoveryFailed as failed:
+        return _swap_recovery_failed_response(str(body.get("model") or target_model), failed)
     if not ready:
         return _litellm_activation_failure_response(
             requested_model=str(body.get("model") or target_model),
             backend=backend,
             target_model=activation.model,
         )
+    try:
+        return await _forward_internal_litellm_local_upstream(
+            request, backend=backend, upstream_base=upstream_base,
+            body=body, activation=activation, target_model=target_model, lease=lease,
+        )
+    finally:
+        if lease is not None and not lease.handed_off:
+            lease.release()
 
+
+async def _forward_internal_litellm_local_upstream(
+    request: Request,
+    *,
+    backend: str,
+    upstream_base: str,
+    body: dict,
+    activation: "LocalModelActivation",
+    target_model: str,
+    lease: Optional[ServingLease],
+) -> Response | StreamingResponse:
+    """Forward one ready, leased request to the engine. A stream takes the lease."""
     body["model"] = activation.backend_model or target_model
     execution_request = LlmExecutionRequest(
         method="POST",
@@ -27498,8 +27679,10 @@ async def _forward_internal_litellm_local_chat_completions(
                     if cancellation_handle is not None:
                         cancellation_handle.release()
 
+            # The stream outlives this handler: it releases the lease after
+            # the final upstream byte, on error, or on cancellation.
             return StreamingResponse(
-                stream_response(),
+                lease.hand_off(stream_response()) if lease is not None else stream_response(),
                 status_code=resp.status_code,
                 headers=response_headers,
                 media_type=content_type,

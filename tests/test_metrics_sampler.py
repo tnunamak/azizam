@@ -65,9 +65,10 @@ class TestMetricsSampler(unittest.TestCase):
             patch.object(metrics_sampler.status_endpoint, "_journal_xids", return_value={}) as journal,
         ):
             metrics_sampler._emit_slow(self._writer, now)
-        for probe in (disks, ram, gpus, journal):
+        for probe in (disks, gpus, journal):
             probe.assert_called_once_with()
-        vram.assert_called_once_with([])
+        ram.assert_called_once_with(None)
+        vram.assert_called_once_with([], None)
 
     def test_record_request_writes_with_tags(self) -> None:
         metrics_sampler.record_request(

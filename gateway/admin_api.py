@@ -27,6 +27,7 @@ import hmac
 import re
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable, Mapping, Protocol
 
 from fastapi import APIRouter, Request, status
@@ -1702,6 +1703,24 @@ def _decision_payload(decision: PolicyDecision) -> dict[str, Any]:
     }
 
 
+def _plans_spend(rows: list[Mapping[str, Any]], ledger: Path | None) -> list[list[dict[str, Any]] | None]:
+    """Spend against each plan's caps, as cap enforcement counts it.
+
+    ``None`` for a stored plan that cannot be loaded (its caps are unknown).
+    One ledger connection serves every plan.
+    """
+    from gateway import providers
+
+    loaded: list[Any] = []
+    for row in rows:
+        try:
+            loaded.append(load_profile(row.get("profile"), default_id=row.get("id")))
+        except ProfileLoadError:
+            loaded.append(None)
+    spend = providers.plan_spend_many([p for p in loaded if p is not None], path=ledger)
+    return [spend[p.id] if p is not None else None for p in loaded]
+
+
 def create_admin_router(
     store: AdminStore,
     *,
@@ -1713,6 +1732,7 @@ def create_admin_router(
     known_model_names_getter: Callable[[], frozenset[str]] | None = None,
     effective_oidc_config_provider: EffectiveOidcConfigProvider | None = None,
     prefix: str = "/admin/api",
+    spend_ledger_path: Callable[[], Path | None] = lambda: None,
 ) -> APIRouter:
     """Build an admin-plane router.
 
@@ -2009,9 +2029,11 @@ def create_admin_router(
         ctx = _guard(request)
         if isinstance(ctx, JSONResponse):
             return ctx
+        rows = list(store.list_profiles())
+        spend = _plans_spend(rows, spend_ledger_path())
         return JSONResponse(
             status_code=status.HTTP_200_OK,
-            content={"profiles": list(store.list_profiles())},
+            content={"profiles": [{**row, "plan_spend": plan} for row, plan in zip(rows, spend)]},
         )
 
     @router.get("/policy/editor")

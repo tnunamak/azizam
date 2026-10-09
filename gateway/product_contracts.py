@@ -18,7 +18,12 @@ ModelTag = Literal["tool-use", "reasoning", "vision", "file-input"]
 
 class AvailabilityEvidence(TypedDict, total=False):
     source: str
+    # When the check or request behind this evidence happened (a failed check
+    # is observed at its attempt time). Absent when nothing was checked.
     observed_at_s: float
+    last_attempt_at_s: float
+    # Latest known success of this source; absent when none is known.
+    last_success_at_s: float
     receipt_status: str
     kind: str
 
@@ -131,7 +136,29 @@ class HomeReceipt(TypedDict):
     source: NotRequired[HomeReceiptSource]
 
 
+class PlanSpend(TypedDict):
+    period: Literal["daily", "monthly"]
+    # daily: the rolling last 24 hours; monthly: the UTC calendar month.
+    window: Literal["rolling_24h", "calendar_month_utc"]
+    # Decimal USD string; null when the spend is not known (never 0).
+    spent_usd: str | None
+    cap_usd: str
+    # monthly: start of next UTC month. daily: when the oldest counted charge
+    # leaves the window; null when nothing is counted or spend is unknown.
+    resets_at: int | None
+    unknown_reason: NotRequired[Literal["ledger_unavailable", "needs_reconciliation"]]
+
+
+class GatewayFacts(TypedDict):
+    # Display name of the gateway owner; null when the owner has none.
+    owner_name: str | None
+
+
 class HomeProjection(TypedDict):
+    # NotRequired: older gateways omit these.
+    gateway: NotRequired[GatewayFacts]
+    # The member's own plan; null when that plan cannot be loaded.
+    plan_spend: NotRequired[list[PlanSpend] | None]
     csrf_token: str
     public_base_url: str
     api_base_url: str
@@ -186,6 +213,10 @@ class SetupEvidenceResponse(TypedDict):
     source: Literal["user_confirmation"]
 
 
+class MemberStatusAvailability(TypedDict):
+    evidence: AvailabilityEvidence
+
+
 class MemberStatusCapability(TypedDict):
     capability_title: NotRequired[str]
     icon_key: NotRequired[CapabilityIconKey]
@@ -204,6 +235,8 @@ class MemberStatusCapability(TypedDict):
     reason_code: str
     measured: bool
     observed_at_s: NotRequired[float | None]
+    # NotRequired: older gateways omit it.
+    availability: NotRequired[MemberStatusAvailability]
 
 
 class MemberStatusReceipt(TypedDict):
@@ -216,6 +249,7 @@ class MemberStatusReceipt(TypedDict):
 
 class MemberStatus(TypedDict):
     scope: Literal["member"]
+    gateway: NotRequired[GatewayFacts]
     status: StatusSummary
     capabilities: list[MemberStatusCapability]
     receipts: list[MemberStatusReceipt]

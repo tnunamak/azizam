@@ -836,3 +836,213 @@ def test_availability_probes_only_caller_visible_services(monkeypatch, tmp_path)
     caps = [Capability(intent="chat.completions", backend="allowed"),
             Capability(intent="chat.completions", backend="private", policy_available=False)]
     assert asyncio.run(proxy._capabilities_availability_evidence(caps, registry)) == {}
+
+
+# Evidence time is the check time (design ask 3). Nothing here may invent a
+# time: absent means "not known", and the attempt and the last success are
+# separate facts.
+
+def test_status_rows_without_check_time_carry_no_time():
+    evidence = evidence_from_status_rows([{"service_id": "svc", "live_status": "up"}])
+    assert "observed_at_s" not in evidence["svc"]
+    assert "last_success_at_s" not in evidence["svc"]
+
+
+def test_status_rows_carry_snapshot_check_time_and_success_only_when_ready():
+    evidence = evidence_from_status_rows([
+        {"service_id": "up", "live_status": "up"},
+        {"service_id": "down", "live_status": "down"},
+    ], observed_at_s=100)
+    assert {key: evidence["up"][key] for key in ("observed_at_s", "last_attempt_at_s", "last_success_at_s")} == {
+        "observed_at_s": 100, "last_attempt_at_s": 100, "last_success_at_s": 100}
+    assert evidence["down"]["observed_at_s"] == 100
+    assert evidence["down"]["last_attempt_at_s"] == 100
+    assert "last_success_at_s" not in evidence["down"]
+
+
+def test_snapshot_without_generated_at_does_not_stamp_now():
+    from gateway.availability import availability_evidence_snapshot
+    evidence = availability_evidence_snapshot(
+        status_payload={"backends": [{"service_id": "svc", "live_status": "degraded"}]}, now_s=999)
+    assert "observed_at_s" not in evidence["svc"]
+    stamped = availability_evidence_snapshot(
+        status_payload={"generated_at": 120, "backends": [{"service_id": "svc", "live_status": "degraded"}]}, now_s=999)
+    assert stamped["svc"]["observed_at_s"] == 120
+
+
+def test_failed_health_probe_keeps_attempt_time_and_last_success_separate(monkeypatch):
+    import asyncio
+    from gateway import models_catalog
+    monkeypatch.setattr(models_catalog, "_HEALTH_LAST_SUCCESS_S", {})
+    clock = {"now": 1000}
+    monkeypatch.setattr(models_catalog.time, "time", lambda: clock["now"])
+    answers = iter([{"status": "ok"}, None])
+    async def get_json(_url):
+        return next(answers)
+    registry = {"services": {"svc": {"config": {"health_endpoint": "http://svc/health"}}}}
+    ok = asyncio.run(models_catalog.probe_service_health(registry, get_json=get_json))["svc"]
+    assert (ok["observed_at_s"], ok["last_attempt_at_s"], ok["last_success_at_s"]) == (1000, 1000, 1000)
+    clock["now"] = 2000
+    failed = asyncio.run(models_catalog.probe_service_health(registry, get_json=get_json))["svc"]
+    assert failed["available"] is False and failed["kind"] == "no_response"
+    assert failed["observed_at_s"] == 2000
+    assert failed["last_attempt_at_s"] == 2000
+    assert failed["last_success_at_s"] == 1000
+    public = project_service("svc", service_records=registry, evidence={"svc": failed}).to_public_dict()["evidence"]
+    assert public["last_success_at_s"] == 1000 and public["last_attempt_at_s"] == 2000
+
+
+def test_failed_health_probe_without_known_success_has_no_success_time(monkeypatch):
+    import asyncio
+    from gateway import models_catalog
+    monkeypatch.setattr(models_catalog, "_HEALTH_LAST_SUCCESS_S", {})
+    async def get_json(_url):
+        return None
+    evidence = asyncio.run(models_catalog.probe_service_health(
+        {"services": {"svc": {"config": {"health_endpoint": "http://svc/health"}}}}, get_json=get_json))["svc"]
+    assert isinstance(evidence["observed_at_s"], int)
+    assert "last_success_at_s" not in evidence
+
+
+def test_unmeasured_health_has_no_observation_time():
+    import asyncio
+    from gateway.models_catalog import probe_service_health
+    async def get_json(_url):
+        raise AssertionError("no endpoint is declared")
+    evidence = asyncio.run(probe_service_health({"services": {"svc": {"config": {}}}}, get_json=get_json))
+    assert evidence["svc"]["status"] == "unknown"
+    assert "observed_at_s" not in evidence["svc"]
+
+
+def test_unmeasured_placeholder_does_not_mask_a_real_status_observation():
+    merged = merge_evidence(
+        {"svc": {"available": None, "status": "unknown", "source": None}},
+        {"svc": {"available": False, "status": "down", "source": "status", "observed_at_s": 100}},
+    )
+    assert merged["svc"]["status"] == "down"
+    merged = merge_evidence(
+        {"svc": {"available": False, "status": "down", "source": "status", "observed_at_s": 100}},
+        {"svc": {"available": None, "status": "unknown", "source": None}},
+    )
+    assert merged["svc"]["status"] == "down"
+
+
+def test_request_evidence_carries_last_success_separately_from_latest_failure():
+    now = int(time.time())
+    evidence = evidence_from_receipts([
+        {"request_id": "ok", "backend": "svc", "status": "succeeded", "_stored_at": now - 100},
+        {"request_id": "bad", "backend": "svc", "status": "failed", "status_code": 503, "_stored_at": now - 10},
+    ], now_s=now)["svc"]
+    assert evidence["available"] is False
+    assert evidence["observed_at_s"] == now - 10
+    assert evidence["last_attempt_at_s"] == now - 10
+    assert evidence["last_success_at_s"] == now - 100
+
+
+# Busy versus failing (design ask 4). A service whose recent requests fail
+# with server errors is not "busy", even when its status probe says busy or
+# degraded and that probe is newer than the failed request.
+
+@pytest.mark.parametrize("raw_status", ["busy", "degraded"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_recent_5xx_request_failure_is_not_projected_as_busy(raw_status, reverse):
+    now = int(time.time())
+    request = evidence_from_receipts([
+        {"request_id": "bad", "backend": "svc", "status": "failed", "status_code": 503, "_stored_at": now - 120},
+    ], now_s=now)
+    status = evidence_from_status_rows([{"service_id": "svc", "live_status": raw_status}], observed_at_s=now)
+    sources = [status, request]
+    if reverse:
+        sources.reverse()
+    projection = project_service("svc", service_records={"services": {"svc": {"enabled": True}}},
+                                 evidence=merge_evidence(*sources))
+    assert projection.status == "unavailable"
+    assert projection.available is False
+    assert projection.evidence["source"] == "request"
+
+
+def test_later_request_success_clears_the_failure_and_busy_stays_busy():
+    now = int(time.time())
+    request = evidence_from_receipts([
+        {"request_id": "bad", "backend": "svc", "status": "failed", "status_code": 503, "_stored_at": now - 120},
+        {"request_id": "ok", "backend": "svc", "status": "succeeded", "_stored_at": now - 60},
+    ], now_s=now)
+    status = evidence_from_status_rows([{"service_id": "svc", "live_status": "busy"}], observed_at_s=now)
+    projection = project_service("svc", service_records={"services": {"svc": {"enabled": True}}},
+                                 evidence=merge_evidence(status, request))
+    assert projection.status == "busy"
+
+
+def test_busy_without_request_failure_stays_busy():
+    now = int(time.time())
+    status = evidence_from_status_rows([{"service_id": "svc", "live_status": "busy"}], observed_at_s=now)
+    # A client-side failure (4xx) proves nothing about the backend.
+    request = evidence_from_receipts([
+        {"request_id": "bad", "backend": "svc", "status": "failed", "status_code": 400, "_stored_at": now - 10},
+    ], now_s=now)
+    projection = project_service("svc", service_records={"services": {"svc": {"enabled": True}}},
+                                 evidence=merge_evidence(status, request))
+    assert projection.status == "busy"
+
+
+def test_availability_projection_is_presentation_only_not_a_routing_input():
+    """Routing and fallback must not read gateway.availability.
+
+    The projection changes for design ask 4 are safe only while this holds.
+    """
+    import ast
+    root = Path(__file__).resolve().parents[1]
+    importers = set()
+    for path in sorted((root / "gateway").rglob("*.py")):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == "gateway.availability":
+                importers.add(path.relative_to(root).as_posix())
+            elif isinstance(node, ast.ImportFrom) and node.module == "gateway" and any(a.name == "availability" for a in node.names):
+                importers.add(path.relative_to(root).as_posix())
+            elif isinstance(node, ast.Import) and any(a.name == "gateway.availability" for a in node.names):
+                importers.add(path.relative_to(root).as_posix())
+    # Discovery, Home/Status, admin Status, and catalog presentation only.
+    assert importers <= {"gateway/home_api.py", "gateway/admin_api.py", "gateway/models_catalog.py",
+                         "gateway/capabilities.py"}
+
+    tree = ast.parse((root / "proxy.py").read_text())
+    names = {"availability_evidence_snapshot", "project_capabilities", "_runtime_availability_evidence",
+             "_capabilities_availability_evidence", "_status_payload_with_availability", "_gateway_capabilities_provider"}
+    users: dict[str, set[str]] = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            used = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)} & names
+            if used:
+                users[node.name] = used
+    assert set(users) <= {
+        "_gateway_capabilities_provider", "_capabilities_availability_evidence", "_runtime_availability_evidence",
+        "_status_payload_with_availability", "_user_models_catalog_payload", "_user_workflows_catalog_payload",
+    }
+    # The two provider callables are only handed to discovery and Home/Status routers.
+    module_refs = [n for n in ast.walk(tree) if isinstance(n, ast.keyword)
+                   and isinstance(n.value, ast.Name) and n.value.id in {"_gateway_capabilities_provider", "_status_payload_with_availability"}]
+    assert {(k.arg, k.value.id) for k in module_refs} <= {
+        ("capabilities_provider", "_gateway_capabilities_provider"),
+        ("status_provider", "_status_payload_with_availability"),
+    }
+
+
+@pytest.mark.parametrize("raw_status", ["busy", "degraded"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_same_second_ready_health_check_beats_busy_status_row(raw_status, reverse):
+    health = {"svc": {"source": "health", "status": "ready", "available": True, "observed_at_s": 500}}
+    status = evidence_from_status_rows([{"service_id": "svc", "live_status": raw_status}], observed_at_s=500)
+    sources = [health, status]
+    if reverse:
+        sources.reverse()
+    merged = merge_evidence(*sources)
+    assert merged["svc"]["source"] == "health"
+    projection = project_service("svc", service_records={"services": {"svc": {"enabled": True}}}, evidence=merged)
+    assert projection.status == "ready"
+
+
+def test_newer_busy_row_still_beats_older_ready_check():
+    health = {"svc": {"source": "health", "status": "ready", "available": True, "observed_at_s": 499}}
+    status = evidence_from_status_rows([{"service_id": "svc", "live_status": "busy"}], observed_at_s=500)
+    assert merge_evidence(health, status)["svc"]["source"] == "status"

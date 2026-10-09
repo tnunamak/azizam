@@ -18,6 +18,8 @@ export type ModelTag = "tool-use" | "reasoning" | "vision" | "file-input";
 export interface AvailabilityEvidence {
   source?: string;
   observed_at_s?: number;
+  last_attempt_at_s?: number;
+  last_success_at_s?: number;
   receipt_status?: string;
   kind?: string;
 }
@@ -159,7 +161,22 @@ export interface HomeReceipt {
   source?: HomeReceiptSource;
 }
 
+export interface PlanSpend {
+  period: "daily" | "monthly";
+  window: "rolling_24h" | "calendar_month_utc";
+  spent_usd: string | null;
+  cap_usd: string;
+  resets_at: number | null;
+  unknown_reason?: "ledger_unavailable" | "needs_reconciliation";
+}
+
+export interface GatewayFacts {
+  owner_name: string | null;
+}
+
 export interface HomeProjection {
+  gateway?: GatewayFacts;
+  plan_spend?: Array<PlanSpend> | null;
   csrf_token: string;
   public_base_url: string;
   api_base_url: string;
@@ -214,6 +231,10 @@ export interface SetupEvidenceResponse {
   source: "user_confirmation";
 }
 
+export interface MemberStatusAvailability {
+  evidence: AvailabilityEvidence;
+}
+
 export interface MemberStatusCapability {
   capability_title?: string;
   icon_key?: "chat" | "image" | "video" | "music" | "sfx" | "speech" | "transcribe" | "decide" | "embed" | "rerank";
@@ -232,6 +253,7 @@ export interface MemberStatusCapability {
   reason_code: string;
   measured: boolean;
   observed_at_s?: number | null;
+  availability?: MemberStatusAvailability;
 }
 
 export interface MemberStatusReceipt {
@@ -244,6 +266,7 @@ export interface MemberStatusReceipt {
 
 export interface MemberStatus {
   scope: "member";
+  gateway?: GatewayFacts;
   status: StatusSummary;
   capabilities: Array<MemberStatusCapability>;
   receipts: Array<MemberStatusReceipt>;

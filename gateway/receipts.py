@@ -48,7 +48,24 @@ CLIENT_VISIBLE_FIELDS = {
     "effective_output_limit",
     "accepted_at_ms",
     "updated_at_ms",
+    "refusal",
 }
+
+# Machine-readable refusal facts a client may see on its own receipt. Codes
+# only: no amounts, provider names or other people's usage.
+REFUSAL_CODES = frozenset({"budget_exceeded", "provider_needs_reconciliation"})
+REFUSAL_PERIODS = frozenset({"daily", "monthly", "request"})
+REFUSAL_SCOPES = frozenset({"plan", "provider", "global"})
+
+
+def sanitize_refusal(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping) or value.get("code") not in REFUSAL_CODES:
+        return None
+    limit = value.get("limit")
+    if (isinstance(limit, Mapping) and limit.get("period") in REFUSAL_PERIODS
+            and limit.get("scope") in REFUSAL_SCOPES):
+        return {"code": value["code"], "limit": {"period": limit["period"], "scope": limit["scope"]}}
+    return {"code": value["code"], "limit": None}
 
 # Metadata keys promoted to top-level fields for the "admin" audience even
 # though the rest of ``metadata`` is hidden there (a free-text ops note is
@@ -238,6 +255,7 @@ class RouteReceipt:
     cost: dict[str, Any] | None = None
     usage: dict[str, Any] | None = None
     effective_output_limit: int | None = None
+    refusal: dict[str, Any] | None = None
     accepted_at_ms: int | None = None
     updated_at_ms: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -305,6 +323,10 @@ class RouteReceipt:
             self.policy_reasons.append(reason)
         if source:
             self.policy_sources.append(source)
+
+    def set_refusal(self, refusal: Mapping[str, Any]) -> None:
+        """Record why the gateway refused this request (see sanitize_refusal)."""
+        self.refusal = sanitize_refusal(refusal)
 
     def attach_manifest(
         self,
@@ -387,6 +409,9 @@ class RouteReceipt:
             "updated_at_ms": self.updated_at_ms,
             "metadata": dict(self.metadata),
         }
+        if isinstance(self.refusal, Mapping):
+            # Present only on refused requests; absent means none recorded.
+            data["refusal"] = dict(self.refusal)
         return serialize_receipt_for_audience(data, audience)
 
 
@@ -402,6 +427,10 @@ def serialize_receipt_for_audience(data: Mapping[str, Any], audience: str = "int
         out.update(sanitize_admin_metadata(metadata))
         return out
     client_data = {name: data[name] for name in CLIENT_VISIBLE_FIELDS if name in data}
+    if "refusal" in client_data:
+        refusal = sanitize_refusal(client_data.pop("refusal"))
+        if refusal is not None:
+            client_data["refusal"] = refusal
     cost = client_data.get("cost")
     if isinstance(cost, Mapping):
         client_data["cost"] = {

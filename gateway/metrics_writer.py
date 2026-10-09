@@ -12,9 +12,30 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Iterable, Literal
+from typing import Iterable, Literal, Mapping, Optional
 
 import metrics_store
+
+
+class PendingCommit:
+    """One accepted transaction. ``wait`` tells whether it committed."""
+
+    def __init__(self) -> None:
+        self._done = threading.Event()
+        self._committed = False
+
+    def wait(self, timeout_s: float) -> Optional[bool]:
+        """True once committed, False if it failed or was dropped, None if still queued."""
+        if not self._done.wait(timeout_s):
+            return None
+        return self._committed
+
+    def _settle(self, committed: bool) -> None:
+        """Record the outcome once; only the writer thread calls this."""
+        if self._done.is_set():
+            return
+        self._committed = committed
+        self._done.set()
 
 
 class MetricsWriter:
@@ -70,6 +91,21 @@ class MetricsWriter:
     def record_sample(self, ts: int, metric: str, value: float, tags: dict | None = None) -> bool:
         return self.record_samples(((int(ts), metric, metrics_store._serialize_tags(tags), float(value)),))
 
+    def record_samples_with_state(
+        self, samples: Iterable[tuple], state: Mapping[str, str],
+    ) -> Optional[PendingCommit]:
+        """Write samples and sampler positions in one transaction.
+
+        Returns None when the queue refuses the batch; otherwise a handle that
+        reports whether that transaction committed. A position is therefore
+        never stored without the samples it accounts for.
+        """
+        rows = tuple(samples)
+        pending = PendingCommit()
+        if not self._submit(("samples_state", (rows, dict(state), pending)), len(rows)):
+            return None
+        return pending
+
     def maintain(self, operation: Literal["minute", "hour", "prune"], now: int) -> bool:
         return self._submit((operation, int(now)))
 
@@ -103,7 +139,9 @@ class MetricsWriter:
         # Do not log sample tags (which can contain request identities).
         print(f"[metrics_writer] persistence failed: {type(error).__name__}", flush=True)
 
-    def _finish(self) -> None:
+    def _finish(self, command: tuple) -> None:
+        if command[0] == "samples_state":
+            command[1][2]._settle(False)  # no-op if it already committed
         self._queue.task_done()
         with self._drained:
             self._completed += 1
@@ -116,6 +154,10 @@ class MetricsWriter:
                 conn.execute("BEGIN")
                 if operation == "samples":
                     metrics_store.record_samples(conn, payload)
+                elif operation == "samples_state":
+                    rows, state, pending = payload
+                    metrics_store.record_samples(conn, rows)
+                    metrics_store.write_sampler_state(conn, state)
                 elif operation == "minute":
                     metrics_store.downsample_minute(conn, now=payload)
                 elif operation == "hour":
@@ -126,6 +168,8 @@ class MetricsWriter:
                 else:
                     raise ValueError("unknown metrics operation")
                 conn.commit()
+                if operation == "samples_state":
+                    payload[2]._settle(True)
                 return
             except sqlite3.OperationalError as error:
                 conn.rollback()
@@ -160,7 +204,7 @@ class MetricsWriter:
                 except Exception as error:
                     self._failed(error)
                 finally:
-                    self._finish()
+                    self._finish(command)
         except Exception as error:
             self._failed(error)
         finally:
@@ -170,10 +214,10 @@ class MetricsWriter:
             # Initialization failures must also release flush waiters.
             while True:
                 try:
-                    self._queue.get_nowait()
+                    command = self._queue.get_nowait()
                 except queue.Empty:
                     break
-                self._finish()
+                self._finish(command)
             if conn is not None:
                 try:
                     conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")

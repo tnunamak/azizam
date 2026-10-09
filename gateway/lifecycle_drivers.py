@@ -32,7 +32,8 @@ DockerDriver
 
 SystemdDriver  (swap_strategy: dropin-env-restart)
     Drives a systemd unit the operator already wrote.
-    swap()        → write drop-in env file → daemon-reload → restart → poll health.
+    swap()        → write drop-in env file → daemon-reload → restart → poll health;
+                    on failure, restore the previous drop-in and restart on it.
     stop()        → systemctl stop <unit> (only fires when idle_timeout_s > 0).
     ensure_ready  → systemctl start <unit> then poll health.
     driver_config keys: scope, unit, dropin, swap_strategy, health_endpoint,
@@ -58,12 +59,85 @@ from __future__ import annotations
 from gateway.compat import get_env
 
 import asyncio
+import contextlib
 import os
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional, Protocol, runtime_checkable
+from typing import Any, Awaitable, Callable, Mapping, Optional, Protocol, TypeVar, runtime_checkable
+
+_T = TypeVar("_T")
+
+
+class SwapRecoveryFailed(RuntimeError):
+    """A swap failed, and putting back the activation the unit ran before failed too.
+
+    The unit may be down or on the failed activation; an operator must look.
+    Raised by ``swap()`` instead of returning False, so callers can tell
+    "the target could not be loaded" from "the backend may now be broken".
+    """
+
+    def __init__(self, unit: str, detail: str) -> None:
+        self.unit = unit
+        self.detail = detail
+        super().__init__(f"unit {unit!r}: swap failed and recovery failed: {detail}")
+
+
+def _replace_file_atomically(path: Path, text: str) -> None:
+    """Replace ``path`` with ``text``: readers see the old bytes or the new, never a mix.
+
+    Writes a temporary file in the same directory, flushes and fsyncs it, then
+    renames it over ``path``. On any failure the temporary file is removed and
+    ``path`` is unchanged. The rename is then made durable with a directory
+    fsync, best effort: if that fails, the new bytes are in place but the rename
+    may not survive a power loss, and a warning is logged.
+    """
+    fd, temp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(temp_name)
+        raise
+    try:
+        dir_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except OSError as exc:
+        print(
+            f"[lifecycle] WARN: {path} was replaced, but the directory fsync failed ({exc}); "
+            "the change may not survive a power loss",
+            flush=True,
+        )
+
+
+async def _finish_even_if_cancelled(operation: Awaitable[_T]) -> _T:
+    """Await ``operation`` to its end, even if the caller is cancelled meanwhile.
+
+    A cancelled caller keeps waiting until ``operation`` finishes, then the
+    cancellation is raised. Use it for a transaction that must not stop half
+    way (a changed drop-in with no restart, or a restart with no rollback).
+    """
+    task = asyncio.ensure_future(operation)
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.wait({task})
+        except asyncio.CancelledError:
+            cancelled = True
+    if cancelled:
+        if not task.cancelled():
+            task.exception()  # retrieved; the operation logged its own failure
+        raise asyncio.CancelledError
+    return task.result()
 
 
 # ---------------------------------------------------------------------------
@@ -224,8 +298,25 @@ class LifecycleDriver(Protocol):
         fresh set is used (so warnings always fire — safe for isolated tests).
 
         Returns True iff the engine is serving the target after the swap.
+        Raises SwapRecoveryFailed if the swap failed and the driver could not
+        put back the previous activation either.
         ExternalDriver / DockerDriver do NOT implement this (no single slot).
         Callers MUST check supports_swap(driver) before calling this method.
+        """
+        ...
+
+    def swap_required(
+        self,
+        svc: Mapping[str, Any],
+        activation: Mapping[str, Any],
+        ctx: SwapContext,
+    ) -> bool:
+        """OPTIONAL — swap drivers only. Would ``swap(svc, activation, ctx=ctx)``
+        restart or reload the engine?
+
+        False when ``swap`` would short-circuit (already loaded) or skip the
+        switch (pin_loaded). No side effects. Callers use it to let requests in
+        flight finish before a swap interrupts them.
         """
         ...
 
@@ -762,7 +853,8 @@ def register_params_provider(name: str, fn: Callable[[Mapping[str, Any]], dict])
 class SystemdDriver:
     """Drive a systemd unit the operator already wrote.
 
-    swap()       → write a drop-in env override → daemon-reload → restart → poll.
+    swap()       → write a drop-in env override → daemon-reload → restart → poll;
+                   on failure, restore the previous drop-in and restart on it.
     stop()       → systemctl stop <unit>  (only fires when idle_timeout_s > 0).
     ensure_ready → systemctl start <unit> then poll health.
 
@@ -783,6 +875,9 @@ class SystemdDriver:
 
     _SWAPPABLE = True
     _SYSTEMCTL_TIMEOUT_S: float = 30.0
+    # daemon-reload, restart and start wait for systemd's job; 120 s is longer
+    # than systemd's default 90 s start timeout, so only a hung call trips it.
+    _SYSTEMCTL_JOB_TIMEOUT_S: float = 120.0
     _DEFAULT_HEALTH_TIMEOUT_S: float = 60.0
 
     # ------------------------------------------------------------------
@@ -987,6 +1082,21 @@ class SystemdDriver:
         Drives the dropin-env-restart swap: write a higher-numbered systemd
         drop-in overriding the activation env keys, daemon-reload, restart the
         unit, then poll health.
+
+        On failure (daemon-reload, restart, or health timeout) returns False
+        after putting back the drop-in the unit ran before (or removing it if
+        there was none) and, if the unit was already restarted, restarting it
+        on that previous activation. The last working model stays loaded. If
+        that rollback fails too, raises SwapRecoveryFailed.
+
+        Drop-ins are replaced atomically (a failed write leaves the old bytes).
+        Durability across a power loss is best effort: a failed directory fsync
+        after the rename is logged, not treated as a failed swap. Once the
+        drop-in has changed, the swap runs to its end even if the caller is
+        cancelled; the cancellation is raised afterwards. It does not survive
+        the gateway process exiting mid-swap. Each systemctl call is bounded by
+        _SYSTEMCTL_JOB_TIMEOUT_S, so the swap (and the caller's swap lock) ends
+        within about four such calls plus two health timeouts.
         """
         dc = self._driver_config(svc)
         scope_flag = self._scope_flag(dc)
@@ -1004,25 +1114,7 @@ class SystemdDriver:
         # --- SwapContext policy (already-loaded short-circuit + pin) ----------
         if ctx is not None:
             target = ctx.target_model
-            # Aux match: only compare aux if the activation env carries an aux
-            # key — drivers without aux (e.g. tabby) won't have it, so we only
-            # factor aux in when the env dict actually contains an aux-shaped key.
-            # We detect aux by checking whether loaded_aux / target_aux are
-            # meaningful: if the activation.env is empty there's nothing to do
-            # anyway, but for correctness we mirror the kobold logic:
-            # mismatch = (model mismatch) OR (aux mismatch, normalised to None).
-            loaded_aux_norm = ctx.loaded_aux or None
-            target_aux_norm = ctx.target_aux or None
-            profile_matches = (
-                ctx.target_profile is None
-                or self._managed_dropin_matches(dropin_path, dropin_text)
-            )
-            already_loaded = (
-                ctx.loaded_model == target
-                and loaded_aux_norm == target_aux_norm
-                and profile_matches
-            )
-            if already_loaded:
+            if self._already_loaded(dropin_path, dropin_text, ctx):
                 return True
             if ctx.pin_loaded:
                 # Warn once per model path — use the caller-supplied set so
@@ -1044,40 +1136,113 @@ class SystemdDriver:
                 return True
         # --- end SwapContext policy -------------------------------------------
 
-        # Write the drop-in.
+        # Keep the activation the unit runs now, so a failed swap can put it back.
+        # None means no managed drop-in: the unit runs its base configuration.
         try:
-            dropin_path.parent.mkdir(parents=True, exist_ok=True)
-            dropin_path.write_text(dropin_text)
-        except Exception as e:
-            print(f"[lifecycle] SystemdDriver.swap: failed to write drop-in: {e}", flush=True)
+            previous_dropin: Optional[str] = dropin_path.read_text()
+        except FileNotFoundError:
+            previous_dropin = None
+        except OSError as e:
+            # Without the old text a failure could not be undone: do not swap.
+            print(f"[lifecycle] SystemdDriver.swap: cannot read current drop-in: {e}", flush=True)
             return False
 
-        def _remove_dropin() -> None:
-            try:
-                dropin_path.unlink(missing_ok=True)
-            except Exception as exc:
-                print(f"[lifecycle] SystemdDriver.swap: failed to remove drop-in: {exc}", flush=True)
+        # Once the drop-in changes, the swap must finish or roll back: a
+        # requester that disconnects must not leave the new drop-in on disk
+        # with the old engine stopped. Cancellation is re-raised afterwards.
+        return await _finish_even_if_cancelled(self._swap_transaction(
+            svc, unit, dropin_path, dropin_text, previous_dropin,
+            reload_cmd=["systemctl"] + scope_flag + ["daemon-reload"],
+            restart_cmd=["systemctl"] + scope_flag + ["restart", unit],
+            health_ep=health_ep, health_timeout=health_timeout,
+        ))
 
-        # daemon-reload then restart — daemon-reload MUST precede restart.
-        for cmd in (
-            ["systemctl"] + scope_flag + ["daemon-reload"],
-            ["systemctl"] + scope_flag + ["restart", unit],
-        ):
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+    async def _swap_transaction(
+        self,
+        svc: Mapping[str, Any],
+        unit: str,
+        dropin_path: Path,
+        dropin_text: str,
+        previous_dropin: Optional[str],
+        *,
+        reload_cmd: list[str],
+        restart_cmd: list[str],
+        health_ep: str,
+        health_timeout: float,
+    ) -> bool:
+        """Write the drop-in, daemon-reload, restart, poll health; roll back on failure."""
+        try:
+            dropin_path.parent.mkdir(parents=True, exist_ok=True)
+            _replace_file_atomically(dropin_path, dropin_text)
+        except Exception as e:
+            print(f"[lifecycle] SystemdDriver.swap: failed to write drop-in (previous one kept): {e}", flush=True)
+            return False
+
+        # daemon-reload MUST precede restart.
+        if not await self._run_systemctl(reload_cmd):
+            await self._restore_after_failed_swap(
+                svc, unit, dropin_path, previous_dropin, reload_cmd, None, health_ep, health_timeout,
             )
-            _, stderr = await proc.communicate()
-            if proc.returncode != 0:
-                print(
-                    f"[lifecycle] SystemdDriver.swap: `{' '.join(cmd)}` failed: {stderr.decode()}",
-                    flush=True,
-                )
-                _remove_dropin()
-                return False
+            return False
+        if not await self._run_systemctl(restart_cmd):
+            await self._restore_after_failed_swap(
+                svc, unit, dropin_path, previous_dropin, reload_cmd, restart_cmd, health_ep, health_timeout,
+            )
+            return False
 
-        # Poll health endpoint until ready.
+        elapsed = await self._wait_until_healthy(svc, health_ep, health_timeout)
+        if elapsed is not None:
+            print(f"[lifecycle] SystemdDriver.swap complete in {elapsed:.1f}s", flush=True)
+            return True
+
+        print(
+            f"[lifecycle] SystemdDriver.swap: unit '{unit}' did not become ready within {health_timeout}s",
+            flush=True,
+        )
+        await self._restore_after_failed_swap(
+            svc, unit, dropin_path, previous_dropin, reload_cmd, restart_cmd, health_ep, health_timeout,
+        )
+        return False
+
+    def swap_required(
+        self,
+        svc: Mapping[str, Any],
+        activation: Mapping[str, Any],
+        ctx: SwapContext,
+    ) -> bool:
+        """True when swap() would restart the unit (not loaded, not pinned)."""
+        dc = self._driver_config(svc)
+        if not dc.get("unit", ""):
+            return False
+        loaded = self._already_loaded(self._dropin_path(dc), self._dropin_text(activation), ctx)
+        return not loaded and not ctx.pin_loaded
+
+    # ------------------------------------------------------------------
+    # Internals
+    # ------------------------------------------------------------------
+
+    def _already_loaded(self, dropin_path: Path, dropin_text: str, ctx: SwapContext) -> bool:
+        # Aux match: only compare aux if the activation env carries an aux
+        # key — drivers without aux (e.g. tabby) won't have it, so we only
+        # factor aux in when the env dict actually contains an aux-shaped key.
+        # We detect aux by checking whether loaded_aux / target_aux are
+        # meaningful: if the activation.env is empty there's nothing to do
+        # anyway, but for correctness we mirror the kobold logic:
+        # mismatch = (model mismatch) OR (aux mismatch, normalised to None).
+        profile_matches = (
+            ctx.target_profile is None
+            or self._managed_dropin_matches(dropin_path, dropin_text)
+        )
+        return (
+            ctx.loaded_model == ctx.target_model
+            and (ctx.loaded_aux or None) == (ctx.target_aux or None)
+            and profile_matches
+        )
+
+    async def _wait_until_healthy(
+        self, svc: Mapping[str, Any], health_ep: str, health_timeout: float,
+    ) -> Optional[float]:
+        """Poll the health endpoint; return seconds until 200, or None on timeout."""
         svc_for_poll = self._svc_with_health_endpoint(svc, health_ep)
         start = time.time()
         deadline = start + health_timeout
@@ -1090,25 +1255,52 @@ class SystemdDriver:
                         f"http://{svc_for_poll.get('host', '127.0.0.1')}:{svc_for_poll.get('port')}{health_ep}"
                     )
                     if resp.status_code == 200:
-                        elapsed = time.time() - start
-                        print(f"[lifecycle] SystemdDriver.swap complete in {elapsed:.1f}s", flush=True)
-                        return True
+                        return time.time() - start
             except Exception:
                 pass
             if time.time() >= deadline:
-                break
+                return None
             await asyncio.sleep(interval)
 
-        print(
-            f"[lifecycle] SystemdDriver.swap: unit '{unit}' did not become ready within {health_timeout}s",
-            flush=True,
-        )
-        _remove_dropin()
-        return False
+    async def _restore_after_failed_swap(
+        self,
+        svc: Mapping[str, Any],
+        unit: str,
+        dropin_path: Path,
+        previous_dropin: Optional[str],
+        reload_cmd: list[str],
+        restart_cmd: Optional[list[str]],
+        health_ep: str,
+        health_timeout: float,
+    ) -> None:
+        """Put back the activation the unit ran before the swap.
 
-    # ------------------------------------------------------------------
-    # Internals
-    # ------------------------------------------------------------------
+        Restores the previous drop-in text (or removes the drop-in if there was
+        none), reloads systemd, and, when the failed swap already restarted the
+        unit (``restart_cmd`` given), restarts it on the restored activation and
+        waits for health. Raises SwapRecoveryFailed if any step fails.
+        """
+
+        def recovery_failed(detail: str) -> SwapRecoveryFailed:
+            print(f"[lifecycle] SystemdDriver.swap: recovery failed for unit '{unit}': {detail}", flush=True)
+            return SwapRecoveryFailed(unit, detail)
+
+        try:
+            if previous_dropin is None:
+                dropin_path.unlink(missing_ok=True)
+            else:
+                _replace_file_atomically(dropin_path, previous_dropin)
+        except OSError as exc:
+            raise recovery_failed(f"cannot restore drop-in {dropin_path}: {exc}") from exc
+        if not await self._run_systemctl(reload_cmd):
+            raise recovery_failed("daemon-reload after restoring the drop-in failed")
+        if restart_cmd is None:
+            return
+        if not await self._run_systemctl(restart_cmd):
+            raise recovery_failed("restart on the previous activation failed")
+        if await self._wait_until_healthy(svc, health_ep, health_timeout) is None:
+            raise recovery_failed(f"the previous activation did not become ready within {health_timeout}s")
+        print("[lifecycle] SystemdDriver.swap: rolled back to the previous activation", flush=True)
 
     @staticmethod
     def _driver_config(svc: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -1161,24 +1353,46 @@ class SystemdDriver:
         return d
 
     async def _run_systemctl(self, cmd: list[str]) -> bool:
-        """Run a systemctl command asynchronously. Returns True on exit code 0."""
-        try:
+        """Run a systemctl command. True on exit code 0; False on failure or timeout.
+
+        A call that runs longer than _SYSTEMCTL_JOB_TIMEOUT_S is killed and treated
+        as failed. Killing the client does not cancel a job systemd already
+        queued; the rollback that follows queues its own restart.
+        """
+        proc = None
+
+        async def run() -> bytes:
+            nonlocal proc
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
             _, stderr = await proc.communicate()
-            if proc.returncode != 0:
-                print(
-                    f"[lifecycle] SystemdDriver: `{' '.join(cmd)}` failed: {stderr.decode()}",
-                    flush=True,
-                )
-                return False
-            return True
+            return stderr
+
+        try:
+            stderr = await asyncio.wait_for(run(), timeout=self._SYSTEMCTL_JOB_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            print(
+                f"[lifecycle] SystemdDriver: `{' '.join(cmd)}` did not finish within "
+                f"{self._SYSTEMCTL_JOB_TIMEOUT_S:.0f}s; treated as failed",
+                flush=True,
+            )
+            if proc is not None and proc.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
+            return False
         except Exception as e:
             print(f"[lifecycle] SystemdDriver: subprocess error: {e}", flush=True)
             return False
+        if proc.returncode != 0:
+            print(
+                f"[lifecycle] SystemdDriver: `{' '.join(cmd)}` failed: {stderr.decode()}",
+                flush=True,
+            )
+            return False
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -1421,6 +1635,16 @@ class HttpLoadUnloadDriver:
         except Exception as e:
             print(f"[lifecycle] HttpLoadUnloadDriver.swap: load error: {e}", flush=True)
             return False
+
+    def swap_required(
+        self,
+        svc: Mapping[str, Any],
+        activation: Mapping[str, Any],
+        ctx: SwapContext,
+    ) -> bool:
+        """True when swap() would unload/load. Like swap(), ignores pin_loaded."""
+        target_model = activation.get("model_name", "")
+        return bool(target_model) and ctx.loaded_model != target_model
 
     # ------------------------------------------------------------------
     # Internals

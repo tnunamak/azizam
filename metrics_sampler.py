@@ -9,8 +9,11 @@ Reuses probe helpers from ``status_endpoint`` to avoid duplicating logic.
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 import time
-from typing import Optional
+from collections import Counter
+from typing import Any, Callable, Mapping, Optional
 
 import metrics_store
 import status_endpoint  # reuse existing probes
@@ -29,7 +32,154 @@ _state = {
     "last_hour_rolled": 0,
     "last_prune_day": 0,
     "request_writes": 0,
+    # Kernel-journal cursor NVKMS failures are counted up to, as committed in
+    # metrics.db; None until loaded from there or first committed.
+    "nvkms_cursor": None,
+    # (PendingCommit, cursor) of a batch the writer accepted but has not settled.
+    "nvkms_pending": None,
+    # True while the kernel journal cannot be read (warn once per outage).
+    "nvkms_journal_unreadable": False,
 }
+
+# The NVIDIA driver logs "Failed to allocate NVKMS memory for GEM object" when the
+# desktop compositor cannot get GPU memory. Each tick reads the kernel journal on
+# from a cursor that is committed to metrics.db in the same transaction as the
+# counts it produced. A failed read, a refused or failed write, a long pause or a
+# restart therefore loses no failure and counts none twice: the next tick reads
+# on from the last committed position.
+_NVKMS_CURSOR_KEY = "nvkms_journal_cursor"
+# Entries read per tick: a large backlog is caught up in steps that each finish
+# well inside the read timeout, instead of one read that keeps timing out.
+_NVKMS_READ_BATCH = 2000
+# How long a tick waits for its counts to commit before it leaves them pending.
+_NVKMS_COMMIT_WAIT_S = 5.0
+_NVKMS_GPU_ID_RE = re.compile(r"\[GPU ID (0x[0-9a-fA-F]+)\]")
+
+
+def _is_nvkms_failure(message: str) -> bool:
+    lower = message.lower()
+    return "nvkms" in lower and ("error" in lower or "fail" in lower)
+
+
+def _kernel_journal(position: list[str]) -> Optional[list[dict]]:
+    """Kernel journal entries (cursor + message) from ``position``; None if unreadable.
+
+    The match is _TRANSPORT=kernel, not -k: -k implies -b (this boot only), which
+    would drop what the previous boot logged after the last read. A cursor names
+    its boot, so reading on from it crosses a reboot.
+    """
+    rc, out, err = status_endpoint._run(
+        ["journalctl", "_TRANSPORT=kernel", *position, "-o", "json", "--output-fields=MESSAGE", "--no-pager", "-q"],
+        timeout=5.0,
+    )
+    entries: Optional[list[dict]] = None
+    if rc == 0:
+        try:
+            entries = [json.loads(line) for line in out.splitlines() if line.strip()]
+        except ValueError:
+            err = "unparseable journalctl output"
+    if entries is None or not all(isinstance(e, dict) and isinstance(e.get("__CURSOR"), str) for e in entries):
+        if not _state["nvkms_journal_unreadable"]:
+            print(
+                f"[metrics_sampler] WARN: kernel journal unreadable (rc={rc}: {err.strip()[:200]}); "
+                f"no gpu_desktop_alloc_failures rows until it is readable, then the gap is counted",
+                flush=True,
+            )
+        _state["nvkms_journal_unreadable"] = True
+        return None
+    if _state["nvkms_journal_unreadable"]:
+        print("[metrics_sampler] kernel journal readable again", flush=True)
+    _state["nvkms_journal_unreadable"] = False
+    return entries
+
+
+def _message(entry: dict) -> str:
+    message = entry.get("MESSAGE")
+    if isinstance(message, list):  # journalctl's JSON form of a non-UTF-8 message
+        return bytes(message).decode("utf-8", "replace")
+    return message if isinstance(message, str) else ""
+
+
+def _read_new_nvkms_failures() -> Optional[tuple[list[str], Optional[str]]]:
+    """NVKMS failure messages after the committed cursor, and the cursor after them.
+
+    Returns None if the journal is unreadable (nothing changes). With no
+    committed cursor (first run after deploy) the position is the journal's
+    end: history is not counted. Reads at most _NVKMS_READ_BATCH new entries.
+
+    journalctl answers a well-formed cursor it no longer holds (rotated away,
+    or from another journal) by starting at the oldest entry, with exit 0.
+    ``--cursor`` (not ``--after-cursor``) returns the saved entry first when it
+    is still there, so a missing one is detected; the gap is logged and
+    counting restarts at the journal's end instead of replaying history.
+    """
+    saved = _state["nvkms_cursor"] or metrics_store.read_sampler_state(metrics_store.DB_PATH, _NVKMS_CURSOR_KEY)
+    if saved:
+        entries = _kernel_journal([f"--cursor={saved}", "-n", f"+{_NVKMS_READ_BATCH + 1}"])
+        if entries is None:
+            return None
+        if entries and entries[0]["__CURSOR"] == saved:
+            new = entries[1:]
+            failures = [m for m in map(_message, new) if _is_nvkms_failure(m)]
+            return failures, (new[-1]["__CURSOR"] if new else saved)
+        print(
+            "[metrics_sampler] WARN: the NVKMS journal cursor is no longer in the journal "
+            "(rotated away, or from another journal); failures logged since it was committed "
+            "are not counted; counting restarts at the journal end",
+            flush=True,
+        )
+    entries = _kernel_journal(["-n", "1"])
+    if entries is None:
+        return None
+    return [], (entries[-1]["__CURSOR"] if entries else None)
+
+
+def _nvkms_pending_settled() -> bool:
+    """False while an earlier batch is still queued: its entries must not be read again."""
+    pending = _state["nvkms_pending"]
+    if pending is None:
+        return True
+    handle, cursor = pending
+    committed = handle.wait(0)
+    if committed is None:
+        return False
+    _state["nvkms_pending"] = None
+    if committed:
+        _state["nvkms_cursor"] = cursor
+    return True
+
+
+def _commit_nvkms_counts(writer, rows: list[tuple], cursor: Optional[str]) -> None:
+    """Record the counts and their cursor in one transaction; adopt the cursor once committed."""
+    if cursor is None:  # empty journal: no position to keep yet
+        writer.record_samples(rows)
+        return
+    handle = writer.record_samples_with_state(rows, {_NVKMS_CURSOR_KEY: cursor})
+    if handle is None:
+        print("[metrics_sampler] NVKMS counts refused by the metrics writer; read again next tick", flush=True)
+        return
+    committed = handle.wait(_NVKMS_COMMIT_WAIT_S)
+    if committed is None:
+        _state["nvkms_pending"] = (handle, cursor)
+    elif committed:
+        _state["nvkms_cursor"] = cursor
+    else:
+        print("[metrics_sampler] NVKMS counts were not committed; read again next tick", flush=True)
+
+
+def _gpu_index_by_drm_id() -> dict[int, int]:
+    """nvidia-drm "GPU ID" (PCI bus << 8 | slot, domain 0 only) -> nvidia-smi index.
+
+    Checked on this host: GPU ID 0x00000100 is the card at 01:00.0 (index 0).
+    """
+    rc, out, _ = status_endpoint._run(["nvidia-smi", "--query-gpu=index,pci.bus_id", "--format=csv,noheader"])
+    ids: dict[int, int] = {}
+    for line in out.splitlines() if rc == 0 else []:
+        idx, _, bus_id = (p.strip() for p in line.partition(","))
+        m = re.fullmatch(r"0*:([0-9a-fA-F]{2}):([0-9a-fA-F]{2})\.\d", bus_id)
+        if idx.isdigit() and m:
+            ids[(int(m.group(1), 16) << 8) | int(m.group(2), 16)] = int(idx)
+    return ids
 
 
 def _emit_fast(writer, now: int) -> None:
@@ -37,6 +187,7 @@ def _emit_fast(writer, now: int) -> None:
     samples: list[tuple] = []
 
     # GPUs.
+    gpus: list[dict] = []
     try:
         gpus = status_endpoint._gpus_raw() or []
         for g in gpus:
@@ -50,6 +201,8 @@ def _emit_fast(writer, now: int) -> None:
                 samples.append((now, "vram_used_mb", tags_json, float(mem_used)))
             if isinstance(mem_total, (int, float)) and isinstance(mem_used, (int, float)) and mem_total:
                 samples.append((now, "vram_pct", tags_json, float(mem_used) / float(mem_total) * 100.0))
+            if isinstance(mem_total, (int, float)) and isinstance(mem_used, (int, float)):
+                samples.append((now, "vram_free_mb", tags_json, float(mem_total) - float(mem_used)))
             for metric_key, gpu_key in (
                 ("gpu_util_pct", "instantaneous_util_pct"),
                 ("gpu_temp_c", "temp_c"),
@@ -63,6 +216,29 @@ def _emit_fast(writer, now: int) -> None:
                     samples.append((now, metric_key, tags_json, float(v)))
     except Exception as e:  # noqa: BLE001
         print(f"[metrics_sampler] gpu probe failed: {e}", flush=True)
+
+    # Desktop (NVKMS) allocation failures since the last committed read, per GPU.
+    # Absent when the journal is unreadable or an earlier batch is still being
+    # written: a missing row means "not measured", a 0 means "none happened".
+    # Failures logged during such a gap count on the next tick that reads them.
+    nvkms_read: Optional[tuple[list[str], Optional[str]]] = None
+    nvkms_rows: list[tuple] = []
+    try:
+        if _nvkms_pending_settled():
+            nvkms_read = _read_new_nvkms_failures()
+        if nvkms_read is not None:
+            new = nvkms_read[0]
+            gpu_for_id = _gpu_index_by_drm_id() if new else {}
+            per_gpu: Counter = Counter({g["index"]: 0 for g in gpus if g.get("index") is not None})
+            for message in new:
+                m = _NVKMS_GPU_ID_RE.search(message)
+                per_gpu[gpu_for_id.get(int(m.group(1), 16)) if m else None] += 1
+            for idx, n in per_gpu.items():
+                tags = "" if idx is None else f'{{"gpu":{int(idx)}}}'
+                nvkms_rows.append((now, "gpu_desktop_alloc_failures", tags, float(n)))
+    except Exception as e:  # noqa: BLE001
+        nvkms_read = None
+        print(f"[metrics_sampler] nvkms probe failed: {e}", flush=True)
 
     # CPU thermal + load.
     try:
@@ -105,6 +281,11 @@ def _emit_fast(writer, now: int) -> None:
             writer.record_samples(samples)
         except Exception as e:  # noqa: BLE001
             print(f"[metrics_sampler] record_samples (fast) failed: {e}", flush=True)
+    if nvkms_read is not None:
+        try:
+            _commit_nvkms_counts(writer, nvkms_rows, nvkms_read[1])
+        except Exception as e:  # noqa: BLE001
+            print(f"[metrics_sampler] recording NVKMS counts failed: {e}", flush=True)
 
 
 async def _emit_fast_async(writer, now: int) -> None:
@@ -129,8 +310,11 @@ async def _emit_fast_async(writer, now: int) -> None:
         print(f"[metrics_sampler] llama slots probe failed: {e}", flush=True)
 
 
-def _emit_slow(writer, now: int) -> None:
-    """Disk avail per partition + per-service RSS + per-GPU per-service VRAM."""
+def _emit_slow(writer, now: int, config: Optional[Mapping[str, Any]] = None) -> None:
+    """Disk avail per partition + per-service RSS + per-GPU per-service VRAM.
+
+    `config` supplies the backends that services are attributed to.
+    """
     samples: list[tuple] = []
 
     # Disk per partition.
@@ -150,7 +334,7 @@ def _emit_slow(writer, now: int) -> None:
 
     # Per-service RSS.
     try:
-        ram = status_endpoint._ram_attribution() or {}
+        ram = status_endpoint._ram_attribution(config) or {}
         for row in ram.get("rows") or []:
             svc = row.get("service")
             kb = row.get("rss_kb")
@@ -163,12 +347,12 @@ def _emit_slow(writer, now: int) -> None:
     # Per-GPU per-service VRAM.
     try:
         gpus = status_endpoint._gpus_raw()
-        vram_attr = status_endpoint._vram_attribution(gpus) or {}
+        vram_attr = status_endpoint._vram_attribution(gpus, config) or {}
         for entry in vram_attr.get("per_gpu") or []:
             idx = entry.get("index")
             if idx is None:
                 continue
-            for row in entry.get("rows") or []:
+            for row in entry.get("services") or []:
                 svc = row.get("service")
                 used_mb = row.get("used_mb")
                 if svc and isinstance(used_mb, (int, float)) and not str(svc).startswith("__"):
@@ -203,8 +387,12 @@ def _json_str(s: str) -> str:
     return _json.dumps(str(s))
 
 
-async def sampler_loop():
-    """Main loop. Aligns to wall-clock 10s boundaries so charts look clean."""
+async def sampler_loop(get_config: Optional[Callable[[], Mapping[str, Any]]] = None):
+    """Main loop. Aligns to wall-clock 10s boundaries so charts look clean.
+
+    `get_config` returns the live gateway config each cycle (it is hot-reloaded),
+    so per-service attribution follows the current backends.
+    """
     print("[metrics_sampler] starting", flush=True)
     try:
         # First sleep to align with the next 10s boundary.
@@ -242,7 +430,7 @@ async def sampler_loop():
 
                     # Slow tier piggybacked at the top of each minute.
                     if (now_int % 60) < 10:
-                        await asyncio.to_thread(_emit_slow, writer, now_int)
+                        await asyncio.to_thread(_emit_slow, writer, now_int, get_config() if get_config else None)
 
                     # Per-minute rollup at the start of each new minute.
                     cur_min = now_int // 60
