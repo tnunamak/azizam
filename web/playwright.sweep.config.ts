@@ -1,5 +1,6 @@
 // Quality sweep: every route and state, 390/1440 px, light/dark, owner/member.
-// Run with `npm run sweep` (fixtures) or `npm run sweep:live` (live-data harness).
+// `npm run sweep` (household fixture), `npm run sweep:live` (live-data harness),
+// `npm run sweep:copy` (live-data harness on a copy of production data).
 import { defineConfig } from "@playwright/test";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -33,7 +34,18 @@ const servers =
           url: `${target.setupBaseURL}/health`,
         },
       ]
-    : [
+    : target.name === "copy"
+      ? [
+          {
+            // Production data, copied read-only into one scratch directory that is deleted on exit.
+            command: `${quote(python)} ../scripts/ui/live_data_seed.py --serve --port ${target.port} --copy-from ${quote(
+              process.env.SWEEP_COPY_FROM ?? path.join(process.env.HOME ?? "", "applications", "azizam"),
+            )}${process.env.SWEEP_DATA_STATE === "restarted" ? " --restarted" : ""}`,
+            env: { UI_E2E_PORT: String(target.port), LIVE_DATA_MANIFEST_PATH: paths.seedManifest },
+            url: `${target.baseURL}/health`,
+          },
+        ]
+      : [
         {
           command: `${quote(python)} ../scripts/ui/live_data_seed.py --serve --port ${target.port}`,
           env: { UI_E2E_PORT: String(target.port), LIVE_DATA_MANIFEST_PATH: paths.seedManifest },
@@ -62,7 +74,7 @@ export default defineConfig({
   webServer: servers.map((server) => ({
     ...server,
     reuseExistingServer: false,
-    timeout: 120_000,
+    timeout: 240_000,
     gracefulShutdown: { signal: "SIGTERM" as const, timeout: 15_000 },
   })),
 });

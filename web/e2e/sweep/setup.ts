@@ -78,18 +78,18 @@ export default async function setup(_config: FullConfig) {
   }
 
   // An invitation link. The household fixture seeds deterministic tokens;
-  // elsewhere the sweep creates one in the disposable copy.
+  // elsewhere the sweep creates one in the disposable harness data.
   let inviteToken: string | undefined;
   if (target.name === "fixtures") {
     inviteToken = "household-fixture-invite-june@example.test";
   } else {
     const session = await (await owner.get("/admin/api/session")).json();
     const csrf = session?.actor?.csrf_token;
-    const listing = await owner.get("/admin/api/invites");
+    const listing = await owner.get("/admin/api/profiles");
     const profiles = listing.ok() ? (await listing.json()).profiles ?? [] : [];
     if (csrf && profiles[0]?.id) {
       const created = await owner.post("/admin/api/invites", {
-        headers: { "x-azizam-csrf": csrf },
+        headers: { "x-azizam-csrf": csrf, "x-azizam-admin-action": "1" },
         data: { profile_id: profiles[0].id, email: "sweep-invitee@example.test", expires_in: 86_400 },
       });
       if (created.ok()) {

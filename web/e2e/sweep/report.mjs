@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 // Merge per-test sweep findings into sweep.json and a human report grouped
-// surface → rule → finding. Usage: node e2e/sweep/report.mjs [fixtures|live] [--out file.md]
+// surface → rule → finding. Usage: node e2e/sweep/report.mjs [fixtures|live|copy] [--out file.md]
+// --out also copies the screenshots the report cites to <file>-shots/ so the
+// report survives deleting test-results/.
 import { existsSync, readdirSync, readFileSync, writeFileSync, copyFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
-const targetName = args.find((arg) => ["fixtures", "live"].includes(arg)) ?? process.env.SWEEP_TARGET ?? "fixtures";
+const targetName = args.find((arg) => ["fixtures", "live", "copy"].includes(arg)) ?? process.env.SWEEP_TARGET ?? "fixtures";
 const outIndex = args.indexOf("--out");
 const out = outIndex >= 0 ? path.resolve(args[outIndex + 1]) : null;
 const dir = path.resolve(here, "../../test-results/sweep", targetName);
@@ -114,6 +116,14 @@ const viewsLabel = (views) => {
   return `${roles.join("+")} · ${widths.join("/")}px · ${themes.length === 2 ? "both themes" : themes[0]}`;
 };
 
+// With --out, cited screenshots move next to the saved report.
+const shotDir = out ? out.replace(/\.md$/, "") + "-shots" : null;
+const cited = new Set();
+const shotPath = (shot) => {
+  cited.add(shot);
+  return shotDir ? path.join(shotDir, path.basename(shot)) : path.join(dir, shot);
+};
+
 const lines = [];
 lines.push(`# UI quality sweep — ${targetName}`, "");
 lines.push(`Generated ${summary.generated_at} against ${context.base ?? "?"}${summary.duration_s ? `, run took ${Math.floor(summary.duration_s / 60)} min ${summary.duration_s % 60} s` : ""}.`);
@@ -144,7 +154,7 @@ for (const surface of surfaces) {
       lines.push(`  - where: ${hit.routes.join(", ")} · states: ${hit.states.join(", ")} · ${viewsLabel(hit.views)}${hit.context ? ` · in “${esc(hit.context)}”` : ""}`);
       lines.push(`  - selector: \`${hit.selector || "(page)"}\``);
       if (hit.note) lines.push(`  - note: ${esc(hit.note)}`);
-      if (hit.screenshot) lines.push(`  - screenshot: ${path.join(dir, hit.screenshot)}`);
+      if (hit.screenshot) lines.push(`  - screenshot: ${shotPath(hit.screenshot)}`);
     }
     if (hits.length > 40) lines.push(`- … ${hits.length - 40} more in sweep.json`);
     lines.push("");
@@ -169,5 +179,8 @@ writeFileSync(path.join(dir, "report.md"), `${lines.join("\n")}\n`);
 if (out) {
   mkdirSync(path.dirname(out), { recursive: true });
   copyFileSync(path.join(dir, "report.md"), out);
+  copyFileSync(path.join(dir, "sweep.json"), out.replace(/\.md$/, "") + ".json");
+  if (cited.size) mkdirSync(shotDir, { recursive: true });
+  for (const shot of cited) if (existsSync(path.join(dir, shot))) copyFileSync(path.join(dir, shot), path.join(shotDir, path.basename(shot)));
 }
 console.log(`[sweep] ${checked} states, ${failing.length} unique failing findings → ${path.join(dir, "report.md")}${out ? ` and ${out}` : ""}`);

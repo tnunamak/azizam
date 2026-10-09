@@ -17,6 +17,7 @@
     "visual:capture": "darshana",
     "sweep": "node e2e/sweep/run.mjs",
     "sweep:live": "node e2e/sweep/run.mjs --live",
+    "sweep:copy": "node e2e/sweep/run.mjs --copy",
     "sweep:report": "node e2e/sweep/report.mjs"
   },
   "dependencies": {

@@ -190,9 +190,18 @@ for (const route of ROUTES) {
                 await settle(page);
               }
               record.url = page.url().replace(base, "");
+              // A member sent elsewhere (an owner page redirecting Home) sees the destination,
+              // which is swept on its own; checking it again here would double count.
+              const landed = new URL(page.url()).pathname;
+              const asked = new URL(`${base}${relative}`).pathname;
+              if (landed !== asked) {
+                record.status = "skipped";
+                record.reason = `redirected to ${landed}`;
+                continue;
+              }
               const shot = path.join(
                 paths.shots,
-                `${slug(route.surface)}__${slug(route.path)}__${state.id}__${role}_${width}_${theme}.png`,
+                `${slug(route.surface)}__${slug(route.path)}__${state.id}__${role}_${width}_${theme}.jpg`,
               );
               const relShot = path.relative(paths.dir, shot);
               const before = findings.length;
@@ -270,7 +279,10 @@ for (const route of ROUTES) {
                     if (el) el.style.setProperty("outline", "3px solid #ff00ff", "important");
                   }
                 }, [...flaggedRefs]);
-                await page.screenshot({ path: shot, fullPage: true, animations: "disabled", timeout: 20_000 }).catch(() => {});
+                // Findings only, as small JPEGs: these runs are frequent and disks are finite.
+                await page
+                  .screenshot({ path: shot, fullPage: true, type: "jpeg", quality: 50, animations: "disabled", timeout: 20_000 })
+                  .catch(() => {});
                 for (const finding of findings.slice(before)) finding.screenshot = relShot;
               }
             } catch (error) {
