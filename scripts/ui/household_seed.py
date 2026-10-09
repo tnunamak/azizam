@@ -110,7 +110,10 @@ APP_CAPABILITY_CHOICES = {
 SERVICE_NAMES = {
     "household-chat": "Study and coding",
     "household-image": "Image studio",
-    "household-voice": "Home Assistant voice",
+    # An engine name of its own: the household's Home Assistant is an app
+    # (the "home" app below); naming the engine after it sent the owner to the
+    # wrong system (red team round 2).
+    "household-voice": "Voice and sound",
     "household-video": "Video studio",
     "household-embedding": "Document search",
     "household-remote": "Remote backup",
