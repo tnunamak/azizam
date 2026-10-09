@@ -62,6 +62,8 @@ Member preferences live in a new `admin.db` table keyed by `users.id`:
 `default_remember=true`, `never_keep=false`, and `retention_cap=never` by
 default. The effective expiry is the shorter of the member choice and owner
 cap, measured from request time. The kill switch wins over all other choices.
+Enabling the kill switch also purges previously kept prompt records for every
+member. Turning it off later cannot restore them.
 
 | Viewer | Own asset prompt/title | Another person's prompt/title | Full workflow download |
 | --- | --- | --- | --- |

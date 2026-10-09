@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from gateway import admin_store, lan_auth_policy
+from gateway import admin_store, lan_auth_policy, prompt_memory
 from gateway.admin_api import AdminAuth, AdminContext, _require_admin
 
 INSTANCE_SETTING_KEY = "instance_presentation"
@@ -85,7 +85,8 @@ def redact_config(value: Any) -> Any:
 def create_settings_router(*, auth: AdminAuth, admin_path: Path,
                            config_provider: Callable[[], Mapping[str, Any]],
                            instance_defaults: Callable[[], Mapping[str, Any]] | None = None,
-                           overrides_provider: Callable[[], Mapping[str, Any]] | None = None) -> APIRouter:
+                           overrides_provider: Callable[[], Mapping[str, Any]] | None = None,
+                           prompt_memory_path: Path | None = None) -> APIRouter:
     router = APIRouter(prefix="/admin/api/settings", tags=["admin"])
 
     def guard(request: Request) -> AdminContext | JSONResponse:
@@ -161,6 +162,8 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
             )
         except admin_store.SettingsConflictError:
             return JSONResponse({"error": {"code": "settings_conflict", "message": "Settings changed elsewhere; reload to see the latest"}}, status_code=409)
+        if body["never_keep"]:
+            prompt_memory.delete_all(path=prompt_memory_path)
         return prompt_memory_response()
 
     @router.put("/instance")

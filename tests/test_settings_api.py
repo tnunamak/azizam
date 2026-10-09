@@ -5,7 +5,7 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-from gateway import admin_store, lan_auth_policy
+from gateway import admin_store, lan_auth_policy, media_jobs, prompt_memory
 from gateway.admin_api import AdminAuthError, AdminContext
 from gateway.settings_api import create_settings_router, instance_settings
 
@@ -32,6 +32,32 @@ def settings(tmp_path):
 
 
 OWNER = {"test-role": "owner", "x-azizam-csrf": "csrf-fixture"}
+
+
+def test_prompt_memory_owner_kill_switch_purges_existing_prompts(settings, tmp_path, monkeypatch):
+    client, _, _ = settings
+    prompt_db = tmp_path / "media_jobs.db"
+    monkeypatch.setattr(media_jobs, "DB_PATH", prompt_db)
+    prompt_memory.put("img_one", "person-a", "private-sentinel", kept_until=None, path=prompt_db)
+    defaults = client.get("/admin/api/settings/prompt-memory", headers=OWNER)
+    assert defaults.status_code == 200
+    assert defaults.json()["prompt_memory"] == {
+        "default_remember": True, "never_keep": False, "retention_cap": "never",
+    }
+    denied = client.put(
+        "/admin/api/settings/prompt-memory",
+        json={"default_remember": True, "never_keep": True, "retention_cap": "never"},
+        headers={**OWNER, "If-Match": "stale"},
+    )
+    assert denied.status_code == 409
+    assert prompt_memory.get("img_one", "person-a", path=prompt_db)
+    updated = client.put(
+        "/admin/api/settings/prompt-memory",
+        json={"default_remember": True, "never_keep": True, "retention_cap": "never"},
+        headers={**OWNER, "If-Match": defaults.json()["revision"]},
+    )
+    assert updated.status_code == 200
+    assert prompt_memory.get("img_one", "person-a", path=prompt_db) is None
 
 
 @pytest.mark.parametrize("route", ["instance", "defaults", "lan-placeholder-keys", "effective", "effective/export"])

@@ -51,3 +51,28 @@ def test_request_forget_overrides_remember_and_validates_shape():
     result = prompt_memory.decide(**base, request_body={"extensions": {"com.azizam.prompts": {"mode": "forget"}}})
     assert result.reason == "request_forget" and not result.keep
     assert prompt_memory.decide(**base, request_body={"prompt": "hello"}).keep
+
+
+def test_default_retention_is_never_and_owner_default_controls_new_member():
+    remembered = prompt_memory.decide(
+        person_id="person-a", member=None, household=None, request_body={"prompt": "hello"}, now=100,
+    )
+    assert remembered.keep and remembered.kept_until is None
+    disabled = prompt_memory.decide(
+        person_id="person-a", member=None, household={"default_remember": False},
+        request_body={"prompt": "hello"}, now=100,
+    )
+    assert not disabled.keep and disabled.reason == "member_disabled"
+
+
+def test_server_purge_deletes_prompts_for_every_person_but_not_media(tmp_path):
+    db = tmp_path / "data" / "media_jobs.db"
+    media = tmp_path / "cache" / "image.png"
+    media.parent.mkdir()
+    media.write_bytes(b"media stays")
+    for person in ("person-a", "person-b"):
+        prompt_memory.put("img_shared", person, f"{person} secret", kept_until=None, path=db)
+    assert prompt_memory.delete_all(path=db) == 2
+    assert prompt_memory.get("img_shared", "person-a", path=db) is None
+    assert prompt_memory.get("img_shared", "person-b", path=db) is None
+    assert media.read_bytes() == b"media stays"

@@ -291,6 +291,17 @@ def delete_person(person_id: str, *, path: Path | None = None) -> int:
         conn.close()
 
 
+def delete_all(*, path: Path | None = None) -> int:
+    """Purge retained prompts when the server-wide kill switch is enabled."""
+    conn = _connect(path)
+    try:
+        count = conn.execute("DELETE FROM asset_prompts").rowcount
+        conn.commit()
+        return count
+    finally:
+        conn.close()
+
+
 def delete_asset(asset_id: str, *, path: Path | None = None) -> int:
     conn = _connect(path)
     try:
