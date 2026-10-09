@@ -237,6 +237,8 @@ function hasNoProviderCharge(row: CatalogRow): boolean {
 }
 
 function costLabel(row: CatalogRow): string | undefined {
+  if (row.locality === "remote" && row.cost.kind === "unknown")
+    return "Cost not recorded";
   if (row.cost.kind === "paid") {
     return row.cost.price === null
       ? "Paid · price unavailable"
@@ -441,7 +443,9 @@ function itemMatches(row: CatalogRow, query: string): boolean {
     row.id,
     row.name,
     row.display_name,
-    row.description,
+    titleFor(row),
+    descriptionFor(row),
+    primaryCapabilityLabel(row),
     ...(row.use_names ?? []),
     row.recommended_model,
     row.provider,
@@ -841,8 +845,10 @@ export default function ModelsClient() {
   );
   const [showNoProviderCharge, setShowNoProviderCharge] = useState(true);
   const [showPaid, setShowPaid] = useState(true);
+  const [showUnknownCost, setShowUnknownCost] = useState(true);
   const [tableOpen, setTableOpen] = useState(false);
-  const [detail, setDetail] = useState<CatalogRow | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [detailNote, setDetailNote] = useState<string | null>(null);
   const {
     data: catalogData,
     isPending: catalogPending,
@@ -857,6 +863,17 @@ export default function ModelsClient() {
     () => [...(catalogData?.aliases ?? []), ...(catalogData?.models ?? [])],
     [catalogData],
   );
+  const detail = allRows.find((row) => row.id === detailId) ?? null;
+  useEffect(() => {
+    if (detailId !== null && catalogData && !detail) {
+      setDetailId(null);
+      setDetailNote("This model is no longer in the catalog.");
+    }
+  }, [catalogData, detail, detailId]);
+  function selectDetail(row: CatalogRow) {
+    setDetailNote(null);
+    setDetailId(row.id);
+  }
   const appliedDeepLink = useRef(false);
   useEffect(() => {
     if (!catalogData || appliedDeepLink.current) return;
@@ -884,6 +901,8 @@ export default function ModelsClient() {
     if (capability !== "all" && !hasCapability(row, capability)) {
       return false;
     }
+    if (row.locality === "remote" && row.cost.kind === "unknown")
+      return showUnknownCost;
     if (hasNoProviderCharge(row) && !showNoProviderCharge) return false;
     if (!hasNoProviderCharge(row) && row.cost.kind === "paid" && !showPaid)
       return false;
@@ -981,6 +1000,14 @@ export default function ModelsClient() {
                 >
                   Paid
                 </button>
+                <button
+                  type="button"
+                  aria-pressed={showUnknownCost}
+                  onClick={() => setShowUnknownCost((value) => !value)}
+                  className="text-muted-foreground hover:bg-muted focus-visible:ring-ring aria-pressed:text-foreground min-h-11 rounded-md px-3 text-xs underline-offset-4 transition outline-none focus-visible:ring-[3px] aria-pressed:underline"
+                >
+                  Cost not recorded
+                </button>
               </div>
             </div>
           </section>
@@ -1010,6 +1037,7 @@ export default function ModelsClient() {
                       setCapability("all");
                       setShowNoProviderCharge(true);
                       setShowPaid(true);
+                      setShowUnknownCost(true);
                     }}
                   >
                     Clear filters
@@ -1026,7 +1054,7 @@ export default function ModelsClient() {
                 <CapabilityRow
                   key={group.capability}
                   rows={group.rows}
-                  onDetail={setDetail}
+                  onDetail={selectDetail}
                   searching={Boolean(query.trim())}
                 />
               ))}
@@ -1065,7 +1093,7 @@ export default function ModelsClient() {
                       <TableRow
                         key={row.id}
                         className="cursor-pointer"
-                        onClick={() => setDetail(row)}
+                        onClick={() => selectDetail(row)}
                       >
                         <TableCell className="font-medium">
                           {titleFor(row) && (
@@ -1088,7 +1116,7 @@ export default function ModelsClient() {
                             size="sm"
                             onClick={(event) => {
                               event.stopPropagation();
-                              setDetail(row);
+                              selectDetail(row);
                             }}
                           >
                             Details
@@ -1103,9 +1131,10 @@ export default function ModelsClient() {
           </section>
         </>
       )}
+      {detailNote && <p role="status">{detailNote}</p>}
       <DetailSheet
         row={detail}
-        onOpenChange={(open) => !open && setDetail(null)}
+        onOpenChange={(open) => !open && setDetailId(null)}
         viewerAdmin={viewer.admin}
       />
     </div>

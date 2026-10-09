@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 import { ViewerContext } from "@/components/shell/session";
@@ -14,12 +14,16 @@ vi.mock("recharts", () => ({
   XAxis: () => null,
   YAxis: () => null,
 }));
-function renderUsage(summary: Record<string, unknown>) {
+function renderUsage(
+  summary: Record<string, unknown>,
+  fetchSummary?: () => Promise<Response>,
+) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => Response.json({ requests: 4, ...summary })),
+    vi.fn(fetchSummary ?? (async () => Response.json({ requests: 4, ...summary }))),
   );
-  return render(
+  const view = render(
     <ViewerContext.Provider
       value={{
         authenticated: true,
@@ -29,15 +33,12 @@ function renderUsage(summary: Record<string, unknown>) {
         admin: true,
       }}
     >
-      <QueryClientProvider
-        client={
-          new QueryClient({ defaultOptions: { queries: { retry: false } } })
-        }
-      >
+      <QueryClientProvider client={client}>
         <UsagePage />
       </QueryClientProvider>
     </ViewerContext.Provider>,
   );
+  return { ...view, client };
 }
 HTMLElement.prototype.scrollIntoView = vi.fn();
 afterEach(() => {
@@ -219,4 +220,88 @@ test.each([undefined, null])("UA-01 labels an unrecorded receipt cost in summary
   const sheet = screen.getByRole("dialog");
   expect(within(sheet).getByText("Cost")).toBeVisible();
   expect(within(sheet).getByText("Cost unknown")).toBeVisible();
+});
+
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+test("Usage announces loading with the shared Busy status and no invented totals", async () => {
+  const pending = deferred<Response>();
+  renderUsage({}, () => pending.promise);
+  expect(screen.getByRole("status")).toHaveTextContent("Busy · Loading usage");
+  expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
+  expect(screen.queryByText("No requests in this period")).not.toBeInTheDocument();
+  await act(async () => pending.resolve(Response.json({ requests: 0 })));
+  expect(await screen.findByText("No requests in this period")).toBeVisible();
+  expect(screen.getByRole("link", { name: "Connect an app" })).toHaveAttribute("href", "/ui/apps/");
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});
+
+test("Usage reports an Unknown load failure with a shared callout and retry", async () => {
+  const retry = deferred<Response>();
+  let calls = 0;
+  renderUsage({}, () => ++calls === 1 ? Promise.reject(new Error("offline")) : retry.promise);
+  const alert = await screen.findByRole("alert");
+  expect(within(alert).getByRole("heading", { name: "Usage could not be loaded" })).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent("Unknown · Usage unavailable");
+  expect(screen.queryByText("No requests in this period")).not.toBeInTheDocument();
+  await userEvent.setup().click(within(alert).getByRole("button", { name: "Retry usage" }));
+  expect(screen.getByRole("status")).toHaveTextContent("Busy · Loading usage");
+  await act(async () => retry.resolve(Response.json({ requests: 4, remote_spend: 1.25 })));
+  expect(await screen.findByText("$1.25")).toBeVisible();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+test.each([0, 4])("Usage keeps %i cached requests through refresh failure and retry", async (requests) => {
+  const refresh = deferred<Response>();
+  const retry = deferred<Response>();
+  let calls = 0;
+  const { client } = renderUsage({}, () => {
+    calls += 1;
+    if (calls === 1) return Promise.resolve(Response.json({ requests, remote_spend: null }));
+    return calls === 2 ? refresh.promise : retry.promise;
+  });
+  const cachedLabel = requests ? "Unavailable" : "No requests in this period";
+  expect(await screen.findByText(cachedLabel)).toBeVisible();
+  act(() => { void client.invalidateQueries({ queryKey: ["usage"] }); });
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Busy · Refreshing usage"));
+  expect(screen.getByText(cachedLabel)).toBeVisible();
+  await act(async () => refresh.reject(new Error("refresh unavailable")));
+  expect(await screen.findByRole("heading", { name: "Usage could not be refreshed" })).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent("Degraded · Usage refresh failed");
+  expect(screen.getByText(cachedLabel)).toBeVisible();
+  expect(screen.getByText("Showing the last loaded usage. New requests and spend may be missing.")).toBeVisible();
+  expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  await userEvent.setup().click(screen.getByRole("button", { name: "Retry usage" }));
+  expect(screen.getByRole("button", { name: "Retrying…" })).toBeDisabled();
+  expect(screen.getByText(cachedLabel)).toBeVisible();
+  await act(async () => retry.resolve(Response.json({ requests: 5, remote_spend: 2.5 })));
+  expect(await screen.findByText("$2.50")).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "Usage could not be refreshed" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});
+
+test.each([undefined, null, "", "   ", false])("Usage never formats unrecorded spend as zero: %s", async (spend) => {
+  renderUsage({ remote_spend: spend, remote_spend_available: true });
+  expect(await screen.findByText("Unavailable")).toBeVisible();
+  expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
+});
+
+test("Usage uses shared empty panels for missing daily and model breakdowns", async () => {
+  renderUsage({});
+  for (const title of [
+    "Daily request history will appear here.",
+    "Model totals will appear here after your first request.",
+  ]) {
+    expect((await screen.findByText(title)).closest(".border-dashed")).toBeInTheDocument();
+  }
 });

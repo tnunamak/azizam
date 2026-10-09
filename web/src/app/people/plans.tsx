@@ -215,6 +215,10 @@ function PlanForm({
   );
   const [raw, setRaw] = useState<string | null>(null);
   const [rawError, setRawError] = useState("");
+  const discardRaw = () => {
+    setRaw(null);
+    setRawError("");
+  };
   const mutation = useMutation({
     mutationFn: () =>
       plan
@@ -243,7 +247,7 @@ function PlanForm({
       else updated[field] = value;
       return updated;
     });
-    setRaw(null);
+    discardRaw();
   };
   const setAllow = (
     field: "intents" | "exposure" | "trust_tiers" | "resource_tiers" | "tags",
@@ -255,7 +259,7 @@ function PlanForm({
       else allow[field] = value;
       return { ...old, allow };
     });
-    setRaw(null);
+    discardRaw();
   };
   return (
     <form
@@ -363,7 +367,7 @@ function PlanForm({
                         else fallback.cloud_allowed = v === "allowed";
                         return { ...old, fallback };
                       });
-                      setRaw(null);
+                      discardRaw();
                     }}
                   />
                   {v === "default"
@@ -388,6 +392,8 @@ function PlanForm({
             </Label>
             <Textarea
               id="policy-json"
+              aria-invalid={!!rawError}
+              aria-describedby={rawError ? "policy-json-error" : undefined}
               rows={12}
               className="font-mono text-xs"
               value={raw ?? JSON.stringify(policy, null, 2)}
@@ -408,9 +414,22 @@ function PlanForm({
               }}
             />
             {rawError && (
-              <p role="alert" className="text-destructive text-sm">
-                {rawError}
-              </p>
+              <>
+                <p
+                  id="policy-json-error"
+                  role="alert"
+                  className="text-destructive text-sm"
+                >
+                  {rawError}
+                </p>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={discardRaw}
+                >
+                  Discard invalid JSON changes
+                </Button>
+              </>
             )}
           </details>
         </div>
@@ -421,6 +440,14 @@ function PlanForm({
         </p>
       )}
       <DialogFooter>
+        {rawError && (
+          <p
+            id="plan-save-error"
+            className="text-destructive self-center text-sm"
+          >
+            Save is blocked. Fix or discard invalid JSON changes in Advanced.
+          </p>
+        )}
         <Button
           type="button"
           variant="ghost"
@@ -429,7 +456,10 @@ function PlanForm({
         >
           Cancel
         </Button>
-        <Button disabled={!name.trim() || !!rawError || mutation.isPending}>
+        <Button
+          disabled={!name.trim() || !!rawError || mutation.isPending}
+          aria-describedby={rawError ? "plan-save-error" : undefined}
+        >
           {mutation.isPending ? "Saving…" : "Save access plan"}
         </Button>
       </DialogFooter>

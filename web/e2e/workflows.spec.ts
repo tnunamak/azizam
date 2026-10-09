@@ -270,6 +270,8 @@ test("typed input table fits desktop and mobile summaries expose Range on a narr
 
     const sheet = page.getByRole("dialog", { name: "Product render" });
     await expect(sheet).toBeVisible();
+    // The typed input table sits inside the closed Technical details.
+    await sheet.getByText("Technical details", { exact: true }).click();
     const columnNames = ["Name", "Type", "Default", "Range", "Applies"];
 
     if (width === 1440) {
@@ -517,6 +519,18 @@ test("workflow sheet shows controls, code, links and seeded recent jobs", async 
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   const mediaRequests: string[] = [];
   const sheet = await openSeededSheet(page, "light", 1440, mediaRequests);
+  const technicalDetails = sheet
+    .getByText("Technical details", { exact: true })
+    .locator("xpath=ancestor::details[1]");
+  await expect(technicalDetails).not.toHaveAttribute("open", "");
+  await expect(
+    sheet.getByText(/Long manifest guidance stays searchable/),
+  ).not.toBeVisible();
+  await sheet.getByText("Technical details", { exact: true }).click();
+  await expect(technicalDetails).toHaveAttribute("open", "");
+  await expect(
+    sheet.getByText(/Long manifest guidance stays searchable/),
+  ).toBeVisible();
   await expect(sheet.getByRole("columnheader", { name: "Name" })).toBeVisible();
   await expect(sheet.getByRole("columnheader", { name: "Type" })).toBeVisible();
   await expect(
@@ -534,18 +548,6 @@ test("workflow sheet shows controls, code, links and seeded recent jobs", async 
   ).toBeVisible();
   await expect(sheet.getByRole("cell", { name: "Ignored" })).toBeVisible();
 
-  const technicalDetails = sheet
-    .getByText("Technical details", { exact: true })
-    .locator("xpath=ancestor::details[1]");
-  await expect(technicalDetails).not.toHaveAttribute("open", "");
-  await expect(
-    sheet.getByText(/Long manifest guidance stays searchable/),
-  ).not.toBeVisible();
-  await sheet.getByText("Technical details", { exact: true }).click();
-  await expect(technicalDetails).toHaveAttribute("open", "");
-  await expect(
-    sheet.getByText(/Long manifest guidance stays searchable/),
-  ).toBeVisible();
   const details = sheet.locator("details").filter({
     hasText: "Technical details",
   });
@@ -573,7 +575,7 @@ test("workflow sheet shows controls, code, links and seeded recent jobs", async 
     .poll(() => page.evaluate(() => navigator.clipboard.readText()))
     .toContain("image.product-render");
 
-  await expect(sheet.getByRole("link", { name: "Run in Try" })).toHaveAttribute(
+  await expect(sheet.getByRole("link", { name: "Open in Try" })).toHaveAttribute(
     "href",
     "/ui/try/?workflow=image.product-render",
   );

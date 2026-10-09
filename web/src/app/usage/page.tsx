@@ -54,11 +54,11 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Callout, StatusLine } from "@/components/product/status-ui";
 import {
   CapabilityIcon,
   CodeBlock,
   EmptyState,
-  ErrorState,
   Money,
   PageHeader,
   RelativeTime,
@@ -251,15 +251,51 @@ export default function UsagePage() {
             </div>
           ) : undefined
         }
-      />
+      >
+        {isPending || isFetching || isError || !data ? (
+          <StatusLine
+            compact
+            tone={isFetching || isPending ? "busy" : data ? "warn" : "unknown"}
+            text={
+              isPending
+                ? "Busy · Loading usage"
+                : isFetching
+                  ? data ? "Busy · Refreshing usage" : "Busy · Loading usage"
+                  : data
+                    ? "Degraded · Usage refresh failed"
+                    : "Unknown · Usage unavailable"
+            }
+          />
+        ) : null}
+      </PageHeader>
+      {isError && data ? (
+        <Callout
+          severity="attention"
+          title="Usage could not be refreshed"
+          headerAction={
+            <Button variant="outline" disabled={isFetching} onClick={() => void refetch()}>
+              {isFetching ? "Retrying…" : "Retry usage"}
+            </Button>
+          }
+        >
+          <p>Showing the last loaded usage. New requests and spend may be missing.</p>
+        </Callout>
+      ) : null}
       {isPending ? (
         <UsageSkeleton />
-      ) : isError || !data ? (
-        <ErrorState
-          message="Usage could not be loaded. Try again."
-          retrying={isFetching}
-          onRetry={() => void refetch()}
-        />
+      ) : !data ? (
+        <Callout
+          as="div"
+          severity="critical"
+          title="Usage could not be loaded"
+          headerAction={
+            <Button variant="outline" disabled={isFetching} onClick={() => void refetch()}>
+              {isFetching ? "Retrying…" : "Retry usage"}
+            </Button>
+          }
+        >
+          <p>Try again to load this month’s usage.</p>
+        </Callout>
       ) : !hasUsage ? (
         <EmptyState
           icon={Activity}
@@ -478,9 +514,7 @@ function DailyChart({ days }: { days: UsageDay[] }) {
       </CardHeader>
       <CardContent>
         {rows.length < 1 ? (
-          <div className="text-muted-foreground flex min-h-40 items-center justify-center rounded-lg border text-sm">
-            Daily request history will appear here.
-          </div>
+          <EmptyState icon={Activity} title="Daily request history will appear here." />
         ) : (
           <>
             <div className="h-72 w-full">
@@ -644,9 +678,7 @@ function ModelTable({
             ) : null}
           </div>
         ) : (
-          <p className="text-muted-foreground text-sm">
-            Model totals will appear here after your first request.
-          </p>
+          <EmptyState icon={Layers} title="Model totals will appear here after your first request." />
         )}
       </CardContent>
     </Card>
@@ -998,9 +1030,7 @@ function receiptNextAction(receipt: UsageReceipt) {
 function UsageSkeleton() {
   return (
     <div
-      role="status"
-      aria-label="Loading usage"
-      aria-busy="true"
+      aria-hidden="true"
       className="space-y-6"
     >
       <div className="grid gap-4 md:grid-cols-3">
@@ -1290,7 +1320,8 @@ function number(value: unknown, fallback: number): number {
 }
 
 function nullableNumber(value: unknown): number | null {
-  if (value == null || value === "") return null;
+  if (typeof value !== "number" && typeof value !== "string") return null;
+  if (typeof value === "string" && !value.trim()) return null;
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
