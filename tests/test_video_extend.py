@@ -204,7 +204,7 @@ class ExtensionRouteTests(RemixReplaceBase):
         # 193 source frames + 192 new frames, stitched
         self.assertAlmostEqual(body["total_seconds"], 385 / 24, places=3)
         self.assertEqual(float(body["seconds"]), body["total_seconds"])
-        self.assertIsNone(body["prompt"])  # This service request has no person who can see a kept prompt.
+        self.assertEqual(body["prompt"], "the cyclist reaches the village")
         self.assertEqual(self.comfy.uploads[0][1], SOURCE_BYTES)
 
     def test_graph_loads_the_uploaded_source_and_adds_one_segment(self) -> None:
@@ -366,7 +366,7 @@ class ExtensionRouteTests(RemixReplaceBase):
         self.assertEqual((video.object, video.status, video.progress), ("video", "queued", 0))
         self.assertEqual(video.remixed_from_video_id, SOURCE_ID)
         self.assertEqual(video.size, "960x512")
-        self.assertIsNone(video.prompt)
+        self.assertEqual(video.prompt, "continue")
 
     @unittest.skipUnless(hasattr(__import__("openai").OpenAI(api_key="x").videos, "extend"), "installed openai SDK has no videos.extend")
     def test_the_real_sdk_extends_an_uploaded_video(self) -> None:
@@ -435,7 +435,7 @@ class CreateLongVideoTests(RemixReplaceBase):
         self.assertEqual([g[f"s{i}_text"]["inputs"]["text"] for i in range(3)],
                          ["wide shot of a harbor", "close on a fisherman", "the boat leaves"])
         self.assertAlmostEqual(body["total_seconds"], 13, delta=0.4)
-        self.assertIsNone(body["prompt"])
+        self.assertEqual(body["prompt"], "wide shot of a harbor\nclose on a fisherman\nthe boat leaves")
         self.assertIsNone(body["extended_from_video_id"])
 
     def test_shots_work_on_the_default_ltx_model_too(self) -> None:

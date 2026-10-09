@@ -189,6 +189,7 @@ def create_me_media_router(
             if item is None:
                 raise _ApiError("asset_not_found", "Asset not found for this account", 404)
             physical_removed = asset_deleter(asset_id)
+            prompt_memory.delete_asset_for_person(asset_id, actor.user_id, path=prompt_path)
             admin_store.record_audit(
                 "media.asset.delete",
                 actor_kind="user",
@@ -339,6 +340,7 @@ def conservative_asset_deleter(
     metadata_reader: AssetMetadataReader,
     asset_path_resolver: AssetPathResolver,
     metadata_path_resolver: Callable[[str], Path | None],
+    prompt_memory_path: PathProvider | None = None,
 ) -> AssetDeleter:
     def delete(asset_id: str) -> bool:
         metadata = metadata_reader(asset_id)
@@ -347,13 +349,17 @@ def conservative_asset_deleter(
             for owner in metadata.get("owner_key_hashes") or []
             if isinstance(owner, str)
         }
-        if len(owners) > 1:
+        if len(owners) > 1 or len(metadata.get("maker_person_ids") or []) > 1:
             return False
+        from gateway.prompt_metadata_migration import CACHE_MUTATION_LOCK
         removed = False
-        for path in (asset_path_resolver(asset_id), metadata_path_resolver(asset_id)):
-            if path is not None and path.exists():
-                path.unlink()
-                removed = True
+        with CACHE_MUTATION_LOCK:
+            for path in (asset_path_resolver(asset_id), metadata_path_resolver(asset_id)):
+                if path is not None and path.exists():
+                    path.unlink()
+                    removed = True
+            if removed:
+                prompt_memory.delete_asset(asset_id, path=_resolve_path(prompt_memory_path) if prompt_memory_path is not None else None)
         return removed
 
     return delete
@@ -548,6 +554,7 @@ def _media_items(
     )
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
+    prompts = prompt_memory.get_person_prompts(scope.viewer_person_id, path=prompt_memory_path)
     deleted = _deleted_asset_ids(scope, admin_db_path)
     for job in jobs:
         receipt = receipts.get(str(job.get("request_id") or ""))
@@ -565,10 +572,10 @@ def _media_items(
             embedded = _embedded_provenance(path)
             media_type = str(asset.get("media_type") or asset_media_type_resolver(asset_id, path))
             created_at = _asset_created_at(path, job, receipt, embedded)
-            maker_app_id = str((receipt or {}).get("app_id") or job.get("app_id") or "")
-            maker_id = prompt_memory.person_for_app(maker_app_id, admin_path=admin_db_path)
-            prompt_record = (prompt_memory.get(asset_id, scope.viewer_person_id, path=prompt_memory_path)
-                             if maker_id and maker_id == scope.viewer_person_id else None)
+            sidecar = dict(asset_metadata_reader(asset_id) or {}) if asset_metadata_reader else {}
+            if "maker_person_ids" in sidecar and scope.app_ids is not None and scope.person_id not in sidecar["maker_person_ids"]:
+                continue
+            prompt_record = prompts.get(asset_id)
             prompt = prompt_record.get("prompt_text") if prompt_record else None
             model = _string_first(
                 _model_for_asset(asset, job, receipt),
@@ -581,6 +588,10 @@ def _media_items(
                 embedded.get("workflow"),
             )
             source = _source_projection(receipt, admin_db_path, metadata=job, visible_app_ids=scope.app_ids)
+            makers = sidecar.get("maker_person_ids")
+            if makers and len(makers) == 1:
+                user = admin_store.get_user(makers[0], path=admin_db_path)
+                source = {**source, "label": str((user or {}).get("display_name") or (user or {}).get("email") or "Unknown maker"), "person_id": makers[0]}
             out.append({
                 "asset_id": asset_id,
                 "id": asset_id,
@@ -616,6 +627,8 @@ def _media_items(
             if not asset_id or asset_id in seen or asset_id in deleted:
                 continue
             metadata = dict(asset_metadata_reader(asset_id) or {})
+            if "maker_person_ids" in metadata and scope.app_ids is not None and scope.person_id not in metadata["maker_person_ids"]:
+                continue
             owners = {str(value) for value in metadata.get("owner_key_hashes") or [] if isinstance(value, str)}
             if credential_hashes is not None and not (owners & credential_hashes):
                 continue
@@ -628,7 +641,7 @@ def _media_items(
                 continue
             kind = _asset_kind(asset_id, metadata)
             created_at = _asset_created_at(path, {}, None, embedded)
-            prompt_record = prompt_memory.get(asset_id, scope.viewer_person_id, path=prompt_memory_path)
+            prompt_record = prompts.get(asset_id)
             prompt = prompt_record.get("prompt_text") if prompt_record else None
             source = _source_projection(receipt, admin_db_path, metadata=metadata, embedded=embedded,
                                         visible_app_ids=scope.app_ids)
@@ -1077,7 +1090,7 @@ def _media_title(prompt: str | None, kind: str, created_at: int, source: Mapping
         return private
     noun = {"image": "Picture", "audio": "Audio", "video": "Video"}.get(kind, "Item")
     maker = str(source.get("label") or "unknown maker")
-    date = datetime.fromtimestamp(created_at, timezone.utc).strftime("%b %-d, %Y")
+    date = datetime.fromtimestamp(created_at).strftime("%b %-d at %-I:%M %p")
     return f"{noun} by {maker} · {date}"
 
 

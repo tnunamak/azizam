@@ -83,7 +83,7 @@ from gateway import (
 from gateway import loop_watchdog, video_extend
 from gateway import comfy_object_info, comfy_ui_graph, media_delivery, media_fetch, media_metadata, provenance
 from gateway import video_subject
-from gateway import video_job_records
+from gateway import video_job_records, prompt_metadata_migration
 from gateway.showcase import build_showcase_router, is_public_showcase_path
 from gateway import realtime_proxy
 from gateway.outbound_request import backend_request_headers, backend_query_string, canonical_native_path
@@ -4427,7 +4427,7 @@ async def _proxy_tts_once(request: Request, auth_context: AuthContext, *, model_
     try:
         body_json = json.loads(body)
         # Gateway-level control; engines never see the extensions envelope.
-        _begin_media_delivery(auth_context, receipt)
+        _begin_media_delivery(auth_context, receipt).capture_embedded_prompt = False
         if isinstance(body_json, dict):
             metadata_error = _note_media_metadata_body(body_json)
             if metadata_error is not None:
@@ -6925,12 +6925,16 @@ def _asset_access_allowed(asset_id: str, auth_context: AuthContext | None) -> bo
     return bool(owners.intersection(_asset_read_owner_keys(auth_context)))
 
 
+_CURRENT_MAKER = object()
+
+
 def store_asset_bytes(
     content: bytes,
     *,
     kind: str = "img",
     suffix: str = ".png",
     owner_key_hash: str | None = None,
+    maker_person_id: str | None | object = _CURRENT_MAKER,
 ) -> str:
     """Store clean media; any retained prompt lives only in asset_prompts."""
     kind = str(kind).strip().lower()
@@ -6944,24 +6948,41 @@ def store_asset_bytes(
     text = getattr(delivery, "prompt_text", None)
     metadata: dict[str, str] = {}
     if decision is not None and decision.keep and text:
-        metadata = prompt_memory.capture_metadata(content, suffix)
+        try:
+            metadata = {} if kind == "aud" and not getattr(delivery, "capture_embedded_prompt", True) else prompt_memory.capture_metadata(content, suffix)
+        except Exception:
+            # A metadata/storage failure never discards a finished generation.
+            decision = prompt_memory.Decision(decision.person_id, False, "storage_failed")
+            delivery.prompt_decision = decision
     content = media_metadata.strip_metadata(content, suffix, workdir=media_delivery.DEFAULT_WORKDIR)
     digest = hashlib.sha256(content).hexdigest()
     asset_id = f"{kind}_{digest}"
     IMAGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     target = IMAGE_CACHE_DIR / f"{digest}{suffix}"
-    if not target.exists():
-        # Atomic write: tmp + rename.
-        tmp = target.with_suffix(f"{suffix}.tmp")
-        tmp.write_bytes(content)
-        tmp.replace(target)
-    _record_asset_owner(asset_id, owner_key_hash)
+    with prompt_metadata_migration.CACHE_MUTATION_LOCK:
+        if not target.exists():
+            tmp = target.with_suffix(f"{suffix}.tmp")
+            try:
+                tmp.write_bytes(content)
+                tmp.replace(target)
+            finally:
+                tmp.unlink(missing_ok=True)
+        _record_asset_owner(asset_id, owner_key_hash)
+        person_id = (getattr(delivery, "person_id", None) or getattr(decision, "person_id", None)) if maker_person_id is _CURRENT_MAKER else maker_person_id
+        metadata_sidecar = _read_asset_metadata(asset_id)
+        makers = set(metadata_sidecar.get("maker_person_ids") or [])
+        if person_id:
+            makers.add(person_id)
+        metadata_sidecar["maker_person_ids"] = sorted(makers)
+        _write_asset_metadata(asset_id, metadata_sidecar)
     if decision is not None and decision.keep and text:
-        prompt_memory.put(
+        saved = prompt_memory.safe_put(
             asset_id, decision.person_id, text,
             kept_until=decision.kept_until, metadata=metadata,
             admin_path=ADMIN_STORE.path, created_at=decision.created_at,
         )
+        if not saved:
+            delivery.prompt_decision = prompt_memory.Decision(decision.person_id, False, "storage_failed")
     return asset_id
 
 
@@ -7959,7 +7980,7 @@ async def _generate_images_with_adaptive_batching(
         flush=True,
     )
 
-    return _build_image_response_payload(
+    return await asyncio.to_thread(_build_image_response_payload,
         request,
         images_collected,
         response_format,
@@ -9381,7 +9402,7 @@ def _video_progress_percent(value: Any, *, floor: int = 0, ceiling: int = 100) -
     return max(floor, min(progress, ceiling))
 
 
-def _tracked_video_fields(prompt_id: str) -> dict[str, Any]:
+def _tracked_video_fields(prompt_id: str, auth_context: AuthContext | None = None) -> dict[str, Any]:
     record = _video_job_records.get(prompt_id) or {}
     fields = {
         key: record.get(key)
@@ -9394,7 +9415,9 @@ def _tracked_video_fields(prompt_id: str) -> dict[str, Any]:
     }
     if record.get("resolved_model") is not None:
         fields["azizam_resolved_model"] = record["resolved_model"]
-    person_id = prompt_memory.person_for_app(record.get("app_id"), admin_path=ADMIN_STORE.path)
+    person_id = _auth_person_id(auth_context)
+    if person_id != record.get("person_id"):
+        person_id = None
     prompt_asset_id = str(record.get("asset_id") or f"video_{prompt_id}")
     saved = prompt_memory.get(prompt_asset_id, person_id) if person_id else None
     fields["prompt"] = saved["prompt_text"] if saved else None
@@ -9426,10 +9449,11 @@ def _openai_video_payload(
     prompt_id: str,
     status: str,
     progress: int,
+    auth_context: AuthContext | None = None,
     updated_at: int | None = None,
     **extra: Any,
 ) -> dict[str, Any]:
-    tracked = _tracked_video_fields(prompt_id)
+    tracked = _tracked_video_fields(prompt_id, auth_context)
     payload: dict[str, Any] = {
         "id": video_id,
         "object": "video",
@@ -9554,8 +9578,7 @@ async def _record_event(event: dict) -> None:
             entry["ended_at"] = time.time()
         elif etype == "execution_error":
             entry["status"] = "failed"
-            err = {k: data.get(k) for k in ("exception_message", "exception_type", "node_id", "node_type") if k in data}
-            entry["error"] = err or "execution_error"
+            entry["error"] = _comfy_execution_error_message({"status": {"messages": [["execution_error", data]]}})
             entry["ended_at"] = time.time()
 
         entry["updated_at"] = time.time()
@@ -9600,6 +9623,7 @@ def _gc_video_job_records_locked(now: float) -> None:
     for pid in drop:
         _video_job_records.pop(pid, None)
         _forget_video_record_row(pid)
+        prompt_memory.delete_asset(f"video_{pid}")
 
 
 async def _gc_video_progress() -> None:
@@ -10133,7 +10157,7 @@ def _resolve_cached_image_asset(
         raise _InputReferenceError("asset_id not found (may have been evicted)")
     if not _asset_access_allowed(asset_id, auth_context):
         raise _InputReferenceError("asset_id is not accessible for this API key")
-    return path.read_bytes(), f"{asset_id}{path.suffix or '.png'}"
+    return media_delivery.deliver_bytes(path.read_bytes(), path.suffix, "none"), f"{asset_id}{path.suffix or '.png'}"
 
 
 async def _resolve_input_reference(
@@ -10688,6 +10712,7 @@ async def _submit_video_graph(
                         # _asset_owner_key's existing image/audio asset model.
                         "app_profile": (_profile_for_auth_context(auth_context).id if _profile_for_auth_context(auth_context) else None),
                         "app_id": auth_context.identity.app_id if auth_context.identity else None,
+                        "person_id": _auth_person_id(auth_context),
                         "api_key_name": auth_context.identity.name if auth_context.identity else None,
                         "owner_key_hash": _asset_owner_key(auth_context),
                         "deleted_at": None,
@@ -10696,13 +10721,23 @@ async def _submit_video_graph(
                 context = media_delivery.current()
                 memory = context.prompt_decision if context is not None else None
                 if memory is not None and memory.keep and context.prompt_text:
-                    prompt_memory.put(
+                    saved = await asyncio.to_thread(prompt_memory.safe_put,
                         f"video_{prompt_id}", memory.person_id, context.prompt_text,
                         kept_until=memory.kept_until, admin_path=ADMIN_STORE.path,
                         created_at=memory.created_at,
                     )
+                    if not saved:
+                        context.prompt_decision = prompt_memory.Decision(memory.person_id, False, "storage_failed")
             except Exception:
                 pass
+            immediate_prompt = _tracked_video_fields(prompt_id, auth_context).get("prompt")
+            context = media_delivery.current()
+            memory = context.prompt_decision if context is not None else None
+            if (_auth_person_id(auth_context) is None and (memory is None or memory.reason == "no_person")
+                    and not prompt_memory.household_settings(admin_path=ADMIN_STORE.path)["never_keep"]):
+                # Echo this caller's input only in the create response. It is
+                # never retained in the job record or exposed by later reads.
+                immediate_prompt = prompt
             payload = {
                 "id": video_id,
                 "object": "video",
@@ -10713,7 +10748,7 @@ async def _submit_video_graph(
                 "created_at": now,
                 "completed_at": None,
                 "expires_at": now + 86400,
-                "prompt": _tracked_video_fields(prompt_id).get("prompt"),
+                "prompt": immediate_prompt,
                 "remixed_from_video_id": remixed_from_video_id,
                 "error": None,
                 "size": f"{width}x{height}",
@@ -11747,6 +11782,10 @@ async def proxy_comfy_video_extend(request: Request, auth_context: AuthContext) 
         body = await _read_video_request_body(request, id_reference_fields=("video",))
     except _VideoFormParseError as exc:
         return _json_error(400, str(exc))
+    _begin_media_delivery(auth_context)
+    memory_error = _note_media_metadata_body(body)
+    if memory_error is not None:
+        return memory_error
     video = body.pop("video", None)
     if video is None:
         return _json_error(400, "video is required: pass {\"id\": \"video_...\"} or upload a file", param="video")
@@ -11824,6 +11863,7 @@ async def proxy_comfy_video_status(video_id: str, auth_context: AuthContext) -> 
                     payload = _openai_video_payload(
                         video_id=video_id,
                         prompt_id=prompt_id,
+                        auth_context=auth_context,
                         status=internal_status,
                         progress=_video_progress_percent(live.get("percent"), ceiling=99),
                         updated_at=int(live.get("updated_at") or time.time()),
@@ -11849,6 +11889,7 @@ async def proxy_comfy_video_status(video_id: str, auth_context: AuthContext) -> 
                     content=json.dumps(_hold_video_progress(prompt_id, _openai_video_payload(
                         video_id=video_id,
                         prompt_id=prompt_id,
+                        auth_context=auth_context,
                         status=queue_status,
                         progress=25 if queue_status == "running" else 0,
                         updated_at=int(time.time()),
@@ -11865,6 +11906,7 @@ async def proxy_comfy_video_status(video_id: str, auth_context: AuthContext) -> 
             payload = _openai_video_payload(
                 video_id=video_id,
                 prompt_id=prompt_id,
+                auth_context=auth_context,
                 status=sora_status,
                 progress=progress,
                 updated_at=int(time.time()),
@@ -12015,27 +12057,43 @@ async def proxy_comfy_video_content(
 
             video_bytes = view_resp.content
             record = _video_job_records.get(prompt_id) or {}
-            person_id = prompt_memory.person_for_app(record.get("app_id"), admin_path=ADMIN_STORE.path)
-            saved_prompt = prompt_memory.get(str(record.get("asset_id") or f"video_{prompt_id}"), person_id) if person_id else None
-            if saved_prompt is None:
-                metadata_mode = provenance.METADATA_NONE
+            person_id = record.get("person_id")
+            saved_prompt_id = str(record.get("asset_id") or f"video_{prompt_id}")
+            saved_prompt = await asyncio.to_thread(prompt_memory.get, saved_prompt_id, person_id) if person_id else None
+            household = await asyncio.to_thread(prompt_memory.household_settings, admin_path=ADMIN_STORE.path)
+            if metadata_mode == provenance.METADATA_FULL and (
+                person_id != _auth_person_id(auth_context) or saved_prompt is None
+                or household["never_keep"]
+            ):
+                return JSONResponse({"error": {"code": "prompt_not_accessible", "message": "Full metadata is available only to the maker while their prompt is kept."}}, status_code=403)
             try:
+                # Internal asynchronous delivery strips the bytes before the
+                # runner stores them. Capture the original workflow into its
+                # retained maker row first, even when Library indexing waits.
+                workflow_metadata = {}
+                if saved_prompt:
+                    workflow_metadata = await asyncio.to_thread(prompt_memory.capture_metadata, video_bytes, ext)
+                    workflow_metadata = {**saved_prompt.get("metadata", {}), **workflow_metadata}
+                    await asyncio.to_thread(
+                        prompt_memory.safe_put, saved_prompt_id, person_id, saved_prompt["prompt_text"],
+                        kept_until=saved_prompt["kept_until"], created_at=saved_prompt["created_at"],
+                        metadata=workflow_metadata, admin_path=ADMIN_STORE.path,
+                    )
                 stored_video_bytes = await asyncio.to_thread(
                     media_delivery.attach_provenance, video_bytes, ext, record.get("provenance")
                 )
                 if index_library:
-                    person_id = prompt_memory.person_for_app(record.get("app_id"), admin_path=ADMIN_STORE.path)
-                    workflow_metadata = prompt_memory.capture_metadata(stored_video_bytes, ext) if person_id and prompt_memory.get(f"video_{prompt_id}", person_id) else {}
                     asset_id = await asyncio.to_thread(
                         store_asset_bytes,
                         stored_video_bytes,
                         kind="vid",
                         suffix=ext,
                         owner_key_hash=record.get("owner_key_hash") if isinstance(record.get("owner_key_hash"), str) else None,
+                        maker_person_id=person_id,
                     )
                     if person_id:
-                        prompt_memory.move(f"video_{prompt_id}", asset_id, person_id,
-                                           metadata=workflow_metadata, admin_path=ADMIN_STORE.path)
+                        await asyncio.to_thread(prompt_memory.move, f"video_{prompt_id}", asset_id, person_id,
+                                                metadata=workflow_metadata, admin_path=ADMIN_STORE.path)
                     record["asset_id"] = asset_id
                     _persist_video_record(prompt_id)
                     from gateway import media_ingestion
@@ -12091,6 +12149,8 @@ async def _record_video_job_terminal_timestamp(prompt_id: str, status: str) -> N
     gets a correct completed_at if one later does, and vice versa."""
     if status not in ("succeeded", "failed"):
         return
+    if status == "failed":
+        await asyncio.to_thread(prompt_memory.delete_asset, f"video_{prompt_id}")
     async with _video_progress_lock:
         record = _video_job_records.get(prompt_id)
         if record is not None and record.get("completed_at") is None:
@@ -12213,6 +12273,7 @@ async def proxy_comfy_video_list(request: Request, auth_context: AuthContext) ->
                     "seconds": record.get("seconds"),
                     "created_at": record.get("created_at"),
                     "completed_at": record.get("completed_at"),
+                    "prompt": _tracked_video_fields(prompt_id, auth_context).get("prompt"),
                 }
                 if job is not None:
                     status, progress = _job_status_from_history(job)
@@ -12393,6 +12454,9 @@ async def proxy_comfy_video_delete(video_id: str, auth_context: AuthContext) -> 
         _video_workflows.pop(prompt_id, None)
         _video_chain_units.pop(prompt_id, None)
 
+    await asyncio.to_thread(prompt_memory.delete_asset, f"video_{prompt_id}")
+    if record and record.get("asset_id"):
+        await asyncio.to_thread(prompt_memory.delete_asset, str(record["asset_id"]))
     return Response(
         content=json.dumps({"id": video_id, "object": "video", "deleted": True}),
         status_code=200,
@@ -14270,7 +14334,7 @@ def _mcp_read_asset(request: Request, auth: Any, asset_id: str) -> bytes | None:
         return None
     if not _asset_access_allowed(asset_id, auth if isinstance(auth, AuthContext) else None):
         return None
-    return path.read_bytes()
+    return media_delivery.deliver_bytes(path.read_bytes(), path.suffix, "none")
 
 
 mcp_server.register_mcp_routes(
@@ -14646,7 +14710,7 @@ async def _run_identity_job(
         req.on_progress = _identity_job_progress(job_id)
         try:
             result = await app.state.identity_execute(auth_context, req)
-            item = _identity_store_image(shim, auth_context, result.image, response_format)
+            item = await asyncio.to_thread(_identity_store_image, shim, auth_context, result.image, response_format)
             asset = {k: item[k] for k in ("asset_id", "asset_url", "media_type", "url") if k in item}
             asset.update(identity_api.scene_extras(result))
             media_jobs.update_status(
@@ -19144,7 +19208,7 @@ async def _proxy_offset_inpaint_tile_request(
 
     response_headers["X-Image-Rounds"] = str(rounds)
     response_headers["X-Image-Returned"] = str(len(images))
-    return _build_image_response_payload(
+    return await asyncio.to_thread(_build_image_response_payload,
         request,
         images,
         response_format,

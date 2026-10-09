@@ -61,6 +61,7 @@ def summarize_extensions(registry: WorkflowRegistry, audience: str) -> dict[str,
                     {"route": route, "target": "gateway_prompt_policy", "controls": ["mode"]}
                     for route in (
                         "/v1/images/generations", "/v1/images/edits", "/v1/videos",
+                        "/v1/videos/extensions", "/v1/videos/workflows/{workflow_id}",
                         "/v1/audio/generate", "/v1/audio/speech", "/v1/responses",
                         "/gateway/v1/media/jobs/image-generations",
                     )

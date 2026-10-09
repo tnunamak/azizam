@@ -74,7 +74,7 @@ class RemixRouteTests(RemixReplaceBase):
         self.assertEqual(body["remixed_from_video_id"], SOURCE_ID)
         self.assertEqual(body["model"], "video-remix")
         self.assertEqual(body["azizam_resolved_model"], "video-bernini-r-remix")
-        self.assertIsNone(body["prompt"])
+        self.assertEqual(body["prompt"], "make it snowy")
         self.assertEqual(body["size"], "832x480")
         self.assertEqual(body["seconds"], "3.4")
         # the source bytes were fetched from ComfyUI /view and re-uploaded as the input
