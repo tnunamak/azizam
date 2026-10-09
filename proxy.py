@@ -3873,6 +3873,7 @@ def _engine_voice(engine: Mapping[str, Any], requested_voice: str) -> str:
     key = requested_voice.lower()
     if key in native:
         return native[key]
+    key = LEGACY_TTS_VOICE_ALIASES.get(key, key)  # a legacy name (cheerful_female) means its canonical voice
     return voice_map.get(key) or str(engine.get("default_voice") or requested_voice)
 
 
@@ -3943,10 +3944,10 @@ def _custom_voice_engines() -> list[str]:
 
 
 def _speech_engine_endpoint(engine_id: str) -> tuple[str, str] | None:
-    """(service id, base URL) of a speech engine, or None when it is not deployed."""
+    """(service id, base URL) of a speech engine, or None when it is not deployed (unknown or disabled)."""
     spec = _speech_engines().get(engine_id)
-    if not isinstance(spec, Mapping):
-        return None
+    if not isinstance(spec, Mapping) or not _alias_engine_available_for("speech")(engine_id, spec):
+        return None  # unknown, or disabled in the registry: never start a disabled engine's unit
     service_id = str(spec.get("service") or "")
     service = (config.get("backends") or {}).get(service_id)
     if not isinstance(service, Mapping) or not service.get("host") or not service.get("port"):
@@ -4067,7 +4068,7 @@ async def _apply_custom_voice(
     if engine is None or not bool_from_config(engine.get("custom_voices"), False):
         usable = ", ".join(_custom_voice_engines()) or "none deployed"
         return openai_error_response(
-            f"The selected speech engine cannot use a custom voice. Engines that can: {usable}. Use model tts or one of those engine ids.",
+            f"The selected speech engine cannot use a custom voice. Engines that can: {usable}. Set model to one of those engine ids.",
             status_code=400,
             param="voice",
             code="custom_voice_engine_unsupported",
@@ -4165,7 +4166,7 @@ async def _stream_tts_upstream(
         await client.aclose()
         return _tts_error(f"TTS proxy error: {e}", 502)
 
-    # An engine that loads its model lazily (Supertonic, Chatterbox) sends "200 chunked"
+    # An engine that loads its model lazily (a cold audio.cpp or Python unit) sends "200 chunked"
     # first and fails inside the stream when GPU0 is full, so the status alone cannot be
     # trusted. Read the first chunk before committing a 200 to the client: a stream that
     # dies before any audio becomes a 503 and the tier falls back to its next engine.

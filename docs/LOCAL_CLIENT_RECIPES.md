@@ -1022,7 +1022,7 @@ gateway's own routes:
 |---|---|---|
 | Hear | `POST /v1/audio/transcriptions` | model `stt-fast` |
 | Think | `POST /v1/chat/completions` | model `current`, `reasoning_effort: none` (thinking off), streamed |
-| Speak | `POST /v1/audio/speech` | model `tts-fast` (Supertonic), `response_format=pcm`; `tts-1` (Chatterbox) is a drop-in option |
+| Speak | `POST /v1/audio/speech` | model `tts-fast` (Supertonic), `response_format=pcm`; `tts-1` is a drop-in option (it follows `tts`, which is Supertonic too while Chatterbox is disabled) |
 
 Example deployment behavior: Silero VAD and Smart Turn run on the CPU. The service uses no GPU and loads no model
 of its own.
@@ -1613,11 +1613,11 @@ an exact model or settings. Unknown names pass through unchanged.
 | | `video-remix` | `video-bernini-r-remix`; needs `extensions...source_video`; also what `/v1/videos/{id}/remix` runs | |
 | | `character-replace` | `video-scail-2-replace`; needs `extensions...source_video` and `reference_image` | |
 | Rerank | `rerank` | Example deployment: Qwen3-Reranker-0.6B Q5_K_M (CPU, on demand) | any name containing `rerank` |
-| TTS | `tts` | Chatterbox Turbo (GPU0, on demand), then OmniVoice. The 13 OpenAI voice names are fixed cloned identities, and `voice: {"id": "voice_..."}` selects a user-created voice | `tts-1`, `gpt-4o-mini-tts`, `gpt-4o-tts`, `tts-*` |
-| | `tts-fast` | Supertonic (audio.cpp, GPU0; preset voices), then Chatterbox, then OmniVoice | none (point `tts-1` here to make it the fast tier) |
-| | `tts-quality` | Chatterbox Turbo, then OmniVoice, then Kokoro | `tts-1-hd` |
+| TTS | `tts` | Supertonic (audio.cpp, GPU0, always warm; preset voices), then OmniVoice. Chatterbox Turbo is temporarily disabled (2026-10-08) and is not in the list. A user-created voice (`voice: {"id": "voice_..."}`) answers `400 custom_voice_engine_unsupported` here, because Supertonic has preset voices only; select `model: omnivoice` to clone (see the GPU0 note below) | `tts-1`, `gpt-4o-mini-tts`, `gpt-4o-tts`, `tts-*` |
+| | `tts-fast` | Supertonic (audio.cpp, GPU0, always warm; preset voices), then OmniVoice | none (same list as `tts` while Chatterbox is disabled) |
+| | `tts-quality` | OmniVoice, then Kokoro (Chatterbox Turbo led this tier before 2026-10-08) | `tts-1-hd` |
 | STT | `stt` | Parakeet TDT 0.6B v3 on GPU0 (audio.cpp, on demand), then the CPU Parakeet if GPU0 is full | `whisper*`, `parakeet-*` |
-| | `stt-fast` | Nemotron streaming (audio.cpp, GPU0), then Parakeet | `gpt-4o-mini-transcribe*` |
+| | `stt-fast` | Nemotron streaming (audio.cpp, GPU0, always warm), then Parakeet | `gpt-4o-mini-transcribe*` |
 | | `stt-quality` | Parakeet on GPU0, then CPU Parakeet, then Canary 180M Flash | `gpt-4o-transcribe*` |
 | | `stt-diarize` | Nemotron 3 Diarization (CPU) for speakers + Parakeet for words; no fallback engine | `gpt-4o-transcribe-diarize*`, `*transcribe-diarize*` |
 | Translations | -- | not supported by the local STT backend (clear 400) | |
@@ -1628,14 +1628,18 @@ an exact model or settings. Unknown names pass through unchanged.
 TTS and STT aliases resolve through **engines**: each tier lists engines in
 order and the first one whose service is deployed wins. Engine ids
 (`chatterbox`, `omnivoice`, `supertonic`, `kokoro`, `parakeet-gpu`, `parakeet`, `nemotron-streaming`,
-`canary`, `nemotron-diarize`) are valid `model` values too; an engine that is not deployed returns
-`400 model_not_deployed`. Chatterbox Turbo and OmniVoice clone the 13 OpenAI voice
+`canary`, `nemotron-diarize`) are valid `model` values too; an engine that is not deployed (or is
+disabled in the service registry, like `chatterbox` since 2026-10-08) returns
+`503 model_not_deployed`. Chatterbox Turbo (while enabled) and OmniVoice clone the 13 OpenAI voice
 names from the same fixed reference clips (the nine public OpenAI sample clips for
 alloy, ash, coral, echo, fable, nova, onyx, sage and shimmer; designed clips for ballad,
 cedar, marin and verse, which OpenAI publishes no sample for). Supertonic and Kokoro
 map OpenAI voice names to the closest preset voice (`voice_map`; an engine-native
-voice name is passed through). The tier order is a policy choice: Chatterbox won the
-blind listening test 7/7, so it leads `tts` and `tts-quality`, and OmniVoice is the fallback.
+voice name is passed through). The tier order is a policy choice. Chatterbox won the
+blind listening test 7/7 and led `tts` and `tts-quality`, but on 2026-10-08 the owner disabled it
+temporarily because GPU0 memory contention broke the desktop, so Supertonic leads `tts` and `tts-fast`
+and OmniVoice is the fallback and leads `tts-quality`. The comment on `model_aliases.speech.stable` in
+`proxy_config.yml` lists the exact steps to restore Chatterbox.
 
 **Fallback.** STT and TTS tiers try the tier's next engine (`whisper-1` -> Parakeet on GPU, then the
 always-on CPU Parakeet) when the first engine cannot serve the request:
@@ -1658,9 +1662,11 @@ lists `fallback_engines`.
 **Example deployment: starting engines.** An engine whose service has a `systemd` lifecycle is
 started on demand (one health check, then `systemctl --user start` and a health
 poll). `chatterbox-tts`, `omnivoice-tts`, `supertonic-tts`, `kokoro-tts`, `nemotron-stt`, `canary-stt` and `diarize-stt` are
-operator-owned user units; the gateway only starts them. Chatterbox frees its weights after 10 min idle and exits after
-1 h; OmniVoice exits after 5 min idle. If GPU0 is full (ComfyUI is rendering), Chatterbox answers
-`503` with `Retry-After` instead of failing mid-request.
+operator-owned user units; the gateway only starts them. Supertonic and Nemotron are the exception to "on demand": since
+2026-10-08 their units start at boot, load their model at start and never unload it, so the first voice reply and the
+first transcription are warm (about 0.7 GB and 2.2 GB of GPU0 stay resident). Chatterbox keeps its weights loaded while
+its process runs (no idle unload or exit) and is disabled for now; OmniVoice exits after 5 min idle. If GPU0 is full
+(ComfyUI is rendering), an engine that is loading answers `503` with `Retry-After` instead of failing mid-request.
 
 **Speech formats.** An omitted or empty `response_format` defaults to `mp3`,
 matching OpenAI. MP3 responses use `Content-Type: audio/mpeg`; request `wav`
@@ -1728,8 +1734,11 @@ gateway reports the ECAPA speaker similarity: `status` is `ok` at 0.45 or higher
 Rules. Every voice and consent belongs to the API key that created it; another key gets `404`.
 A voice is used only through `{"id": ...}` or a bare `voice_<24 hex>` string, never by its name, and a
 voice cannot be named like a built-in voice (`400 voice_name_reserved`), so built-in names cannot be
-shadowed. Chatterbox and OmniVoice accept custom voices (`compatible_engines`); Supertonic and Kokoro answer
-`400 custom_voice_engine_unsupported`. An unknown id is `404 voice_not_found`, never a silent fallback to
+shadowed. OmniVoice (and Chatterbox while it is enabled) accepts custom voices (`compatible_engines`); Supertonic and Kokoro answer
+`400 custom_voice_engine_unsupported`, and so does a tier that resolves to one of them (`tts`, `tts-1`, `tts-fast`
+while Chatterbox is disabled): the message names the engines that can, and the request must set `model` to one
+of their ids. A clone on OmniVoice needs about 4.7 GB of GPU0 for a 12 s clip, which may not fit beside the
+always-warm pair and a resident ComfyUI (it then fails inside the engine). An unknown id is `404 voice_not_found`, never a silent fallback to
 another voice. Limits per key, in `proxy_config.yml` `voices:`: 20 voices, 50 consents, 200 MB. Revoking an
 API key deletes its voices and consents. Files live under `data/voices/<owner>/`.
 

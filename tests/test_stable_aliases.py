@@ -265,17 +265,36 @@ class ShippedConfigTests(unittest.TestCase):
         self.assertEqual(res.engine, "parakeet-gpu")  # first of stt-quality; the CPU Parakeet is its fallback
         self.assertEqual([e for e, _ in res.fallbacks], ["parakeet", "canary"])
 
-    def test_fast_tiers_split_when_their_engine_is_deployed(self):
-        res = sa.resolve_alias(ALIASES, "speech", "tts-fast", engine_available=_all_up)
-        self.assertEqual(res.engine, "supertonic")
-        # Chatterbox Turbo is the default voice-cloning engine (Tim's blind listening test, 7/7).
-        for name in ("tts", "tts-1", "tts-1-hd", "tts-quality", "gpt-4o-mini-tts"):
+    def test_speech_tiers_while_chatterbox_is_disabled(self):
+        # 2026-10-08, Tim's interim decision: Chatterbox is disabled in the service registry and left out of
+        # the tiers. Supertonic (always warm) is the default; OmniVoice is its fallback and leads tts-quality.
+        for name in ("tts", "tts-1", "tts-fast", "gpt-4o-mini-tts", "gpt-4o-tts"):
             res = sa.resolve_alias(ALIASES, "speech", name, engine_available=_all_up)
-            self.assertEqual(res.engine, "chatterbox", name)
-        # OmniVoice stays reachable by engine id and is the fallback behind Chatterbox.
+            self.assertEqual((res.engine, [e for e, _ in res.fallbacks]), ("supertonic", ["omnivoice"]), name)
+        for name in ("tts-quality", "tts-1-hd"):
+            res = sa.resolve_alias(ALIASES, "speech", name, engine_available=_all_up)
+            self.assertEqual((res.engine, [e for e, _ in res.fallbacks]), ("omnivoice", ["kokoro"]), name)
+        for tier in ("tts", "tts-fast", "tts-quality"):
+            self.assertNotIn("chatterbox", ALIASES["speech"]["stable"][tier], tier)
+        # Engine ids keep working by name; OmniVoice is the fallback behind Supertonic.
         self.assertEqual(sa.resolve_alias(ALIASES, "speech", "omnivoice", engine_available=_all_up).engine, "omnivoice")
         fallback = sa.resolve_alias(ALIASES, "speech", "tts", engine_available=_only("omnivoice"))
         self.assertEqual(fallback.engine, "omnivoice")
+
+    def test_disabled_chatterbox_by_name_is_not_deployed_and_never_rerouted(self):
+        # The engine stays in the data, so restoring it is a registry flag plus the tier lists.
+        self.assertIn("chatterbox", ALIASES["speech"]["engines"])
+        with self.assertRaises(sa.AliasUnavailableError) as ctx:
+            sa.resolve_alias(ALIASES, "speech", "chatterbox", engine_available=lambda e, _s: e != "chatterbox")
+        self.assertEqual(ctx.exception.code, "model_not_deployed")
+
+    def test_stt_aliases_are_unchanged(self):
+        stable = ALIASES["transcriptions"]["stable"]
+        self.assertEqual(stable["stt"], ["parakeet-gpu", "parakeet"])
+        self.assertEqual(stable["stt-fast"], ["nemotron-streaming", "parakeet"])
+        for name, engine in (("whisper-1", "parakeet-gpu"), ("gpt-4o-mini-transcribe", "nemotron-streaming")):
+            res = sa.resolve_alias(ALIASES, "transcriptions", name, engine_available=_all_up)
+            self.assertEqual(res.engine, engine, name)
         res = sa.resolve_alias(ALIASES, "speech", "kokoro", engine_available=_all_up)
         self.assertEqual(res.engine, "kokoro")
         res = sa.resolve_alias(ALIASES, "transcriptions", "stt-fast", engine_available=_all_up)
@@ -395,19 +414,19 @@ class RouteTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         speech = resp.json()["operations"]["speech"]
         rows = {r["alias"]: r for r in speech["stable"]}
-        self.assertEqual(rows["tts"]["resolves_to"], "chatterbox")
-        self.assertEqual(rows["tts"]["candidates"], ["chatterbox", "omnivoice"])
-        self.assertEqual(rows["tts-fast"]["candidates"], ["supertonic", "chatterbox", "omnivoice"])
+        self.assertEqual(rows["tts"]["resolves_to"], "supertonic")
+        self.assertEqual(rows["tts"]["candidates"], ["supertonic", "omnivoice"])
+        self.assertEqual(rows["tts-fast"]["candidates"], ["supertonic", "omnivoice"])
         engines = {e["engine"]: e["deployed"] for e in speech["engines"]}
         self.assertTrue(engines["omnivoice"])
         self.assertTrue(engines["supertonic"])
         self.assertEqual(rows["tts-fast"]["resolves_to"], "supertonic")
-        self.assertEqual(rows["tts-quality"]["resolves_to"], "chatterbox")
-        self.assertEqual(rows["tts-quality"]["candidates"], ["chatterbox", "omnivoice", "kokoro"])
+        self.assertEqual(rows["tts-quality"]["resolves_to"], "omnivoice")
+        self.assertEqual(rows["tts-quality"]["candidates"], ["omnivoice", "kokoro"])
         with self._without_service("tts-supertonic"):
             resp = self.client.get("/gateway/v1/aliases", params={"operation": "speech"})
         rows = {r["alias"]: r for r in resp.json()["operations"]["speech"]["stable"]}
-        self.assertEqual(rows["tts-fast"]["resolves_to"], "chatterbox")
+        self.assertEqual(rows["tts-fast"]["resolves_to"], "omnivoice")
         self.assertEqual(rows["tts-fast"]["skipped_engines"], ["supertonic"])
 
     def test_models_entries_for_stable_aliases(self):
@@ -511,11 +530,40 @@ class SpeechEngineRoutingTests(unittest.TestCase):
         self.assertEqual(self._speak("supertonic", "M3")["body"]["voice"], "M3")
         self.assertEqual(self._speak("tts-fast", "no-such-voice")["body"]["voice"], "F1")
 
-    def test_tts_alias_goes_to_chatterbox_with_identity_voices(self):
+    def test_tts_alias_goes_to_supertonic_with_mapped_voices(self):
         sent = self._speak("tts", "nova")
-        self.assertEqual(sent["url"], "http://127.0.0.1:8015/v1/audio/speech")
-        self.assertEqual(sent["body"]["model"], "chatterbox-turbo")
+        self.assertEqual(sent["url"], "http://127.0.0.1:8010/v1/audio/speech")
+        self.assertEqual(sent["body"]["model"], "supertonic")
+        self.assertEqual(sent["body"]["voice"], "F2")
+
+    def test_daisys_tts_1_with_shimmer_gets_supertonic_f4(self):
+        for model in ("tts-1", "gpt-4o-mini-tts"):
+            sent = self._speak(model, "shimmer")
+            self.assertEqual(sent["url"], "http://127.0.0.1:8010/v1/audio/speech", model)
+            self.assertEqual((sent["body"]["model"], sent["body"]["voice"]), ("supertonic", "F4"), model)
+
+    def test_tts_quality_goes_to_omnivoice(self):
+        sent = self._speak("tts-quality", "nova")
+        self.assertEqual(sent["body"]["model"], "k2-fsa/OmniVoice")
         self.assertEqual(sent["body"]["voice"], "nova")
+        self.assertNotIn(":8015", sent["url"])
+
+    def test_disabled_chatterbox_is_a_coded_503_and_nothing_is_forwarded(self):
+        cfg = proxy.config
+        cfg["backends"]["tts-chatterbox"] = {**cfg["backends"]["tts-chatterbox"], "enabled": False}
+        resp = self.client.post(
+            "/v1/audio/speech", json={"model": "chatterbox", "voice": "nova", "input": "hello", "response_format": "wav"}
+        )
+        self.assertEqual(resp.status_code, 503)
+        error = resp.json()["error"]
+        self.assertEqual((error["code"], error["param"]), ("model_not_deployed", "model"))
+        self.assertIn("chatterbox", error["message"])
+        # The upstream model name is not a public name: a clear 404, never a silent route to another engine.
+        resp = self.client.post(
+            "/v1/audio/speech", json={"model": "chatterbox-turbo", "voice": "nova", "input": "hello", "response_format": "wav"}
+        )
+        self.assertEqual((resp.status_code, resp.json()["error"]["code"]), (404, "model_not_found"))
+        self.assertEqual(_FakeTTSClient.requests, [])
 
     def test_omnivoice_engine_id_still_reaches_omnivoice(self):
         sent = self._speak("omnivoice", "nova")

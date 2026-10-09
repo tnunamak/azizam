@@ -100,18 +100,30 @@ class VoiceRouteTests(unittest.TestCase):
             p.start()
             self.addCleanup(p.stop)
 
-    def speak(self, voice: str) -> str:
+    def speak(self, voice: str, model: str = "omnivoice") -> str:
         resp = self.client.post(
             "/v1/audio/speech",
-            json={"model": "tts-1", "voice": voice, "input": "hello", "response_format": "wav"},
+            json={"model": model, "voice": voice, "input": "hello", "response_format": "wav"},
         )
         self.assertEqual(resp.status_code, 200, resp.text)
         return json.loads(_FakeTTSAsyncClient.requests[-1]["content"])["voice"]
 
     def test_backend_only_sees_canonical_voice_names(self) -> None:
+        # An engine that clones the OpenAI names (OmniVoice here) receives the canonical name.
         self.assertEqual(self.speak("cheerful_female"), "shimmer")
         self.assertEqual(self.speak("Marin"), "marin")
         self.assertEqual(self.speak("nope"), DEFAULT_TTS_VOICE)
+
+    def test_a_preset_voice_engine_resolves_legacy_names_through_the_canonical_voice(self) -> None:
+        # tts-1 is Supertonic while Chatterbox is disabled: a legacy name must land on the same preset
+        # voice as its canonical name, not on the engine's default voice.
+        shimmer = self.speak("shimmer", model="tts-1")
+        self.assertEqual(shimmer, "F4")
+        self.assertEqual(self.speak("cheerful_female", model="tts-1"), shimmer)
+        self.assertEqual(self.speak("casual_male", model="tts-1"), self.speak("echo", model="tts-1"))
+        self.assertEqual(self.speak("Marin", model="tts-1"), "F1")
+        self.assertEqual(self.speak("nope", model="tts-1"), "F1")  # unknown stays the engine default
+        self.assertEqual(self.speak("M3", model="tts-1"), "M3")  # an engine-native name passes through
 
     def test_voices_endpoint_lists_canonical_then_aliases(self) -> None:
         body = self.client.get("/v1/voices").json()
