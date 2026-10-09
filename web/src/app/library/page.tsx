@@ -47,8 +47,10 @@ import { PersonMark } from "@/components/product/person-mark";
 import {
   AudioFace,
   audioKind,
+  DayChip,
   MediaBadge,
-  mediaBadgeButton,
+  PlayDisc,
+  playDiscButton,
   Waveform,
 } from "@/components/product/audio-cover";
 import { useAudioPeaks } from "@/lib/audio-peaks";
@@ -79,7 +81,7 @@ import { productApi, type MemberStatus } from "@/lib/product-api";
 import { api } from "@/lib/api";
 import {
   MAKING_COPY,
-  groupByDate,
+  dayMarks,
   inProgressMedia,
   modelDisplayName,
   tileDate,
@@ -145,15 +147,36 @@ function kindLabel(kind: MediaKind) {
   return kind[0].toUpperCase() + kind.slice(1);
 }
 
+/**
+ * A creation's name when it has no prompt. Apps' requests never store
+ * prompts (docs/CORE_CONTRACTS.md, a privacy contract), so such items are
+ * named by type and time, "Video, Oct 20 at 7:45 PM", never "Image" alone
+ * (D1.6); the maker is beside the name in the viewer and on hover.
+ */
+function untitledName(asset: MediaAsset): string {
+  const date = toDateValue(asset.created_at);
+  const word = { image: "Picture", video: "Video", audio: "Audio" }[asset.kind];
+  if (!date) return word;
+  const day = date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+  const time = date.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return `${word}, ${day} at ${time}`;
+}
+
 function assetTitle(asset: MediaAsset) {
   const prompt = typeof asset.prompt === "string" ? asset.prompt.trim() : "";
-  return prompt || kindLabel(asset.kind);
+  return prompt || untitledName(asset);
 }
 
 /** A heading-length title: the prompt's first clause, or its first words. */
 function shortTitle(asset: MediaAsset): string {
   const prompt = typeof asset.prompt === "string" ? asset.prompt.trim() : "";
-  if (!prompt) return kindLabel(asset.kind);
+  if (!prompt) return untitledName(asset);
   const clause =
     prompt.split(/(?<=[.!?])\s|,\s/)[0]?.replace(/[.!?]$/, "") ?? prompt;
   const words = clause.split(/\s+/);
@@ -357,9 +380,10 @@ function pauseOtherAudio(current: HTMLAudioElement) {
 }
 
 /**
- * An audio creation has no picture, so its tile is a calm neutral face: its
- * waveform and a play badge with its length (D1.5). Who made it and its
- * words are in the hover title, the person filter and the viewer.
+ * An audio creation has no picture, so its tile is a calm neutral face with
+ * its waveform (D1.5), the play disc in the middle and its type and length
+ * bottom left (D1.6). On a wide screen the disc plays the clip in place; a
+ * phone opens it in the viewer instead (a 44 px target on a 125 px tile).
  */
 function AudioTile({
   assetId,
@@ -409,72 +433,72 @@ function AudioTile({
       : null;
 
   return (
-    <AudioFace
-      peaksKey={assetId}
-      src={src}
-      visible={visible}
-      status={errorText ? <span role="status">{errorText}</span> : null}
-      control={
-        <>
-          <audio
-            ref={audioRef}
-            preload="none"
-            onLoadedMetadata={(event) => {
-              setError(null);
-              setMeasuredDuration(event.currentTarget.duration);
-            }}
-            onPlay={(event) => {
-              pauseOtherAudio(event.currentTarget);
-              setError(null);
-              setIsPlaying(true);
-            }}
-            onPause={() => setIsPlaying(false)}
-            onEnded={() => setIsPlaying(false)}
-            onError={() => {
-              setIsPlaying(false);
-              setError("media");
-            }}
-          />
-          <button
-            type="button"
-            // A phone opens the clip in the viewer instead: a 44 px play
-            // target would outweigh a 125 px tile (Apple Photos plays on open).
-            className={cn(mediaBadgeButton(), "max-sm:hidden")}
-            aria-label={label}
-            onClick={async (event) => {
-              event.stopPropagation();
-              const audio = audioRef.current;
-              if (!audio) return;
-              if (isPlaying) {
-                audio.pause();
-                setIsPlaying(false);
-                return;
-              }
-              if (audio.getAttribute("src") !== src) {
-                audio.setAttribute("src", src);
-              }
-              if (error === "media") {
-                audio.load();
-              }
-              try {
-                await audio.play();
+    <>
+      <AudioFace
+        peaksKey={assetId}
+        src={src}
+        visible={visible}
+        status={errorText ? <span role="status">{errorText}</span> : null}
+        center={
+          <>
+            <audio
+              ref={audioRef}
+              preload="none"
+              onLoadedMetadata={(event) => {
+                setError(null);
+                setMeasuredDuration(event.currentTarget.duration);
+              }}
+              onPlay={(event) => {
+                pauseOtherAudio(event.currentTarget);
                 setError(null);
                 setIsPlaying(true);
-              } catch {
+              }}
+              onPause={() => setIsPlaying(false)}
+              onEnded={() => setIsPlaying(false)}
+              onError={() => {
                 setIsPlaying(false);
-                setError(audio.error ? "media" : "playback");
-              }
-            }}
-          >
-            {isPlaying ? <Pause aria-hidden /> : <Play aria-hidden />}
-            {durationText ?? "Audio"}
-          </button>
-          <MediaBadge icon={Play} className="sm:hidden">
-            {durationText ?? "Audio"}
-          </MediaBadge>
-        </>
-      }
-    />
+                setError("media");
+              }}
+            />
+            <button
+              type="button"
+              className={cn(playDiscButton, "max-sm:hidden")}
+              aria-label={label}
+              onClick={async (event) => {
+                event.stopPropagation();
+                const audio = audioRef.current;
+                if (!audio) return;
+                if (isPlaying) {
+                  audio.pause();
+                  setIsPlaying(false);
+                  return;
+                }
+                if (audio.getAttribute("src") !== src) {
+                  audio.setAttribute("src", src);
+                }
+                if (error === "media") {
+                  audio.load();
+                }
+                try {
+                  await audio.play();
+                  setError(null);
+                  setIsPlaying(true);
+                } catch {
+                  setIsPlaying(false);
+                  setError(audio.error ? "media" : "playback");
+                }
+              }}
+            >
+              {isPlaying ? <Pause aria-hidden /> : <Play aria-hidden />}
+            </button>
+            <PlayDisc className="sm:hidden" />
+          </>
+        }
+      />
+      <MediaBadge icon={AudioLines} className="absolute bottom-2 left-2 z-20">
+        {durationText}
+      </MediaBadge>
+    </>
   );
 }
 
@@ -990,12 +1014,15 @@ function AssetTile({
   everyone,
   person,
   selected,
+  day,
 }: {
   asset: MediaAsset;
   onOpen: (asset: MediaAsset) => void;
   everyone: boolean;
   person: string | null;
   selected: boolean;
+  /** The day label, on the first tile of each day only. */
+  day?: string | null;
 }) {
   const { ref: visibilityRef, visible } = usePreviewVisible();
   const playableAudio =
@@ -1034,39 +1061,51 @@ function AssetTile({
           />
         )}
         {asset.kind === "video" && asset.available !== false ? (
-          <MediaBadge icon={Play} className="absolute right-2 bottom-2 z-20">
-            {asset.duration_s != null && Number.isFinite(asset.duration_s)
-              ? formatDuration(asset.duration_s)
-              : "Video"}
-          </MediaBadge>
+          <>
+            <span className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
+              <PlayDisc />
+            </span>
+            <MediaBadge icon={Video} className="absolute bottom-2 left-2 z-20">
+              {asset.duration_s != null && Number.isFinite(asset.duration_s)
+                ? formatDuration(asset.duration_s)
+                : null}
+            </MediaBadge>
+          </>
+        ) : null}
+        {/* D1.6: the day on the first tile of each day, and the maker when
+            the whole household is shown; the grid stays continuous. */}
+        {day ? (
+          <DayChip className="absolute top-2 left-2 z-20">{day}</DayChip>
+        ) : null}
+        {everyone && person ? (
+          <PersonMark
+            name={person}
+            size="xs"
+            label={person}
+            className="ring-media-badge absolute top-2 right-2 z-20 ring-2"
+          />
         ) : null}
         {/* D1.4: always-on captions were cut to two or three words and the
             maker badge sat on every tile. The grid now shows media only; on
             a wide screen, hover or keyboard focus shows a short title (whole
             words, two lines), the maker and the day. The button's name
             carries the full prompt for screen readers. */}
-        {/* Audio's title sits at the top so its play badge stays usable. */}
-        {asset.kind !== "audio" || asset.available !== false ? (
-          <div
-            aria-hidden="true"
-            className={cn(
-              "dark bg-card/90 text-foreground pointer-events-none absolute inset-x-0 z-20 px-2.5 py-2 opacity-0 transition-opacity duration-(--motion-fast) group-focus-within:opacity-100 group-hover:opacity-100 max-sm:hidden",
-              asset.kind === "audio" ? "top-0" : "bottom-0",
-            )}
-          >
-            <p className="line-clamp-2 text-xs leading-snug font-medium">
-              {captionTitle(asset.prompt, kindLabel(asset.kind), 56)}
-            </p>
-            <p className="text-foreground/80 mt-0.5 text-xs">
-              {[
-                everyone ? person : null,
-                tileDate(toDateValue(asset.created_at), new Date()),
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            </p>
-          </div>
-        ) : null}
+        <div
+          aria-hidden="true"
+          className="dark bg-card/90 text-foreground pointer-events-none absolute inset-x-0 bottom-0 z-20 px-2.5 py-2 opacity-0 transition-opacity duration-(--motion-fast) group-focus-within:opacity-100 group-hover:opacity-100 max-sm:hidden"
+        >
+          <p className="line-clamp-2 text-xs leading-snug font-medium">
+            {captionTitle(asset.prompt, untitledName(asset), 56)}
+          </p>
+          <p className="text-foreground/80 mt-0.5 text-xs">
+            {[
+              everyone ? person : null,
+              tileDate(toDateValue(asset.created_at), new Date()),
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </p>
+        </div>
       </div>
     </article>
   );
@@ -2086,13 +2125,10 @@ export default function LibraryPage() {
       ) : null}
     </>
   );
-  const dateGroups = groupByDate(
-    storedAssets,
-    (asset) => toDateValue(asset.created_at),
+  const days = dayMarks(
+    storedAssets.map((asset) => toDateValue(asset.created_at)),
     new Date(),
   );
-  if (inProgress.length && dateGroups[0]?.label !== "Today")
-    dateGroups.unshift({ label: "Today", items: [] });
   const selectedPerson = selected
     ? instanceView
       ? personFor(selected)
@@ -2239,9 +2275,8 @@ export default function LibraryPage() {
           aria-busy="true"
           className="space-y-3"
         >
-          {/* The grid's own shape: a group header, then three to six
-              columns (D1.5: two big phone squares jumped to three). */}
-          <Skeleton className="h-4 w-16" />
+          {/* The grid's own shape: three to six columns (D1.5: two big
+              phone squares jumped to three). */}
           <div className="grid grid-cols-3 gap-1 sm:gap-1.5 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             {Array.from({ length: 12 }).map((_, index) => (
               <Skeleton key={index} className="rounded-media aspect-square" />
@@ -2292,40 +2327,25 @@ export default function LibraryPage() {
       {!isLoading &&
       !showInitialError &&
       (storedAssets.length > 0 || inProgress.length > 0) ? (
-        <div aria-busy={updating} className="space-y-6">
-          {/* Date groups with quiet headers, newest first, as Apple Photos
-              heads its days (D1.5); a group's last row may be part-filled.
-              Work still being made opens the Today group. */}
-          {dateGroups.map((group, index) => (
-            <section
-              key={`${group.label}-${index}`}
-              aria-labelledby={`library-group-${index}`}
-            >
-              <h2
-                id={`library-group-${index}`}
-                className="text-muted-foreground mb-2 text-sm font-medium"
-              >
-                {group.label}
-              </h2>
-              <div className="grid grid-cols-3 gap-1 sm:gap-1.5 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-                {index === 0 && group.label === "Today"
-                  ? inProgress.map((item) => (
-                      <InProgressTile key={item.id} item={item} />
-                    ))
-                  : null}
-                {group.items.map((asset) => (
-                  <AssetTile
-                    key={asset.asset_id}
-                    asset={asset}
-                    onOpen={openAsset}
-                    everyone={instanceView}
-                    person={instanceView ? personFor(asset) : null}
-                    selected={selected?.asset_id === asset.asset_id}
-                  />
-                ))}
-              </div>
-            </section>
-          ))}
+        <div aria-busy={updating}>
+          {/* One continuous grid, newest first (D1.6: date groups left
+              part-filled rows); the day rides on its first tile. */}
+          <div className="grid grid-cols-3 gap-1 sm:gap-1.5 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+            {inProgress.map((item) => (
+              <InProgressTile key={item.id} item={item} />
+            ))}
+            {storedAssets.map((asset, index) => (
+              <AssetTile
+                key={asset.asset_id}
+                asset={asset}
+                onOpen={openAsset}
+                everyone={instanceView}
+                person={instanceView ? personFor(asset) : null}
+                selected={selected?.asset_id === asset.asset_id}
+                day={days[index]}
+              />
+            ))}
+          </div>
         </div>
       ) : null}
       {!isLoading && !showInitialError && goneAssets.length > 0 ? (

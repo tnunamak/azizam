@@ -46,7 +46,7 @@ import { CapNotice } from "@/components/product/cap-notice";
 import {
   AudioFace,
   MediaBadge,
-  mediaBadgeButton,
+  playDiscButton,
 } from "@/components/product/audio-cover";
 import { PageHeader } from "@/components/product/page-header";
 import {
@@ -1016,7 +1016,7 @@ function CreationMedia({
             </span>
           ) : null
         }
-        control={
+        center={
           <>
             <audio
               ref={audioRef}
@@ -1037,7 +1037,7 @@ function CreationMedia({
             <button
               type="button"
               // On a phone the tile opens the clip in Library instead.
-              className={cn(mediaBadgeButton(true), "max-sm:hidden")}
+              className={cn(playDiscButton, "max-sm:hidden")}
               aria-label={`${isPlaying ? "Pause" : "Play"} ${title}`}
               onClick={async () => {
                 const audio = audioRef.current;
@@ -1074,7 +1074,6 @@ function CreationMedia({
                 <Play aria-hidden="true" />
               )}
             </button>
-            <MediaBadge icon={Play} className="sm:hidden" />
           </>
         }
       />
@@ -1117,6 +1116,10 @@ function CreationPreview({ creation }: { creation: HomeCreation }) {
     return (
       <li className={tile}>
         {body}
+        <MediaBadge
+          icon={AudioLines}
+          className="absolute bottom-2 left-2 z-10"
+        />
         <Link
           href={`/library/?asset=${encodeURIComponent(creation.asset_id)}`}
           aria-label={linkLabel}
@@ -1134,7 +1137,7 @@ function CreationPreview({ creation }: { creation: HomeCreation }) {
       >
         {body}
         {creation.kind === "video" ? (
-          <MediaBadge icon={Play} className="absolute right-2 bottom-2" />
+          <MediaBadge icon={Video} className="absolute bottom-2 left-2" />
         ) : null}
       </Link>
     </li>

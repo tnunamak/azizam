@@ -28,32 +28,36 @@ describe("audio faces", () => {
     expect(bars[0].getAttribute("class")).toContain("opacity-90");
     expect(bars[3].getAttribute("class")).toContain("opacity-40");
   });
-  it("show only the length badge, in no person's colour, and no waveform without Web Audio", () => {
-    const { getByText, container } = render(
-      <AudioFace peaksKey="a" src="/a.mp3" visible duration="0:04" />,
+  it("draw one neutral face in no person's colour, and no waveform without Web Audio", () => {
+    const { container } = render(
+      <AudioFace peaksKey="a" src="/a.mp3" visible />,
     );
-    expect(getByText("0:04")).toBeVisible();
-    // D1.5: one neutral family; no words, kind or maker on the tile.
+    // D1.5: one neutral family; no words, kind or maker on the face.
     expect(container.innerHTML).not.toContain("person");
+    expect(container.textContent).toBe("");
     // jsdom has no AudioContext: nothing is invented.
     expect(container.querySelector("svg rect")).toBeNull();
   });
-  it("let a play control replace the badge", () => {
-    const { getByRole, container } = render(
+  it("put the play control in the middle of the face", () => {
+    const { getByRole } = render(
       <AudioFace
         peaksKey="b"
         visible={false}
-        duration="0:04"
-        control={<button type="button">Play clip</button>}
+        center={<button type="button">Play clip</button>}
       />,
     );
     expect(getByRole("button", { name: "Play clip" })).toBeVisible();
-    expect(container.textContent).not.toContain("0:04");
   });
-  it("draw a glyph-only badge without a duration", () => {
-    const { container } = render(<MediaBadge icon={Play} />);
-    const badge = container.firstElementChild!;
-    expect(badge.className).toContain("w-6");
-    expect(badge.className).not.toContain("px-2");
+  it("show the type glyph and length, or the glyph alone", () => {
+    const { container, getByText } = render(
+      <>
+        <MediaBadge icon={Play}>0:04</MediaBadge>
+        <MediaBadge icon={Play} />
+      </>,
+    );
+    expect(getByText("0:04")).toBeVisible();
+    const glyphOnly = container.children[1];
+    expect(glyphOnly.className).toContain("w-6");
+    expect(glyphOnly.textContent).toBe("");
   });
 });

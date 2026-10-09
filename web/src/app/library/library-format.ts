@@ -34,41 +34,21 @@ export function tileDate(date: Date | null, now: Date): string {
 }
 
 /**
- * The date group a creation sits in, as Apple Photos heads its days:
- * "Today", "Yesterday", "This week" for the five days before that, then the
- * month ("September"), with the year only when it is not the current year.
+ * The day label for each creation in a newest-first list, on the first
+ * creation of each day only ("Today", "Yesterday", "Monday", "Oct 12");
+ * null elsewhere. D1.6: date groups broke the grid into part-filled rows
+ * (round 6: "Today and Yesterday rows are mostly blank"), so the grid stays
+ * continuous and the day rides on its first tile, as Apple Photos' All
+ * Photos scroll labels its days without breaking rows.
  */
-export function dateGroupLabel(date: Date | null, now: Date): string {
-  if (!date) return "Undated";
-  const days = Math.round((startOfDay(now) - startOfDay(date)) / DAY_MS);
-  if (days <= 0) return "Today";
-  if (days === 1) return "Yesterday";
-  if (days < 7) return "This week";
-  return date.toLocaleDateString("en-US", {
-    month: "long",
-    ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+export function dayMarks(dates: (Date | null)[], now: Date): (string | null)[] {
+  let previous: string | undefined;
+  return dates.map((date) => {
+    const label = tileDate(date, now);
+    if (label === previous) return null;
+    previous = label;
+    return label;
   });
-}
-
-/**
- * Newest-first items cut into runs that share a date group, in order (D1.5:
- * date groups with quiet headers; a part-filled last row is fine). Undated
- * items keep their place; an out-of-order item starts a new run rather than
- * being moved, so the grid never reorders what the server sent.
- */
-export function groupByDate<T>(
-  items: T[],
-  dateOf: (item: T) => Date | null,
-  now: Date,
-): { label: string; items: T[] }[] {
-  const groups: { label: string; items: T[] }[] = [];
-  for (const item of items) {
-    const label = dateGroupLabel(dateOf(item), now);
-    const last = groups.at(-1);
-    if (last?.label === label) last.items.push(item);
-    else groups.push({ label, items: [item] });
-  }
-  return groups;
 }
 
 /**

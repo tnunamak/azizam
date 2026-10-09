@@ -100,7 +100,8 @@ it("names an uncatalogued model readably and keeps the raw id only in Details", 
   // A tile's caption names the picture and its day, never the model; the
   // viewer's facts carry the model.
   const tile = container.querySelector("article")!;
-  expect(tile).toHaveTextContent(/^Retired model image/);
+  // (D1.6: the first tile of a day leads with its day chip.)
+  expect(tile).toHaveTextContent(/^\w+.*Retired model image/);
   expect(tile).not.toHaveTextContent(/model\b.*v1|vendor/i);
   fireEvent.click(screen.getByRole("button", { name: "Open Retired model image" }));
   const dialog = await screen.findByRole("dialog");

@@ -140,7 +140,7 @@ describe("LibraryPage batch J provenance", () => {
 
     (
       await screen.findByRole("button", {
-        name: "Open Image",
+        name: /^Open Picture, /,
       })
     ).click();
     fireEvent.click(await screen.findByText("Details"));
@@ -195,7 +195,7 @@ describe("LibraryPage batch J provenance", () => {
 
     (
       await screen.findByRole("button", {
-        name: "Open Image",
+        name: /^Open Picture, /,
       })
     ).click();
     fireEvent.click(await screen.findByText("Details"));
@@ -255,7 +255,7 @@ describe("LibraryPage batch J provenance", () => {
 
     (
       await screen.findByRole("button", {
-        name: "Open Image",
+        name: /^Open Picture, /,
       })
     ).click();
     fireEvent.click(await screen.findByRole("button", { name: "Download" }));
@@ -319,7 +319,7 @@ describe("LibraryPage batch J provenance", () => {
 
     expect(
       await screen.findByRole("button", {
-        name: "Open Audio",
+        name: /^Open Audio, /,
       }),
     ).toBeVisible();
     expect(screen.queryByText("Prompt not recorded")).toBeNull();
@@ -338,7 +338,7 @@ describe("LibraryPage batch J provenance", () => {
 
     expect(
       await screen.findByRole("button", {
-        name: "Open Audio",
+        name: /^Open Audio, /,
       }),
     ).toBeVisible();
     expect(screen.queryByText("Prompt not recorded")).toBeNull();
@@ -360,8 +360,11 @@ describe("LibraryPage batch J provenance", () => {
     const playButton = await screen.findByRole("button", {
       name: `Play ${audioAsset.prompt}`,
     });
-    // The play badge carries the length (a phone shows a plain badge twin).
-    expect(playButton).toHaveTextContent("2:05");
+    // D1.6: the length is in the type badge bottom left; the play disc is
+    // the button.
+    expect(
+      playButton.closest("article")!.querySelector("span.pointer-events-none.flex.h-6"),
+    ).toHaveTextContent("2:05");
     expect(
       screen.queryByLabelText(`Play ${audioAsset.prompt}`, {
         selector: "audio",
@@ -645,7 +648,7 @@ describe("Library honesty and access", () => {
     fireEvent.click(within(dialog).getAllByRole("button", { name: "Close" })[0]);
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
-    fireEvent.click(screen.getByRole("button", { name: "Open Image" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Open Picture, / }));
     dialog = await screen.findByRole("dialog");
     // With neither a prompt nor a receipt, the note promises nothing below.
     expect(dialog.querySelector("p.bg-muted")).toHaveTextContent(
@@ -857,7 +860,7 @@ describe("Library honesty and access", () => {
     click.mockRestore();
   });
 
-  test("2 dates each creation in its caption and heads its date group", async () => {
+  test("2 dates each creation in its caption and marks the first tile of each day", async () => {
     const day = 86_400;
     const nowS = Math.floor(Date.now() / 1000);
     routeFetch((path) =>
@@ -877,14 +880,11 @@ describe("Library honesty and access", () => {
       .getByRole("button", { name: "Open Made long ago" })
       .closest("article")!;
     expect(old).toHaveTextContent(/Made long ago\s*[A-Z][a-z]{2} \d{1,2}(, \d{4})?$/);
-    // D1.5: quiet date-group headers, Today first, then the month.
-    const groups = screen.getAllByRole("heading", { level: 2 });
-    expect(groups.map((group) => group.textContent)).toEqual([
-      "Today",
-      expect.stringMatching(/^[A-Z][a-z]+( \d{4})?$/),
-    ]);
-    expect(groups[0].closest("section")).toContainElement(today);
-    expect(groups[1].closest("section")).toContainElement(old);
+    // D1.6: one continuous grid (no date headers); the day rides on the
+    // first tile of each day.
+    expect(screen.queryAllByRole("heading", { level: 2 })).toHaveLength(0);
+    expect(today).toHaveTextContent(/^Today/);
+    expect(old).toHaveTextContent(/^[A-Z][a-z]{2} \d{1,2}(, \d{4})?/);
   });
 
   test("drops a video's poster from the grid, the count and viewer navigation", async () => {
@@ -905,7 +905,7 @@ describe("Library honesty and access", () => {
     );
     renderLibrary();
     const tile = await screen.findByRole("button", { name: "Open A swimming fish" });
-    expect(screen.queryByRole("button", { name: "Open Image" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Open Picture, / })).toBeNull();
     expect(document.querySelectorAll("article")).toHaveLength(1);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/^Library1$/);
     fireEvent.click(tile);

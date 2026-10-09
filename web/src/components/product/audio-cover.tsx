@@ -69,18 +69,21 @@ export function Waveform({
   );
 }
 
-/** The duration badge's look: a dark scrim pill that reads over any picture. */
-function mediaBadge(glyphOnly: boolean) {
-  return cn(
-    "bg-media-badge text-media-badge-foreground flex h-6 shrink-0 items-center gap-1 rounded-full text-xs font-medium [&_svg]:size-3",
-    glyphOnly ? "w-6 justify-center" : "px-2",
-  );
-}
+/* ------------------------------------------------------------------ */
+/* Tile cues (D1.6)                                                    */
+/* ------------------------------------------------------------------ */
+/* Round 6 judges: "video and audio look like still images" and "nothing
+   shows who made it". Every media tile uses the same small cues on one dark
+   scrim that reads over any picture: the type and length bottom left, a play
+   disc in the middle for what plays, the maker top right (Everyone only),
+   and the day top left on the first tile of each day. */
+
+const scrim = "bg-media-badge text-media-badge-foreground";
 
 /**
- * The small badge on a media tile that says what it is and how long: a play
- * glyph and "0:03" on video and audio (Apple Photos' duration badge). One
- * style for both kinds. Without a duration it is the glyph alone.
+ * The type and length of a playable tile, bottom left: a video or sound
+ * glyph and "0:04" (Apple Photos' duration badge, with the type it lacks).
+ * Without a length it is the glyph alone.
  */
 export function MediaBadge({
   icon: Icon,
@@ -94,8 +97,9 @@ export function MediaBadge({
   return (
     <span
       className={cn(
-        mediaBadge(children == null),
-        "pointer-events-none",
+        scrim,
+        "pointer-events-none flex h-6 shrink-0 items-center gap-1 rounded-full text-xs font-medium [&_svg]:size-3.5",
+        children == null ? "w-6 justify-center" : "pr-2 pl-1.5",
         className,
       )}
     >
@@ -105,39 +109,64 @@ export function MediaBadge({
   );
 }
 
-/**
- * The badge as a play button, for audio that plays in place. It keeps the
- * badge's look; an invisible margin around it makes a 40 px target.
- */
-export function mediaBadgeButton(glyphOnly = false) {
-  return cn(
-    mediaBadge(glyphOnly),
-    "hover:bg-media-badge-hover focus-visible:ring-ring relative z-20 cursor-pointer transition-colors duration-(--motion-fast) after:absolute after:-inset-2 after:content-[''] focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none",
+const disc =
+  "flex size-10 items-center justify-center rounded-full [&_svg]:size-4 [&_svg]:translate-x-px";
+
+/** The play cue in the middle of a video or audio tile. */
+export function PlayDisc({ className }: { className?: string }) {
+  return (
+    <span className={cn(scrim, disc, "pointer-events-none", className)}>
+      <Play aria-hidden="true" className="fill-current" />
+    </span>
+  );
+}
+
+/** The play disc as a button, for audio that plays in place. */
+export const playDiscButton = cn(
+  scrim,
+  disc,
+  "hover:bg-media-badge-hover focus-visible:ring-ring relative z-30 cursor-pointer transition-colors duration-(--motion-fast) focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none [&_svg]:fill-current",
+);
+
+/** A short day label ("Today", "Oct 20") on the first tile of each day. */
+export function DayChip({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <span
+      className={cn(
+        scrim,
+        "pointer-events-none flex h-6 items-center rounded-full px-2 text-xs font-medium",
+        className,
+      )}
+    >
+      {children}
+    </span>
   );
 }
 
 /**
- * An audio creation's tile face (D1.5): one calm neutral surface for every
- * clip, its real waveform (or the glyph when it cannot be measured) and the
- * duration badge, so audio keeps the grid's rhythm instead of being its
- * loudest tile. Who made it is the person filter's job; the words are in
- * the hover title and the viewer. `control`, when given, replaces the
- * badge (a play button that looks like it).
+ * An audio creation's tile face: one calm neutral surface for every clip
+ * and its real waveform (or the glyph when it cannot be measured), so audio
+ * keeps the grid's rhythm instead of being its loudest tile. `center` sits
+ * over the middle (the play disc); the caller adds the other cues.
  */
 export function AudioFace({
   peaksKey,
   src,
   visible,
-  duration,
-  control,
+  center,
   status,
   className,
 }: {
   peaksKey: string;
   src?: string | null;
   visible: boolean;
-  duration?: string | null;
-  control?: ReactNode;
+  center?: ReactNode;
   /** A short error line, shown at the top. */
   status?: ReactNode;
   className?: string;
@@ -156,13 +185,15 @@ export function AudioFace({
         <AudioLines aria-hidden="true" className="size-8" />
       )}
       {status ? (
-        <span className="text-foreground absolute inset-x-2 top-2 text-xs font-medium">
+        <span className="text-foreground absolute inset-x-2 top-2 z-30 text-xs font-medium">
           {status}
         </span>
       ) : null}
-      <span className="absolute right-2 bottom-2 z-20">
-        {control ?? <MediaBadge icon={Play}>{duration ?? "Audio"}</MediaBadge>}
-      </span>
+      {center ? (
+        <span className="absolute inset-0 z-20 flex items-center justify-center">
+          {center}
+        </span>
+      ) : null}
     </div>
   );
 }

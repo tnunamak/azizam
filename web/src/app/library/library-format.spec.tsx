@@ -1,8 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import {
-  dateGroupLabel,
-  groupByDate,
+  dayMarks,
   inProgressMedia,
   modelDisplayName,
   prettifyModelId,
@@ -31,41 +30,27 @@ describe("tileDate", () => {
   });
 });
 
-describe("date groups", () => {
-  test.each([
-    [new Date(2026, 9, 8, 0, 1), "Today"],
-    [new Date(2026, 9, 7, 23, 59), "Yesterday"],
-    [new Date(2026, 9, 6, 12, 0), "This week"],
-    [new Date(2026, 9, 2, 12, 0), "This week"],
-    [new Date(2026, 9, 1, 12, 0), "October"],
-    [new Date(2026, 8, 30, 12, 0), "September"],
-    [new Date(2025, 11, 31, 12, 0), "December 2025"],
-    [null, "Undated"],
-  ])("heads %s as %s", (date, label) => {
-    expect(dateGroupLabel(date, now)).toBe(label);
-  });
-
-  test("cuts newest-first items into runs and never reorders them", () => {
-    const items = [
+describe("day marks", () => {
+  test("label the first creation of each day and keep the order", () => {
+    const dates = [
       new Date(2026, 9, 8, 14, 0),
       new Date(2026, 9, 8, 9, 0),
       new Date(2026, 9, 7, 9, 0),
       new Date(2026, 9, 5, 9, 0),
-      new Date(2026, 9, 3, 9, 0),
+      new Date(2026, 9, 5, 8, 0),
+      null,
       new Date(2026, 8, 12, 9, 0),
     ];
-    expect(
-      groupByDate(items, (item) => item, now).map((group) => [
-        group.label,
-        group.items.length,
-      ]),
-    ).toEqual([
-      ["Today", 2],
-      ["Yesterday", 1],
-      ["This week", 2],
-      ["September", 1],
+    expect(dayMarks(dates, now)).toEqual([
+      "Today",
+      null,
+      "Yesterday",
+      "Monday",
+      null,
+      "Undated",
+      "Sep 12",
     ]);
-    expect(groupByDate([], (item: Date) => item, now)).toEqual([]);
+    expect(dayMarks([], now)).toEqual([]);
   });
 });
 

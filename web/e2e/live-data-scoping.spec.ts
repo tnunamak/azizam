@@ -81,7 +81,7 @@ test("owner sees keyless LAN and service app media and usage", async ({
   await page.getByRole("option", { name: "Daisy", exact: true }).click();
   await page.keyboard.press("Escape");
   await expect(page.locator("article")).toHaveCount(1);
-  await page.getByRole("button", { name: "Open Image", exact: true }).click();
+  await page.getByRole("button", { name: /^Open Picture, / }).click();
   await page.getByText("Details", { exact: true }).click();
   await expect(
     page.getByRole("dialog").getByText("Daisy", { exact: true }),
