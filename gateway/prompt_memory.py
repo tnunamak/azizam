@@ -1,7 +1,9 @@
 """Maker-scoped prompt retention for generated assets.
 
-This is the only gateway store for media prompt text. Receipts, job metadata,
-asset sidecars and diagnostics must never carry the text or a workflow graph.
+This is the retained personal store for media prompts. Private execution spools
+may keep input until normal jobs finish so they can resume after restart.
+Receipts, job metadata, asset sidecars and diagnostics never carry that text or
+a workflow graph.
 """
 
 from __future__ import annotations

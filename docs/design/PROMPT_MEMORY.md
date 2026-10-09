@@ -17,7 +17,7 @@ deliberate compatibility change required by the privacy control.
 
 The brief also asks for one prompt write path while ComfyUI puts a second copy
 of the prompt in PNG and container metadata. The asset cache must store only
-metadata-stripped bytes. The prompt record is the sole durable gateway copy;
+metadata-stripped bytes. The prompt record is the sole retained media prompt copy;
 when kept, that record may include the original workflow metadata needed to
 construct a maker-only full download. Deleting or expiring the record removes
 both text and that workflow copy. The generated media itself remains.
@@ -30,14 +30,17 @@ authenticated maker on an API content route. Old signed URLs with `md=full`
 must fail closed. The `full` profile default still governs the direct response
 to the maker's own authenticated API request.
 
-No-key LAN calls and service Apps have no person. Their media prompts are not saved:
+No-key LAN calls and credentials created without a human have no person. Their media prompts are not saved:
 there is no defensible maker-only viewer or retention setting for them. They
 still receive their generated media. Existing owner instance views retain
 metadata about these calls, without prompt-derived content.
 Their direct API response follows the caller's metadata profile because it is
 the caller's own output; the gateway cache and later signed URLs remain clean.
-The OpenAI Responses store is a separate protocol contract: a no-person caller
-can still opt into its seven-day conversation state with `store:true`. The
+The OpenAI Responses store defaults to off for no-person requests. A caller
+with a stable authenticated App or credential can explicitly opt into seven-day
+conversation state with `store:true`. Keyless LAN requests have no private
+conversation scope and are not stored. Rows require matching person and App ID
+or the fallback credential hash; App display names do not grant access. The
 request-level forget control, `store:false`, and the owner kill switch disable
 that storage.
 
@@ -57,14 +60,19 @@ records; their prompt redaction guards remain strict. A record is read only
 if its `person_id` equals the current authenticated person and it has not
 expired. An absent row means `prompt: null` and a non-prompt title.
 
-The request maker is resolved from the authenticated key's App to
-`apps.owner_user_id`. This is the same durable attribution used by Library
-scope. A service App or no-key request resolves to no person. A browser member
-is `users.id`. The owner is a maker only for the owner's own personal Apps;
-the owner role does not grant prompt visibility for any other person.
+The request maker is the authenticated browser person or the recorded human
+creator of the calling credential (`credentials.created_by`). App owner and
+maker are independent facts. An owner-created key on a member's App acts as the
+owner and cannot read that member's prompts or full workflow files. New cache
+sidecars record maker person IDs for Library ownership separately from the App
+media access boundary. Unknown legacy credential creators fail closed; mint a
+replacement key to use personal prompt memory. A shared key delegates the
+creator's identity, prompt access and attribution to whoever holds it. The owner
+can read the database or issue a reset link to sign in as a member. Privacy in
+the UI/API does not protect against that server authority.
 
 Member preferences live in a new `admin.db` table keyed by `users.id`:
-`remember` (default: household default) and `retention` (`never`, `3_months`,
+`remember` (explicit snapshot of the household default at rollout or user creation) and `retention` (`never`, `3_months`,
 `1_year`). The owner setting is `operator_settings.prompt_memory`, with
 `default_remember=true`, `never_keep=false`, and `retention_cap=never` by
 default. The effective expiry is the shorter of the member choice and owner
@@ -98,8 +106,11 @@ Member API: `GET/PUT /me/api/prompt-memory`, `DELETE
 /me/api/prompt-memory/prompts`. Owner API: `GET/PUT
 /admin/api/settings/prompt-memory`, using `If-Match` revision semantics. The
 member reads their effective settings but cannot override the owner kill
-switch or cap. Delete-all removes prompt records, not media, receipts, or
-other household members' records.
+switch or cap. Delete-all removes retained prompts and conversations and moves
+active execution payloads to memory; media and body-free receipts remain.
+A durable deletion cutoff also blocks late writes and image retries from
+requests that began before deletion. A same-second new request can be refused
+storage. A failed cutoff write returns 503 with retry_required.
 
 Library `prompt` and prompt-based title fields are projected only after a
 maker-id equality check. Search over prompt text uses this same projection.
@@ -110,16 +121,37 @@ firehose carry no prompt snippets. Default signed URLs carry `md=none`.
 
 ## Retention and upgrade
 
-A periodic pruner removes expired prompt rows. Delete-all removes one person's
-rows immediately at the database level; SQLite's normal page/WAL behavior and
-backups mean physical byte erasure is not promised. Media and its stable asset
-ID remain. New asset bytes are stripped on store. Historical asset files lack
-reliable maker attribution, so no historical prompt is imported; migration
-strips their embedded prompt/workflow on delivery. Rewriting stored bytes
-would invalidate content-addressed asset IDs, so historical cache files are
-not rewritten in place. Historical
-video records are purged of the prompt field on load/save, and no Library read
-falls back to embedded metadata. Enabling the owner kill switch also deletes
-existing Responses rows because their request bodies may contain prompt text.
-This breaks previously stored conversation chains; future forced-off Responses
-requests have `store:false` semantics until the owner turns retention back on.
+A dedicated maintenance loop removes expired prompts, missing-asset rows and
+unfetched video placeholders after 14 days. Library/video deletion, failure,
+cache eviction and member removal remove associated prompt rows. Cancellation
+clears execution spools and the current video placeholder. An in-flight
+backend generation can still finish and store its result.
+Database deletion uses SQLite secure_delete. Backups and earlier WAL snapshots
+can retain bytes; no forensic erasure guarantee is made.
+
+A resumable worker strips legacy PNG/JPEG/WebP text, EXIF, XMP, workflow chunks
+and audio/video metadata in place. It uses one low-priority thread, bounded
+batches and a delay between files. Progress stores fingerprints, never prompt
+text. Files keep their IDs and filenames as opaque handles. Atomic replacement
+and a shared cache mutation lock protect concurrent gateway writes/deletes.
+External filesystem writers must coordinate separately. Invalid or unsupported
+files remain pending. ffmpeg/ffprobe use anonymous memory-backed file handles;
+legacy crash scratch files are removed. Lossless JPEG/WebP metadata insertion
+preserves compressed image data, and clean WAV/MP3/FLAC stripping requires no
+ffmpeg. Input-reference resolution and MCP reads strip metadata on delivery.
+
+Delete-all and the kill switch strip affected files synchronously in a worker
+thread. HTTP 202 reports pending cleanup; a persisted retry queue and startup
+maintenance resume it. The kill switch takes effect before cleanup and blocks
+new prompt writes. Recent video prompts with unknown creators are removed at
+upgrade rather than assigned to an App's owner.
+
+Normal async jobs survive restarts. No-person service/LAN jobs keep the original
+prompt in a private execution spool because a redacted inference request cannot
+resume. Completion, failure and cancellation delete that spool; orphan pruning
+is the fallback. Explicit forget, member-off and kill-switch requests are
+memory-only and cannot resume after restart. Delete-all and the kill switch
+move already queued payloads to memory so the current process can finish them.
+Enabling the kill switch deletes stored Responses conversations, so earlier
+conversation chains become unavailable. Disabling it cannot restore deleted
+prompts or conversations.

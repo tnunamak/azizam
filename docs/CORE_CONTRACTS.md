@@ -571,16 +571,71 @@ Minimum fields:
 Receipts are not full request logs. They should avoid raw prompts, raw files,
 secrets, downstream credentials, and large payloads by default.
 
-Generated-media prompts have a separate maker-scoped store. A retained prompt
-is keyed by asset and person, with an optional expiry. Receipts and media-job
-metadata continue to reject raw prompt fields. Media cache bytes are stripped
-of embedded prompt/workflow metadata at store time. A full metadata download
-requires the authenticated maker and an unexpired prompt record; signed URLs
-default to `metadata=none`. `extensions.com.azizam.prompts.mode="forget"`, a
-member's off setting, or the owner kill switch prevents retention. Responses
-`store:false` is also a forget request. No-person callers keep the standard
-Responses `store:true` conversation state unless they forget or the owner kill
-switch is on. See `docs/design/PROMPT_MEMORY.md`.
+Generated-media prompts have a separate store keyed by asset and maker person.
+The maker is the authenticated browser user (`users.id`) or the recorded human
+creator of the App key (`credentials.created_by`). App ownership grants media
+access; it does not grant another person's identity or prompt access. An owner
+key minted on a member's App acts as the owner. Its outputs belong to the owner
+in the Library. A key with an unknown creator has no person identity. Existing
+keys are not assigned an inferred creator during upgrade; replace them to use
+personal prompt memory. Giving someone your key delegates your person identity,
+including access to your saved prompts and full workflow downloads.
+
+A retained prompt has an optional expiry. Receipts and media-job metadata
+reject raw prompt fields. New cache writes strip embedded prompts and workflows.
+Full metadata downloads require the authenticated maker and an unexpired saved
+prompt; signed URLs default to `metadata=none`. Another key on the same App
+can read permitted clean media, but cannot read another person's prompt or full
+workflow. The owner role grants no prompt access through these APIs. An owner
+can read server databases or issue an account reset link and sign in as a
+member; this system does not protect content against that server authority.
+
+`extensions.com.azizam.prompts.mode="forget"`, a member's off setting,
+Responses `store:false`, and the household kill switch prevent prompt storage.
+Member preferences are saved at rollout and user creation. The household
+default affects new members only. The kill switch overrides every preference.
+Responses conversation rows are scoped by person and immutable App ID, or by
+credential hash when there is no App. Display names grant no access. Older
+rows without trustworthy scope are hidden. No-person requests default to
+`store:false`; explicit `store:true` works only with a stable authenticated App
+or credential scope. Keyless LAN requests have no private conversation scope.
+
+Normal asynchronous jobs retain restart durability. For service or keyless
+requests with no person, the prompt is required to resume inference, so the
+execution spool keeps it until completion, failure or cancellation, with an
+orphan pruner as a fallback. This temporary operational copy is not personal
+prompt memory. Redacting it would make the job unable to resume. Explicit
+forget, member-off and the kill switch use a memory-only execution spool.
+Those jobs can finish in the current process but cannot resume after restart.
+Delete-all and the kill switch move active spools to memory and remove their
+durable copies. The submit-time forget decision stays in effect during retries.
+
+Deleting media, evicting the cache, deleting a video, failing a video, and
+removing a member remove associated prompt rows. Cancellation removes the
+execution spool and current placeholder, but does not abort an in-flight
+backend generation; its output can still finish. Unfetched video rows expire
+after 14 days. A separate maintenance task removes expired and orphaned rows
+and retries pending erasure. Media asset prompt writes run off the event loop
+and fail closed: if a write fails, the finished generation still succeeds with
+clean cache bytes and no saved prompt.
+
+Upgrade runs a throttled, resumable background migration that strips legacy
+cache metadata in place. Asset IDs remain opaque handles after this rewrite;
+no download path rechecks them against a content hash. Delete-all and the kill
+switch strip affected legacy files before returning success. A partial purge
+returns HTTP 202 with pending counts and schedules retries; it does not claim
+completed erasure. Unsupported or corrupt files remain reported as pending.
+SQLite secure deletion reduces recoverable database content, but snapshots,
+backups, backend histories and previous downloads are outside this contract.
+See `docs/design/PROMPT_MEMORY.md`.
+
+Deletion records a per-person erasure cutoff before cleanup. Final prompt and
+Responses writes reject requests started at or before that cutoff, including
+async image retries. Whole-second timestamps can also suppress storage for a
+new request in the same second. Media generation still completes. A deletion
+whose intent cannot be saved returns 503 with retry_required; it does not claim
+that a background retry was scheduled. Persisted off settings and retention
+limits are reconciled on startup and every minute.
 
 Receipts have audiences:
 
