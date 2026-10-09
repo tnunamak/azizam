@@ -61,9 +61,9 @@ def test_member_prompt_memory_defaults_and_put_are_admin_store_backed(tmp_path: 
     assert response.status_code == 200
     assert response.json()["prompt_memory"] == {
         "remember": True,
-        "retention": "never",
+        "retention": "3_months",
         "effective_remember": True,
-        "effective_retention": "1_year",
+        "effective_retention": "3_months",
         "household": {"default_remember": True, "never_keep": False, "retention_cap": "1_year"},
     }
 

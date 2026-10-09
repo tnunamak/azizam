@@ -15,6 +15,7 @@ from typing import Any, Mapping
 
 from gateway import admin_store, media_jobs, media_metadata
 
+DB_PATH = media_jobs.DB_PATH
 NAMESPACE = "com.azizam.prompts"
 RETENTION_SECONDS = {"never": None, "3_months": 90 * 86400, "1_year": 365 * 86400}
 MEMBER_DEFAULTS = {"remember": True, "retention": "3_months"}
