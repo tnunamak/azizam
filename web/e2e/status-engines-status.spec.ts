@@ -274,7 +274,8 @@ for (const theme of ["light", "dark"] as const) {
           await expect(disabled).toContainText("Off");
           await expect(disabled).not.toContainText("Ready");
           await expect(
-            main.getByRole("rowheader", { name: "OpenRouter", exact: true }),
+            // D1.5: the row header reads "OpenRouter Remote provider".
+            main.getByRole("rowheader", { name: /^OpenRouter\b/ }),
           ).toBeVisible();
           await page.getByRole("button", { name: "Status actions" }).click();
           const details = page.getByRole("menuitem", {
