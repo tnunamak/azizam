@@ -156,8 +156,12 @@ export function lintText(items: TextItem[], options: LintOptions): TextFinding[]
     if (options.role === "member") {
       for (const { re } of options.jargon) add(item, "member-jargon", re);
     }
-    // Every visible Unknown is flagged; long prose that merely mentions the word is not a state.
-    if (item.kind === "text" && item.text.length <= 80) add(item, "unknown", UNKNOWN);
+    // Every visible Unknown is flagged. A short label ("Unknown", "1 unknown", "Chat unknown")
+    // is a state and fails; a sentence that mentions it ("21 requests have unknown cost") warns.
+    if (item.kind === "text" && item.text.length <= 160) {
+      const label = item.text.length <= 40;
+      add(item, "unknown", UNKNOWN, label ? {} : { severity: "warn", note: "in a sentence" });
+    }
   }
   return out;
 }

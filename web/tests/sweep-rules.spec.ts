@@ -40,11 +40,12 @@ describe("sweep text rules", () => {
     expect(rules("Make a picture", "member")).toEqual([]);
   });
 
-  it("flags short Unknown states but not prose", () => {
+  it("fails short Unknown states and warns on prose", () => {
     expect(rules("Chat unknown", "owner")).toContain("unknown");
     expect(rules("1 unknown", "owner")).toContain("unknown");
-    expect(
-      rules("We could not measure this engine yet because nothing has used it since the gateway started, so its state is unknown for now.", "owner"),
-    ).not.toContain("unknown");
+    const prose = lintText([item("Cost measured for 34 requests. 21 paid requests have unknown cost.")], { role: "owner", research, jargon });
+    expect(prose.find((finding) => finding.rule === "unknown")?.severity).toBe("warn");
+    const long = "We could not measure this engine yet because nothing has used it since the gateway started, so its state is unknown for now.";
+    expect(lintText([item(long)], { role: "owner", research, jargon }).filter((finding) => finding.severity === "fail")).toEqual([]);
   });
 });

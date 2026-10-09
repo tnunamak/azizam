@@ -258,6 +258,12 @@ for (const route of ROUTES) {
                   return null;
                 });
                 for (const violation of axe?.violations ?? []) {
+                  // Radix Select's listbox viewport scrolls with the arrow keys (options are roving
+                  // tabindex=-1), which axe cannot see; drop that one known false positive.
+                  violation.nodes = violation.nodes.filter(
+                    (node) => !(violation.id === "scrollable-region-focusable" && node.html.includes("data-radix-select-viewport")),
+                  );
+                  if (!violation.nodes.length) continue;
                   for (const node of violation.nodes.slice(0, 6)) {
                     const html = node.html.replace(/\s+/g, " ").slice(0, 140);
                     add({
