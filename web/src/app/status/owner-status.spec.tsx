@@ -267,7 +267,12 @@ it("uses server engine names and transcription taxonomy and preserves an exact d
   expect(engine).toHaveAttribute("title", "Canary (transcription)");
   expect(screen.queryByRole("button", { name: "Local chat" })).toBeNull();
   expect(screen.getByRole("table", { name: "Engine status" })).toBeVisible();
-  expect(screen.getByRole("cell", { name: "Transcription" })).toBeVisible();
+  // D1.5: what an engine serves sits under its name (Linear's row anatomy).
+  expect(
+    within(screen.getByRole("rowheader", { name: /Canary/ })).getByText(
+      "Transcription",
+    ),
+  ).toBeVisible();
   expect(
     within(
       screen

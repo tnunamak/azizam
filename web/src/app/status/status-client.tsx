@@ -856,21 +856,26 @@ function EngineRow({
       className="border-b last:border-0"
       aria-current={selected ? "true" : undefined}
     >
-      <th scope="row" className="py-2 pr-4 text-left align-middle font-normal">
+      <th
+        scope="row"
+        className="py-2.5 pr-4 text-left align-middle font-normal"
+      >
         <EngineSheet engine={engine} open={open} onOpenChange={setOpen}>
           <button
             type="button"
-            className="block max-w-full min-w-0 truncate py-1.5 text-left text-sm font-medium hover:underline max-sm:min-h-11"
+            className="block max-w-full min-w-0 truncate text-left text-sm font-medium hover:underline max-sm:min-h-11"
             title={engine.name}
           >
             {engine.shortName}
           </button>
         </EngineSheet>
+        {engine.label ? (
+          <span className="text-muted-foreground hidden truncate text-sm sm:block">
+            {engine.label}
+          </span>
+        ) : null}
       </th>
-      <td className="text-muted-foreground hidden py-2 pr-4 align-middle text-sm md:table-cell">
-        {engine.label || null}
-      </td>
-      <td className="hidden w-52 py-2 pr-3 align-middle sm:table-cell">
+      <td className="hidden py-2.5 pr-3 align-middle sm:table-cell">
         {engine.service.enabled ? (
           <UptimeBar
             series={series}
@@ -881,10 +886,10 @@ function EngineRow({
           />
         ) : null}
       </td>
-      <td className="figures text-muted-foreground hidden w-20 py-2 pr-4 text-right align-middle text-xs sm:table-cell">
+      <td className="figures text-muted-foreground hidden py-2.5 pr-4 text-right align-middle text-sm sm:table-cell">
         {engine.service.enabled && checked ? `${up}/${checked} h up` : ""}
       </td>
-      <td className="py-2 align-middle">
+      <td className="py-2.5 align-middle">
         <StateWord tone={tone} word={word} />
       </td>
     </tr>
@@ -920,13 +925,15 @@ function ProviderRow({ provider }: { provider: ProviderStatusView }) {
     <tr className="border-b last:border-0">
       <th
         scope="row"
-        className="py-2.5 pr-4 text-left align-middle text-sm font-medium"
+        className="py-2.5 pr-4 text-left align-middle font-normal"
       >
-        {provider.name}
+        <span className="block truncate text-sm font-medium">
+          {provider.name}
+        </span>
+        <span className="text-muted-foreground hidden text-sm sm:block">
+          Remote provider
+        </span>
       </th>
-      <td className="text-muted-foreground hidden py-2.5 pr-4 align-middle text-sm md:table-cell">
-        Provider
-      </td>
       <td className="hidden py-2.5 pr-3 align-middle sm:table-cell" colSpan={2}>
         {spent ? (
           <span className="flex items-center gap-3 text-sm">
@@ -1600,24 +1607,18 @@ export function StatusClient() {
                       <caption className="sr-only">Engine status</caption>
                       <thead>
                         <tr className="text-subtle-foreground border-b text-left text-xs">
-                          <th scope="col" className="py-2 font-normal">
+                          <th scope="col" className="py-2 font-normal sm:w-52">
                             Engine
                           </th>
                           <th
                             scope="col"
-                            className="hidden py-2 font-normal md:table-cell"
-                          >
-                            Serves
-                          </th>
-                          <th
-                            scope="col"
-                            className="hidden w-52 py-2 font-normal sm:table-cell"
+                            className="hidden py-2 font-normal sm:table-cell"
                           >
                             Health checks, last 24 h
                           </th>
                           <th
                             scope="col"
-                            className="hidden w-20 py-2 text-right font-normal sm:table-cell"
+                            className="hidden w-24 py-2 text-right font-normal sm:table-cell"
                           >
                             <span className="sr-only">Hours up</span>
                           </th>
