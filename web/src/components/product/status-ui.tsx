@@ -323,27 +323,37 @@ export function CapabilityList({
   showDetail?: boolean;
   actionFor?: (view: CapabilityView) => ReactNode;
 }) {
+  // D1.5: one row family across Home, Status and Library. Rows sit in one
+  // card with hairlines between them (none above the first row of each
+  // column), and lead with the capability's icon in its colour, as Home's
+  // task rows do; the 32 px tinted tiles were a second row style.
   return (
-    <ul className={cn("grid gap-x-10", columns === 2 && "sm:grid-cols-2")}>
+    <ul
+      className={cn(
+        "bg-card rounded-panel grid border px-4",
+        columns === 2 && "sm:grid-cols-2 sm:gap-x-8",
+      )}
+    >
       {views.map((view) => {
         const meta = capabilityMeta(view.key);
         const Icon = meta.icon;
         return (
           <li
             key={view.key}
-            className="grid min-h-14 grid-cols-[2rem_minmax(0,1fr)_auto] items-center gap-x-3 border-b py-2.5"
+            className={cn(
+              "grid min-h-11 grid-cols-[1rem_minmax(0,1fr)_auto] items-center gap-x-3 border-t py-2.5 first:border-t-0",
+              columns === 2 && "sm:nth-2:border-t-0",
+            )}
           >
-            {/* The same anatomy as Home's task rows: tinted icon, name, state. */}
-            <span
+            <Icon
+              aria-hidden="true"
               className={cn(
-                "rounded-control flex size-8 items-center justify-center",
+                "size-4",
                 view.state === "off" || view.state === "blocked"
-                  ? "bg-muted text-muted-foreground"
-                  : cn(meta.tint, meta.tone),
+                  ? "text-muted-foreground"
+                  : meta.tone,
               )}
-            >
-              <Icon aria-hidden="true" className="size-4" />
-            </span>
+            />
             <div className="min-w-0">
               <p className="truncate text-sm font-medium">{view.label}</p>
               {showDetail && view.detail ? (
