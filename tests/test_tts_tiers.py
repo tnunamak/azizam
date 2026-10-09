@@ -150,13 +150,43 @@ class TtsRuntimeFallbackTests(RouteCase):
         )
 
     def test_allocation_failure_falls_back_with_a_header(self) -> None:
-        seen = self._upstream(lambda r: httpx.Response(500, json={"error": {"message": "CUDA out of memory"}}))
+        seen = self._upstream(lambda r: httpx.Response(500, json={"detail": "CUDA out of memory. Tried to allocate 4.70 GiB."}))
         resp = self._speak()
         self.assertEqual((resp.status_code, resp.content), (200, b"RIFFwav"))
         self.assertEqual([r.url.port for r in seen], list(self._ports()))
         self.assertEqual(resp.headers["x-azizam-fallback"], "supertonic->omnivoice (gpu_oom)")
         self.assertEqual(resp.headers["x-azizam-fallback"], "supertonic->omnivoice (gpu_oom)")
         self.assertEqual(json.loads(seen[1].content)["model"], "k2-fsa/OmniVoice")
+
+    def test_last_engine_allocation_failure_is_retryable_503(self) -> None:
+        self.cfg["backends"]["tts-supertonic"]["enabled"] = False
+        seen = self.use_upstream(lambda r: httpx.Response(500, json={"detail": "CUDA out of memory. Tried to allocate 4.70 GiB."}))
+        resp = self._speak()
+        self.assertEqual(resp.status_code, 503, resp.text)
+        self.assertEqual(resp.json()["error"]["code"], "gpu_memory_unavailable")
+        self.assertIn("GPU", resp.json()["error"]["message"])
+        self.assertIn("out of memory", resp.json()["error"]["message"].lower())
+        self.assertEqual(resp.headers["retry-after"], "30")
+        self.assertEqual(len(seen), 1)
+
+    def test_explicit_engine_allocation_failure_does_not_fall_back(self) -> None:
+        seen = self._upstream(lambda r: httpx.Response(500, json={"detail": "CUDA out of memory. Tried to allocate 4.70 GiB."}))
+        resp = self._speak(model="supertonic")
+        self.assertEqual(resp.status_code, 503, resp.text)
+        self.assertEqual(resp.json()["error"]["code"], "gpu_memory_unavailable")
+        self.assertEqual(resp.headers["retry-after"], "30")
+        self.assertNotIn("x-azizam-fallback", resp.headers)
+        self.assertEqual(len(seen), 1)
+
+    def test_non_allocation_server_error_is_unchanged(self) -> None:
+        seen = self._upstream(lambda r: httpx.Response(500, json={"detail": "synthesis failed"}))
+        resp = self._speak()
+        self.assertEqual(resp.status_code, 500)
+        self.assertEqual(resp.json()["error"]["code"], "tts_backend_error")
+        self.assertEqual(resp.json()["error"]["message"], "TTS backend rejected the speech request.")
+        self.assertNotIn("retry-after", resp.headers)
+        self.assertNotIn("x-azizam-fallback", resp.headers)
+        self.assertEqual(len(seen), 1)
 
     def test_skipped_primary_engine_is_reported_without_runtime_retry(self) -> None:
         self.cfg["backends"]["tts-supertonic"]["enabled"] = False
