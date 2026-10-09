@@ -120,7 +120,7 @@ def test_with_drain_the_swap_waits_for_the_request_in_flight(engine) -> None:
     assert restarts_while_a_in_flight == [], "no restart while A is generating"
     assert not a_stream.was_killed
     assert engine.restarts() == ["p-b"], "the swap happens after A finishes"
-    assert proxy._swap_drain.in_flight(BACKEND, max_age_s=60) == 0
+    assert proxy._swap_drain.in_flight(BACKEND) == 0
 
 
 def test_a_request_for_the_loaded_target_does_not_wait_or_restart(engine) -> None:
@@ -173,7 +173,7 @@ def test_outer_and_inner_ensure_target_interleave_without_deadlock(engine) -> No
         b_outer = asyncio.create_task(_outer_hop("p-b"))
         await _settle()
         assert proxy.swap_lock_for(BACKEND).locked()
-        assert proxy._swap_drain.in_flight(BACKEND, max_age_s=60) == 0, "A is not counted between hops"
+        assert proxy._swap_drain.in_flight(BACKEND) == 0, "A is not counted between hops"
 
         # A, inner hop: blocks on the lock, holding no lease.
         a_inner = asyncio.create_task(proxy._ensure_target_leased(BACKEND, _activation("p-a")))
@@ -203,69 +203,37 @@ def test_outer_and_inner_ensure_target_interleave_without_deadlock(engine) -> No
     assert engine.killed == []
 
 
-def test_no_lease_is_granted_while_a_swap_is_restarting_the_engine(engine) -> None:
-    """A made p-a ready; before A leases, B starts a swap to p-b. While B's
-    restart runs, A must not lease (its target is about to disappear). A waits
-    for the swap, sees the backend moved to p-b, and makes p-a ready again."""
+def test_the_lease_is_granted_in_the_same_lock_hold_as_the_swap_that_made_it_ready(engine) -> None:
+    """A switches to p-b; B, queued on the lock, wants p-a. No lease exists
+    while A's restart runs, and A leases before it releases the lock, so B's
+    swap back to p-a must wait for A instead of restarting under it."""
 
     async def scenario() -> None:
-        real_ensure_target = proxy.ensure_target
-        b_task: list[asyncio.Task] = []
+        engine.restart_gate = asyncio.Event()
+        a = asyncio.create_task(proxy._ensure_target_leased(BACKEND, _activation("p-b")))
+        await _settle()
+        assert proxy.swap_lock_for(BACKEND).locked(), "A is inside its restart"
+        b = asyncio.create_task(proxy._ensure_target_leased(BACKEND, _activation("p-a")))
+        await _settle()
+        assert proxy._swap_drain.in_flight(BACKEND) == 0, "no lease before the target is ready"
 
-        async def ensure_then_b_starts_switching(*args: Any, **kwargs: Any) -> bool:
-            ready = await real_ensure_target(*args, **kwargs)
-            if not b_task:
-                engine.restart_gate = asyncio.Event()
-                b_task.append(asyncio.create_task(real_ensure_target(BACKEND, MODEL, None, profile="p-b")))
-                await _settle()  # B now holds the lock, inside its restart
-            return ready
+        engine.restart_gate.set()
+        ready, a_lease = await asyncio.wait_for(a, 1)
+        assert ready and a_lease is not None
+        a_stream = engine.serve("A")
+        await asyncio.sleep(0.05)
+        assert not b.done(), "B waits for A's lease"
+        assert engine.restarts() == ["p-b"]
 
-        proxy.ensure_target = ensure_then_b_starts_switching
-        try:
-            a = asyncio.create_task(proxy._ensure_target_leased(BACKEND, _activation("p-a")))
-            await _settle()
-            assert not a.done(), "A must wait for the swap in progress"
-            assert proxy._swap_drain.in_flight(BACKEND, max_age_s=60) == 0
-            engine.restart_gate.set()
-            assert await asyncio.wait_for(b_task[0], 1) is True
-            ready, lease = await asyncio.wait_for(a, 1)
-        finally:
-            proxy.ensure_target = real_ensure_target
-        assert ready and lease is not None
-        lease.release()
+        a_stream.done()
+        a_lease.release()
+        ready, b_lease = await asyncio.wait_for(b, 1)
+        assert ready and b_lease is not None
+        b_lease.release()
 
     _run(scenario())
     assert engine.restarts() == ["p-b", "p-a"]
-
-
-def test_a_lease_taken_after_another_swap_makes_the_target_ready_again(engine) -> None:
-    """Between A's ensure_target and A's lease, B switches the model. A must
-    not lease the wrong model: it makes p-a ready again before it leases."""
-
-    async def scenario() -> None:
-        real_ensure_target = proxy.ensure_target
-        switched = False
-
-        async def ensure_then_someone_switches(*args: Any, **kwargs: Any) -> bool:
-            nonlocal switched
-            ready = await real_ensure_target(*args, **kwargs)
-            if not switched:
-                switched = True
-                assert await real_ensure_target(BACKEND, MODEL, None, profile="p-b")
-            return ready
-
-        proxy.ensure_target = ensure_then_someone_switches
-        try:
-            ready, lease = await proxy._ensure_target_leased(BACKEND, _activation("p-a"))
-        finally:
-            proxy.ensure_target = real_ensure_target
-        assert ready and lease is not None
-        assert lease.target == proxy._swap_target_key(MODEL, None, "p-a")
-        lease.release()
-
-    _run(scenario())
-    assert engine.restarts() == ["p-b", "p-a"]
-    assert engine.loaded == "p-a"
+    assert engine.killed == []
 
 
 # ---------------------------------------------------------------------------
@@ -292,7 +260,7 @@ def test_new_old_target_requests_queue_behind_a_pending_swap(engine) -> None:
         # Keep sending old-target requests while B waits: none may be admitted.
         for _ in range(5):
             await asyncio.sleep(0.01)
-            assert proxy._swap_drain.in_flight(BACKEND, max_age_s=60) == 1, "only A is in flight"
+            assert proxy._swap_drain.in_flight(BACKEND) == 1, "only A is in flight"
         assert not c.done()
 
         order.append("A finished")
@@ -410,7 +378,7 @@ class _UpstreamClient:
 
 def _fake_send(engine: FakeEngine, *, sse: bool, seen_in_flight: list[int]):
     async def send(_execution_request, *, cancellation_token=None):
-        seen_in_flight.append(proxy._swap_drain.in_flight(BACKEND, max_age_s=60))
+        seen_in_flight.append(proxy._swap_drain.in_flight(BACKEND))
         return _UpstreamClient(), _UpstreamResponse(engine.serve("A"), sse=sse)
 
     return send
@@ -442,7 +410,7 @@ def test_drain_timeout_returns_503_on_the_inner_hop(engine, monkeypatch) -> None
     assert json.loads(response.body)["error"]["code"] == "model_switch_deferred"
     assert sends == [], "nothing is forwarded upstream"
     assert engine.restarts() == []
-    assert proxy._swap_drain.in_flight(BACKEND, max_age_s=60) == 0
+    assert proxy._swap_drain.in_flight(BACKEND) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -471,7 +439,7 @@ def test_inner_hop_stream_holds_its_lease_until_the_final_byte(engine, monkeypat
         )
         assert isinstance(response, StreamingResponse)
         # The handler has returned; the stream still owns the lease.
-        assert proxy._swap_drain.in_flight(BACKEND, max_age_s=60) == 1
+        assert proxy._swap_drain.in_flight(BACKEND) == 1
         body = response.body_iterator
         chunks = [await body.__anext__()]
 
@@ -483,7 +451,7 @@ def test_inner_hop_stream_holds_its_lease_until_the_final_byte(engine, monkeypat
         stream.finish.set()
         async for chunk in body:
             chunks.append(chunk)
-        assert proxy._swap_drain.in_flight(BACKEND, max_age_s=60) == 0
+        assert proxy._swap_drain.in_flight(BACKEND) == 0
         assert await asyncio.wait_for(b, 5) is True
         return chunks
 
@@ -511,11 +479,11 @@ def test_inner_hop_stream_releases_its_lease_when_cancelled(engine, monkeypatch)
 
         reader = asyncio.create_task(client_reads())
         await asyncio.sleep(0.02)
-        assert proxy._swap_drain.in_flight(BACKEND, max_age_s=60) == 1
+        assert proxy._swap_drain.in_flight(BACKEND) == 1
         reader.cancel()  # Starlette cancels the body on client disconnect
         with pytest.raises(asyncio.CancelledError):
             await reader
-        assert proxy._swap_drain.in_flight(BACKEND, max_age_s=60) == 0
+        assert proxy._swap_drain.in_flight(BACKEND) == 0
 
     _run(scenario())
 
@@ -531,7 +499,7 @@ def test_inner_hop_non_stream_releases_its_lease_on_return(engine, monkeypatch) 
             backend=BACKEND,
         ))
         await asyncio.sleep(0.02)
-        assert proxy._swap_drain.in_flight(BACKEND, max_age_s=60) == 1
+        assert proxy._swap_drain.in_flight(BACKEND) == 1
         (stream,) = engine.streams
         stream.finish.set()
         return await asyncio.wait_for(task, 5)
@@ -539,7 +507,7 @@ def test_inner_hop_non_stream_releases_its_lease_on_return(engine, monkeypatch) 
     response = _run(scenario())
     assert response.status_code == 200
     assert sends == [1]
-    assert proxy._swap_drain.in_flight(BACKEND, max_age_s=60) == 0
+    assert proxy._swap_drain.in_flight(BACKEND) == 0
 
 
 def test_inner_hop_releases_its_lease_when_the_upstream_is_unreachable(engine, monkeypatch) -> None:
@@ -558,12 +526,15 @@ def test_inner_hop_releases_its_lease_when_the_upstream_is_unreachable(engine, m
 
     response = _run(scenario())
     assert response.status_code == 503
-    assert proxy._swap_drain.in_flight(BACKEND, max_age_s=60) == 0
+    assert proxy._swap_drain.in_flight(BACKEND) == 0
 
 
-def test_current_loaded_stream_holds_a_lease_that_a_swap_waits_for(engine, monkeypatch) -> None:
-    """model "current" is served by whatever is loaded, without ensure_target.
-    A swap must still wait for it."""
+def _current_loaded_route(monkeypatch, engine: FakeEngine, forwarded: list[dict]) -> dict:
+    """Serve model "current" from the fake engine with real target resolution.
+
+    The loaded model id names the engine's loaded profile, so a forward that
+    used a model resolved before a swap is visible in the forwarded body.
+    """
     backends = {}
     for service_id, service in proxy.config["backends"].items():
         service = dict(service)
@@ -571,18 +542,28 @@ def test_current_loaded_stream_holds_a_lease_that_a_swap_waits_for(engine, monke
             service["model_policy_schema_version"] = proxy.service_registry.MODEL_POLICY_SCHEMA_VERSION
         backends[service_id] = service
     monkeypatch.setitem(proxy.config, "backends", backends)
-    target = proxy.CurrentLoadedLlmTarget(backend=BACKEND, host="http://127.0.0.1:59999", model=MODEL)
 
-    async def current_target(*_args: Any, **_kwargs: Any) -> Any:
-        return target, None
+    async def active_backend() -> str:
+        return BACKEND
 
-    async def send(_execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
+    async def loaded_model_id(_backend: str) -> str:
+        return f"model-{engine.loaded}"
+
+    async def send(execution_request, *, disconnect_watcher=None, cancellation_token=None, on_signal=None):
+        forwarded.append(json.loads(execution_request.body))
         return _UpstreamClient(), _UpstreamResponse(engine.serve("A"), sse=True)
 
-    monkeypatch.setattr(proxy, "_current_loaded_llm_target", current_target)
+    monkeypatch.setattr(proxy, "get_active_backend", active_backend)
+    monkeypatch.setattr(proxy, "current_llm_model_for_backend", loaded_model_id)
     monkeypatch.setattr(proxy, "prepare_downstream_headers", lambda *_a, **_k: {})
     monkeypatch.setattr(proxy, "send_llm_execution_request", send)
-    body = {"model": "current", "messages": [{"role": "user", "content": "hi"}], "stream": True}
+    return {"model": "current", "messages": [{"role": "user", "content": "hi"}], "stream": True}
+
+
+def test_current_loaded_stream_holds_a_lease_that_a_swap_waits_for(engine, monkeypatch) -> None:
+    """model "current" is served by whatever is loaded, without ensure_target.
+    A swap must still wait for it."""
+    body = _current_loaded_route(monkeypatch, engine, [])
 
     async def scenario() -> None:
         response = await proxy._forward_current_loaded_openai_request(
@@ -593,7 +574,7 @@ def test_current_loaded_stream_holds_a_lease_that_a_swap_waits_for(engine, monke
             enforce_gateway_policy=False,
         )
         assert isinstance(response, StreamingResponse), getattr(response, "body", response)
-        assert proxy._swap_drain.in_flight(BACKEND, max_age_s=60) == 1
+        assert proxy._swap_drain.in_flight(BACKEND) == 1
         stream = response.body_iterator
         await stream.__anext__()
 
@@ -605,7 +586,7 @@ def test_current_loaded_stream_holds_a_lease_that_a_swap_waits_for(engine, monke
         upstream.finish.set()
         async for _ in stream:
             pass
-        assert proxy._swap_drain.in_flight(BACKEND, max_age_s=60) == 0
+        assert proxy._swap_drain.in_flight(BACKEND) == 0
         assert await asyncio.wait_for(b, 1) is True
 
     _run(scenario())
@@ -613,26 +594,146 @@ def test_current_loaded_stream_holds_a_lease_that_a_swap_waits_for(engine, monke
     assert engine.killed == []
 
 
-# ---------------------------------------------------------------------------
-# Leaked lease: a maximum age keeps it from blocking swaps forever
-# ---------------------------------------------------------------------------
+def test_current_forwards_the_model_loaded_when_it_leases_not_when_it_resolved(engine, monkeypatch) -> None:
+    """Red-team-3 C2: "current" resolves the loaded model, then a swap lands
+    before it leases. It must forward, and report, the model that is loaded
+    while it holds the lease, never the one it saw before the swap."""
+    forwarded: list[dict] = []
+    body = _current_loaded_route(monkeypatch, engine, forwarded)
+    real_resolve = proxy._current_loaded_llm_target
+    resolved = asyncio.Event()
+    resume = asyncio.Event()
 
+    async def resolve_then_pause(*args: Any, **kwargs: Any) -> Any:
+        result = await real_resolve(*args, **kwargs)
+        if not resolved.is_set():
+            resolved.set()
+            await resume.wait()
+        return result
 
-def test_a_leaked_lease_older_than_its_max_age_does_not_hold_a_swap(engine, monkeypatch) -> None:
-    clock = [1000.0]
-    monkeypatch.setattr(proxy, "_swap_drain", SwapDrain(clock=lambda: clock[0]))
-    _set_drain(monkeypatch, enabled=True, timeout_s=5, lease_max_age_s=60)
+    monkeypatch.setattr(proxy, "_current_loaded_llm_target", resolve_then_pause)
 
-    async def scenario() -> float:
-        ready, _leaked = await proxy._ensure_target_leased(BACKEND, _activation("p-a"))
-        assert ready  # never released: a bug elsewhere leaked it
-        clock[0] += 61
-        start = time.monotonic()
+    async def scenario() -> Any:
+        current = asyncio.create_task(proxy._forward_current_loaded_openai_request(
+            _inner_request(body),
+            request_path="/v1/chat/completions",
+            auth_context=proxy.NO_AUTH_CONTEXT,
+            body_json=body,
+            enforce_gateway_policy=False,
+        ))
+        await asyncio.wait_for(resolved.wait(), 1)  # "current" saw model-p-a
         assert await proxy.ensure_target(BACKEND, MODEL, None, profile="p-b")
-        return time.monotonic() - start
+        resume.set()
+        response = await asyncio.wait_for(current, 1)
+        assert isinstance(response, StreamingResponse), getattr(response, "body", response)
+        assert proxy._swap_drain.in_flight(BACKEND) == 1
+        (upstream,) = engine.streams
+        upstream.finish.set()
+        async for _ in response.body_iterator:
+            pass
+        return response
 
-    assert _run(scenario()) < 1.0
+    response = _run(scenario())
     assert engine.restarts() == ["p-b"]
+    assert [sent["model"] for sent in forwarded] == ["model-p-b"]
+    assert response.headers["X-Azizam-Resolved-Model"] == "model-p-b"
+    assert proxy._swap_drain.in_flight(BACKEND) == 0
+
+
+def test_current_waits_for_a_swap_in_progress_then_serves_the_new_model(engine, monkeypatch) -> None:
+    """A "current" request that arrives while a swap restarts the engine must
+    queue on the swap lock and forward the model the swap loaded."""
+    forwarded: list[dict] = []
+    body = _current_loaded_route(monkeypatch, engine, forwarded)
+
+    async def scenario() -> Any:
+        engine.restart_gate = asyncio.Event()
+        b = asyncio.create_task(proxy.ensure_target(BACKEND, MODEL, None, profile="p-b"))
+        await _settle()
+        assert proxy.swap_lock_for(BACKEND).locked()
+        current = asyncio.create_task(proxy._forward_current_loaded_openai_request(
+            _inner_request(body),
+            request_path="/v1/chat/completions",
+            auth_context=proxy.NO_AUTH_CONTEXT,
+            body_json=body,
+            enforce_gateway_policy=False,
+        ))
+        await _settle()
+        assert forwarded == [], "nothing is forwarded while the engine restarts"
+        engine.restart_gate.set()
+        assert await asyncio.wait_for(b, 1) is True
+        response = await asyncio.wait_for(current, 1)
+        (upstream,) = engine.streams
+        upstream.finish.set()
+        async for _ in response.body_iterator:
+            pass
+        return response
+
+    response = _run(scenario())
+    assert [sent["model"] for sent in forwarded] == ["model-p-b"]
+    assert response.headers["X-Azizam-Resolved-Model"] == "model-p-b"
+    assert engine.killed == []
+
+
+def test_current_releases_its_lease_when_building_the_forward_fails(engine, monkeypatch) -> None:
+    """A lease never expires, so every exit after the grant must release it,
+    including a failure while the forwarded request is still being built."""
+    body = _current_loaded_route(monkeypatch, engine, [])
+
+    def broken_headers(*_args: Any, **_kwargs: Any) -> dict:
+        raise RuntimeError("header preparation failed")
+
+    monkeypatch.setattr(proxy, "prepare_downstream_headers", broken_headers)
+
+    async def scenario() -> None:
+        with pytest.raises(RuntimeError):
+            await proxy._forward_current_loaded_openai_request(
+                _inner_request(body),
+                request_path="/v1/chat/completions",
+                auth_context=proxy.NO_AUTH_CONTEXT,
+                body_json=body,
+                enforce_gateway_policy=False,
+            )
+
+    _run(scenario())
+    assert proxy._swap_drain.in_flight(BACKEND) == 0
+
+
+# ---------------------------------------------------------------------------
+# Long requests: a live lease never ages into permission to swap
+# ---------------------------------------------------------------------------
+
+
+def test_a_live_stream_older_than_the_former_max_age_defers_the_swap(engine, monkeypatch) -> None:
+    """Red-team-3 C1: a lease used to stop counting after 1800 s, so a swap
+    restarted the engine under a long, healthy stream. The drain's timeout_s
+    is the only bound: the swap is deferred with 503 and nothing restarts."""
+    offset = [0.0]
+    monkeypatch.setattr(proxy, "_swap_drain", SwapDrain(clock=lambda: time.monotonic() + offset[0]))
+    _set_drain(monkeypatch, enabled=True, timeout_s=0.1)
+
+    async def scenario() -> tuple[Any, UpstreamStream]:
+        ready, lease = await proxy._ensure_target_leased(BACKEND, _activation("p-a"))
+        assert ready and lease is not None
+        a_stream = engine.serve("A")
+        offset[0] += 3 * 3600  # A has streamed for three hours and is still going
+        response = await proxy._ensure_litellm_local_backend_target(
+            proxy.NO_AUTH_CONTEXT,
+            requested_model="fake-p-b",
+            backend=BACKEND,
+            target_model=MODEL,
+            target_profile="p-b",
+            enforce_gateway_policy=False,
+        )
+        a_stream.done()
+        lease.release()
+        return response, a_stream
+
+    response, a_stream = _run(scenario())
+    assert response is not None and response.status_code == 503
+    assert json.loads(response.body)["error"]["code"] == "model_switch_deferred"
+    assert engine.restarts() == []
+    assert not a_stream.was_killed
 
 
 # ---------------------------------------------------------------------------

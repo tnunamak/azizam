@@ -26,17 +26,9 @@ from gateway.swap_drain import (  # noqa: E402
 
 
 def _settings(**overrides) -> SwapDrainSettings:
-    values = {"enabled": True, "timeout_s": 0.2, "lease_max_age_s": 60.0}
+    values = {"enabled": True, "timeout_s": 0.2}
     values.update(overrides)
     return SwapDrainSettings(**values)
-
-
-class _FakeClock:
-    def __init__(self) -> None:
-        self.now = 1000.0
-
-    def __call__(self) -> float:
-        return self.now
 
 
 # ---------------------------------------------------------------------------
@@ -48,14 +40,19 @@ def test_settings_default_off_and_bounded() -> None:
     settings = SwapDrainSettings.from_llm_config(None)
     assert settings.enabled is False
     assert settings.timeout_s == 120.0
-    assert settings.lease_max_age_s == 1800.0
 
 
 def test_settings_read_from_llm_block() -> None:
     settings = SwapDrainSettings.from_llm_config(
-        {"swap_drain": {"enabled": True, "timeout_s": 30, "lease_max_age_s": 600}}
+        {"swap_drain": {"enabled": True, "timeout_s": 30}}
     )
-    assert settings == SwapDrainSettings(enabled=True, timeout_s=30.0, lease_max_age_s=600.0)
+    assert settings == SwapDrainSettings(enabled=True, timeout_s=30.0)
+
+
+def test_settings_ignore_the_removed_lease_max_age() -> None:
+    """A config written for the earlier lease_max_age_s still loads."""
+    settings = SwapDrainSettings.from_llm_config({"swap_drain": {"enabled": True, "lease_max_age_s": 600}})
+    assert settings == SwapDrainSettings(enabled=True)
 
 
 @pytest.mark.parametrize(
@@ -63,14 +60,13 @@ def test_settings_read_from_llm_block() -> None:
     [
         {"enabled": True, "timeout_s": "soon"},
         {"enabled": True, "timeout_s": -1},
-        {"enabled": True, "lease_max_age_s": 0},
+        {"enabled": True, "timeout_s": 0},
     ],
 )
 def test_settings_reject_unbounded_values_by_falling_back_to_defaults(block) -> None:
     settings = SwapDrainSettings.from_llm_config({"swap_drain": block})
     assert settings.enabled is True
-    assert settings.timeout_s > 0
-    assert settings.lease_max_age_s > 0
+    assert settings.timeout_s == 120.0
 
 
 # ---------------------------------------------------------------------------
@@ -80,33 +76,22 @@ def test_settings_reject_unbounded_values_by_falling_back_to_defaults(block) -> 
 
 def test_lease_counts_until_released_and_release_is_idempotent() -> None:
     drain = SwapDrain()
-    first = drain.lease("llm", "a")
-    second = drain.lease("llm", "a")
-    other = drain.lease("other-llm", "z")
-    assert drain.in_flight("llm", max_age_s=60) == 2
-    assert drain.in_flight("other-llm", max_age_s=60) == 1
+    first = drain.lease("llm")
+    second = drain.lease("llm")
+    other = drain.lease("other-llm")
+    assert drain.in_flight("llm") == 2
+    assert drain.in_flight("other-llm") == 1
 
     first.release()
     first.release()
-    assert drain.in_flight("llm", max_age_s=60) == 1
+    assert drain.in_flight("llm") == 1
     second.release()
     other.release()
-    assert drain.in_flight("llm", max_age_s=60) == 0
-
-
-def test_lease_is_refused_when_backend_was_made_ready_for_another_target() -> None:
-    drain = SwapDrain()
-    # Nothing recorded yet: any target may lease.
-    assert drain.lease("llm", "a") is not None
-    drain.mark_ready("llm", "b")
-    assert drain.lease("llm", "a") is None
-    assert drain.lease("llm", "b") is not None
-    # A lease for "whatever is loaded" never checks the target.
-    assert drain.lease("llm", None) is not None
+    assert drain.in_flight("llm") == 0
 
 
 # ---------------------------------------------------------------------------
-# clear_for_swap: wait, timeout, max age
+# clear_for_swap: wait, timeout; a lease never expires
 # ---------------------------------------------------------------------------
 
 
@@ -123,7 +108,7 @@ def test_clear_for_swap_returns_at_once_when_idle() -> None:
 
 def test_clear_for_swap_waits_for_the_last_release() -> None:
     drain = SwapDrain()
-    lease = drain.lease("llm", "a")
+    lease = drain.lease("llm")
     order: list[str] = []
 
     async def scenario() -> None:
@@ -143,7 +128,7 @@ def test_clear_for_swap_waits_for_the_last_release() -> None:
 
 def test_clear_for_swap_times_out_with_swap_deferred() -> None:
     drain = SwapDrain()
-    lease = drain.lease("llm", "a")
+    lease = drain.lease("llm")
 
     async def scenario() -> SwapDeferred:
         start = time.monotonic()
@@ -157,28 +142,26 @@ def test_clear_for_swap_times_out_with_swap_deferred() -> None:
     assert deferred.in_flight == 1
     assert deferred.retry_after_s > 0
     # The lease is still counted: a deferred swap changes nothing.
-    assert drain.in_flight("llm", max_age_s=60) == 1
+    assert drain.in_flight("llm") == 1
     lease.release()
 
 
-def test_a_leaked_lease_stops_blocking_swaps_after_its_max_age() -> None:
-    clock = _FakeClock()
-    drain = SwapDrain(clock=clock)
-    leaked = drain.lease("llm", "a")  # never released
-    assert drain.in_flight("llm", max_age_s=60) == 1
+def test_an_old_lease_still_defers_the_swap_and_reports_its_age(capsys) -> None:
+    """A lease never ages out: an hours-old one is a long stream as far as the
+    drain can tell. The swap is deferred and the deferral names its age."""
+    offset = [0.0]
+    drain = SwapDrain(clock=lambda: time.monotonic() + offset[0])
+    lease = drain.lease("llm")
+    offset[0] += 3 * 3600
 
-    clock.now += 61
-    assert drain.in_flight("llm", max_age_s=60) == 0
+    async def scenario() -> None:
+        with pytest.raises(SwapDeferred):
+            await drain.clear_for_swap("llm", _settings(timeout_s=0.05))
 
-    async def scenario() -> float:
-        start = time.monotonic()
-        await drain.clear_for_swap("llm", _settings(timeout_s=5, lease_max_age_s=60))
-        return time.monotonic() - start
-
-    assert asyncio.run(scenario()) < 0.5
-    # Releasing an expired lease later is harmless.
-    leaked.release()
-    assert drain.in_flight("llm", max_age_s=60) == 0
+    asyncio.run(scenario())
+    assert drain.in_flight("llm") == 1
+    assert "oldest 10800s" in capsys.readouterr().out
+    lease.release()
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +180,7 @@ async def _chunks(gate: asyncio.Event, log: list[str]):
 
 def test_stream_releases_after_the_final_byte() -> None:
     drain = SwapDrain()
-    lease = drain.lease("llm", "a")
+    lease = drain.lease("llm")
     log: list[str] = []
 
     async def scenario() -> None:
@@ -205,21 +188,21 @@ def test_stream_releases_after_the_final_byte() -> None:
         stream = lease.hand_off(_chunks(gate, log))
         assert lease.handed_off
         assert await stream.__anext__() == b"first"
-        assert drain.in_flight("llm", max_age_s=60) == 1
+        assert drain.in_flight("llm") == 1
         gate.set()
         assert await stream.__anext__() == b"last"
-        assert drain.in_flight("llm", max_age_s=60) == 1
+        assert drain.in_flight("llm") == 1
         with pytest.raises(StopAsyncIteration):
             await stream.__anext__()
 
     asyncio.run(scenario())
-    assert drain.in_flight("llm", max_age_s=60) == 0
+    assert drain.in_flight("llm") == 0
     assert log == ["upstream closed"]
 
 
 def test_stream_releases_on_cancellation() -> None:
     drain = SwapDrain()
-    lease = drain.lease("llm", "a")
+    lease = drain.lease("llm")
     log: list[str] = []
 
     async def scenario() -> None:
@@ -232,19 +215,19 @@ def test_stream_releases_on_cancellation() -> None:
 
         task = asyncio.create_task(consume())
         await asyncio.sleep(0.01)
-        assert drain.in_flight("llm", max_age_s=60) == 1
+        assert drain.in_flight("llm") == 1
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
 
     asyncio.run(scenario())
-    assert drain.in_flight("llm", max_age_s=60) == 0
+    assert drain.in_flight("llm") == 0
     assert log == ["upstream closed"]
 
 
 def test_stream_releases_when_closed_early() -> None:
     drain = SwapDrain()
-    lease = drain.lease("llm", "a")
+    lease = drain.lease("llm")
     log: list[str] = []
 
     async def scenario() -> None:
@@ -253,13 +236,13 @@ def test_stream_releases_when_closed_early() -> None:
         await stream.aclose()
 
     asyncio.run(scenario())
-    assert drain.in_flight("llm", max_age_s=60) == 0
+    assert drain.in_flight("llm") == 0
     assert log == ["upstream closed"], "closing the wrapper must close the upstream stream too"
 
 
 def test_stream_releases_on_upstream_error() -> None:
     drain = SwapDrain()
-    lease = drain.lease("llm", "a")
+    lease = drain.lease("llm")
 
     async def broken():
         yield b"first"
@@ -271,16 +254,16 @@ def test_stream_releases_on_upstream_error() -> None:
                 pass
 
     asyncio.run(scenario())
-    assert drain.in_flight("llm", max_age_s=60) == 0
+    assert drain.in_flight("llm") == 0
 
 
 def test_stream_that_is_never_started_releases_when_dropped() -> None:
     """A StreamingResponse whose client left before the first byte never runs
     its generator body, so a ``finally`` alone would leak the lease."""
     drain = SwapDrain()
-    lease = drain.lease("llm", "a")
+    lease = drain.lease("llm")
     stream = lease.hand_off(_chunks(asyncio.Event(), []))
-    assert drain.in_flight("llm", max_age_s=60) == 1
+    assert drain.in_flight("llm") == 1
     del stream
     gc.collect()
-    assert drain.in_flight("llm", max_age_s=60) == 0
+    assert drain.in_flight("llm") == 0

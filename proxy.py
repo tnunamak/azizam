@@ -1129,19 +1129,15 @@ def swap_lock_for(service_id: str) -> asyncio.Lock:
 
 
 # Requests in flight per swap-capable backend, so a swap can wait for them
-# (gateway/swap_drain.py). Leases are taken and swaps cleared under
-# swap_lock_for(backend). Only active when `llm.swap_drain.enabled` is true.
+# (gateway/swap_drain.py). A lease is granted in the same hold of
+# swap_lock_for(backend) that made its target ready, and swaps are cleared
+# under that lock. Only active when `llm.swap_drain.enabled` is true.
 _swap_drain = SwapDrain()
 
 
 def _swap_drain_settings() -> SwapDrainSettings:
     """`llm.swap_drain`, read per call so a config reload applies."""
     return SwapDrainSettings.from_llm_config(config.get("llm"))
-
-
-def _swap_target_key(model: Optional[str], mmproj: Optional[str], profile: Optional[str]) -> str:
-    """The loaded identity a lease is valid for: what ensure_target compares."""
-    return json.dumps([model or "", mmproj or "", profile or ""])
 
 # Kobold loaded-state cache. Seeded from the backend's state endpoint on first read
 # after startup, then updated authoritatively after every swap. TTL guards against
@@ -1409,6 +1405,23 @@ async def ensure_target(
 
     Returns True on success. Caller turns False into a 503.
     """
+    ready, _lease = await _ensure_target(backend, model, mmproj, profile, take_lease=False)
+    return ready
+
+
+async def _ensure_target(
+    backend: str,
+    model: Optional[str],
+    mmproj: Optional[str],
+    profile: Optional[str],
+    *,
+    take_lease: bool,
+) -> tuple[bool, Optional[ServingLease]]:
+    """ensure_target; with `take_lease`, also lease the backend once it is ready.
+
+    The lease is granted in the same hold of the swap lock that made the
+    target ready, so no other swap can land between the two.
+    """
     from gateway.lifecycle_drivers import driver_for_service, supports_swap, SwapContext
 
     bcfg = (config.get("backends") or {}).get(backend) or {}
@@ -1429,7 +1442,11 @@ async def ensure_target(
                 f"[proxy] ensure_target: backend '{backend}' unreachable via driver",
                 flush=True,
             )
-        return ready
+            return False, None
+        if not take_lease:
+            return True, None
+        async with swap_lock_for(backend):
+            return True, _swap_drain.lease(backend)
 
     # The driver builds + prechecks its own activation from driver_config. On a
     # precheck failure (e.g. a missing GGUF/aux file) it returns None.
@@ -1440,7 +1457,7 @@ async def ensure_target(
         profile=profile,
     )
     if activation is None:
-        return False
+        return False, None
 
     # The driver does the already-loaded short-circuit and pin-loaded skip from
     # SwapContext — no engine literal appears here.
@@ -1469,9 +1486,7 @@ async def ensure_target(
             if swapping:
                 # The loaded-state cache predates the swap; re-probe on next read.
                 _kobold_state["ts"] = 0.0
-        if ready and drain.enabled:
-            _swap_drain.mark_ready(backend, _swap_target_key(model, mmproj, profile))
-        return ready
+        return ready, (_swap_drain.lease(backend) if ready and take_lease else None)
 
 
 async def _ensure_target_leased(
@@ -1484,25 +1499,15 @@ async def _ensure_target_leased(
     The caller must release the lease after the final upstream byte, on error
     and on cancellation (ServingLease.hand_off does this for a stream).
 
-    The lease is granted only for the target this request made ready. If
-    another request swapped the backend between our ensure_target and our
-    lease, make the target ready again (bounded). Raises SwapDeferred.
+    The lease is granted in the same hold of the swap lock that made the
+    target ready, so it always covers the target this request asked for.
+    Raises SwapDeferred.
     """
     if not _swap_drain_settings().enabled:
         ready = await ensure_target(backend, activation.model, activation.mmproj, profile=activation.profile)
         return ready, None
-    target = _swap_target_key(activation.model, activation.mmproj, activation.profile)
-    for _attempt in range(3):
-        if not await ensure_target(backend, activation.model, activation.mmproj, profile=activation.profile):
-            return False, None
-        async with swap_lock_for(backend):
-            lease = _swap_drain.lease(backend, target)
-        if lease is not None:
-            return True, lease
-    raise SwapDeferred(
-        backend,
-        in_flight=_swap_drain.in_flight(backend, max_age_s=_swap_drain_settings().lease_max_age_s),
-        waited_s=0.0,
+    return await _ensure_target(
+        backend, activation.model, activation.mmproj, activation.profile, take_lease=True
     )
 
 
@@ -3592,6 +3597,15 @@ async def current_llm_model_for_backend(backend: str) -> str:
         return ""
 
 
+def _current_model_unavailable_response(backend: str) -> Response:
+    return openai_error_response(
+        f"model 'current' requested, but backend {backend!r} has no loaded model.",
+        status_code=503,
+        error_type="service_unavailable",
+        code="current_model_unavailable",
+    )
+
+
 async def _current_loaded_llm_target(
     auth_context: AuthContext,
     *,
@@ -3623,12 +3637,7 @@ async def _current_loaded_llm_target(
 
     loaded_model = await current_llm_model_for_backend(active)
     if not loaded_model:
-        return None, openai_error_response(
-            f"model 'current' requested, but backend {active!r} has no loaded model.",
-            status_code=503,
-            error_type="service_unavailable",
-            code="current_model_unavailable",
-        )
+        return None, _current_model_unavailable_response(active)
     return CurrentLoadedLlmTarget(
         backend=active,
         host=LLM_BACKEND_HOSTS[active],
@@ -26663,66 +26672,74 @@ async def _forward_current_loaded_openai_request(
             owner.report(status="failed", reason="failed")
             return target_error
         assert target is not None
-    # These are post-acceptance resolution facts.  finalize() merges them into
-    # the same in-progress row without replacing immutable acceptance facts.
-        receipt.backend = target.backend
-        receipt.resolved_model = target.model
-
-        body = copy.deepcopy(dict(body_for_backend))
-        body.pop("_vf_requested_model", None)
-        body["model"] = target.model
-        policy_error, body, execution_body = _prepare_resolved_openai_request(
-            body,
-            request_path=request_path,
-            target=logical_target,
-            execution_service_id=target.backend,
-        )
-        terminal_body = body
-        if policy_error is not None:
-            owner.report(status="failed", reason="failed")
-            return policy_error
-        query = backend_query_string(request.url.query)
-        url = f"{target.host}{request_path}"
-        if query:
-            url = f"{url}?{query}"
-
-        headers = prepare_downstream_headers(
-            request.headers,
-            auth_context,
-            target.backend,
-            request_path,
-        )
-        headers.setdefault("content-type", "application/json")
-        headers.setdefault("accept", "application/json")
-
-        if execution_body is None:
-            execution_body = json.dumps(body).encode()
-        execution_request = LlmExecutionRequest(
-            method=request.method,
-            url=url,
-            headers=headers,
-            body=execution_body,
-            read_timeout=UPSTREAM_READ_TIMEOUT,
-        )
-
-        record_request_shape_stage(
-            receipt.metadata, "outer_egress", body,
-            extra={"body_bytes": request_body_byte_count(execution_body)},
-        )
-
         # "current" serves whatever is loaded, but a swap would still cut it
-        # off: hold a lease around the forward. The lock makes it queue behind
-        # a pending swap instead of starving it.
+        # off: hold a lease around the forward. Read the loaded model again in
+        # the same hold of the swap lock that grants the lease, so a swap that
+        # landed after the resolution above cannot leave this request
+        # forwarding, or reporting, the model it replaced. The lock also makes
+        # this request queue behind a pending swap instead of starving it.
         lease: Optional[ServingLease] = None
         if _swap_drain_settings().enabled:
             async with swap_lock_for(target.backend):
-                lease = _swap_drain.lease(target.backend, None)
-
-        cancellation_span = _OuterCancellationSpan(
-            request_id or new_request_id(), receive=request.receive
-        )
-
+                loaded_model = await current_llm_model_for_backend(target.backend)
+                if loaded_model:
+                    lease = _swap_drain.lease(target.backend)
+            if not loaded_model:
+                owner.report(status="failed", reason="failed")
+                return _current_model_unavailable_response(target.backend)
+            target = replace(target, model=loaded_model)
         try:
+            # These are post-acceptance resolution facts.  finalize() merges them into
+            # the same in-progress row without replacing immutable acceptance facts.
+            receipt.backend = target.backend
+            receipt.resolved_model = target.model
+
+            body = copy.deepcopy(dict(body_for_backend))
+            body.pop("_vf_requested_model", None)
+            body["model"] = target.model
+            policy_error, body, execution_body = _prepare_resolved_openai_request(
+                body,
+                request_path=request_path,
+                target=logical_target,
+                execution_service_id=target.backend,
+            )
+            terminal_body = body
+            if policy_error is not None:
+                owner.report(status="failed", reason="failed")
+                return policy_error
+            query = backend_query_string(request.url.query)
+            url = f"{target.host}{request_path}"
+            if query:
+                url = f"{url}?{query}"
+
+            headers = prepare_downstream_headers(
+                request.headers,
+                auth_context,
+                target.backend,
+                request_path,
+            )
+            headers.setdefault("content-type", "application/json")
+            headers.setdefault("accept", "application/json")
+
+            if execution_body is None:
+                execution_body = json.dumps(body).encode()
+            execution_request = LlmExecutionRequest(
+                method=request.method,
+                url=url,
+                headers=headers,
+                body=execution_body,
+                read_timeout=UPSTREAM_READ_TIMEOUT,
+            )
+
+            record_request_shape_stage(
+                receipt.metadata, "outer_egress", body,
+                extra={"body_bytes": request_body_byte_count(execution_body)},
+            )
+
+            cancellation_span = _OuterCancellationSpan(
+                request_id or new_request_id(), receive=request.receive
+            )
+
             try:
                 client, resp = await cancellation_span.dispatch(execution_request)
             except ClientDisconnectedBeforeHeaders:
