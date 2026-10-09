@@ -281,6 +281,7 @@ export default function UsagePage() {
                 >
                   <SelectTrigger
                     id="usage-source"
+                    size="sm"
                     className="w-[210px] max-w-full"
                   >
                     <SelectValue placeholder="All sources" />
@@ -440,7 +441,11 @@ function PersonFilter({
         Person
       </label>
       <Select value={value} onValueChange={onChange} disabled={disabled}>
-        <SelectTrigger id="usage-person" className="w-[180px] max-w-full">
+        <SelectTrigger
+          id="usage-person"
+          size="sm"
+          className="w-[180px] max-w-full"
+        >
           <SelectValue placeholder="Your usage" />
         </SelectTrigger>
         <SelectContent>

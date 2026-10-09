@@ -2085,11 +2085,9 @@ export default function LibraryPage() {
         >
           <SelectTrigger
             aria-label="Person"
-            // Match the segmented control and Filters (40 px) above phone width.
-            className={cn(
-              "sm:data-[size=default]:h-10",
-              place === "sheet" ? "w-full" : "w-auto min-w-40",
-            )}
+            // A toolbar control: 32, like the segments and Filters (44 on a phone).
+            size="sm"
+            className={place === "sheet" ? "w-full" : "w-auto min-w-40"}
           >
             <SelectValue />
           </SelectTrigger>
@@ -2203,6 +2201,7 @@ export default function LibraryPage() {
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Search your creations"
+            size="sm"
             className="pl-9"
           />
         </label>
