@@ -98,47 +98,41 @@ for (const mode of ["light", "dark"] as const) {
         return route.fulfill({ json: mediaFixture });
       });
       await page.goto("/ui/library/");
-      await expect(
-        page.getByText("A clean product render", { exact: false }),
-      ).toBeVisible();
+      // Tiles are named by their prompt; the caption shows its subject.
+      const tile = page.getByRole("button", {
+        name: /Open A clean product render/,
+      });
+      await expect(tile).toBeVisible();
       await auditPage(page);
       await page.screenshot({
         path: `test-results/screens/library-grid-${mode}-${width}.png`,
         fullPage: true,
       });
-      if (width === 390) {
-        await page.getByText("Filter", { exact: true }).click();
-      }
-      await page
-        .getByRole("button", {
-          name: width === 390 ? "Filter kind Images" : "Images",
-          exact: true,
-        })
-        .click();
-      await expect(
-        page.getByRole("button", {
-          name: width === 390 ? "Filter kind Images" : "Images",
-          exact: true,
-        }),
-      ).toHaveAttribute("aria-pressed", "true");
+      // On a phone, kind lives inside Filters (D1.3).
+      if (width === 390)
+        await page.getByRole("button", { name: /^Filters/ }).click();
+      const images = page
+        .getByRole("group", { name: "Kind" })
+        .getByRole("button", { name: "Images", exact: true });
+      await images.click();
+      await expect(images).toHaveAttribute("aria-pressed", "true");
       expect(mediaRequests.at(-1)).toContain("kind=image");
+      if (width === 390) await page.keyboard.press("Escape");
       await page
-        .locator('input[placeholder="Search prompts"]:visible')
+        .locator('input[placeholder="Search your creations"]:visible')
         .fill("desk");
       await expect.poll(() => mediaRequests.at(-1) ?? "").toContain("q=desk");
-      await page
-        .getByRole("button", { name: /A clean product render/ })
-        .click();
-      await expect(page.getByRole("dialog")).toContainText("Workflow");
+      await tile.click();
+      const dialog = page.getByRole("dialog");
+      // Download prepares a fresh signed URL on click (page.spec.tsx checks
+      // the request); the workflow link sits in Details.
       await expect(
-        page
-          .getByRole("dialog")
-          .getByRole("link", { name: "Download", exact: true }),
-      ).toHaveAttribute("href", mediaFixture.assets[0].download_url!);
+        dialog.getByRole("button", { name: "Download", exact: true }),
+      ).toBeVisible();
+      await dialog.getByText("Details", { exact: true }).click();
+      await expect(dialog).toContainText("Workflow");
       await expect(
-        page
-          .getByRole("dialog")
-          .getByRole("link", { name: "Download ComfyUI workflow" }),
+        dialog.getByRole("link", { name: "Download ComfyUI workflow" }),
       ).toHaveAttribute("href", mediaFixture.assets[0].workflow_download_url!);
       await auditPage(page);
       const cards = await page
@@ -226,9 +220,7 @@ test("library delete confirms before mutation", async ({ page }) => {
     return route.fulfill({ json: { ok: true } });
   });
   await page.goto("/ui/library/");
-  await page
-    .getByRole("combobox", { name: "Person", exact: true })
-    .click();
+  await page.getByRole("combobox", { name: "Person", exact: true }).click();
   await page.getByRole("option", { name: /^(You|.+ \(you\))$/ }).click();
   await page.getByRole("button", { name: /A clean product render/ }).click();
   await page
@@ -281,23 +273,18 @@ test("library filters dates and everyone, pages forward and preserves prior item
     page.getByRole("button", { name: /Open A clean product render/ }),
   ).toBeVisible();
   expect(requests.at(-1)).toContain("cursor=cursor_next");
-  await page
-    .getByLabel("Date", { exact: true })
-    .filter({ visible: true })
-    .click();
+  // Model, date and app live in Filters; the owner filter is "Person".
+  await page.getByRole("button", { name: /^Filters/ }).click();
+  await page.getByRole("combobox", { name: "Date", exact: true }).click();
   await page.getByRole("option", { name: "Last 7 days" }).click();
   await expect.poll(() => requests.at(-1) ?? "").toContain("start=");
-  await page
-    .getByLabel("Owner", { exact: true })
-    .filter({ visible: true })
-    .click();
-  await page.getByRole("option", { name: "Mine", exact: true }).click();
+  await page.keyboard.press("Escape");
+  const person = page.getByRole("combobox", { name: "Person", exact: true });
+  await person.click();
+  await page.getByRole("option", { name: /\(you\)$|^You$/ }).click();
   await expect.poll(() => requests.at(-1) ?? "").toContain("scope=me");
-  await page
-    .getByLabel("Owner", { exact: true })
-    .filter({ visible: true })
-    .click();
-  await page.getByRole("option", { name: "Everyone's" }).click();
+  await person.click();
+  await page.getByRole("option", { name: "Everyone", exact: true }).click();
   await expect.poll(() => requests.at(-1) ?? "").toContain("scope=everyone");
   await page
     .getByRole("button", { name: /Open A clean product render/ })
@@ -305,6 +292,7 @@ test("library filters dates and everyone, pages forward and preserves prior item
   await expect(
     page.getByRole("button", { name: "Delete", exact: true }),
   ).toHaveCount(0);
+  await page.getByRole("dialog").getByText("Details", { exact: true }).click();
   await expect(
     page.getByRole("link", { name: "Download ComfyUI workflow" }),
   ).toBeVisible();

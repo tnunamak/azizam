@@ -311,11 +311,22 @@ async function stateLibraryKind(ctx, kind) {
   const lower = kind.toLowerCase();
   await attempt(ctx, "library", `library-${lower}`, async page => {
     const notes = await gotoSettled(page, ctx, "/ui/library/");
-    const group = page.getByRole("group", { name: "Kind" });
+    let group = page.getByRole("group", { name: "Kind" });
+    // On a phone the kinds live inside Filters (D1.3).
+    let inFilters = false;
+    if (!(await group.count())) {
+      const filters = page.getByRole("button", { name: /^Filters/ });
+      if (await filters.count()) {
+        await filters.first().click();
+        group = page.getByRole("dialog").getByRole("group", { name: "Kind" });
+        inFilters = true;
+      }
+    }
     if (!(await group.count())) throw new Skip("No group labelled \"Kind\"");
     const button = group.getByRole("button", { name: kind, exact: true });
     if (!(await button.count())) throw new Skip(`No button named exactly \"${kind}\" in the Kind group`);
     await button.click();
+    if (inFilters) await page.keyboard.press("Escape");
     await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => notes.push("network did not go idle after filter"));
     await page.waitForTimeout(350);
     await shoot(page, ctx, "library", `library-${lower}-grid`, { notes: [...notes] });
