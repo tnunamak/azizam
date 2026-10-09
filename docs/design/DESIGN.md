@@ -180,7 +180,7 @@ D1.1 retuned the scale so weight and size carry the hierarchy (judges: "craft fa
 | PersonMark | `components/product/person-mark.tsx` | A person's initial in their stable hue |
 | BrandMark | `components/product/brand-mark.tsx` | The fish, in the chrome accent |
 | Segmented, Tabs | `components/product/segmented.tsx`, `components/ui/tabs.tsx` | The only segment pattern for filtering, and the tab pattern. D1.5: no sunken track; quiet chips, the chosen one in the accent tint and semibold (the sidebar's "you are here"). Options may carry an icon (hidden on phones, where four segments share the width). Tabs' `line` variant (People) keeps its underline |
-| Disclosure | `app/globals.css` (`summary`) | Every `<summary>` draws one chevron in the text colour that turns 90° when open; a summary with `list-none` draws its own |
+| Disclosure | `app/globals.css` (`summary`) | Every `<summary>` draws one chevron in the text colour that turns 90° when open; a summary with `list-none` draws its own. Disclosure buttons (the Callout's "Show evidence") lead with the same chevron |
 | CopyField | `components/product/copy-field.tsx` | One boxed value with the copy button inside its edge (Cloudflare 6a.2) |
 | Button | `components/ui/button.tsx` | default (primary), outline, secondary, ghost, link, destructive (D1.5 removed `cover`) |
 | Input, Select, Popover, Dialog, Sheet, DropdownMenu, Tooltip, Skeleton | `components/ui/*` | shadcn primitives on the tokens |

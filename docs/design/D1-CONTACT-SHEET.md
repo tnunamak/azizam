@@ -1,6 +1,6 @@
 # D1 contact sheet: Home, Status, Library
 
-Captures: `~/.tmp/azizam-redesign/d1-11/` for D1.4, round 5 (made by `scripts/ui/d1-states-capture`, branch `design/d12-continue`; earlier sets: `d1-10` for D1.3, `d1-8` and `d1-9` for D1.2). D1.4 adds `try-image` and `try-speech` populated captures. One folder per household scenario. File names are `<scenario>_<role>_<surface>_<state>_<theme>_<width>.png`; each has a `_viewport.png` twin (1440×900 or 390×844, not full page, which is what the benchmarks show) and the page text in a `.txt`. A `manifest.json` per folder records console errors and forced states. Every state exists for owner (Sam) and member (Robin), at 390 and 1440 px, in light and dark. Loading, error, empty and expired are forced by request interception and labelled so in the manifest. The fixture's public address is `https://ai.household.example`.
+Captures: `~/.tmp/azizam-redesign/d1-12/` for D1.5, round 6 (made by `scripts/ui/d1-states-capture`, branch `design/d12-continue`; earlier sets: `d1-11` for D1.4, `d1-10` for D1.3, `d1-8` and `d1-9` for D1.2). `try-image` and `try-speech` are populated captures of the Try page; `d1-12/task-flows/` holds six household jobs step by step (`web/e2e/d1-task-flows.mjs`). One folder per household scenario. File names are `<scenario>_<role>_<surface>_<state>_<theme>_<width>.png`; each has a `_viewport.png` twin (1440×900 or 390×844, not full page, which is what the benchmarks show) and the page text in a `.txt`. A `manifest.json` per folder records console errors and forced states. Every state exists for owner (Sam) and member (Robin), at 390 and 1440 px, in light and dark. Loading, error, empty and expired are forced by request interception and labelled so in the manifest. The fixture's public address is `https://ai.household.example`.
 
 Benchmark ids refer to `benchmarks/BOARD.md`. State words and rules: DESIGN.md, "Status model".
 
@@ -8,7 +8,7 @@ Benchmark ids refer to `benchmarks/BOARD.md`. State words and rules: DESIGN.md, 
 
 | State | What it shows, and the trait it meets |
 |---|---|
-| populated, member | Title, then one 14 px line: "Video degraded", "Checked just now" and "See what is happening" (to Status). Apple Home's order: "Recent", four of Robin's creations; then "Make something": her two most-used tasks as 128 px tiles ("Chat, Last used 22m ago", "Make a picture, Last used 39m ago"), then the other tasks as quiet 44 px rows; only Video carries a state ("Degraded"). "Connect an app" in the header on phones, the right-hand panel on desktop. |
+| populated, member | Title, then close under it one 14 px line: "Video degraded", "Checked just now" and "See what is happening" (to Status). Apple Home's order: "Recent", four of Robin's creations (video and audio with a play badge); then "Make something": her two most-used tasks as 128 px tiles ("Chat, Last used 22m ago", "Make a picture, Last used 39m ago"), then the other tasks as 44 px rows in one card with hairlines; only Video carries a state ("Degraded"). "Connect an app" in the header on phones, the right-hand panel on desktop. |
 | populated, owner | The same Home with "Open Status" beside the verdict. |
 | running | "Making your video" with "Video degraded: it may not finish" (wide screens). |
 | new-member | No app has made a request, so the panel opens on the app chooser with real marks. Favourites fall back to pictures and chat. |
@@ -21,7 +21,7 @@ Benchmark ids refer to `benchmarks/BOARD.md`. State words and rules: DESIGN.md, 
 
 | State | What it shows, and the trait it meets |
 |---|---|
-| populated, owner | Verdict "Video degraded". At 1440: the card and "Engines and providers" in the left column, Capabilities as a list in the right. The card: "Video studio is answering with errors", "Inspect Video studio", the fix, Affects ("Video: no other engine serves it." and, on wide screens, "A request from Robin's personal app failed 1h ago."), Last 24 hours ("Degraded since about 1:30 PM · 3 spells: down 4 h, degraded 2 h", then the large strip and its legend), Failed requests. On a phone: title, Affects, Last 24 hours, the fix, the button, "Show evidence". Engines: "Other engines: 4 ready, 1 turned off." "Remote providers: 1 set up." |
+| populated, owner | Verdict "Video degraded". At 1440: the card on the left and Capabilities (one card of rows) on the right, then "Engines and providers" across the full width: each engine's name over what it serves, a wide 24-hour strip, "24/24 h up" and its state. The card: "Video studio is answering with errors", "Inspect Video studio", the fix, Affects ("Video: no other engine serves it." and, on wide screens, "A request from Robin's personal app failed 1h ago."), Last 24 hours ("Degraded since about 1:30 PM", then "Down for 4 hours and degraded for 2 in the last 24 hours, in 3 separate stretches.", the legend, the large strip and clock times 3:30 PM, 9:30 PM, 3:30 AM, 9:30 AM, Now), Failed requests. On a phone: one column, each label above its value: title, Affects, Last 24 hours, the fix, the button, "Show evidence"; no header pill. Below 1280 px the engines fold to "Engines: 4 ready, …" with "Show all". |
 | populated, member | The same verdict as Home; "Your video request failed"; "Your capabilities"; "Model names"; "Your latest requests" (the gateway sends five); the next step follows the failure ("Ask Sam if it does not recover.", not "Check your connection"). |
 | new-member / budget-exhausted, member | Video reads Degraded, "May be slow or fail right now." (it read "Busy, working on other requests" while the owner saw errors; DESIGN backend ask 16). |
 | running, owner | "Running now" lists the two requests in progress, with their people. |
@@ -35,12 +35,48 @@ Benchmark ids refer to `benchmarks/BOARD.md`. State words and rules: DESIGN.md, 
 
 | State | What it shows, and the trait it meets |
 |---|---|
-| populated | Title with the count the grid shows; one control row: search, kind (segmented, with icons), person (the household's marks for "Everyone") and "Filters". Media only, no captions or badges (Midjourney 3a.1–3a.2); hover or focus shows a two-line title of whole words, the maker and the day. Phone: search and Filters on one line, the kind switch on the next, three columns. |
-| library-audio | Covers on deep water in the maker's hue with "Robin · Oct 20" and "Voice" on the top line, the clip's words, waveform, length and play disc; on a phone, the hue and the play disc. |
+| populated | Title with the count the grid shows; one control row: search, kind (chips with icons, the chosen one tinted), person (the household's marks for "Everyone") and "Filters". Date groups with quiet headers: Today, Yesterday, This week, October. Media only, no captions (Apple Photos, Midjourney 3a.1–3a.2); video and audio carry a duration badge; hover or focus shows a two-line title of whole words, the maker and the day. Phone: one row of kind chips, a Search button and an icon Filters button, three columns. |
+| library-audio | Every clip has the same calm face: the sunken surface, its waveform and a "▷ 0:04" badge that plays it in place on wider screens and opens it on a phone. No per-person colour, no words on the tile. The viewer shows the clip on a plain card: "Voice", its words, a primary play button and the waveform as position. |
 | library-video / library-detail | The viewer: media on the stage, designed play, position, times and mute; Share first where the browser has a share sheet, then Download, Copy prompt, Receipt; facts with display names. |
 | expired | "20" in the title and "4 no longer stored" beside it, which opens the list; "Their prompts and receipts remain." for owners and members. |
 | loading / error / empty / filtered empty | Square skeletons; a critical Callout with "Try again"; "No creations yet" with "Make an image"; "Clear filters to see more." |
 | running | Calm placeholders for work in progress. |
+
+## Craft diff (D1.5, round 5 judges and the benchmarks)
+
+Round 5 (set-6): win or tie 82 / 88 / 88 / 88% (flat), Library 71% for every judge, craft 7.2 / 6.6 / 7.5 / 7.0 against about 8.1, coherence failed for 3 of 4 judges. The brief's diagnosis: the gap is in the system, not in single items. "Before" is `d1-11`, "after" is `d1-12`. Each row was checked side by side with the benchmark image named in its heading.
+
+### Library: Apple Photos (iOS), Midjourney explore, Apple Music
+| Measured in the benchmark, or judged | `d1-11` | `d1-12` change |
+|---|---|---|
+| Apple Photos: date groups ("Jul 13, 2025") over the grid; a part-filled row ends a group. q2, q3, x3: no date, owner or type cue per tile | One grid, no dates; media only | Date groups with 14 px muted headers: Today, Yesterday, This week, then the month; part-filled last rows (`groupByDate`) |
+| Apple Photos: a duration badge on video; no captions. q3, x3: cannot tell a video or audio clip from a picture | Video: a play chip; audio: a different cover | One badge for both kinds: a play glyph and "0:04" on a dark scrim, bottom right |
+| q1, q2, q3: multi-coloured voice cards are the loudest thing on the page and break the rhythm; "Alexandria · Oct …" truncates | Deep-water covers washed with seven person hues, words and a top line | One neutral face for every clip: sunken surface, waveform, the badge; no hue, no words (the detector's text-overflow exception is gone) |
+| q1: search, filters and tabs take a third of the phone screen | Search and Filters, then a full-width kind row; first tile at y = 264 | One row: kind chips, a Search button, an icon Filters button; the row ends at y = 180 (was 240) and the first date header sits at y = 213 of 844; title and controls take about 120 px, 14% of the screen. The cost: group headers and part-filled rows show about 9 tiles on the first phone screen where the single grid showed 12 |
+| Midjourney: Images / Videos as quiet chips, the chosen one tinted. q3: "a component kit" | A sunken track with a raised white segment | Chips with no track; the chosen one in the accent tint and semibold, the sidebar's own "you are here" |
+
+### Status: Linear status, incident.io incident
+| Measured in the benchmark, or judged | `d1-11` | `d1-12` change |
+|---|---|---|
+| q1: Degraded is a muddy brown close to Down's red | Brown text (#8F5300) and a brown fill | Clear amber (#B45309 text, #D97706 fill; dark #F5B544 / #F2A93B) that parts from Down's red by lightness: ΔE 25 to 46 under every colour-vision simulation (`scripts/ui/state_palette.py`, DESIGN.md "State palette checks") |
+| q3: the strip has no clock labels; the legend sits under the chart | "24 h ago … Now"; legend under the strip | Legend above the strip; 3:30 PM, 9:30 PM, 3:30 AM, 9:30 AM and Now under it |
+| q2, q3: "3 spells: down 4 h, degraded 2 h" is jargon and wraps mid-phrase | One run-on line | Two lines: "Degraded since about 1:30 PM" (semibold), then "Down for 4 hours and degraded for 2 in the last 24 hours, in 3 separate stretches." at 16 px on wide screens, 14 px on a phone |
+| q3, x3: on a phone the evidence is squeezed into a narrow right column | Label column beside values at 390 | One column on a phone: each label in 12 px medium above its value |
+| Linear: one wide strip per row under the name, inside one card. q3: the lower half is empty beside a plain "Engines and providers" box | Folded summary box under the card; right column ends at y ≈ 580 | At 1280 px and wider the engine table spans the full width under the card and Capabilities; each row is name over "Serves", a strip that takes the free width, hours up and state; rows are one height (no per-row "Hour by hour") |
+| q3: "the degraded warning is repeated three times" (header pill, status row, video row) | Header pill on every phone page | No header pill on Home and Status, which open with their own verdict |
+
+### Home: Apple Home (iPhone)
+| Measured in the benchmark, or judged | `d1-11` | `d1-12` change |
+|---|---|---|
+| Apple Home: a section title sits about 16 px over its content, sections about 32 px apart. q1, q2, q3: a dead gap above Recent | On a phone the status line sits 58 px under the title and "Recent" 77 px under it | Status line 47 px under the title (`PageHeader tight`) and "Recent" 68 px under it, close to the 45 px between Recent's tiles and "Make something". A modest change: the 44 px tap height of "Open Status" keeps a floor under the line |
+| Apple Home: scenes as tiles, then accessories as tiles of one family. q1, q2, x3: two big cards then a bare list | Two 128 px tiles, then bare rows | The rows sit in one card under the tiles, with hairlines between them (two columns on a wide card) |
+
+### Across surfaces (coherence)
+| Judged | `d1-11` | `d1-12` change |
+|---|---|---|
+| q3: the 13-item sidebar gives Engines and Providers the weight of Home and Library | Two groups of equal weight | The owner's Gateway group sits under a hairline with 28 px rows, 12 px text and subtle ink |
+| Three judges failed coherence | Three row styles (task rows, capability rows with 32 px tinted tiles, capability chips); the browser's disclosure triangle; a sunken tab track on Try | One row family (icon in its colour, name, state word, hairlines inside one card) on Home, Status owner and member; one chevron for every disclosure (including "Show evidence"); tabs and segments as chips |
+| Blocked shared Busy's blue family (ΔE 4 to 6 for protan and deutan readers) | Violet #8B6FD1 fill | Deep violet in light theme (#5B3A9E), pale lavender in dark (#D6C4FF): ΔE 19 to 27 from Busy |
 
 ## Craft diff (D1.4, round 4 judges and the benchmarks)
 
@@ -211,12 +247,12 @@ Conclusion: the judges' "no poster" was audio tiles that looked like un-postered
 
 ## Gate results for this set
 
-D1.4 on `design/d12-continue` (main edc0388 merged). Fixture servers on ports 18840 to 18960; nothing on 5000.
+D1.5 on `design/d12-continue` (no main merge this round; main edc0388 is the last merged). Fixture servers on ports 18940 to 18990; nothing on 5000.
 
-- axe WCAG 2 AA: 0 violations over 32 page checks (owner and member; Home, Status, Library, viewer; light and dark; 1440 and 390). Horizontal overflow, clipped text, targets under 44 px at 390, tab stops without visible focus and console errors: 0 (`~/.tmp/azizam-redesign/d1-11-gates`).
-- Impeccable detector on 16 snapshots (`d1-11-snap`): Sonner's toast height transition (recorded exception) and `text-overflow` on an audio cover's top line on owner Library (recorded D1.4 exception).
-- Token drift: 0.
-- lint.py on a copy of the production data (eleven engines blocked): Home, Library and member Status pass. Owner Status reads 86 words against 60 (D1.3: 88), so it did not grow.
-- Unit tests: vitest 533 in the main config plus all 11 folder configs pass.
-- Playwright, main config: the full run passed 609 of 612. The three failures were mine and are fixed (a Library spec still opened Filters on a phone; the new Unknown card fired for never-checked capabilities); the affected spec files then passed 85 of 85, and member Status and copy contracts 23 of 23. Live-data config: 4 of 4.
-- Hermetic Python at a64514a (with the fixture rename): 5789 passed, 0 failed.
+- axe WCAG 2 AA: 0 violations over 32 page checks (owner and member; Home, Status, Library, viewer; light and dark; 1440 and 390). Horizontal overflow, clipped text, targets under 44 px at 390, tab stops without visible focus and console errors: 0 (`~/.tmp/azizam-redesign/d1-12-gates`). The audio play badge is 24 px, so phones show a plain badge and open the clip instead.
+- Impeccable detector on 16 snapshots (`d1-12-snap`): only Sonner's toast height transition (recorded exception). D1.4's `text-overflow` exception is gone with the audio covers.
+- Token drift: 0. State palette (`scripts/ui/state_palette.py --fail`): passes.
+- lint.py on a copy of the production data (eleven engines blocked): Home, Library and member Status pass. Owner Status reads 212 words against 60 (D1.4: 86). It grew because at 1280 px and wider the engine table is now open under the card (the brief's "fill the empty lower half"), and the production copy has 18 engines and 2 providers; below 1280 px the table still folds to one line. This needs a decision (see the report).
+- Unit tests: vitest 534 in the main config plus all 11 folder configs (198) pass. `tsc` and ESLint: clean.
+- Playwright, main config: the full run on the build before the last fixes passed 608 of 612. The four failures were mine: two specs asserted D1.4 behaviour that D1.5 changed on purpose (the phone tour clicked the in-place play badge; a provider row header now reads "OpenRouter Remote provider"); fixed in e8e7813, and the ten affected spec files then passed 115 of 115 on the final build. Live-data config: 4 of 4.
+- Hermetic Python at d4f1399: 5789 passed, 0 failed. Every later commit changes `web/` only.
