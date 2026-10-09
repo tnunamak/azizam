@@ -128,3 +128,18 @@ def test_member_prompt_memory_rejects_bad_settings(tmp_path: Path) -> None:
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "invalid_prompt_memory_settings"
     assert admin_store.get_prompt_memory_preference(user["id"], path=admin_db) is None
+
+
+def test_member_shorter_retention_removes_expired_saved_prompt(tmp_path: Path) -> None:
+    admin_db = tmp_path / "admin.db"
+    prompt_db = tmp_path / "prompt.db"
+    admin_store.init_db(admin_db)
+    user = admin_store.upsert_oidc_user("issuer", "alice", email="alice@example.test", path=admin_db)
+    prompt_memory.put("img_old", user["id"], "old secret", kept_until=None,
+                      created_at=int(time.time()) - 100 * 86400, path=prompt_db)
+    response = _client(admin_db, prompt_db, user_id=user["id"]).put(
+        "/me/api/prompt-memory", json={"remember": True, "retention": "3_months"},
+        headers={"x-azizam-user-action": "1"},
+    )
+    assert response.status_code == 200
+    assert prompt_memory.get("img_old", user["id"], path=prompt_db) is None

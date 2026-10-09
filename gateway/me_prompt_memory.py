@@ -92,6 +92,10 @@ def create_me_prompt_memory_router(
             updated_by=str(session.subject),
             path=admin_db_path,
         )
+        from gateway import prompt_memory
+
+        prompt_memory.tighten_retention(str(retention), person_id=str(session.subject),
+                                        path=prompt_memory_path)
         return _settings_response(str(session.subject), request)
 
     @router.delete("/prompt-memory/prompts", include_in_schema=False)

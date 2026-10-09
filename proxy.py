@@ -6953,6 +6953,7 @@ def store_asset_bytes(
         prompt_memory.put(
             asset_id, decision.person_id, text,
             kept_until=decision.kept_until, metadata=metadata,
+            admin_path=ADMIN_STORE.path, created_at=decision.created_at,
         )
     return asset_id
 
@@ -7067,8 +7068,8 @@ def image_cache_path(image_id: str) -> Optional[Path]:
 def build_signed_asset_url(request: Request, asset_id: str, metadata_mode: str | None = None) -> str:
     """Build a signed, hostname-aware URL for a generated asset.
 
-    The URL carries ``md=full|none``: the metadata mode the bytes are
-    delivered with. Default is the current request's resolved mode.
+    The URL carries ``md=full|none``. Its default is ``none`` because a
+    transferable bearer URL cannot establish the maker's identity.
     """
     mode = metadata_mode or provenance.METADATA_NONE
     expires = int(time.time()) + IMAGE_SIGNED_URL_TTL
@@ -7517,11 +7518,11 @@ def _build_image_response_payload(
         image_id = store_image_bytes(encoded, owner_key_hash=owner_key_hash, suffix=suffix)
         item: dict[str, Any] = {
             "asset_id": image_id,
-            "asset_url": build_signed_asset_url(request, image_id, mode),
+            "asset_url": build_signed_asset_url(request, image_id),
             "media_type": mime_type,
         }
         if response_format == "url":
-            item["url"] = build_signed_image_url(request, image_id, mode)
+            item["url"] = build_signed_image_url(request, image_id)
         else:
             # Delivered copy: the request/profile decides; the stored copy is untouched.
             delivered = media_delivery.deliver_bytes(encoded, suffix, mode)
@@ -10690,7 +10691,8 @@ async def _submit_video_graph(
                 if memory is not None and memory.keep and context.prompt_text:
                     prompt_memory.put(
                         f"video_{prompt_id}", memory.person_id, context.prompt_text,
-                        kept_until=memory.kept_until,
+                        kept_until=memory.kept_until, admin_path=ADMIN_STORE.path,
+                        created_at=memory.created_at,
                     )
             except Exception:
                 pass
@@ -12026,7 +12028,8 @@ async def proxy_comfy_video_content(
                         owner_key_hash=record.get("owner_key_hash") if isinstance(record.get("owner_key_hash"), str) else None,
                     )
                     if person_id:
-                        prompt_memory.move(f"video_{prompt_id}", asset_id, person_id, metadata=workflow_metadata)
+                        prompt_memory.move(f"video_{prompt_id}", asset_id, person_id,
+                                           metadata=workflow_metadata, admin_path=ADMIN_STORE.path)
                     record["asset_id"] = asset_id
                     _persist_video_record(prompt_id)
                     from gateway import media_ingestion
@@ -14537,11 +14540,11 @@ def _identity_store_image(request: Request, auth_context: AuthContext, content: 
     image_id = store_image_bytes(encoded, owner_key_hash=_asset_owner_key(auth_context), suffix=".png")
     item: dict[str, Any] = {
         "asset_id": image_id,
-        "asset_url": build_signed_asset_url(request, image_id, mode),
+        "asset_url": build_signed_asset_url(request, image_id),
         "media_type": mime_type,
     }
     if response_format == "url":
-        item["url"] = build_signed_image_url(request, image_id, mode)
+        item["url"] = build_signed_image_url(request, image_id)
     else:
         delivered = media_delivery.deliver_bytes(encoded, ".png", mode)
         item["b64_json"] = base64.b64encode(delivered).decode("utf-8")
@@ -15033,6 +15036,8 @@ app.include_router(create_settings_router(
     },
     instance_defaults=_instance_presentation_defaults,
     overrides_provider=ADMIN_STORE.operator_overrides,
+    prompt_memory_path=media_jobs.DB_PATH,
+    on_prompt_memory_kill=lambda: _purge_prompt_payload_files(),
 ))
 app.include_router(create_activity_router(auth=ADMIN_AUTH, admin_path=ADMIN_DB_PATH))
 app.include_router(build_setup_api_router(lambda request: {
@@ -19917,6 +19922,15 @@ def _image_media_job_payload_path(job_id: str) -> Path:
     return IMAGE_MEDIA_JOB_PAYLOAD_DIR / f"{job_id}.json"
 
 
+def _purge_prompt_payload_files() -> None:
+    """Remove pending durable request bodies when the owner disables memory."""
+    if not IMAGE_MEDIA_JOB_PAYLOAD_DIR.exists():
+        return
+    for pattern in ("mj_*.json", "mj_*.json.tmp"):
+        for path in IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob(pattern):
+            path.unlink(missing_ok=True)
+
+
 _EPHEMERAL_MEDIA_JOB_PAYLOADS: dict[str, dict[str, Any]] = {}
 
 
@@ -19949,20 +19963,21 @@ def _persist_image_media_job_payload(
     memory = prompt_memory.decide_for_app(
         getattr(identity, "app_id", None), body, admin_path=ADMIN_STORE.path,
     )
-    if not memory.keep:
-        # A forgotten async job can run in this process but cannot survive a
-        # restart: a durable request spool would itself retain the prompt.
-        _EPHEMERAL_MEDIA_JOB_PAYLOADS[job_id] = payload
-        return
-    IMAGE_MEDIA_JOB_PAYLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    path = _image_media_job_payload_path(job_id)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
-    try:
-        os.chmod(tmp, 0o600)
-    except Exception:
-        pass
-    tmp.replace(path)
+    with prompt_memory.retention_guard(ADMIN_STORE.path, memory.person_id) as policy:
+        if not memory.keep or policy["never_keep"] or not policy["remember"]:
+            # A forgotten async job can run in this process but cannot survive
+            # a restart: a durable request spool would retain the prompt.
+            _EPHEMERAL_MEDIA_JOB_PAYLOADS[job_id] = payload
+            return
+        IMAGE_MEDIA_JOB_PAYLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        path = _image_media_job_payload_path(job_id)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+        try:
+            os.chmod(tmp, 0o600)
+        except Exception:
+            pass
+        tmp.replace(path)
 
 
 def _load_image_media_job_payload(job_id: str) -> dict[str, Any] | None:
@@ -19993,8 +20008,9 @@ def _prune_orphaned_media_job_payloads(*, now: float | None = None) -> int:
         return 0
     cutoff = (time.time() if now is None else now) - media_jobs.RETAIN_S
     removed = 0
-    for path in IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json"):
-        job_id = path.stem
+    for path in (*IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json"),
+                 *IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json.tmp")):
+        job_id = path.name.split(".json", 1)[0]
         job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
         if (job is None or job.get("status") in media_jobs.TERMINAL_STATUSES
                 or path.stat().st_mtime < cutoff):
@@ -21477,7 +21493,12 @@ async def _run_video_media_job(job_id: str) -> None:
                 admin_path=ADMIN_STORE.path,
             )
             if person_id:
-                prompt_memory.move(f"video_{_prompt_id_from_video_id(video_id)}", asset_id, person_id)
+                prompt_memory.move(f"video_{_prompt_id_from_video_id(video_id)}", asset_id, person_id,
+                                   admin_path=ADMIN_STORE.path)
+                prompt_id = _prompt_id_from_video_id(video_id)
+                if prompt_id and prompt_id in _video_job_records:
+                    _video_job_records[prompt_id]["asset_id"] = asset_id
+                    _persist_video_record(prompt_id)
             asset = video_media_job_http.completed_asset_from_stored_video(
                 filename=filename,
                 asset_id=asset_id,
@@ -25845,15 +25866,17 @@ async def create_response(request: Request):
                         final_obj = translator.build_final_response()
                         if store:
                             try:
-                                responses_store.save(
-                                    response_id,
-                                    created_at=created_at,
-                                    model=final_obj.get("model"),
-                                    previous_response_id=req_body.get("previous_response_id"),
-                                    request_json=req_body,
-                                    response_json=final_obj,
-                                    api_key_name=_api_key_name(auth_context),
-                                )
+                                with prompt_memory.retention_guard(ADMIN_STORE.path, prompt_decision.person_id) as policy:
+                                    if not policy["never_keep"] and policy["remember"]:
+                                        responses_store.save(
+                                            response_id,
+                                            created_at=created_at,
+                                            model=final_obj.get("model"),
+                                            previous_response_id=req_body.get("previous_response_id"),
+                                            request_json=req_body,
+                                            response_json=final_obj,
+                                            api_key_name=_api_key_name(auth_context),
+                                        )
                             except Exception:  # noqa: BLE001
                                 for ev in translator.fail("Azizam could not persist the response."):
                                     yield ev
@@ -25921,15 +25944,17 @@ async def create_response(request: Request):
 
             if store:
                 try:
-                    responses_store.save(
-                        response_id,
-                        created_at=created_at,
-                        model=resp_json.get("model"),
-                        previous_response_id=req_body.get("previous_response_id"),
-                        request_json=req_body,
-                        response_json=resp_json,
-                        api_key_name=_api_key_name(auth_context),
-                    )
+                    with prompt_memory.retention_guard(ADMIN_STORE.path, prompt_decision.person_id) as policy:
+                        if not policy["never_keep"] and policy["remember"]:
+                            responses_store.save(
+                                response_id,
+                                created_at=created_at,
+                                model=resp_json.get("model"),
+                                previous_response_id=req_body.get("previous_response_id"),
+                                request_json=req_body,
+                                response_json=resp_json,
+                                api_key_name=_api_key_name(auth_context),
+                            )
                 except Exception:  # noqa: BLE001
                     owner.report(status="failed", reason="failed")
                     return _responses_error(

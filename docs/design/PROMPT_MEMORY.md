@@ -24,7 +24,8 @@ both text and that workflow copy. The generated media itself remains.
 
 OpenAI image URLs are bearer capabilities and are commonly fetched without the
 original API key. A transferable signed URL cannot prove who is reading it.
-Therefore signed URLs are `metadata=none`; a full metadata fetch requires an
+Therefore signed URLs in generation responses are `metadata=none`, even when
+the direct base64 response follows a `full` profile. A full metadata fetch requires an
 authenticated maker on an API content route. Old signed URLs with `md=full`
 must fail closed. The `full` profile default still governs the direct response
 to the maker's own authenticated API request.
@@ -33,6 +34,8 @@ No-key LAN calls and service Apps have no person. Their prompts are not saved:
 there is no defensible maker-only viewer or retention setting for them. They
 still receive their generated media. Existing owner instance views retain
 metadata about these calls, without prompt-derived content.
+Their direct API response follows the caller's metadata profile because it is
+the caller's own output; the gateway cache and later signed URLs remain clean.
 
 Azizam cannot promise prompt erasure from an inference engine's own history,
 external backend output directory, filesystem snapshots, or a recipient's
@@ -64,6 +67,10 @@ default. The effective expiry is the shorter of the member choice and owner
 cap, measured from request time. The kill switch wins over all other choices.
 Enabling the kill switch also purges previously kept prompt records for every
 member. Turning it off later cannot restore them.
+Changing a member's retention or the owner cap shortens existing deadlines;
+it does not lengthen an earlier deadline. Prompt-bearing writes recheck these
+settings under an admin database write lock, so an in-flight generation cannot
+restore a prompt after the owner switches memory off.
 
 | Viewer | Own asset prompt/title | Another person's prompt/title | Full workflow download |
 | --- | --- | --- | --- |
@@ -104,7 +111,9 @@ rows immediately at the database level; SQLite's normal page/WAL behavior and
 backups mean physical byte erasure is not promised. Media and its stable asset
 ID remain. New asset bytes are stripped on store. Historical asset files lack
 reliable maker attribution, so no historical prompt is imported; migration
-scrubs their embedded prompt/workflow before further full delivery. Historical
+strips their embedded prompt/workflow on delivery. Rewriting stored bytes
+would invalidate content-addressed asset IDs, so historical cache files are
+not rewritten in place. Historical
 video records are purged of the prompt field on load/save, and no Library read
 falls back to embedded metadata. Existing Responses rows keep their original
 seven-day expiry; they are not retroactively reclassified as media prompts.

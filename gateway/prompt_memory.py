@@ -9,9 +9,10 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
 
 from gateway import admin_store, media_jobs, media_metadata
 
@@ -42,6 +43,7 @@ class Decision:
     keep: bool
     reason: str
     kept_until: int | None = None
+    created_at: int | None = None
 
 
 class PromptModeError(ValueError):
@@ -130,20 +132,54 @@ def decide(
     """Resolve policy before any payload, media or Responses persistence."""
     mode = requested_mode(request_body)
     policy = {**HOUSEHOLD_DEFAULTS, **(household or {})}
-    if not person_id:
-        return Decision(None, False, "no_person")
     if policy["never_keep"]:
         return Decision(person_id, False, "server_disabled")
     if mode == "forget" or responses_store is False:
         return Decision(person_id, False, "request_forget")
+    if not person_id:
+        return Decision(None, False, "no_person")
     preference = {**MEMBER_DEFAULTS, "remember": policy["default_remember"], **(member or {})}
     if not preference.get("remember", policy["default_remember"]):
         return Decision(person_id, False, "member_disabled")
+    started = int(time.time()) if now is None else now
     member_period = RETENTION_SECONDS.get(preference.get("retention", "never"))
     cap_period = RETENTION_SECONDS.get(policy.get("retention_cap", "never"))
     finite = [period for period in (member_period, cap_period) if period is not None]
-    expiry = (int(time.time()) if now is None else now) + min(finite) if finite else None
-    return Decision(person_id, True, "remembered", expiry)
+    expiry = started + min(finite) if finite else None
+    return Decision(person_id, True, "remembered", expiry, started)
+
+
+@contextmanager
+def retention_guard(admin_path: Path | None, person_id: str | None = None) -> Iterator[dict[str, Any]]:
+    """Hold the admin setting's write lock through a prompt-bearing write.
+
+    A kill-switch update waits for this write, then purges it. A write that
+    starts after the update sees the new policy and is refused. The lock works
+    across gateway processes because it is a SQLite transaction.
+    """
+    if admin_path is None:
+        yield {**HOUSEHOLD_DEFAULTS, **MEMBER_DEFAULTS}
+        return
+    conn = sqlite3.connect(str(admin_path), timeout=30)
+    conn.execute("PRAGMA busy_timeout=30000")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT value_json FROM operator_settings WHERE key='prompt_memory'").fetchone()
+        household = {**HOUSEHOLD_DEFAULTS, **(json.loads(row[0]) if row else {})}
+        member = None
+        if person_id:
+            member = conn.execute(
+                "SELECT remember, retention FROM prompt_memory_preferences WHERE user_id=?", (person_id,),
+            ).fetchone()
+        policy = {**household, "remember": bool(member[0]) if member else household["default_remember"],
+                  "retention": member[1] if member else MEMBER_DEFAULTS["retention"]}
+        yield policy
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def household_settings(*, admin_path: Path | None = None) -> dict[str, Any]:
@@ -242,21 +278,56 @@ def init_db(*, path: Path | None = None) -> None:
 def put(
     asset_id: str, person_id: str, prompt_text: str, *, kept_until: int | None,
     metadata: Mapping[str, str] | None = None, path: Path | None = None,
-) -> None:
+    admin_path: Path | None = None, created_at: int | None = None,
+) -> bool:
     if not asset_id or not person_id or not isinstance(prompt_text, str) or not prompt_text:
         raise ValueError("asset, maker and nonempty prompt text are required")
+    started = int(time.time()) if created_at is None else created_at
+    with retention_guard(admin_path, person_id) as policy:
+        if policy["never_keep"] or not policy["remember"]:
+            return False
+        periods = [RETENTION_SECONDS[value] for value in
+                   (policy["retention"], policy["retention_cap"])
+                   if RETENTION_SECONDS[value] is not None]
+        limits = [kept_until] if kept_until is not None else []
+        limits.extend(started + period for period in periods)
+        deadline = min(limits) if limits else None
+        if deadline is not None and deadline <= int(time.time()):
+            return False
+        conn = _connect(path)
+        try:
+            conn.execute(
+                "INSERT INTO asset_prompts(asset_id,person_id,prompt_text,metadata_json,created_at,kept_until) "
+                "VALUES(?,?,?,?,?,?) ON CONFLICT(asset_id,person_id) DO UPDATE SET "
+                "prompt_text=excluded.prompt_text,metadata_json=excluded.metadata_json,"
+                "created_at=excluded.created_at,kept_until=excluded.kept_until",
+                (asset_id, person_id, prompt_text,
+                 json.dumps(dict(metadata), ensure_ascii=False) if metadata else None,
+                 started, deadline),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    return True
+
+
+def tighten_retention(period: str, *, person_id: str | None = None,
+                      path: Path | None = None, now: int | None = None) -> int:
+    """Shorten existing deadlines; never restore or lengthen a prompt."""
+    seconds = RETENTION_SECONDS[period]
+    if seconds is None:
+        return 0
     conn = _connect(path)
     try:
-        conn.execute(
-            "INSERT INTO asset_prompts(asset_id,person_id,prompt_text,metadata_json,created_at,kept_until) "
-            "VALUES(?,?,?,?,?,?) ON CONFLICT(asset_id,person_id) DO UPDATE SET "
-            "prompt_text=excluded.prompt_text,metadata_json=excluded.metadata_json,"
-            "created_at=excluded.created_at,kept_until=excluded.kept_until",
-            (asset_id, person_id, prompt_text,
-             json.dumps(dict(metadata), ensure_ascii=False) if metadata else None,
-             int(time.time()), kept_until),
-        )
+        where = "WHERE person_id=?" if person_id else ""
+        args: tuple[Any, ...] = (person_id,) if person_id else ()
+        count = conn.execute(
+            "UPDATE asset_prompts SET kept_until=MIN(COALESCE(kept_until, created_at+?), created_at+?) " + where,
+            (seconds, seconds, *args),
+        ).rowcount
+        conn.execute("DELETE FROM asset_prompts WHERE kept_until<=?", (int(time.time()) if now is None else now,))
         conn.commit()
+        return count
     finally:
         conn.close()
 
@@ -312,27 +383,35 @@ def delete_asset(asset_id: str, *, path: Path | None = None) -> int:
         conn.close()
 
 
-def move(source_id: str, asset_id: str, person_id: str, *, metadata: Mapping[str, str] | None = None, path: Path | None = None) -> bool:
+def move(source_id: str, asset_id: str, person_id: str, *, metadata: Mapping[str, str] | None = None,
+         path: Path | None = None, admin_path: Path | None = None) -> bool:
     """Move an in-flight video prompt to its finished asset in one transaction."""
-    conn = _connect(path)
-    try:
-        row = conn.execute(
-            "SELECT prompt_text,metadata_json,created_at,kept_until FROM asset_prompts "
-            "WHERE asset_id=? AND person_id=?", (source_id, person_id),
-        ).fetchone()
-        if row is None:
+    with retention_guard(admin_path, person_id) as policy:
+        if policy["never_keep"] or not policy["remember"]:
             return False
-        merged = dict(metadata) if metadata else json.loads(row["metadata_json"] or "{}")
-        conn.execute(
-            "INSERT OR REPLACE INTO asset_prompts(asset_id,person_id,prompt_text,metadata_json,created_at,kept_until) "
-            "VALUES(?,?,?,?,?,?)",
-            (asset_id, person_id, row["prompt_text"], json.dumps(merged, ensure_ascii=False), row["created_at"], row["kept_until"]),
-        )
-        conn.execute("DELETE FROM asset_prompts WHERE asset_id=? AND person_id=?", (source_id, person_id))
-        conn.commit()
-        return True
-    finally:
-        conn.close()
+        conn = _connect(path)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT prompt_text,metadata_json,created_at,kept_until FROM asset_prompts "
+                "WHERE asset_id=? AND person_id=?", (source_id, person_id),
+            ).fetchone()
+            if row is None:
+                return False
+            destination = conn.execute(
+                "SELECT metadata_json FROM asset_prompts WHERE asset_id=? AND person_id=?", (asset_id, person_id),
+            ).fetchone()
+            merged = dict(metadata) if metadata else json.loads((destination or row)["metadata_json"] or "{}")
+            conn.execute(
+                "INSERT OR REPLACE INTO asset_prompts(asset_id,person_id,prompt_text,metadata_json,created_at,kept_until) "
+                "VALUES(?,?,?,?,?,?)",
+                (asset_id, person_id, row["prompt_text"], json.dumps(merged, ensure_ascii=False), row["created_at"], row["kept_until"]),
+            )
+            conn.execute("DELETE FROM asset_prompts WHERE asset_id=? AND person_id=?", (source_id, person_id))
+            conn.commit()
+            return True
+        finally:
+            conn.close()
 
 
 def prune(*, path: Path | None = None, now: int | None = None) -> int:

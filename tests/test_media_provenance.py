@@ -359,10 +359,10 @@ class ImagePayloadTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(media_metadata.png_text_chunks(base64.b64decode(down["data"][0]["b64_json"])), {})
         self.assertIn("workflow", media_metadata.png_text_chunks(base64.b64decode(up["data"][0]["b64_json"])))
 
-    def test_url_delivery_mode_is_signed_into_the_url(self) -> None:
+    def test_signed_url_defaults_to_clean_media_even_for_full_profile(self) -> None:
         none = self._payload(mode_default="none", requested=None, response_format="url")
         full = self._payload(mode_default="none", requested="full", response_format="url")
-        for payload, expected in ((none, "none"), (full, "full")):
+        for payload, expected in ((none, "none"), (full, "none")):
             for key in ("url", "asset_url"):
                 query = parse_qs(urlparse(payload["data"][0][key]).query)
                 self.assertEqual(query["md"], [expected])
@@ -371,7 +371,8 @@ class ImagePayloadTests(unittest.IsolatedAsyncioTestCase):
         got_full = client.get(self._relative(full["data"][0]["asset_url"]))
         self.assertEqual(got_none.status_code, 200)
         self.assertEqual(media_metadata.png_text_chunks(got_none.content), {})
-        self.assertEqual(got_full.status_code, 403)
+        self.assertEqual(got_full.status_code, 200)
+        self.assertEqual(media_metadata.png_text_chunks(got_full.content), {})
 
     def test_signed_url_cannot_be_flipped_to_full(self) -> None:
         none = self._payload(mode_default="none", requested=None, response_format="url")
@@ -700,7 +701,7 @@ class SpeechRouteTests(unittest.TestCase):
         self.auth = proxy.AuthContext(identity=proxy.AuthIdentity(name="n", key_hash="sha256:n"))
         self.assertNotIn("engine-generated-note", self._tags(self._speak().content))
         self.auth = proxy.NO_AUTH_CONTEXT
-        self.assertNotIn("engine-generated-note", self._tags(self._speak().content))
+        self.assertEqual(self._speak().content, self.wav)
 
     def test_bad_value_is_a_400(self) -> None:
         response = self._speak(extensions={NS: {"metadata": "sometimes"}})

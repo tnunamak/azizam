@@ -1,5 +1,6 @@
 """Hermetic settings journeys: authorization, durable writes and redacted export."""
 import json
+import time
 
 import pytest
 from fastapi import FastAPI, Request
@@ -58,6 +59,22 @@ def test_prompt_memory_owner_kill_switch_purges_existing_prompts(settings, tmp_p
     )
     assert updated.status_code == 200
     assert prompt_memory.get("img_one", "person-a", path=prompt_db) is None
+
+
+def test_prompt_memory_owner_cap_tightens_existing_prompts(settings, tmp_path, monkeypatch):
+    client, _, _ = settings
+    prompt_db = tmp_path / "media_jobs.db"
+    monkeypatch.setattr(media_jobs, "DB_PATH", prompt_db)
+    prompt_memory.put("img_old", "person-a", "old secret", kept_until=None,
+                      created_at=int(time.time()) - 100 * 86400, path=prompt_db)
+    revision = client.get("/admin/api/settings/prompt-memory", headers=OWNER).json()["revision"]
+    response = client.put(
+        "/admin/api/settings/prompt-memory",
+        json={"default_remember": True, "never_keep": False, "retention_cap": "3_months"},
+        headers={**OWNER, "If-Match": revision},
+    )
+    assert response.status_code == 200
+    assert prompt_memory.get("img_old", "person-a", path=prompt_db) is None
 
 
 @pytest.mark.parametrize("route", ["instance", "defaults", "lan-placeholder-keys", "effective", "effective/export"])

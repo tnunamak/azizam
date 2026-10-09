@@ -86,7 +86,8 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
                            config_provider: Callable[[], Mapping[str, Any]],
                            instance_defaults: Callable[[], Mapping[str, Any]] | None = None,
                            overrides_provider: Callable[[], Mapping[str, Any]] | None = None,
-                           prompt_memory_path: Path | None = None) -> APIRouter:
+                           prompt_memory_path: Path | None = None,
+                           on_prompt_memory_kill: Callable[[], None] | None = None) -> APIRouter:
     router = APIRouter(prefix="/admin/api/settings", tags=["admin"])
 
     def guard(request: Request) -> AdminContext | JSONResponse:
@@ -141,7 +142,7 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
             return ctx
         try:
             body = await request.json()
-            if not isinstance(body, Mapping):
+            if not isinstance(body, Mapping) or set(body) != {"default_remember", "never_keep", "retention_cap"}:
                 raise ValueError
             body = _validate_prompt_memory(body)
         except (ValueError, TypeError):
@@ -164,6 +165,10 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
             return JSONResponse({"error": {"code": "settings_conflict", "message": "Settings changed elsewhere; reload to see the latest"}}, status_code=409)
         if body["never_keep"]:
             prompt_memory.delete_all(path=prompt_memory_path)
+            if on_prompt_memory_kill is not None:
+                on_prompt_memory_kill()
+        else:
+            prompt_memory.tighten_retention(body["retention_cap"], path=prompt_memory_path)
         return prompt_memory_response()
 
     @router.put("/instance")

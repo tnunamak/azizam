@@ -46,7 +46,8 @@ class DeliveryContext:
 
     @property
     def mode(self) -> str:
-        if self.prompt_decision is not None and not self.prompt_decision.keep:
+        if (self.prompt_decision is not None and not self.prompt_decision.keep
+                and self.prompt_decision.reason != "no_person"):
             return provenance.METADATA_NONE
         return provenance.resolve_metadata_mode(self.requested_mode, self.profile_default)
 
