@@ -895,8 +895,7 @@ def _render_video_jobs(jobs: list[dict]) -> str:
         '<table><thead><tr>'
         '<th>Status</th><th>Progress</th><th>Phase</th><th>Step/Total</th>'
         '<th>Alias</th><th>Workflow</th><th>Size</th><th>Sec</th>'
-        '<th>Elapsed</th><th>ETA</th><th>Key</th><th>Prompt (truncated)</th>'
-        '<th>prompt_id</th><th>Error</th>'
+        '<th>Elapsed</th><th>ETA</th><th>Key</th><th>prompt_id</th><th>Error</th>'
         '</tr></thead><tbody>'
     ]
     def _fmt_secs(s):
@@ -933,7 +932,6 @@ def _render_video_jobs(jobs: list[dict]) -> str:
             f'<td class="mono">{_fmt_secs(j.get("elapsed_seconds"))}</td>'
             f'<td class="mono">{_fmt_secs(j.get("eta_seconds"))}</td>'
             f'<td>{_esc(j.get("key_name"))}</td>'
-            f'<td class="mono small">{_esc(j.get("prompt_truncated") or "")}</td>'
             f'<td class="mono small">{_esc(j.get("prompt_id"))}</td>'
             f'<td class="err small">{_esc(j.get("error") or "")}</td>'
             f'</tr>'
@@ -1730,7 +1728,7 @@ def _render_recent_videos(v: list[dict]) -> str:
     rows = [
         '<table><thead><tr>'
         '<th>Filename</th><th>Alias</th><th>Duration</th><th>Dimensions</th>'
-        '<th>Audio</th><th>Size</th><th>Age</th><th>Prompt</th>'
+        '<th>Audio</th><th>Size</th><th>Age</th>'
         '</tr></thead><tbody>'
     ]
     for r in v:
@@ -1753,7 +1751,6 @@ def _render_recent_videos(v: list[dict]) -> str:
             if err else ""
         )
         path_attr = _esc(r.get("path") or "")
-        prompt_html = _render_prompt_cell(r.get("prompt"))
         rows.append(
             f'<tr>'
             f'<td class="mono" title="{path_attr}">{_esc(r.get("filename"))}{err_html}</td>'
@@ -1763,7 +1760,6 @@ def _render_recent_videos(v: list[dict]) -> str:
             f'<td>{audio_html}</td>'
             f'<td class="mono">{_bytes(r.get("size_bytes"))}</td>'
             f'<td title="{_esc(_abs_utc(r.get("mtime")))}">{_ago(r.get("mtime"))}</td>'
-            f'<td>{prompt_html}</td>'
             f'</tr>'
         )
     rows.append("</tbody></table>")
@@ -1775,7 +1771,7 @@ def _render_recent_images(v: list[dict]) -> str:
         return '<div class="muted">no images</div>'
     rows = [
         '<table><thead><tr>'
-        '<th>Filename</th><th>Dimensions</th><th>Size</th><th>Age</th><th>Prompt</th>'
+        '<th>Filename</th><th>Dimensions</th><th>Size</th><th>Age</th>'
         '</tr></thead><tbody>'
     ]
     for r in v:
@@ -1789,14 +1785,12 @@ def _render_recent_images(v: list[dict]) -> str:
             if err else ""
         )
         path_attr = _esc(r.get("path") or "")
-        prompt_html = _render_prompt_cell(r.get("prompt"))
         rows.append(
             f'<tr>'
             f'<td class="mono" title="{path_attr}">{_esc(r.get("filename"))}{err_html}</td>'
             f'<td class="mono">{dims_html}</td>'
             f'<td class="mono">{_bytes(r.get("size_bytes"))}</td>'
             f'<td title="{_esc(_abs_utc(r.get("mtime")))}">{_ago(r.get("mtime"))}</td>'
-            f'<td>{prompt_html}</td>'
             f'</tr>'
         )
     rows.append("</tbody></table>")
@@ -1924,7 +1918,7 @@ def _render_recent_events(events: list[dict]) -> str:
         STANDARD = {"ts", "type", "summary", "path", "status",
                     "latency_ms", "key", "model"}
         extras = {k: v for k, v in e.items()
-                  if k not in STANDARD and v not in (None, "", [], {})}
+                  if k not in STANDARD and "prompt" not in str(k).lower() and v not in (None, "", [], {})}
         if extras:
             bits.append(", ".join(f"{k}={v}" for k, v in extras.items()))
         return " · ".join(bits) if bits else ""
