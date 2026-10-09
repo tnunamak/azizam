@@ -11,7 +11,7 @@ Benchmark ids refer to `benchmarks/BOARD.md`. State words and rules: DESIGN.md, 
 | populated, member | Title, then the verdict label "Video degraded" with "Checked just now" (Linear 2a.1). "Make something": every task as one 56 px row in one panel (two columns on desktop). Each row leads with a 40 px square of what this person last made with it (Robin's garden picture, the first frame of her video, a voice cover in her amber) or the task's tinted icon when there is nothing yet; the right side says "Used 39m ago" or the state (Video: Degraded). No chevrons. "Recent" media, audio as covers (Midjourney 3a.2). "Connect an app" in the header on phones, the right-hand panel on desktop. |
 | populated, owner | The same Home with "Open Status" beside the verdict. |
 | new-member | No app has made a request, so the panel opens on the app chooser with real marks (Open WebUI, LibreChat, SillyTavern, Cursor, Codex, Claude Code, Another app). On a phone it still comes after the tasks. Persian name in the person mark. |
-| budget-exhausted, member | "Paid models were paused for you": the household reached its monthly limit, when it resets, ask the gateway owner. Chat reads Degraded: "Some models are paused: a spending limit was reached." |
+| budget-exhausted, member | "Paid models were paused for you": the household reached its monthly limit, when it resets, and "Ask Sam if you need them sooner" (the owner's name now comes from the gateway; "the gateway owner" when it has none). Chat reads Degraded: "Some models are paused: a spending limit was reached." |
 | budget-exhausted, owner | "A spending limit refused paid requests" with the gateway's sentence, the reset and "Open Status". |
 | stale-health | Voice, Transcription, Music and Sound effects read Unknown; the verdict counts them ("5 of 7 capabilities need attention"); nothing says Ready on old evidence. |
 | loading / error / empty / signed-out | The real header and seven 56 px row skeletons in the task panel (D1.2 replaced D1's tile-grid skeleton); a critical Callout with "Try again"; "Nothing is set up yet"; "Sign in to use your AI" as an info Callout with one button. |
@@ -92,6 +92,7 @@ Read side by side at DPR 1: Azizam viewport shots against `benchmarks/home/apple
 | Apple Home / Stripe: no chevrons on tiles; the whole tile is the control | A chevron on every row | Chevrons removed; each row is still one link named by its task, with a hover fill |
 | Apple Home trait 5 and Stripe trait 2: add/create one tap from the landing | Already met in `d1-8` ("+ Connect an app" in the header) | Unchanged |
 | Skeletons in the final layout (Geist, our own rule) | Home's skeleton was D1's eight-tile grid | The real header, a verdict placeholder and seven row skeletons in the task panel |
+| Apple Home names the household ("My Home"); VOICE: ask a person, not a role | Members were told to "ask the gateway owner" | With `gateway.owner_name` from main, a member's notices say "Ask Sam"; "the gateway owner" only when the gateway has no name. The household shows on the first screen as its own work in its own hues (the leading squares) rather than as a title or a tile grid |
 
 **Status (phone).**
 | Measured in the benchmark | `d1-8` | `d1-9` change |
@@ -122,10 +123,13 @@ Conclusion: the judges' "no poster" was audio tiles that looked like un-postered
 
 ## Gate results for this set
 
-Run on the final D1.2 build (default household, port 18480):
+Run on `design/d12-continue` after merging main (42c6a32), HEAD 1813605. Fixture servers on ports 18620 to 18720.
 
-- axe WCAG 2 AA: 0 violations over 32 page checks (owner and member; Home, Status, Library, viewer; light and dark; 1440 and 390). Horizontal overflow, clipped text, targets under 44 px at 390, tab stops without visible focus and console errors: 0.
-- Impeccable detector: only Sonner's toast height transition (the recorded exception) on all 16 snapshots at 1280 and six at 390. Its first run found task names truncating at 1280 px and hidden hour-list layout under the failed-request marks; both are fixed.
+- axe WCAG 2 AA: 0 violations over 32 page checks (owner and member; Home, Status, Library, viewer; light and dark; 1440 and 390). Horizontal overflow, clipped text, targets under 44 px at 390, tab stops without visible focus and console errors: 0 (`~/.tmp/azizam-redesign/d1-9-gates`).
+- Impeccable detector: only Sonner's toast height transition (the recorded exception) on all 16 snapshots (`d1-9-snap`).
 - Token drift: 0.
-- lint.py on a copy of the production data (every engine blocked): Home, Library and member Status pass. Owner Status reads 83 words against a budget of 60 (D1.1: 69): the capability chips and the health-bar legend add words to a twelve-engine outage. Workflows, Activity and Usage are over budget and out of scope.
-- Unit tests: every vitest config passes.
+- lint.py on a copy of the production data (every engine blocked): Home, Library and member Status pass. Owner Status reads 76 words against a budget of 60 (`d1-8`: 83). The excess is the nine capability chips, each with its state word, in an outage where all nine need attention; the "Affects" row of the card names seven of them again. Folding them is a judging question, because each chip carries a different state. Workflows, Activity and Usage are over budget and out of scope.
+- Unit tests: vitest 524 in the main config plus all 11 folder configs pass.
+- Playwright, main config: 597 passed, 15 failed. The 15 are the same tests (spec and title) that fail at 542c95a and on main in the 2026-10-09 audit (stale specs: Library seeded, Library filters, engines and services error copy, services route gate, Usage remote spend). Live-data config: 4 of 4 pass (the stale scoping spec is fixed).
+- Hermetic Python at 1813605: 5789 passed, 0 failed.
+- One regression was found and fixed during the round: the deep-water cover isolated its stacking context and hid a tile's play control under its open button (`3a65385`); `e2e/library.spec.ts` "audio plays independently" caught it.
