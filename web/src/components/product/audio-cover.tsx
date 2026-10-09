@@ -62,10 +62,7 @@ export function Waveform({
             width={2}
             height={height}
             rx={1}
-            className={cn(
-              "fill-current",
-              played ? "opacity-90" : "opacity-25",
-            )}
+            className={cn("fill-current", played ? "opacity-90" : "opacity-40")}
           />
         );
       })}

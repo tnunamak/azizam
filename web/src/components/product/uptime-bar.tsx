@@ -162,20 +162,25 @@ export function UptimeBar({
       ) : null}
       {showLegend ? (
         <ul className="text-muted-foreground mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+          {/* Only the colours this bar shows, so every word names a cell. */}
           {[
             ["bg-success/70", "Up"],
             ["bg-warning", "Degraded"],
             ["bg-danger", "Down"],
             ["bg-muted", "No check"],
-          ].map(([swatch, word]) => (
-            <li key={word} className="flex items-center gap-1.5">
-              <span
-                aria-hidden="true"
-                className={cn("size-2 rounded-xs", swatch)}
-              />
-              {word}
-            </li>
-          ))}
+          ]
+            .filter(([swatch]) =>
+              slots.some((slot) => slotClass(slot.value, enabled) === swatch),
+            )
+            .map(([swatch, word]) => (
+              <li key={word} className="flex items-center gap-1.5">
+                <span
+                  aria-hidden="true"
+                  className={cn("size-2 rounded-xs", swatch)}
+                />
+                {word}
+              </li>
+            ))}
         </ul>
       ) : null}
       {enabled &&

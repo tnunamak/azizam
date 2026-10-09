@@ -322,10 +322,13 @@ function failedRequestsFact(records: ActivityRecord[]): ReactNode {
         <RelativeTime ts={latest.created_at ?? null} fallback="" />
         {latest.receipt?.request_id ? (
           <>
-            {" · "}
+            {/* On a phone the link takes its own line, so no dot dangles. */}
+            <span aria-hidden="true" className="max-sm:hidden">
+              {" · "}
+            </span>
             <a
               href={`/r/${encodeURIComponent(latest.receipt.request_id)}`}
-              className="text-link font-medium underline-offset-4 hover:underline max-sm:inline-block max-sm:py-3"
+              className="text-link font-medium underline-offset-4 hover:underline max-sm:block max-sm:w-fit max-sm:py-3"
             >
               Open receipt
             </a>

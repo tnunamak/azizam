@@ -178,6 +178,8 @@ export function Callout({
           aria-hidden="true"
           className={cn("mt-0.5 size-5 shrink-0", severityText[severity])}
         />
+        {/* On a phone only the title sits beside the icon; everything under
+            it uses the card's full width (incident.io's phone card). */}
         <div className="min-w-0 flex-1 space-y-3">
           <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
             <div className="min-w-0 flex-1 max-sm:basis-full">
@@ -187,16 +189,16 @@ export function Callout({
               ) : null}
             </div>
             {headerAction ? (
-              <div className="flex shrink-0 items-center gap-2">
+              <div className="flex shrink-0 items-center gap-2 max-sm:-ml-8">
                 {headerAction}
               </div>
             ) : null}
           </div>
           {children ? (
-            <div className="space-y-1 text-sm">{children}</div>
+            <div className="space-y-1 text-sm max-sm:-ml-8">{children}</div>
           ) : null}
           {facts?.length ? (
-            <dl className="grid grid-cols-[6rem_minmax(0,1fr)] gap-x-3 gap-y-2 text-sm sm:grid-cols-[8.5rem_minmax(0,1fr)] sm:gap-x-4">
+            <dl className="grid grid-cols-[6rem_minmax(0,1fr)] gap-x-3 gap-y-2 text-sm max-sm:-ml-8 sm:grid-cols-[8.5rem_minmax(0,1fr)] sm:gap-x-4">
               {facts.map(([label, value]) => (
                 <div key={label} className="contents">
                   <dt className="text-muted-foreground">{label}</dt>
@@ -206,7 +208,9 @@ export function Callout({
             </dl>
           ) : null}
           {actions ? (
-            <div className="flex flex-wrap items-center gap-2">{actions}</div>
+            <div className="flex flex-wrap items-center gap-2 max-sm:-ml-8">
+              {actions}
+            </div>
           ) : null}
         </div>
       </div>

@@ -18,7 +18,7 @@ describe("audio covers", () => {
     const bars = container.querySelectorAll("rect");
     expect(bars).toHaveLength(4);
     expect(bars[0].getAttribute("class")).toContain("opacity-90");
-    expect(bars[3].getAttribute("class")).toContain("opacity-25");
+    expect(bars[3].getAttribute("class")).toContain("opacity-40");
   });
   it("show the clip's words, kind and length, and no waveform without Web Audio", () => {
     const { getByText, container } = render(
