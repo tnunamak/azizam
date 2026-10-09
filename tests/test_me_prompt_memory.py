@@ -55,6 +55,7 @@ def test_member_prompt_memory_defaults_and_put_are_admin_store_backed(tmp_path: 
     admin_db = tmp_path / "admin.db"
     prompt_db = tmp_path / "prompt.db"
     admin_store.init_db(admin_db)
+    admin_store.upsert_oidc_user("issuer", "alice", email="alice@example.test", user_id="usr_alice", path=admin_db)
     client = _client(admin_db, prompt_db, household={"retention_cap": "1_year"})
 
     response = client.get("/me/api/prompt-memory")
@@ -85,6 +86,7 @@ def test_member_prompt_memory_honors_household_kill_switch_and_delete_all(tmp_pa
     admin_db = tmp_path / "admin.db"
     prompt_db = tmp_path / "prompt.db"
     admin_store.init_db(admin_db)
+    admin_store.upsert_oidc_user("issuer", "alice", email="alice@example.test", user_id="usr_alice", path=admin_db)
     prompt_memory.put("img_one", "usr_alice", "sentinel text", kept_until=None, path=prompt_db)
     client = _client(admin_db, prompt_db, household={"never_keep": True})
 
@@ -105,6 +107,7 @@ def test_member_prompt_memory_rejects_bad_settings(tmp_path: Path) -> None:
     admin_db = tmp_path / "admin.db"
     prompt_db = tmp_path / "prompt.db"
     admin_store.init_db(admin_db)
+    admin_store.upsert_oidc_user("issuer", "alice", email="alice@example.test", user_id="usr_alice", path=admin_db)
     client = _client(admin_db, prompt_db)
 
     response = client.put(
