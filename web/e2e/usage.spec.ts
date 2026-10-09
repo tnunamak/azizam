@@ -163,14 +163,21 @@ for (const theme of ["light", "dark"] as const) {
         return route.fulfill({ json: seededSummary });
       });
       await page.goto("/ui/usage/");
-      await expect(page.getByText(/Usage could not be loaded/i)).toBeVisible();
+      await expect(
+        page.getByText("Usage could not be loaded", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByText("Unknown · Usage unavailable", { exact: true }),
+      ).toBeVisible();
       await expectNoHorizontalOverflow(page);
       await expectNoSeriousAxeViolations(page);
       await page.screenshot({
         path: `test-results/screens/usage-error-${theme}-${width}.png`,
         fullPage: true,
       });
-      await page.getByRole("button", { name: /try again/i }).click();
+      await page
+        .getByRole("button", { name: "Retry usage", exact: true })
+        .click();
       await expect(page.getByText("demo-chat").first()).toBeVisible();
     });
 

@@ -94,7 +94,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   await page.unroute("**/me/api/receipts/receipt_preferred");
   await page.unroute("**/me/api/receipts/generic_request");
 
-  await page.getByRole("tab", { name: "Image" }).click();
+  await page.getByRole("tab", { name: "Make a picture" }).click();
   await page.route("**/openai/v1/images/generations", (route) =>
     route.fulfill({
       headers: { "x-azizam-request-id": "req_image_try" },
@@ -111,7 +111,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Image result", { exact: true })).toBeVisible();
 
-  await page.getByRole("tab", { name: "Speech" }).click();
+  await page.getByRole("tab", { name: "Read text aloud" }).click();
   await page.route("**/openai/v1/audio/speech", (route) =>
     route.fulfill({
       headers: {
@@ -124,7 +124,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Speech result", { exact: true })).toBeVisible();
 
-  await page.getByRole("tab", { name: "Transcription" }).click();
+  await page.getByRole("tab", { name: "Turn a recording into text" }).click();
   await page.setInputFiles("input[type=file]", {
     name: "sample.wav",
     mimeType: "audio/wav",
@@ -139,7 +139,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("The gateway is ready.")).toBeVisible();
 
-  await page.getByRole("tab", { name: "Decisions" }).click();
+  await page.getByRole("tab", { name: "Choose an option" }).click();
   await page.route("**/v1/systemone", async (route) => {
     const body = route.request().postDataJSON();
     expect(body.state).toBe("Gateway smoke test is starting.");
@@ -176,7 +176,7 @@ test("try shows empty, public API error, decision 404, and non-chat results", as
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("70%")).toBeVisible();
 
-  await page.getByRole("tab", { name: "Embeddings" }).click();
+  await page.getByRole("tab", { name: "Turn text into numbers" }).click();
   await page.route("**/openai/v1/embeddings", (route) =>
     route.fulfill({
       headers: {
@@ -229,23 +229,23 @@ test("try catalog maps exact capability intents to the right tabs", async ({
   await expect(page.getByRole("combobox").first()).not.toContainText(
     "completion-only",
   );
-  await page.getByRole("tab", { name: "Image", exact: true }).click();
+  await page.getByRole("tab", { name: "Make a picture", exact: true }).click();
   await expect(page.getByRole("combobox").first()).not.toContainText(
     "edit-only",
   );
-  await page.getByRole("tab", { name: "Speech", exact: true }).click();
+  await page.getByRole("tab", { name: "Read text aloud", exact: true }).click();
   await expect(page.getByRole("combobox").first()).not.toContainText(
     "music-only",
   );
   await page.getByRole("tab", { name: "Chat", exact: true }).click();
 
-  await page.getByRole("tab", { name: "Transcription" }).click();
+  await page.getByRole("tab", { name: "Turn a recording into text" }).click();
   await expect(page.getByRole("combobox").first()).toContainText("stt model");
   await expect(page.getByRole("combobox").first()).not.toContainText(
     "tts model",
   );
 
-  await page.getByRole("tab", { name: "Embeddings" }).click();
+  await page.getByRole("tab", { name: "Turn text into numbers" }).click();
   await expect(page.getByRole("combobox").first()).toContainText(
     "embeddings model",
   );
@@ -275,10 +275,9 @@ test("try query params select capability and preserve requested model", async ({
   await page.goto("/ui/try/?capability=decide");
   await page.getByRole("button", { name: "Run", exact: true }).click();
   await expect(page.getByText("Using a Try key")).toBeVisible();
-  await expect(page.getByRole("tab", { name: "Decisions" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+  await expect(
+    page.getByRole("tab", { name: "Choose an option" }),
+  ).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("combobox").first()).toContainText(
     "decide model",
   );
@@ -353,7 +352,7 @@ test("try records audio, uploads it, and stops microphone tracks", async ({
 
   await prepareTryKey(page);
   await waitForCatalog(page);
-  await page.getByRole("tab", { name: "Transcription" }).click();
+  await page.getByRole("tab", { name: "Turn a recording into text" }).click();
 
   await page.getByRole("button", { name: "Record" }).click();
   await expect(page.getByRole("button", { name: "Stop" })).toBeEnabled();

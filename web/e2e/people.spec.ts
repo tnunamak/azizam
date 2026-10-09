@@ -173,14 +173,18 @@ async function open(page: Page, surface: Surface, state: State) {
   else if (surface === "people")
     await expect(
       page.getByText(
-        state === "empty" ? "Your people will appear here" : "Morgan Rivera",
+        state === "empty"
+          ? "Create an access plan before inviting someone"
+          : "Morgan Rivera",
         { exact: true },
       ),
     ).toBeVisible();
   else if (surface === "invites")
     await expect(
       page.getByText(
-        state === "empty" ? "No invitations yet" : "sam@example.test",
+        state === "empty"
+          ? "Create an access plan before inviting someone"
+          : "sam@example.test",
         { exact: true },
       ),
     ).toBeVisible();
@@ -500,7 +504,15 @@ test("people lane failed list retries, pending invitation revokes with confirmat
   await page.route("**/admin/api/invites", (route) =>
     route.fulfill({ json: { invites: [invitation], profiles: [plan] } }),
   );
-  await page.getByRole("button", { name: "Try again", exact: true }).click();
+  // The plans request also fails in the error state, so the header explains
+  // why Invite is unavailable and offers its own Try again.
+  await expect(
+    page.getByText("Access plans couldn’t be loaded", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByLabel("Invites")
+    .getByRole("button", { name: "Try again", exact: true })
+    .click();
   await expect(page.getByText(invitation.email, { exact: true })).toBeVisible();
   let revoked = false;
   await page.route(`**/admin/api/invites/${invitation.id}`, (route) => {
