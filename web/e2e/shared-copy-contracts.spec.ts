@@ -85,7 +85,7 @@ for (const theme of ["light", "dark"] as const) {
       // signed-out "Gateway reachable" (DESIGN.md, Status model rule 3).
       await expect(
         page.getByRole("button", {
-          name: /^Gateway status: (All working|\d+ issues?|Busy|Nothing turned on|Status unknown)$/,
+          name: /^Gateway status: (All working|\d+ issues?|\d+ unchecked|Busy|Nothing turned on|Status unknown)$/,
         }),
       ).toBeVisible();
       await checkAccessibility(page);

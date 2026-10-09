@@ -1,3 +1,4 @@
+import { networkFetch } from "./network-error";
 import { ApiError, type Credential, type MintedCredential } from "./api";
 
 export interface AccountApp {
@@ -29,7 +30,7 @@ async function accountRequest<T>(
     headers.set("x-azizam-user-action", "1");
     headers.set("x-azizam-csrf", session.csrf_token);
   }
-  const response = await fetch(path, {
+  const response = await networkFetch(path, {
     method: init.method,
     headers,
     credentials: "same-origin",

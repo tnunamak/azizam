@@ -47,6 +47,47 @@ class ModelsCatalogBuildTests(unittest.TestCase):
             },
         )
 
+    def test_rows_say_what_each_picture_model_needs_and_makes(self) -> None:
+        from gateway.discovery import WorkflowRegistry
+
+        registry = WorkflowRegistry.from_directory(ROOT / "manifests" / "workflows")
+        wanted = {
+            "krea2-turbo": ("image.generate", ("text",)),
+            "qwen-image-2.1-edit": ("image.edit", ("text", "image")),
+            "sdxl-seamless-tile": ("image.generate", ("text",)),
+        }
+        records = [
+            {"id": record.id, "manifest": record.manifest}
+            for record in registry.records()
+            if record.id.removeprefix(record.intent + ".") in wanted
+        ]
+        workflow_for = {name: record["id"] for record in records for name in wanted if record["id"].endswith("." + name)}
+        catalog = build_models_catalog(
+            capabilities=[
+                Capability(
+                    intent=intent,
+                    model=model_id,
+                    workflow=workflow_for[model_id],
+                    backend="local",
+                    input_modalities=inputs,
+                    output_modalities=("image",),
+                )
+                for model_id, (intent, inputs) in wanted.items()
+            ],
+            model_entries=[{"id": model_id} for model_id in wanted],
+            service_records={"services": {"local": {"id": "local", "locality": "local"}}},
+            workflow_records=records,
+        )
+        rows = {row["id"]: row for row in catalog["models"]}
+        summary = lambda row: row["capabilities"][0]  # noqa: E731
+        self.assertEqual(summary(rows["krea2-turbo"])["intent"], "image.generate")
+        self.assertEqual(summary(rows["krea2-turbo"])["input_modalities"], ["text"])
+        self.assertEqual(summary(rows["qwen-image-2.1-edit"])["intent"], "image.edit")
+        self.assertIn("image", summary(rows["qwen-image-2.1-edit"])["input_modalities"])
+        # Texture tiles make pictures from text but are a different task.
+        self.assertEqual(rows["sdxl-seamless-tile"]["task"], "texture-tile")
+        self.assertNotIn("task", rows["krea2-turbo"])
+
     def test_registered_models_bind_generic_capabilities_without_legacy_engines(self) -> None:
         services = {"services": {
             "capture-engine": {"enabled": True, "capabilities": ["chat", "completions"],

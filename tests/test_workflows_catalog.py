@@ -472,6 +472,29 @@ class WorkflowsCatalogTests(unittest.TestCase):
         self.assertIn("seconds", request["body"])
         self.assertIn("size", request["body"])
 
+    def test_asset_inputs_are_flagged_and_exampled_as_media(self) -> None:
+        manifest_root = Path(__file__).resolve().parents[1] / "manifests" / "workflows"
+        registry = WorkflowRegistry.from_directory(manifest_root)
+        records = [r for r in registry.records() if r.id == "video.generate.ltx-2.5-i2v"]
+        payload = build_workflows_catalog(
+            records=records,
+            capabilities=[
+                Capability(intent=r.intent, backend=r.supported_backends[0], workflow=r.id)
+                for r in records
+            ],
+        )
+        workflow = payload["workflows"][0]
+        inputs = {row["name"]: row for row in workflow["inputs"]}
+        # The row type stays the JSON type; the flag is how a UI finds media.
+        self.assertEqual(inputs["image"]["type"], "string")
+        self.assertIs(inputs["image"]["asset"], True)
+        self.assertEqual(inputs["image"]["request_field"], "input_reference")
+        self.assertNotIn("asset", inputs["prompt"])
+        self.assertNotIn("asset", inputs["negative_prompt"])
+        # The example shows media as media, not as the word "value".
+        body = workflow["example_request"]["body"]
+        self.assertTrue(body["input_reference"].startswith("data:image/"))
+
     def test_measured_unavailable_capability_is_not_configured_available(self) -> None:
         payload = build_workflows_catalog(
             records=_registry().records(),
