@@ -1,0 +1,18 @@
+# Internal research notes that must never be rendered on any screen.
+# One term per line. A plain term matches as a whole word, case-insensitive,
+# with an optional plural "s". Prefix a line with "re:" for a JS regex (flags "i").
+Reddit
+re:\br\/(?:LocalLLaMA|StableDiffusion|comfyui)\b
+Hacker News
+footgun
+bake-off
+bakeoff
+piss filter
+lorem ipsum
+re:\bTODO\b
+re:\bFIXME\b
+re:\bXXX\b
+dogfood
+re:\banecdotally\b
+re:\bper (?:the )?(?:forum|thread|discord)\b
+re:\bin my testing\b

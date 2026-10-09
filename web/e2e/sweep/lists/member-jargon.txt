@@ -1,0 +1,37 @@
+# Developer jargon a household member should never have to read.
+# Checked on MEMBER screens only. Same syntax as research-notes.txt.
+# Plain terms are whole words, case-insensitive, optional plural "s".
+Request body
+string
+integer
+boolean
+JSON
+endpoint
+payload
+backend
+Decisions
+Embedding
+capability
+capabilities
+sidecar
+manifest
+schema
+re:\bcurl\b
+re:\bBearer\b
+base URL
+LiteLLM
+ComfyUI
+llama.cpp
+kobold
+koboldcpp
+re:\bGGUF\b
+VRAM
+re:\bOpenAI[- ]compatible\b
+re:\btokens?/s(?:ec)?\b
+re:\bWrites \w
+alias
+re:\bmultipart\b
+re:\bstdout\b|\bstderr\b
+re:\bSSE\b
+re:\bwebhook
+re:\bQ\d_K(?:_[MSL])?\b
