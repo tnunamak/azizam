@@ -52,6 +52,9 @@ for (const mode of [
       "Image engine is unavailable. Check its connection on Status.",
       { exact: true },
     );
+    await expect(page.getByText("Disk is full", { exact: true })).toHaveCount(
+      0,
+    );
     if (mode === "down") {
       await expect(alert).toBeVisible();
       await page
@@ -63,9 +66,6 @@ for (const mode of [
       ).toBeFocused();
       await expect(alert).toHaveCount(0);
     } else await expect(alert).toHaveCount(0);
-    await expect(page.getByText("Disk is full", { exact: true })).toHaveCount(
-      0,
-    );
   });
 }
 
