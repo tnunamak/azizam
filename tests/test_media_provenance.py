@@ -349,8 +349,9 @@ class ImagePayloadTests(unittest.IsolatedAsyncioTestCase):
         record = json.loads(media_metadata.png_text_chunks(full_bytes)["azizam_provenance"])
         self.assertEqual(record["seed"], 11)
         self.assertEqual(record["parameters"]["size"], "8x6")
-        # the stored copy is full in both cases
-        self.assertEqual(set(media_metadata.png_text_chunks(self._stored(none["data"][0]))), {"prompt", "workflow", "azizam_provenance"})
+        # The stored cache copy is clean; prompt/workflow metadata is restored
+        # only from a maker-scoped prompt record.
+        self.assertEqual(media_metadata.png_text_chunks(self._stored(none["data"][0])), {})
 
     def test_request_overrides_profile_both_ways(self) -> None:
         down = self._payload(mode_default="full", requested="none")
@@ -370,8 +371,7 @@ class ImagePayloadTests(unittest.IsolatedAsyncioTestCase):
         got_full = client.get(self._relative(full["data"][0]["asset_url"]))
         self.assertEqual(got_none.status_code, 200)
         self.assertEqual(media_metadata.png_text_chunks(got_none.content), {})
-        self.assertEqual(set(media_metadata.png_text_chunks(got_full.content)), {"prompt", "workflow", "azizam_provenance"})
-        self.assertEqual(pixels(got_none.content), pixels(got_full.content))
+        self.assertEqual(got_full.status_code, 403)
 
     def test_signed_url_cannot_be_flipped_to_full(self) -> None:
         none = self._payload(mode_default="none", requested=None, response_format="url")
@@ -399,10 +399,7 @@ class ImagePayloadTests(unittest.IsolatedAsyncioTestCase):
                 item = payload["data"][0]
                 stored = self._stored(item)
                 exif = Image.open(io.BytesIO(stored)).getexif()
-                joined = " ".join(str(v) for v in exif.values())
-                self.assertIn("workflow:", joined)
-                self.assertIn("prompt:", joined)
-                self.assertIn("azizam_provenance:", joined)
+                self.assertEqual(len(exif), 0)
                 delivered = base64.b64decode(item["b64_json"])
                 self.assertEqual(len(Image.open(io.BytesIO(delivered)).getexif()), 0)
                 self.assertNotIn(b"KSampler", delivered)
@@ -815,7 +812,7 @@ class MediaJobUrlTests(unittest.TestCase):
             ctx = media_delivery.begin(profile_default="none")
             ctx.requested_mode = "full"
             item = proxy._media_job_asset_items(job, StubRequest(), kind="vid")[0]  # type: ignore[arg-type]
-            self.assertEqual(parse_qs(urlparse(item["content_url"]).query)["md"], ["full"])
+            self.assertEqual(parse_qs(urlparse(item["content_url"]).query)["md"], ["none"])
 
 
 @unittest.skipUnless(FFMPEG, "ffmpeg is required")

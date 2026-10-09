@@ -13,7 +13,7 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-from gateway import admin_store, media_delivery, media_jobs, media_metadata, me_media, ownership, provenance, receipt_store
+from gateway import admin_store, media_delivery, media_jobs, media_metadata, me_media, ownership, prompt_memory, provenance, receipt_store
 from gateway.admin_oidc import AdminSession
 from gateway.admin_oidc import CookieConfig, OIDCConfig, encode_session_cookie, session_from_claims
 from gateway.receipts import RouteReceipt
@@ -31,6 +31,7 @@ class MeMediaRouterTests(unittest.TestCase):
         self.admin_db = self.root / "admin.db"
         self.jobs_db = self.root / "media_jobs.db"
         self.receipts_db = self.root / "receipts.db"
+        self.prompt_db = self.root / "prompt_memory.db"
         self.cache = self.root / "cache"
         self.cache.mkdir()
         admin_store.init_db(self.admin_db)
@@ -89,6 +90,7 @@ class MeMediaRouterTests(unittest.TestCase):
                 admin_db_path=self.admin_db,
                 media_jobs_path=self.jobs_db,
                 receipts_path=self.receipts_db,
+                prompt_memory_path=self.prompt_db,
             )
         )
         self.client = TestClient(app)
@@ -167,6 +169,10 @@ class MeMediaRouterTests(unittest.TestCase):
         self._meta_path(asset_id).write_text(
             json.dumps({"asset_id": asset_id, "owner_key_hashes": owner_hashes, "updated_at": 1_700_000_000})
         )
+        if "sha256:alice" in owner_hashes:
+            prompt_memory.put(asset_id, self.alice["id"], prompt, kept_until=None, path=self.prompt_db)
+        if "sha256:bob" in owner_hashes:
+            prompt_memory.put(asset_id, self.bob["id"], prompt, kept_until=None, path=self.prompt_db)
 
     def _receipt(
         self,
