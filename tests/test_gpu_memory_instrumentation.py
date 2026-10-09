@@ -10,8 +10,10 @@ from __future__ import annotations
 import importlib
 import io
 import json
+import sqlite3
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -182,7 +184,8 @@ class SamplerCase(unittest.TestCase):
     @staticmethod
     def _reset_nvkms_state() -> None:
         """The cursor in memory belongs to one journal; each test has its own."""
-        metrics_sampler._state["nvkms_cursor"] = None
+        for key in ("nvkms_cursor", "nvkms_pending"):
+            metrics_sampler._state[key] = None
         metrics_sampler._state["nvkms_journal_unreadable"] = False
 
     def samples(self, metric: str) -> list[tuple[dict, float]]:
@@ -232,31 +235,42 @@ class TestServiceVramSampled(SamplerCase):
 
 
 FAIL = (
-    "{ts} peregrine kernel: [drm:nv_drm_gem_alloc_nvkms_memory_ioctl [nvidia_drm]] "
+    "[drm:nv_drm_gem_alloc_nvkms_memory_ioctl [nvidia_drm]] "
     "*ERROR* [nvidia-drm] [GPU ID 0x00000100] Failed to allocate NVKMS memory for GEM object"
 )
-NOISE = "1791503490.100000 peregrine kernel: usb 9-2.2.1.4: USB disconnect, device number 86"
+NOISE = "usb 9-2.2.1.4: USB disconnect, device number 86"
 
 
 class FakeKernelJournal:
-    """The kernel journal as journalctl shows it: entries with cursors.
+    """The kernel journal as ``journalctl _TRANSPORT=kernel -o json`` shows it.
 
-    Answers ``--since @T`` (time window), ``--after-cursor=C`` (read on from a
-    saved position) and ``-n 0`` (no entries, only the end position);
-    ``--show-cursor`` adds the ``-- cursor:`` line journalctl prints.
+    Mirrors what journalctl (systemd 259) did on this host in read-only probes:
+    ``--cursor=C`` starts AT entry C; a well-formed cursor that is no longer in
+    the journal starts at the oldest retained entry instead (exit 0, history
+    replayed); ``-n +N`` shows the first N from there; ``-n N`` without a
+    cursor shows the last N. ``--since @T`` filters by time (the old reader).
     """
-
-    EMPTY = f"s={'a' * 32};i=0;b={'b' * 32};m=0;t=0;x=0"  # the end of an empty journal
 
     def __init__(self) -> None:
         self.now = 1791503000.0
-        self.entries: list[tuple[float, str, str]] = []  # (ts, line, cursor)
+        self.entries: list[dict] = []
         self.readable = True
+        self.largest_read = 0
+        self._seq = 0
 
-    def log(self, template: str, *, after_s: float = 0.0) -> None:
+    def log(self, message: str, *, after_s: float = 0.0) -> None:
         self.now += after_s
-        cursor = f"s={'a' * 32};i={len(self.entries) + 1:x};b={'b' * 32};m=1;t=1;x=1"
-        self.entries.append((self.now, template.format(ts=f"{self.now:.6f}"), cursor))
+        self._seq += 1
+        usec = int(self.now * 1_000_000)
+        self.entries.append({
+            "__CURSOR": f"s={'a' * 32};i={self._seq:x};b={'b' * 32};m={self._seq:x};t={usec:x};x={self._seq:x}",
+            "__REALTIME_TIMESTAMP": str(usec),
+            "MESSAGE": message,
+        })
+
+    def vacuum(self, keep_last: int) -> None:
+        """Rotation: only the newest ``keep_last`` entries stay."""
+        self.entries = self.entries[len(self.entries) - keep_last:] if keep_last else []
 
     def run(self, cmd, timeout=None):
         if cmd[0] == "nvidia-smi":
@@ -267,20 +281,23 @@ class FakeKernelJournal:
             return 1, "", "Failed to get journal access"
         args = list(cmd[1:])
         shown = list(self.entries)
-        position = self.entries[-1][2] if self.entries else self.EMPTY
-        for arg in args:
-            if arg.startswith("--after-cursor="):
-                saved = arg.removeprefix("--after-cursor=")
-                cursors = [self.EMPTY] + [cursor for _ts, _line, cursor in self.entries]
-                shown, position = self.entries[cursors.index(saved):], saved
+        lines = args[args.index("-n") + 1] if "-n" in args else None
+        cursor = next((a.removeprefix("--cursor=") for a in args if a.startswith("--cursor=")), None)
+        if cursor is not None:
+            cursors = [entry["__CURSOR"] for entry in shown]
+            if cursor in cursors:
+                shown = shown[cursors.index(cursor):]
+            if lines and lines.startswith("+"):
+                shown = shown[:int(lines[1:])]
+        elif lines is not None:
+            shown = shown[len(shown) - int(lines):] if int(lines) else []
         if "--since" in args:
             since = float(args[args.index("--since") + 1].lstrip("@"))
-            shown = [entry for entry in shown if entry[0] >= since]
-        if "-n" in args and args[args.index("-n") + 1] == "0":
-            shown = []
-        out = [line for _ts, line, _cursor in shown]
-        if "--show-cursor" in args:
-            out.append(f"-- cursor: {shown[-1][2] if shown else position}")
+            shown = [e for e in shown if int(e["__REALTIME_TIMESTAMP"]) >= since * 1_000_000]
+        self.largest_read = max(self.largest_read, len(shown))
+        if "json" in args:
+            return 0, "".join(json.dumps(entry) + "\n" for entry in shown), ""
+        out = [f'{int(e["__REALTIME_TIMESTAMP"]) / 1e6:.6f} peregrine kernel: {e["MESSAGE"]}' for e in shown]
         return 0, "\n".join(out) + "\n", ""
 
 
@@ -301,9 +318,21 @@ class TestNvkmsFailureMetric(SamplerCase):
         ):
             metrics_sampler._emit_fast(self.writer, int(self.journal.now))
 
+    def restart_gateway(self) -> None:
+        """A new process: module state is gone and the writer is new."""
+        try:
+            metrics_sampler.close_writer()
+        except RuntimeError:
+            pass  # the old writer reports its earlier persistence failure
+        importlib.reload(metrics_sampler)
+        self.writer = metrics_sampler.start_writer()
+
     def failures(self, gpu: int | None = 0) -> list[float]:
         tags = {} if gpu is None else {"gpu": gpu}
         return [v for t, v in self.samples("gpu_desktop_alloc_failures") if t == tags]
+
+    def committed_cursor(self) -> str | None:
+        return metrics_store.read_sampler_state(self.db, "nvkms_journal_cursor")
 
     def test_first_run_starts_at_the_journal_end_and_counts_no_history(self) -> None:
         self.journal.log(NOISE)
@@ -315,12 +344,13 @@ class TestNvkmsFailureMetric(SamplerCase):
         self.assertEqual(self.failures(0), [0.0, 1.0, 0.0])
         self.assertEqual(self.failures(1), [0.0, 0.0, 0.0])
 
-    def test_the_cursor_is_kept_next_to_metrics_db(self) -> None:
+    def test_the_cursor_is_committed_in_metrics_db_with_the_counts(self) -> None:
+        self.journal.log(NOISE)
         self.tick()
-        cursor_file = self.db.parent / "nvkms-journal.cursor"
-        self.assertTrue(cursor_file.read_text().startswith("s="))
+        self.assertEqual(self.committed_cursor(), self.journal.entries[-1]["__CURSOR"])
 
     def test_failures_during_a_gap_longer_than_the_window_count_on_recovery(self) -> None:
+        self.journal.log(NOISE)
         self.tick()
         self.journal.readable = False
         self.tick()
@@ -331,22 +361,16 @@ class TestNvkmsFailureMetric(SamplerCase):
         self.tick()
         self.assertEqual(self.failures(0), [0.0, 2.0], "no rows while unreadable; both counted on recovery")
 
-    def test_a_sampler_restart_resumes_from_the_saved_cursor(self) -> None:
+    def test_a_sampler_restart_resumes_from_the_committed_cursor(self) -> None:
+        self.journal.log(NOISE)
         self.tick()
         self.journal.log(FAIL, after_s=1)
-        importlib.reload(metrics_sampler)  # the gateway restarts: module state is gone
+        self.restart_gateway()
         self.tick(after_s=120)
         self.assertEqual(self.failures(0), [0.0, 1.0])
 
-    def test_a_failed_cursor_save_does_not_count_the_same_failure_twice(self) -> None:
-        self.tick()
-        self.journal.log(FAIL, after_s=1)
-        with patch.object(metrics_sampler.os, "replace", side_effect=OSError(28, "No space left on device")):
-            self.tick()
-            self.tick()
-        self.assertEqual(self.failures(0), [0.0, 1.0, 0.0])
-
-    def test_identical_repeated_lines_each_count_once(self) -> None:
+    def test_identical_repeated_messages_each_count_once(self) -> None:
+        self.journal.log(NOISE)
         self.tick()
         self.journal.log(FAIL, after_s=1)
         self.journal.log(FAIL)  # same text, same microsecond
@@ -355,23 +379,115 @@ class TestNvkmsFailureMetric(SamplerCase):
         self.assertEqual(self.failures(0), [0.0, 2.0, 0.0])
 
     def test_unreadable_journal_records_no_rows_keeps_the_cursor_and_warns_once(self) -> None:
+        self.journal.log(NOISE)
         self.tick()
-        cursor_file = self.db.parent / "nvkms-journal.cursor"
-        saved = cursor_file.read_text()
+        saved = self.committed_cursor()
         self.journal.readable = False
         with patch("sys.stdout", new_callable=io.StringIO) as out:
             self.tick()
             self.tick()
         self.assertEqual(self.failures(0), [0.0])
-        self.assertEqual(cursor_file.read_text(), saved)
+        self.assertEqual(self.committed_cursor(), saved)
         self.assertEqual(out.getvalue().count("kernel journal unreadable"), 1)
         self.assertEqual(len(self.samples("vram_used_mb")), 6)  # the rest of each tick still ran
 
     def test_failure_from_unknown_gpu_id_is_counted_without_a_gpu_tag(self) -> None:
+        self.journal.log(NOISE)
         self.tick()
         self.journal.log(FAIL.replace("0x00000100", "0x00000900"), after_s=1)
         self.tick()
         self.assertEqual(self.failures(None), [1.0])
+
+    # -- A3: the cursor moves only with committed counts ----------------------
+
+    def test_a_rejected_write_keeps_the_cursor_and_a_restart_counts_the_failure(self) -> None:
+        self.journal.log(NOISE)
+        self.tick()
+        saved = self.committed_cursor()
+        self.journal.log(FAIL, after_s=1)
+        with self.writer._lock:
+            self.writer._accepting = False  # the bounded queue refuses the batch
+        self.tick()
+        self.assertEqual(self.committed_cursor(), saved)
+        self.restart_gateway()
+        self.tick()
+        self.assertEqual(self.failures(0), [0.0, 1.0])
+
+    def test_a_failed_commit_keeps_the_cursor_and_a_restart_counts_the_failure_once(self) -> None:
+        self.journal.log(NOISE)
+        self.tick()
+        saved = self.committed_cursor()
+        self.journal.log(FAIL, after_s=1)
+        real_record = metrics_store.record_samples
+
+        def disk_error(conn, rows):
+            raise sqlite3.OperationalError("disk I/O error")
+
+        with patch.object(metrics_store, "record_samples", disk_error):
+            self.tick()
+        self.assertEqual(self.committed_cursor(), saved)
+        self.assertIs(metrics_store.record_samples, real_record)
+        self.restart_gateway()
+        self.tick()
+        self.tick()
+        self.assertEqual(self.failures(0), [0.0, 1.0, 0.0])
+
+    def test_a_commit_still_pending_is_not_read_again(self) -> None:
+        self.journal.log(NOISE)
+        self.tick()
+        self.journal.log(FAIL, after_s=1)
+        gate = threading.Event()
+        real_record = metrics_store.record_samples
+
+        def slow_record(conn, rows):
+            gate.wait(5)
+            real_record(conn, rows)
+
+        with (
+            patch.object(metrics_store, "record_samples", slow_record),
+            patch.object(metrics_sampler, "_NVKMS_COMMIT_WAIT_S", 0.05),
+        ):
+            self.tick()  # the batch is accepted but not yet committed
+            self.tick()  # must not count the same failure again
+            gate.set()
+            self.writer.flush()
+        self.tick()
+        self.tick()
+        self.assertEqual(sum(self.failures(0)), 1.0)
+
+    # -- A4: a cursor that left the journal, and a bounded catch-up ----------
+
+    def test_a_cursor_no_longer_in_the_journal_is_not_replayed(self) -> None:
+        """journalctl answers a well-formed cursor it no longer holds (rotated
+        away, or from another journal) by starting at the oldest entry, exit 0.
+        Those entries must not be counted again: log the gap, rebaseline."""
+        for _ in range(3):
+            self.journal.log(FAIL)
+        self.journal.log(NOISE)
+        self.tick()  # the three failures are history
+        absent = f"s={'c' * 32};i=1;b={'d' * 32};m=1;t=1;x=1"
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("UPDATE sampler_state SET value = ? WHERE key = 'nvkms_journal_cursor'", (absent,))
+        self.restart_gateway()
+        with patch("sys.stdout", new_callable=io.StringIO) as out:
+            self.tick()
+        self.assertEqual(self.failures(0), [0.0, 0.0], "a lost position is a gap, never a replay")
+        self.assertIn("no longer in the journal", out.getvalue())
+        self.assertEqual(self.committed_cursor(), self.journal.entries[-1]["__CURSOR"])
+        self.journal.log(FAIL, after_s=1)
+        self.tick()
+        self.assertEqual(self.failures(0), [0.0, 0.0, 1.0], "counting resumes from the journal end")
+
+    def test_a_large_backlog_is_read_in_bounded_steps(self) -> None:
+        self.journal.log(NOISE)
+        self.tick()
+        for _ in range(7):
+            self.journal.log(FAIL, after_s=1)
+        with patch.object(metrics_sampler, "_NVKMS_READ_BATCH", 3):
+            for _ in range(4):
+                self.tick()
+        self.assertEqual(self.failures(0), [0.0, 3.0, 3.0, 1.0, 0.0])
+        self.assertLessEqual(self.journal.largest_read, 4, "at most one batch plus the saved entry per read")
 
 
 class TestGpuFreeMemory(SamplerCase):

@@ -168,7 +168,7 @@ class TestMetricsStore(unittest.TestCase):
         metrics_store.init_db(self.db)
         metrics_store.init_db(self.db)
         with sqlite3.connect(self.db) as conn:
-            self.assertEqual(conn.execute("SELECT version FROM schema_version").fetchone()[0], 3)
+            self.assertEqual(conn.execute("SELECT version FROM schema_version").fetchone()[0], metrics_store.SCHEMA_VERSION)
             for table in ("samples_1min", "samples_1hour"):
                 self.assertEqual(conn.execute(f"SELECT * FROM {table}").fetchall(), [(60, 'x', '', 2, 1, 3, 2)])
                 for sql, params in (
@@ -179,6 +179,21 @@ class TestMetricsStore(unittest.TestCase):
                     plan = conn.execute("EXPLAIN QUERY PLAN " + sql, params).fetchall()
                     self.assertTrue(any(f"SEARCH {table} USING" in row[3] and f"{table}_ts" in row[3]
                                         for row in plan), plan)
+
+    def test_a_version_3_db_gains_the_sampler_state_table_without_changing_rows(self) -> None:
+        import sqlite3
+
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("DROP TABLE sampler_state")
+            conn.execute("INSERT INTO samples VALUES (60, 'x', '', 2)")
+            conn.execute("UPDATE schema_version SET version=3")
+        metrics_store.init_db(self.db)
+        with sqlite3.connect(self.db) as conn:
+            self.assertEqual(conn.execute("SELECT * FROM samples").fetchall(), [(60, "x", "", 2.0)])
+            metrics_store.write_sampler_state(conn, {"k": "v1"})
+            metrics_store.write_sampler_state(conn, {"k": "v2"})
+        self.assertEqual(metrics_store.read_sampler_state(self.db, "k"), "v2")
+        self.assertIsNone(metrics_store.read_sampler_state(self.db, "missing"))
 
     def test_db_health_empty_and_old_samples(self) -> None:
         health = metrics_store.db_health(self.db)

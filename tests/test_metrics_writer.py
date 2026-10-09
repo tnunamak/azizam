@@ -203,6 +203,24 @@ class MetricsWriterTests(unittest.TestCase):
         self.assertEqual(writer.stats["dropped_samples"], 0)
         self.assertEqual(writer.stats["write_errors"], 0)
 
+    def test_samples_with_state_commit_together_or_not_at_all(self):
+        writer = self.writer()
+        committed = writer.record_samples_with_state([(1, "x", "", 1.0)], {"cursor": "c1"})
+        self.assertIs(committed.wait(5), True)
+        with patch.object(metrics_store, "write_sampler_state", side_effect=sqlite3.OperationalError("disk I/O error")):
+            failed = writer.record_samples_with_state([(2, "x", "", 2.0)], {"cursor": "c2"})
+            self.assertIs(failed.wait(5), False)
+        with writer._lock:
+            writer._accepting = False
+        self.assertIsNone(writer.record_samples_with_state([(3, "x", "", 3.0)], {"cursor": "c3"}))
+        with writer._lock:
+            writer._accepting = True
+        writer._error = None  # the injected failure above is the only one expected
+        writer.flush()
+        with sqlite3.connect(self.db) as conn:
+            self.assertEqual(conn.execute("SELECT ts FROM samples").fetchall(), [(1,)])
+        self.assertEqual(metrics_store.read_sampler_state(self.db, "cursor"), "c1")
+
     def test_persistence_failure_is_reported_by_flush_and_close(self):
         writer = self.writer()
         # Avoid the successful-close cleanup registered by writer() for this error case.

@@ -9,11 +9,10 @@ Reuses probe helpers from ``status_endpoint`` to avoid duplicating logic.
 from __future__ import annotations
 
 import asyncio
-import os
+import json
 import re
 import time
 from collections import Counter
-from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
 import metrics_store
@@ -33,60 +32,53 @@ _state = {
     "last_hour_rolled": 0,
     "last_prune_day": 0,
     "request_writes": 0,
-    # Kernel-journal cursor NVKMS failures are counted up to; None until loaded
-    # from (or first saved to) the cursor file.
+    # Kernel-journal cursor NVKMS failures are counted up to, as committed in
+    # metrics.db; None until loaded from there or first committed.
     "nvkms_cursor": None,
+    # (PendingCommit, cursor) of a batch the writer accepted but has not settled.
+    "nvkms_pending": None,
     # True while the kernel journal cannot be read (warn once per outage).
     "nvkms_journal_unreadable": False,
 }
 
 # The NVIDIA driver logs "Failed to allocate NVKMS memory for GEM object" when the
 # desktop compositor cannot get GPU memory. Each tick reads the kernel journal on
-# from a saved cursor, so a failed read, a long pause or a sampler restart loses no
-# failure: they are counted on the next successful read. The cursor is kept next
-# to metrics.db, the store it feeds.
-_NVKMS_CURSOR_FILE = "nvkms-journal.cursor"
+# from a cursor that is committed to metrics.db in the same transaction as the
+# counts it produced. A failed read, a refused or failed write, a long pause or a
+# restart therefore loses no failure and counts none twice: the next tick reads
+# on from the last committed position.
+_NVKMS_CURSOR_KEY = "nvkms_journal_cursor"
+# Entries read per tick: a large backlog is caught up in steps that each finish
+# well inside the read timeout, instead of one read that keeps timing out.
+_NVKMS_READ_BATCH = 2000
+# How long a tick waits for its counts to commit before it leaves them pending.
+_NVKMS_COMMIT_WAIT_S = 5.0
 _NVKMS_GPU_ID_RE = re.compile(r"\[GPU ID (0x[0-9a-fA-F]+)\]")
-_JOURNAL_CURSOR_RE = re.compile(r"s=[0-9a-f]+;i=[0-9a-f]+;b=[0-9a-f]+;m=[0-9a-f]+;t=[0-9a-f]+;x=[0-9a-f]+")
 
 
-def _nvkms_cursor_path() -> Path:
-    return Path(metrics_store.DB_PATH).parent / _NVKMS_CURSOR_FILE
-
-
-def _is_nvkms_failure(line: str) -> bool:
-    lower = line.lower()
+def _is_nvkms_failure(message: str) -> bool:
+    lower = message.lower()
     return "nvkms" in lower and ("error" in lower or "fail" in lower)
 
 
-def _read_new_nvkms_failures() -> Optional[tuple[list[str], str]]:
-    """NVKMS failure lines logged after the saved cursor, and the cursor after them.
-
-    Returns None if the journal is unreadable; the saved cursor is then kept, so
-    those failures are counted on the next successful read. With no saved cursor
-    (first run after deploy) the read starts at the journal's end: history is not
-    counted. The caller saves the returned cursor once the counts are recorded.
+def _kernel_journal(position: list[str]) -> Optional[list[dict]]:
+    """Kernel journal entries (cursor + message) from ``position``; None if unreadable.
 
     The match is _TRANSPORT=kernel, not -k: -k implies -b (this boot only), which
     would drop what the previous boot logged after the last read. A cursor names
     its boot, so reading on from it crosses a reboot.
     """
-    saved = _state["nvkms_cursor"] or ""
-    if not saved:
-        try:
-            saved = _nvkms_cursor_path().read_text().strip()
-        except OSError:
-            pass
-    if saved and not _JOURNAL_CURSOR_RE.fullmatch(saved):
-        print(f"[metrics_sampler] WARN: ignoring malformed NVKMS journal cursor {saved[:80]!r}", flush=True)
-        saved = ""
-    position = [f"--after-cursor={saved}"] if saved else ["-n", "0"]
     rc, out, err = status_endpoint._run(
-        ["journalctl", "_TRANSPORT=kernel", *position, "--show-cursor", "--no-pager", "-q", "-o", "short-unix"],
+        ["journalctl", "_TRANSPORT=kernel", *position, "-o", "json", "--output-fields=MESSAGE", "--no-pager", "-q"],
         timeout=5.0,
     )
-    lines = out.splitlines()
-    if rc != 0 or not lines or not lines[-1].startswith("-- cursor: "):
+    entries: Optional[list[dict]] = None
+    if rc == 0:
+        try:
+            entries = [json.loads(line) for line in out.splitlines() if line.strip()]
+        except ValueError:
+            err = "unparseable journalctl output"
+    if entries is None or not all(isinstance(e, dict) and isinstance(e.get("__CURSOR"), str) for e in entries):
         if not _state["nvkms_journal_unreadable"]:
             print(
                 f"[metrics_sampler] WARN: kernel journal unreadable (rc={rc}: {err.strip()[:200]}); "
@@ -98,18 +90,81 @@ def _read_new_nvkms_failures() -> Optional[tuple[list[str], str]]:
     if _state["nvkms_journal_unreadable"]:
         print("[metrics_sampler] kernel journal readable again", flush=True)
     _state["nvkms_journal_unreadable"] = False
-    cursor = lines[-1].removeprefix("-- cursor: ").strip()
-    return [line for line in lines[:-1] if _is_nvkms_failure(line)], cursor
+    return entries
 
 
-def _save_nvkms_cursor(cursor: str) -> None:
-    """Commit the cursor: in memory first (so a failed file write cannot make the
-    next tick count the same failures again), then to the file for restarts."""
-    _state["nvkms_cursor"] = cursor
-    path = _nvkms_cursor_path()
-    temp = path.with_name(path.name + ".tmp")
-    temp.write_text(cursor + "\n")
-    os.replace(temp, path)
+def _message(entry: dict) -> str:
+    message = entry.get("MESSAGE")
+    if isinstance(message, list):  # journalctl's JSON form of a non-UTF-8 message
+        return bytes(message).decode("utf-8", "replace")
+    return message if isinstance(message, str) else ""
+
+
+def _read_new_nvkms_failures() -> Optional[tuple[list[str], Optional[str]]]:
+    """NVKMS failure messages after the committed cursor, and the cursor after them.
+
+    Returns None if the journal is unreadable (nothing changes). With no
+    committed cursor (first run after deploy) the position is the journal's
+    end: history is not counted. Reads at most _NVKMS_READ_BATCH new entries.
+
+    journalctl answers a well-formed cursor it no longer holds (rotated away,
+    or from another journal) by starting at the oldest entry, with exit 0.
+    ``--cursor`` (not ``--after-cursor``) returns the saved entry first when it
+    is still there, so a missing one is detected; the gap is logged and
+    counting restarts at the journal's end instead of replaying history.
+    """
+    saved = _state["nvkms_cursor"] or metrics_store.read_sampler_state(metrics_store.DB_PATH, _NVKMS_CURSOR_KEY)
+    if saved:
+        entries = _kernel_journal([f"--cursor={saved}", "-n", f"+{_NVKMS_READ_BATCH + 1}"])
+        if entries is None:
+            return None
+        if entries and entries[0]["__CURSOR"] == saved:
+            new = entries[1:]
+            failures = [m for m in map(_message, new) if _is_nvkms_failure(m)]
+            return failures, (new[-1]["__CURSOR"] if new else saved)
+        print(
+            "[metrics_sampler] WARN: the NVKMS journal cursor is no longer in the journal "
+            "(rotated away, or from another journal); failures logged since it was committed "
+            "are not counted; counting restarts at the journal end",
+            flush=True,
+        )
+    entries = _kernel_journal(["-n", "1"])
+    if entries is None:
+        return None
+    return [], (entries[-1]["__CURSOR"] if entries else None)
+
+
+def _nvkms_pending_settled() -> bool:
+    """False while an earlier batch is still queued: its entries must not be read again."""
+    pending = _state["nvkms_pending"]
+    if pending is None:
+        return True
+    handle, cursor = pending
+    committed = handle.wait(0)
+    if committed is None:
+        return False
+    _state["nvkms_pending"] = None
+    if committed:
+        _state["nvkms_cursor"] = cursor
+    return True
+
+
+def _commit_nvkms_counts(writer, rows: list[tuple], cursor: Optional[str]) -> None:
+    """Record the counts and their cursor in one transaction; adopt the cursor once committed."""
+    if cursor is None:  # empty journal: no position to keep yet
+        writer.record_samples(rows)
+        return
+    handle = writer.record_samples_with_state(rows, {_NVKMS_CURSOR_KEY: cursor})
+    if handle is None:
+        print("[metrics_sampler] NVKMS counts refused by the metrics writer; read again next tick", flush=True)
+        return
+    committed = handle.wait(_NVKMS_COMMIT_WAIT_S)
+    if committed is None:
+        _state["nvkms_pending"] = (handle, cursor)
+    elif committed:
+        _state["nvkms_cursor"] = cursor
+    else:
+        print("[metrics_sampler] NVKMS counts were not committed; read again next tick", flush=True)
 
 
 def _gpu_index_by_drm_id() -> dict[int, int]:
@@ -162,23 +217,27 @@ def _emit_fast(writer, now: int) -> None:
     except Exception as e:  # noqa: BLE001
         print(f"[metrics_sampler] gpu probe failed: {e}", flush=True)
 
-    # Desktop (NVKMS) allocation failures since the last read, per GPU. Absent when the
-    # journal is unreadable: a missing row means "not measured", a 0 means "none
-    # happened". Failures logged during the gap count on the first readable tick.
-    nvkms_cursor: Optional[str] = None
+    # Desktop (NVKMS) allocation failures since the last committed read, per GPU.
+    # Absent when the journal is unreadable or an earlier batch is still being
+    # written: a missing row means "not measured", a 0 means "none happened".
+    # Failures logged during such a gap count on the next tick that reads them.
+    nvkms_read: Optional[tuple[list[str], Optional[str]]] = None
+    nvkms_rows: list[tuple] = []
     try:
-        read = _read_new_nvkms_failures()
-        if read is not None:
-            new, nvkms_cursor = read
+        if _nvkms_pending_settled():
+            nvkms_read = _read_new_nvkms_failures()
+        if nvkms_read is not None:
+            new = nvkms_read[0]
             gpu_for_id = _gpu_index_by_drm_id() if new else {}
             per_gpu: Counter = Counter({g["index"]: 0 for g in gpus if g.get("index") is not None})
-            for line in new:
-                m = _NVKMS_GPU_ID_RE.search(line)
+            for message in new:
+                m = _NVKMS_GPU_ID_RE.search(message)
                 per_gpu[gpu_for_id.get(int(m.group(1), 16)) if m else None] += 1
             for idx, n in per_gpu.items():
                 tags = "" if idx is None else f'{{"gpu":{int(idx)}}}'
-                samples.append((now, "gpu_desktop_alloc_failures", tags, float(n)))
+                nvkms_rows.append((now, "gpu_desktop_alloc_failures", tags, float(n)))
     except Exception as e:  # noqa: BLE001
+        nvkms_read = None
         print(f"[metrics_sampler] nvkms probe failed: {e}", flush=True)
 
     # CPU thermal + load.
@@ -222,12 +281,11 @@ def _emit_fast(writer, now: int) -> None:
             writer.record_samples(samples)
         except Exception as e:  # noqa: BLE001
             print(f"[metrics_sampler] record_samples (fast) failed: {e}", flush=True)
-            return  # keep the NVKMS cursor: those failures count on the next tick
-    if nvkms_cursor is not None:
+    if nvkms_read is not None:
         try:
-            _save_nvkms_cursor(nvkms_cursor)
-        except OSError as e:
-            print(f"[metrics_sampler] saving the NVKMS journal cursor failed: {e}", flush=True)
+            _commit_nvkms_counts(writer, nvkms_rows, nvkms_read[1])
+        except Exception as e:  # noqa: BLE001
+            print(f"[metrics_sampler] recording NVKMS counts failed: {e}", flush=True)
 
 
 async def _emit_fast_async(writer, now: int) -> None:
