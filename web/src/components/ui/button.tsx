@@ -6,7 +6,9 @@ import { Slot } from "radix-ui";
 /**
  * Two desktop heights (DESIGN "Controls"): 32 for page, toolbar, row and card
  * actions (the default, also `sm`), and 40 (`md`) for a form's submit, Try's
- * Run and a dialog's primary. Below 640 px every size is at least 44 × 44.
+ * Run and a dialog's primary. A submit button with no size is `md`, so a form
+ * keeps its 40 action beside its 40 fields. Below 640 px every size is at
+ * least 44 × 44.
  * `lg` (44) is for full-width phone actions only.
  */
 const buttonVariants = cva(
@@ -47,7 +49,7 @@ const buttonVariants = cva(
 function Button({
   className,
   variant = "default",
-  size = "default",
+  size: requestedSize,
   asChild = false,
   ...props
 }: React.ComponentProps<"button"> &
@@ -55,6 +57,7 @@ function Button({
     asChild?: boolean;
   }) {
   const Comp = asChild ? Slot.Root : "button";
+  const size = requestedSize ?? (props.type === "submit" ? "md" : "default");
 
   return (
     <Comp

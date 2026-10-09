@@ -101,6 +101,21 @@ describe("controls", () => {
     );
   });
 
+  it("gives a form's submit the md height unless it names a size", () => {
+    render(
+      <form>
+        <Button type="submit">Save</Button>
+        <Button type="submit" size="sm">
+          Apply
+        </Button>
+      </form>,
+    );
+    const save = screen.getByRole("button", { name: "Save" });
+    expect(save).toHaveAttribute("data-size", "md");
+    expect(save).toHaveClass("h-10");
+    expect(screen.getByRole("button", { name: "Apply" })).toHaveClass("h-8");
+  });
+
   it("sizes inputs at 40 in forms and 32 in toolbars, 44 on a phone", () => {
     render(
       <>
