@@ -129,6 +129,24 @@ def test_workflows_catalog_carries_the_composed_reason_and_engine_only():
     assert "engine" not in rows["image.generate.flux2-klein-4b"]
 
 
+def test_home_rows_project_composed_workflows_from_their_engines():
+    from gateway.home_api import _capability_rows
+
+    registry = _composed_registry()
+    caps = [_composed_cap(registry, "image.analyze.face-likeness"), _composed_cap(registry, "image.edit.image-identity")]
+    services = {"services": {"faces": _FACES, "comfyui": _COMFYUI}}
+    evidence = {"faces": _FACES_STOPPED,
+                "comfyui": {"status": "down", "available": False, "observed_at_s": 900}}
+    rows = {row["workflow"]: row for row in _capability_rows(caps, evidence, services, {}, registry.records())}
+    likeness = rows["image.analyze.face-likeness"]
+    assert (likeness["status"], likeness["available"]) == ("idle", True)
+    # Home's capability state needs the check time to say "Ready to start".
+    assert likeness["availability"]["evidence"]["observed_at_s"] == 1_000
+    assert "engine" not in likeness["availability"] and "reason" not in likeness["availability"]
+    assert (rows["image.edit.image-identity"]["status"], rows["image.edit.image-identity"]["available"]) == (
+        "unavailable", False)
+
+
 def test_composed_sidecar_check_is_read_only_and_fills_the_cached_status_gap(monkeypatch):
     """The face sidecar is checked by lifecycle status, never started, even with a warm status cache."""
     import asyncio

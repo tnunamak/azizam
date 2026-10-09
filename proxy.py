@@ -13899,7 +13899,12 @@ async def _status_payload_with_availability() -> Mapping[str, Any]:
             ),
             "_availability_evidence": _runtime_availability_evidence(
                 service_records,
-                status_payload=payload,
+                # Composed workflow engines (the face sidecar) are checked
+                # read-only for evidence; the engine grid itself is unchanged.
+                status_payload=await _status_payload_with_service_rows(
+                    payload, _workflow_availability_services(service_records),
+                    _composed_dependency_service_ids(_gateway_capabilities_for_auth_context(NO_AUTH_CONTEXT)),
+                ),
                 health_evidence=health_evidence,
             ),
         }
@@ -15158,6 +15163,8 @@ app.include_router(create_home_router(
     status_provider=_status_payload_with_availability,
     admin_auth=ADMIN_AUTH,
     spend_ledger_path=lambda: ADMIN_DB_PATH.parent / "provider_spend.db",
+    availability_services=_workflow_availability_services,
+    workflow_records=GATEWAY_WORKFLOW_REGISTRY.records,
 ))
 
 
