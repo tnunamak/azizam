@@ -32,7 +32,8 @@ DockerDriver
 
 SystemdDriver  (swap_strategy: dropin-env-restart)
     Drives a systemd unit the operator already wrote.
-    swap()        → write drop-in env file → daemon-reload → restart → poll health.
+    swap()        → write drop-in env file → daemon-reload → restart → poll health;
+                    on failure, restore the previous drop-in and restart on it.
     stop()        → systemctl stop <unit> (only fires when idle_timeout_s > 0).
     ensure_ready  → systemctl start <unit> then poll health.
     driver_config keys: scope, unit, dropin, swap_strategy, health_endpoint,
@@ -762,7 +763,8 @@ def register_params_provider(name: str, fn: Callable[[Mapping[str, Any]], dict])
 class SystemdDriver:
     """Drive a systemd unit the operator already wrote.
 
-    swap()       → write a drop-in env override → daemon-reload → restart → poll.
+    swap()       → write a drop-in env override → daemon-reload → restart → poll;
+                   on failure, restore the previous drop-in and restart on it.
     stop()       → systemctl stop <unit>  (only fires when idle_timeout_s > 0).
     ensure_ready → systemctl start <unit> then poll health.
 
@@ -987,6 +989,11 @@ class SystemdDriver:
         Drives the dropin-env-restart swap: write a higher-numbered systemd
         drop-in overriding the activation env keys, daemon-reload, restart the
         unit, then poll health.
+
+        On failure (daemon-reload, restart, or health timeout) returns False
+        after putting back the drop-in the unit ran before (or removing it if
+        there was none) and, if the unit was already restarted, restarting it
+        on that previous activation. The last working model stays loaded.
         """
         dc = self._driver_config(svc)
         scope_flag = self._scope_flag(dc)
@@ -1044,6 +1051,17 @@ class SystemdDriver:
                 return True
         # --- end SwapContext policy -------------------------------------------
 
+        # Keep the activation the unit runs now, so a failed swap can put it back.
+        # None means no managed drop-in: the unit runs its base configuration.
+        try:
+            previous_dropin: Optional[str] = dropin_path.read_text()
+        except FileNotFoundError:
+            previous_dropin = None
+        except OSError as e:
+            # Without the old text a failure could not be undone: do not swap.
+            print(f"[lifecycle] SystemdDriver.swap: cannot read current drop-in: {e}", flush=True)
+            return False
+
         # Write the drop-in.
         try:
             dropin_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1052,17 +1070,11 @@ class SystemdDriver:
             print(f"[lifecycle] SystemdDriver.swap: failed to write drop-in: {e}", flush=True)
             return False
 
-        def _remove_dropin() -> None:
-            try:
-                dropin_path.unlink(missing_ok=True)
-            except Exception as exc:
-                print(f"[lifecycle] SystemdDriver.swap: failed to remove drop-in: {exc}", flush=True)
+        reload_cmd = ["systemctl"] + scope_flag + ["daemon-reload"]
+        restart_cmd = ["systemctl"] + scope_flag + ["restart", unit]
 
         # daemon-reload then restart — daemon-reload MUST precede restart.
-        for cmd in (
-            ["systemctl"] + scope_flag + ["daemon-reload"],
-            ["systemctl"] + scope_flag + ["restart", unit],
-        ):
+        for cmd in (reload_cmd, restart_cmd):
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
@@ -1074,10 +1086,35 @@ class SystemdDriver:
                     f"[lifecycle] SystemdDriver.swap: `{' '.join(cmd)}` failed: {stderr.decode()}",
                     flush=True,
                 )
-                _remove_dropin()
+                await self._restore_after_failed_swap(
+                    svc, dropin_path, previous_dropin, reload_cmd,
+                    restart_cmd if cmd is restart_cmd else None,
+                    health_ep, health_timeout,
+                )
                 return False
 
-        # Poll health endpoint until ready.
+        elapsed = await self._wait_until_healthy(svc, health_ep, health_timeout)
+        if elapsed is not None:
+            print(f"[lifecycle] SystemdDriver.swap complete in {elapsed:.1f}s", flush=True)
+            return True
+
+        print(
+            f"[lifecycle] SystemdDriver.swap: unit '{unit}' did not become ready within {health_timeout}s",
+            flush=True,
+        )
+        await self._restore_after_failed_swap(
+            svc, dropin_path, previous_dropin, reload_cmd, restart_cmd, health_ep, health_timeout,
+        )
+        return False
+
+    # ------------------------------------------------------------------
+    # Internals
+    # ------------------------------------------------------------------
+
+    async def _wait_until_healthy(
+        self, svc: Mapping[str, Any], health_ep: str, health_timeout: float,
+    ) -> Optional[float]:
+        """Poll the health endpoint; return seconds until 200, or None on timeout."""
         svc_for_poll = self._svc_with_health_endpoint(svc, health_ep)
         start = time.time()
         deadline = start + health_timeout
@@ -1090,25 +1127,50 @@ class SystemdDriver:
                         f"http://{svc_for_poll.get('host', '127.0.0.1')}:{svc_for_poll.get('port')}{health_ep}"
                     )
                     if resp.status_code == 200:
-                        elapsed = time.time() - start
-                        print(f"[lifecycle] SystemdDriver.swap complete in {elapsed:.1f}s", flush=True)
-                        return True
+                        return time.time() - start
             except Exception:
                 pass
             if time.time() >= deadline:
-                break
+                return None
             await asyncio.sleep(interval)
 
-        print(
-            f"[lifecycle] SystemdDriver.swap: unit '{unit}' did not become ready within {health_timeout}s",
-            flush=True,
-        )
-        _remove_dropin()
-        return False
+    async def _restore_after_failed_swap(
+        self,
+        svc: Mapping[str, Any],
+        dropin_path: Path,
+        previous_dropin: Optional[str],
+        reload_cmd: list[str],
+        restart_cmd: Optional[list[str]],
+        health_ep: str,
+        health_timeout: float,
+    ) -> None:
+        """Put back the activation the unit ran before the swap.
 
-    # ------------------------------------------------------------------
-    # Internals
-    # ------------------------------------------------------------------
+        Restores the previous drop-in text (or removes the drop-in if there was
+        none), reloads systemd, and, when the failed swap already restarted the
+        unit (``restart_cmd`` given), restarts it on the restored activation and
+        waits for health. Best effort: every step logs its own failure.
+        """
+        try:
+            if previous_dropin is None:
+                dropin_path.unlink(missing_ok=True)
+            else:
+                dropin_path.write_text(previous_dropin)
+        except Exception as exc:
+            print(f"[lifecycle] SystemdDriver.swap: failed to restore drop-in: {exc}", flush=True)
+            return
+        if not await self._run_systemctl(reload_cmd) or restart_cmd is None:
+            return
+        if not await self._run_systemctl(restart_cmd):
+            return
+        if await self._wait_until_healthy(svc, health_ep, health_timeout) is None:
+            print(
+                f"[lifecycle] SystemdDriver.swap: rollback restart did not become ready "
+                f"within {health_timeout}s",
+                flush=True,
+            )
+        else:
+            print("[lifecycle] SystemdDriver.swap: rolled back to the previous activation", flush=True)
 
     @staticmethod
     def _driver_config(svc: Mapping[str, Any]) -> Mapping[str, Any]:

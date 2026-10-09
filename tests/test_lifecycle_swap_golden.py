@@ -21,8 +21,10 @@ Kobold assertions (K1 trap):
     lines (NOT LLAMA_TURBO_*, which the design doc incorrectly claimed).
   - exec sequence == daemon-reload → restart koboldcpp.service, in that order.
   - health poll hits /v1/models.
-  - failure path (bad restart exit code): both remove drop-in and return False.
-  - failure path (health timeout): both remove drop-in and return False.
+  - failure path (bad restart exit code): restore the previous drop-in (remove
+    it when there was none, as here) and return False.
+  - failure path (health timeout): same restore, return False.
+    (Restore-and-restart on the previous activation: test_systemd_swap_rollback.py.)
   - empty mmproj: Environment="LLAMA_BEE_MMPROJ=" (empty value).
 
 Tabby assertions (T1 fix):
