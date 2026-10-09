@@ -134,10 +134,17 @@ export default function SignInPage() {
                   <ArrowRight />
                 </Button>
                 {!reset && (
-                  <p className="text-muted-foreground text-xs leading-5">
-                    Forgot your password? Ask the gateway owner for a reset
-                    link.
-                  </p>
+                  <div className="text-muted-foreground space-y-2 text-xs leading-5">
+                    <p>
+                      If you created an account from an invitation, use the
+                      password you chose there. An App API key cannot sign you
+                      in.
+                    </p>
+                    <p>
+                      Forgot your password? Ask the gateway owner for a reset
+                      link.
+                    </p>
+                  </div>
                 )}
               </form>
             )}
