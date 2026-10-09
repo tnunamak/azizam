@@ -677,7 +677,7 @@ def _availability_reason_code(capabilities: list[Capability]) -> str:
 def _availability(capabilities: list[Capability]) -> dict[str, Any]:
     projected = [cap for cap in capabilities if isinstance(cap.availability, Mapping) and cap.policy_available]
     if projected:
-        rank = {"ready": 5, "idle": 4, "starting": 3, "busy": 2, "unknown": 1, "unavailable": 0}
+        rank = {"ready": 6, "idle": 5, "starting": 4, "busy": 3, "degraded": 2, "unknown": 1, "unavailable": 0}
         selected = max(projected, key=lambda cap: rank.get(str(cap.availability.get("status")), 0))
         result = dict(selected.availability)
         status = str(result.get("status") or "unknown")

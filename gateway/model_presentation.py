@@ -348,7 +348,7 @@ def group_product_capabilities(rows: list[dict[str, Any]]) -> list[dict[str, Any
     grouped: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         grouped.setdefault(row["capability"], []).append(row)
-    rank = {"ready": 5, "idle": 4, "starting": 3, "busy": 2, "unknown": 1, "unavailable": 0}
+    rank = {"ready": 6, "idle": 5, "starting": 4, "busy": 3, "degraded": 2, "unknown": 1, "unavailable": 0}
     result = []
     for kind, candidates in grouped.items():
         def preference(row):
@@ -376,7 +376,7 @@ def product_status_summary(rows: list[Mapping[str, Any]]) -> dict[str, Any]:
         state = "ready"
         reason_code = "ready_on_request" if any(row.get("status") == "idle" for row in rows) else "ready"
     else:
-        state = next((status for status in ("unavailable", "unknown", "busy", "starting")
+        state = next((status for status in ("unavailable", "degraded", "unknown", "busy", "starting")
                       if any(row["status"] == status for row in issues)), "unavailable")
         selected = next(row for row in issues if row["status"] == state)
         evidence = (selected.get("availability") or {}).get("evidence") or {}

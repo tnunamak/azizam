@@ -112,6 +112,9 @@ describe("Home presentation", () => {
         row("voice", "speech", "tts", "busy"),
       ]),
     ).toBe("Images are starting · voice is busy");
+    expect(capabilitySummary([row("image", "images", "image", "degraded")])).toBe(
+      "Images are degraded",
+    );
     expect(capabilitySummary([])).toBe(
       "No tasks are available to your account yet.",
     );

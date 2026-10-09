@@ -7,6 +7,9 @@ describe("status copy", () => {
       "Ready to start when you make a request.",
     );
     expect(availabilityReason("unknown", "unknown")).toBeUndefined();
+    expect(availabilityReason("degraded", "degraded")).toBe(
+      "Degraded. Requests may fail.",
+    );
   });
 
   it("uses the capability label and matching plural verb once", () => {

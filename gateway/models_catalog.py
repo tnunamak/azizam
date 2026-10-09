@@ -1020,7 +1020,9 @@ async def probe_service_health(
         status = _status_from_health_payload(payload)
         if status == "unknown" and declared_health_success(service, payload):
             available, status = True, "ready"
-        if available is False:
+        if status == "degraded":
+            reason = "Health endpoint reported degraded"
+        elif available is False:
             reason = "Health endpoint reported unavailable"
         elif available is True:
             reason = "Health endpoint responded"
@@ -1070,6 +1072,8 @@ def _status_from_health_payload(payload: Mapping[str, Any]) -> str:
         return "starting"
     if status_value in {"busy"}:
         return "busy"
+    if status_value == "degraded":
+        return "degraded"
     if _availability_from_health_payload(payload) is True:
         return "ready"
     if _availability_from_health_payload(payload) is False:

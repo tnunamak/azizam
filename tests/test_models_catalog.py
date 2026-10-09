@@ -830,6 +830,23 @@ class ModelsCatalogBuildTests(unittest.TestCase):
         self.assertEqual(evidence["svc"]["status"], "unavailable")
         self.assertEqual(evidence["svc"]["reason"], "Health endpoint reported unavailable")
 
+    def test_service_health_probe_preserves_degraded_status(self) -> None:
+        async def run():
+            async def get_json(_url: str):
+                return {"status": "degraded"}
+
+            return await probe_service_health(
+                {"services": {"svc": {"config": {"health_endpoint": "http://svc/health"}}}},
+                get_json=get_json,
+            )
+
+        import asyncio
+
+        evidence = asyncio.run(run())
+        self.assertIsNone(evidence["svc"]["available"])
+        self.assertEqual(evidence["svc"]["status"], "degraded")
+        self.assertEqual(evidence["svc"]["reason"], "Health endpoint reported degraded")
+
     def test_service_health_probe_opaque_success_is_unknown(self) -> None:
         async def run():
             async def get_json(_url: str):

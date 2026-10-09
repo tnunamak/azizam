@@ -169,13 +169,17 @@ def test_home_unknown_health_is_not_green(home_case):
     assert data["capabilities"][0]["reason_code"] == "unknown"
 
 
-@pytest.mark.parametrize("state", ["busy", "starting"])
-def test_home_status_preserves_observed_busy_or_starting(home_case, state):
+@pytest.mark.parametrize("state", ["busy", "starting", "degraded"])
+def test_home_and_member_status_preserve_observed_state(home_case, state):
     home_case.health = {"backends": [{"key": "service", "live_status": state}]}
     data = home_case.http.get("/me/api/home").json()
     assert data["status"]["state"] == state
     assert data["aliases"][0]["status"] == state
     assert not data["capabilities"][0]["available"]
+    member = home_case.http.get("/me/api/status").json()
+    TypeAdapter(MemberStatus).validate_python(member)
+    assert member["status"]["state"] == state
+    assert member["capabilities"][0]["status"] == state
 
 
 def test_home_health_failure_is_an_error(home_case):

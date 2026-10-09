@@ -482,13 +482,14 @@ def _admin_observation_from_projection(
     projection: Mapping[str, Any],
     *,
     role: str,
-    raw_status: str,
 ) -> str:
     status_value = str(projection.get("status") or "")
     if status_value == "ready":
         return "up"
+    if status_value == "degraded":
+        return "degraded"
     if status_value == "busy":
-        return "degraded" if raw_status == "degraded" else "busy"
+        return "busy"
     if status_value == "starting":
         return "starting"
     if status_value == "idle":
@@ -609,11 +610,9 @@ def derive_admin_health_projection(
                 service_records=registry,
                 evidence=availability_evidence,
             )
-            raw_status = str((availability_evidence.get(service_id) or {}).get("status") or "")
             observation = _admin_observation_from_projection(
                 projection.to_public_dict(),
                 role=role,
-                raw_status=raw_status,
             )
             if not observation_available and service_id not in availability_evidence:
                 observation = "unavailable"
@@ -664,7 +663,6 @@ def derive_admin_health_projection(
         observation = _admin_observation_from_projection(
             projection.to_public_dict(),
             role="required",
-            raw_status=str((availability_evidence.get(service_id) or {}).get("status") or ""),
         )
         tone = "neutral" if relied_on_ids is not None else _admin_tone_from_observation(observation, role="required")
         if rank.get(tone, 0) > rank.get(worst, 0):
