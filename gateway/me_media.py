@@ -622,6 +622,8 @@ def _media_items(
                 continue
             kind = _asset_kind(asset_id, metadata)
             created_at = _asset_created_at(path, {}, None, embedded)
+            prompt_record = prompt_memory.get(asset_id, scope.person_id, path=prompt_memory_path)
+            prompt = prompt_record.get("prompt_text") if prompt_record else None
             seen.add(asset_id)
             out.append({
                 "asset_id": asset_id,

@@ -17,7 +17,7 @@ PROMPT_MEMORY_SETTING_KEY = "prompt_memory"
 PROMPT_MEMORY_DEFAULT = {
     "default_remember": True,
     "never_keep": False,
-    "retention_cap": "never",
+    "retention_cap": "1_year",
 }
 
 

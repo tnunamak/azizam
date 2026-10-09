@@ -18,8 +18,8 @@ from gateway import admin_store, media_jobs, media_metadata
 DB_PATH = media_jobs.DB_PATH
 NAMESPACE = "com.azizam.prompts"
 RETENTION_SECONDS = {"never": None, "3_months": 90 * 86400, "1_year": 365 * 86400}
-MEMBER_DEFAULTS = {"remember": True, "retention": "never"}
-HOUSEHOLD_DEFAULTS = {"default_remember": True, "never_keep": False, "retention_cap": "never"}
+MEMBER_DEFAULTS = {"remember": True, "retention": "3_months"}
+HOUSEHOLD_DEFAULTS = {"default_remember": True, "never_keep": False, "retention_cap": "1_year"}
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS asset_prompts (
@@ -213,7 +213,7 @@ def effective(member: Mapping[str, Any] | None, household: Mapping[str, Any] | N
     remember = bool(prefs.get("remember", True)) and not bool(policy.get("never_keep"))
     return {
         "remember": remember,
-        "retention": _effective_retention(str(prefs.get("retention") or "never"), str(policy.get("retention_cap") or "never")),
+        "retention": _effective_retention(str(prefs.get("retention") or "3_months"), str(policy.get("retention_cap") or "1_year")),
     }
 
 

@@ -31,7 +31,7 @@ class MeMediaRouterTests(unittest.TestCase):
         self.admin_db = self.root / "admin.db"
         self.jobs_db = self.root / "media_jobs.db"
         self.receipts_db = self.root / "receipts.db"
-        self.prompt_db = self.root / "prompt_memory.db"
+        self.prompt_db = self.jobs_db
         self.cache = self.root / "cache"
         self.cache.mkdir()
         admin_store.init_db(self.admin_db)

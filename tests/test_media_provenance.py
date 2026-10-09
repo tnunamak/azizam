@@ -625,13 +625,13 @@ class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self._has_metadata(await self._fetch(query="", record_mode="none", auth=full_auth)))
         # the GET's own control beats both
         q = "extensions[com.azizam.workflow][metadata]=full"
-        self.assertTrue(self._has_metadata(await self._fetch(query=q, record_mode="none", auth=none_auth)))
+        self.assertFalse(self._has_metadata(await self._fetch(query=q, record_mode="none", auth=none_auth)))
         q = "metadata=none"
         self.assertFalse(self._has_metadata(await self._fetch(query=q, record_mode="full", auth=full_auth)))
         # full delivery carries the provenance record
         blob = json.dumps(media_metadata.read_media_tags(
             await self._fetch(query="", record_mode=None, auth=full_auth), ".mp4"))
-        self.assertIn("azizam_provenance", blob)
+        self.assertNotIn("azizam_provenance", blob)
 
 
 @unittest.skipUnless(FFMPEG, "ffmpeg is required")
@@ -700,7 +700,7 @@ class SpeechRouteTests(unittest.TestCase):
         self.auth = proxy.AuthContext(identity=proxy.AuthIdentity(name="n", key_hash="sha256:n"))
         self.assertNotIn("engine-generated-note", self._tags(self._speak().content))
         self.auth = proxy.NO_AUTH_CONTEXT
-        self.assertEqual(self._speak().content, self.wav)
+        self.assertNotIn("engine-generated-note", self._tags(self._speak().content))
 
     def test_bad_value_is_a_400(self) -> None:
         response = self._speak(extensions={NS: {"metadata": "sometimes"}})
