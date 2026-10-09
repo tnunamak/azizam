@@ -107,7 +107,10 @@ for (const theme of ["light", "dark"] as const) {
                       {
                         ...imageRow,
                         availability: {
-                          evidence: { source: "status", observed_at_s: checkedAt },
+                          evidence: {
+                            source: "status",
+                            observed_at_s: checkedAt,
+                          },
                         },
                       },
                     ],
@@ -130,8 +133,7 @@ for (const theme of ["light", "dark"] as const) {
                     state: "unavailable",
                     reason_code:
                       state === "empty" ? "no_capabilities" : "unavailable",
-                    affected_capability_ids:
-                      state === "empty" ? [] : ["image"],
+                    affected_capability_ids: state === "empty" ? [] : ["image"],
                     counts:
                       state === "empty"
                         ? { total: 0, available: 0, affected: 0 }
@@ -184,9 +186,9 @@ for (const theme of ["light", "dark"] as const) {
             }),
           ).toBeVisible();
           await expect(
+            // Names the owner when the gateway knows their name.
             page.getByText(
-              "Ask the gateway owner to connect a model and give you access.",
-              { exact: true },
+              /^Ask (the gateway owner|[^ ]+) to connect a model and give you access\.$/,
             ),
           ).toBeVisible();
         } else
@@ -195,12 +197,17 @@ for (const theme of ["light", "dark"] as const) {
           ).toBeVisible();
         if (state === "seeded") {
           await expect(
-            yourCapabilities.getByRole("listitem").filter({ hasText: "Images" }),
+            yourCapabilities
+              .getByRole("listitem")
+              .filter({ hasText: "Images" }),
           ).toContainText("Down");
           await expect(
-            page.getByText("Your app reached the gateway. Images is down now.", {
-              exact: true,
-            }),
+            page.getByText(
+              "Your app reached the gateway. Images is down now.",
+              {
+                exact: true,
+              },
+            ),
           ).toBeVisible();
         }
         await expect(page.locator('[aria-busy="true"]:visible')).toHaveCount(0);

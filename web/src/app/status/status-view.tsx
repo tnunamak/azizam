@@ -33,6 +33,7 @@ import {
   capabilityLabel,
   useCapabilityViews,
 } from "@/lib/use-capability-views";
+import { askOwner, useOwnerName } from "@/lib/use-owner-name";
 import { StatusClient } from "./status-client";
 
 function usableNames(capability: MemberStatusCapability): string[] {
@@ -56,6 +57,7 @@ function receiptWord(status: string | null) {
 }
 
 export function MemberStatus() {
+  const ownerName = useOwnerName();
   const { data, error, isPending, isError, isFetching, refetch } = useQuery({
     queryKey: ["account", "status"],
     queryFn: productApi.status,
@@ -230,7 +232,7 @@ export function MemberStatus() {
                 ) : (
                   <EmptyState
                     title="No models are available to your account yet"
-                    description="Ask the gateway owner to connect a model and give you access."
+                    description={`${askOwner(ownerName)} to connect a model and give you access.`}
                   />
                 )}
                 {data.capabilities.length ? (

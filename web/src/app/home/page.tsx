@@ -821,8 +821,9 @@ function Connect({
                   This key does not include the default model
                 </p>
                 <p className="text-muted-foreground mt-1">
-                  Choose another key, or ask the owner to update this app’s
-                  access.
+                  Choose another key, or ask{" "}
+                  {home.gateway?.owner_name?.trim() || "the owner"} to update
+                  this app’s access.
                 </p>
               </div>
             ) : null}

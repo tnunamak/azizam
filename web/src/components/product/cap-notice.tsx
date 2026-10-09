@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { RelativeTime } from "@/components/ui/relative-time";
 import { Callout } from "@/components/product/status-ui";
 import { capLimitFrom } from "@/app/home/presentation";
+import { askOwner, useOwnerName } from "@/lib/use-owner-name";
 
 function nextMonthStart(now: Date): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
@@ -25,6 +26,7 @@ export function CapNotice({
   at: number;
   owner: boolean;
 }) {
+  const ownerName = useOwnerName();
   const limit = capLimitFrom(warning);
   const resets = nextMonthStart(new Date()).toLocaleDateString(undefined, {
     month: "short",
@@ -68,7 +70,7 @@ export function CapNotice({
     >
       <p>
         The household reached its {limit === "monthly" ? "monthly" : "daily"}{" "}
-        limit for outside AI services. {when} Ask the gateway owner if you need
+        limit for outside AI services. {when} {askOwner(ownerName)} if you need
         them sooner.
       </p>
     </Callout>
