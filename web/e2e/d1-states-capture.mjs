@@ -33,10 +33,11 @@ const browserLocale = "en-US";
 const browserTimezone = "America/Chicago";
 const baseURL = `http://127.0.0.1:${port}`;
 const surfaces = [["home", "/ui/home/"], ["status", "/ui/status/"], ["library", "/ui/library/"]];
+const trySurfaces = [["try-image", "/ui/try/?capability=image"], ["try-speech", "/ui/try/?capability=speech"]];
 const widths = [1440, 390];
 const themes = ["light", "dark"];
-const OUTAGE_BODY = { error: { code: "internal_error", message: "Simulated outage for the screenshot" } };
-const INJECTED_TEXT = /Simulated outage|internal_error|status of 500/;
+const OUTAGE_BODY = { error: { code: "internal_error", message: "The gateway could not load this data. Refresh to try again." } };
+const INJECTED_TEXT = /could not load this data|internal_error|status of 500/;
 
 const captures = [];
 
@@ -185,6 +186,9 @@ const TARGETS = {
       capabilities: [], apps: [], receipts: [], aliases: [], new_app_aliases: [], credential_aliases: {},
       status: { state: "unavailable", reason_code: "no_capabilities", affected_capability_ids: [], counts: { total: 0, available: 0, affected: 0 } },
     }),
+  }, {
+    test: p => p === "/me/api/media", wrap: null, emptyOnly: true,
+    empty: j => Object.assign(j, { assets: [], next_cursor: null, has_more: false }),
   }],
   status: [
     { test: p => p === "/admin/api/status", wrap: "status",
@@ -193,12 +197,16 @@ const TARGETS = {
       empty: j => Object.assign(j, { services: {} }) },
     { test: p => p === "/me/api/status", wrap: null,
       empty: j => Object.assign(j, { capabilities: [], receipts: [] }) },
+    { test: p => p === "/me/api/home", wrap: null, emptyOnly: true,
+      empty: j => Object.assign(j, { capabilities: [], receipts: [], aliases: [] }) },
+    { test: p => p === "/admin/api/providers", wrap: null, emptyOnly: true,
+      empty: j => (Array.isArray(j) ? [] : Object.assign(j, { providers: [] })) },
   ],
   library: [{
     test: p => p === "/me/api/media", wrap: null,
     empty: j => Object.assign(j, { assets: [], next_cursor: null, has_more: false }),
     expired: j => {
-      (j.assets ?? []).slice(0, 4).forEach(asset => Object.assign(asset, { available: false, download_url: null, unavailable_reason: "Asset file is missing or expired." }));
+      (j.assets ?? []).slice(-4).forEach(asset => Object.assign(asset, { available: false, download_url: null, unavailable_reason: "Asset file is missing or expired." }));
       return j;
     },
   }],
@@ -214,6 +222,9 @@ async function routeTargets(page, surface, mode) {
   await page.route(targetUrlTest(surface), async route => {
     const pathname = trimmed(new URL(route.request().url()).pathname);
     const target = TARGETS[surface].find(item => item.test(pathname));
+    // Secondary sources only follow "empty"; loading and errors stay on the
+    // surface's own call.
+    if (target.emptyOnly && mode !== "empty") return route.fallback();
     if (mode === "hold") return new Promise(() => {}); // never answered, so the page stays loading
     if (mode === "error") return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify(OUTAGE_BODY) });
     const response = await route.fetch();
@@ -223,8 +234,8 @@ async function routeTargets(page, surface, mode) {
     const root = target.wrap && json && typeof json[target.wrap] === "object" && json[target.wrap] !== null ? json[target.wrap] : json;
     const rewrite = target[mode];
     if (!rewrite) return route.fulfill({ response });
-    rewrite(root);
-    return route.fulfill({ response, json });
+    const rewritten = rewrite(root);
+    return route.fulfill({ response, json: target.wrap ? json : (rewritten ?? json) });
   });
 }
 
@@ -394,6 +405,9 @@ async function captureSignedIn(seed, role, email, themeWidths) {
       continue;
     }
     for (const [surface, url] of surfaces) await statePopulated(ctx, surface, url);
+    // The two core member tasks, as they open from Home (red team round 2
+    // coverage gap): Try for a picture and for reading text aloud.
+    for (const [surface, url] of trySurfaces) await statePopulated(ctx, surface, url);
     await stateLibraryDetail(ctx);
     await stateLibraryKind(ctx, "Video");
     await stateLibraryKind(ctx, "Audio");
