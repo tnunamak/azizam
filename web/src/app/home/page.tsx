@@ -58,6 +58,7 @@ import {
   type CapabilityView,
 } from "@/lib/capability-state";
 import { useCapabilityViews } from "@/lib/use-capability-views";
+import { taskNames } from "@/lib/terms";
 import {
   Sheet,
   SheetContent,
@@ -167,13 +168,13 @@ interface Task {
 }
 /* The person's own tasks, most-asked first (brief D1.1 item 4). */
 const TASKS: Task[] = [
-  { key: "image", title: "Make a picture", tab: "image" },
-  { key: "speech", title: "Read text aloud", tab: "speech" },
+  { key: "image", title: taskNames.image, tab: "image" },
+  { key: "speech", title: taskNames.speech, tab: "speech" },
   { key: "chat", title: "Chat", tab: "chat" },
-  { key: "music", title: "Make music", tab: "audio" },
-  { key: "sfx", title: "Make a sound effect", tab: "audio" },
-  { key: "video", title: "Make a video", tab: "video" },
-  { key: "transcribe", title: "Turn a recording into text", tab: "transcribe" },
+  { key: "music", title: taskNames.music, tab: "audio" },
+  { key: "sfx", title: taskNames.sound_effects, tab: "audio" },
+  { key: "video", title: taskNames.video, tab: "video" },
+  { key: "transcribe", title: taskNames.transcribe, tab: "transcribe" },
 ];
 const USABLE = new Set(["ready", "busy", "degraded", "unknown"]);
 

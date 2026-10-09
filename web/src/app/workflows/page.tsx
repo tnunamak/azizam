@@ -12,6 +12,7 @@ import {
 import { cn } from "@/lib/cn";
 import { capabilityLabels } from "@/lib/terms";
 import { availabilityReason } from "@/lib/status-copy";
+import { safeModelId } from "@/lib/model-name";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CopyButton } from "@/components/ui/copy-button";
@@ -677,7 +678,7 @@ function RecentJobs({ workflow }: { workflow: WorkflowRow }) {
                   {asset.model && (
                     <>
                       <dt>Model</dt>
-                      <dd className="break-all">{asset.model}</dd>
+                      <dd className="break-all">{safeModelId(asset.model)}</dd>
                     </>
                   )}
                   {asset.workflow && (

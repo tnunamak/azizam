@@ -13,6 +13,25 @@ export const capabilityLabels = {
   reranking: "Reranking",
 } as const;
 
+/**
+ * What a person asks for, in the words Home and Try use. Screens that name a
+ * kind of request (Usage rows, chart legends) use these, so one thing keeps
+ * one name across the app.
+ */
+export const taskNames = {
+  chat: "Chat",
+  image: "Make a picture",
+  video: "Make a video",
+  speech: "Read text aloud",
+  transcribe: "Turn a recording into text",
+  music: "Make music",
+  sound_effects: "Make a sound effect",
+  audio: "Make music or sounds",
+  decisions: "Choose an option",
+  embeddings: "Turn text into numbers",
+  reranking: "Reranking",
+} as const;
+
 /** Preferred member-facing terms; protocol and stored field names stay unchanged. */
 export const preferredTerms = {
   localExecution: "Engine",
