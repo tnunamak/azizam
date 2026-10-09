@@ -33,6 +33,9 @@ _state = {
     "last_hour_rolled": 0,
     "last_prune_day": 0,
     "request_writes": 0,
+    # Kernel-journal cursor NVKMS failures are counted up to; None until loaded
+    # from (or first saved to) the cursor file.
+    "nvkms_cursor": None,
     # True while the kernel journal cannot be read (warn once per outage).
     "nvkms_journal_unreadable": False,
 }
@@ -68,10 +71,12 @@ def _read_new_nvkms_failures() -> Optional[tuple[list[str], str]]:
     would drop what the previous boot logged after the last read. A cursor names
     its boot, so reading on from it crosses a reboot.
     """
-    try:
-        saved = _nvkms_cursor_path().read_text().strip()
-    except OSError:
-        saved = ""
+    saved = _state["nvkms_cursor"] or ""
+    if not saved:
+        try:
+            saved = _nvkms_cursor_path().read_text().strip()
+        except OSError:
+            pass
     if saved and not _JOURNAL_CURSOR_RE.fullmatch(saved):
         print(f"[metrics_sampler] WARN: ignoring malformed NVKMS journal cursor {saved[:80]!r}", flush=True)
         saved = ""
@@ -98,6 +103,9 @@ def _read_new_nvkms_failures() -> Optional[tuple[list[str], str]]:
 
 
 def _save_nvkms_cursor(cursor: str) -> None:
+    """Commit the cursor: in memory first (so a failed file write cannot make the
+    next tick count the same failures again), then to the file for restarts."""
+    _state["nvkms_cursor"] = cursor
     path = _nvkms_cursor_path()
     temp = path.with_name(path.name + ".tmp")
     temp.write_text(cursor + "\n")

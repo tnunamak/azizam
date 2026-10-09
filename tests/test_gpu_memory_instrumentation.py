@@ -171,11 +171,19 @@ class SamplerCase(unittest.TestCase):
         metrics_store.init_db(self.db)
         metrics_sampler.close_writer()
         self.writer = metrics_sampler.start_writer()
+        self._reset_nvkms_state()
 
     def tearDown(self) -> None:
         metrics_sampler.close_writer()
         metrics_store.DB_PATH = self._orig_path
+        self._reset_nvkms_state()
         self.tmp.cleanup()
+
+    @staticmethod
+    def _reset_nvkms_state() -> None:
+        """The cursor in memory belongs to one journal; each test has its own."""
+        metrics_sampler._state["nvkms_cursor"] = None
+        metrics_sampler._state["nvkms_journal_unreadable"] = False
 
     def samples(self, metric: str) -> list[tuple[dict, float]]:
         self.writer.flush()
@@ -329,6 +337,14 @@ class TestNvkmsFailureMetric(SamplerCase):
         importlib.reload(metrics_sampler)  # the gateway restarts: module state is gone
         self.tick(after_s=120)
         self.assertEqual(self.failures(0), [0.0, 1.0])
+
+    def test_a_failed_cursor_save_does_not_count_the_same_failure_twice(self) -> None:
+        self.tick()
+        self.journal.log(FAIL, after_s=1)
+        with patch.object(metrics_sampler.os, "replace", side_effect=OSError(28, "No space left on device")):
+            self.tick()
+            self.tick()
+        self.assertEqual(self.failures(0), [0.0, 1.0, 0.0])
 
     def test_identical_repeated_lines_each_count_once(self) -> None:
         self.tick()
