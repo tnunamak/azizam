@@ -10,33 +10,17 @@ const hues = [
   "bg-person-7",
 ] as const;
 
-/* The same hues as a custom property, so a surface that belongs to a person
-   (an audio cover) can wash, draw and fill with that person's colour. */
-const hueVars = [
-  "[--person:var(--person-1)]",
-  "[--person:var(--person-2)]",
-  "[--person:var(--person-3)]",
-  "[--person:var(--person-4)]",
-  "[--person:var(--person-5)]",
-  "[--person:var(--person-6)]",
-  "[--person:var(--person-7)]",
-] as const;
-
 function hueIndex(name: string): number {
   const key = name.trim().toLowerCase();
   let hash = 5381;
-  for (const char of key) hash = ((hash << 5) + hash + char.codePointAt(0)!) >>> 0;
+  for (const char of key)
+    hash = ((hash << 5) + hash + char.codePointAt(0)!) >>> 0;
   return hash % hues.length;
 }
 
 /** A person keeps one hue everywhere: the djb2 hash of their display name. */
 export function personHue(name: string): (typeof hues)[number] {
   return hues[hueIndex(name)];
-}
-
-/** Sets `--person` to the person's hue for everything inside. */
-export function personHueVar(name: string): (typeof hueVars)[number] {
-  return hueVars[hueIndex(name)];
 }
 
 export function personInitial(name: string): string {

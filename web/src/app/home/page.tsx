@@ -43,7 +43,11 @@ import { capabilityMeta, SectionHeading } from "@/components/product/readiness";
 import { StateWord, StatusLine } from "@/components/product/status-ui";
 import { AppMark } from "@/components/product/app-mark";
 import { CapNotice } from "@/components/product/cap-notice";
-import { AudioCover } from "@/components/product/audio-cover";
+import {
+  AudioFace,
+  MediaBadge,
+  mediaBadgeButton,
+} from "@/components/product/audio-cover";
 import { PageHeader } from "@/components/product/page-header";
 import {
   activeCapRefusal,
@@ -884,12 +888,10 @@ function CreationMedia({
   creation,
   title,
   visible,
-  maker,
 }: {
   creation: HomeCreation;
   title: string;
   visible: boolean;
-  maker?: string | null;
 }) {
   const Icon =
     creation.kind === "video"
@@ -995,15 +997,10 @@ function CreationMedia({
 
   if (creation.kind === "audio" && creation.download_url) {
     return (
-      <AudioCover
-        compact
+      <AudioFace
         peaksKey={creation.asset_id}
         src={audioSrc}
         visible={visible}
-        maker={maker}
-        model={creation.model}
-        text={creation.prompt?.trim() || title}
-        className="rounded-none border-0"
         status={
           audioError ? (
             <span role="status" className="text-destructive">
@@ -1031,11 +1028,9 @@ function CreationMedia({
               }}
               className="sr-only"
             />
-            <Button
+            <button
               type="button"
-              size="icon"
-              variant="cover"
-              className="relative z-10 size-9 shrink-0 rounded-full max-sm:size-11"
+              className={mediaBadgeButton(true)}
               aria-label={`${isPlaying ? "Pause" : "Play"} ${title}`}
               onClick={async () => {
                 const audio = audioRef.current;
@@ -1071,7 +1066,7 @@ function CreationMedia({
               ) : (
                 <Play aria-hidden="true" />
               )}
-            </Button>
+            </button>
           </>
         }
       />
@@ -1091,7 +1086,6 @@ function CreationMedia({
 }
 
 function CreationPreview({ creation }: { creation: HomeCreation }) {
-  const viewer = useViewer();
   const { ref: visibilityRef, visible } = useHomePreviewVisible();
   const label =
     creation.kind === "video"
@@ -1108,13 +1102,7 @@ function CreationPreview({ creation }: { creation: HomeCreation }) {
     "bg-muted group relative block aspect-square min-w-0 overflow-hidden rounded-media";
   const body = (
     <div ref={visibilityRef} className="size-full">
-      <CreationMedia
-        creation={creation}
-        title={title}
-        visible={visible}
-        // Home shows the viewer's own creations.
-        maker={viewer.name}
-      />
+      <CreationMedia creation={creation} title={title} visible={visible} />
     </div>
   );
   if (creation.kind === "audio") {
@@ -1138,9 +1126,7 @@ function CreationPreview({ creation }: { creation: HomeCreation }) {
       >
         {body}
         {creation.kind === "video" ? (
-          <span className="bg-chrome/80 text-chrome-foreground absolute bottom-2 left-2 flex size-7 items-center justify-center rounded-full">
-            <Play aria-hidden="true" className="size-3.5" />
-          </span>
+          <MediaBadge icon={Play} className="absolute right-2 bottom-2" />
         ) : null}
       </Link>
     </li>

@@ -17,8 +17,6 @@ const buttonVariants = cva(
           "bg-secondary text-secondary-foreground hover:bg-accent hover:text-accent-foreground",
         ghost: "text-foreground hover:bg-muted",
         link: "text-link underline-offset-4 hover:underline",
-        // The play control on an audio cover, in the maker's hue (`--person`).
-        cover: "bg-(--person) text-person-ink hover:bg-(--person)/85",
       },
       size: {
         default: "h-10 px-4 has-[>svg]:px-3.5",

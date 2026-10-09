@@ -431,13 +431,13 @@ describe("Library media recovery", () => {
       { ...image, asset_id: "audio", kind: "audio", prompt: audioPrompt },
     ]);
     mount();
-    // An image tile's hover title is a short whole-word title on up to two
-    // lines; an audio cover shows whole words of its prompt, which wrap.
+    // Every tile's hover title is a short whole-word title on up to two
+    // lines (D1.5: audio tiles carry no words of their own).
     expect(
       await screen.findByRole("button", { name: `Open ${prompt}` }),
     ).toBeVisible();
     expect(screen.getByText(`X${"x".repeat(55)}…`)).toHaveClass("line-clamp-2");
-    expect(screen.getByText(`${"y".repeat(84)}…`)).toHaveClass("break-words");
+    expect(screen.getByText(`Y${"y".repeat(55)}…`)).toHaveClass("line-clamp-2");
     await userEvent.click(
       screen.getByRole("button", { name: `Open ${prompt}` }),
     );

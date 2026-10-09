@@ -378,9 +378,11 @@ test("Home recent media carries content while requests stay in receipts", async 
   await expect(page.locator('a[href="/r/polish-image-receipt"]')).toHaveCount(
     0,
   );
+  // D1.5: the audio tile shows a waveform and a play badge; its words are
+  // the link's name, not a caption.
   await expect(
-    page.getByText("A river moves beneath the willow trees"),
-  ).toBeVisible();
+    page.getByRole("link", { name: /A river moves beneath the willow trees/ }),
+  ).toBeAttached();
   await expect(
     page.getByRole("button", {
       name: "Play A river moves beneath the willow trees",

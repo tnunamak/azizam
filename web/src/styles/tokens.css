@@ -43,6 +43,10 @@
   --chrome-accent: #d2702a;
   --media-stage: #e6ecee;
   --media-stage-foreground: #10232a;
+  /* The duration badge on media tiles: one dark scrim over any picture. */
+  --media-badge: rgb(5 15 18 / 64%);
+  --media-badge-foreground: #ffffff;
+  --media-badge-hover: rgb(5 15 18 / 80%);
   --subtle-foreground: #5e7076;
 
   /* States: always paired with an icon and a word. D1.5: each state has
@@ -230,6 +234,9 @@
   --color-chrome-accent: var(--chrome-accent);
   --color-media-stage: var(--media-stage);
   --color-media-stage-foreground: var(--media-stage-foreground);
+  --color-media-badge: var(--media-badge);
+  --color-media-badge-foreground: var(--media-badge-foreground);
+  --color-media-badge-hover: var(--media-badge-hover);
   --color-subtle-foreground: var(--subtle-foreground);
   --color-sidebar: var(--chrome);
   --color-sidebar-foreground: var(--chrome-foreground);

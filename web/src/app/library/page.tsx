@@ -45,10 +45,10 @@ import { ErrorState } from "@/components/product/error-state";
 import { EmptyState } from "@/components/product/empty-state";
 import { PersonMark } from "@/components/product/person-mark";
 import {
-  AudioCover,
+  AudioFace,
   audioKind,
-  CoverWash,
-  coverSurface,
+  MediaBadge,
+  mediaBadgeButton,
   Waveform,
 } from "@/components/product/audio-cover";
 import { useAudioPeaks } from "@/lib/audio-peaks";
@@ -355,55 +355,23 @@ function pauseOtherAudio(current: HTMLAudioElement) {
   });
 }
 
-/** The one duration chip, shared by video and audio tiles. */
-function DurationChip({
-  icon: Icon,
-  children,
-  className,
-}: {
-  icon: typeof Play;
-  children: ReactNode;
-  className?: string;
-}) {
-  return (
-    <span
-      className={cn(
-        "bg-chrome/80 text-chrome-foreground pointer-events-none flex h-6 shrink-0 items-center gap-1 rounded-full px-2 text-xs font-medium",
-        className,
-      )}
-    >
-      <Icon aria-hidden="true" className="size-3" />
-      {children}
-    </span>
-  );
-}
-
 /**
- * An audio creation has no picture, so its tile is an AudioCover: the maker's
- * tint, the kind of sound, its words, its real waveform and its length, with
- * one play control.
+ * An audio creation has no picture, so its tile is a calm neutral face: its
+ * waveform and a play badge with its length (D1.5). Who made it and its
+ * words are in the hover title, the person filter and the viewer.
  */
 function AudioTile({
   assetId,
   src,
   title,
-  text,
   duration,
   visible,
-  maker,
-  meta,
-  model,
 }: {
   assetId: string;
   src: string;
   title: string;
-  text: string;
   duration?: number | null;
   visible: boolean;
-  maker?: string | null;
-  /** Who and when, on the cover's top line ("Robin · Monday"). */
-  meta?: string;
-  model?: string | null;
 }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -440,16 +408,10 @@ function AudioTile({
       : null;
 
   return (
-    <AudioCover
+    <AudioFace
       peaksKey={assetId}
       src={src}
       visible={visible}
-      maker={maker}
-      meta={meta}
-      miniOnPhone
-      model={model}
-      text={text}
-      duration={durationText}
       status={errorText ? <span role="status">{errorText}</span> : null}
       control={
         <>
@@ -472,11 +434,9 @@ function AudioTile({
               setError("media");
             }}
           />
-          <Button
+          <button
             type="button"
-            size="icon"
-            variant="cover"
-            className="relative z-20 size-9 shrink-0 rounded-full max-sm:size-11"
+            className={mediaBadgeButton()}
             aria-label={label}
             onClick={async (event) => {
               event.stopPropagation();
@@ -504,7 +464,8 @@ function AudioTile({
             }}
           >
             {isPlaying ? <Pause aria-hidden /> : <Play aria-hidden />}
-          </Button>
+            {durationText ?? "Audio"}
+          </button>
         </>
       }
     />
@@ -559,7 +520,6 @@ function LargeAudioPlayer({
       <Button
         type="button"
         size="icon"
-        variant="cover"
         className="size-16 rounded-full [&_svg:not([class*='size-'])]:size-6"
         aria-label={`${playing ? "Pause" : "Play"} ${title}`}
         onClick={async () => {
@@ -579,7 +539,7 @@ function LargeAudioPlayer({
         <Waveform
           peaks={peaks}
           progress={length ? Math.min(1, time / length) : 0}
-          className="h-14 w-full flex-none text-(--person)"
+          className="text-foreground h-14 w-full flex-none"
         />
       ) : null}
       <div className="flex w-full items-center gap-3">
@@ -600,7 +560,7 @@ function LargeAudioPlayer({
             audio.currentTime = Number(event.target.value);
             setTime(audio.currentTime);
           }}
-          className="h-11 min-w-0 flex-1 cursor-pointer accent-(--person)"
+          className="accent-primary h-11 min-w-0 flex-1 cursor-pointer"
         />
         <span className="figures text-muted-foreground w-10 text-xs">
           {length != null ? formatDuration(length) : "–:––"}
@@ -1056,17 +1016,8 @@ function AssetTile({
             assetId={asset.asset_id}
             src={asset.download_url!}
             title={assetTitle(asset)}
-            text={asset.prompt?.trim() || kindLabel(asset.kind)}
             duration={asset.duration_s}
             visible={visible}
-            maker={person}
-            meta={[
-              everyone ? (person?.split(" ")[0] ?? null) : null,
-              tileDate(toDateValue(asset.created_at), new Date()),
-            ]
-              .filter(Boolean)
-              .join(" · ")}
-            model={asset.model}
           />
         ) : (
           <Preview
@@ -1077,21 +1028,25 @@ function AssetTile({
           />
         )}
         {asset.kind === "video" && asset.available !== false ? (
-          <DurationChip icon={Play} className="absolute right-2 bottom-2 z-20">
+          <MediaBadge icon={Play} className="absolute right-2 bottom-2 z-20">
             {asset.duration_s != null && Number.isFinite(asset.duration_s)
               ? formatDuration(asset.duration_s)
               : "Video"}
-          </DurationChip>
+          </MediaBadge>
         ) : null}
         {/* D1.4: always-on captions were cut to two or three words and the
             maker badge sat on every tile. The grid now shows media only; on
             a wide screen, hover or keyboard focus shows a short title (whole
             words, two lines), the maker and the day. The button's name
             carries the full prompt for screen readers. */}
-        {asset.kind !== "audio" ? (
+        {/* Audio's title sits at the top so its play badge stays usable. */}
+        {asset.kind !== "audio" || asset.available !== false ? (
           <div
             aria-hidden="true"
-            className="dark bg-card/90 text-foreground pointer-events-none absolute inset-x-0 bottom-0 z-20 px-2.5 py-2 opacity-0 transition-opacity duration-(--motion-fast) group-focus-within:opacity-100 group-hover:opacity-100 max-sm:hidden"
+            className={cn(
+              "dark bg-card/90 text-foreground pointer-events-none absolute inset-x-0 z-20 px-2.5 py-2 opacity-0 transition-opacity duration-(--motion-fast) group-focus-within:opacity-100 group-hover:opacity-100 max-sm:hidden",
+              asset.kind === "audio" ? "top-0" : "bottom-0",
+            )}
           >
             <p className="line-clamp-2 text-xs leading-snug font-medium">
               {captionTitle(asset.prompt, kindLabel(asset.kind), 56)}
@@ -1375,23 +1330,17 @@ function CreationViewer({
                 className={cn(
                   "relative flex max-h-full w-full items-center justify-center overflow-hidden",
                   asset.kind === "audio"
-                    ? cn(
-                        coverSurface(person),
-                        "rounded-panel max-w-lg flex-col gap-6 px-8 py-8",
-                      )
+                    ? "bg-card text-card-foreground border-border rounded-panel max-w-lg flex-col gap-6 border px-8 py-8"
                     : "h-full",
                 )}
               >
                 {asset.kind === "audio" ? (
                   <>
-                    {/* The clip's own cover: maker's hue, kind, its words. */}
-                    <CoverWash />
+                    {/* The clip on one neutral card (D1.5): its kind, its
+                        words and the player. Who made it is in the details. */}
                     <div className="relative w-full space-y-3">
-                      <p className="text-foreground/80 flex items-center gap-1.5 text-xs font-medium">
-                        <AudioLines
-                          aria-hidden="true"
-                          className="size-3.5 text-(--person)"
-                        />
+                      <p className="text-muted-foreground flex items-center gap-1.5 text-xs font-medium">
+                        <AudioLines aria-hidden="true" className="size-3.5" />
                         {audioKind(asset.model).label}
                       </p>
                       <p className="line-clamp-5 text-lg leading-snug font-medium break-words">

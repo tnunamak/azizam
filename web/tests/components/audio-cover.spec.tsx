@@ -1,38 +1,19 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import {
-  AudioCover,
+  AudioFace,
   audioKind,
-  coverWords,
+  MediaBadge,
   Waveform,
 } from "@/components/product/audio-cover";
+import { Play } from "lucide-react";
 
-describe("audio covers", () => {
+describe("audio faces", () => {
   it("name the kind of sound from the model", () => {
     expect(audioKind("tts-1").label).toBe("Voice");
     expect(audioKind("ace-step-xl").label).toBe("Music");
     expect(audioKind("stable-audio-sfx").label).toBe("Sound effect");
     expect(audioKind(null).label).toBe("Audio");
-  });
-  it("show whole sentences, else whole words, never a cut word", () => {
-    const tart =
-      "For the apple tart, slice the apples thinly and bake until the pastry is golden. Let it cool before serving.";
-    expect(coverWords(tart, 84)).toBe(
-      "For the apple tart, slice the apples thinly and bake until the pastry is golden.",
-    );
-    expect(coverWords("The tomatoes are ready.", 84)).toBe(
-      "The tomatoes are ready.",
-    );
-    expect(coverWords(tart, 40)).toBe("For the apple tart, slice the apples…");
-    // Never ends on a joining word.
-    expect(
-      coverWords(
-        "On Saturday we will take the train to the coast, walk by the harbor, and have a picnic.",
-        80,
-      ),
-    ).toBe(
-      "On Saturday we will take the train to the coast, walk by the harbor…",
-    );
   });
   it("draw no bars without measured peaks", () => {
     const { container } = render(<Waveform peaks={null} />);
@@ -47,23 +28,32 @@ describe("audio covers", () => {
     expect(bars[0].getAttribute("class")).toContain("opacity-90");
     expect(bars[3].getAttribute("class")).toContain("opacity-40");
   });
-  it("show the clip's words, kind and length, and no waveform without Web Audio", () => {
+  it("show only the length badge, in no person's colour, and no waveform without Web Audio", () => {
     const { getByText, container } = render(
-      <AudioCover
-        peaksKey="a"
-        src="/a.mp3"
-        visible
-        maker="Robin"
-        model="tts-1"
-        text="The tomatoes are ready to pick."
-        duration="0:04"
-        control={<button type="button">Play</button>}
-      />,
+      <AudioFace peaksKey="a" src="/a.mp3" visible duration="0:04" />,
     );
-    expect(getByText("The tomatoes are ready to pick.")).toBeVisible();
-    expect(getByText("Voice")).toBeVisible();
     expect(getByText("0:04")).toBeVisible();
+    // D1.5: one neutral family; no words, kind or maker on the tile.
+    expect(container.innerHTML).not.toContain("person");
     // jsdom has no AudioContext: nothing is invented.
     expect(container.querySelector("svg rect")).toBeNull();
+  });
+  it("let a play control replace the badge", () => {
+    const { getByRole, container } = render(
+      <AudioFace
+        peaksKey="b"
+        visible={false}
+        duration="0:04"
+        control={<button type="button">Play clip</button>}
+      />,
+    );
+    expect(getByRole("button", { name: "Play clip" })).toBeVisible();
+    expect(container.textContent).not.toContain("0:04");
+  });
+  it("draw a glyph-only badge without a duration", () => {
+    const { container } = render(<MediaBadge icon={Play} />);
+    const badge = container.firstElementChild!;
+    expect(badge.className).toContain("w-6");
+    expect(badge.className).not.toContain("px-2");
   });
 });

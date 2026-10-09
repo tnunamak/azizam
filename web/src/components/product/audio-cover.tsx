@@ -1,10 +1,9 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { AudioLines, Music2, Waves } from "lucide-react";
+import { AudioLines, Music2, Play, Waves } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useAudioPeaks } from "@/lib/audio-peaks";
-import { personHueVar } from "./person-mark";
 
 /** What kind of sound a model makes, in the glossary's words. */
 export function audioKind(model?: string | null): {
@@ -70,171 +69,100 @@ export function Waveform({
   );
 }
 
-/**
- * The words a cover can show whole: every full sentence that fits in `max`
- * characters, else the longest run of whole words with an ellipsis. A cover
- * never stops mid-word, and stops mid-sentence only when the first sentence
- * alone is too long (D1.3: "voice cards truncate their text mid-sentence").
- */
-export function coverWords(text: string, max: number): string {
-  const clean = text.trim().replace(/\s+/g, " ");
-  if (clean.length <= max) return clean;
-  let out = "";
-  for (const sentence of clean.match(/[^.!?]+[.!?]+(?:\s|$)/g) ?? []) {
-    if ((out + sentence).trim().length > max) break;
-    out += sentence;
-  }
-  if (out.trim()) return out.trim();
-  // The last space at or before `max` ends the last whole word; one long
-  // word with no space is cut at `max`.
-  const space = clean.lastIndexOf(" ", max);
-  const cut = space > 0 ? clean.slice(0, space) : clean.slice(0, max);
-  // Prefer the end of a clause when one closes in the second half.
-  const comma = cut.lastIndexOf(",");
-  const words = comma >= max / 2 ? cut.slice(0, comma) : cut;
-  // Never end on a joining word ("…and have a…"): drop them, then any
-  // trailing punctuation.
-  const trimmed = words
-    .replace(
-      /(?:\s+(?:a|an|the|and|or|but|to|of|in|on|at|by|for|with|from))+$/i,
-      "",
-    )
-    .replace(/[,;:.!?]+$/, "");
-  return `${trimmed || words}…`;
-}
-
-/**
- * The surface every audio cover is drawn on: deep water (the dark theme's
- * card, in both themes) washed with the maker's hue, so a clip carries the
- * same weight as a photograph beside it and says whose it is. `dark` scopes
- * the dark tokens to the cover, so text and controls inside stay legible.
- */
-export function coverSurface(maker?: string | null): string {
+/** The duration badge's look: a dark scrim pill that reads over any picture. */
+function mediaBadge(glyphOnly: boolean) {
   return cn(
-    "dark bg-card text-foreground relative overflow-hidden",
-    maker ? personHueVar(maker) : "[--person:var(--capability-voice)]",
+    "bg-media-badge text-media-badge-foreground flex h-6 shrink-0 items-center gap-1 rounded-full text-xs font-medium [&_svg]:size-3",
+    glyphOnly ? "w-6 justify-center" : "px-2",
   );
 }
 
 /**
- * The maker's wash; the first child of a cover surface. It is positioned
- * without a z-index, so the cover's content must be positioned too
- * (`relative`) to paint above it. The cover makes no stacking context: a
- * tile's play control (z-20) must stay above the tile's open button (z-10).
+ * The small badge on a media tile that says what it is and how long: a play
+ * glyph and "0:03" on video and audio (Apple Photos' duration badge). One
+ * style for both kinds. Without a duration it is the glyph alone.
  */
-export function CoverWash() {
+export function MediaBadge({
+  icon: Icon,
+  children,
+  className,
+}: {
+  icon: typeof AudioLines;
+  children?: ReactNode;
+  className?: string;
+}) {
   return (
     <span
-      aria-hidden="true"
-      className="pointer-events-none absolute inset-0 bg-(--person)/24"
-    />
+      className={cn(
+        mediaBadge(children == null),
+        "pointer-events-none",
+        className,
+      )}
+    >
+      <Icon aria-hidden="true" />
+      {children}
+    </span>
   );
 }
 
 /**
- * An audio creation's cover, so a clip is as recognisable as a picture: its
- * maker's hue on deep water, what kind of sound it is, its words, its real
- * waveform and its length. The play control comes from the caller (a Button
- * with variant="cover").
+ * The badge as a play button, for audio that plays in place. It keeps the
+ * badge's look; an invisible margin around it makes a 40 px target.
  */
-export function AudioCover({
+export function mediaBadgeButton(glyphOnly = false) {
+  return cn(
+    mediaBadge(glyphOnly),
+    "hover:bg-media-badge-hover focus-visible:ring-ring relative z-20 cursor-pointer transition-colors duration-(--motion-fast) after:absolute after:-inset-2 after:content-[''] focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none",
+  );
+}
+
+/**
+ * An audio creation's tile face (D1.5): one calm neutral surface for every
+ * clip, its real waveform (or the glyph when it cannot be measured) and the
+ * duration badge, so audio keeps the grid's rhythm instead of being its
+ * loudest tile. Who made it is the person filter's job; the words are in
+ * the hover title and the viewer. `control`, when given, replaces the
+ * badge (a play button that looks like it).
+ */
+export function AudioFace({
   peaksKey,
   src,
   visible,
-  maker,
-  model,
-  text,
   duration,
-  status,
   control,
-  meta,
-  compact = false,
-  miniOnPhone = compact,
+  status,
   className,
 }: {
   peaksKey: string;
   src?: string | null;
   visible: boolean;
-  maker?: string | null;
-  model?: string | null;
-  text: string;
   duration?: string | null;
-  /** A short error or state line, shown in place of the waveform. */
+  control?: ReactNode;
+  /** A short error line, shown at the top. */
   status?: ReactNode;
-  control: ReactNode;
-  /** Who and when, at the start of the top line ("Robin · Monday"). */
-  meta?: string;
-  /** Home's Recent tile: three lines of words instead of four. */
-  compact?: boolean;
-  /**
-   * On a phone, where a tile is a third or a quarter of the width, show only
-   * the maker's hue and the play disc (Home's Recent, Library's grid).
-   */
-  miniOnPhone?: boolean;
   className?: string;
 }) {
   const peaks = useAudioPeaks(peaksKey, src, visible);
-  const phoneHidden = miniOnPhone ? "max-sm:hidden" : undefined;
-  const kind = audioKind(model);
-  const Icon = kind.icon;
   return (
     <div
       className={cn(
-        coverSurface(maker),
-        "rounded-media flex size-full flex-col gap-2 p-3",
-        miniOnPhone && "max-sm:items-center max-sm:justify-center max-sm:p-2",
+        "bg-muted text-muted-foreground relative flex size-full items-center justify-center",
         className,
       )}
     >
-      <CoverWash />
-      <p
-        className={cn(
-          "text-foreground/80 relative flex items-center gap-1 text-xs font-medium",
-          phoneHidden,
-        )}
-      >
-        {meta ? <span className="min-w-0 flex-1 truncate">{meta}</span> : null}
-        <span className="ml-auto flex shrink-0 items-center gap-1">
-          <Icon aria-hidden="true" className="size-3.5 text-(--person)" />
-          {kind.label}
+      {peaks ? (
+        <Waveform peaks={peaks} className="h-1/4 w-3/4 flex-none" />
+      ) : (
+        <AudioLines aria-hidden="true" className="size-8" />
+      )}
+      {status ? (
+        <span className="text-foreground absolute inset-x-2 top-2 text-xs font-medium">
+          {status}
         </span>
-      </p>
-      <p
-        className={cn(
-          "relative min-h-0 flex-1 font-medium break-words",
-          phoneHidden,
-          compact
-            ? "line-clamp-3 text-sm leading-snug"
-            : "line-clamp-4 text-sm leading-snug",
-        )}
-      >
-        {coverWords(text, compact ? 64 : 84)}
-      </p>
-      <div className="relative flex items-center gap-2">
-        {control}
-        {status ? (
-          <span
-            className={cn("min-w-0 flex-1 text-xs font-medium", phoneHidden)}
-          >
-            {status}
-          </span>
-        ) : (
-          <Waveform
-            peaks={peaks}
-            className={cn("text-(--person)", phoneHidden)}
-          />
-        )}
-        {duration && !status ? (
-          <span
-            className={cn(
-              "figures text-foreground/80 shrink-0 text-xs font-medium",
-              phoneHidden,
-            )}
-          >
-            {duration}
-          </span>
-        ) : null}
-      </div>
+      ) : null}
+      <span className="absolute right-2 bottom-2 z-20">
+        {control ?? <MediaBadge icon={Play}>{duration ?? "Audio"}</MediaBadge>}
+      </span>
     </div>
   );
 }
