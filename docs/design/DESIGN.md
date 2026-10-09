@@ -1,6 +1,6 @@
 # Azizam design system (D1.2)
 
-Owner: the D1 designer (Opus 5.5). Status: v1.6, 2026-10-09 (D1.6: a continuous Library grid with type, play, maker and day cues; Status cards that lead with the action; one sidebar type size; larger, darker secondary text; Home tiles that say why they lead; D1.5b: Status is one reading column at every width and folds healthy engines during an incident again; the gateway's own "degraded" status; Try's failed-run title and primary Run; D1.5: a state palette that colour-blind readers can part, date groups and calm neutral audio in Library, plain-word evidence with clock labels on Status, one control vocabulary, a quieter owner group in the sidebar; D1.4: a media-only Library with hover titles and a three-column phone grid, a Home with favourites, a balanced Status, and red-team honesty fixes; D1.1: one status model, freshness, plan blocks, task-first Home, a system instead of pages; D1.2: media that identifies itself, one search, one row grammar, a craft pass against the benchmarks; D1.3: a problem card that tells the strip's story, scope before evidence, a Library control row, dated captions and one grid, a Home that leads with tasks and shows Recent on the first phone screen). Scope: the system, the shell, Home, Status and Library. Other routes inherit the tokens and the shell; their own layouts come in later rounds.
+Owner: the D1 designer (Opus 5.5). Status: v1.6, 2026-10-09 (D1.6: a continuous Library grid with type, play, maker and day cues; Status cards that lead with the action; one sidebar type size; larger, darker secondary text; Home tiles that say why they lead; D1.5b: Status is one reading column at every width and folds healthy engines during an incident again; the gateway's own "degraded" status; Try's failed-run title and primary Run; D1.5: a state palette that colour-blind readers can part, date groups and calm neutral audio in Library, plain-word evidence with clock labels on Status, one control vocabulary, a quieter owner group in the sidebar; D1.4: a media-only Library with hover titles and a three-column phone grid, a Home with favourites, a balanced Status, and red-team honesty fixes; D1.1: one status model, freshness, plan blocks, task-first Home, a system instead of pages; D1.2: media that identifies itself, one search, one row grammar, a craft pass against the benchmarks; D1.3: a problem card that tells the strip's story, scope before evidence, a Library control row, dated captions and one grid, a Home that leads with tasks and shows Recent on the first phone screen). Scope: the system, the shell, Home, Status and Library. 2026-10-09: "System numbers v2" (below "Tokens") specifies the craft system measured against the benchmarks; it is the target for every surface, applied by `craft-system/PLAN.md`. Other routes inherit the tokens and the shell; their own layouts come in later rounds.
 
 ## Direction
 
@@ -149,6 +149,150 @@ D1.1 retuned the scale so weight and size carry the hierarchy (judges: "craft fa
 - **Icons:** lucide at 16 px in rows and 20 px for state, stroke 1.75 (the default 2 read heavy beside 13–14 px text).
 - **Motion:** 120 ms for hover and press (`--motion-fast`), 200 ms for disclosure and overlays (`--motion-duration`), easing cubic-bezier(0.2, 0, 0, 1). `prefers-reduced-motion` sets both to 0.
 - **Targets:** at < 640 px every control is at least 44 × 44 px (`max-sm:min-h-11`). Desktop controls are 32–40 px.
+
+## System numbers v2 (craft system, 2026-10-09)
+
+Status: **spec**. Nothing below has shipped. It takes effect in the token-and-components PR (PR 1 in `craft-system/PLAN.md`). Until then, the "Tokens" section above describes the code. Where the two disagree, this section is the target and "Tokens" is today.
+
+Why this section exists: craft levelled off at about 7.0 against about 7.9 for the benchmarks after four rounds of page-by-page patches. The measurements (`craft-system/MEASUREMENTS.md`) show the gap is in the system. Desktop uses six control heights, the same two-line row is drawn at five heights, two sizes serve one text role, 44 px touch targets leak onto the desktop, and cards are still the kit default. Every number below cites its evidence: a benchmark file under `benchmarks/` (measured in `MEASUREMENTS.md` §1), or a measurement of Azizam (§2).
+
+**Font correction.** Hanken Grotesk's x-height is 0.493 em, against 0.54–0.55 for Geist, Inter and SF. Text sizes therefore sit 1 px above the benchmark size, so they read at the same size. Heading sizes are the same as the benchmarks', because the cap heights match (`MEASUREMENTS.md` §1.4).
+
+### Type
+
+| Role | Token (new utility) | Size / line height | Weight | Phone (< 640) | Reason |
+|---|---|---|---|---|---|
+| Page title | `text-title` | 24 / 32, −0.015 em | 600 | 24 / 32 | Vercel ×4 and Linear ×2 at 24 (`people/vercel-team-members-roles-desktop`, `settings/linear-security-saved-desktop`). The line height moves from 30 to 32 to sit on the 4 px grid |
+| Verdict and dialog title | `text-verdict` | 20 / 28 | 600 | 20 / 28 | Vercel's card titles are 20. Only Status's verdict and dialog titles use it |
+| Section heading | `text-heading` | 16 / 24 | 600 | 16 / 24 | Linear 15–16, incident.io 16, AI Studio 16. Replaces the 15 headings on Usage and Settings |
+| Body and row name | `text-body` | 15 / 22 | 400; 500 for a row's name | 15 / 22 | The benchmarks' 14 at Hanken's x-height (14 × 0.54 ÷ 0.493 = 15.3). Ends the 14-or-15 split (Home 14, People 15) |
+| Secondary | `text-meta` | 14 / 20 | 400, muted ink | 14 / 20 | Linear 13 and Stripe 13–14, corrected for Hanken. Keeps D1.6's floor of 14 |
+| Label (table header, field label, group label, key in a key–value list) | `text-label` | 13 / 18 | 500 | 13 / 18 | Stripe th 13 / 600, Mistral th 13 / 500, corrected. Replaces 12 / 400 table headers (People) and 14 / 500 field labels (Usage) |
+| Badge, chip, duration | `text-badge` | 12 / 16 | 500 | 12 / 16 | Stripe status badge 12 / 600, Vercel tag 12. Library's 10 px badges go to 12 |
+| Figure (one KPI number) | `text-figure` | 24 / 32, tabular | 600 | 20 / 28 | OpenAI Usage KPI 24–28 / 600 (`usage/openai-usage-spend-desktop`) |
+| Person initial | `text-2xs` | 10 / 12 | 600 | same | Unchanged: initials inside a 20 px mark only |
+
+- **At most four text roles on one page, plus badges.** Linear uses 3 and Vercel and Stripe 4. Home today uses 5 sizes and 3 heading levels.
+- **Two heading levels per page: title and section.** Delete sub-headings such as "Your usual" and "Everything else": the section heading plus the layout carry that grouping. Vercel, Linear and Stripe show no third level on any measured screen.
+- **Weights 400, 500 and 600 only.** Every benchmark except Stripe's 700 title does the same.
+- Mapping: `text-title` = today's `text-2xl` with line height 32. `text-heading` = `text-lg`. `text-body` = `text-base`. `text-meta` = `text-sm`. `text-badge` = `text-xs`. `text-label` is new (there is no 13 step today). The old utilities stay as aliases until every surface has moved, and then `token_drift.py` flags them.
+
+### Spacing and page geometry
+
+| Token (new) | Value | Reason |
+|---|---|---|
+| `--page-pad` | 32 at ≥ 1024, 24 at 640–1023, 20 on phone | Vercel 27, OpenAI 20, Stripe 38 beside the sidebar; Linear iOS 20. Today 48, which reads as a sparse template on every page |
+| `--page-top` | 32 at ≥ 640, 24 on phone | Vercel's title sits 30–40 below the top bar. Today 40 |
+| `--content-max` | 1200 (unchanged) for list, table and grid pages | Vercel and Stripe tables run full width |
+| `--content-read` | 720 for settings, detail, Status and the Try form | Linear settings 610, incident.io 670. Settings today is 1024 wide |
+| `--space-section` | 32 between sections, always | Vercel 30, Linear 30, incident.io 24. Today 0–120 within one page (Workflows) |
+| `--space-heading` | 12 from a section heading to its content | incident.io 12, Linear 16 |
+| `--space-title` | 24 from the page header to the first section; 4 from the title to a one-line subtitle | Vercel 27, Linear 38 |
+| `--space-stack` | 16 between blocks inside a card; 8 between a field label and its control (6 at 13 px) | Vercel and Linear forms |
+
+### Controls
+
+| Control | Desktop | Phone (< 640) | Reason |
+|---|---|---|---|
+| Button, `size="sm"` (**the new default**): page header, toolbar, row and card actions | 32, padding 0 12, `text-meta` 500, icon 16 | 44 | Vercel 32, Linear 32, OpenAI 32, Stripe 28–32 |
+| Button, `size="md"`: a form's submit, the Try Run button, a dialog's primary | 40, padding 0 16, `text-body` 500 | 44; 48 when full width at the bottom | Vercel Invite 40 in forms, Mistral 40, ElevenLabs 36 |
+| Input and select in a form | 40 | 44 | Vercel 40, ElevenLabs 40 |
+| Input, select and segmented control in a toolbar or filter row | 32 (segments 28) | 44 | Linear and AI Studio 32, Vercel segmented 32 with 24–28 segments |
+| Textarea | min 80, grows to 240 | min 96 | AI Studio composer 105 |
+| Tabs (`line`) | 40 tall, labels `text-meta` 500, 2 px indicator | 44 | Vercel, Mistral and OpenAI underline tabs at 40–44 |
+| Toggle (Switch) | 32 × 20 | 44 hit area | Linear 29 × 20 |
+| Icon button | 32 square | 44 | Vercel "…" row menus |
+| **One rule:** controls that share a row share a height | | | Every benchmark. Usage's header mixes 44 selects with a 40 button today |
+| **One rule:** 44 px applies below 640 only (`max-sm:`) | | | 76 unprefixed `min-h-11` and 17 `h-11` put phone sizes on the desktop today (`MEASUREMENTS.md` §2.3) |
+
+Desktop therefore uses **two control heights, 32 and 40**, where today it uses six.
+
+- **Field edge.** Inputs and selects keep `--input` (3:1 against the card). The benchmarks use a lighter hairline (about 1.3:1), but WCAG 1.4.11 needs a 3:1 boundary to identify a text field, and T-4 requires AA. This is a deliberate exception to "match the benchmarks", and it is recorded here so no later round reopens it. Outline buttons keep the hairline `--border`, which darkens to `--input` on hover, as today. A shorter control (32 rather than 44) is what removes most of the heaviness the judges saw.
+
+### Radius, edges, elevation
+
+| Token | Value | Reason |
+|---|---|---|
+| `--radius` (controls) | 6 (unchanged) | Vercel, Linear, Stripe |
+| `--radius-card` (cards, dialogs, popovers) | **8** (was 10) | Linear, incident.io and Vercel 8. 10 reads as the kit's `rounded-xl` |
+| `--radius-badge` (new) | 4 for status badges and chips | Stripe 4. Today badges are full pills |
+| `--radius-media` | 6 (unchanged) | Midjourney 8, Apple Photos 0–4 |
+| Full radius | person marks, avatars, the play disc, toggles only | |
+| Card edge | 1 px `--border`, **no shadow** | All 14 measured screens. The kit Card's `shadow-sm` goes |
+| Shadow | `--shadow-overlay` for menus, popovers, dialogs and toasts only. `--shadow-float` for the Try composer when it docks at the bottom | Vercel role menu, Linear toast, AI Studio composer |
+
+### List, table and card anatomy
+
+| Part | Numbers | Reason |
+|---|---|---|
+| **List card** (`ListCard`, new) | A bordered card (radius 8, no padding of its own). Rows have 16 px horizontal padding and hairline dividers. An optional header band of 36 holds `text-label` in muted ink | Vercel Members, Linear Security, Mistral keys |
+| One-line row | 40 (36 when `dense`, for Usage and Activity tables) | Stripe 35–37, Vercel Usage 38 |
+| Two-line row (name and secondary) | 60: name `text-body` 500, secondary `text-meta` muted, 2 px between them | Mistral 58, Linear 60–62, Vercel models 61. People today 75, Usage 77 |
+| Leading element | a 32 avatar or person mark, or a 16 icon in ink; 12 gap | Vercel avatars 30–32 |
+| Trailing element | meta right-aligned in `text-meta`, numbers tabular; a 32 row action or "…" icon button | Vercel, Stripe |
+| Phone row | one line 48, two lines 64. Secondary facts collapse into the second line, joined by " · ", and never stack into a third and fourth line | Linear iOS 48, Instacart 64. People today 165 |
+| **Table** (`components/ui/table.tsx`) | header 36, `text-label` muted, no fill; rows 40 (`dense` 36); numbers right-aligned and tabular; the first column is the name in `text-body` 500 | Stripe Transactions, Vercel models and Usage |
+| **Setting row** (`SettingRow`, new) | min height 64, padding 12 × 16: label `text-body` 500 and one line of description in `text-meta`, the control right-aligned at 32. Rows sit in one card per section, under a `text-heading` with a 12 gap | Linear Security and Preferences 60–62, Vercel Firewall 80. Settings today 113 |
+| **Key–value list** (detail pages, receipts, Status facts) | rows 32–36; key `text-meta` muted in a 160 column (stacked on phone); value `text-body` | Stripe Workbench detail rows 31 |
+| **Content card** | padding 24 (16 on phone); title `text-heading`; body `text-body`; blocks 16 apart; actions at the bottom left or in the title row | Vercel 24–32, incident.io 16 |
+| **Stat strip** (`StatStrip`, new) | one bordered card with up to 4 cells divided by hairlines; each cell 16 × 20 padding, a `text-meta` label above a `text-figure` number, an optional `text-meta` line under it; no icon tiles | Vercel Usage credit card, OpenAI Usage, Stripe Transactions filter tiles (66 tall) |
+| **Media grid** | gutter 6 (4 on phone), unchanged and within Apple Photos' 2 and Midjourney's 8; square tiles, radius 6; **at most two cues always on a tile**: the type and length badge on video and audio, and the maker mark (shrunk from 20 to 16) when Everyone is shown. The day chip is the one exception: it stays visible on the first tile of each day, because removing dates is what lost round 6 ("no dates"). The video play disc and the title show on hover or focus only, since the type badge already says "video". Audio keeps its play disc, because it has no picture | Apple Photos shows only the duration on video; Midjourney shows nothing. Today a tile carries up to 4 cues, and one viewport holds 24 maker marks in 7 hues. The exception guards against the caption and date-group oscillation recorded in D1.5 and D1.6 |
+
+### Page templates
+
+Every route uses one of these five. A route that fits none needs a director decision.
+
+| Template | Routes | Numbers |
+|---|---|---|
+| **List page** | People, Apps and keys, Models, Workflows, Activity, Engines, Providers | Header: title, optional count in `text-heading` subtle, and one primary action (32) on the right; optional one-line subtitle in `text-meta`. Toolbar 24 below it: search 32 (max 320 wide), then filters and segments at 32, all one row. Then one ListCard or table at full width (≤ 1200). Footer count in `text-meta`. Empty, loading and error states draw inside the card |
+| **Detail page** | an engine, a receipt, a person, a workflow, an app | A back link (`text-meta`), title and state badge, and actions at 32 on the right. Facts as a key–value list. Sections 32 apart in a 720 column |
+| **Settings page** | Settings, a person's access plan, an app's settings | A 720 column. Each section is a heading and one card of SettingRows. No section tabs or jump links while every section fits on the page (ban 22) |
+| **Overview page** | Home, Status, Usage | Title and verdict line; a StatStrip when there are figures; sections 32 apart. Status and Usage use the 720 column for prose and cards, and Usage's chart and table run full width |
+| **Creation page** | Try (task pages and Playground) | At ≥ 1024, two panes: the composer at 400, sticky, with form controls at 40 and Run at 40 at the end of the form; and the results feed filling the rest, 24 away. This matches `MakePage` in `briefs/try-redesign-plan.md` §4.1. The result pane shows the last result or an example, never an empty dashed box. On phone, the form comes first and the new result appears directly under the Run button (44), with nothing sticky, as in `briefs/try-redesign-plan.md` §4.1: the 4-tab bar is already fixed. The content fills the viewport: no page ends above 70 % of 900 px (ban 27) |
+
+### Status display
+
+The words and rules are in "Status model" above. Only the drawing is set here.
+
+| Element | Numbers | Use | Reason |
+|---|---|---|---|
+| `StateBadge` | 20 tall, radius 4, padding 0 6, a 14 icon and the word in `text-badge`, tint background and state ink | A row or card title whose state is not Ready | Stripe "Failed ✕" and Vercel "Invitation Expired" are 20 tall |
+| Quiet Ready | a 14 success icon and the word in `text-meta` muted, or nothing at all in a row | Lists where most things work | Supabase "Healthy" is muted under a small green check |
+| Dot | 8 | The shell health line and chart legends | Vercel Usage legend dots |
+| Strip | cells 24 tall on a problem card, 16 in a table | Status, Engines | incident.io 16 |
+| Verdict line | `text-verdict` on Status, one `text-body` line on Home | | Unchanged from principle 1 |
+| Colour share | Status hues only inside badges, dots, strips and meters: never on a card edge, a row background or a page band | | Benchmarks: 0.1–1.7 % coloured pixels |
+
+### Colour budget
+
+- **Outside media and charts, coloured pixels stay at or under 2 % of a 1440 × 900 screen, and at or under 10 % of the ink** (benchmarks: 0.1–1.7 % and a median of 5 %; `tools/colorshare.py`). Usage today is at 10.6 % and 70 %.
+- **Charts:** one series takes one hue, `--chart-1` (the primary teal). A breakdown shows at most 3 hues plus "Other" in `--neutral`. Capability hues never fill bars. The breakdown moves to the table under the chart, with 8 px dots (Vercel Usage: single-hue bars and a dotted legend; OpenAI: one purple).
+- **Icons are ink**, `--muted-foreground` or `--foreground`. Capability hues colour the 16 px glyph only where the capability is the subject (the Try chip, the Library type badge), and never as a 12 % tinted tile. Every measured benchmark draws neutral icons, and Supabase's are in bordered neutral tiles. This retires the "pastel tile grid" the Linear-designer red team named in round 1.
+- **People** keep their hue in marks of 16–32 px only (principle 6).
+
+### Icons
+
+16 in navigation, rows, buttons and inputs (Vercel and Linear nav glyphs measure 14 in a 16 box); 14 in badges; 20 for the verdict icon, phone tabs and an empty state's icon. Nothing larger except media cues (the 40 play disc). Stroke 1.75 (unchanged).
+
+### Empty, loading and error
+
+| State | Numbers | Reason |
+|---|---|---|
+| Empty | Drawn inside the region it would fill (the ListCard or the grid), left-aligned: a 20 icon in muted ink, a title in `text-body` 500, one sentence in `text-meta`, one action at 32. Minimum height 160. A dashed 1 px `--border` only when the region has no card of its own | Geist empty state (`empty-error/vercel-geist-empty-state-desktop`); ban 23 |
+| Loading | Skeleton rows at the exact row heights (3 rows of 40 or 60), shown after 300 ms; no full-page spinner. A 16 spinner inside a button while it works | Stripe and Vercel tables |
+| Error | A Callout in place of the region: title in `text-body` 600 naming the layer, one sentence in `text-meta`, Retry at 32; the HTTP code under "Technical details". Never a toast for a page that failed to load | P3, VOICE rule 4 |
+
+### Gates for these numbers
+
+PR 1 turns `craft-system/azizam/_scripts/measure.mjs` and `summarize.py` into a check, `scripts/ui/craft_numbers.py --fail`, that runs on the fixture at 1440 and 390. It fails when any of these holds:
+- desktop uses a control height outside {32, 40} (media tiles and textareas excepted);
+- a page uses more than 4 text sizes plus badge text, or any size outside the type table;
+- a row in a ListCard or table is outside {36, 40, 60} on desktop or {48, 64} on phone;
+- the page padding or section gaps differ from the tokens;
+- a card has a shadow or a radius other than 8;
+- the coloured-pixel budget is broken outside media and charts.
+
+`token_drift.py` also flags unprefixed `min-h-11` and `h-11`, `rounded-lg` and `rounded-xl` in `app/`, `shadow-*` on non-overlay elements, and the old text utilities once their surface has moved.
 
 ## Shell
 
