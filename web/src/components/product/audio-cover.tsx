@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { AudioLines, Music2, Waves } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useAudioPeaks } from "@/lib/audio-peaks";
-import { personTint } from "./person-mark";
+import { personHueVar } from "./person-mark";
 
 /** What kind of sound a model makes, in the glossary's words. */
 export function audioKind(model?: string | null): {
@@ -64,11 +64,7 @@ export function Waveform({
             rx={1}
             className={cn(
               "fill-current",
-              progress === undefined
-                ? "opacity-60"
-                : played
-                  ? "opacity-90"
-                  : "opacity-25",
+              played ? "opacity-90" : "opacity-25",
             )}
           />
         );
@@ -78,9 +74,33 @@ export function Waveform({
 }
 
 /**
+ * The surface every audio cover is drawn on: deep water (the dark theme's
+ * card, in both themes) washed with the maker's hue, so a clip carries the
+ * same weight as a photograph beside it and says whose it is. `dark` scopes
+ * the dark tokens to the cover, so text and controls inside stay legible.
+ */
+export function coverSurface(maker?: string | null): string {
+  return cn(
+    "dark bg-card text-foreground relative isolate overflow-hidden",
+    maker ? personHueVar(maker) : "[--person:var(--capability-voice)]",
+  );
+}
+
+/** The maker's wash; the first child of a cover surface. */
+export function CoverWash() {
+  return (
+    <span
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-0 -z-10 bg-(--person)/24"
+    />
+  );
+}
+
+/**
  * An audio creation's cover, so a clip is as recognisable as a picture: its
- * maker's tint, what kind of sound it is, its words, its real waveform and its
- * length. The play control comes from the caller.
+ * maker's hue on deep water, what kind of sound it is, its words, its real
+ * waveform and its length. The play control comes from the caller (a Button
+ * with variant="cover").
  */
 export function AudioCover({
   peaksKey,
@@ -114,24 +134,19 @@ export function AudioCover({
   return (
     <div
       className={cn(
-        "bg-card text-foreground rounded-media relative flex size-full flex-col gap-2 border p-3",
+        coverSurface(maker),
+        "rounded-media flex size-full flex-col gap-2 p-3",
         className,
       )}
     >
-      <span
-        aria-hidden="true"
-        className={cn(
-          "rounded-media pointer-events-none absolute inset-0",
-          maker ? personTint(maker) : "bg-capability-voice/12",
-        )}
-      />
-      <p className="text-muted-foreground relative flex items-center justify-end gap-1 text-xs font-medium">
-        <Icon aria-hidden="true" className="size-3.5" />
+      <CoverWash />
+      <p className="text-foreground/80 flex items-center justify-end gap-1 text-xs font-medium">
+        <Icon aria-hidden="true" className="size-3.5 text-(--person)" />
         {kind.label}
       </p>
       <p
         className={cn(
-          "relative min-h-0 flex-1 font-medium break-words",
+          "min-h-0 flex-1 font-medium break-words",
           compact
             ? "line-clamp-3 text-sm leading-snug"
             : "line-clamp-4 text-sm leading-snug sm:text-base sm:leading-snug",
@@ -139,15 +154,15 @@ export function AudioCover({
       >
         {text}
       </p>
-      <div className="text-foreground relative flex items-center gap-2">
+      <div className="flex items-center gap-2">
         {control}
         {status ? (
           <span className="min-w-0 flex-1 text-xs font-medium">{status}</span>
         ) : (
-          <Waveform peaks={peaks} />
+          <Waveform peaks={peaks} className="text-(--person)" />
         )}
         {duration && !status ? (
-          <span className="figures text-muted-foreground shrink-0 text-xs font-medium">
+          <span className="figures text-foreground/80 shrink-0 text-xs font-medium">
             {duration}
           </span>
         ) : null}

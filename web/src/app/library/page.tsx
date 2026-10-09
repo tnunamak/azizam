@@ -42,10 +42,12 @@ import { formatAbsoluteUTC } from "@/lib/format";
 import { RelativeTime } from "@/components/product/relative-time";
 import { ErrorState } from "@/components/product/error-state";
 import { EmptyState } from "@/components/product/empty-state";
-import { PersonMark, personTint } from "@/components/product/person-mark";
+import { PersonMark } from "@/components/product/person-mark";
 import {
   AudioCover,
   audioKind,
+  CoverWash,
+  coverSurface,
   Waveform,
 } from "@/components/product/audio-cover";
 import { useAudioPeaks } from "@/lib/audio-peaks";
@@ -440,6 +442,7 @@ function AudioTile({
           <Button
             type="button"
             size="icon"
+            variant="cover"
             className="relative z-20 size-9 shrink-0 rounded-full max-sm:size-11"
             aria-label={label}
             onClick={async (event) => {
@@ -523,6 +526,7 @@ function LargeAudioPlayer({
       <Button
         type="button"
         size="icon"
+        variant="cover"
         className="size-16 rounded-full [&_svg:not([class*='size-'])]:size-6"
         aria-label={`${playing ? "Pause" : "Play"} ${title}`}
         onClick={async () => {
@@ -542,7 +546,7 @@ function LargeAudioPlayer({
         <Waveform
           peaks={peaks}
           progress={length ? Math.min(1, time / length) : 0}
-          className="text-foreground h-14 w-full flex-none"
+          className="h-14 w-full flex-none text-(--person)"
         />
       ) : null}
       <div className="flex w-full items-center gap-3">
@@ -563,7 +567,7 @@ function LargeAudioPlayer({
             audio.currentTime = Number(event.target.value);
             setTime(audio.currentTime);
           }}
-          className="accent-primary h-11 min-w-0 flex-1 cursor-pointer"
+          className="h-11 min-w-0 flex-1 cursor-pointer accent-(--person)"
         />
         <span className="figures text-muted-foreground w-10 text-xs">
           {length != null ? formatDuration(length) : "–:––"}
@@ -1295,23 +1299,23 @@ function CreationViewer({
                 className={cn(
                   "relative flex max-h-full w-full items-center justify-center overflow-hidden",
                   asset.kind === "audio"
-                    ? "bg-card rounded-panel max-w-lg flex-col gap-6 border px-8 py-8"
+                    ? cn(
+                        coverSurface(person),
+                        "rounded-panel max-w-lg flex-col gap-6 px-8 py-8",
+                      )
                     : "h-full",
                 )}
               >
                 {asset.kind === "audio" ? (
                   <>
-                    {/* The clip's own cover: maker's tint, kind, its words. */}
-                    <span
-                      aria-hidden="true"
-                      className={cn(
-                        "pointer-events-none absolute inset-0",
-                        person ? personTint(person) : "bg-capability-voice/12",
-                      )}
-                    />
-                    <div className="relative w-full space-y-3">
-                      <p className="text-muted-foreground flex items-center gap-1.5 text-xs font-medium">
-                        <AudioLines aria-hidden="true" className="size-3.5" />
+                    {/* The clip's own cover: maker's hue, kind, its words. */}
+                    <CoverWash />
+                    <div className="w-full space-y-3">
+                      <p className="text-foreground/80 flex items-center gap-1.5 text-xs font-medium">
+                        <AudioLines
+                          aria-hidden="true"
+                          className="size-3.5 text-(--person)"
+                        />
                         {audioKind(asset.model).label}
                       </p>
                       <p className="line-clamp-5 text-lg leading-snug font-medium break-words">

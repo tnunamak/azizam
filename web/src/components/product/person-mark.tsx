@@ -10,15 +10,16 @@ const hues = [
   "bg-person-7",
 ] as const;
 
-/* The same hues at 16%, for surfaces that belong to a person (audio covers). */
-const tints = [
-  "bg-person-1/16",
-  "bg-person-2/16",
-  "bg-person-3/16",
-  "bg-person-4/16",
-  "bg-person-5/16",
-  "bg-person-6/16",
-  "bg-person-7/16",
+/* The same hues as a custom property, so a surface that belongs to a person
+   (an audio cover) can wash, draw and fill with that person's colour. */
+const hueVars = [
+  "[--person:var(--person-1)]",
+  "[--person:var(--person-2)]",
+  "[--person:var(--person-3)]",
+  "[--person:var(--person-4)]",
+  "[--person:var(--person-5)]",
+  "[--person:var(--person-6)]",
+  "[--person:var(--person-7)]",
 ] as const;
 
 function hueIndex(name: string): number {
@@ -33,8 +34,9 @@ export function personHue(name: string): (typeof hues)[number] {
   return hues[hueIndex(name)];
 }
 
-export function personTint(name: string): (typeof tints)[number] {
-  return tints[hueIndex(name)];
+/** Sets `--person` to the person's hue for everything inside. */
+export function personHueVar(name: string): (typeof hueVars)[number] {
+  return hueVars[hueIndex(name)];
 }
 
 export function personInitial(name: string): string {
