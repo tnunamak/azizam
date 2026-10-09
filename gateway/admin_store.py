@@ -153,6 +153,7 @@ CREATE TABLE IF NOT EXISTS credentials (
   display_name TEXT,
   scopes_json TEXT,
   created_at INTEGER NOT NULL,
+  created_by TEXT,
   expires_at INTEGER,
   revoked_at INTEGER,
   last_used_at INTEGER,
@@ -288,6 +289,10 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         )
     if migrate_legacy_claims:
         _migrate_legacy_identity_profiles(conn)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(credentials)")}
+    if "created_by" not in columns:
+        conn.execute("ALTER TABLE credentials ADD COLUMN created_by TEXT")
+    _freeze_missing_prompt_memory_preferences(conn, _prompt_memory_default(conn))
     # Seed existing documents once. INSERT OR IGNORE preserves every revision
     # across restarts, including the registry's existing CAS generation.
     conn.execute(
@@ -296,6 +301,42 @@ def _exec_schema(conn: sqlite3.Connection) -> None:
         "SELECT key, 1 FROM operator_settings"
     )
     conn.commit()
+
+
+def _prompt_memory_default(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT value_json FROM operator_settings WHERE key='prompt_memory'"
+    ).fetchone()
+    if row is None:
+        return True
+    try:
+        value = json.loads(row[0])
+    except (TypeError, json.JSONDecodeError):
+        return True
+    return bool(value.get("default_remember", True)) if isinstance(value, Mapping) else True
+
+
+def _insert_prompt_memory_preference(
+    conn: sqlite3.Connection, user_id: str, now: int,
+) -> None:
+    value = _prompt_memory_default(conn)
+    conn.execute(
+        "INSERT OR IGNORE INTO prompt_memory_preferences"
+        "(user_id, remember, retention, updated_at, updated_by) VALUES (?, ?, 'never', ?, NULL)",
+        (user_id, 1 if value else 0, now),
+    )
+
+
+def _freeze_missing_prompt_memory_preferences(
+    conn: sqlite3.Connection, remember: bool, *, now: int | None = None,
+) -> None:
+    ts = _now() if now is None else int(now)
+    conn.execute(
+        "INSERT OR IGNORE INTO prompt_memory_preferences"
+        "(user_id, remember, retention, updated_at, updated_by) "
+        "SELECT id, ?, 'never', ?, NULL FROM users",
+        (1 if remember else 0, ts),
+    )
 
 
 def _migrate_legacy_identity_profiles(conn: sqlite3.Connection) -> None:
@@ -524,6 +565,7 @@ def upsert_oidc_user(
                 "created_at, last_login_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (user_id, issuer, subject, email, display_name, ts, ts),
             )
+            _insert_prompt_memory_preference(conn, user_id, ts)
         else:
             user_id = row["id"]
             conn.execute(
@@ -675,6 +717,7 @@ def claim_first_local_owner(
                 "created_at, last_login_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (user_id, issuer, subject, email, display_name, ts, ts),
             )
+            _insert_prompt_memory_preference(conn, user_id, ts)
         else:
             user_id = row["id"]
             conn.execute(
@@ -1264,6 +1307,7 @@ def create_credential_hash(
     profile_id: str | None = None,
     display_name: str | None = None,
     scopes: Iterable[str] | None = None,
+    created_by: str | None = None,
     expires_at: int | None = None,
     now: int | None = None,
     path: Path = DB_PATH,
@@ -1310,7 +1354,7 @@ def create_credential_hash(
         conn.execute(
             "INSERT INTO credentials(id, subject_kind, subject_id, app_id, "
             "profile_id, hash, prefix, display_name, scopes_json, "
-            "created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "created_at, created_by, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 cred_id,
                 subject_kind,
@@ -1322,6 +1366,7 @@ def create_credential_hash(
                 display_name,
                 scopes_json,
                 ts,
+                created_by,
                 expires_at,
             ),
         )
@@ -2080,6 +2125,8 @@ def put_operator_setting(
     payload = json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
     with _conn(path) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        if setting_key == "prompt_memory":
+            _freeze_missing_prompt_memory_preferences(conn, _prompt_memory_default(conn), now=ts)
         conn.execute(
             "INSERT INTO operator_settings(key, value_json, updated_at, updated_by) "
             "VALUES (?, ?, ?, ?) "
@@ -2138,6 +2185,8 @@ def put_operator_setting_with_audit(
                 raise SettingsConflictError("Settings changed elsewhere; reload to see the latest")
             if validate_in_transaction is not None:
                 validate_in_transaction(conn)
+            if setting_key == "prompt_memory":
+                _freeze_missing_prompt_memory_preferences(conn, _prompt_memory_default(conn), now=ts)
             conn.execute(
                 "INSERT INTO operator_settings(key, value_json, updated_at, updated_by) "
                 "VALUES (?, ?, ?, ?) "
@@ -2380,6 +2429,30 @@ def get_prompt_memory_preference(
     return data
 
 
+def ensure_prompt_memory_preference(
+    user_id: str,
+    *,
+    now: int | None = None,
+    path: Path = DB_PATH,
+) -> dict[str, Any]:
+    """Persist the household default for a person who has no saved choice."""
+    if not user_id:
+        raise ValueError("user_id is required")
+    ts = _now() if now is None else int(now)
+    with _conn(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        _insert_prompt_memory_preference(conn, user_id, ts)
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM prompt_memory_preferences WHERE user_id = ?", (user_id,),
+        ).fetchone()
+    data = _row_to_dict(row)
+    if data is None:
+        raise RuntimeError("prompt memory preference initialization failed")
+    data["remember"] = bool(data.get("remember"))
+    return data
+
+
 def put_prompt_memory_preference(
     user_id: str,
     *,
@@ -2493,6 +2566,7 @@ __all__ = [
     "get_operator_setting",
     "list_operator_settings",
     "get_prompt_memory_preference",
+    "ensure_prompt_memory_preference",
     "put_prompt_memory_preference",
     "record_audit",
     "list_audit",

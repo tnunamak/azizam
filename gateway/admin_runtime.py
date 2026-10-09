@@ -572,6 +572,7 @@ class AdminSQLiteStore:
             profile_id=profile_id,
             display_name=str(data.get("label") or data.get("name") or "API key"),
             scopes=data.get("scopes") if isinstance(data.get("scopes"), list) else None,
+            created_by=actor.audit_actor_id if actor.actor_kind == "user" else None,
             path=self.path,
         )
         admin_store.record_audit(
@@ -1618,6 +1619,10 @@ def runtime_identity_for_app_credential_hash(
             downstream={},
             profile=profile,
             app_id=app_id,
+            person_id=(str(credential["created_by"])
+                       if credential.get("created_by") and connection.execute(
+                           "SELECT 1 FROM users WHERE id=?", (credential["created_by"],),
+                       ).fetchone() is not None else None),
         )
 
 def create_admin_service_account_key(

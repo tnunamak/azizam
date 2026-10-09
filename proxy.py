@@ -42,6 +42,7 @@ from decimal import Decimal
 from dataclasses import dataclass, replace
 from pathlib import Path
 import contextlib
+import contextvars
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Awaitable, Callable, Iterable, Mapping, Optional, Sequence
 from urllib.parse import parse_qs, parse_qsl, quote, urlencode, urlsplit
@@ -2122,6 +2123,12 @@ class AuthContext:
 
 
 NO_AUTH_CONTEXT = AuthContext()
+
+
+def _auth_person_id(auth_context: AuthContext | None) -> str | None:
+    """Trusted credential creator; never infer a person from App ownership."""
+    person_id = getattr(getattr(auth_context, "identity", None), "person_id", None)
+    return person_id if isinstance(person_id, str) and person_id else None
 
 
 @dataclass(frozen=True)
@@ -13299,6 +13306,7 @@ def _begin_media_delivery(auth_context: AuthContext | None, receipt: Any = None)
     )
     identity = getattr(auth_context, "identity", None)
     ctx.app_id = getattr(identity, "app_id", None)
+    ctx.person_id = _auth_person_id(auth_context)
     return ctx
 
 
@@ -13315,15 +13323,23 @@ def _media_metadata_error(exc: Exception) -> Response:
     )
 
 
+_MEDIA_JOB_PROMPT_STARTED_AT: contextvars.ContextVar[int | None] = contextvars.ContextVar("media_job_prompt_started_at", default=None)
+
+
 def _note_media_metadata_body(body: Any) -> Response | None:
     """Read the metadata control from a parsed body; return a 400 if invalid."""
     try:
         media_delivery.note_body(body if isinstance(body, Mapping) else None)
         ctx = media_delivery.current()
         if ctx is not None and isinstance(body, Mapping):
-            ctx.prompt_decision = prompt_memory.decide_for_app(
-                ctx.app_id, body, admin_path=ADMIN_STORE.path,
+            ctx.prompt_decision = prompt_memory.decide_for_person(
+                ctx.person_id, body, admin_path=ADMIN_STORE.path,
             )
+            started = _MEDIA_JOB_PROMPT_STARTED_AT.get()
+            if started is not None and ctx.prompt_decision.keep:
+                decision = ctx.prompt_decision
+                expiry = decision.kept_until - (decision.created_at - started) if decision.kept_until is not None else None
+                ctx.prompt_decision = prompt_memory.Decision(decision.person_id, True, decision.reason, expiry, started)
             ctx.prompt_text = prompt_memory.prompt_text(body)
     except prompt_memory.PromptModeError as exc:
         return Response(
@@ -22278,11 +22294,12 @@ def _signed_asset_content_response(
             if not isinstance(checked, Response):
                 auth_context = checked
         if auth_context is not None:
-            identity = getattr(auth_context, "identity", None)
-            person_id = prompt_memory.person_for_app(
-                getattr(identity, "app_id", None), admin_path=ADMIN_STORE.path,
-            )
-        if person_id is None:
+            person_id = _auth_person_id(auth_context)
+        identity = getattr(auth_context, "identity", None)
+        key_hash = getattr(identity, "key_hash", "") or ""
+        if identity is None or (not getattr(identity, "app_id", None) and not key_hash.startswith("sha256:")):
+            # A synthetic LAN/path identity has no person. A signed browser
+            # session can supply one, but never override a real credential.
             session = _oidc_session_from_request(request)
             person_id = str(session.subject) if session is not None else None
         record = prompt_memory.get(asset_id, person_id) if person_id else None
@@ -24412,10 +24429,26 @@ class _PreviousResponseNotFound(Exception):
 
 
 def _responses_row_visible(row: Optional[dict], auth_context) -> bool:
-    """A stored response belongs to the key that created it."""
+    """Match the creator person and stable App (or legacy credential) scope."""
     if not row:
         return False
-    return row.get("api_key_name") == _api_key_name(auth_context)
+    scope = _responses_scope(auth_context)
+    if scope is None or "person_id" not in row or row.get("person_id") != scope["person_id"]:
+        return False
+    if scope["app_id"]:
+        return row.get("app_id") == scope["app_id"]
+    return not row.get("app_id") and row.get("owner_key_hash") == scope["owner_key_hash"]
+
+
+def _responses_scope(auth_context) -> dict[str, str | None] | None:
+    identity = getattr(auth_context, "identity", None)
+    app_id = getattr(identity, "app_id", None)
+    key_hash = getattr(identity, "key_hash", None)
+    # LAN/path-token markers identify a shared network, not a credential.
+    if not app_id and not (isinstance(key_hash, str) and key_hash.startswith("sha256:") and len(key_hash) > 7):
+        return None
+    return {"person_id": _auth_person_id(auth_context), "app_id": app_id,
+            "owner_key_hash": key_hash if not app_id else None}
 
 
 async def _build_prior_messages(previous_response_id: Optional[str], auth_context) -> list[dict]:
@@ -25744,8 +25777,8 @@ async def create_response(request: Request):
 
         try:
             prompt_memory.requested_mode(req_body)
-            prompt_decision = prompt_memory.decide_for_app(
-                getattr(getattr(auth_context, "identity", None), "app_id", None),
+            prompt_decision = prompt_memory.decide_for_person(
+                _auth_person_id(auth_context),
                 req_body, admin_path=ADMIN_STORE.path,
                 responses_store=req_body.get("store") if isinstance(req_body.get("store"), bool) else None,
             )
@@ -25811,10 +25844,13 @@ async def create_response(request: Request):
         stream = bool(req_body.get("stream"))
         store = req_body.get("store")
         if store is None:
-            store = True
+            store = prompt_decision.person_id is not None
+        response_scope = _responses_scope(auth_context)
+        if response_scope is None:
+            store = False
         if not prompt_decision.keep and prompt_decision.reason != "no_person":
             store = False
-            req_body["store"] = False
+        req_body["store"] = bool(store)
         profile = _profile_for_auth_context(auth_context)
         outer_receipt = RouteReceipt(
             protocol="openai.responses",
@@ -25878,7 +25914,10 @@ async def create_response(request: Request):
                         if store:
                             try:
                                 with prompt_memory.retention_guard(ADMIN_STORE.path, prompt_decision.person_id) as policy:
-                                    if not policy["never_keep"] and (prompt_decision.person_id is None or policy["remember"]):
+                                    if not policy["never_keep"] and (prompt_decision.person_id is None or (
+                                        policy["remember"]
+                                        and int(prompt_decision.created_at or 0) > int(policy.get("forgot_before") or 0)
+                                    )):
                                         responses_store.save(
                                             response_id,
                                             created_at=created_at,
@@ -25887,6 +25926,7 @@ async def create_response(request: Request):
                                             request_json=req_body,
                                             response_json=final_obj,
                                             api_key_name=_api_key_name(auth_context),
+                                            **response_scope,
                                         )
                             except Exception:  # noqa: BLE001
                                 for ev in translator.fail("Azizam could not persist the response."):
@@ -25956,7 +25996,10 @@ async def create_response(request: Request):
             if store:
                 try:
                     with prompt_memory.retention_guard(ADMIN_STORE.path, prompt_decision.person_id) as policy:
-                        if not policy["never_keep"] and (prompt_decision.person_id is None or policy["remember"]):
+                        if not policy["never_keep"] and (prompt_decision.person_id is None or (
+                            policy["remember"]
+                            and int(prompt_decision.created_at or 0) > int(policy.get("forgot_before") or 0)
+                        )):
                             responses_store.save(
                                 response_id,
                                 created_at=created_at,
@@ -25965,6 +26008,7 @@ async def create_response(request: Request):
                                 request_json=req_body,
                                 response_json=resp_json,
                                 api_key_name=_api_key_name(auth_context),
+                                **response_scope,
                             )
                 except Exception:  # noqa: BLE001
                     owner.report(status="failed", reason="failed")

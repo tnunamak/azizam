@@ -74,7 +74,9 @@ class ResponsesConformanceTests(unittest.TestCase):
     def setUp(self) -> None:
         proxy.responses_store.init_db()
         self.client = TestClient(proxy.app)
-        self.auth = patch.object(proxy, "AUTH_ENABLED", False)
+        self.auth = patch.object(proxy, "authenticate_request", return_value=proxy.AuthContext(
+            identity=proxy.AuthIdentity(name="conformance", key_hash="sha256:conformance-responses")
+        ))
         self.auth.start()
         self.addCleanup(self.auth.stop)
         self.sent: list[dict] = []
@@ -334,7 +336,7 @@ class ResponsesConformanceTests(unittest.TestCase):
     def test_previous_response_id_retrieve_and_delete(self) -> None:
         up = chat_completion({"role": "assistant", "content": "Mango"})
         with patch.object(proxy, "_forward_chat_completions", self._fwd(up)):
-            r1 = self.client.post("/v1/responses", json={"model": "default", "input": "Remember mango"})
+            r1 = self.client.post("/v1/responses", json={"model": "default", "input": "Remember mango", "store": True})
             self.assertEqual(r1.status_code, 200, r1.text)
             validate("Response", r1.json())
             r2 = self.client.post(
@@ -368,7 +370,7 @@ class ResponsesConformanceTests(unittest.TestCase):
             made = self.client.post(
                 "/v1/responses",
                 headers={"Authorization": "Bearer sk-owner"},
-                json={"model": "default", "input": "hi"},
+                json={"model": "default", "input": "hi", "store": True},
             )
             self.assertEqual(made.status_code, 200, made.text)
             rid = made.json()["id"]
@@ -392,7 +394,7 @@ class ResponsesConformanceTests(unittest.TestCase):
         up = chat_completion({"role": "assistant", "content": "x"})
         with patch.object(proxy, "_forward_chat_completions", self._fwd(up)):
             rid = self.client.post(
-                "/v1/responses", json={"model": "default", "input": "hello there"}
+                "/v1/responses", json={"model": "default", "input": "hello there", "store": True}
             ).json()["id"]
             r = self.client.get(f"/v1/responses/{rid}/input_items")
         self.assertEqual(r.status_code, 200, r.text)
@@ -455,7 +457,7 @@ class ResponsesConformanceTests(unittest.TestCase):
         from starlette.requests import Request
 
         async def exercise():
-            raw = json.dumps({"model": "default", "input": "hi", "stream": True}).encode()
+            raw = json.dumps({"model": "default", "input": "hi", "stream": True, "store": True}).encode()
             async def receive():
                 return {"type": "http.request", "body": raw, "more_body": False}
             request = Request({"type": "http", "method": "POST", "path": "/v1/responses",

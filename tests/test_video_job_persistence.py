@@ -155,11 +155,17 @@ class OwnershipAfterRestartTests(VideoRegistryTestCase):
         app = admin_store.create_app(
             "Alice app", kind="personal", owner_user_id=alice["id"], path=proxy.ADMIN_STORE.path,
         )
-        proxy._video_job_records["p1"] = self._record(app_id=app["id"], prompt="legacy-secret")
+        maker_auth = proxy.AuthContext(identity=proxy.AuthIdentity(
+            name="alice", key_hash="sha256:alice", app_id=app["id"], person_id=alice["id"],
+        ))
+        proxy._video_job_records["p1"] = self._record(
+            app_id=app["id"], person_id=alice["id"], owner_key_hash=proxy._asset_owner_key(maker_auth),
+            prompt="legacy-secret",
+        )
         prompt_memory.put("video_p1", alice["id"], "kept-maker-secret",
                           kept_until=None, path=media_jobs.DB_PATH)
 
-        response = await self._status(ALICE)
+        response = await self._status(maker_auth)
         self.assertEqual(response.status_code, 200)
         body = json.loads(response.body)
         self.assertEqual(body["prompt"], "kept-maker-secret")

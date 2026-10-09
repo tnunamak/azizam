@@ -46,7 +46,7 @@ def _error(exc: UserPortalError | AdminAuthError) -> JSONResponse:
 
 
 def _identity(app: Mapping[str, Any], credential: Mapping[str, Any] | None,
-              default_profile_id: str | None, path: Path) -> RuntimeIdentity | None:
+              default_profile_id: str | None, path: Path, *, person_id: str | None = None) -> RuntimeIdentity | None:
     """Resolve access without marking a key used by a read-only Home request."""
     profile_id = (credential or {}).get("profile_id") or app.get("default_profile_id") or default_profile_id
     profile = DEFAULT_PROFILE
@@ -60,7 +60,8 @@ def _identity(app: Mapping[str, Any], credential: Mapping[str, Any] | None,
             return None
     return RuntimeIdentity(name=str(app.get("name") or "Your access"),
                            key_hash=str((credential or {}).get("hash") or ""),
-                           profile=profile, app_id=app.get("id"))
+                           profile=profile, app_id=app.get("id"),
+                           person_id=credential.get("created_by") if credential is not None else person_id)
 
 
 def _availability(capability: Capability, evidence: Mapping[str, Mapping[str, Any]], registry: Mapping[str, Any] | None = None) -> tuple[str, str]:
@@ -331,7 +332,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
             credentials = admin_store.list_active_credentials(subject_kind="app", app_id=app["id"], path=store.path)
             for credential in credentials or [None]:
                 app_inherited = inherited_profile_id_for_app(app) if inherited_profile_id_for_app else inherited
-                identity = _identity(app, credential, app_inherited, store.path)
+                identity = _identity(app, credential, app_inherited, store.path, person_id=session.subject)
                 if identity is None:
                     continue
                 scoped = _resolved_capabilities(identity, capabilities, registry)
@@ -340,7 +341,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                 for cap in scoped:
                     if cap.policy_available:
                         allowed[(cap.intent, cap.model, cap.workflow, cap.backend)] = cap
-        new_identity = _identity({}, None, inherited, store.path) if self_service_enabled() else None
+        new_identity = _identity({}, None, inherited, store.path, person_id=session.subject) if self_service_enabled() else None
         new_caps = _resolved_capabilities(new_identity, capabilities, registry) if new_identity else []
         new_app_aliases = _alias_rows(_capability_rows(new_caps, availability_evidence, registry, alias_views), alias_views)
         for cap in new_caps:
@@ -355,7 +356,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
         gateway = {"owner_name": admin_store.owner_display_name(path=store.path)}
         # The person's own plan: the access plan their keys inherit. Spend is
         # the plan's total across everyone on it, because the caps are shared.
-        plan_identity = _identity({}, None, inherited, store.path)
+        plan_identity = _identity({}, None, inherited, store.path, person_id=session.subject)
         plan_spend = (providers.plan_spend(plan_identity.profile, path=spend_ledger_path())
                       if plan_identity is not None else None)
         return _json({**account, "gateway": gateway, "plan_spend": plan_spend,
@@ -454,7 +455,7 @@ def create_home_router(*, store, receipts_path: Callable[[], Path], require_sess
                 raise UserPortalError("credential_not_found", "API key not found for this account", status_code=404)
             app = admin_store.get_app(credential["app_id"], path=store.path)
             inherited = inherited_profile_id_for_app(app) if inherited_profile_id_for_app else default_profile_id(session)
-            identity = _identity(app, credential, inherited, store.path)
+            identity = _identity(app, credential, inherited, store.path, person_id=session.subject)
             if identity is None:
                 raise UserPortalError("credential_unavailable", "This key's access plan is unavailable.", status_code=403)
         except UserPortalError as exc:

@@ -99,6 +99,10 @@ class RuntimeIdentity:
     # which have no owning App. Used to scope the user activity feed to one
     # user's own receipts (see receipt_store.recent's ``app_ids`` filter).
     app_id: str | None = None
+    # The authenticated person who minted this credential. App ownership is
+    # independent: an owner can create a key on another person's App.
+    # Unknown legacy creators and synthetic identities have no prompt identity.
+    person_id: str | None = None
 
 
 # ---------------------------------------------------------------------------

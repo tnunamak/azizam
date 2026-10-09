@@ -444,6 +444,7 @@ def mint_user_app_key(
         hash=hash_api_key(api_key),
         prefix=_key_prefix(api_key),
         display_name=label or "Self-service key",
+        created_by=str(user["id"]),
         path=path,
     )
     admin_store.record_audit(
