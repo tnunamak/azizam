@@ -13763,8 +13763,53 @@ def _workflow_availability_services(registry: Mapping[str, Any]) -> dict[str, An
     services = dict(registry.get("services") or {})
     face_config = (config.get("identity") or {}).get("face_service")
     if isinstance(face_config, Mapping) and face_config:
-        services["faces"] = {"enabled": True, "config": dict(face_config), "availability_probe": False}
+        services["faces"] = {"enabled": True, "name": str(face_config.get("name") or "Face service"),
+                             "config": dict(face_config)}
     return {**registry, "services": services}
+
+
+def _composed_dependency_service_ids(capabilities: Iterable[Capability]) -> set[str]:
+    """Engines that visible gateway-composed workflows declare they rely on."""
+    records = {record.id: record for record in GATEWAY_WORKFLOW_REGISTRY.records()}
+    out: set[str] = set()
+    for cap in capabilities:
+        if not cap.policy_available or cap.backend != "gateway":
+            continue
+        record = records.get(cap.workflow or cap.resolved_workflow or "")
+        requirements = record.manifest.get("requires") if record else None
+        if isinstance(requirements, Mapping):
+            out.update(str(service) for service in requirements.get("services") or ())
+            for workflow_id in requirements.get("workflows") or ():
+                required = records.get(str(workflow_id))
+                if required:
+                    out.update(required.supported_backends)
+    return out
+
+
+async def _status_payload_with_service_rows(
+    status_payload: Mapping[str, Any], service_records: Mapping[str, Any], service_ids: Iterable[str],
+) -> Mapping[str, Any]:
+    """Check the named services the status payload has no row for.
+
+    The checks are read-only: an HTTP health GET and the lifecycle driver's
+    status query (``systemctl is-active`` for systemd). Neither starts an
+    on-demand engine, so a stopped sidecar reads as stopped, not as started.
+    """
+    raw_rows = status_payload.get("backends")
+    rows = [row for row in raw_rows if isinstance(row, Mapping)] if isinstance(raw_rows, list) else []
+    seen = {str(row.get("service_id") or row.get("key") or "") for row in rows}
+    wanted = set(service_ids) - seen
+    if not wanted:
+        return status_payload
+    backends = service_registry.runtime_backends(service_records)
+    missing = {key: value for key, value in backends.items() if key in wanted}
+    if not missing:
+        return status_payload
+    extra = await status_endpoint._backend_grid({"backends": missing})
+    checked_at = int(time.time())
+    for row in extra:
+        row.setdefault("observed_at_s", checked_at)
+    return {**status_payload, "backends": [*rows, *extra]}
 
 
 async def _gateway_capabilities_provider(request: Request) -> list[Capability]:
@@ -13784,33 +13829,20 @@ async def _gateway_capabilities_provider(request: Request) -> list[Capability]:
 async def _capabilities_availability_evidence(
     capabilities: Iterable[Capability], service_records: Mapping[str, Any],
 ) -> dict[str, dict[str, Any]]:
-    visible = {cap.backend for cap in capabilities if cap.policy_available}
-    records = {record.id: record for record in GATEWAY_WORKFLOW_REGISTRY.records()}
-    for cap in capabilities:
-        if not cap.policy_available or cap.backend != "gateway":
-            continue
-        record = records.get(cap.workflow or cap.resolved_workflow or "")
-        requirements = record.manifest.get("requires") if record else None
-        if isinstance(requirements, Mapping):
-            visible.update(str(service) for service in requirements.get("services") or ())
-            for workflow_id in requirements.get("workflows") or ():
-                required = records.get(str(workflow_id))
-                if required:
-                    visible.update(required.supported_backends)
+    capabilities = list(capabilities)
+    dependencies = _composed_dependency_service_ids(capabilities)
+    visible = {cap.backend for cap in capabilities if cap.policy_available} | dependencies
     if not visible:
         return {}
     status_payload = _cached_status_payload_for_availability()
-    if not status_payload:
-        backends = service_registry.runtime_backends(service_records)
-        service_rows = service_records.get("services") or {}
-        scoped_backends = {
-            key: value for key, value in backends.items()
-            if key in visible and (service_rows.get(key) or {}).get("availability_probe") is not False
-        }
-        status_payload = {
-            "backends": await status_endpoint._backend_grid({"backends": scoped_backends}),
-            "generated_at": int(time.time()),
-        }
+    if status_payload:
+        # The cached status grid covers registry engines only; check composed
+        # workflow dependencies (such as the face sidecar) it does not list.
+        probe_ids = dependencies
+    else:
+        status_payload = {"backends": [], "generated_at": int(time.time())}
+        probe_ids = visible
+    status_payload = await _status_payload_with_service_rows(status_payload, service_records, probe_ids)
     return _runtime_availability_evidence(service_records, status_payload=status_payload)
 
 
@@ -15244,6 +15276,13 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
         status_payload = await status_endpoint.get_cached_status(config)
     except Exception:  # noqa: BLE001
         status_payload = _cached_status_payload_for_availability()
+    try:
+        status_payload = await _status_payload_with_service_rows(
+            status_payload or {}, service_records,
+            set().union(*(_composed_dependency_service_ids(group) for group in capability_sets)),
+        )
+    except Exception:  # noqa: BLE001
+        pass
     availability_evidence = _runtime_availability_evidence(
         service_records,
         status_payload=status_payload,
