@@ -44,6 +44,7 @@ def test_real_composed_workflows_have_derived_catalog_states_offline():
     from gateway.discovery import WorkflowRegistry
     from gateway.capabilities import capability_from_workflow_record
     from gateway.workflows_catalog import build_workflows_catalog
+    from gateway.models_catalog import build_models_catalog
 
     registry = WorkflowRegistry.from_directory(Path(__file__).resolve().parents[1] / "manifests/workflows")
     composed = [record for record in registry.records() if "gateway" in record.supported_backends]
@@ -64,6 +65,17 @@ def test_real_composed_workflows_have_derived_catalog_states_offline():
     assert states == {
         "image.analyze.face-likeness": "idle", "image.edit.image-identity": "idle",
         "image.generate.flux2-klein-4b-seamless-tile": "ready",
+    }
+    models = build_models_catalog(
+        capabilities=projected,
+        model_entries=[{"id": record.manifest["bindings"]["gateway"]["model_id"],
+                        "azizam_workflow_id": record.id} for record in composed],
+        service_records=services,
+    )
+    model_states = {row["id"]: row["availability"]["status"] for row in models["models"]}
+    assert model_states == {
+        "face-likeness": "idle", "image-identity": "idle",
+        "flux2-klein-4b-seamless-tile": "ready",
     }
 
 
