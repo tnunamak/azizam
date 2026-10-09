@@ -175,7 +175,8 @@ it.each([
 });
 
 it.each([false, true, undefined])("honors workflow availability %s in the picker and Run action", async (available) => {
-  const reason = "Unavailable. Ask the owner to enable this capability.";
+  // The same member wording as the Workflows page (lib/workflow-availability).
+  const reason = "Not available right now. The person who manages Azizam can set it up.";
   fetchMock.mockImplementation(async (url: string) => json(url.includes("workflows") ? {
     workflows: [{
       ...workflows.workflows[0],
