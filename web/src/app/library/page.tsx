@@ -2243,8 +2243,10 @@ export default function LibraryPage() {
           aria-busy="true"
           className="space-y-3"
         >
-          <Skeleton className="h-5 w-24" />
-          <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+          {/* The grid's own shape: a group header, then three to six
+              columns (D1.5: two big phone squares jumped to three). */}
+          <Skeleton className="h-4 w-16" />
+          <div className="grid grid-cols-3 gap-1 sm:gap-1.5 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
             {Array.from({ length: 12 }).map((_, index) => (
               <Skeleton key={index} className="rounded-media aspect-square" />
             ))}
