@@ -1063,6 +1063,13 @@ def _availability_from_health_payload(payload: Mapping[str, Any]) -> bool | None
         return True
     if status_value in {"down", "failed", "unhealthy", "unavailable", "busy", "warming", "starting"}:
         return False
+    # A nonempty OpenAI model list is a successful check of a usable route.
+    # Explicit readiness fields above still take precedence.
+    if not status_value and payload.get("object") == "list" and isinstance(payload.get("data"), list):
+        if any(isinstance(model, Mapping) and model.get("object") == "model"
+               and isinstance(model.get("id"), str) and model["id"].strip()
+               for model in payload["data"]):
+            return True
     return None
 
 

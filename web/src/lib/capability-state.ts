@@ -8,6 +8,8 @@
  * capability lists all read from here, so they cannot disagree.
  */
 
+import { availabilityReason } from "@/lib/status-copy";
+
 export type CapabilityStateKey =
   | "ready"
   | "busy"
@@ -334,7 +336,12 @@ export function capabilityView(
   // The gateway's projection says unavailable even without a timed check:
   // that is a current fault, not missing knowledge.
   if (status === "unavailable" && at === null) return make("down", null, stamp);
-  if (!evidence || status === "unknown" || (!at && !source)) {
+  if (
+    !evidence ||
+    status === "unknown" ||
+    (!at && !source) ||
+    (status === "idle" && at === null)
+  ) {
     const lastChecks = serving
       .map((engine) => engine.checkedAt)
       .filter((value): value is number => typeof value === "number");
@@ -407,8 +414,10 @@ export function capabilityView(
       `${unresolvedFailures.length} request${unresolvedFailures.length === 1 ? "" : "s"} failed in the last hour.`,
       stamp,
     );
+  if (status === "idle")
+    return make("ready", availabilityReason("idle") ?? null, stamp);
   if (
-    ["ready", "idle", "idle-startable", "standby_stopped"].includes(status) ||
+    ["ready", "idle-startable", "standby_stopped"].includes(status) ||
     input.available
   )
     return make("ready", null, stamp);
