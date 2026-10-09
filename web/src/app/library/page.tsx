@@ -1590,7 +1590,7 @@ function CreationViewer({
                   ) : null}
                 </div>
                 <section className="mt-3">
-                  <h4 className="mb-1 text-sm font-medium">Workflow</h4>
+                  <h3 className="mb-1 text-sm font-medium">Workflow</h3>
                   <pre className="bg-muted rounded-control max-h-40 overflow-auto p-3 font-mono text-xs whitespace-pre-wrap">
                     {asset.workflow
                       ? typeof asset.workflow === "string"
