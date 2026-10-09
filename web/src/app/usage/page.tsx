@@ -429,7 +429,7 @@ function SummaryRow({ summary }: { summary: UsageSummary }) {
           noPaidRequests ? (
             "No paid requests"
           ) : summary.remoteSpendUsd === null ? (
-            "Spend not recorded"
+            "Unavailable"
           ) : (
             <Money amount={summary.remoteSpendUsd} summary />
           )

@@ -57,7 +57,7 @@ test.each([0, 4])(
       spend_total_requests: 4,
     });
     expect(await screen.findByText("Remote spend")).toBeVisible();
-    expect(screen.getByText("Spend not recorded")).toBeVisible();
+    expect(screen.getByText("Unavailable")).toBeVisible();
     expect(screen.getByText(/Cost measured for 0 of 4 requests/)).toBeVisible();
     expect(screen.getByText(/4 paid requests have unknown cost/)).toBeVisible();
   },
@@ -269,7 +269,7 @@ test.each([0, 4])("Usage keeps %i cached requests through refresh failure and re
     if (calls === 1) return Promise.resolve(Response.json({ requests, remote_spend: null }));
     return calls === 2 ? refresh.promise : retry.promise;
   });
-  const cachedLabel = requests ? "Spend not recorded" : "No requests in this period";
+  const cachedLabel = requests ? "Unavailable" : "No requests in this period";
   expect(await screen.findByText(cachedLabel)).toBeVisible();
   act(() => { void client.invalidateQueries({ queryKey: ["usage"] }); });
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Busy · Refreshing usage"));
@@ -292,7 +292,7 @@ test.each([0, 4])("Usage keeps %i cached requests through refresh failure and re
 
 test.each([undefined, null, "", "   ", false])("Usage never formats unrecorded spend as zero: %s", async (spend) => {
   renderUsage({ remote_spend: spend, remote_spend_available: true });
-  expect(await screen.findByText("Spend not recorded")).toBeVisible();
+  expect(await screen.findByText("Unavailable")).toBeVisible();
   expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
 });
 
