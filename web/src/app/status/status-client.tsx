@@ -386,8 +386,12 @@ function affectsFact(
   covered: string[],
   failed: ActivityRecord[],
 ): ReactNode {
+  // More than three names would repeat the Capabilities list on the same
+  // screen; count them instead.
   const scope = exposed.length
-    ? `${joinNames(exposed)}: no other engine serves ${exposed.length === 1 ? "it" : "them"}.`
+    ? exposed.length > 3
+      ? `${exposed.length} capabilities: no other engine serves them.`
+      : `${joinNames(exposed)}: no other engine serves ${exposed.length === 1 ? "it" : "them"}.`
     : covered.length
       ? `Nothing yet: another engine still serves ${joinNames(covered.map((label) => label.toLowerCase()))}.`
       : "Unknown";
