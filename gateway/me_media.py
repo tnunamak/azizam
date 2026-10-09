@@ -277,6 +277,7 @@ def _resolve_path(provider: PathProvider) -> Path:
 class _MediaScope:
     app_ids: list[str] | None
     person_id: str | None = None
+    viewer_person_id: str | None = None
     user_ids: list[str] | None = None
     owner_keys: frozenset[str] | None = None
     audit_everyone: bool = False
@@ -397,31 +398,33 @@ def _media_scope(request: Request, actor: _Actor, admin_db_path: Path) -> _Media
         if not actor.owner:
             raise _ApiError("owner_required", "Only owners can filter by person", 403)
         if person == "all":
-            return _MediaScope(app_ids=None, person_id="all", user_ids=None, audit_everyone=True)
+            return _MediaScope(app_ids=None, person_id="all", viewer_person_id=actor.user_id, user_ids=None, audit_everyone=True)
         if person == "self":
             return _member_media_scope(actor.user_id, admin_db_path, person_id=actor.user_id)
         if person == "local-network":
-            return _MediaScope(app_ids=None, person_id="local-network", user_ids=None, audit_everyone=True)
-        return _member_media_scope(person, admin_db_path, person_id=person)
+            return _MediaScope(app_ids=None, person_id="local-network", viewer_person_id=actor.user_id, user_ids=None, audit_everyone=True)
+        return _member_media_scope(person, admin_db_path, person_id=person, viewer_person_id=actor.user_id)
     if raw_scope is None and actor.owner:
-        return _MediaScope(app_ids=None, user_ids=None, audit_everyone=True, owner_default=True)
+        return _MediaScope(app_ids=None, viewer_person_id=actor.user_id, user_ids=None, audit_everyone=True, owner_default=True)
     scope = str(raw_scope or "me")
     if scope == "everyone":
         if not actor.owner:
             raise _ApiError("owner_required", "Only owners can view everyone's media", 403)
-        return _MediaScope(app_ids=None, user_ids=None, audit_everyone=True)
+        return _MediaScope(app_ids=None, viewer_person_id=actor.user_id, user_ids=None, audit_everyone=True)
     return _member_media_scope(actor.user_id, admin_db_path)
 
 
-def _member_media_scope(user_id: str, admin_db_path: Path, *, person_id: str | None = None) -> _MediaScope:
+def _member_media_scope(user_id: str, admin_db_path: Path, *, person_id: str | None = None, viewer_person_id: str | None = None) -> _MediaScope:
     scope = _MediaScope(
         app_ids=_owned_app_ids(user_id, admin_db_path),
         person_id=person_id or user_id,
+        viewer_person_id=viewer_person_id or user_id,
         user_ids=[user_id],
     )
     return _MediaScope(
         app_ids=scope.app_ids,
         person_id=scope.person_id,
+        viewer_person_id=scope.viewer_person_id,
         user_ids=scope.user_ids,
         owner_keys=frozenset(_credential_hashes_for_scope(scope, admin_db_path) or ()),
     )
@@ -562,7 +565,10 @@ def _media_items(
             embedded = _embedded_provenance(path)
             media_type = str(asset.get("media_type") or asset_media_type_resolver(asset_id, path))
             created_at = _asset_created_at(path, job, receipt, embedded)
-            prompt_record = prompt_memory.get(asset_id, scope.person_id, path=prompt_memory_path)
+            maker_app_id = str((receipt or {}).get("app_id") or job.get("app_id") or "")
+            maker_id = prompt_memory.person_for_app(maker_app_id, admin_path=admin_db_path)
+            prompt_record = (prompt_memory.get(asset_id, scope.viewer_person_id, path=prompt_memory_path)
+                             if maker_id and maker_id == scope.viewer_person_id else None)
             prompt = prompt_record.get("prompt_text") if prompt_record else None
             model = _string_first(
                 _model_for_asset(asset, job, receipt),
@@ -574,8 +580,6 @@ def _media_items(
                 embedded.get("workflow_id"),
                 embedded.get("workflow"),
             )
-            prompt_record = prompt_memory.get(asset_id, scope.person_id, path=prompt_memory_path)
-            prompt = prompt_record.get("prompt_text") if prompt_record else None
             out.append({
                 "asset_id": asset_id,
                 "id": asset_id,
@@ -589,6 +593,7 @@ def _media_items(
                 "status": job.get("status"),
                 "available": bool(path is not None and path.is_file()),
                 "prompt": prompt,
+                "title": _prompt_title(prompt),
                 "model": model,
                 "workflow": workflow,
                 "seed": _first_present(asset.get("seed"), _nested(job, "metadata", "seed"), _nested(receipt, "metadata", "seed"), embedded.get("seed")),
@@ -622,7 +627,7 @@ def _media_items(
                 continue
             kind = _asset_kind(asset_id, metadata)
             created_at = _asset_created_at(path, {}, None, embedded)
-            prompt_record = prompt_memory.get(asset_id, scope.person_id, path=prompt_memory_path)
+            prompt_record = prompt_memory.get(asset_id, scope.viewer_person_id, path=prompt_memory_path)
             prompt = prompt_record.get("prompt_text") if prompt_record else None
             seen.add(asset_id)
             out.append({
@@ -637,6 +642,7 @@ def _media_items(
                 "request_id": (receipt or embedded).get("request_id"),
                 "status": "available",
                 "prompt": prompt,
+                "title": _prompt_title(prompt),
                 "model": _string_first(embedded.get("resolved_model"), embedded.get("requested_model")),
                 "workflow": _string_first(embedded.get("workflow_id"), embedded.get("workflow")),
                 "seed": embedded.get("seed"),
@@ -1063,6 +1069,13 @@ def _provenance(
         "request_id": job.get("request_id"),
         "job_id": job.get("job_id"),
     }
+
+
+def _prompt_title(prompt: str | None) -> str | None:
+    if not prompt:
+        return None
+    first_line = next((line.strip() for line in prompt.splitlines() if line.strip()), "")
+    return first_line[:120] or None
 
 
 def _matches_media_filters(item: Mapping[str, Any], request: Request) -> bool:

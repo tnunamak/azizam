@@ -242,6 +242,8 @@ class MeMediaRouterTests(unittest.TestCase):
         self.assertEqual(own.json()["asset"]["provenance"]["workflow"], "wf.image")
         self.assertEqual(own.json()["asset"]["provenance"]["seed"], 7)
         self.assertEqual(own.json()["asset"]["provenance"]["size"], {"width": 512, "height": 512})
+        self.assertEqual(own.json()["asset"]["prompt"], "misty lake")
+        self.assertEqual(own.json()["asset"]["title"], "misty lake")
 
     def test_owner_everyone_scope_is_role_gated_and_audited(self) -> None:
         alice_asset = "img_" + "c" * 64
@@ -259,8 +261,28 @@ class MeMediaRouterTests(unittest.TestCase):
         allowed = self.client.get("/me/api/media?scope=everyone")
         self.assertEqual(allowed.status_code, 200, allowed.text)
         self.assertEqual({item["asset_id"] for item in allowed.json()["assets"]}, {alice_asset, bob_asset})
+        self.assertTrue(all(item["prompt"] is None and item["title"] is None for item in allowed.json()["assets"]))
+        foreign = self.client.get(f"/me/api/media?person={self.alice['id']}")
+        self.assertEqual(foreign.status_code, 200, foreign.text)
+        self.assertTrue(all(item["prompt"] is None and item["title"] is None for item in foreign.json()["assets"]))
         audit = admin_store.list_audit(action_prefix="media.library.everyone", path=self.admin_db)
         self.assertEqual(len(audit), 1)
+
+    def test_owner_sees_own_prompt_in_instance_library_only(self) -> None:
+        owner_app = admin_store.create_app(
+            "Owner personal", kind="personal", owner_user_id=self.owner["id"], path=self.admin_db,
+        )
+        asset_id = "img_" + "e" * 64
+        self._write_asset(asset_id, ["sha256:alice"], prompt="maker words")
+        prompt_memory.put(asset_id, self.owner["id"], "owner words", kept_until=None, path=self.prompt_db)
+        self._receipt(owner_app["id"], "req_owner")
+        self._job("req_owner", asset_id)
+        self.current_user = self.owner
+        own = self.client.get("/me/api/media")
+        self.assertEqual(own.status_code, 200, own.text)
+        asset = next(item for item in own.json()["assets"] if item["asset_id"] == asset_id)
+        self.assertEqual(asset["prompt"], "owner words")
+        self.assertEqual(asset["title"], "owner words")
 
     def test_media_sources_filter_jobs_and_cache_assets(self) -> None:
         alice_asset = "img_" + "2" * 64

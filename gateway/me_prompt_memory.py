@@ -15,8 +15,8 @@ SessionProvider = Callable[[Request], AdminSession | None]
 MutationValidator = Callable[[Request, AdminSession], JSONResponse | None]
 HouseholdProvider = Callable[[], Mapping[str, Any]]
 
-MEMBER_DEFAULT = {"remember": True, "retention": "3_months"}
-HOUSEHOLD_DEFAULT = {"default_remember": True, "never_keep": False, "retention_cap": "1_year"}
+MEMBER_DEFAULT = {"remember": True, "retention": "never"}
+HOUSEHOLD_DEFAULT = {"default_remember": True, "never_keep": False, "retention_cap": "never"}
 RETENTION_ORDER = {"3_months": 0, "1_year": 1, "never": 2}
 
 
