@@ -1,3 +1,5 @@
+import type { WorkflowAvailability } from "@/lib/workflow-availability";
+
 export interface WorkflowInput {
   name: string;
   type: string;
@@ -33,11 +35,9 @@ export interface Workflow {
   inputs: WorkflowInput[];
   outputs?: WorkflowOutput[];
   engine_binding: string | null;
-  availability: {
+  availability: WorkflowAvailability & {
     status: string;
     reason_code: string;
-    available?: boolean;
-    evidence?: { kind?: string };
   };
   typical_seconds: number | null;
   aliases: string[];
