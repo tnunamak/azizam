@@ -265,10 +265,11 @@ test.describe("phone target primitives", () => {
         const engineToggle = dialog.getByRole("switch", {
           name: "Toggle Local chat engine",
         });
+        // DESIGN "Controls": the toggle is 32 x 20 (Linear 29 x 20).
         await expectCompactBox(
           engineToggle.locator('[data-slot="switch-track"]'),
           32,
-          18,
+          20,
         );
         const testButton = dialog.getByRole("button", { name: "Test" });
         const detectButton = dialog.getByRole("button", { name: "Detect" });
@@ -379,7 +380,7 @@ test.describe("phone target primitives", () => {
       await expectCompactBox(
         page.getByRole("switch", { name: "Enable access" }),
         32,
-        18,
+        20,
       );
       await expectCompactHeight(
         page.getByRole("button", { name: "Copy alias" }),
