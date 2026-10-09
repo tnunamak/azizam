@@ -416,7 +416,7 @@ def _media_scope(request: Request, actor: _Actor, admin_db_path: Path) -> _Media
 def _member_media_scope(user_id: str, admin_db_path: Path, *, person_id: str | None = None) -> _MediaScope:
     scope = _MediaScope(
         app_ids=_owned_app_ids(user_id, admin_db_path),
-        person_id=person_id,
+        person_id=person_id or user_id,
         user_ids=[user_id],
     )
     return _MediaScope(
@@ -574,6 +574,8 @@ def _media_items(
                 embedded.get("workflow_id"),
                 embedded.get("workflow"),
             )
+            prompt_record = prompt_memory.get(asset_id, scope.person_id, path=prompt_memory_path)
+            prompt = prompt_record.get("prompt_text") if prompt_record else None
             out.append({
                 "asset_id": asset_id,
                 "id": asset_id,
@@ -632,7 +634,7 @@ def _media_items(
                 "job_id": None,
                 "request_id": (receipt or embedded).get("request_id"),
                 "status": "available",
-                "prompt": None,
+                "prompt": prompt,
                 "model": _string_first(embedded.get("resolved_model"), embedded.get("requested_model")),
                 "workflow": _string_first(embedded.get("workflow_id"), embedded.get("workflow")),
                 "seed": embedded.get("seed"),
@@ -641,10 +643,10 @@ def _media_items(
                 "duration_s": _nested(embedded, "parameters", "duration_s"),
                 "poster_asset_id": None,
                 "download_url": signed_url_builder(request, asset_id, "none"),
-                "workflow_download_url": None,
+                "workflow_download_url": signed_url_builder(request, asset_id, "full") if prompt_record else None,
                 "generation_ms": None,
                 "provenance": {
-                    "prompt": None,
+                    "prompt": prompt,
                     "model": _string_first(embedded.get("resolved_model"), embedded.get("requested_model")),
                     "workflow": _string_first(embedded.get("workflow_id"), embedded.get("workflow")),
                     "seed": embedded.get("seed"),

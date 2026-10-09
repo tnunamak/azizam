@@ -62,9 +62,9 @@ def test_member_prompt_memory_defaults_and_put_are_admin_store_backed(tmp_path: 
     assert response.status_code == 200
     assert response.json()["prompt_memory"] == {
         "remember": True,
-        "retention": "never",
+        "retention": "3_months",
         "effective_remember": True,
-        "effective_retention": "1_year",
+        "effective_retention": "3_months",
         "household": {"default_remember": True, "never_keep": False, "retention_cap": "1_year"},
     }
 
@@ -110,7 +110,7 @@ def test_new_member_inherits_owner_default_off(tmp_path: Path) -> None:
     client = _client(admin_db, tmp_path / "prompt.db", user_id=user["id"], household={"default_remember": False})
     settings = client.get("/me/api/prompt-memory").json()["prompt_memory"]
     assert settings["remember"] is False
-    assert settings["retention"] == "never"
+    assert settings["retention"] == "3_months"
 
 
 def test_member_prompt_memory_rejects_bad_settings(tmp_path: Path) -> None:

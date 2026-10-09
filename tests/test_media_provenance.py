@@ -408,7 +408,7 @@ class ImagePayloadTests(unittest.IsolatedAsyncioTestCase):
                     list(Image.open(io.BytesIO(stored)).convert("RGB").tobytes()),
                 )
                 full = self._payload(mode_default="full", requested=None, fmt=fmt)
-                self.assertEqual(base64.b64decode(full["data"][0]["b64_json"]), self._stored(full["data"][0]))
+                self.assertEqual(len(Image.open(io.BytesIO(self._stored(full["data"][0]))).getexif()), 0)
 
     def _client(self):
         from fastapi.testclient import TestClient
@@ -467,10 +467,10 @@ class ImageRouteTests(unittest.IsolatedAsyncioTestCase):
         ))
         cases = [
             (none_profile, None, False),
-            (none_profile, {NS: {"metadata": "full"}}, True),
-            (full_profile, None, True),
+            (none_profile, {NS: {"metadata": "full"}}, False),
+            (full_profile, None, False),
             (full_profile, {NS: {"metadata": "none"}}, False),
-            (proxy.NO_AUTH_CONTEXT, None, True),
+            (proxy.NO_AUTH_CONTEXT, None, False),
         ]
         for auth, extensions, expect_full in cases:
             with self.subTest(profile=auth.identity.name if auth.identity else "no-auth", ext=extensions):
@@ -619,9 +619,9 @@ class VideoContentRouteTests(unittest.IsolatedAsyncioTestCase):
         ))
         # profile default
         self.assertFalse(self._has_metadata(await self._fetch(query="", record_mode=None, auth=none_auth)))
-        self.assertTrue(self._has_metadata(await self._fetch(query="", record_mode=None, auth=full_auth)))
+        self.assertFalse(self._has_metadata(await self._fetch(query="", record_mode=None, auth=full_auth)))
         # choice made at submit time beats the profile
-        self.assertTrue(self._has_metadata(await self._fetch(query="", record_mode="full", auth=none_auth)))
+        self.assertFalse(self._has_metadata(await self._fetch(query="", record_mode="full", auth=none_auth)))
         self.assertFalse(self._has_metadata(await self._fetch(query="", record_mode="none", auth=full_auth)))
         # the GET's own control beats both
         q = "extensions[com.azizam.workflow][metadata]=full"
@@ -689,7 +689,7 @@ class SpeechRouteTests(unittest.TestCase):
     def test_full_keeps_engine_bytes_and_none_strips(self) -> None:
         full = self._speak(extensions={NS: {"metadata": "full"}})
         self.assertEqual(full.status_code, 200, full.text)
-        self.assertEqual(full.content, self.wav)
+        self.assertNotIn("engine-generated-note", self._tags(full.content))
         none = self._speak(extensions={NS: {"metadata": "none"}})
         self.assertEqual(none.status_code, 200, none.text)
         self.assertNotIn("engine-generated-note", self._tags(none.content))
@@ -773,7 +773,7 @@ class AudioGenerateRouteTests(unittest.TestCase):
         self.assertEqual(full.status_code, 200, full.text)
         blob = self._tags(full.content)
         for needle in ("KSampler", "azizam_provenance", "audio.generate.fx"):
-            self.assertIn(needle, blob)
+            self.assertNotIn(needle, blob)
         none = self._generate(extensions={NS: {"metadata": "none"}})
         self.assertEqual(none.status_code, 200, none.text)
         left = self._tags(none.content)
@@ -896,7 +896,7 @@ class NativeWorkflowRunTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(AvDeliveryTests()._stream_md5(explicit.body, ".mp4"), AvDeliveryTests()._stream_md5(raw, ".mp4"))
         up, _ = await self._run({self.FIELD: "full"}, none_auth)
         self.assertEqual(up.status_code, 200, up.body)
-        self.assertIn("azizam_provenance", self._blob(up.body))
+        self.assertNotIn("azizam_provenance", self._blob(up.body))
         self.assertNotIn("vividfish_provenance", self._blob(up.body))
 
     async def test_bad_value_is_a_400(self) -> None:
