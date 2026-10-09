@@ -78,6 +78,7 @@ class FakeEngine:
         self.reload_codes: list[int] = []  # popped per daemon-reload; empty = success
         self.unhealthy_profiles: set[str] = set()
         self.restart_gate: asyncio.Event | None = None
+        self.reload_gate: asyncio.Event | None = None
 
     def _profile_on_disk(self) -> str:
         try:
@@ -92,6 +93,8 @@ class FakeEngine:
     async def exec(self, *cmd: str, **_kwargs: Any) -> _Proc:
         verb = cmd[2] if cmd[1] == "--user" else cmd[1]
         if verb == "daemon-reload":
+            if self.reload_gate is not None:
+                await self.reload_gate.wait()
             code = self.reload_codes.pop(0) if self.reload_codes else 0
             self.events.append(("daemon-reload", code))
             return _Proc(code)

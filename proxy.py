@@ -98,6 +98,7 @@ from gateway import mcp_server
 from gateway import identity_api, identity_scene
 from gateway import likeness as likeness_module
 from gateway import stt_chunking
+from gateway.lifecycle_drivers import SwapRecoveryFailed
 from gateway.swap_drain import ServingLease, SwapDeferred, SwapDrain, SwapDrainSettings
 from gateway.alias_policy import (
     AliasPolicyResolutionError,
@@ -1524,6 +1525,20 @@ def _swap_deferred_response(requested_model: str, deferred: SwapDeferred) -> Res
     )
     response.headers["Retry-After"] = str(deferred.retry_after_s)
     return response
+
+
+def _swap_recovery_failed_response(requested_model: str, failed: SwapRecoveryFailed) -> Response:
+    """503 for a swap whose rollback also failed: the backend may be down."""
+    return openai_error_response(
+        (
+            f"Switching to {requested_model!r} failed, and restoring the model that was "
+            f"loaded before failed too ({failed.detail}). The backend may be down until "
+            "an operator restores it."
+        ),
+        status_code=503,
+        error_type="service_unavailable",
+        code="backend_recovery_failed",
+    )
 
 
 # =============================================================================
@@ -3339,6 +3354,8 @@ async def _ensure_litellm_local_backend_target(
         )
     except SwapDeferred as deferred:
         return _swap_deferred_response(requested_model, deferred)
+    except SwapRecoveryFailed as failed:
+        return _swap_recovery_failed_response(requested_model, failed)
     if ready:
         return None
     return _litellm_activation_failure_response(
@@ -27502,6 +27519,8 @@ async def _forward_internal_litellm_local_chat_completions(
         ready, lease = await _ensure_target_leased(backend, activation)
     except SwapDeferred as deferred:
         return _swap_deferred_response(str(body.get("model") or target_model), deferred)
+    except SwapRecoveryFailed as failed:
+        return _swap_recovery_failed_response(str(body.get("model") or target_model), failed)
     if not ready:
         return _litellm_activation_failure_response(
             requested_model=str(body.get("model") or target_model),

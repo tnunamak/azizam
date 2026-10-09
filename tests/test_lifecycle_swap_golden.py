@@ -22,8 +22,10 @@ Kobold assertions (K1 trap):
   - exec sequence == daemon-reload → restart koboldcpp.service, in that order.
   - health poll hits /v1/models.
   - failure path (bad restart exit code): restore the previous drop-in (remove
-    it when there was none, as here) and return False.
-  - failure path (health timeout): same restore, return False.
+    it when there was none, as here); here every restart fails, so the
+    rollback fails too and swap raises SwapRecoveryFailed.
+  - failure path (health timeout): same restore; the unit never becomes
+    healthy, so swap raises SwapRecoveryFailed.
     (Restore-and-restart on the previous activation: test_systemd_swap_rollback.py.)
   - empty mmproj: Environment="LLAMA_BEE_MMPROJ=" (empty value).
 
@@ -52,6 +54,7 @@ sys.path.insert(0, str(ROOT))
 import proxy  # noqa: E402  (imports needed for legacy functions + module globals)
 import firehose_metrics  # noqa: E402
 from gateway.lifecycle_drivers import (
+    SwapRecoveryFailed,
     SystemdDriver,
     HttpLoadUnloadDriver,
     register_params_provider,
@@ -214,7 +217,7 @@ class TestSystemdDriverSwapGolden(unittest.TestCase):
 
         with patch("asyncio.create_subprocess_exec", return_value=mock_proc), \
              patch.object(Path, "mkdir"), \
-             patch.object(Path, "write_text", _fake_write_text), \
+             patch("gateway.lifecycle_drivers._replace_file_atomically", _fake_write_text), \
              patch("httpx.AsyncClient", mock_httpx_cls), \
              patch("firehose_metrics.record_event"):
             result = _run(self.driver.swap(self.svc, activation))
@@ -244,7 +247,7 @@ class TestSystemdDriverSwapGolden(unittest.TestCase):
 
         with patch("asyncio.create_subprocess_exec", return_value=mock_proc), \
              patch.object(Path, "mkdir"), \
-             patch.object(Path, "write_text", _fake_write_text), \
+             patch("gateway.lifecycle_drivers._replace_file_atomically", _fake_write_text), \
              patch("httpx.AsyncClient", mock_httpx_cls), \
              patch("firehose_metrics.record_event"):
             result = _run(self.driver.swap(self.svc, activation))
@@ -272,7 +275,7 @@ class TestSystemdDriverSwapGolden(unittest.TestCase):
 
         with patch("asyncio.create_subprocess_exec", side_effect=_fake_exec), \
              patch.object(Path, "mkdir"), \
-             patch.object(Path, "write_text"), \
+             patch("gateway.lifecycle_drivers._replace_file_atomically"), \
              patch("httpx.AsyncClient", mock_httpx_cls), \
              patch("firehose_metrics.record_event"):
             _run(self.driver.swap(self.svc, activation))
@@ -297,7 +300,7 @@ class TestSystemdDriverSwapGolden(unittest.TestCase):
 
         with patch("asyncio.create_subprocess_exec", return_value=mock_proc), \
              patch.object(Path, "mkdir"), \
-             patch.object(Path, "write_text"), \
+             patch("gateway.lifecycle_drivers._replace_file_atomically"), \
              patch("httpx.AsyncClient", mock_httpx_cls), \
              patch("firehose_metrics.record_event"):
             result = _run(self.driver.swap(self.svc, activation))
@@ -308,8 +311,9 @@ class TestSystemdDriverSwapGolden(unittest.TestCase):
     # 1b. Failure path — bad restart → drop-in removed, returns False
     # -----------------------------------------------------------------------
 
-    def test_restart_fail_removes_dropin_returns_false(self):
-        """Non-zero restart exit code → remove drop-in → return False."""
+    def test_restart_fail_removes_dropin_and_reports_failed_recovery(self):
+        """Every restart exits non-zero → remove drop-in → the rollback restart
+        fails too → SwapRecoveryFailed (not a bare False)."""
         exec_calls: list[tuple] = []
         unlinked: list[Path] = []
 
@@ -329,11 +333,11 @@ class TestSystemdDriverSwapGolden(unittest.TestCase):
 
         with patch("asyncio.create_subprocess_exec", side_effect=_fake_exec), \
              patch.object(Path, "mkdir"), \
-             patch.object(Path, "write_text"), \
-             patch.object(Path, "unlink", _fake_unlink):
-            result = _run(self.driver.swap(self.svc, activation))
+             patch("gateway.lifecycle_drivers._replace_file_atomically"), \
+             patch.object(Path, "unlink", _fake_unlink), \
+             self.assertRaises(SwapRecoveryFailed):
+            _run(self.driver.swap(self.svc, activation))
 
-        self.assertFalse(result, "swap must return False when restart fails")
         self.assertTrue(len(unlinked) > 0, "drop-in must be removed after restart failure")
 
     def test_write_fail_returns_false_no_exec(self):
@@ -352,7 +356,7 @@ class TestSystemdDriverSwapGolden(unittest.TestCase):
 
         with patch("asyncio.create_subprocess_exec", side_effect=_fake_exec), \
              patch.object(Path, "mkdir"), \
-             patch.object(Path, "write_text", _raise_on_write):
+             patch("gateway.lifecycle_drivers._replace_file_atomically", _raise_on_write):
             result = _run(self.driver.swap(self.svc, activation))
 
         self.assertFalse(result)
@@ -362,8 +366,9 @@ class TestSystemdDriverSwapGolden(unittest.TestCase):
     # 1c. Health timeout → drop-in removed, returns False
     # -----------------------------------------------------------------------
 
-    def test_health_timeout_removes_dropin_returns_false(self):
-        """Health poll timeout → remove drop-in → return False."""
+    def test_health_timeout_removes_dropin_and_reports_failed_recovery(self):
+        """Health poll timeout → remove drop-in → the restored unit is not
+        healthy either → SwapRecoveryFailed (not a bare False)."""
         unlinked: list[Path] = []
 
         def _fake_unlink(self_path, **kwargs):
@@ -389,12 +394,12 @@ class TestSystemdDriverSwapGolden(unittest.TestCase):
 
         with patch("asyncio.create_subprocess_exec", return_value=mock_proc), \
              patch.object(Path, "mkdir"), \
-             patch.object(Path, "write_text"), \
+             patch("gateway.lifecycle_drivers._replace_file_atomically"), \
              patch.object(Path, "unlink", _fake_unlink), \
-             patch("httpx.AsyncClient", mock_httpx_cls):
-            result = _run(self.driver.swap(svc, activation))
+             patch("httpx.AsyncClient", mock_httpx_cls), \
+             self.assertRaises(SwapRecoveryFailed):
+            _run(self.driver.swap(svc, activation))
 
-        self.assertFalse(result, "swap must return False on health timeout")
         self.assertTrue(len(unlinked) > 0, "drop-in must be removed after health timeout")
 
     # -----------------------------------------------------------------------
@@ -965,7 +970,7 @@ class TestSwapContextByteIdenticalProof(unittest.TestCase):
             write_calls.append(text)
 
         with patch("asyncio.create_subprocess_exec", side_effect=_fake_exec), \
-             patch.object(Path, "write_text", _fake_write), \
+             patch("gateway.lifecycle_drivers._replace_file_atomically", _fake_write), \
              patch.object(Path, "mkdir"):
             result = _run(self.kobold_driver.swap(self.kobold_svc, activation, ctx=ctx))
 
@@ -1015,7 +1020,7 @@ class TestSwapContextByteIdenticalProof(unittest.TestCase):
         warned: set = set()
 
         with patch("asyncio.create_subprocess_exec", side_effect=_fake_exec), \
-             patch.object(Path, "write_text", _fake_write), \
+             patch("gateway.lifecycle_drivers._replace_file_atomically", _fake_write), \
              patch.object(Path, "mkdir"), \
              patch("builtins.print", side_effect=_capture_print):
             # First call — should warn.
@@ -1077,7 +1082,7 @@ class TestSwapContextByteIdenticalProof(unittest.TestCase):
 
         with patch("asyncio.create_subprocess_exec", side_effect=_capture_exec), \
              patch.object(Path, "mkdir"), \
-             patch.object(Path, "write_text", _fake_write), \
+             patch("gateway.lifecycle_drivers._replace_file_atomically", _fake_write), \
              patch("httpx.AsyncClient", mock_httpx_cls):
             result = _run(self.kobold_driver.swap(
                 self.kobold_svc, activation, ctx=ctx

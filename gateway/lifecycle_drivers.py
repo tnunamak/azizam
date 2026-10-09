@@ -59,12 +59,78 @@ from __future__ import annotations
 from gateway.compat import get_env
 
 import asyncio
+import contextlib
 import os
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional, Protocol, runtime_checkable
+from typing import Any, Awaitable, Callable, Mapping, Optional, Protocol, TypeVar, runtime_checkable
+
+_T = TypeVar("_T")
+
+
+class SwapRecoveryFailed(RuntimeError):
+    """A swap failed, and putting back the activation the unit ran before failed too.
+
+    The unit may be down or on the failed activation; an operator must look.
+    Raised by ``swap()`` instead of returning False, so callers can tell
+    "the target could not be loaded" from "the backend may now be broken".
+    """
+
+    def __init__(self, unit: str, detail: str) -> None:
+        self.unit = unit
+        self.detail = detail
+        super().__init__(f"unit {unit!r}: swap failed and recovery failed: {detail}")
+
+
+def _replace_file_atomically(path: Path, text: str) -> None:
+    """Replace ``path`` with ``text``: readers see the old bytes or the new, never a mix.
+
+    Writes a temporary file in the same directory, flushes and fsyncs it, then
+    renames it over ``path``. On any failure the temporary file is removed and
+    ``path`` is unchanged.
+    """
+    fd, temp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_name, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(temp_name)
+        raise
+    # Make the rename itself durable. Best effort: the new bytes are in place.
+    with contextlib.suppress(OSError):
+        dir_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+
+
+async def _finish_even_if_cancelled(operation: Awaitable[_T]) -> _T:
+    """Await ``operation`` to its end, even if the caller is cancelled meanwhile.
+
+    A cancelled caller keeps waiting until ``operation`` finishes, then the
+    cancellation is raised. Use it for a transaction that must not stop half
+    way (a changed drop-in with no restart, or a restart with no rollback).
+    """
+    task = asyncio.ensure_future(operation)
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.wait({task})
+        except asyncio.CancelledError:
+            cancelled = True
+    if cancelled:
+        if not task.cancelled():
+            task.exception()  # retrieved; the operation logged its own failure
+        raise asyncio.CancelledError
+    return task.result()
 
 
 # ---------------------------------------------------------------------------
@@ -1008,7 +1074,12 @@ class SystemdDriver:
         On failure (daemon-reload, restart, or health timeout) returns False
         after putting back the drop-in the unit ran before (or removing it if
         there was none) and, if the unit was already restarted, restarting it
-        on that previous activation. The last working model stays loaded.
+        on that previous activation. The last working model stays loaded. If
+        that rollback fails too, raises SwapRecoveryFailed.
+
+        Drop-ins are replaced atomically (a failed write leaves the old bytes).
+        Once the drop-in has changed, the swap runs to its end even if the
+        caller is cancelled; the cancellation is raised afterwards.
         """
         dc = self._driver_config(svc)
         scope_flag = self._scope_flag(dc)
@@ -1059,36 +1130,48 @@ class SystemdDriver:
             print(f"[lifecycle] SystemdDriver.swap: cannot read current drop-in: {e}", flush=True)
             return False
 
-        # Write the drop-in.
+        # Once the drop-in changes, the swap must finish or roll back: a
+        # requester that disconnects must not leave the new drop-in on disk
+        # with the old engine stopped. Cancellation is re-raised afterwards.
+        return await _finish_even_if_cancelled(self._swap_transaction(
+            svc, unit, dropin_path, dropin_text, previous_dropin,
+            reload_cmd=["systemctl"] + scope_flag + ["daemon-reload"],
+            restart_cmd=["systemctl"] + scope_flag + ["restart", unit],
+            health_ep=health_ep, health_timeout=health_timeout,
+        ))
+
+    async def _swap_transaction(
+        self,
+        svc: Mapping[str, Any],
+        unit: str,
+        dropin_path: Path,
+        dropin_text: str,
+        previous_dropin: Optional[str],
+        *,
+        reload_cmd: list[str],
+        restart_cmd: list[str],
+        health_ep: str,
+        health_timeout: float,
+    ) -> bool:
+        """Write the drop-in, daemon-reload, restart, poll health; roll back on failure."""
         try:
             dropin_path.parent.mkdir(parents=True, exist_ok=True)
-            dropin_path.write_text(dropin_text)
+            _replace_file_atomically(dropin_path, dropin_text)
         except Exception as e:
-            print(f"[lifecycle] SystemdDriver.swap: failed to write drop-in: {e}", flush=True)
+            print(f"[lifecycle] SystemdDriver.swap: failed to write drop-in (previous one kept): {e}", flush=True)
             return False
 
-        reload_cmd = ["systemctl"] + scope_flag + ["daemon-reload"]
-        restart_cmd = ["systemctl"] + scope_flag + ["restart", unit]
-
-        # daemon-reload then restart — daemon-reload MUST precede restart.
-        for cmd in (reload_cmd, restart_cmd):
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+        # daemon-reload MUST precede restart.
+        if not await self._run_systemctl(reload_cmd):
+            await self._restore_after_failed_swap(
+                svc, unit, dropin_path, previous_dropin, reload_cmd, None, health_ep, health_timeout,
             )
-            _, stderr = await proc.communicate()
-            if proc.returncode != 0:
-                print(
-                    f"[lifecycle] SystemdDriver.swap: `{' '.join(cmd)}` failed: {stderr.decode()}",
-                    flush=True,
-                )
-                await self._restore_after_failed_swap(
-                    svc, dropin_path, previous_dropin, reload_cmd,
-                    restart_cmd if cmd is restart_cmd else None,
-                    health_ep, health_timeout,
-                )
-                return False
+            return False
+        if not await self._run_systemctl(restart_cmd):
+            await self._restore_after_failed_swap(
+                svc, unit, dropin_path, previous_dropin, reload_cmd, restart_cmd, health_ep, health_timeout,
+            )
+            return False
 
         elapsed = await self._wait_until_healthy(svc, health_ep, health_timeout)
         if elapsed is not None:
@@ -1100,7 +1183,7 @@ class SystemdDriver:
             flush=True,
         )
         await self._restore_after_failed_swap(
-            svc, dropin_path, previous_dropin, reload_cmd, restart_cmd, health_ep, health_timeout,
+            svc, unit, dropin_path, previous_dropin, reload_cmd, restart_cmd, health_ep, health_timeout,
         )
         return False
 
@@ -1165,6 +1248,7 @@ class SystemdDriver:
     async def _restore_after_failed_swap(
         self,
         svc: Mapping[str, Any],
+        unit: str,
         dropin_path: Path,
         previous_dropin: Optional[str],
         reload_cmd: list[str],
@@ -1177,28 +1261,29 @@ class SystemdDriver:
         Restores the previous drop-in text (or removes the drop-in if there was
         none), reloads systemd, and, when the failed swap already restarted the
         unit (``restart_cmd`` given), restarts it on the restored activation and
-        waits for health. Best effort: every step logs its own failure.
+        waits for health. Raises SwapRecoveryFailed if any step fails.
         """
+
+        def recovery_failed(detail: str) -> SwapRecoveryFailed:
+            print(f"[lifecycle] SystemdDriver.swap: recovery failed for unit '{unit}': {detail}", flush=True)
+            return SwapRecoveryFailed(unit, detail)
+
         try:
             if previous_dropin is None:
                 dropin_path.unlink(missing_ok=True)
             else:
-                dropin_path.write_text(previous_dropin)
-        except Exception as exc:
-            print(f"[lifecycle] SystemdDriver.swap: failed to restore drop-in: {exc}", flush=True)
-            return
-        if not await self._run_systemctl(reload_cmd) or restart_cmd is None:
+                _replace_file_atomically(dropin_path, previous_dropin)
+        except OSError as exc:
+            raise recovery_failed(f"cannot restore drop-in {dropin_path}: {exc}") from exc
+        if not await self._run_systemctl(reload_cmd):
+            raise recovery_failed("daemon-reload after restoring the drop-in failed")
+        if restart_cmd is None:
             return
         if not await self._run_systemctl(restart_cmd):
-            return
+            raise recovery_failed("restart on the previous activation failed")
         if await self._wait_until_healthy(svc, health_ep, health_timeout) is None:
-            print(
-                f"[lifecycle] SystemdDriver.swap: rollback restart did not become ready "
-                f"within {health_timeout}s",
-                flush=True,
-            )
-        else:
-            print("[lifecycle] SystemdDriver.swap: rolled back to the previous activation", flush=True)
+            raise recovery_failed(f"the previous activation did not become ready within {health_timeout}s")
+        print("[lifecycle] SystemdDriver.swap: rolled back to the previous activation", flush=True)
 
     @staticmethod
     def _driver_config(svc: Mapping[str, Any]) -> Mapping[str, Any]:

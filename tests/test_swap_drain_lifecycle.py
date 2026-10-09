@@ -310,6 +310,21 @@ def test_drain_timeout_refuses_the_swap_and_returns_503_on_the_outer_route(engin
     assert engine.dropin.read_text() == dropin_text("p-a"), "the drop-in is untouched"
 
 
+@pytest.mark.parametrize("drain_enabled", [False, True])
+def test_a_failed_rollback_returns_a_distinct_503_on_the_outer_route(engine, monkeypatch, drain_enabled) -> None:
+    """Neither p-b nor the previous p-a starts: the caller learns the backend
+    may be down, not just that its model could not be loaded."""
+    _set_drain(monkeypatch, enabled=drain_enabled, timeout_s=1)
+    engine.restart_codes = [1, 1]
+    response = _run(_outer_hop("p-b"))
+    assert response is not None and response.status_code == 503
+    error = json.loads(response.body)["error"]
+    assert error["code"] == "backend_recovery_failed"
+    assert "restoring" in error["message"]
+    assert proxy._swap_drain.in_flight(BACKEND) == 0
+    assert not proxy.swap_lock_for(BACKEND).locked()
+
+
 def _inner_request(body: dict) -> Request:
     payload = json.dumps(body).encode()
     delivered = False
