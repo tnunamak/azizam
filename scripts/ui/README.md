@@ -64,3 +64,35 @@ fresh isolated harness state. The fixture covers Sam, Robin, a restricted
 member, apps, requests, provider spend, engine health, and generated media.
 Remote provider behavior and login use synthetic local fixtures; the harness
 does not contact an external identity provider or remote model service.
+
+## UI quality sweep
+
+`web/e2e/sweep/` visits every route in `web/src/app` and its meaningful states
+(tabs, filters, popovers, folds, dialogs, row menus, the Try workflow form with
+a picture workflow) at 390 and 1440 px, light and dark, as owner, member and
+signed-out visitor. A page with no entry in `routes.ts` fails the run.
+
+```sh
+cd web
+npm run sweep                    # household fixture + an unclaimed gateway for first run (ports 18860-18863)
+npm run sweep:live               # synthetic live-data harness (18866-18867)
+npm run sweep:copy               # live-data harness on a COPY of production data (18870-18871)
+npm run sweep -- --out ~/report.md   # also save the report, JSON and cited screenshots there
+```
+
+Each page fails on horizontal overflow (including popovers), filesystem paths,
+raw ids, research notes, raw errors, member jargon, visible Unknown states,
+axe WCAG AA violations, controls under the phone bottom nav, and uncaught
+script errors. Term lists live in `web/e2e/sweep/lists/`. Results:
+`web/test-results/sweep/<target>/{sweep.json,report.md,shots/}`; screenshots
+are taken only for findings. Narrow a run with `SWEEP_ROUTES`, `SWEEP_ROLES`,
+`SWEEP_WIDTHS`, `SWEEP_THEMES`; `SWEEP_AXE=0` skips axe; `SWEEP_SHOTS=all`
+captures every state.
+
+`sweep:copy` reads `~/applications/azizam/data/*.db` through SQLite's read-only
+backup API into `.ui-e2e-state/copy/` (about 600 MB), rewrites every backend to
+the fake engine, runs the gateway behind the fixture connection guard and
+deletes the directory on exit. Media files and the provider secrets key are not
+copied, so Library items read "no longer stored" and remote providers report a
+missing key there. `SWEEP_DATA_STATE=restarted` drops the last 30 minutes of
+receipts and samples to mimic a gateway that just restarted.
