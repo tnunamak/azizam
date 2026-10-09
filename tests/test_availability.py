@@ -10,6 +10,63 @@ from gateway.capabilities import Capability
 from gateway.receipts import RouteReceipt
 
 
+def test_composed_face_likeness_is_startable_without_a_sidecar_probe():
+    from gateway.discovery import WorkflowRegistry
+    from gateway.capabilities import capability_from_workflow_record
+
+    registry = WorkflowRegistry.from_directory(Path(__file__).resolve().parents[1] / "manifests/workflows")
+    record = registry.get("image.analyze.face-likeness")
+    cap = capability_from_workflow_record(record, backend="gateway")
+    services = {"services": {"faces": {"enabled": True, "config": {"lifecycle": {"driver": "systemd"}}}}}
+    result = project_capabilities([cap], service_records=services, workflow_records=registry.records())
+    assert result[0].availability["status"] == "idle"
+    assert result[0].available is True
+
+
+def test_composed_identity_reports_down_comfyui_dependency():
+    from gateway.discovery import WorkflowRegistry
+    from gateway.capabilities import capability_from_workflow_record
+
+    registry = WorkflowRegistry.from_directory(Path(__file__).resolve().parents[1] / "manifests/workflows")
+    cap = capability_from_workflow_record(registry.get("image.edit.image-identity"), backend="gateway")
+    services = {"services": {
+        "faces": {"enabled": True, "config": {"lifecycle": {"driver": "systemd"}}},
+        "comfyui": {"enabled": True, "config": {"base_url": "http://comfyui"}},
+    }}
+    result = project_capabilities([cap], service_records=services,
+                                  evidence={"comfyui": {"status": "down", "available": False}},
+                                  workflow_records=registry.records())
+    assert result[0].availability["status"] == "unavailable"
+    assert "comfyui" in result[0].availability["reason"]
+
+
+def test_real_composed_workflows_have_derived_catalog_states_offline():
+    from gateway.discovery import WorkflowRegistry
+    from gateway.capabilities import capability_from_workflow_record
+    from gateway.workflows_catalog import build_workflows_catalog
+
+    registry = WorkflowRegistry.from_directory(Path(__file__).resolve().parents[1] / "manifests/workflows")
+    composed = [record for record in registry.records() if "gateway" in record.supported_backends]
+    assert {record.id for record in composed} == {
+        "image.analyze.face-likeness", "image.edit.image-identity",
+        "image.generate.flux2-klein-4b-seamless-tile",
+    }
+    caps = [capability_from_workflow_record(record, backend="gateway") for record in composed]
+    services = {"services": {
+        "faces": {"enabled": True, "config": {"lifecycle": {"driver": "systemd"}}},
+        "comfyui": {"enabled": True, "config": {"base_url": "http://comfyui"}},
+    }}
+    projected = project_capabilities(caps, service_records=services,
+                                     evidence={"comfyui": {"status": "ready", "available": True}},
+                                     workflow_records=registry.records())
+    catalog = build_workflows_catalog(records=registry.records(), capabilities=projected)
+    states = {row["id"]: row["availability"]["status"] for row in catalog["workflows"]}
+    assert states == {
+        "image.analyze.face-likeness": "idle", "image.edit.image-identity": "idle",
+        "image.generate.flux2-klein-4b-seamless-tile": "ready",
+    }
+
+
 @pytest.mark.parametrize("observed,expected", [
     ("active", "running"),
     ("activating", "starting"),
