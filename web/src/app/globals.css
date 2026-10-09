@@ -103,19 +103,11 @@
   .shell-group-label {
     @apply text-subtle-foreground mb-1 hidden px-2.5 text-xs lg:block;
   }
-  /* The owner's group: a hairline above, smaller rows and text, quieter ink.
-     Desktop only; the rail and the phone sheet keep full-size targets. */
+  /* The owner's group: the same rows and type as the household's places,
+     set apart by space and its small label only (D1.6: two nav type sizes
+     read as incoherent). */
   .shell-group-admin {
-    @apply lg:border-chrome-border lg:border-t lg:pt-4;
-  }
-  .shell-group-admin .shell-nav-link {
-    @apply lg:text-subtle-foreground lg:min-h-7 lg:text-xs;
-  }
-  .shell-group-admin .shell-nav-link svg {
-    @apply lg:size-3.5;
-  }
-  .shell-group-admin .shell-nav-link[aria-current="page"] {
-    @apply lg:text-chrome-foreground;
+    @apply lg:pt-3;
   }
   .shell-nav-footer {
     @apply text-chrome-muted hover:bg-chrome-raised hover:text-chrome-foreground rounded-control flex min-h-11 min-w-11 items-center gap-2.5 px-2.5 text-sm lg:min-h-8;

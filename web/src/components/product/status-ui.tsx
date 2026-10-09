@@ -229,7 +229,7 @@ export function Callout({
   const rows = (items: Array<[string, ReactNode]>) =>
     items.map(([label, value]) => (
       <div key={label} className="contents">
-        <dt className="text-muted-foreground max-sm:text-xs max-sm:font-medium">
+        <dt className="text-muted-foreground max-sm:font-medium">
           {label}
         </dt>
         <dd className="min-w-0 max-sm:mb-1">{value}</dd>

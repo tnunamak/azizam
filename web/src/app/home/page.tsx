@@ -355,6 +355,11 @@ function Tasks({
   return (
     <section aria-labelledby="tasks-heading" className="@container">
       <SectionHeading id="tasks-heading" title="Make something" />
+      {/* D1.6: the two tiles say why they lead (round 6: "two big cards,
+          then a list, for no clear reason"). */}
+      <h3 className="text-muted-foreground mb-2 text-sm font-medium">
+        {uses.size ? "Your usual" : "Start here"}
+      </h3>
       <ul className="grid grid-cols-2 gap-2 sm:gap-3">
         {favourites.map((task) => (
           <Favourite
@@ -367,7 +372,12 @@ function Tasks({
         ))}
       </ul>
       {rest.length ? (
-        <ul className="bg-card rounded-panel mt-2 grid border px-4 sm:mt-3 @2xl:grid-cols-2 @2xl:gap-x-8">
+        <h3 className="text-muted-foreground mt-5 mb-2 text-sm font-medium">
+          Everything else
+        </h3>
+      ) : null}
+      {rest.length ? (
+        <ul className="bg-card rounded-panel grid border px-4 @2xl:grid-cols-2 @2xl:gap-x-8">
           {rest.map((task) => (
             <MoreRow
               key={task.key}
@@ -1380,7 +1390,13 @@ export default function HomePage() {
             actions={
               // Connecting an app is secondary, but one tap from the top
               // (Apple Home puts "+" in the top bar).
-              <Button variant="outline" size="sm" asChild className="lg:hidden">
+              // A quiet link, so it does not compete with the title (D1.6).
+              <Button
+                variant="link"
+                size="sm"
+                asChild
+                className="max-sm:min-h-11 lg:hidden"
+              >
                 <a href="#connect">
                   <Plus aria-hidden="true" />
                   Connect an app
