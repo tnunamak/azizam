@@ -170,7 +170,7 @@ interface Task {
 const TASKS: Task[] = [
   { key: "image", title: taskNames.image, tab: "image" },
   { key: "speech", title: taskNames.speech, tab: "speech" },
-  { key: "chat", title: "Chat", tab: "chat" },
+  { key: "chat", title: taskNames.chat, tab: "chat" },
   { key: "music", title: taskNames.music, tab: "audio" },
   { key: "sfx", title: taskNames.sound_effects, tab: "audio" },
   { key: "video", title: taskNames.video, tab: "video" },

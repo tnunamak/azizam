@@ -267,6 +267,17 @@ function AccountMenu({ compact = false }: { compact?: boolean }) {
   );
 }
 
+/** Not-Ready capabilities split into faults, unchecked (Unknown) and Busy. */
+function sortProblems(problems: CapabilityView[]) {
+  return {
+    faults: problems.filter(
+      (view) => view.state !== "busy" && view.state !== "unknown",
+    ),
+    unchecked: problems.filter((view) => view.state === "unknown"),
+    busy: problems.filter((view) => view.state === "busy"),
+  };
+}
+
 /**
  * The count and colour for the capabilities that are not Ready (Status model
  * rule 3). Busy is not a fault and is not counted. A fault (Down, Blocked,
@@ -278,8 +289,7 @@ function AccountMenu({ compact = false }: { compact?: boolean }) {
 export function problemPill(
   problems: CapabilityView[],
 ): { label: string; tone: StateTone } | null {
-  const counted = problems.filter((view) => view.state !== "busy");
-  const faults = counted.filter((view) => view.state !== "unknown");
+  const { faults, unchecked } = sortProblems(problems);
   if (faults.length) {
     const worst = faults.reduce((a, b) =>
       STATE_WORDS[b.state].rank > STATE_WORDS[a.state].rank ? b : a,
@@ -289,7 +299,7 @@ export function problemPill(
       tone: worst.tone,
     };
   }
-  if (counted.length) return { label: "Not checked yet", tone: "unknown" };
+  if (unchecked.length) return { label: "Not checked yet", tone: "unknown" };
   return null;
 }
 
@@ -337,12 +347,11 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
   // Owners also see the engine or provider at fault, in the banner's words.
   const ownerAlert = useOwnerAlertTarget(viewer.admin);
   const signedIn = viewer.authenticated && !viewer.serviceAdmin;
-  // Busy is not a fault, so it is not counted as an issue. Unknown (no fresh
-  // check) is listed in the popover, but it is not a fault either.
-  const listedProblems = model.verdict.problems.filter(
-    (view) => view.state !== "busy",
-  );
-  const busy = model.verdict.problems.length - listedProblems.length;
+  // One rule (problemPill): faults are issues; Unknown (no fresh check) is
+  // listed after them in the popover but never counted; Busy is neither.
+  const sorted = sortProblems(model.verdict.problems);
+  const listedProblems = [...sorted.faults, ...sorted.unchecked];
+  const busy = sorted.busy.length;
   const pill = problemPill(model.verdict.problems);
   const { label, tone } = gatewayError
     ? { label: "Gateway unreachable", tone: "bad" as const }
