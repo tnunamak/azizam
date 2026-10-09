@@ -19994,6 +19994,22 @@ def _delete_image_media_job_payload(job_id: str) -> None:
         pass
 
 
+def _prune_orphaned_media_job_payloads(*, now: float | None = None) -> int:
+    """Remove old or terminal request spools left by an interrupted worker."""
+    if not IMAGE_MEDIA_JOB_PAYLOAD_DIR.exists():
+        return 0
+    cutoff = (time.time() if now is None else now) - media_jobs.RETAIN_S
+    removed = 0
+    for path in IMAGE_MEDIA_JOB_PAYLOAD_DIR.glob("mj_*.json"):
+        job_id = path.stem
+        job = media_jobs.get(job_id, audience="internal", path=media_jobs.DB_PATH)
+        if (job is None or job.get("status") in media_jobs.TERMINAL_STATUSES
+                or path.stat().st_mtime < cutoff):
+            path.unlink(missing_ok=True)
+            removed += 1
+    return removed
+
+
 def _image_job_body_has_seed(body: Mapping[str, Any]) -> bool:
     if isinstance(body.get("seed"), int) and not isinstance(body.get("seed"), bool):
         return True
@@ -24329,6 +24345,8 @@ async def _responses_prune_loop(stop_event: asyncio.Event) -> None:
     while not stop_event.is_set():
         try:
             deleted = responses_store.prune()
+            prompt_memory.prune()
+            _prune_orphaned_media_job_payloads()
             if deleted:
                 print(f"[proxy] responses_store: pruned {deleted} expired row(s)", flush=True)
         except Exception as e:  # noqa: BLE001
@@ -25693,6 +25711,21 @@ async def create_response(request: Request):
         if not isinstance(req_body, dict):
             return _responses_error("Request body must be a JSON object.", code="invalid_request_error")
 
+        try:
+            prompt_memory.requested_mode(req_body)
+            prompt_decision = prompt_memory.decide_for_app(
+                getattr(getattr(auth_context, "identity", None), "app_id", None),
+                req_body, admin_path=ADMIN_STORE.path,
+                responses_store=req_body.get("store") if isinstance(req_body.get("store"), bool) else None,
+            )
+        except prompt_memory.PromptModeError as exc:
+            return _responses_error(str(exc), code="invalid_prompt_mode", param=f"extensions.{prompt_memory.NAMESPACE}.mode")
+        prompt_extensions = req_body.get("extensions")
+        if isinstance(prompt_extensions, dict) and prompt_memory.NAMESPACE in prompt_extensions:
+            req_body["extensions"] = {key: value for key, value in prompt_extensions.items() if key != prompt_memory.NAMESPACE}
+            if not req_body["extensions"]:
+                req_body.pop("extensions")
+
         if not route_auth.delegated_to_litellm:
             decision = _protocol_policy_decision(
                 auth_context,
@@ -25748,6 +25781,9 @@ async def create_response(request: Request):
         store = req_body.get("store")
         if store is None:
             store = True
+        if not prompt_decision.keep:
+            store = False
+            req_body["store"] = False
         profile = _profile_for_auth_context(auth_context)
         outer_receipt = RouteReceipt(
             protocol="openai.responses",
