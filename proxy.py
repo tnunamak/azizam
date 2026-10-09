@@ -13758,14 +13758,24 @@ def _gateway_capabilities_for_auth_context(auth_context: AuthContext) -> list[Ca
     ]
 
 
+def _workflow_availability_services(registry: Mapping[str, Any]) -> dict[str, Any]:
+    """Add the on-demand sidecar declaration to the availability-only registry view."""
+    services = dict(registry.get("services") or {})
+    face_config = (config.get("identity") or {}).get("face_service")
+    if isinstance(face_config, Mapping) and face_config:
+        services["faces"] = {"enabled": True, "config": dict(face_config)}
+    return {**registry, "services": services}
+
+
 async def _gateway_capabilities_provider(request: Request) -> list[Capability]:
     capabilities = _gateway_capabilities_for_auth_context(_auth_context_from_scope(request))
     try:
-        service_records = ADMIN_STORE.get_service_registry()
+        service_records = _workflow_availability_services(ADMIN_STORE.get_service_registry())
         return project_capabilities(
             capabilities,
             service_records=service_records,
             evidence=await _capabilities_availability_evidence(capabilities, service_records),
+            workflow_records=GATEWAY_WORKFLOW_REGISTRY.records(),
         )
     except Exception:  # noqa: BLE001
         return capabilities
@@ -13775,6 +13785,18 @@ async def _capabilities_availability_evidence(
     capabilities: Iterable[Capability], service_records: Mapping[str, Any],
 ) -> dict[str, dict[str, Any]]:
     visible = {cap.backend for cap in capabilities if cap.policy_available}
+    records = {record.id: record for record in GATEWAY_WORKFLOW_REGISTRY.records()}
+    for cap in capabilities:
+        if not cap.policy_available or cap.backend != "gateway":
+            continue
+        record = records.get(cap.workflow or cap.resolved_workflow or "")
+        requirements = record.manifest.get("requires") if record else None
+        if isinstance(requirements, Mapping):
+            visible.update(str(service) for service in requirements.get("services") or ())
+            for workflow_id in requirements.get("workflows") or ():
+                required = records.get(str(workflow_id))
+                if required:
+                    visible.update(required.supported_backends)
     if not visible:
         return {}
     status_payload = _cached_status_payload_for_availability()
@@ -15196,6 +15218,7 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
         service_records: Mapping[str, Any] = ADMIN_STORE.get_service_registry()
     except Exception:  # noqa: BLE001
         service_records = {}
+    service_records = _workflow_availability_services(service_records)
     capability_sets = [
         _gateway_capabilities_for_auth_context(auth_context)
         for auth_context in auth_contexts
@@ -15222,6 +15245,12 @@ async def _user_models_catalog_payload(request: Request) -> dict[str, Any]:
         status_payload=status_payload,
         health_evidence=health_evidence,
     )
+    capability_sets = [
+        project_capabilities(group, service_records=service_records,
+                             evidence=availability_evidence,
+                             workflow_records=GATEWAY_WORKFLOW_REGISTRY.records())
+        for group in capability_sets
+    ]
     model_entries = [
         *_stable_alias_model_entries(),
         *_build_workflow_model_entries(),
@@ -15326,10 +15355,11 @@ async def _user_workflows_catalog_payload(request: Request) -> dict[str, Any]:
         path=media_jobs.DB_PATH,
         **scope,
     )
-    service_records = ADMIN_STORE.get_service_registry()
+    service_records = _workflow_availability_services(ADMIN_STORE.get_service_registry())
     capabilities = project_capabilities(
         capabilities, service_records=service_records,
         evidence=await _capabilities_availability_evidence(capabilities, service_records),
+        workflow_records=GATEWAY_WORKFLOW_REGISTRY.records(),
     )
     return build_workflows_catalog(
         records=GATEWAY_WORKFLOW_REGISTRY.records(),

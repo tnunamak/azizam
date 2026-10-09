@@ -677,6 +677,11 @@ def _availability(
     health: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     if capabilities and any(cap.policy_available is not False for cap in capabilities):
+        composed = next((cap.availability for cap in capabilities
+                         if isinstance(cap.availability, Mapping)
+                         and (cap.availability.get("evidence") or {}).get("kind") == "required"), None)
+        if composed is not None:
+            return dict(composed)
         declared_unavailable = next(
             (
                 cap.availability
