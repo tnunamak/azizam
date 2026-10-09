@@ -47,6 +47,11 @@ describe("audio faces", () => {
       />,
     );
     expect(getByRole("button", { name: "Play clip" })).toBeVisible();
+    // The middle layer covers the tile, so it must let clicks through to
+    // the tile's open button (a D1.6 regression the task flows caught).
+    expect(
+      getByRole("button", { name: "Play clip" }).parentElement!.className,
+    ).toContain("pointer-events-none");
   });
   it("show the type glyph and length, or the glyph alone", () => {
     const { container, getByText } = render(

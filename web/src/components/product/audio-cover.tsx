@@ -125,7 +125,7 @@ export function PlayDisc({ className }: { className?: string }) {
 export const playDiscButton = cn(
   scrim,
   disc,
-  "hover:bg-media-badge-hover focus-visible:ring-ring relative z-30 cursor-pointer transition-colors duration-(--motion-fast) focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none [&_svg]:fill-current",
+  "hover:bg-media-badge-hover focus-visible:ring-ring pointer-events-auto relative z-30 cursor-pointer transition-colors duration-(--motion-fast) focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none [&_svg]:fill-current",
 );
 
 /** A short day label ("Today", "Oct 20") on the first tile of each day. */
@@ -190,7 +190,7 @@ export function AudioFace({
         </span>
       ) : null}
       {center ? (
-        <span className="absolute inset-0 z-20 flex items-center justify-center">
+        <span className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
           {center}
         </span>
       ) : null}
