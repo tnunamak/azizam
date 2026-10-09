@@ -67,6 +67,7 @@ def _connect(path: Path | None) -> sqlite3.Connection:
 
 def save(prompt_id: str, record: Mapping[str, Any], *, path: Path | None = None) -> None:
     record = dict(record)
+    record.pop("prompt", None)
     record["owner_key_hash"] = stored_owner_key(record.get("owner_key_hash"), app_id=record.get("app_id"))
     conn = _connect(path)
     try:
@@ -102,6 +103,17 @@ def load_all(*, path: Path | None = None, max_age_s: float | None = None) -> dic
         rows = conn.execute(
             "SELECT prompt_id, record_json, created_at FROM video_job_records ORDER BY created_at"
         ).fetchall()
+        for prompt_id, blob, _ in rows:
+            try:
+                data = json.loads(blob)
+            except ValueError:
+                continue
+            if isinstance(data, dict) and "prompt" in data:
+                data.pop("prompt", None)
+                conn.execute("UPDATE video_job_records SET record_json=? WHERE prompt_id=?", (
+                    json.dumps(data, ensure_ascii=False, sort_keys=True), prompt_id,
+                ))
+        conn.commit()
     finally:
         conn.close()
     cutoff = time.time() - max_age_s if max_age_s else None
@@ -114,6 +126,7 @@ def load_all(*, path: Path | None = None, max_age_s: float | None = None) -> dic
         except ValueError:
             continue
         if isinstance(data, dict):
+            data.pop("prompt", None)
             out[prompt_id] = data
     return out
 
