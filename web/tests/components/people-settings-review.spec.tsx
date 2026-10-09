@@ -446,6 +446,100 @@ describe("People and Settings red-team regressions", () => {
       ).toBeEnabled();
     },
   );
+  it.each([
+    ["Restrict capabilities", { allow: { intents: [] } }],
+    ["Restrict models", { models: [] }],
+    ["Allow cloud fallback", { fallback: { cloud_allowed: true } }],
+  ])(
+    "recovers from invalid JSON when changing %s",
+    async (label, expectedPolicy) => {
+      mount(<PlanEditor plan={plan} close={vi.fn()} saved={vi.fn()} />);
+      const json = await screen.findByLabelText("Policy JSON");
+      await userEvent.click(screen.getByText("Advanced", { exact: true }));
+      await userEvent.click(
+        screen.getByText("Complete policy document", { exact: true }),
+      );
+      const save = screen.getByRole("button", { name: "Save access plan" });
+      fireEvent.change(json, { target: { value: "{" } });
+      expect(save).toBeDisabled();
+
+      await userEvent.click(screen.getByLabelText(label as string));
+
+      expect(json).toHaveValue(JSON.stringify(expectedPolicy, null, 2));
+      expect(json).toHaveAttribute("aria-invalid", "false");
+      expect(json).not.toHaveAttribute("aria-describedby");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.queryByText(/Save is blocked/)).not.toBeInTheDocument();
+      expect(save).toBeEnabled();
+    },
+  );
+  it("discards invalid JSON back to the latest valid draft without losing saved fields", async () => {
+    mount(<PlanEditor plan={plan} close={vi.fn()} saved={vi.fn()} />);
+    const json = await screen.findByLabelText("Policy JSON");
+    await userEvent.click(screen.getByText("Advanced", { exact: true }));
+    await userEvent.click(
+      screen.getByText("Complete policy document", { exact: true }),
+    );
+    const validDraft = {
+      models: [],
+      operator_extension: { keep: true },
+    };
+    fireEvent.change(json, {
+      target: { value: JSON.stringify(validDraft) },
+    });
+    const save = screen.getByRole("button", { name: "Save access plan" });
+
+    for (const invalidDraft of ["{", '{"models":"invalid"}']) {
+      fireEvent.change(json, { target: { value: invalidDraft } });
+      expect(save).toBeDisabled();
+      await userEvent.click(
+        screen.getByRole("button", { name: "Discard invalid JSON changes" }),
+      );
+
+      expect(json).toHaveValue(JSON.stringify(validDraft, null, 2));
+      expect(json).toHaveAttribute("aria-invalid", "false");
+      expect(json).not.toHaveAttribute("aria-describedby");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Discard invalid JSON changes" }),
+      ).not.toBeInTheDocument();
+      expect(save).toBeEnabled();
+    }
+  });
+  it("keeps the Save-block reason visible when Advanced is closed and links JSON errors", async () => {
+    mount(<PlanEditor plan={plan} close={vi.fn()} saved={vi.fn()} />);
+    const json = await screen.findByLabelText("Policy JSON");
+    const advanced = screen.getByText("Advanced", { exact: true });
+    await userEvent.click(advanced);
+    await userEvent.click(
+      screen.getByText("Complete policy document", { exact: true }),
+    );
+    fireEvent.change(json, { target: { value: "{" } });
+    expect(json).toHaveAttribute("aria-invalid", "true");
+    expect(json).toHaveAttribute("aria-describedby", "policy-json-error");
+    expect(screen.getByRole("alert")).toHaveAttribute("id", "policy-json-error");
+    expect(json).toHaveAccessibleDescription(
+      "Enter a valid JSON object before saving.",
+    );
+
+    await userEvent.click(advanced);
+
+    const save = screen.getByRole("button", { name: "Save access plan" });
+    const reason =
+      "Save is blocked. Fix or discard invalid JSON changes in Advanced.";
+    expect(json).not.toBeVisible();
+    expect(save).toBeDisabled();
+    expect(screen.getByText(reason)).toBeVisible();
+    expect(save).toHaveAccessibleDescription(reason);
+    expect(save).toHaveAttribute("aria-describedby", "plan-save-error");
+
+    await userEvent.click(advanced);
+    expect(json).toHaveValue("{");
+    fireEvent.change(json, { target: { value: "{}" } });
+    expect(screen.queryByText(reason)).not.toBeInTheDocument();
+    expect(save).not.toHaveAttribute("aria-describedby");
+    expect(save).toBeEnabled();
+  });
   it.each([false, true])(
     "names the person in %s enable/disable confirmations",
     async (disabled) => {
