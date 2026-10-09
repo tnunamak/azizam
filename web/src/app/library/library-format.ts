@@ -34,6 +34,44 @@ export function tileDate(date: Date | null, now: Date): string {
 }
 
 /**
+ * The date group a creation sits in, as Apple Photos heads its days:
+ * "Today", "Yesterday", "This week" for the five days before that, then the
+ * month ("September"), with the year only when it is not the current year.
+ */
+export function dateGroupLabel(date: Date | null, now: Date): string {
+  if (!date) return "Undated";
+  const days = Math.round((startOfDay(now) - startOfDay(date)) / DAY_MS);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 7) return "This week";
+  return date.toLocaleDateString("en-US", {
+    month: "long",
+    ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+  });
+}
+
+/**
+ * Newest-first items cut into runs that share a date group, in order (D1.5:
+ * date groups with quiet headers; a part-filled last row is fine). Undated
+ * items keep their place; an out-of-order item starts a new run rather than
+ * being moved, so the grid never reorders what the server sent.
+ */
+export function groupByDate<T>(
+  items: T[],
+  dateOf: (item: T) => Date | null,
+  now: Date,
+): { label: string; items: T[] }[] {
+  const groups: { label: string; items: T[] }[] = [];
+  for (const item of items) {
+    const label = dateGroupLabel(dateOf(item), now);
+    const last = groups.at(-1);
+    if (last?.label === label) last.items.push(item);
+    else groups.push({ label, items: [item] });
+  }
+  return groups;
+}
+
+/**
  * A readable name from a raw model id: "krea2-turbo" -> "Krea2 Turbo",
  * "tts-1" -> "TTS 1". Short all-letter words read as acronyms.
  */

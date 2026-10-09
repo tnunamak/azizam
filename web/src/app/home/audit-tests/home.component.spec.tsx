@@ -209,9 +209,14 @@ describe("Home audit component behavior", () => {
     );
 
     renderHome();
+    // D1.5: the audio tile is a waveform and a play badge; its words are
+    // the link's name.
     expect(
-      await screen.findByText("gentle rain over a quiet porch"),
-    ).toBeVisible();
+      await screen.findByRole("link", {
+        name: "Open Audio in Library: gentle rain over a quiet porch",
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("gentle rain over a quiet porch")).toBeNull();
     const audio = document.querySelector("audio");
     expect(audio).toHaveAttribute("src", "https://media.example/audio.wav");
     expect(

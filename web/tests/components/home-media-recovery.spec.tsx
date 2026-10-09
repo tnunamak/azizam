@@ -298,15 +298,17 @@ describe("Home recent media recovery", () => {
 
     renderHome();
 
-    // Image tiles carry the prompt only in their accessible name; audio tiles
-    // show it as text, which must wrap.
+    // Tiles carry the prompt only in their accessible name (D1.5: audio too).
     expect(
       await screen.findByRole("link", {
         name: `Open Image in Library: ${prompt}`,
       }),
     ).toBeVisible();
     expect(screen.queryByText(prompt)).toBeNull();
-    expect(screen.getByText(`${"y".repeat(64)}…`)).toHaveClass("break-words");
+    expect(
+      screen.getByRole("link", { name: /^Open Audio in Library: y+/ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^y+/)).toBeNull();
     expect(
       await screen.findByText("Recent results may be incomplete."),
     ).toBeVisible();

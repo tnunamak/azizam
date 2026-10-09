@@ -281,7 +281,7 @@ describe("LibraryPage batch J provenance", () => {
     expect(document.querySelectorAll("main")).toHaveLength(0);
   });
 
-  test("uses the prompt as the audio tile's text and names the model only in the viewer", async () => {
+  test("gives the audio tile the same short hover title as a picture and names the model only in the viewer", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       Response.json({
         assets: [audioAsset],
@@ -291,11 +291,11 @@ describe("LibraryPage batch J provenance", () => {
     );
     renderLibrary();
 
-    // The cover shows whole words of the prompt and never cuts one.
-    const words = await screen.findByText(
-      /^A warm synth loop with brushed percussion and a soft rising melody for a loading…$/,
-    );
-    expect(words).toBeVisible();
+    // D1.5: no words on the audio face; the hover title is the short
+    // whole-word title every tile has.
+    expect(
+      await screen.findByText(/^Warm synth loop with brushed percussion .*…$/),
+    ).toHaveClass("line-clamp-2");
     // The tile carries no model name or id; the viewer's facts do.
     expect(screen.queryByText("Sound model")).toBeNull();
     expect(screen.queryByText("audio.generate.test-model")).toBeNull();
@@ -856,7 +856,7 @@ describe("Library honesty and access", () => {
     click.mockRestore();
   });
 
-  test("2 dates each creation in its caption, in one grid", async () => {
+  test("2 dates each creation in its caption and heads its date group", async () => {
     const day = 86_400;
     const nowS = Math.floor(Date.now() / 1000);
     routeFetch((path) =>
@@ -876,8 +876,14 @@ describe("Library honesty and access", () => {
       .getByRole("button", { name: "Open Made long ago" })
       .closest("article")!;
     expect(old).toHaveTextContent(/Made long ago\s*[A-Z][a-z]{2} \d{1,2}(, \d{4})?$/);
-    // No week groups: one grid, so no part-filled group leaves a gap.
-    expect(screen.queryAllByRole("heading", { level: 2 })).toHaveLength(0);
+    // D1.5: quiet date-group headers, Today first, then the month.
+    const groups = screen.getAllByRole("heading", { level: 2 });
+    expect(groups.map((group) => group.textContent)).toEqual([
+      "Today",
+      expect.stringMatching(/^[A-Z][a-z]+( \d{4})?$/),
+    ]);
+    expect(groups[0].closest("section")).toContainElement(today);
+    expect(groups[1].closest("section")).toContainElement(old);
   });
 
   test("drops a video's poster from the grid, the count and viewer navigation", async () => {

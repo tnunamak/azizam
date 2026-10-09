@@ -79,6 +79,7 @@ import { productApi, type MemberStatus } from "@/lib/product-api";
 import { api } from "@/lib/api";
 import {
   MAKING_COPY,
+  groupByDate,
   inProgressMedia,
   modelDisplayName,
   tileDate,
@@ -1121,11 +1122,17 @@ function MoreFilters({
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button variant="outline">
+        <Button
+          variant="outline"
+          className="relative max-sm:size-11 max-sm:px-0"
+        >
           <ListFilter aria-hidden="true" />
-          Filters
-          {/* A phone counts kind and person too, which live in here. */}
-          {badge(active + phoneActive, "flex sm:hidden")}
+          <span className="max-sm:sr-only">Filters</span>
+          {/* A phone counts the person too, which lives in here. */}
+          {badge(
+            active + phoneActive,
+            "absolute -top-1.5 -right-1.5 flex sm:hidden",
+          )}
           {badge(active, "max-sm:hidden sm:flex")}
         </Button>
       </PopoverTrigger>
@@ -1696,6 +1703,9 @@ export default function LibraryPage() {
   const [model, setModel] = useState("all");
   const [date, setDate] = useState<DateFilter>("all");
   const [search, setSearch] = useState("");
+  // On a phone the search field opens from a button in the control row.
+  const [phoneSearch, setPhoneSearch] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
   const [owner, setOwner] = useState("default");
   const [source, setSource] = useState("all");
   const [selected, setSelected] = useState<MediaAsset | null>(null);
@@ -2071,6 +2081,13 @@ export default function LibraryPage() {
       ) : null}
     </>
   );
+  const dateGroups = groupByDate(
+    storedAssets,
+    (asset) => toDateValue(asset.created_at),
+    new Date(),
+  );
+  if (inProgress.length && dateGroups[0]?.label !== "Today")
+    dateGroups.unshift({ label: "Today", items: [] });
   const selectedPerson = selected
     ? instanceView
       ? personFor(selected)
@@ -2080,9 +2097,10 @@ export default function LibraryPage() {
     <div>
       {/* The title and count, then one row of controls with search first
           (D1.3: search floated alone at the right, and on a phone four rows
-          of controls filled half the screen). On a phone the row is search
-          and one Filters control; kind and person move into it. The heading
-          keeps a ref so the viewer can return focus to it. */}
+          of controls filled half the screen). On a phone the row is the kind
+          switch, a search button and Filters, so the controls stay under a
+          fifth of the screen (D1.5); the search field opens below it. The
+          heading keeps a ref so the viewer can return focus to it. */}
       <header className="mb-4 flex min-h-10 items-center">
         <h1
           ref={headingRef}
@@ -2123,13 +2141,21 @@ export default function LibraryPage() {
         aria-label="Library filters"
         className="mb-6 flex flex-wrap items-center gap-2"
       >
-        <label className="relative block min-w-0 max-sm:flex-1 sm:w-64">
+        <label
+          className={cn(
+            "relative block min-w-0 sm:w-64",
+            phoneSearch || search
+              ? "max-sm:order-last max-sm:w-full"
+              : "max-sm:hidden",
+          )}
+        >
           <span className="sr-only">Search your creations</span>
           <Search
             className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
             aria-hidden
           />
           <Input
+            ref={searchRef}
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Search your creations"
@@ -2137,10 +2163,10 @@ export default function LibraryPage() {
           />
         </label>
         {/* The kind switch stays one tap away on a phone too (D1.4: audio
-            was buried behind Filters); there it takes its own line. */}
+            was buried behind Filters). */}
         <Segmented
           label="Kind"
-          className="max-sm:order-last max-sm:w-full"
+          className="max-sm:min-w-0 max-sm:flex-1"
           value={kind}
           onChange={setKind}
           options={[
@@ -2150,6 +2176,21 @@ export default function LibraryPage() {
             { value: "audio", label: "Audio", icon: AudioLines },
           ]}
         />
+        <Button
+          type="button"
+          variant="outline"
+          size="icon-lg"
+          aria-label="Search"
+          aria-expanded={phoneSearch || Boolean(search)}
+          onClick={() => {
+            const open = !phoneSearch;
+            setPhoneSearch(open);
+            if (open) requestAnimationFrame(() => searchRef.current?.focus());
+          }}
+          className="sm:hidden"
+        >
+          <Search aria-hidden="true" />
+        </Button>
         <div className="contents max-sm:hidden">{personPicker("row")}</div>
         <MoreFilters
           model={model}
@@ -2244,24 +2285,40 @@ export default function LibraryPage() {
       {!isLoading &&
       !showInitialError &&
       (storedAssets.length > 0 || inProgress.length > 0) ? (
-        <div aria-busy={updating} className="space-y-7">
-          {/* One continuous grid, newest first; each tile's caption carries
-              its date, so no part-filled week group leaves a gap. */}
-          <div className="grid grid-cols-3 gap-1 sm:gap-1.5 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-            {inProgress.map((item) => (
-              <InProgressTile key={item.id} item={item} />
-            ))}
-            {storedAssets.map((asset) => (
-              <AssetTile
-                key={asset.asset_id}
-                asset={asset}
-                onOpen={openAsset}
-                everyone={instanceView}
-                person={instanceView ? personFor(asset) : null}
-                selected={selected?.asset_id === asset.asset_id}
-              />
-            ))}
-          </div>
+        <div aria-busy={updating} className="space-y-6">
+          {/* Date groups with quiet headers, newest first, as Apple Photos
+              heads its days (D1.5); a group's last row may be part-filled.
+              Work still being made opens the Today group. */}
+          {dateGroups.map((group, index) => (
+            <section
+              key={`${group.label}-${index}`}
+              aria-labelledby={`library-group-${index}`}
+            >
+              <h2
+                id={`library-group-${index}`}
+                className="text-muted-foreground mb-2 text-sm font-medium"
+              >
+                {group.label}
+              </h2>
+              <div className="grid grid-cols-3 gap-1 sm:gap-1.5 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+                {index === 0 && group.label === "Today"
+                  ? inProgress.map((item) => (
+                      <InProgressTile key={item.id} item={item} />
+                    ))
+                  : null}
+                {group.items.map((asset) => (
+                  <AssetTile
+                    key={asset.asset_id}
+                    asset={asset}
+                    onOpen={openAsset}
+                    everyone={instanceView}
+                    person={instanceView ? personFor(asset) : null}
+                    selected={selected?.asset_id === asset.asset_id}
+                  />
+                ))}
+              </div>
+            </section>
+          ))}
         </div>
       ) : null}
       {!isLoading && !showInitialError && goneAssets.length > 0 ? (
