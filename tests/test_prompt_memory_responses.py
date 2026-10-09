@@ -169,3 +169,14 @@ def test_owner_kill_switch_disables_responses_store_and_leaves_no_prompt_bytes(r
     assert responses_gateway["sent"][0]["messages"][-1]["content"] == sentinel
     _assert_no_bytes(responses_gateway["data"], sentinel)
     _assert_no_bytes(responses_gateway["cache"], sentinel)
+
+
+def test_owner_kill_purges_responses_saved_before_it_was_enabled(responses_gateway):
+    response = _post_response(responses_gateway, {"input": "older-stored-response-sentinel"})
+    assert response.status_code == 200, response.text
+    response_id = response.json()["id"]
+    assert proxy.responses_store.get(response_id, path=responses_gateway["responses_db"])
+
+    proxy._purge_prompt_memory_on_kill()
+
+    assert proxy.responses_store.get(response_id, path=responses_gateway["responses_db"]) is None
