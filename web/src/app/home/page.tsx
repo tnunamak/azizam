@@ -1328,11 +1328,9 @@ export default function HomePage() {
           <PageHeader title="Home" />
           <ErrorState
             heading="Couldn’t load Home"
-            message={
-              isOwner || viewer.admin
-                ? "The gateway did not return your Home. Status may show why."
-                : "The gateway did not return your Home. Try again."
-            }
+            // "Status may show why" pointed at a page with no link to it
+            // (red team round 2); the retry is the one next step.
+            message="The gateway did not return your Home. Try again."
             onRetry={() => void refetchHome()}
             retrying={homeFetching}
           />
@@ -1370,6 +1368,7 @@ export default function HomePage() {
               tone={verdict.tone}
               text={verdict.text}
               checkedAt={verdict.checkedAt}
+              unconfirmed={verdict.unconfirmed}
             >
               {verdict.problems.length ? (
                 // Members too: on a phone Status is under More, so the
@@ -1381,6 +1380,13 @@ export default function HomePage() {
                   {isOwner ? "Open Status" : "See what is happening"}
                   <ChevronRight aria-hidden="true" className="size-4" />
                 </Link>
+              ) : verdict.tone === "off" && !isOwner ? (
+                // A member cannot turn anything on; say who can.
+                <span className="text-muted-foreground">
+                  {home.gateway?.owner_name?.trim()
+                    ? `Ask ${home.gateway.owner_name.trim()} to turn something on.`
+                    : "Ask the gateway owner to turn something on."}
+                </span>
               ) : verdict.tone === "off" && isOwner ? (
                 // Nothing set up: the owner's next step is an engine.
                 <Link

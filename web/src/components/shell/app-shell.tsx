@@ -292,8 +292,10 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
       ? { label: "Checking", tone: "unknown" as const }
       : !signedIn
         ? { label: "Gateway reachable", tone: "ok" as const }
-        : model.isError
-          ? // Reachable, but the capability states did not load: no all-clear.
+        : model.isError || model.ownerHealthError
+          ? // Reachable, but the capability states (or, for an owner, the
+            // engine checks) did not load: no count from old data, no
+            // all-clear (red team round 2).
             { label: "Status unknown", tone: "unknown" as const }
           : model.isPending
             ? { label: "Checking", tone: "unknown" as const }
@@ -305,7 +307,7 @@ function HealthLink({ compact = false }: { compact?: boolean }) {
               : busy
                 ? { label: "Busy", tone: "busy" as const }
                 : model.verdict.tone === "off"
-                  ? { label: "Nothing set up", tone: "off" as const }
+                  ? { label: "Nothing turned on", tone: "off" as const }
                   : { label: "All working", tone: "ok" as const };
   const visibleLabel = label;
   const dot =

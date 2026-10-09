@@ -120,6 +120,8 @@ export interface CapabilityViewsResult {
   isError: boolean;
   /** The health data behind owner views failed to load; views fall back to the member model. */
   ownerHealthMissing: boolean;
+  /** The owner's health check request itself failed. */
+  ownerHealthError: boolean;
   refetch: () => void;
   isFetching: boolean;
 }
@@ -205,6 +207,7 @@ export function useCapabilityViews(owner: boolean): CapabilityViewsResult {
     isPending: homeQuery.isPending,
     isError: homeQuery.isError,
     ownerHealthMissing: owner && (statusQuery.isError || !health?.observation_available),
+    ownerHealthError: owner && statusQuery.isError,
     refetch: () => {
       void homeQuery.refetch();
       if (owner) {

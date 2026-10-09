@@ -221,7 +221,7 @@ for (const theme of ["light", "dark"] as const) {
               page
                 .locator("main")
                 .getByRole("status")
-                .filter({ hasText: "Nothing is set up yet" }),
+                .filter({ hasText: "Nothing is turned on yet" }),
             ).toHaveCount(1);
             await expect(
               page.getByRole("heading", {

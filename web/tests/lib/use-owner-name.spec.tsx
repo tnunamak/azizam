@@ -42,13 +42,13 @@ describe("the gateway owner by name", () => {
   it("a member's spending-limit notice names the owner", async () => {
     renderNotice("Sam");
     expect(
-      await screen.findByText(/Ask Sam if you need them sooner\./),
+      await screen.findByText(/Ask Sam if you need paid models sooner\./),
     ).toBeVisible();
   });
   it("falls back to the role when the gateway has no owner name", async () => {
     renderNotice(null);
     expect(
-      await screen.findByText(/Ask the gateway owner if you need them sooner\./),
+      await screen.findByText(/Ask the gateway owner if you need paid models sooner\./),
     ).toBeVisible();
   });
 });

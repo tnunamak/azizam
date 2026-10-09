@@ -61,7 +61,10 @@ export function CapNotice({
   return (
     <Callout
       severity="attention"
-      title="Paid models were paused for you"
+      // Household-wide, not personal ("paused for you" read as a penalty),
+      // and only what the refusal supports: a limit was reported reached
+      // (red team round 2).
+      title="Paid models are paused"
       meta={
         <>
           Latest <RelativeTime ts={at} fallback="" />
@@ -69,9 +72,10 @@ export function CapNotice({
       }
     >
       <p>
-        The household reached its {limit === "monthly" ? "monthly" : "daily"}{" "}
-        limit for outside AI services. {when} {askOwner(ownerName)} if you need
-        them sooner.
+        The gateway reported that the{" "}
+        {limit === "monthly" ? "monthly" : "daily"} limit for paid AI services
+        was reached. {when} {askOwner(ownerName)} if you need paid models
+        sooner.
       </p>
     </Callout>
   );
