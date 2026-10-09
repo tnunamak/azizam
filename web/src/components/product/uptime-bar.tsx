@@ -279,7 +279,7 @@ export function UptimeBar({
         aria-label={summary}
         className={cn(
           "flex min-w-0 items-end",
-          large ? "h-6 gap-0.5 sm:gap-1" : "h-4 gap-0.5",
+          large ? "h-8 gap-0.5 sm:gap-1" : "h-4 gap-0.5",
         )}
       >
         {slots.map((slot) => (
@@ -291,10 +291,10 @@ export function UptimeBar({
               slotClass(slot.value, enabled),
               slot.value !== null && slot.value < 1 && enabled
                 ? large
-                  ? "h-6"
+                  ? "h-8"
                   : "h-4"
                 : large
-                  ? "h-4"
+                  ? "h-6"
                   : "h-2.5",
             )}
           />
@@ -303,7 +303,10 @@ export function UptimeBar({
       {showAxis ? (
         <div
           aria-hidden="true"
-          className="text-subtle-foreground mt-1 flex justify-between text-xs"
+          className={cn(
+            "text-subtle-foreground mt-1 flex justify-between",
+            large ? "text-sm" : "text-xs",
+          )}
         >
           {large ? (
             // Clock times every six hours, so "since about 1:30 PM" can be

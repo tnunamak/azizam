@@ -200,6 +200,8 @@ export function Callout({
   as: Tag = "section",
   className,
   headingLevel = 2,
+  history,
+  variant = "default",
 }: {
   severity: CalloutSeverity;
   title: ReactNode;
@@ -212,6 +214,14 @@ export function Callout({
   as?: "section" | "article" | "div";
   className?: string;
   headingLevel?: 2 | 3;
+  /** The incident variant's history block (the 24-hour strip and story). */
+  history?: ReactNode;
+  /**
+   * "incident" (Status problem cards, D1.6): one order at every width.
+   * What is wrong and who is affected, then what to do in full-weight text
+   * with its button, then history, then evidence folded behind one control.
+   */
+  variant?: "default" | "incident";
 }) {
   const Icon = severityIcon[severity];
   const Heading = headingLevel === 2 ? "h2" : "h3";
@@ -230,6 +240,69 @@ export function Callout({
   // screens.
   const factGrid =
     "grid grid-cols-1 gap-y-1 text-sm sm:grid-cols-[8.5rem_minmax(0,1fr)] sm:gap-x-4 sm:gap-y-2 sm:text-base";
+  if (variant === "incident")
+    return (
+      <Tag
+        role={severity === "critical" && Tag === "div" ? "alert" : undefined}
+        className={cn(
+          "bg-card rounded-panel min-w-0 border p-4 sm:p-5",
+          className,
+        )}
+      >
+        <div className="flex min-w-0 items-start gap-3">
+          <Icon
+            aria-hidden="true"
+            className={cn("mt-0.5 size-5 shrink-0", severityText[severity])}
+          />
+          <div className="min-w-0">
+            <Heading className="text-lg font-semibold">{title}</Heading>
+            {meta ? (
+              <p className="text-muted-foreground text-sm">{meta}</p>
+            ) : null}
+          </div>
+        </div>
+        <div className="mt-4 min-w-0 space-y-5 sm:pl-8">
+          {facts?.length ? <dl className={factGrid}>{rows(facts)}</dl> : null}
+          {children || actions ? (
+            <div className="space-y-3">
+              {children ? (
+                <div className="text-foreground space-y-1 text-base font-medium">
+                  {children}
+                </div>
+              ) : null}
+              {actions ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  {actions}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          {history ? <div className="border-t pt-4">{history}</div> : null}
+          {evidence?.length ? (
+            <div className="space-y-2">
+              <button
+                type="button"
+                aria-expanded={evidenceOpen}
+                onClick={() => setEvidenceOpen((open) => !open)}
+                className="text-link inline-flex min-h-11 items-center gap-1 text-sm font-medium sm:min-h-8"
+              >
+                <ChevronRight
+                  aria-hidden="true"
+                  className={cn(
+                    "size-4 opacity-75 transition-transform",
+                    evidenceOpen && "rotate-90",
+                  )}
+                />
+                {evidenceOpen ? "Hide evidence" : "Show evidence"}
+              </button>
+              {evidenceOpen ? (
+                <dl className={factGrid}>{rows(evidence)}</dl>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      </Tag>
+    );
   return (
     <Tag
       role={severity === "critical" && Tag === "div" ? "alert" : undefined}

@@ -358,8 +358,10 @@ type Problem = {
   /** Names the subject and its state word: "Video studio is down". */
   title: string;
   facts: Array<[string, ReactNode]>;
-  /** Supporting evidence: shown on wide screens, folded on a phone. */
+  /** Supporting evidence, folded behind "Show evidence". */
   evidence?: Array<[string, ReactNode]>;
+  /** The 24-hour strip and its story, after what to do (D1.6). */
+  history?: ReactNode;
   /** Plain paragraphs: the symptom, then the fix. */
   body?: string[];
   href?: string | null;
@@ -542,28 +544,45 @@ function engineProblems(
     const exposed = labels.filter((label) => !covered.includes(label));
     // Scope first: what stops working, for whom, and who already hit it
     // (not the capability name again; the title names the engine).
+    const single = affected.length === 1;
+    // D1.6: one title on the page. The verdict above names the state
+    // ("Video degraded"); a single engine's card names the consequence
+    // ("Video requests can fail right now") and its first fact the cause.
+    const consequence = single && exposed.length > 0;
     const facts: Array<[string, ReactNode]> = [
+      ...(consequence
+        ? ([["What's wrong", symptomOf(first)]] as Array<[string, ReactNode]>)
+        : []),
       ["Affects", affectsFact(exposed, covered, failed)],
     ];
     const evidence: Array<[string, ReactNode]> = [];
-    if (affected.length === 1) {
+    let history: ReactNode = null;
+    if (single) {
       const series = first.backend?.history?.status_series;
       const slots = hourSlots(series, end);
       // The words come from the same hourly slots the strip draws, so the
       // card never calls a day of failures a short, recent problem.
       const story = healthStory(healthHistory(slots), slots);
-      // Where it stands, the strip itself, then the day's spells: two short
-      // lines around the picture instead of one run-on sentence (D1.4).
+      // Where it stands, the day's spells, how the red hours relate to the
+      // verdict, then the strip: history comes after what to do (D1.6).
+      const { down } = healthHistory(slots);
+      const relation =
+        story.current?.startsWith("Degraded") && down > 0
+          ? "Fully down at times (red); partly working now (amber)."
+          : null;
       if (story.current || series?.length)
-        facts.push([
-          "Last 24 hours",
-          <div key="u" className="max-w-xl space-y-2">
-            {/* Two lines, never one wrapped mid-phrase (D1.5). */}
+        history = (
+          <div className="space-y-2">
+            <h4 className="text-muted-foreground text-sm font-medium">
+              Last 24 hours
+            </h4>
             {story.current ? (
-              <p className="font-semibold">{story.current}</p>
+              <p className="text-base font-semibold">{story.current}</p>
             ) : null}
-            {story.day ? (
-              <p className="text-muted-foreground">{story.day}</p>
+            {story.day || relation ? (
+              <p className="text-muted-foreground text-base">
+                {[story.day, relation].filter(Boolean).join(" ")}
+              </p>
             ) : null}
             {series?.length ? (
               <UptimeBar
@@ -574,8 +593,8 @@ function engineProblems(
                 size="lg"
               />
             ) : null}
-          </div>,
-        ]);
+          </div>
+        );
     } else {
       const names = affected.map((engine) => engine.shortName);
       facts.push([
@@ -590,22 +609,23 @@ function engineProblems(
       failedRequestsFact(failed, { who: false }) ??
         `None in the latest ${ACTIVITY_SAMPLE} requests`,
     ]);
-    const single = affected.length === 1;
     return {
       key: single
         ? `engine:${first.service.id}`
         : `engines:${affected.map((e) => e.service.id).join(",")}`,
       severity: key === "down" && exposed.length ? "critical" : "attention",
       tone: exposed.length ? STATE_WORDS[key].tone : "warn",
-      // The title is the fault in plain words; the verdict line above
-      // already carries the state word, so it is not repeated here.
-      title: single
-        ? symptomOf(first).replace(/\.$/, "")
-        : `${affected.length} engines ${symptomOf(first)
-            .replace(first.shortName, "")
-            .trim()
-            .replace(/^is /, "are ")
-            .replace(/\.$/, "")}`,
+      // The verdict line above carries the state word, so the title says
+      // what it means for people, or the fault when nothing is exposed.
+      title: consequence
+        ? `${joinNames([exposed[0], ...exposed.slice(1).map((label) => label.toLowerCase())])} requests ${key === "down" ? "are failing" : "can fail right now"}`
+        : single
+          ? symptomOf(first).replace(/\.$/, "")
+          : `${affected.length} engines ${symptomOf(first)
+              .replace(first.shortName, "")
+              .trim()
+              .replace(/^is /, "are ")
+              .replace(/\.$/, "")}`,
       headline: exposed.length
         ? exposed.length > 2
           ? `${exposed.length} capabilities ${word}`
@@ -615,6 +635,7 @@ function engineProblems(
           : `${affected.length} engines ${word}`,
       facts,
       evidence,
+      history,
       body: single ? [engineRemedy(first.lastError)] : undefined,
       href: single
         ? `/engines/?service=${encodeURIComponent(first.service.id)}`
@@ -799,20 +820,18 @@ function ProblemCard({
   return (
     <Callout
       as="article"
+      variant="incident"
       headingLevel={3}
       severity={problem.severity}
       title={problem.title}
       facts={problem.facts}
       evidence={problem.evidence}
-      headerAction={
+      history={problem.history}
+      actions={
         problem.href || problem.disk ? (
           <>
             {problem.href ? (
-              <Button
-                asChild
-                variant={primary ? "default" : "outline"}
-                size="sm"
-              >
+              <Button asChild variant={primary ? "default" : "outline"}>
                 <Link href={problem.href}>
                   {problem.action ?? "Open"}
                   <ChevronRight aria-hidden="true" />
@@ -820,7 +839,7 @@ function ProblemCard({
               </Button>
             ) : null}
             {problem.disk ? (
-              <Button variant="outline" size="sm" onClick={onDiskHelp}>
+              <Button variant="outline" onClick={onDiskHelp}>
                 Free disk space
               </Button>
             ) : null}

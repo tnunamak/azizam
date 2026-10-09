@@ -357,10 +357,14 @@ it("summarizes connection failures without putting raw transport text in the ans
   await waitFor(() =>
     expect(screen.getByRole("status")).toHaveTextContent("Chat down"),
   );
+  // D1.6: the card's title is the consequence, once; its first fact is the
+  // fault in plain words, once.
   expect(
-    // The card's title is the fault in plain words, once.
-    screen.getAllByRole("heading", {
-      name: "Local chat is not accepting connections",
+    screen.getAllByRole("heading", { name: "Chat requests are failing" }),
+  ).toHaveLength(1);
+  expect(
+    screen.getAllByText("Local chat is not accepting connections.", {
+      exact: true,
     }),
   ).toHaveLength(1);
   expect(
@@ -605,7 +609,7 @@ it("tells the 24-hour story from the strip's own hours and names who is affected
   } as unknown as StatusPayload);
   const card = (
     await screen.findByRole("heading", {
-      name: "Local chat is not accepting connections",
+      name: "Chat requests are failing",
     })
   ).closest("article")!;
   // Where it stands, in the strip's own word, then the day's spells.
