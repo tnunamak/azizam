@@ -1,0 +1,20 @@
+Try
+Chat
+Image
+Speech
+Transcription
+Decisions
+Embeddings
+Workflow
+Speech
+
+Turn a sentence into audio.
+
+Model name
+Voice
+Voice
+Prompt
+More options
+Run
+
+Run speech

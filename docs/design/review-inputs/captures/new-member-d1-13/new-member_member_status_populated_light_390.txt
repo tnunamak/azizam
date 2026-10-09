@@ -1,0 +1,49 @@
+Status
+Refresh status
+
+Video degraded
+
+Checked just now
+Your capabilities
+
+Chat
+
+Ready
+
+Images
+
+Ready
+
+Video
+
+Answering with errors. Requests may fail.
+
+Degraded
+
+Voice
+
+Ready
+
+Transcription
+
+Ready
+
+Music
+
+Ready
+
+Sound effects
+
+Ready
+
+Embeddings
+
+Turned off by the owner.
+
+Off
+Model names
+Your latest requests
+
+No requests yet.
+
+Ask Sam if it does not recover.

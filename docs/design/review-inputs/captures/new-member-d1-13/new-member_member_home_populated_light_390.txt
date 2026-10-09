@@ -1,0 +1,36 @@
+Home
+Connect an app
+
+Video degraded
+
+Checked just now
+See what is happening
+Make something
+Make a picture
+Read text aloud
+Chat
+Make music
+Make a sound effect
+Make a video
+Degraded
+Turn a recording into text
+Connect an app
+
+For chat apps, phone apps and coding tools. Each app gets its own key.
+
+Your apps
+Personal access
+No requests yet
+Add an app
+OI
+Open WebUI
+LC
+LibreChat
+ST
+SillyTavern
+Cursor
+Cx
+Codex
+Claude Code
++
+Another app

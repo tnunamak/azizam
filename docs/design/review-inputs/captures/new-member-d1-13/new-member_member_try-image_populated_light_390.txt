@@ -1,0 +1,20 @@
+Try
+Chat
+Image
+Speech
+Transcription
+Decisions
+Embeddings
+Workflow
+Image
+
+Generate one image from a prompt.
+
+Model name
+Krea 2 Turbo
+Krea 2 Turbo
+Qwen Image Edit
+Prompt
+Run
+
+Run image
