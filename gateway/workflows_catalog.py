@@ -703,6 +703,10 @@ def _availability(capabilities: list[Capability]) -> dict[str, Any]:
             ("unavailable", "disabled"): "unavailable_disabled",
             ("unavailable", "unconfigured"): "unavailable_unconfigured",
         }.get((status, evidence.get("kind")), status)
+        if evidence.get("source") == "dependencies":
+            # A composed workflow carries its own code: an engine it needs
+            # that is turned off or not set up is Off, not Down.
+            result["reason_code"] = str(selected.availability.get("reason_code") or status)
         return result
     measured_caps = [cap for cap in capabilities if cap.health != "unknown" or cap.lifecycle != "unknown"]
     ready_caps = [

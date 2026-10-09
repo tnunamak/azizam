@@ -67,7 +67,8 @@ class AvailabilityProjection:
             "up": self.up,
             "idle_startable": self.idle_startable,
             "evidence": _public_evidence(self.evidence),
-            **({"engine": self.engine} if self.engine else {}),
+            **({"engine": self.engine, "reason_code": composed_reason_code(self.status, self.enabled, self.configured)}
+               if self.engine else {}),
         }
 
 
@@ -164,6 +165,16 @@ def _project_required_dependencies(
         all(item.measured for item in projected), composed_evidence,
         idle_startable=status == "idle", engine=limiting.service_id,
     )
+
+
+def composed_reason_code(status: str, enabled: bool, configured: bool) -> str:
+    """Reason code for a composed workflow: an engine turned off or not set up is Off, not Down."""
+
+    if status == "unavailable" and not enabled:
+        return "unavailable_disabled"
+    if status == "unavailable" and not configured:
+        return "unavailable_unconfigured"
+    return status
 
 
 def _dependency_reason(limiting: AvailabilityProjection, service: Mapping[str, Any]) -> str:

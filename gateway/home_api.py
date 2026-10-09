@@ -236,7 +236,8 @@ def _capability_rows(capabilities, evidence, registry=None, alias_views=None, wo
         if composed is not None:
             # A gateway-composed workflow is as available as the engines it
             # needs; the "gateway" pseudo-backend itself is never checked.
-            state = reason = str(composed.get("status") or "unknown")
+            state = str(composed.get("status") or "unknown")
+            reason = str(composed.get("reason_code") or state)
             product_availability = dict(composed)
         else:
             state, reason = _availability(cap, evidence, registry)

@@ -147,6 +147,24 @@ def test_home_rows_project_composed_workflows_from_their_engines():
         "unavailable", False)
 
 
+def test_composed_workflow_with_an_engine_off_or_not_set_up_is_off_not_down():
+    from gateway.home_api import _capability_rows
+    from gateway.workflows_catalog import build_workflows_catalog
+
+    registry = _composed_registry()
+    caps = [_composed_cap(registry, "image.analyze.face-likeness"), _composed_cap(registry, "image.edit.image-identity")]
+    # No face sidecar configured; ComfyUI turned off by the owner.
+    services = {"services": {"comfyui": {**_COMFYUI, "enabled": False}}}
+    rows = {row["workflow"]: row for row in _capability_rows(caps, {}, services, {}, registry.records())}
+    assert rows["image.analyze.face-likeness"]["reason_code"] == "unavailable_unconfigured"
+    assert rows["image.edit.image-identity"]["reason_code"] == "unavailable_disabled"
+    projected = project_capabilities(caps, service_records=services, workflow_records=registry.records())
+    catalog = {row["id"]: row["availability"]
+               for row in build_workflows_catalog(records=registry.records(), capabilities=projected)["workflows"]}
+    assert catalog["image.edit.image-identity"]["reason_code"] == "unavailable_disabled"
+    assert catalog["image.edit.image-identity"]["reason"] == "ComfyUI is turned off."
+
+
 def test_composed_sidecar_check_is_read_only_and_fills_the_cached_status_gap(monkeypatch):
     """The face sidecar is checked by lifecycle status, never started, even with a warm status cache."""
     import asyncio
