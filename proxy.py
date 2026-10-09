@@ -11909,9 +11909,8 @@ async def proxy_comfy_video_content(
 ) -> Response:
     """GET /v1/videos/{video_id}/content — return mp4 bytes.
 
-    The bytes always carry full metadata (ComfyUI prompt/workflow plus the
-    gateway provenance record) unless ``metadata_mode`` is ``none``. Internal
-    callers that store the result (media jobs) keep the default ``full``.
+    Full delivery requires a retained maker prompt record. Cached asset bytes
+    are stripped before storage.
     """
     if not COMFY_ENABLED:
         return Response(
