@@ -10,10 +10,12 @@ import AxeBuilder from "@axe-core/playwright";
 /** Open the engines table: folded under a card below 1280 px, open above. */
 async function openLayerTable(main: Locator, summary: string) {
   const button = main.getByRole("button", { name: summary, exact: true });
+  const table = main.getByRole("table", { name: "Engine status" });
+  // Wait for the page to settle on one of the two before deciding: a bare
+  // isVisible() raced the first render.
+  await expect(button.or(table)).toBeVisible();
   if (await button.isVisible()) await button.click();
-  await expect(
-    main.getByRole("table", { name: "Engine status" }),
-  ).toBeVisible();
+  await expect(table).toBeVisible();
 }
 
 const registry = {

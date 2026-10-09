@@ -280,7 +280,7 @@ for (const theme of ["light", "dark"] as const) {
             page.getByText(
               state === "empty"
                 ? "No request receipts yet"
-                : "Requests could not be loaded. Try again.",
+                : "Couldn't load requests",
               { exact: true },
             ),
           ).toBeVisible();
@@ -327,7 +327,7 @@ test("request errors retry and audit details use readable timestamps", async ({
   await page.keyboard.press("Escape");
   await page.getByRole("tab", { name: "Requests", exact: true }).click();
   await expect(
-    page.getByText("Requests could not be loaded. Try again.", { exact: true }),
+    page.getByText("Couldn't load requests", { exact: true }),
   ).toBeVisible();
   fail = false;
   await page.getByRole("button", { name: /Retry|Try again/ }).click();
@@ -375,7 +375,7 @@ for (const theme of ["light", "dark"] as const) {
             page.getByText(
               state === "empty"
                 ? "No changes yet"
-                : "Changes could not be loaded. Try again.",
+                : "Couldn't load changes",
               { exact: true },
             ),
           ).toBeVisible();
