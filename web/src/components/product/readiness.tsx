@@ -116,6 +116,10 @@ export function capabilityMeta(key: string | null | undefined): CapabilityMeta {
   );
 }
 
+/**
+ * Every titled region: `text-heading`, 12 above its content, an optional
+ * count and one action at 32 (Button's default size).
+ */
 export function SectionHeading({
   id,
   title,
@@ -136,7 +140,7 @@ export function SectionHeading({
         className,
       )}
     >
-      <h2 id={id} className="text-lg font-semibold">
+      <h2 id={id} className="text-heading">
         {title}
         {typeof count === "number" ? (
           <span className="text-muted-foreground ml-2 font-normal">
