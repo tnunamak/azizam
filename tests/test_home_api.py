@@ -177,6 +177,7 @@ def test_home_and_member_status_preserve_observed_state(home_case, state):
     assert data["aliases"][0]["status"] == state
     assert not data["capabilities"][0]["available"]
     member = home_case.http.get("/me/api/status").json()
+    TypeAdapter(MemberStatus).validate_python(member)
     assert member["status"]["state"] == state
     assert member["capabilities"][0]["status"] == state
 

@@ -5,6 +5,7 @@ export type AvailabilityStatus =
   | "ready"
   | "starting"
   | "busy"
+  | "degraded"
   | "idle"
   | "idle-startable"
   | "standby_stopped"
@@ -23,6 +24,7 @@ const states = {
   ready: { label: "Ready", icon: Check, color: "text-success" },
   starting: { label: "Starting", icon: Loader2, color: "text-info" },
   busy: { label: "Busy", icon: Clock3, color: "text-warning" },
+  degraded: { label: "Degraded", icon: CircleSlash, color: "text-warning" },
   idle: { label: "Ready to start", icon: Check, color: "text-success" },
   "idle-startable": {
     label: "Ready to start",

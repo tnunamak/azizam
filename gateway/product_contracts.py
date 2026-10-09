@@ -6,7 +6,7 @@ its stores; generation and contract validation need no instance credentials.
 from typing import Literal
 from typing_extensions import NotRequired, TypedDict
 
-AvailabilityStatus = Literal["ready", "idle", "starting", "busy", "unknown", "unavailable"]
+AvailabilityStatus = Literal["ready", "idle", "starting", "busy", "degraded", "unknown", "unavailable"]
 CapabilityIconKey = Literal["chat", "image", "video", "music", "sfx", "speech", "transcribe", "decide", "embed", "rerank"]
 SetupEvent = Literal["settings_copied", "external_client_confirmed", "receipt_viewed"]
 # The `/v1/models` metadata vocabulary (gateway/model_metadata.py, docs/api/MODEL_METADATA.md).

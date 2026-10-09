@@ -225,7 +225,7 @@ async def _probe(
                 available = _availability_from_health_payload(payload)
                 if parsed_status == "ready" or available is True or (parsed_status == "unknown" and declared_health_success(service or {}, payload)):
                     return {**base, "status": "up", "live_status": "up", "latency_ms": dt, "last_error": None}
-                if parsed_status in {"starting", "busy"}:
+                if parsed_status in {"starting", "busy", "degraded"}:
                     return {**base, "status": parsed_status, "live_status": parsed_status, "latency_ms": dt, "last_error": None}
                 if parsed_status == "unavailable" or available is False:
                     return {**base, "status": "down", "live_status": "down", "latency_ms": dt, "last_error": "readiness false"}

@@ -19,7 +19,7 @@ from gateway.capabilities import Capability, resolve_capability_targets
 
 READY_STATUSES = frozenset({"ready", "up", "ok", "healthy", "available"})
 STARTING_STATUSES = frozenset({"starting", "warming"})
-BUSY_STATUSES = frozenset({"busy", "degraded"})
+BUSY_STATUSES = frozenset({"busy"})
 DOWN_STATUSES = frozenset({"down", "failed", "unhealthy", "unavailable", "stopped"})
 SUCCESS_RECEIPT_STATUSES = frozenset({"ok", "success", "succeeded", "completed", "200"})
 FAILED_RECEIPT_STATUSES = frozenset(
@@ -346,6 +346,11 @@ def _from_evidence(
             service_id, enabled, configured, True, "busy",
             str(evidence.get("reason") or "The service is busy."), True, dict(evidence), idle_startable,
         )
+    if raw_status == "degraded":
+        return AvailabilityProjection(
+            service_id, enabled, configured, True, "degraded",
+            str(evidence.get("reason") or "The service is degraded."), True, dict(evidence), idle_startable,
+        )
     if idle_startable and _observed_stopped(evidence) and evidence.get("source") != "request":
         return AvailabilityProjection(
             service_id, enabled, configured, None, "idle",
@@ -369,7 +374,7 @@ def _capability_states(projection: AvailabilityProjection) -> tuple[str, str]:
         return "warm", "healthy"
     if projection.status == "starting":
         return "warming", "degraded"
-    if projection.status == "busy":
+    if projection.status in {"busy", "degraded"}:
         return "warm", "degraded"
     if projection.status == "idle":
         return "stopped", "unknown"
@@ -502,7 +507,7 @@ def _request_failure(evidence: Mapping[str, Any]) -> bool:
 
 def _busy_like(evidence: Mapping[str, Any]) -> bool:
     status = str(evidence.get("status") or "").strip().lower()
-    return status in BUSY_STATUSES and evidence.get("available") is not True
+    return status in BUSY_STATUSES | {"degraded"} and evidence.get("available") is not True
 
 
 def _is_epoch(value: Any) -> bool:

@@ -116,6 +116,7 @@ describe("foundation product contracts", () => {
     ["idle", "Ready to start"],
     ["starting", "Starting"],
     ["busy", "Busy"],
+    ["degraded", "Degraded"],
     ["unavailable", "Unavailable"],
     ["unknown", "Unknown"],
   ])("preserves the measured %s state and its reason", (status, label) => {

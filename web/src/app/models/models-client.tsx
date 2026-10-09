@@ -57,6 +57,7 @@ type AvailabilityState =
   | "ready"
   | "starting"
   | "busy"
+  | "degraded"
   | "idle"
   | "idle-startable"
   | "standby_stopped"
@@ -298,6 +299,7 @@ function availabilityState(row: CatalogRow): AvailabilityState {
         "ready",
         "starting",
         "busy",
+        "degraded",
         "idle",
         "idle-startable",
         "unknown",

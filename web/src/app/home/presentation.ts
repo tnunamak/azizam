@@ -142,6 +142,7 @@ export function capabilityTiles(
         rows.find((item) => item.status === "ready") ??
         rows.find((item) => item.status === "starting") ??
         rows.find((item) => item.status === "busy") ??
+        rows.find((item) => item.status === "degraded") ??
         rows[0];
       return row ? [{ ...row, model: null, workflow: null }] : [];
     },
@@ -170,7 +171,7 @@ export function capabilitySummary(tiles: HomeCapability[]): string {
     audio: "audio",
   };
   const clauses = (
-    ["ready", "idle", "starting", "busy", "unavailable"] as const
+    ["ready", "idle", "starting", "busy", "degraded", "unavailable"] as const
   ).flatMap((status) => {
     const matching = tiles
       .filter((tile) => tile.status === status)

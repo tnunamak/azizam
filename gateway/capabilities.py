@@ -440,7 +440,7 @@ def _deduplicate_visible_entries(capabilities: Iterable[Capability]) -> list[Cap
     surfaces suppress covered targets before applying this shared preference.
     """
     rows = {}
-    rank = {"ready": 5, "idle": 4, "starting": 3, "busy": 2, "unavailable": 1, "unknown": 0}
+    rank = {"ready": 6, "idle": 5, "starting": 4, "busy": 3, "degraded": 2, "unavailable": 1, "unknown": 0}
     for cap in capabilities:
         key = (cap.intent, cap.model, cap.workflow)
         if cap.model is None and cap.workflow is None:

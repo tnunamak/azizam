@@ -4,6 +4,7 @@ export type AvailabilityReasonCode =
   | "ready_on_request"
   | "starting"
   | "busy"
+  | "degraded"
   | "unknown"
   | "unavailable"
   | "unavailable_disabled"
@@ -20,6 +21,7 @@ const stateReason: Record<string, string> = {
   idle: "Ready to start when you make a request.",
   starting: "Starting. Try again shortly.",
   busy: "Busy. Try again shortly.",
+  degraded: "Degraded. Requests may fail.",
   unknown: "",
   configured: "",
   unavailable: "",
