@@ -267,3 +267,45 @@ def test_stream_that_is_never_started_releases_when_dropped() -> None:
     del stream
     gc.collect()
     assert drain.in_flight("llm") == 0
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics: count and oldest age per backend, read-only
+# ---------------------------------------------------------------------------
+
+
+def test_snapshot_reports_in_flight_count_and_oldest_age_per_backend() -> None:
+    offset = [0.0]
+    drain = SwapDrain(clock=lambda: 1000.0 + offset[0])
+    old = drain.lease("llm")
+    offset[0] += 30
+    drain.lease("llm")
+    drain.lease("other-llm")
+    offset[0] += 10
+    assert drain.snapshot() == {
+        "llm": {"in_flight": 2, "oldest_lease_age_s": 40.0},
+        "other-llm": {"in_flight": 1, "oldest_lease_age_s": 10.0},
+    }
+    old.release()
+    assert drain.snapshot()["llm"] == {"in_flight": 1, "oldest_lease_age_s": 10.0}
+    assert drain.in_flight("llm") == 1, "a snapshot changes nothing"
+
+
+def test_status_swap_state_shows_the_drain() -> None:
+    import types
+
+    import status_endpoint
+
+    drain = SwapDrain()
+    lease = drain.lease("kobold")
+    proxy_module = types.SimpleNamespace(
+        _swap_drain=drain,
+        _swap_drain_settings=lambda: SwapDrainSettings(enabled=True, timeout_s=120.0),
+    )
+    state = status_endpoint._swap_state(proxy_module)
+    assert state["drain"]["enabled"] is True
+    assert state["drain"]["timeout_s"] == 120.0
+    assert state["drain"]["backends"]["kobold"]["in_flight"] == 1
+    assert state["drain"]["backends"]["kobold"]["oldest_lease_age_s"] >= 0
+    lease.release()
+    assert status_endpoint._swap_state(proxy_module)["drain"]["backends"] == {}

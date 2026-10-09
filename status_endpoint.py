@@ -3058,7 +3058,7 @@ def _workflow_drift_status() -> Optional[dict]:
 # --- swap state ----------------------------------------------------------
 
 def _swap_state(proxy_module) -> dict:
-    """Tabby/Kobold model-swap lock state from proxy module globals."""
+    """Model-swap lock state and swap-drain leases from proxy module globals."""
     out: dict[str, Any] = {}
     try:
         tabby_lock = getattr(proxy_module, "tabby_swap_lock", None)
@@ -3070,6 +3070,20 @@ def _swap_state(proxy_module) -> dict:
         out["kobold_swap_in_progress"] = kobold_lock.locked() if kobold_lock else None
     except Exception:
         out["kobold_swap_in_progress"] = None
+    # Swap drain (llm.swap_drain): requests a swap would wait for, per backend.
+    # Read-only; a lease far older than any real request is leaked.
+    try:
+        drain = getattr(proxy_module, "_swap_drain", None)
+        settings = getattr(proxy_module, "_swap_drain_settings", None)
+        if drain is not None and settings is not None:
+            current = settings()
+            out["drain"] = {
+                "enabled": current.enabled,
+                "timeout_s": current.timeout_s,
+                "backends": drain.snapshot(),
+            }
+    except Exception:
+        out["drain"] = None
     return out
 
 

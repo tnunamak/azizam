@@ -8,6 +8,12 @@ llm:
   # timeout_s; if they do not finish, the swap is refused and the request that
   # wanted it gets 503 + Retry-After. Off by default: a swap restarts at once.
   # A request in flight is never dropped from the count, however long it runs.
+  # /v1/status swap_state.drain shows, per backend, the requests in flight and
+  # the oldest one's age. If swaps keep returning 503 model_switch_deferred and
+  # that age is far beyond any real request, a lease leaked: no request is
+  # running, but the count says one is. Only a gateway restart clears it; use
+  # scripts/safe-restart (docs/ops/SAFE_RESTART.md), never a bare systemctl
+  # restart, so real requests in flight are drained first.
   # swap_drain:
   #   enabled: true
   #   timeout_s: 120          # longest a swap waits for requests in flight

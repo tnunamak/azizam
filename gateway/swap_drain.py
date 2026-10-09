@@ -158,6 +158,22 @@ class SwapDrain:
     def in_flight(self, backend: str) -> int:
         return len(self._leases.get(backend, ()))
 
+    def snapshot(self) -> dict[str, dict[str, float]]:
+        """Read-only diagnostics: in-flight count and oldest lease age per busy backend.
+
+        A lease whose age is far beyond any real request is leaked; see the
+        recovery note at ``llm.swap_drain`` in proxy_config.yml.
+        """
+        now = self._clock()
+        return {
+            backend: {
+                "in_flight": len(leases),
+                "oldest_lease_age_s": round(now - min(lease.started_at for lease in leases), 1),
+            }
+            for backend, leases in sorted(self._leases.items())
+            if leases
+        }
+
     # -- swapping side ------------------------------------------------------
 
     async def clear_for_swap(self, backend: str, settings: SwapDrainSettings) -> None:
