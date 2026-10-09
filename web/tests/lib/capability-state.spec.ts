@@ -7,7 +7,13 @@ import {
   type EngineSignal,
   type RequestSignal,
 } from "@/lib/capability-state";
-import { failingSince, hourSlots, hoursUp } from "@/components/product/uptime-bar";
+import {
+  failingSince,
+  healthHistory,
+  healthStory,
+  hourSlots,
+  hoursUp,
+} from "@/components/product/uptime-bar";
 
 const now = 1_800_000_000;
 const fresh = { source: "status", observed_at_s: now - 60 };
@@ -217,5 +223,53 @@ describe("uptime: hours up out of checked hours in the window", () => {
     );
     expect(hoursUp(slots)).toEqual({ up: 0, checked: 1 });
     expect(failingSince(slots)).toBe(end - 3600);
+  });
+});
+
+describe("the health story matches the strip (D1.3)", () => {
+  const end = 1_800_000_000;
+  // One check per hour, oldest first: hour index 0 is 24 h ago.
+  const day = (values: Array<number | null>) =>
+    hourSlots(
+      values.flatMap((value, index) =>
+        value === null ? [] : [[end - (24 - index) * 3600 + 1800, value]],
+      ),
+      end,
+    );
+  const up = Array<number | null>(24).fill(1);
+
+  it("counts every failing spell, not only the latest", () => {
+    const values = [...up];
+    values[1] = values[2] = 0; // spell 1
+    values[8] = values[9] = 0; // spell 2
+    values[22] = 0.5; // degraded now
+    values[23] = 0.5;
+    const history = healthHistory(day(values));
+    expect(history).toMatchObject({ down: 4, degraded: 2, spells: 3 });
+    expect(history.failingSince).toBe(end - 2 * 3600);
+    const story = healthStory(history)!;
+    expect(story).toMatch(
+      /^Down 4 and degraded 2 of the last 24 hours, in 3 spells; failing again since about /,
+    );
+  });
+
+  it("says one spell plainly", () => {
+    const values = [...up];
+    values[23] = 0;
+    expect(healthStory(healthHistory(day(values)))).toMatch(
+      /^Down 1 of the last 24 hours; failing since about /,
+    );
+  });
+
+  it("says when it recovered if it is not failing now", () => {
+    const values = [...up];
+    values[5] = 0;
+    const history = healthHistory(day(values));
+    expect(history.recoveredAt).toBe(end - 18 * 3600);
+    expect(healthStory(history)).toMatch(/; working again since about /);
+  });
+
+  it("says nothing when every checked hour was up", () => {
+    expect(healthStory(healthHistory(day(up)))).toBeNull();
   });
 });

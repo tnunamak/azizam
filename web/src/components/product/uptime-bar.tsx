@@ -51,6 +51,76 @@ export function failingSince(
   return since;
 }
 
+export type HealthHistory = {
+  /** Hours whose worst check was down. */
+  down: number;
+  /** Hours with a failed or degraded check that were not down. */
+  degraded: number;
+  /** Separate runs of failing hours; an hour with no check ends a run. */
+  spells: number;
+  /** Start of the failing run that reaches the latest hour, if any. */
+  failingSince: number | null;
+  /** End of the latest failing hour, when the engine is not failing now. */
+  recoveredAt: number | null;
+};
+
+/**
+ * What the strip shows, counted from the same hourly slots (D1.3: the card's
+ * words and the strip must tell one story).
+ */
+export function healthHistory(
+  slots: Array<{ start: number; value: number | null }>,
+): HealthHistory {
+  let down = 0;
+  let degraded = 0;
+  let spells = 0;
+  let lastBadEnd: number | null = null;
+  let previousBad = false;
+  for (const slot of slots) {
+    const bad = slot.value !== null && slot.value < 1;
+    if (bad) {
+      if (slot.value! <= 0) down += 1;
+      else degraded += 1;
+      if (!previousBad) spells += 1;
+      lastBadEnd = slot.start + 3600;
+    }
+    previousBad = bad;
+  }
+  const since = failingSince(slots);
+  return {
+    down,
+    degraded,
+    spells,
+    failingSince: since,
+    recoveredAt: since === null ? lastBadEnd : null,
+  };
+}
+
+/**
+ * One sentence for a problem card, from `healthHistory`: how much of the day
+ * failed, in how many spells, and whether it is failing now. Times are to the
+ * hour ("about"), because checks are counted per hour. Null when every
+ * checked hour was up.
+ */
+export function healthStory(history: HealthHistory): string | null {
+  const { down, degraded, spells, failingSince: since, recoveredAt } = history;
+  if (!down && !degraded) return null;
+  const amounts = [
+    down ? `down ${down}` : null,
+    degraded ? `degraded ${degraded}` : null,
+  ]
+    .filter(Boolean)
+    .join(" and ");
+  const span = `${amounts[0].toUpperCase()}${amounts.slice(1)} of the last 24 hours${
+    spells > 1 ? `, in ${spells} spells` : ""
+  }`;
+  if (since !== null)
+    return `${span}; failing ${spells > 1 ? "again " : ""}since about ${clock(since)}`;
+  return recoveredAt !== null
+    ? `${span}; working again since about ${clock(recoveredAt)}`
+    : span;
+}
+
 function slotClass(value: number | null, enabled: boolean): string {
   if (value === null || !enabled) return "bg-muted";
   if (value >= 1) return "bg-success/70";

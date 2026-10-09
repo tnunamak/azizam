@@ -38,6 +38,10 @@ SCENARIOS = (
 REMOTE_SERVICE = "household-remote"
 REMOTE_DOWN_HOURS = 4
 STALE_VOICE_HOURS = 7
+# Hours ago (within each day) when the video studio's checks were down, and
+# how many recent hours its checks answered "degraded".
+VIDEO_DOWN_HOURS = {9, 10, 16, 17}
+VIDEO_DEGRADED_HOURS = 2
 # Median latency (ms) per capability: a TTS clip and a video render differ by 100x.
 LATENCY_MEDIAN_MS = {
     "chat": 2600, "image": 14000, "image-edit": 18000, "tts": 1400, "stt": 3200,
@@ -793,8 +797,19 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
                 sort_keys=True,
                 separators=(",", ":"),
             )
-            up = (sid != "household-embedding" or hour > 4 * 24) and not (
-                sid == "household-video" and hour % 7 in {0, 1}
+            # The video studio flaps: it was down in two spells earlier in
+            # the day, and for the last two hours it has answered its check
+            # "degraded" (503, recovering after a queue timeout), as its live
+            # probe still does. The status sampler records degraded as 0.5.
+            # (Until D1.3 the seed wrote "down" for the last two hours while
+            # the live probe said "degraded", so the strip and the verdict
+            # disagreed.)
+            video_down = sid == "household-video" and hour % 24 in VIDEO_DOWN_HOURS
+            video_degraded = sid == "household-video" and hour < VIDEO_DEGRADED_HOURS
+            up = (
+                (sid != "household-embedding" or hour > 4 * 24)
+                and not video_down
+                and not video_degraded
             )
             if (
                 scenario == "provider-down"
@@ -805,7 +820,8 @@ def seed(state: Path, port: int, scenario: str | None = None, now: int | None = 
             samples.extend(
                 [
                     (ts, "service_up", tags, int(up)),
-                    (ts, "service_status_code", tags, 1 if up else 0),
+                    (ts, "service_status_code", tags,
+                     0.5 if video_degraded else 1 if up else 0),
                     (ts, "service_latency_ms", tags,
                      _lognormal(rng, 28 if up else 1400, 0.4, 5, 10000)),
                     (ts, "service_error_kind", tags, 0 if up else 3),
