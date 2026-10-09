@@ -54,7 +54,8 @@ import {
   type CalloutSeverity,
 } from "@/components/product/status-ui";
 import {
-  failingSince,
+  healthHistory,
+  healthStory,
   hourSlots,
   hoursUp,
   UptimeBar,
@@ -267,13 +268,6 @@ function EngineSheet({
   );
 }
 
-function clock(ts: number): string {
-  return new Date(ts * 1000).toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
 function joinNames(names: string[]): string {
   if (names.length < 3) return names.join(" and ");
   return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
@@ -295,11 +289,23 @@ function stateWordFor(key: CapabilityStateKey) {
   return { word: STATE_WORDS[key].word, tone: STATE_WORDS[key].tone };
 }
 
-function failedRequestsFact(records: ActivityRecord[]): ReactNode {
+/**
+ * Failed requests as evidence: how many of the sample, from whom, when, and
+ * the latest receipt. `who: false` leaves out the people and the time when
+ * the card's "Affects" already names them.
+ */
+function failedRequestsFact(
+  records: ActivityRecord[],
+  { who = true }: { who?: boolean } = {},
+): ReactNode {
   if (!records.length) return null;
-  const people = [
-    ...new Set(records.map((record) => record.person_label).filter(Boolean)),
-  ] as string[];
+  const people = who
+    ? ([
+        ...new Set(
+          records.map((record) => record.person_label).filter(Boolean),
+        ),
+      ] as string[])
+    : [];
   const latest = records[0];
   return (
     <span className="flex items-start gap-2">
@@ -318,8 +324,12 @@ function failedRequestsFact(records: ActivityRecord[]): ReactNode {
       ) : null}
       <span className="min-w-0">
         {records.length} of the latest {ACTIVITY_SAMPLE} requests
-        {people.length ? `, from ${joinNames(people)}` : ""}; latest{" "}
-        <RelativeTime ts={latest.created_at ?? null} fallback="" />
+        {people.length ? `, from ${joinNames(people)}` : ""}
+        {who ? (
+          <>
+            ; latest <RelativeTime ts={latest.created_at ?? null} fallback="" />
+          </>
+        ) : null}
         {latest.receipt?.request_id ? (
           <>
             {/* On a phone the link takes its own line, so no dot dangles. */}
@@ -346,6 +356,8 @@ type Problem = {
   /** Names the subject and its state word: "Video studio is down". */
   title: string;
   facts: Array<[string, ReactNode]>;
+  /** Supporting evidence: shown on wide screens, folded on a phone. */
+  evidence?: Array<[string, ReactNode]>;
   /** Plain paragraphs: the symptom, then the fix. */
   body?: string[];
   href?: string | null;
@@ -362,6 +374,65 @@ function backendFailures(records: ActivityRecord[], ids: Set<string>) {
       record.receipt?.backend &&
       ids.has(record.receipt.backend) &&
       isTerminalFailure(record.receipt.status),
+  );
+}
+
+/**
+ * Who and what a failing engine affects: the capabilities left without
+ * another engine, and the people (and their apps) whose requests failed.
+ */
+function affectsFact(
+  exposed: string[],
+  covered: string[],
+  failed: ActivityRecord[],
+): ReactNode {
+  const scope = exposed.length
+    ? `${joinNames(exposed)}: no other engine serves ${exposed.length === 1 ? "it" : "them"}.`
+    : covered.length
+      ? `Nothing yet: another engine still serves ${joinNames(covered.map((label) => label.toLowerCase()))}.`
+      : "Unknown";
+  const people = [
+    ...new Set(failed.map((record) => record.person_label).filter(Boolean)),
+  ] as string[];
+  const latest = failed[0];
+  let who: ReactNode = null;
+  if (people.length === 1 && failed.length === 1) {
+    const app = latest.app_label;
+    // An app often carries its owner's name ("Robin's personal app").
+    const namedApp = app?.toLowerCase().includes(people[0].toLowerCase());
+    who = (
+      <>
+        {namedApp ? `A request from ${app}` : `${people[0]}’s request`}
+        {app && !namedApp ? ` from ${app}` : ""} failed{" "}
+        <RelativeTime ts={latest.created_at ?? null} fallback="" />.
+      </>
+    );
+  } else if (people.length)
+    who = (
+      <>
+        {failed.length} requests from {joinNames(people)} failed; latest{" "}
+        <RelativeTime ts={latest.created_at ?? null} fallback="" />.
+      </>
+    );
+  return (
+    <span className="block space-y-1">
+      <span className="block">{scope}</span>
+      {who ? (
+        <span className="flex items-start gap-2">
+          <span className="flex shrink-0 -space-x-1 pt-px">
+            {people.slice(0, 4).map((name) => (
+              <PersonMark
+                key={name}
+                name={name}
+                size="xs"
+                className="ring-card ring-2"
+              />
+            ))}
+          </span>
+          <span className="min-w-0">{who}</span>
+        </span>
+      ) : null}
+    </span>
   );
 }
 
@@ -420,35 +491,23 @@ function engineProblems(
       ),
     );
     const exposed = labels.filter((label) => !covered.includes(label));
+    // Scope first: what stops working, for whom, and who already hit it
+    // (not the capability name again; the title names the engine).
     const facts: Array<[string, ReactNode]> = [
-      [
-        "Affects",
-        [
-          ...exposed,
-          ...covered.map(
-            (label) => `${label} (another engine still serves it)`,
-          ),
-        ].join(", ") || "Unknown",
-      ],
+      ["Affects", affectsFact(exposed, covered, failed)],
     ];
+    const evidence: Array<[string, ReactNode]> = [];
     if (affected.length === 1) {
       const series = first.backend?.history?.status_series;
       const slots = hourSlots(series, end);
-      const { up, checked } = hoursUp(slots);
-      const since = failingSince(slots);
-      // Hourly checks place the start within an hour, no closer.
-      if (since)
-        facts.push([
-          "Started",
-          `Between ${clock(since)} and ${clock(since + 3600)}`,
-        ]);
+      // The words come from the same hourly slots the strip draws, so the
+      // card never calls a day of failures a short, recent problem.
+      const story = healthStory(healthHistory(slots));
+      if (story) facts.push(["Last 24 hours", story]);
       if (series?.length)
-        facts.push([
+        evidence.push([
           "Health checks",
-          <div key="u" className="max-w-md space-y-1">
-            <span>
-              {up} of {checked} checked hours up, last 24 h
-            </span>
+          <div key="u" className="max-w-md">
             <UptimeBar
               series={series}
               end={end}
@@ -466,9 +525,9 @@ function engineProblems(
           : names.join(", "),
       ]);
     }
-    facts.push([
+    evidence.push([
       "Failed requests",
-      failedRequestsFact(failed) ??
+      failedRequestsFact(failed, { who: false }) ??
         `None in the latest ${ACTIVITY_SAMPLE} requests`,
     ]);
     const single = affected.length === 1;
@@ -495,6 +554,7 @@ function engineProblems(
           ? `${first.shortName} ${word}`
           : `${affected.length} engines ${word}`,
       facts,
+      evidence,
       body: single ? [engineRemedy(first.lastError)] : undefined,
       href: single
         ? `/engines/?service=${encodeURIComponent(first.service.id)}`
@@ -640,6 +700,7 @@ function ProblemCard({
       severity={problem.severity}
       title={problem.title}
       facts={problem.facts}
+      evidence={problem.evidence}
       headerAction={
         problem.href || problem.disk ? (
           <>
@@ -1153,6 +1214,8 @@ export function StatusClient() {
   if (providers.state === "error") note = "Provider status did not load.";
   const tableOpen = showAll || !problems.length;
   const capsOpen = !problems.length;
+  // The side rail exists only while capabilities and engines are folded.
+  const rail = problems.length > 0 && !tableOpen;
   // Engines that already have a card are not counted again in the summary.
   const troubled = new Set(
     problems.flatMap((problem) => {
@@ -1171,21 +1234,45 @@ export function StatusClient() {
   const providersDown = providerList.filter(
     (provider) => providerState(provider) === "down",
   ).length;
-  const foldedSummary = [
-    count("ready")
-      ? `${count("ready")} ${troubled.size ? "other " : ""}engine${count("ready") === 1 ? "" : "s"} ready`
-      : null,
-    count("off") ? `${count("off")} off` : null,
-    count("unknown") ? `${count("unknown")} unknown` : null,
-    count("busy") ? `${count("busy")} busy` : null,
-    count("degraded") ? `${count("degraded")} degraded` : null,
-    count("down") ? `${count("down")} down` : null,
-    providerList.length
-      ? `${providerList.length} provider${providerList.length === 1 ? "" : "s"}${providersDown ? ` (${providersDown} down)` : ""}`
-      : null,
-  ]
+  // The folded engines and providers, in sentences (D1.3: "4 other engines
+  // ready, 1 off, 1 provider" read as a code).
+  const engineParts = (
+    [
+      ["ready", "ready"],
+      ["busy", "busy"],
+      ["degraded", "degraded"],
+      ["down", "down"],
+      ["unknown", "not checked"],
+      ["off", "turned off"],
+    ] as Array<[CapabilityStateKey, string]>
+  )
+    .map(([key, words]) => [count(key), words] as const)
+    .filter(([n]) => n > 0);
+  const engineSentence = engineParts.length
+    ? engineParts
+        .map(([n, words], index) =>
+          index === 0
+            ? `${n} ${troubled.size ? "other " : ""}engine${n === 1 ? " is" : "s are"} ${words}`
+            : `${n} ${n === 1 ? "is" : "are"} ${words}`,
+        )
+        .reduce(
+          (text, part, index, parts) =>
+            index === 0
+              ? part
+              : `${text}${index === parts.length - 1 ? " and " : ", "}${part}`,
+          "",
+        ) + "."
+    : null;
+  const providerSentence = providerList.length
+    ? `${providerList.length} remote provider${providerList.length === 1 ? " is" : "s are"} set up${
+        providersDown
+          ? `; ${providersDown} ${providersDown === 1 ? "is" : "are"} down`
+          : ""
+      }.`
+    : null;
+  const foldedSummary = [engineSentence, providerSentence]
     .filter(Boolean)
-    .join(", ");
+    .join(" ");
   // A provider-status failure and its retry stay visible even while the
   // table is folded: an error is not healthy detail (principle 7).
   const providerError =
@@ -1211,7 +1298,7 @@ export function StatusClient() {
   return (
     // A reading column, like Linear and incident.io status pages (about 670 to
     // 900 px), so facts and actions stay within one eye span.
-    <div className="max-w-4xl min-w-0">
+    <div className={cn("max-w-4xl min-w-0", rail && "xl:max-w-6xl")}>
       <PageHeader
         title="Status"
         actions={
@@ -1261,7 +1348,16 @@ export function StatusClient() {
           {note ? <span>{note}</span> : null}
         </StatusLine>
       </PageHeader>
-      <div className="flex min-w-0 flex-col gap-10">
+      {/* While a card explains a problem, a wide screen keeps the card in a
+          reading column and puts the rest of the system beside it (D1.3:
+          the right third stood empty). */}
+      <div
+        className={cn(
+          "flex min-w-0 flex-col gap-10",
+          rail &&
+            "xl:grid xl:grid-cols-[minmax(0,1fr)_18rem] xl:items-start xl:gap-x-10",
+        )}
+      >
         {statusIsPending && registryIsPending ? (
           <div aria-busy="true" className="space-y-4">
             <Skeleton className="rounded-panel h-40 w-full" />
@@ -1272,7 +1368,7 @@ export function StatusClient() {
             {problems.length ? (
               <section
                 aria-labelledby="attention-heading"
-                className="space-y-3"
+                className="space-y-3 xl:col-start-1 xl:row-start-1"
               >
                 <SectionHeading
                   id="attention-heading"
@@ -1292,7 +1388,10 @@ export function StatusClient() {
             ) : null}
 
             {running.length ? (
-              <section aria-labelledby="running-heading">
+              <section
+                aria-labelledby="running-heading"
+                className="xl:col-start-1 xl:row-start-2"
+              >
                 <SectionHeading
                   id="running-heading"
                   title="Running now"
@@ -1330,131 +1429,133 @@ export function StatusClient() {
               </section>
             ) : null}
 
-            {/* Capability states lean on engine checks; without a current
+            <div className="flex min-w-0 flex-col gap-10 xl:col-start-2 xl:row-span-2 xl:row-start-1">
+              {/* Capability states lean on engine checks; without a current
               check they cannot vouch for anything, so they stay hidden. */}
-            {health && modelReady ? (
-              <section aria-labelledby="capability-strip-heading">
-                <SectionHeading
-                  id="capability-strip-heading"
-                  title="Capabilities"
-                />
-                {capsOpen ? (
-                  <CapabilityList
-                    // A failing engine already has a callout with its symptom.
-                    views={model.views.map((view) =>
-                      view.failing.length ? { ...view, detail: null } : view,
-                    )}
-                    columns={2}
+              {health && modelReady ? (
+                <section aria-labelledby="capability-strip-heading">
+                  <SectionHeading
+                    id="capability-strip-heading"
+                    title="Capabilities"
                   />
+                  {capsOpen ? (
+                    <CapabilityList
+                      // A failing engine already has a callout with its symptom.
+                      views={model.views.map((view) =>
+                        view.failing.length ? { ...view, detail: null } : view,
+                      )}
+                      columns={2}
+                    />
+                  ) : (
+                    <CapabilityChips views={model.views} railAt={rail} />
+                  )}
+                </section>
+              ) : null}
+
+              <section aria-labelledby="layers-heading">
+                <SectionHeading
+                  id="layers-heading"
+                  title="Engines and providers"
+                />
+                {registryIsPending ? (
+                  <Skeleton className="rounded-panel h-48 w-full" />
+                ) : !tableEngines.length && !providerList.length ? (
+                  <Callout
+                    severity="info"
+                    title="No engines yet"
+                    actions={
+                      <Button asChild size="sm">
+                        <Link href="/engines">Add an engine</Link>
+                      </Button>
+                    }
+                  >
+                    <p className="text-muted-foreground">
+                      Connect an engine on this computer, or a provider you pay
+                      for.
+                    </p>
+                    {providerError}
+                  </Callout>
+                ) : tableOpen ? (
+                  <div className="bg-card rounded-panel border px-4 sm:px-5">
+                    <table className="w-full table-fixed">
+                      <caption className="sr-only">Engine status</caption>
+                      <thead>
+                        <tr className="text-subtle-foreground border-b text-left text-xs">
+                          <th scope="col" className="py-2 font-normal">
+                            Engine
+                          </th>
+                          <th
+                            scope="col"
+                            className="hidden py-2 font-normal md:table-cell"
+                          >
+                            Serves
+                          </th>
+                          <th
+                            scope="col"
+                            className="hidden w-52 py-2 font-normal sm:table-cell"
+                          >
+                            Health checks, last 24 h
+                          </th>
+                          <th
+                            scope="col"
+                            className="hidden w-20 py-2 text-right font-normal sm:table-cell"
+                          >
+                            <span className="sr-only">Hours up</span>
+                          </th>
+                          <th scope="col" className="w-32 py-2 font-normal">
+                            State
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {tableEngines.map((engine) => (
+                          <EngineRow
+                            key={engine.service.id}
+                            engine={engine}
+                            selected={engine.service.id === selectedServiceId}
+                            end={end}
+                          />
+                        ))}
+                        {providerList.map((provider) => (
+                          <ProviderRow key={provider.id} provider={provider} />
+                        ))}
+                      </tbody>
+                    </table>
+                    {providerError ? (
+                      <div className="border-t py-3">{providerError}</div>
+                    ) : providers.state === "ready" && !providerList.length ? (
+                      // The provider layer's empty state, with its next action.
+                      <p className="text-muted-foreground flex flex-wrap items-center gap-x-3 border-t py-3 text-sm">
+                        <span>No remote providers are configured.</span>
+                        <Link
+                          href="/engines"
+                          className="text-link font-medium underline-offset-4 hover:underline max-sm:inline-block max-sm:py-3"
+                        >
+                          Review connections
+                        </Link>
+                      </p>
+                    ) : null}
+                  </div>
                 ) : (
-                  <CapabilityChips views={model.views} />
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setShowAll(true)}
+                      className="bg-card hover:border-input rounded-panel flex min-h-11 w-full flex-wrap items-center justify-between gap-x-3 gap-y-1 border px-5 py-3 text-left text-sm"
+                    >
+                      <span>{foldedSummary || "Engines and providers"}</span>
+                      <span className="text-link inline-flex shrink-0 items-center gap-1 font-medium whitespace-nowrap">
+                        Show all
+                        <ChevronRight aria-hidden="true" className="size-4" />
+                      </span>
+                    </button>
+                    {providerError ? (
+                      <div className="mt-3">{providerError}</div>
+                    ) : null}
+                  </>
                 )}
               </section>
-            ) : null}
-
-            <section aria-labelledby="layers-heading">
-              <SectionHeading
-                id="layers-heading"
-                title="Engines and providers"
-              />
-              {registryIsPending ? (
-                <Skeleton className="rounded-panel h-48 w-full" />
-              ) : !tableEngines.length && !providerList.length ? (
-                <Callout
-                  severity="info"
-                  title="No engines yet"
-                  actions={
-                    <Button asChild size="sm">
-                      <Link href="/engines">Add an engine</Link>
-                    </Button>
-                  }
-                >
-                  <p className="text-muted-foreground">
-                    Connect an engine on this computer, or a provider you pay
-                    for.
-                  </p>
-                  {providerError}
-                </Callout>
-              ) : tableOpen ? (
-                <div className="bg-card rounded-panel border px-4 sm:px-5">
-                  <table className="w-full table-fixed">
-                    <caption className="sr-only">Engine status</caption>
-                    <thead>
-                      <tr className="text-subtle-foreground border-b text-left text-xs">
-                        <th scope="col" className="py-2 font-normal">
-                          Engine
-                        </th>
-                        <th
-                          scope="col"
-                          className="hidden py-2 font-normal md:table-cell"
-                        >
-                          Serves
-                        </th>
-                        <th
-                          scope="col"
-                          className="hidden w-52 py-2 font-normal sm:table-cell"
-                        >
-                          Health checks, last 24 h
-                        </th>
-                        <th
-                          scope="col"
-                          className="hidden w-20 py-2 text-right font-normal sm:table-cell"
-                        >
-                          <span className="sr-only">Hours up</span>
-                        </th>
-                        <th scope="col" className="w-32 py-2 font-normal">
-                          State
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {tableEngines.map((engine) => (
-                        <EngineRow
-                          key={engine.service.id}
-                          engine={engine}
-                          selected={engine.service.id === selectedServiceId}
-                          end={end}
-                        />
-                      ))}
-                      {providerList.map((provider) => (
-                        <ProviderRow key={provider.id} provider={provider} />
-                      ))}
-                    </tbody>
-                  </table>
-                  {providerError ? (
-                    <div className="border-t py-3">{providerError}</div>
-                  ) : providers.state === "ready" && !providerList.length ? (
-                    // The provider layer's empty state, with its next action.
-                    <p className="text-muted-foreground flex flex-wrap items-center gap-x-3 border-t py-3 text-sm">
-                      <span>No remote providers are configured.</span>
-                      <Link
-                        href="/engines"
-                        className="text-link font-medium underline-offset-4 hover:underline max-sm:inline-block max-sm:py-3"
-                      >
-                        Review connections
-                      </Link>
-                    </p>
-                  ) : null}
-                </div>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setShowAll(true)}
-                    className="bg-card hover:border-input rounded-panel flex min-h-11 w-full flex-wrap items-center justify-between gap-x-3 gap-y-1 border px-5 py-3 text-left text-sm"
-                  >
-                    <span>{foldedSummary || "Engines and providers"}</span>
-                    <span className="text-link inline-flex shrink-0 items-center gap-1 font-medium whitespace-nowrap">
-                      Show all
-                      <ChevronRight aria-hidden="true" className="size-4" />
-                    </span>
-                  </button>
-                  {providerError ? (
-                    <div className="mt-3">{providerError}</div>
-                  ) : null}
-                </>
-              )}
-            </section>
+            </div>
           </>
         )}
         <Sheet open={diskHelpOpen} onOpenChange={setDiskHelpOpen}>

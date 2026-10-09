@@ -247,7 +247,7 @@ for (const theme of ["light", "dark"] as const) {
           // counts; the disabled engine is counted and listed as Off.
           await main
             .getByRole("button", {
-              name: "2 engines ready, 1 off, 1 provider Show all",
+              name: "2 engines are ready and 1 is turned off. 1 remote provider is set up. Show all",
               exact: true,
             })
             .click();
@@ -324,7 +324,7 @@ for (const theme of ["light", "dark"] as const) {
           ).toHaveCount(0);
           await expect(
             main.getByRole("button", {
-              name: "2 engines ready, 1 off Show all",
+              name: "2 engines are ready and 1 is turned off. Show all",
               exact: true,
             }),
           ).toBeVisible();
@@ -365,7 +365,7 @@ test("failed refresh removes stale green engine observations", async ({
   // Open the folded layer table so the engines' green states are on screen.
   await main
     .getByRole("button", {
-      name: "2 engines ready, 1 off Show all",
+      name: "2 engines are ready and 1 is turned off. Show all",
       exact: true,
     })
     .click();

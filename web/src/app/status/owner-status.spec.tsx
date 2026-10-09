@@ -559,3 +559,65 @@ it.each(["empty", "partial"])(
     expect(screen.queryByText("Everything works")).toBeNull();
   },
 );
+
+it("tells the 24-hour story from the strip's own hours and names who is affected (D1.3)", async () => {
+  const end = 1_800_000_000;
+  // One check per hour: down 2 h early in the day, down 1 h at midday, and
+  // failing again for the last 2 hours.
+  const series = Array.from({ length: 24 }, (_, index) => {
+    const bad = [2, 3, 12, 22, 23].includes(index);
+    return [end - (24 - index) * 3600 + 1800, bad ? 0 : 1];
+  });
+  mount({
+    generated_at: end,
+    current_health: {
+      state: "bad",
+      tone: "bad",
+      label: "Needs attention",
+      detail: "Chat is unavailable.",
+      observation_available: true,
+      services: [
+        {
+          service_id: "chat",
+          name: "Local chat",
+          engine_label: "Local chat",
+          capability_title: "Chat",
+          capability_labels: ["Chat"],
+          icon_key: "chat",
+          configured: true,
+          enabled: true,
+          role: "primary",
+          routable: true,
+          observation: "down",
+          tone: "bad",
+          last_error: "Connection refused",
+        },
+      ],
+    },
+    backends: [
+      { key: "chat", service_id: "chat", history: { status_series: series } },
+    ],
+  } as unknown as StatusPayload);
+  const card = (
+    await screen.findByRole("heading", {
+      name: "Local chat is not accepting connections",
+    })
+  ).closest("article")!;
+  expect(
+    within(card).getByText(
+      /^Down 5 of the last 24 hours, in 3 spells; failing again since about /,
+    ),
+  ).toBeVisible();
+  // No narrow "Started" window that the strip contradicts.
+  expect(within(card).queryByText("Started")).not.toBeInTheDocument();
+  // The folded engines read as a sentence, not a code.
+  expect(
+    screen.getByRole("button", {
+      name: "1 other engine is turned off. Show all",
+    }),
+  ).toBeVisible();
+  // Affects names the scope, not the capability again.
+  expect(
+    within(card).getByText("Chat: no other engine serves it."),
+  ).toBeVisible();
+});
