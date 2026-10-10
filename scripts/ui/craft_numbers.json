@@ -88,7 +88,6 @@
     "models": [
       "controls",
       "type",
-      "rows",
       "geometry",
       "cards",
       "colour"

@@ -191,6 +191,12 @@ const tagLabels: Record<ModelTag, string> = {
   "file-input": "File input",
 };
 
+// On a phone a catalog row is a wrapped group of its cells, not seven columns
+// that scroll sideways: the name, its copy button and its actions stay in view.
+const phoneRowClass =
+  "max-sm:flex max-sm:flex-wrap max-sm:items-center max-sm:gap-x-3 max-sm:gap-y-1 max-sm:px-3 max-sm:py-2";
+const phoneCellClass = "max-sm:h-auto! max-sm:p-0! max-sm:empty:hidden";
+
 // Inputs -> outputs and the chat capability tags /v1/models reports.
 function ModelFacts({
   row,
@@ -562,23 +568,23 @@ function AliasOptionRow({
   onDetail: (row: CatalogRow) => void;
 }) {
   return (
-    <TableRow onClick={() => onDetail(row)} className="cursor-pointer">
-      <TableCell className="h-(--row-2) py-1! max-sm:h-(--row-phone-2)!" />
-      <TableCell className="h-(--row-2) py-1! max-sm:h-(--row-phone-2)!">
+    <TableRow onClick={() => onDetail(row)} className={cn("cursor-pointer", phoneRowClass)}>
+      <TableCell className="h-(--row-2) py-1! max-sm:hidden" />
+      <TableCell className={cn("h-(--row-2) py-1!", phoneCellClass, "max-sm:w-full")}>
         <h3 className="text-body font-medium">{titleFor(row) ?? ""}</h3>
         <p className="text-muted-foreground text-meta mt-0.5 max-w-80 truncate" title={descriptionFor(row)}>
           {descriptionFor(row)}
         </p>
       </TableCell>
-      <TableCell className="py-1!"><ModelFacts row={row} /></TableCell>
-      <TableCell className="py-1!"><CopyModelName row={row} /></TableCell>
-      <TableCell numeric className="py-1!">{costLabel(row) ?? ""}</TableCell>
-      <TableCell className="py-1!">
+      <TableCell className={cn("py-1!", phoneCellClass)}><ModelFacts row={row} /></TableCell>
+      <TableCell className={cn("py-1!", phoneCellClass)}><CopyModelName row={row} /></TableCell>
+      <TableCell numeric className={cn("py-1!", phoneCellClass)}>{costLabel(row) ?? ""}</TableCell>
+      <TableCell className={cn("py-1!", phoneCellClass)}>
         {availabilityState(row) !== "ready" && (
           <Availability row={row} showReason={false} />
         )}
       </TableCell>
-      <TableCell className="py-1!">
+      <TableCell className={cn("py-1!", phoneCellClass, "max-sm:ml-auto")}>
         <Button
           variant="ghost"
           size="icon"
@@ -613,8 +619,8 @@ function CapabilityRow({
   return (
     <>
     <TableBody aria-label={`${primaryCapabilityLabel(primary)} models`}>
-      <TableRow className="cursor-pointer" onClick={() => onDetail(primary)}>
-        <TableCell className="py-1! max-sm:h-(--row-phone-2)!">
+      <TableRow className={cn("cursor-pointer", phoneRowClass)} onClick={() => onDetail(primary)}>
+        <TableCell className={cn("py-1!", phoneCellClass)}>
           <div className="flex items-center gap-3">
             <CatalogIcon row={primary} />
             <h2 className="text-body font-medium">
@@ -622,18 +628,18 @@ function CapabilityRow({
             </h2>
           </div>
         </TableCell>
-        <TableCell className="py-1!">
+        <TableCell className={cn("py-1!", phoneCellClass)}>
           <h3 className="text-body font-medium">{titleFor(primary)}</h3>
         </TableCell>
-        <TableCell className="py-1!"><ModelFacts row={primary} /></TableCell>
-        <TableCell className="py-1!"><CopyModelName row={primary} /></TableCell>
-        <TableCell numeric className="py-1!">{costLabel(primary)}</TableCell>
-        <TableCell className="py-1!">
+        <TableCell className={cn("py-1!", phoneCellClass)}><ModelFacts row={primary} /></TableCell>
+        <TableCell className={cn("py-1!", phoneCellClass)}><CopyModelName row={primary} /></TableCell>
+        <TableCell numeric className={cn("py-1!", phoneCellClass)}>{costLabel(primary)}</TableCell>
+        <TableCell className={cn("py-1!", phoneCellClass)}>
           {availabilityState(primary) !== "ready" && (
             <Availability row={primary} showReason={false} />
           )}
         </TableCell>
-        <TableCell className="py-1!">
+        <TableCell className={cn("py-1!", phoneCellClass, "max-sm:ml-auto")}>
           <div className="flex items-center justify-end gap-2">
             {alternatives.length > 0 && (
               <Button
@@ -1081,7 +1087,7 @@ export default function ModelsClient() {
               className="bg-card overflow-hidden rounded-panel border"
             >
               <Table aria-label="Available model aliases">
-                <TableHeader>
+                <TableHeader className="max-sm:hidden">
                   <TableRow>
                     <TableHead>Capability</TableHead>
                     <TableHead>Model</TableHead>

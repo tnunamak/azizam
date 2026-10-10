@@ -356,7 +356,7 @@ export function Requests() {
               <p>The requests already loaded are still shown.</p>
             </Callout>
           )}
-          <Card>
+          <Card className="gap-0 overflow-hidden p-0! max-sm:p-0!">
             <Table dense aria-label="Request receipts" className="table-fixed">
               <TableBody>
                 {rows.map((row, index) => (
