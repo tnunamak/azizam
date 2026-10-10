@@ -51,7 +51,7 @@ import httpx
 import yaml
 from fastapi import FastAPI, Request, Response, WebSocket
 from fastapi.responses import StreamingResponse, FileResponse, RedirectResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from gateway.ui_static import UIStaticFiles
 from starlette.datastructures import FormData
 from starlette.requests import ClientDisconnect, HTTPConnection
 from websockets.asyncio.client import connect as ws_connect
@@ -13283,7 +13283,7 @@ def mount_web_ui(target_app: FastAPI, directory: Path = WEB_UI_DIR) -> bool:
         return False
     target_app.mount(
         "/ui",
-        StaticFiles(directory=str(directory), html=True, check_dir=False),
+        UIStaticFiles(directory=str(directory), html=True, check_dir=False),
         name="web_ui",
     )
     return True
