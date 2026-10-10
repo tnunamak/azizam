@@ -47,23 +47,25 @@ it("resets a failed Home image on the first source-change commit", async () => {
     available: true,
   };
   client.setQueryData(["library", "home-recent-creations"], { assets: [creation] });
-  let capture = false;
   const commits: Array<string | null> = [];
   render(
     createElement(QueryClientProvider, { client },
       createElement(Profiler, {
         id: "home-media",
         onRender: () => {
-          if (capture) commits.push(screen.queryByRole("img", { name: "Reset Home image" })?.getAttribute("src") ?? null);
+          // Only commits rendered after the cache holds the new source count;
+          // earlier commits (pending queries, timers) legitimately show the failure.
+          const cached = client.getQueryData<{ assets: Array<{ download_url: string }> }>(
+            ["library", "home-recent-creations"],
+          );
+          if (cached?.assets[0]?.download_url !== "/home-new.png") return;
+          commits.push(screen.queryByRole("img", { name: "Reset Home image" })?.getAttribute("src") ?? null);
         },
       }, createElement(HomePage)),
     ),
   );
   fireEvent.error(screen.getByRole("img", { name: "Reset Home image" }));
   expect(screen.queryByRole("img", { name: "Reset Home image" })).toBeNull();
-  // Let the page's other queries settle so the first captured commit is the source change.
-  await waitFor(() => expect(client.isFetching()).toBe(0));
-  capture = true;
   act(() => {
     client.setQueryData(["library", "home-recent-creations"], {
       assets: [{ ...creation, download_url: "/home-new.png" }],
