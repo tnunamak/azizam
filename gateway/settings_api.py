@@ -199,7 +199,7 @@ def create_settings_router(*, auth: AdminAuth, admin_path: Path,
             except Exception:
                 return JSONResponse({"error": {"code": "prompt_retention_pending",
                     "message": "The setting was saved. Older prompt cleanup is pending and will be retried."}},
-                    status_code=503, headers={"Cache-Control": "no-store"})
+                    status_code=202, headers={"Cache-Control": "no-store"})
         if body["never_keep"]:
             try:
                 await asyncio.to_thread(prompt_memory.prune_all_before, int(changed["updated_at"]), path=prompt_memory_path)

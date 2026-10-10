@@ -126,7 +126,7 @@ def create_me_prompt_memory_router(
             except Exception:
                 return JSONResponse({"error": {"code": "prompt_retention_pending",
                     "message": "The setting was saved. Older prompt cleanup is pending and will be retried."}},
-                    status_code=503, headers={"Cache-Control": "no-store"})
+                    status_code=202, headers={"Cache-Control": "no-store"})
         if not remember:
             cutoff = int(changed["updated_at"])
             kwargs = {"path": prompt_memory_path} if prompt_memory_path is not None else {}

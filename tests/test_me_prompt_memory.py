@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-from gateway import admin_store, prompt_memory
+from gateway import admin_store, prompt_memory, settings_api
 from gateway.admin_oidc import AdminSession
 from gateway.me_prompt_memory import create_me_prompt_memory_router
 
@@ -219,3 +221,88 @@ def test_off_intent_write_failure_leaves_preference_unchanged(tmp_path, monkeypa
                           headers={"x-azizam-user-action": "1"})
     assert response.status_code == 503
     assert client.get("/me/api/prompt-memory").json()["prompt_memory"]["remember"] is True
+
+
+def _retention_client(scope, admin_db, prompt_db, user_id, monkeypatch):
+    if scope == "member":
+        return (
+            _client(admin_db, prompt_db, user_id=user_id),
+            "/me/api/prompt-memory",
+            {"x-azizam-user-action": "1"},
+            {"remember": True, "retention": "3_months"},
+            "retention",
+            "put_prompt_memory_preference",
+        )
+    owner = SimpleNamespace(
+        subject=user_id, roles=("owner",), actor_kind="user",
+        audit_actor_id=user_id, actor_label="Owner",
+    )
+    monkeypatch.setattr(settings_api, "_require_admin", lambda _auth, _request: owner)
+    app = FastAPI()
+    app.include_router(settings_api.create_settings_router(
+        auth=None, admin_path=admin_db, config_provider=lambda: {},
+        prompt_memory_path=prompt_db,
+    ))
+    client = TestClient(app)
+    path = "/admin/api/settings/prompt-memory"
+    revision = client.get(path).json()["revision"]
+    return (
+        client, path, {"if-match": revision},
+        {"default_remember": True, "never_keep": False, "retention_cap": "3_months"},
+        "retention_cap", "put_operator_setting_with_audit",
+    )
+
+
+@pytest.mark.parametrize("scope", ["member", "household"])
+def test_saved_retention_cleanup_failure_returns_accepted(tmp_path, monkeypatch, scope):
+    admin_db, prompt_db = tmp_path / "admin.db", tmp_path / "prompts.db"
+    admin_store.init_db(admin_db)
+    user = admin_store.upsert_oidc_user("issuer", "maker", path=admin_db)
+    client, path, headers, body, retention_key, _ = _retention_client(
+        scope, admin_db, prompt_db, user["id"], monkeypatch,
+    )
+    cleanup_calls = []
+
+    def busy(*args, **kwargs):
+        cleanup_calls.append((args, kwargs))
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(prompt_memory, "tighten_retention", busy)
+    response = client.put(path, json=body, headers=headers)
+
+    assert response.status_code == 202
+    assert response.json() == {"error": {
+        "code": "prompt_retention_pending",
+        "message": "The setting was saved. Older prompt cleanup is pending and will be retried.",
+    }}
+    assert response.headers["cache-control"] == "no-store"
+    assert len(cleanup_calls) == 1
+    assert client.get(path).json()["prompt_memory"][retention_key] == "3_months"
+
+
+@pytest.mark.parametrize("scope", ["member", "household"])
+def test_unsaved_retention_write_failure_remains_unavailable(tmp_path, monkeypatch, scope):
+    admin_db, prompt_db = tmp_path / "admin.db", tmp_path / "prompts.db"
+    admin_store.init_db(admin_db)
+    user = admin_store.upsert_oidc_user("issuer", "maker", path=admin_db)
+    client, path, headers, body, _, writer = _retention_client(
+        scope, admin_db, prompt_db, user["id"], monkeypatch,
+    )
+    before = client.get(path).json()["prompt_memory"]
+    cleanup_calls = []
+
+    def busy(*args, **kwargs):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(admin_store, writer, busy)
+    monkeypatch.setattr(prompt_memory, "tighten_retention",
+                        lambda *args, **kwargs: cleanup_calls.append((args, kwargs)))
+    response = client.put(path, json=body, headers=headers)
+
+    assert response.status_code == 503
+    assert response.json() == {"error": {
+        "code": "prompt_erasure_unavailable",
+        "message": "The setting wasn’t saved. Try again.",
+    }}
+    assert client.get(path).json()["prompt_memory"] == before
+    assert cleanup_calls == []
