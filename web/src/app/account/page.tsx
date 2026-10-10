@@ -194,6 +194,9 @@ function PromptsSection() {
             />
             <SettingRow
               label="Forget prompts after"
+              // One line on a phone too: the label truncates before the
+              // control wraps under it (DESIGN: phone rows are 64).
+              className="max-sm:flex-nowrap"
               description={
                 cap === "never"
                   ? "Creations stay in Library."
@@ -213,7 +216,7 @@ function PromptsSection() {
                   <SelectTrigger
                     size="sm"
                     aria-label="Forget prompts after"
-                    className="min-w-32"
+                    className="sm:min-w-32"
                   >
                     <SelectValue />
                   </SelectTrigger>
@@ -233,6 +236,9 @@ function PromptsSection() {
             />
             <SettingRow
               label="Delete my saved prompts"
+              // One line on a phone too: the label truncates before the
+              // control wraps under it (DESIGN: phone rows are 64).
+              className="max-sm:flex-nowrap"
               description="Removes every saved prompt now."
               control={
                 <Button

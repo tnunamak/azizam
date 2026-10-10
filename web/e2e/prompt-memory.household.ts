@@ -401,7 +401,7 @@ test.describe("Settings: the household's rules", () => {
       has: owner.page.getByRole("heading", { name: "Prompts" }),
     });
     await section
-      .getByRole("combobox", { name: "Longest time to keep prompts" })
+      .getByRole("combobox", { name: "Keep prompts for" })
       .click();
     await owner.page.getByRole("option", { name: "3 months" }).click();
     await owner.page
@@ -409,7 +409,7 @@ test.describe("Settings: the household's rules", () => {
       .getByRole("button", { name: "Delete older prompts" })
       .click();
     await expect(
-      section.getByRole("combobox", { name: "Longest time to keep prompts" }),
+      section.getByRole("combobox", { name: "Keep prompts for" }),
     ).toHaveText("3 months");
 
     const member = await as(browser, seed.member_email, baseURL!);

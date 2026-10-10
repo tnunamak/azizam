@@ -273,7 +273,7 @@ describe("Settings: the household's prompt rules", () => {
     );
     wrap(<HouseholdPromptsSection />);
     const select = await screen.findByRole("combobox", {
-      name: "Longest time to keep prompts",
+      name: "Keep prompts for",
     });
     await user.click(select);
     await user.click(await screen.findByRole("option", { name: "No limit" }));
@@ -285,7 +285,7 @@ describe("Settings: the household's prompt rules", () => {
     );
     expect(screen.queryByRole("dialog")).toBeNull();
     await user.click(
-      screen.getByRole("combobox", { name: "Longest time to keep prompts" }),
+      screen.getByRole("combobox", { name: "Keep prompts for" }),
     );
     await user.click(await screen.findByRole("option", { name: "3 months" }));
     expect(await screen.findByRole("dialog")).toHaveTextContent(

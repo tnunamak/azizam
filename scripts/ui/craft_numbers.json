@@ -9,7 +9,8 @@
     "usage": "/ui/usage/",
     "workflows": "/ui/workflows/",
     "settings": "/ui/settings/",
-    "apps": "/ui/apps/"
+    "apps": "/ui/apps/",
+    "account": "/ui/account/"
   },
   "enforce": {
     "home": [
@@ -22,6 +23,14 @@
       "controls"
     ],
     "settings": [
+      "controls",
+      "type",
+      "rows",
+      "geometry",
+      "cards",
+      "colour"
+    ],
+    "account": [
       "controls",
       "type",
       "rows",

@@ -207,8 +207,11 @@ function Rows({
         }
       />
       <SettingRow
-        label="Longest time to keep prompts"
-        description="Applies to everyone, as a limit."
+        label="Keep prompts for"
+        // One line on a phone too: the label truncates before the
+        // control wraps under it (DESIGN: phone rows are 64).
+        className="max-sm:flex-nowrap"
+        description="The longest, for everyone."
         control={
           <Select
             value={cap}
@@ -221,8 +224,8 @@ function Rows({
           >
             <SelectTrigger
               size="sm"
-              aria-label="Longest time to keep prompts"
-              className="min-w-32"
+              aria-label="Keep prompts for"
+              className="sm:min-w-32"
             >
               <SelectValue />
             </SelectTrigger>

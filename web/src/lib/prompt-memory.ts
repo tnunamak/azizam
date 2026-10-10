@@ -72,7 +72,7 @@ export const memberRetentionLabel: Record<Retention, string> = {
   "3_months": "3 months",
 };
 
-/** The owner's cap: "Longest time to keep prompts" … */
+/** The owner's cap: "Keep prompts for" … */
 export const capLabel: Record<Retention, string> = {
   never: "No limit",
   "1_year": "1 year",

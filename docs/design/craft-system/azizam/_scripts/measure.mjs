@@ -26,7 +26,7 @@ const allSurfaces = [
   ["workflows", "/ui/workflows/"], ["settings", "/ui/settings/"],
 ];
 // Measured only when named in MEASURE_SURFACES (not in MEASUREMENTS.md).
-const extraSurfaces = [["apps", "/ui/apps/"]];
+const extraSurfaces = [["apps", "/ui/apps/"], ["account", "/ui/account/"]];
 const only = (process.env.MEASURE_SURFACES ?? "").split(",").map(s => s.trim()).filter(Boolean);
 const surfaces = only.length ? [...allSurfaces, ...extraSurfaces].filter(([name]) => only.includes(name)) : allSurfaces;
 const widths = (process.env.MEASURE_WIDTHS ?? "1440,390").split(",").map(Number).filter(Boolean);
