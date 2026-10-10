@@ -28,7 +28,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y bubblewrap iproute2
+          sudo apt-get install -y bubblewrap iproute2 ffmpeg
           if [[ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
@@ -144,4 +144,4 @@ jobs:
             web/test-results/screens/
             web/test-results/report/
             web/test-results/artifacts/
-          retention-days: 7
+          retention-days: 1
