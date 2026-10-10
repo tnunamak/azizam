@@ -599,7 +599,7 @@ Env override: `AZIZAM_QUERY_PARAM_KEY=true`. The client uses base URL
 `https://your-host/v1?api_key=YOURKEY`. The gateway strips `api_key` before
 forwarding upstream so it never reaches the backend or its logs. **Note:** query
 params can still appear in *front-proxy* access logs — prefer the header, or a
-LAN bypass / path token, when possible.
+LAN bypass, when possible.
 
 ### 3. Per-device path tokens
 
@@ -612,9 +612,10 @@ auth:
     tok_livingroom: living-room-speaker
     tok_workshop: workshop-pi
 ```
-The device uses base URL `https://your-host/tok_livingroom/v1`. The token prefix
-is validated (constant-time) then stripped before routing, so it never reaches the
-backend. Remove a line to revoke that device.
+**Not routed today.** A token prefix authenticates (constant-time check), but no
+public route accepts it: every `https://your-host/tok_livingroom/...` request gets
+404 and never reaches a backend. Give the device an App key instead (header, or
+the query-param fallback above).
 
 ### Quick recipe: a header-less app on your LAN (e.g. OpenWhispr)
 

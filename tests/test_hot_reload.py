@@ -5,7 +5,7 @@ Verifies:
 - LIVE ADD: adding a new backend propagates to LLM_BACKEND_HOSTS + routing functions.
 - LIVE REMOVE/DISABLE: disabling a backend removes it from live lookups.
 - READ-SITE LIVENESS: the real routing functions (_highest_priority_chat_backend,
-  backend_for_host, vision_capable_llm_backends) use the NEW host after reload,
+  vision_capable_llm_backends) use the NEW host after reload,
   not a stale snapshot.
 - ATOMICITY (best-effort): config is never observed empty during reload when
   reload is called from synchronous code (asyncio single-thread guarantee).
@@ -331,36 +331,6 @@ class TestReadSiteLiveness(unittest.TestCase):
 
     def tearDown(self):
         _restore_reload_derived_state(self._before)
-
-    def test_backend_for_host_uses_new_host_after_reload(self):
-        """backend_for_host() resolves the NEW host URL after reload (not import-time value)."""
-        NEW_PORT = 7777
-        new_backends = {
-            "tabby": _tabby_backend(port=NEW_PORT),
-            "kobold": _kobold_backend(),
-        }
-        _call_reload_with_config(_make_effective_config(new_backends))
-
-        new_tabby_url = f"http://127.0.0.1:{NEW_PORT}"
-        result = proxy.backend_for_host(new_tabby_url)
-        self.assertEqual(result, "tabby",
-                         f"backend_for_host('{new_tabby_url}') returned {result!r}; "
-                         "expected 'tabby' — read site is stale")
-
-    def test_backend_for_host_old_url_no_longer_resolves(self):
-        """After changing TABBY port, the OLD URL no longer maps to 'tabby'."""
-        old_tabby_url = proxy.TABBY_HOST  # capture before reload
-        new_backends = {
-            "tabby": _tabby_backend(port=8888),
-            "kobold": _kobold_backend(),
-        }
-        _call_reload_with_config(_make_effective_config(new_backends))
-
-        # Old URL should no longer resolve (tabby has a new port now).
-        result = proxy.backend_for_host(old_tabby_url)
-        self.assertNotEqual(result, "tabby",
-                            "backend_for_host() still resolved old URL to 'tabby' after port change — "
-                            "read site is stale")
 
     def test_highest_priority_chat_backend_sees_new_config(self):
         """_highest_priority_chat_backend() uses the new priority ordering after reload."""

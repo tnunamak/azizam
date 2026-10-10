@@ -211,7 +211,6 @@ from gateway.backends.request_shape import (
 from gateway.backends.llm_execution import (
     ClientDisconnectedBeforeHeaders,
     GATEWAY_REQUEST_ID_HEADER,
-    LITELLM_BODY_EXECUTION_PATHS,
     LlmExecutionRequest,
     RequestDisconnectWatcher,
     close_llm_response,
@@ -451,7 +450,6 @@ PROXY_PORT = int(get_env("AZIZAM_PORT", config.get("proxy", {}).get("port", 5000
 tabby_cfg = config.get("backends", {}).get("tabby", {})
 TABBY_HOST = f"http://{tabby_cfg.get('host', '127.0.0.1')}:{tabby_cfg.get('port', 5050)}"
 TABBY_HEALTH_ENDPOINT = tabby_cfg.get("health_endpoint", "/health")
-TABBY_LOAD_TIMEOUT = tabby_cfg.get("load_timeout", 300)
 TABBY_IDLE_TIMEOUT = int(os.environ.get("TABBY_IDLE_TIMEOUT", tabby_cfg.get("idle_timeout", 300)))
 # The gateway never owns an engine's process existence (the binding principle:
 # it manages running and routing, never existence). Tabby's lifecycle —
@@ -546,26 +544,6 @@ def profile_allows_backend(auth_context: "AuthContext", backend: str) -> bool:
     profile = getattr(getattr(auth_context, "identity", None), "profile", None)
     allowed = getattr(profile, "backends", None)
     return allowed is None or backend in allowed
-
-
-def backend_for_host(host: str) -> Optional[str]:
-    for backend, backend_host in LLM_BACKEND_HOSTS.items():
-        if host == backend_host:
-            return backend
-    # Registry-driven fallback: check if the host matches the highest-priority
-    # backend for the embeddings capability (replaces the hardcoded EMBEDDINGS_HOST
-    # pin so a second embeddings backend is resolved correctly).
-    _embeddings_host = host_for_capability("embeddings")
-    if _embeddings_host and host == _embeddings_host:
-        backends = backends_for_capability("embeddings")
-        return backends[0] if backends else None
-    # Legacy fallback: if capability resolution yields nothing but EMBEDDINGS_HOST
-    # is set and enabled, preserve the old behavior.
-    if EMBEDDINGS_ENABLED and host == EMBEDDINGS_HOST:
-        return "embeddings"
-    # Unknown host: no match.  The caller (catch-all route) uses a separate
-    # registry-aware fallback rather than depending on this returning a value.
-    return None
 
 
 def _highest_priority_chat_backend() -> Optional[str]:
@@ -935,14 +913,6 @@ if not isinstance(user_defaults_cfg, Mapping):
 
 # Health
 HEALTH_CHECK_TIMEOUT = 5
-MAX_LOAD_FAILURES = 3
-LOAD_FAILURE_BACKOFF = 30
-
-# Endpoints that require model to be loaded
-MODEL_REQUIRED_PATHS = [
-    "/v1/completions",
-    "/v1/chat/completions",
-]
 
 # Vision model detection patterns (case-insensitive)
 VISION_MODEL_PATTERNS = [
@@ -3740,12 +3710,7 @@ class ProxyState:
         self.model_loading = False
         self.model_unloading = False
         self.load_lock = asyncio.Lock()
-        self.load_event: Optional[asyncio.Event] = None
         self.unload_event: Optional[asyncio.Event] = None
-
-        self.load_failure_count = 0
-        self.last_load_failure_time = 0
-        self.last_load_error: Optional[str] = None
         # NOTE: no tabby_process field — the gateway does not own engine
         # processes (see the TABBY_MANAGED removal). Existence is the operator's
         # supervisor's job (systemd / docker / CommandDriver).
@@ -3758,21 +3723,6 @@ class ProxyState:
     def get_idle_seconds(self) -> float:
         with self.activity_lock:
             return time.time() - self.last_activity
-
-    def reset_load_failures(self):
-        self.load_failure_count = 0
-        self.last_load_failure_time = 0
-
-    def record_load_failure(self):
-        self.load_failure_count += 1
-        self.last_load_failure_time = time.time()
-
-    def can_attempt_load(self) -> bool:
-        if self.load_failure_count >= MAX_LOAD_FAILURES:
-            elapsed = time.time() - self.last_load_failure_time
-            if elapsed < LOAD_FAILURE_BACKOFF * self.load_failure_count:
-                return False
-        return True
 
 
 state = ProxyState()
@@ -12765,95 +12715,6 @@ async def is_model_loaded() -> bool:
     except:
         pass
     return False
-
-
-async def load_model() -> bool:
-    """Load the default model with proper concurrency handling."""
-    if not DEFAULT_MODEL:
-        print(f"[proxy] No default model configured", flush=True)
-        return False
-
-    if not state.can_attempt_load():
-        wait_time = LOAD_FAILURE_BACKOFF * state.load_failure_count
-        print(f"[proxy] Load backoff active, retry in {wait_time}s", flush=True)
-        return False
-
-    if state.model_unloading and state.unload_event:
-        print(f"[proxy] Waiting for unload to complete...", flush=True)
-        try:
-            await asyncio.wait_for(state.unload_event.wait(), timeout=60)
-        except asyncio.TimeoutError:
-            print(f"[proxy] Unload wait timed out", flush=True)
-            return False
-
-    if state.model_loading and state.load_event:
-        print(f"[proxy] Load in progress, waiting...", flush=True)
-        try:
-            await asyncio.wait_for(state.load_event.wait(), timeout=TABBY_LOAD_TIMEOUT)
-            return await is_model_loaded()
-        except asyncio.TimeoutError:
-            print(f"[proxy] Load wait timed out", flush=True)
-            return False
-
-    async with state.load_lock:
-        if await is_model_loaded():
-            state.reset_load_failures()
-            return True
-
-        if state.model_loading:
-            return False
-
-        state.model_loading = True
-        state.load_event = asyncio.Event()
-
-    # Read config fresh to pick up any changes
-    _, _, model_params = get_tabby_model_config()
-    print(f"[proxy] Loading model: {DEFAULT_MODEL}", flush=True)
-    success = False
-    try:
-        load_payload = {"model_name": DEFAULT_MODEL, **model_params}
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{TABBY_HOST}/v1/model/load",
-                headers={"x-admin-key": ADMIN_KEY, "Content-Type": "application/json"},
-                json=load_payload,
-                timeout=TABBY_LOAD_TIMEOUT
-            )
-            response_text = ""
-            async for chunk in resp.aiter_bytes():
-                response_text += chunk.decode("utf-8", errors="replace")
-
-            # TabbyAPI returns SSE with status updates, check for completion
-            # Success: contains "finished" status, Failure: contains "error" status
-            if resp.status_code == 200 and '"status":"finished"' in response_text:
-                print(f"[proxy] Model loaded successfully", flush=True)
-                state.update_activity()
-                state.reset_load_failures()
-                success = True
-            elif '"status":"error"' in response_text or '"error":' in response_text:
-                print(f"[proxy] Load failed: {response_text[-500:]}", flush=True)
-                state.record_load_failure()
-            else:
-                # Verify by checking if model is actually loaded
-                if await is_model_loaded():
-                    print(f"[proxy] Model loaded (verified)", flush=True)
-                    state.update_activity()
-                    state.reset_load_failures()
-                    success = True
-                else:
-                    print(f"[proxy] Load unclear, response: {response_text[-300:]}", flush=True)
-                    state.record_load_failure()
-
-    except Exception as e:
-        print(f"[proxy] Load error: {e}", flush=True)
-        state.record_load_failure()
-    finally:
-        state.model_loading = False
-        if state.load_event:
-            state.load_event.set()
-        state.load_event = None
-
-    return success
 
 
 async def unload_model() -> bool:
@@ -25474,7 +25335,7 @@ async def _forward_chat_completions(
     stream: bool,
 ) -> httpx.Response | tuple[httpx.AsyncClient, httpx.Response]:
     """Send a translated Chat Completions request through the same in-process
-    routing the catch-all proxy_request uses, by making an HTTP loopback call
+    routing the public chat route uses, by making an HTTP loopback call
     to ourselves on 127.0.0.1:PROXY_PORT. This reuses every routing decision
     (model resolution, vision detection, backend swapping) without
     duplicating logic.
@@ -29105,16 +28966,6 @@ async def openai_realtime_unsupported(request: Request, rest: str = "") -> Respo
     return await _openai_unsupported_api(request, "/v1/realtime", "Realtime API")
 
 
-def _should_return_not_found_before_backend(request_path: str) -> bool:
-    """Return True for unmatched public routes.
-
-    Provider-native APIs must be explicitly namespaced and policy-gated. The
-    catch-all exists only so known routes mounted before it can coexist with
-    FastAPI's routing order; it must not become public Tabby passthrough.
-    """
-    return True
-
-
 def _normalize_chat_completion_sse_chunk(chunk: bytes) -> bytes:
     try:
         text = chunk.decode("utf-8")
@@ -29562,321 +29413,40 @@ async def provider_native_request(
     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     include_in_schema=False,
 )
-async def proxy_request(request: Request, path: str, *, mapped_route: bool = False):
-    """Proxy mapped OpenAI requests to a configured local backend."""
+async def unmatched_route(request: Request, path: str):
+    """Answer every unmatched path with 404 after authentication.
+
+    This route never reaches a backend. Provider-native APIs are explicitly
+    namespaced and policy-gated under /gateway/v1/providers/{provider}/; a
+    catch-all must not become a second, ungated passthrough.
+
+    Per-device path-prefix tokens (/<token>/v1/...) authenticate here only;
+    a token-prefixed path is not routed to any handler and gets 404.
+    """
     request_path = f"/{path}"
 
-    # Authenticate FIRST, against the original path so a per-device path-prefix
-    # token (/<token>/v1/...) is still visible to the token check.
+    # Authenticate first, against the original path, so unauthenticated
+    # callers get 401 and a path-prefix token is still visible to the check.
     auth_context = authenticate_request(request, request_path)
     if isinstance(auth_context, Response):
         return auth_context
 
-    # Then strip the token prefix so the upstream sees a clean path and the token
-    # never leaks into backend logs/routing.
-    _path_token = _path_token_from_request(request_path)
-    if _path_token is not None:
-        stripped = request_path.lstrip("/")[len(str(_path_token)):]
-        request_path = "/" + stripped.lstrip("/")
-        path = request_path.lstrip("/")
+    # Never echo a path-prefix token back to the caller.
+    path_token = _path_token_from_request(request_path)
+    if path_token is not None:
+        request_path = "/" + request_path.lstrip("/")[len(str(path_token)):].lstrip("/")
 
-    if not mapped_route and _should_return_not_found_before_backend(request_path):
-        return Response(
-            content=json.dumps({
-                "error": {
-                    "message": f"Path not found: {request_path}",
-                    "type": "invalid_request_error",
-                    "code": "not_found",
-                }
-            }),
-            status_code=404,
-            media_type="application/json",
-        )
-
-    if request_path in LITELLM_BODY_EXECUTION_PATHS:
-        return await _handle_openai_litellm_request(request, request_path)
-
-    # Update activity (unless it's a health/status/tts endpoint)
-    is_activity = not any(request_path.startswith(p) for p in NO_ACTIVITY_PATHS)
-    if is_activity:
-        state.update_activity()
-
-    body_peek = await request.body()
-    if (
-        request.method.upper() in {"POST", "PUT", "PATCH"}
-        and any(request_path.startswith(p) for p in MODEL_REQUIRED_PATHS)
-    ):
-        parsed_body, parse_error = parse_openai_json_body(body_peek)
-        if parse_error is not None:
-            return parse_error
-        if _is_use_loaded_model_alias(parsed_body.get("model")):
-            return await _forward_current_loaded_openai_request(
-                request,
-                request_path=request_path,
-                auth_context=auth_context,
-                body_json=parsed_body,
-            )
-
-    # Registry-aware backend selection for the catch-all native route.
-    # Prefer tabby when it exists and is enabled (zero behavior change for
-    # today's deployment).  When tabby is absent or disabled, fall back to
-    # the highest-priority enabled chat-capable backend from LLM_BACKEND_HOSTS.
-    _tabby_cfg = (config.get("backends") or {}).get("tabby")
-    _tabby_present_and_enabled = isinstance(_tabby_cfg, Mapping) and bool_from_config(
-        _tabby_cfg.get("enabled"), True
-    ) and "tabby" in LLM_BACKEND_HOSTS
-    if _tabby_present_and_enabled:
-        target_host = TABBY_HOST
-    else:
-        # tabby absent or disabled — pick the highest-priority chat-capable backend.
-        _fallback_id = _highest_priority_chat_backend()
-        target_host = LLM_BACKEND_HOSTS[_fallback_id] if _fallback_id else TABBY_HOST
-
-    # This is an advertised external LLM route.  Its health and auto-load
-    # branches below can perform backend I/O, so begin before either one.
-    target_service = backend_for_host(target_host) or _highest_priority_chat_backend() or "kobold"
-    _native_shape_body: Mapping[str, Any] | None = None
-    if request_path in MODEL_REQUIRED_PATHS:
-        _parsed, _parse_error = parse_openai_json_body(body_peek)
-        if _parse_error is None:
-            _native_shape_body = _parsed
-    native_receipt = (
-        RouteReceipt(
-            protocol="openai.chat", path=request_path, intent="chat.generate",
-            backend=target_service,
-            app_profile=(auth_context.identity.profile.id if auth_context.identity is not None else None),
-            app_id=auth_context.identity.app_id if auth_context.identity is not None else None,
-            owner_key_hash=auth_context.identity.key_hash if auth_context.identity else None,
-            api_key_name=auth_context.identity.name if auth_context.identity is not None else None,
-            requested_model=(str(_native_shape_body.get("model")) if _native_shape_body and _native_shape_body.get("model") else None),
-            visibility=(auth_context.identity.profile.status_visibility.level if auth_context.identity is not None else "internal"),
-            stream=bool(_native_shape_body.get("stream")),
-            effective_output_limit=effective_output_limit(_native_shape_body),
-        ) if _native_shape_body is not None else None
+    return Response(
+        content=json.dumps({
+            "error": {
+                "message": f"Path not found: {request_path}",
+                "type": "invalid_request_error",
+                "code": "not_found",
+            }
+        }),
+        status_code=404,
+        media_type="application/json",
     )
-    if native_receipt is not None:
-        native_receipt.metadata.update({"execution_backend": "native"})
-        record_request_shape_stage(native_receipt.metadata, "accepted", _native_shape_body)
-
-    def _record_native_terminal(_receipt: RouteReceipt, terminal_reason: str) -> None:
-        assert native_receipt is not None
-        record_request_shape_stage(
-            native_receipt.metadata, "terminal", _native_shape_body,
-            extra={"terminal_reason": terminal_reason},
-        )
-    owner = (
-        ReceiptLifecycleOwner(native_receipt, on_terminal=_record_native_terminal)
-        if native_receipt is not None else None
-    )
-
-    async with (owner or contextlib.nullcontext()):
-
-        target_service_for_admission = backend_for_host(target_host)
-        if target_service_for_admission:
-            service_response = _service_availability_response(
-                target_service_for_admission,
-                service_label=target_service_for_admission,
-            )
-            if service_response is not None:
-                if owner is not None:
-                    owner.report(status="failed", reason="failed")
-                return service_response
-        if target_host == TABBY_HOST:
-            # Backend-native catch-all paths are service-specific. They never fall
-            # through to another backend because native surfaces are not
-            # interchangeable. The gateway does not revive backends — return 503 and
-            # let the operator's supervisor bring it back.
-            if not await check_service_health(target_service):
-                if owner is not None:
-                    owner.report(status="failed", reason="failed")
-                return Response(
-                    content=json.dumps({
-                        "error": {
-                            "message": (
-                                f"Configured backend '{target_service}' is unavailable for this catch-all route. "
-                                "Retry after Retry-After."
-                            ),
-                            "type": "service_unavailable",
-                            "code": "backend_unavailable",
-                        }
-                    }),
-                    status_code=503,
-                    media_type="application/json",
-                    headers={"Retry-After": "10"},
-                )
-
-        # Auto-load model if needed (TabbyAPI only)
-        if target_host == TABBY_HOST and any(request_path.startswith(p) for p in MODEL_REQUIRED_PATHS):
-            if not await is_model_loaded():
-                if not await load_model():
-                    if owner is not None:
-                        owner.report(status="failed", reason="failed")
-                    return Response(
-                        content=json.dumps({"detail": "Failed to load model"}),
-                        status_code=503,
-                        media_type="application/json"
-                    )
-        # Gateway credentials never belong in a backend URL or its access logs.
-        url = f"{target_host}/{path}"
-        query = backend_query_string(request.url.query)
-        if query:
-            url += f"?{query}"
-
-        body = body_peek  # Already read above for model detection
-        # backend_for_host resolves known hosts; for an unknown host (shouldn't
-        # happen given the registry-derived target above) we fall back to the
-        # highest-priority chat backend id rather than a bare literal.
-        target_service = backend_for_host(target_host) or _highest_priority_chat_backend() or "kobold"
-        headers = prepare_downstream_headers(
-            request.headers,
-            auth_context,
-            target_service,
-            request_path,
-        )
-
-        # Staged request-shape observability, scoped to the chat/completions
-        # paths this catch-all also serves (MODEL_REQUIRED_PATHS) — the rest of
-        # this route forwards arbitrary non-LLM passthrough (health checks,
-        # TTS, ...) that request_shape_fields cannot meaningfully describe, and
-        # a receipt for those adds parallel bookkeeping without a matching
-        # observability contract. ``None`` (parse failure, or a path this
-        # doesn't apply to) means the receipt calls below become no-ops.
-        # ``native_receipt`` was begun above, before health/autoload I/O.
-        if native_receipt is not None:
-            native_receipt.metadata.update({"execution_backend": "native"})
-            record_request_shape_stage(
-                native_receipt.metadata, "outer_egress", _native_shape_body,
-                extra={"body_bytes": request_body_byte_count(body)},
-            )
-
-        # Pre-header disconnect coverage: this route has no LiteLLM/internal hop
-        # behind it (native_passthrough talks straight to the backend), so it
-        # needs the local ASGI disconnect watcher only — no cross-hop
-        # cancellation registry. Built before dispatch so a client abort during
-        # connect/header-wait stops the backend request instead of leaving it
-        # running unobserved (the gap this route previously had).
-        native_disconnect_watcher = RequestDisconnectWatcher(request.receive)
-        try:
-            try:
-                # connect tight (local backend should accept instantly), read generous
-                # (covers slow prompt-processing on reasoning/vision), write tight
-                # (request bodies are small even with base64 images), no pool budget
-                # (fresh client per request — no shared pool to wait on).
-                execution_request = LlmExecutionRequest(
-                    method=request.method,
-                    url=url,
-                    headers=headers,
-                    body=body,
-                    read_timeout=UPSTREAM_READ_TIMEOUT,
-                )
-                try:
-                    client, resp = await send_llm_execution_request(
-                        execution_request, disconnect_watcher=native_disconnect_watcher
-                    )
-                except ClientDisconnectedBeforeHeaders:
-                    if owner is not None:
-                        owner.report(status="cancelled", reason="cancelled")
-                    return Response(status_code=499)
-
-                content_type = resp.headers.get("content-type", "") or "application/json"
-                excluded = ('content-length', 'transfer-encoding', 'content-type')
-                response_headers = {k: v for k, v in resp.headers.items() if k.lower() not in excluded}
-                if native_receipt is not None:
-                    record_request_shape_stage(
-                        native_receipt.metadata, "backend_egress", _native_shape_body,
-                        extra={"status_code": resp.status_code},
-                    )
-                if "text/event-stream" in content_type:
-                    # Hand ASGI receive over to Starlette's own disconnect
-                    # listener before it exists: this watcher must never run
-                    # concurrently with StreamingResponse's receive loop.
-                    await native_disconnect_watcher.aclose()
-
-                    async def stream_response():
-                        try:
-                            async for chunk in iter_llm_response_bytes(
-                                client,
-                                resp,
-                            ):
-                                yield chunk
-                        finally:
-                            await resp.aclose()
-                            await client.aclose()
-                        if owner is not None:
-                            owner.report(
-                                status="succeeded" if 200 <= resp.status_code < 400 else "failed",
-                                reason="completed" if 200 <= resp.status_code < 400 else "failed",
-                            )
-
-                    return StreamingResponse(
-                        owner.handoff_stream(stream_response()) if owner is not None else stream_response(),
-                        status_code=resp.status_code,
-                        headers=response_headers,
-                        media_type=content_type
-                    )
-
-                content = await read_llm_response_body(
-                    client,
-                    resp,
-                    disconnect_watcher=native_disconnect_watcher,
-                )
-                if content is None:
-                    if owner is not None:
-                        owner.report(status="cancelled", reason="disconnected")
-                    return Response(status_code=499)
-                await close_llm_response(client, resp)
-                if owner is not None:
-                    owner.report(
-                        status="succeeded" if 200 <= resp.status_code < 400 else "failed",
-                        reason="completed" if 200 <= resp.status_code < 400 else "failed",
-                    )
-                return Response(
-                    content=content,
-                    status_code=resp.status_code,
-                    headers=response_headers,
-                    media_type=content_type
-                )
-            finally:
-                # Idempotent: already-stopped (streaming handoff, or the
-                # non-stream read's own watcher use) is a no-op. Guarantees the
-                # watcher task never outlives this function on any exit path,
-                # including the exception branches below.
-                await native_disconnect_watcher.aclose()
-
-        except httpx.TimeoutException:
-            if owner is not None:
-                owner.report(status="failed", reason="idle_timeout")
-            return Response(
-                content=json.dumps({"detail": "Request timeout"}),
-                status_code=504,
-                media_type="application/json"
-            )
-        except httpx.ConnectError:
-            # A connect error can be a transient blip or the supervisor mid-restart.
-            # Re-probe health generically: if the local-swap backend is reachable
-            # again, tell the client to retry (503); otherwise it's a hard connection
-            # failure (502). The gateway does not restart backends — supervisors do.
-            if owner is not None:
-                owner.report(status="failed", reason="connect_error")
-            if engine_quarantine.is_local_swap_backend(target_service) and await check_service_health(target_service):
-                return Response(
-                    content=json.dumps({"detail": f"{target_service} is reachable again, please retry"}),
-                    status_code=503,
-                    media_type="application/json"
-                )
-            return Response(
-                content=json.dumps({"detail": f"{target_service} connection failed"}),
-                status_code=502,
-                media_type="application/json"
-            )
-        except Exception as e:
-            if owner is not None:
-                owner.report(status="failed", reason="internal_error")
-            return Response(
-                content=json.dumps({"detail": f"Proxy error: {str(e)}"}),
-                status_code=502,
-                media_type="application/json"
-            )
 
 
 # Inside the framing/source layers, this counts a request until the whole

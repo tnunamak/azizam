@@ -695,10 +695,6 @@ class TestGatewayRouterMounting(unittest.TestCase):
             forbidden_activation,
         ), patch.object(
             proxy,
-            "load_model",
-            forbidden_activation,
-        ), patch.object(
-            proxy,
             "send_llm_execution_request",
             fake_send,
         ):
@@ -850,10 +846,6 @@ class TestGatewayRouterMounting(unittest.TestCase):
             forbidden_activation,
         ), patch.object(
             proxy,
-            "load_model",
-            forbidden_activation,
-        ), patch.object(
-            proxy,
             "send_llm_execution_request",
             fake_send,
         ):
@@ -899,10 +891,6 @@ class TestGatewayRouterMounting(unittest.TestCase):
             proxy,
             "_service_availability_response",
             lambda *_args, **_kwargs: None,
-        ), patch.object(
-            proxy,
-            "load_model",
-            forbidden_activation,
         ), patch.object(
             proxy,
             "send_llm_execution_request",
