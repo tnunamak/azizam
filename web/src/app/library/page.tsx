@@ -2450,9 +2450,7 @@ export default function LibraryPage() {
                   ? `${goneAssets.length} files are no longer stored.`
                   : `${goneAssets.length} files are unavailable.`}{" "}
               {/* One explanation for owners and members alike. */}
-              <span className="text-muted-foreground">
-                Receipts remain.
-              </span>
+              <span className="text-muted-foreground">Receipts remain.</span>
             </p>
             <Button
               variant="link"

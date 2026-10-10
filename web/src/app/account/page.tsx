@@ -53,18 +53,22 @@ function errorMessage(error: unknown, fallback: string) {
 export default function AccountPage() {
   const viewer = useViewer();
   return (
-    <div className="page-read page-stack">
+    // The settings template: a 720 column, the header 24 above sections that
+    // are 32 apart.
+    <div className="page-read">
       <PageHeader title="Your settings" />
-      {viewer.serviceAdmin ? (
-        <ErrorState
-          severity="info"
-          heading="Sign in as a person"
-          message="This session uses a key, which has no prompts of its own."
-          action={{ label: "Sign in", href: "/ui/sign-in/" }}
-        />
-      ) : (
-        <PromptsSection />
-      )}
+      <div className="page-stack">
+        {viewer.serviceAdmin ? (
+          <ErrorState
+            severity="info"
+            heading="Sign in as a person"
+            message="This session uses a key, which has no prompts of its own."
+            action={{ label: "Sign in", href: "/ui/sign-in/" }}
+          />
+        ) : (
+          <PromptsSection />
+        )}
+      </div>
     </div>
   );
 }
