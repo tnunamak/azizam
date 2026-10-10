@@ -240,3 +240,16 @@ def test_forgotten_image_job_cannot_reuse_a_remembered_idempotency_result(househ
     assert remembered[0] != forgotten[0]
     assert forgotten == proxy._image_media_job_request_id(body={**body, "extensions": FORGET}, auth_context=hh.auth,
         idempotency_key="same-client-key", fallback_request_id="three")
+
+
+def test_direct_image_job_rejects_malformed_prompt_controls_before_idempotency(household, monkeypatch):
+    hh = household
+    receipt_path = hh.root / "receipts.db"
+    receipt_store.init_db(receipt_path)
+    monkeypatch.setattr(receipt_store, "DB_PATH", receipt_path)
+    monkeypatch.setattr(proxy, "_gateway_auth_context", lambda *_: hh.auth)
+    response = asyncio.run(proxy.gateway_image_generations_media_job(_StubJsonRequest(
+        {"prompt": "invalid private sentinel", "extensions": {prompt_memory.NAMESPACE: {"mode": "invalid"}}},
+        headers={"idempotency-key": "invalid-mode"})))
+    assert response.status_code == 400, response.body
+    assert json.loads(response.body)["error"]["code"] == "invalid_prompt_mode"
